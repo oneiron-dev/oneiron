@@ -28,7 +28,7 @@ mod position;
 
 pub use self::checkpoint::CodeRunStepCheckpoint;
 
-pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 2;
+pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 3;
 pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
 pub use crate::store::result_manifest::CODE_RUN_REPLAY_HASH_LEN;
 
@@ -233,9 +233,13 @@ impl CodeRunBridgeCall {
             SelfDispatchOutcome::ReaderReport(_) if self.effect != SelfEffect::ReaderReport => Err(
                 invalid_code_run_replay("reader report receipt belongs to another effect"),
             ),
-            SelfDispatchOutcome::TaskWaitSet(_) if self.effect != SelfEffect::TasksWaitSet => Err(
-                invalid_code_run_replay("task wait set answer belongs to another effect"),
-            ),
+            SelfDispatchOutcome::TaskWaitSet(_)
+            | SelfDispatchOutcome::StoredReply(super::types::SelfStoredReply {
+                kind: super::types::SelfStoredReplyKind::TaskWaitSet,
+                ..
+            }) if self.effect != SelfEffect::TasksWaitSet => Err(invalid_code_run_replay(
+                "task wait set answer belongs to another effect",
+            )),
             SelfDispatchOutcome::Summarize(_) if self.effect != SelfEffect::Summarize => Err(
                 invalid_code_run_replay("summary answer belongs to another effect"),
             ),
@@ -628,6 +632,9 @@ fn cached_rows(
 #[non_exhaustive]
 pub struct CodeRunReplayRecord {
     pub run_id: EntityId,
+    /// The host-bound birth world. Known base reality has its actual id;
+    /// `None` means no accepted placement was witnessed. Not read authority.
+    pub birth_world: Option<EntityId>,
     /// Frozen inputs when witnessed; imported outputs can retain unknown inputs.
     pub determinism: Option<CodeRunDeterminism>,
     pub bridge_calls: Vec<CodeRunBridgeCall>,
@@ -779,6 +786,7 @@ impl CodeRunReplayRecord {
     ) -> Self {
         Self {
             run_id,
+            birth_world: None,
             determinism,
             bridge_calls: Vec::new(),
             step_checkpoints: Vec::new(),
@@ -810,6 +818,7 @@ impl CodeRunReplayRecord {
             return Cow::Borrowed(self);
         };
         let mut record = self.clone();
+        record.birth_world = held.birth_world.or(record.birth_world);
         for (call, kept) in record.bridge_calls.iter_mut().zip(&held.bridge_calls) {
             if call.seq == kept.seq
                 && call.effect == kept.effect

@@ -62,6 +62,7 @@ pub(crate) mod ai;
 mod anonymous_chat;
 // FIX 8238: an answer's resources kept until the answer is encoded.
 pub(crate) mod answer_hold;
+mod artifact_backend_pairing;
 mod artifacts;
 // OF-469: a kept authority checkpoint and its attestations, for adoption.
 mod authority_checkpoint;
@@ -156,6 +157,9 @@ pub(crate) use llm::MeshLlm;
 pub(crate) use llm::record_raw_response;
 mod mcp_gateway;
 mod memory;
+// FIX 1435: the direct native read routes cross the verb-hook boundary, and a
+// read that an ask stopped runs again through its own route.
+pub(crate) mod native_read_hooks;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
 // depth cost gate, the extractive answer for the model-free tiers, and the
 // citation gate over whatever a host composer returns.
@@ -304,6 +308,7 @@ pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
 /// listener.
 pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
     artifact_routes()
+        .merge(self::artifacts::backend_routes())
         .layer(axum::Extension(self::artifacts::ArtifactOnlyListener))
         .layer(middleware::from_fn_with_state(
             server.clone(),

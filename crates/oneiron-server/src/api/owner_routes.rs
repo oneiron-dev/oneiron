@@ -64,6 +64,7 @@ pub(super) mod craft_candidate_routes;
 mod curator_rubric_routes;
 pub(super) mod decision_ask_routes;
 pub(super) mod desktop_takeover_routes;
+mod device_succession_routes;
 pub(super) mod diary_routes;
 mod disclosure_routes;
 pub(super) mod dreamer_maintenance_routes;
@@ -214,6 +215,7 @@ fn owner_tables() -> OwnerTable {
         root_routes::owner_table(),
         recovery_kit_target_routes::owner_table(),
         removal_archive_routes::owner_table(),
+        device_succession_routes::owner_table(),
         super::owner_origin::owner_table(),
         super::packs::owner_table(),
         super::phone_line::owner_table(),
@@ -346,7 +348,9 @@ pub(crate) fn hooked_owner(
     Ok((proof, actor))
 }
 
-fn host(server: &SyncServer) -> Result<Arc<OwnerHost>, ApiError> {
+/// The vault's backup storage this server was started with, which the
+/// status, backup and rehearsal root admin commands read.
+pub(super) fn host(server: &SyncServer) -> Result<Arc<OwnerHost>, ApiError> {
     server.owner_host.clone().ok_or_else(|| {
         ApiError::new(
             "this server was started without its vault's backup storage, so it serves no owner status or backups",
@@ -464,15 +468,18 @@ pub(super) async fn blocking<T: Send + 'static>(
         .map_err(owner_error)
 }
 
-/// `GET /v1/owner/status`: where the data lives, the embedder as this
-/// server serves it, where feedback goes, the bytes this process's sync
-/// links moved, and how its browser stands.
+/// The status root admin command's answer, at `GET /v1/owner/status` and
+/// the operator's `GET /v1/operator/status` (FIX 11432): where the data
+/// lives, the embedder as this server serves it, where feedback goes,
+/// failure-signal delivery, the
+/// bytes this process's sync links moved, and how its browser stands.
 #[derive(serde::Serialize)]
-struct OwnerStatus {
+pub(super) struct HostStatus {
     #[serde(flatten)]
     location: location::Location,
     embedder: crate::owner::embedder::EmbedderReport,
     feedback: feedback::FeedbackStatus,
+    failure_signals: crate::owner::failure_signals::FailureSignalStatus,
     /// Every sync and LLM mesh link since this process started, summed per inner frame
     /// tag: raw bytes against the bytes on the wire, each way (OF-604).
     link_bytes: Vec<oneiron::sync::transport::TagBytesRow>,
@@ -486,7 +493,8 @@ struct OwnerStatus {
 /// any vault no supervisor manages, self-hosted or hosted, as no person:
 /// `None`, no owner proof is made up for it. Any other caller runs it as the
 /// owner, through [`owner`], and so does every caller on a managed vault,
-/// whose host's root acts as nobody (FIX 2222, FIX 5255).
+/// whose host's root acts as nobody (FIX 2222, FIX 5255). The operator's own
+/// door serves the same commands under `/v1/operator` (FIX 11432).
 fn root_admin(
     auth: &CoreAuth,
     server: &SyncServer,
@@ -500,20 +508,26 @@ fn root_admin(
     owner(auth, server).map(Some)
 }
 
-async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<OwnerStatus> {
+async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<HostStatus> {
     root_admin(&auth, &server)?;
+    Ok(Json(host_status(server).await?))
+}
+
+/// This server's [`HostStatus`], read now. It takes no actor and no read
+/// key: each door that serves it admits its caller first.
+pub(super) async fn host_status(server: Arc<SyncServer>) -> Result<HostStatus, ApiError> {
     let host = host(&server)?;
-    let report = blocking(move || {
-        Ok::<_, OwnerError>(OwnerStatus {
+    blocking(move || {
+        Ok::<_, OwnerError>(HostStatus {
             location: host.locate(server.vault())?,
             embedder: server.embedder_report()?,
             feedback: feedback::status(server.feedback.as_deref(), &server.config.feedback_inbox),
+            failure_signals: crate::owner::failure_signals::status(&server)?,
             link_bytes: oneiron::sync::transport::process_link_bytes(),
             browser: server.browser_readiness().snapshot(),
         })
     })
-    .await?;
-    Ok(Json(report))
+    .await
 }
 
 async fn list_backups(
@@ -570,20 +584,29 @@ async fn run_housekeeping(
         })
         .await?;
     }
-    let report = server
+    Ok(Json(housekeeping_pass(&server).await?))
+}
+
+/// The plain upkeep root admin command: every housekeeping sweep now, on a
+/// pass the host holds (`SyncServer::housekeeping_now`), answered with its
+/// report. It takes no actor: each door that runs it admits its caller
+/// first.
+pub(super) async fn housekeeping_pass(server: &SyncServer) -> Result<HousekeepingReport, ApiError> {
+    server
         .housekeeping_now()
         .await
         .ok_or_else(|| ApiError::internal_server_error("owner action task failed"))?
-        .map_err(|error| owner_error(error.into()))?;
-    Ok(Json(report))
+        .map_err(|error| owner_error(error.into()))
 }
 
+/// A restore rehearsal's body, at `POST /v1/owner/backups/rehearse` and the
+/// operator's `POST /v1/operator/backups/rehearse` (FIX 11432).
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct RehearseRequest {
+pub(super) struct RehearseRequest {
     /// A backup file name from `GET /v1/owner/backups`; the newest by default.
     #[serde(default)]
-    file: Option<String>,
+    pub(super) file: Option<String>,
 }
 
 async fn rehearse_backup(

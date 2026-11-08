@@ -8,6 +8,7 @@ both bindings and their export-census tests in one change.
 
 - `vault.commitments.create`
 - `vault.commitments.get`
+- `vault.commitments.ledger`
 - `vault.commitments.instances`
 - `vault.commitments.proposals`
 - `vault.commitments.fulfill`
@@ -246,6 +247,8 @@ both bindings and their export-census tests in one change.
 - `vault.skills.restoreDefaults`
 - `vault.skill_hubs.put`
 - `vault.skill_hubs.get`
+- `vault.skill_hubs.clawhub.search`
+- `vault.skill_hubs.clawhub.import`
 - `vault.skill_hubs.publishers.admit`
 - `vault.skill_hubs.publishers.revoke`
 - `vault.skill_hubs.refs.get`
@@ -255,6 +258,7 @@ both bindings and their export-census tests in one change.
 - `vault.packs.get`
 - `vault.skills.import`
 - `vault.skills.sync`
+- `vault.skills.proposal.settle`
 - `vault.skills.receipts`
 - `vault.skills.convert`
 - `vault.skills.get`
@@ -363,6 +367,7 @@ both bindings and their export-census tests in one change.
 - `vault.members.leave`
 - `vault.members.invitations`
 - `vault.members.accept`
+- `vault.members.accept_with_credential`
 - `vault.members.decline`
 - `vault.members.withdraw_invitation`
 - `vault.shared.object`
@@ -385,6 +390,8 @@ both bindings and their export-census tests in one change.
 - `vault.federation.burst.policy`
 - `vault.federation.burst.policy.set`
 - `vault.sync.quarantine.held_edits`
+- `vault.sync.documents.copy_edit.review`
+- `vault.sync.documents.copy_edit.settle`
 - `vault.sync.retained_work.wait.set`
 - `vault.federation.burst.ingress`
 - `vault.federation.burst.disposition`
@@ -427,6 +434,7 @@ both bindings and their export-census tests in one change.
 - `vault.files.sources.detach`
 - `vault.files.sources.list`
 - `vault.files.sources.files`
+- `vault.files.sources.exclude`
 - `vault.residence.mode`
 - `vault.residence.open`
 - `vault.residence.index`
@@ -561,10 +569,14 @@ both bindings and their export-census tests in one change.
 - `vault.policy.outbound.decide`
 - `vault.policy.relay.decide`
 - `vault.consent.approve_once`
+- `vault.campaign.held`
+- `vault.campaign.approve_once`
 - `vault.connectors.calls.approve_once`
+- `vault.connectors.replies.retry_failed`
 - `vault.consent.deny`
 - `vault.consent.create_standing_grant`
 - `vault.consent.create_auto_weave_grant`
+- `vault.consent.create_nightly_link_grant`
 - `vault.consent.registry`
 - `vault.consent.failure_signals_held`
 - `vault.consent.revoke`
@@ -692,13 +704,17 @@ both bindings and their export-census tests in one change.
 - `vault.code.symbols.renew`
 - `vault.code.symbols.release`
 - `vault.code.proposal_submit`
+- `vault.code.proposal_rereview`
 - `vault.code.conflict_record`
 - `vault.code.conflict_view`
 - `vault.code.proposal_resolve`
+- `vault.code.proposal_resolve_rereview`
 - `vault.code.proposal_review`
 - `vault.code.proposal_settle`
 - `vault.code.proposal_settlement`
 - `vault.code.oplog`
+- `vault.code.secrets.get`
+- `vault.code.secrets.propose`
 - `execute_code`
 - `vault.code.model_heal_count`
 - `vault.code.corrections`
@@ -732,9 +748,14 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.publish.approve`
 - `vault.code.origin.publish.execute`
 - `vault.code.origin.publish.cancel`
+- `vault.devices.predecessor.name`
 - `vault.code.origin.authority.get`
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`
+- `vault.code.secrets.purge.request`
+- `vault.code.secrets.purge.get`
+- `vault.code.secrets.purge.execute`
+- `vault.code.checkout.holder.bind`
 - `vault.code.checkout.bind`
 - `vault.code.checkout.claim`
 - `vault.code.checkout.get`
@@ -880,6 +901,7 @@ both bindings and their export-census tests in one change.
 - `vault.rooms.join`
 - `vault.rooms.invite`
 - `vault.rooms.consent`
+- `vault.rooms.leave`
 - `vault.rooms.offer`
 - `vault.rooms.offer.answer`
 - `vault.rooms.offer.vote`
@@ -913,6 +935,9 @@ both bindings and their export-census tests in one change.
 - `vault.models.manifest.replace`
 - `vault.settings.web_connector`
 - `vault.settings.web_connector.replace`
+- `vault.settings.model_pack`
+- `vault.settings.model_pack.replace`
+- `vault.model_pack.revert`
 - `vault.connectors.web.usage`
 - `vault.models.oneironer.bind`
 - `vault.models.routes.read`
@@ -934,6 +959,7 @@ both bindings and their export-census tests in one change.
 - `ai.streams.detach`
 - `ai.streams.abort`
 - `ai.streams.terminal`
+- `ai.streams.release`
 - `ai.reply`
 - `vault.receipts.context`
 - `vault.receipts.craft_reply_manifest`
@@ -985,6 +1011,8 @@ both bindings and their export-census tests in one change.
 - `vault.questions.create`
 - `vault.questions.edit`
 - `vault.questions.pause`
+- `vault.questions.prepare`
+- `vault.questions.admit`
 - `vault.questions.backfill`
 - `vault.questions.read`
 - `vault.questions.outcome_windows`
@@ -1063,6 +1091,7 @@ both bindings and their export-census tests in one change.
 - `vault.search.temporal`
 - `vault.search.bm25`
 - `vault.neighbors`
+- `vault.edges.provenance`
 - `vault.structural.put`
 - `vault.habits.checkin`
 - `vault.productivity.create`
@@ -1188,6 +1217,7 @@ both bindings and their export-census tests in one change.
 - `vault.notes.author_take`
 - `vault.notes.from_entity`
 - `vault.notes.read`
+- `vault.notes.read_indexed`
 - `vault.notes.history`
 - `vault.notes.fork`
 - `vault.notes.forks.read`
@@ -1247,3 +1277,6 @@ both bindings and their export-census tests in one change.
 - `vault.mail.threads.read`
 - `vault.mail.compliance.search`
 - `vault.files.sources.convert`
+- `vault.sync.repo_manifests.conflict.review`
+- `vault.sync.repo_manifests.conflict.discard`
+- `vault.dreamer.follower.keyframe`

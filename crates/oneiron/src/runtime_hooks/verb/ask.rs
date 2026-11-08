@@ -30,8 +30,9 @@ use crate::receipt::{ActionInputs, call_reads_world, json_entity_refs};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{HookActorClass, PackHookBinding};
 use crate::task_verb::{
-    ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskHandle, TaskAskOptionId,
-    TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSpec, TaskAskStatus,
+    ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskHandle, TaskAskOption,
+    TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSpec,
+    TaskAskStatus,
 };
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, MemoryError, Result, Vault};
@@ -435,7 +436,7 @@ pub(super) fn open(
     ] {
         let option = TaskAskOptionId::new(option)
             .map_err(|_| Error::InvariantViolation("verb hook ask option"))?;
-        what.options.insert(option, text);
+        what.options.insert(option, TaskAskOption::new(text));
     }
     let mut spec = TaskAskSpec::shorthand(None, what, None, TaskAskDefault::Hold);
     spec.intent_key = format!(
@@ -541,10 +542,14 @@ pub(super) fn settled_in_txn(
     if row.ask != group || row.binding != binding || row.state != VerbAskState::Open {
         return Ok(());
     }
+    let first_settlement = row.settled_at.is_none();
     row.settled_at = Some(now);
     row.proceeds = proceeds(result);
     row.ready = row.resume.is_some() && row.proceeds;
     ASKS.put(&vault.store, txn, &key, &row)?;
+    if first_settlement {
+        crate::batch::queue_verb_hook_ask_change(vault, txn);
+    }
     if row.ready {
         // The hook runner wakes on the commit, not only on its tick.
         crate::batch::queue_proactivity_change(vault, txn);

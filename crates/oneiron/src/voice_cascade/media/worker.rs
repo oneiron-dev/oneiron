@@ -76,7 +76,13 @@ impl VoiceMediaWorker {
                         continue;
                     };
                     deliver(match spoken {
-                        Ok(frame) => VoiceMediaOutput::Pcm { submission, frame },
+                        // An `ai.speech` answer carries no alignment: a
+                        // part-played sentence's heard text stays unknown.
+                        Ok(frame) => VoiceMediaOutput::Pcm {
+                            submission,
+                            frame,
+                            alignment: None,
+                        },
                         Err(error) => VoiceMediaOutput::SpeechFailed {
                             generation,
                             submission,
