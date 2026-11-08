@@ -526,7 +526,7 @@ impl RecordingJsHost<'_, '_> {
     /// read's does.
     ///
     /// With `child`, a readable result is also checked as a spawn's source
-    /// would be, writing nothing: the run's own result, then the seat, the
+    /// would be, writing nothing: its own or inherited source, then the seat, the
     /// clock and the scope. The verdict names the children's cutoff and the
     /// meter they spend on (`scope`, with what it may still spend, or
     /// `host`, the host's own meter, with no figure), or why a spawn would be
@@ -543,7 +543,9 @@ impl RecordingJsHost<'_, '_> {
         if !child || verdict["can"] != json!(true) {
             return Ok(json!({"output": verdict}));
         }
-        if self.resolve_result(&target.reference).is_none() {
+        if self.resolve_result(&target.reference).is_none()
+            && !self.is_inherited_reader_source(&target.reference)
+        {
             return Ok(json!({"output": {"can": false, "reason": "unknown_handle"}}));
         }
         match self
@@ -597,11 +599,15 @@ impl RecordingJsHost<'_, '_> {
         };
         // A read its live cutoff cut answers `reader_task_settled`, whatever
         // the cut left; a cut selection is never published (FIX 8233).
-        let reply = read.read(storage, facet, input, sink.as_mut());
+        let reply = read.read_delivered(storage, facet, input, sink.as_mut());
         if self.live_cutoff_reached() {
             return Ok(result_refusal(READER_TASK_SETTLED));
         }
-        Ok(match reply? {
+        let (reply, delivered) = reply?;
+        // Past every check, a scoped child's witness keeps the source bytes
+        // the reply shows before the reply leaves (FIX 7735).
+        self.commit_source_delivery(storage, &read, &delivered)?;
+        Ok(match reply {
             ResultReply::Output(output) => json!({"output": output}),
             ResultReply::Denied(refused) => refused,
             ResultReply::Spilled { count, next } => {

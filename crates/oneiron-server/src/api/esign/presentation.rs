@@ -113,7 +113,8 @@ pub(super) async fn layout(
 /// pages. The PDF is inspected as the editor's geometry door inspects its
 /// own (FIX 12230), on a blocking worker: its bytes, measured unread, leased
 /// from this machine's memory before the vault reads them (FIX 12304), and
-/// the lease grown for its parse.
+/// the lease grown for its parse. It uses an installed inspection worker
+/// through the same selector; hosts without one keep the native path.
 pub(super) async fn preview(
     State(server): State<Arc<SyncServer>>,
     SigningIngress { token, admitted }: SigningIngress,
@@ -152,10 +153,15 @@ pub(super) async fn preview(
     let vault = Arc::clone(&server.vault);
     let memory = server.memory.clone();
     let stream_decode_bytes = server.vault.esign_stream_decode_bytes();
+    let inspection_server = Arc::clone(&server);
     let pages = match tokio::task::spawn_blocking(move || {
-        parse_lease::inspected_from_vault(&memory, bytes, stream_decode_bytes, |admitted| {
-            vault.esign_preview_pdf_within(&token, item, admitted)
-        })
+        parse_lease::inspected_from_vault(
+            &inspection_server,
+            &memory,
+            bytes,
+            stream_decode_bytes,
+            |admitted| vault.esign_preview_pdf_within(&token, item, admitted),
+        )
     })
     .await
     {
