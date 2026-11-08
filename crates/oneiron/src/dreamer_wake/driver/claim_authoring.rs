@@ -127,15 +127,6 @@ impl DreamerWakeDriver<'_> {
             }
             ClaimAuthoringSelection::Ambiguous { roots } => {
                 if report.claim_authoring_fallback.is_none() {
-                    let hex: Vec<String> = roots
-                        .iter()
-                        .map(|root| bytes_to_hex_lower(root.as_bytes()))
-                        .collect();
-                    tracing::warn!(
-                        roots = ?hex,
-                        "several bound claim-authoring campaigns carry the promoted default; \
-                         this pass authors single-pass"
-                    );
                     report.claim_authoring_fallback =
                         Some(ClaimAuthoringFallback::AmbiguousCampaigns {
                             roots: roots.clone(),
