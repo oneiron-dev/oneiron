@@ -63,9 +63,11 @@ pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
 mod core_write_doors;
+pub mod device_succession;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
+mod edge_provenance;
 mod people_verbs;
 mod plugin_sections;
 pub mod run_review;
@@ -151,6 +153,7 @@ mod shape_doors;
 pub(crate) use shape_doors::AFTER_NEEDS_HANDLE;
 pub use shape_doors::DescribeRequest;
 mod signal_extraction;
+mod skill_bodies;
 mod structural;
 mod subscriptions;
 mod support;
@@ -235,6 +238,10 @@ pub use dreamer_wake_read::{
     DreamerWakeCallView, DreamerWakeCheckpointView, DreamerWakeClaimAuthoringFallbackView,
     DreamerWakeEndView, DreamerWakeGenerationView, DreamerWakeHeaderView, DreamerWakeLeaseView,
     DreamerWakeLiveCallView, DreamerWakeLiveView, DreamerWakeResumeView, DreamerWakeView,
+};
+pub use edge_provenance::{
+    EdgeProvenanceActorClass, EdgeProvenanceLifecycle, EdgeProvenanceRequest,
+    EdgeProvenanceSupersession, EdgeProvenanceView,
 };
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,

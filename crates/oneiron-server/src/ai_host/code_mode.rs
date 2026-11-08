@@ -334,11 +334,15 @@ fn profiled_compaction(
 /// Where this host serves `pick`, a planned child's model, exactly (FIX
 /// 2310, Engine C1/C2): its router serves it, on a configured or discovered
 /// route, as one picked model, at a route no wider than the chat role's
-/// live route, so a seat-bound admission takes it and its one model answers.
+/// configured route (its manifest's or seat's, never the model pack's: FIX
+/// 5367), so a seat-bound admission takes it and its one model answers.
 /// `None` otherwise, and the child runs as it would today.
 fn exact_route(models: &ModelRuntime, vault: &Vault, pick: &ModelId) -> Option<ModelLocality> {
     let seat = models.seat(CHAT_ROLE)?;
-    let route = models.route_role(vault, CHAT_ROLE, seat).ok()?.locality;
+    let route = models
+        .configured_route_role(vault, CHAT_ROLE, seat)
+        .ok()?
+        .locality;
     let (served, ladder) = models.router()?.served(pick)?;
     (served <= route && ladder.exact_prompt().is_some()).then_some(served)
 }

@@ -19,7 +19,51 @@ pub(super) fn handle_document(
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
-    match handle_document_inner(server, conn_id, entity, kind, payload, direct, state) {
+    let joined = if kind == document_sub_tags::PART {
+        if payload.len() > server.config.max_update_payload {
+            return Err(ProtocolError::FrameTooLarge {
+                size: payload.len(),
+                max: server.config.max_update_payload,
+            });
+        }
+        if payload.first() != Some(&document_sub_tags::NOTE_OPS) {
+            return Err(ProtocolError::InvalidPayload(
+                "upload parts require NOTE operations",
+            ));
+        }
+        require_note_upload(server, state, entity)?;
+        let joined = state
+            .document_parts
+            .accept(transport::DocumentFrame {
+                entity,
+                kind,
+                payload,
+            })
+            .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE operation part"))?;
+        let Some(joined) = joined else {
+            return Ok(());
+        };
+        Some(joined)
+    } else {
+        None
+    };
+    let (kind, payload) = match &joined {
+        Some(joined) => {
+            let frame = joined.frame();
+            (frame.kind, frame.payload)
+        }
+        None => (kind, payload),
+    };
+    match handle_document_inner(
+        server,
+        conn_id,
+        entity,
+        kind,
+        payload,
+        direct,
+        state,
+        joined.is_some(),
+    ) {
         Err(ProtocolError::WaitedOut) => {
             let waited = transport::DocumentWaitedOut::try_from(kind)
                 .map_err(|_| ProtocolError::WaitedOut)?;
@@ -33,6 +77,27 @@ pub(super) fn handle_document(
     }
 }
 
+fn require_note_upload(
+    server: &SyncServer,
+    state: &ConnState,
+    entity: EntityId,
+) -> Result<(), ProtocolError> {
+    let principal = document_principal(server, state)?;
+    if state.owner_documents.contains_key(&entity) {
+        owner_auth(server, state, true)?;
+    } else {
+        let request = state
+            .documents
+            .get(&entity)
+            .ok_or(ProtocolError::InvalidPayload("document not admitted"))?;
+        if request.selector.member_ref != principal {
+            return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
+        }
+        require_note_auth(server, state, &request.selector, true)?;
+    }
+    Ok(())
+}
+
 fn handle_document_inner(
     server: &SyncServer,
     conn_id: u32,
@@ -41,6 +106,7 @@ fn handle_document_inner(
     payload: &[u8],
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     state: &mut ConnState,
+    logical_command: bool,
 ) -> Result<(), ProtocolError> {
     if state.protocol_version != transport::PROTOCOL_VERSION
         && !transport::is_owner_window_version(state.protocol_version)
@@ -50,7 +116,7 @@ fn handle_document_inner(
             "document sync requires a document-capable protocol",
         ));
     }
-    if payload.len() > server.config.max_update_payload {
+    if !logical_command && payload.len() > server.config.max_update_payload {
         return Err(ProtocolError::FrameTooLarge {
             size: payload.len(),
             max: server.config.max_update_payload,
@@ -120,6 +186,8 @@ fn handle_document_inner(
             Ok(())
         }
         document_sub_tags::NOTE_OPS => {
+            // FIX 4748: the NOTE authority is the home, never a peer.
+            super::peer_serve::refuse_note_authority(state)?;
             let request = state
                 .documents
                 .get(&entity)
@@ -303,7 +371,9 @@ fn owner_request(
 /// publication. It applies the publication once every part is there and
 /// window sync has delivered every row it names. An owner-gate denial echoes
 /// only the supplied digest in a Refused receipt without keeping any part;
-/// admitted parts are answered once complete, on this socket alone.
+/// admitted parts are answered once complete, on this socket alone. A socket served as a peer
+/// applies none and keeps no part (FIX 4748): no receipt settles the device's outbox, which
+/// waits for the home.
 fn artifact_publication(
     server: &SyncServer,
     state: &mut ConnState,
@@ -311,6 +381,7 @@ fn artifact_publication(
     payload: &[u8],
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
+    super::peer_serve::refuse_note_authority(state)?;
     let receipt = match owner_auth_checked(server, state, true) {
         Ok(auth) => server
             .vault
@@ -357,6 +428,8 @@ fn owner_document(
             Ok(())
         }
         document_sub_tags::NOTE_OPS => {
+            // FIX 4748: the NOTE authority is the home, never a peer.
+            super::peer_serve::refuse_note_authority(state)?;
             let auth = owner_auth(server, state, true)?;
             let actor = EntityId::from_hex(
                 auth.require_registered_principal()

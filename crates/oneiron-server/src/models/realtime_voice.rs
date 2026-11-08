@@ -1,5 +1,5 @@
 //! Realtime voice sessions (FIX 462, OF-131): one websocket session on a
-//! hosted speech-to-speech model, OpenAI Realtime, held as a voice-loop
+//! hosted speech-to-speech model, OpenAI Realtime or Gemini Live, held as a voice-loop
 //! session rather than an `ai.*` call. The session is admitted on a run of
 //! its own ([`VOICE_LOOP_RUN`]) as the provider's realtime connector, one
 //! unit per token the session reports.
@@ -7,20 +7,20 @@
 //! Each response the model gives goes out on a permit of its own: the first
 //! is admitted before the socket opens, so a refused session opens none, and
 //! each next one as the response before it ends, reserving what that response
-//! reported when past the base (FIX 11481). A `response.done` settles
+//! reported when past the base (FIX 11481). A completed response settles
 //! its permit on the tokens its usage reports. A session that ends between
 //! responses settles its open permit on none; one that ends while a response
 //! is under way, with its usage never reported, pays that permit's
 //! reservation as unknown usage.
 //!
 //! The key is read from the provider's `key_env` when the rung is built and
-//! rides the WebSocket upgrade as a bearer, marked sensitive, and nowhere
-//! else. Gemini Live is not built here yet.
+//! rides the WebSocket upgrade in a sensitive header: an OpenAI bearer or
+//! Gemini's `x-goog-api-key`. It never enters the socket URL.
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use oneiron::llm::run_admission::{CallOutcome, PaidConnector, RunAdmission, RunPermit};
-use oneiron::{FatalLlmError, LlmResult, RetryableLlmError};
+use oneiron::{FatalLlmError, LlmError, LlmResult, RetryableLlmError};
 use serde_json::{Value as JsonValue, json};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
@@ -46,12 +46,15 @@ type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 pub enum RealtimeWire {
     /// OpenAI Realtime: `wss://…/v1/realtime?model=…`, JSON events both ways.
     OpenAiRealtime,
+    /// Gemini Live v1beta: `BidiGenerateContent`, JSON events both ways.
+    GeminiLive,
 }
 
 /// One realtime rung: where its socket opens, its key, and the connector
 /// its sessions are admitted as.
 pub struct RealtimeVoiceRung {
     wire: RealtimeWire,
+    model: String,
     url: String,
     headers: Vec<(HeaderName, HeaderValue)>,
     timeout: Duration,
@@ -74,9 +77,14 @@ impl RealtimeVoiceRung {
                 HeaderValue::from_str(value)?,
             ));
         }
-        headers.push((AUTHORIZATION, bearer(provider)?));
+        let (header, prefix) = match wire {
+            RealtimeWire::OpenAiRealtime => (AUTHORIZATION, "Bearer "),
+            RealtimeWire::GeminiLive => (HeaderName::from_static("x-goog-api-key"), ""),
+        };
+        headers.push((header, key_header(provider, prefix)?));
         Ok(Self {
             wire,
+            model: model.to_owned(),
             url: socket_url(&provider.base_url, model, wire)?,
             headers,
             timeout: Duration::from_secs(provider.timeout_secs).min(UPGRADE_TIMEOUT_CAP),
@@ -86,7 +94,8 @@ impl RealtimeVoiceRung {
 }
 
 /// The session socket's URL on `base_url`: its scheme as a socket's, the
-/// wire's path below the base's, and the model as a query.
+/// wire's path below the base's. OpenAI takes the model as a query;
+/// Gemini takes it in its setup message.
 fn socket_url(base_url: &str, model: &str, wire: RealtimeWire) -> anyhow::Result<String> {
     let mut url = reqwest::Url::parse(base_url)?;
     let scheme = match url.scheme() {
@@ -102,11 +111,18 @@ fn socket_url(base_url: &str, model: &str, wire: RealtimeWire) -> anyhow::Result
             url.set_path(&path);
             url.query_pairs_mut().append_pair("model", model);
         }
+        RealtimeWire::GeminiLive => {
+            let path = format!(
+                "{}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent",
+                url.path().trim_end_matches('/')
+            );
+            url.set_path(&path);
+        }
     }
     Ok(url.into())
 }
 
-fn bearer(provider: &ProviderConfig) -> anyhow::Result<HeaderValue> {
+fn key_header(provider: &ProviderConfig, prefix: &str) -> anyhow::Result<HeaderValue> {
     let env = provider
         .key_env
         .as_deref()
@@ -115,7 +131,7 @@ fn bearer(provider: &ProviderConfig) -> anyhow::Result<HeaderValue> {
         .ok()
         .filter(|key| !key.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("{env} is not set"))?;
-    let mut value = HeaderValue::from_str(&format!("Bearer {}", key.trim()))
+    let mut value = HeaderValue::from_str(&format!("{prefix}{}", key.trim()))
         .map_err(|_| anyhow::anyhow!("{env} is not a header value"))?;
     value.set_sensitive(true);
     Ok(value)
@@ -126,14 +142,21 @@ fn bearer(provider: &ProviderConfig) -> anyhow::Result<HeaderValue> {
 /// settles its open permit.
 pub struct RealtimeVoiceSession {
     socket: Socket,
+    wire: RealtimeWire,
     run: RunAdmission,
     connector: PaidConnector,
     /// The permit the response under way, or the next, is paid on.
     permit: Option<RunPermit>,
     /// A response started and has not reported its usage yet.
     responding: bool,
+    /// Gemini's latest usage report for the response under way, not a sum
+    /// of the counts its successive events report.
+    reported_tokens: Option<u64>,
     /// The tokens the last response reported, for the next one's reservation.
     last_tokens: u64,
+    /// A refusal for the next response, reported after the completed event
+    /// already paid for has reached its caller.
+    terminal_error: Option<LlmError>,
     /// The socket closed: no event follows.
     closed: bool,
 }
@@ -141,8 +164,11 @@ pub struct RealtimeVoiceSession {
 impl RealtimeVoiceSession {
     /// Opens a session on `rung`, on `run`, its first permit admitted before
     /// the socket opens. `session`, when given, is the wire's session
-    /// configuration, sent first. An upgrade that fails started nothing at
-    /// the provider, so its permit settles on no usage.
+    /// configuration, sent first. Gemini always sends setup with the rung's
+    /// model; its caller must read `setupComplete` before sending input.
+    /// Server acknowledgments remain in the raw event stream. An upgrade
+    /// that fails started nothing at the provider, so its permit settles
+    /// on no usage.
     pub async fn open(
         rung: &RealtimeVoiceRung,
         run: RunAdmission,
@@ -159,20 +185,35 @@ impl RealtimeVoiceSession {
         };
         let mut opened = Self {
             socket,
+            wire: rung.wire,
             run,
             connector: rung.connector.clone(),
             permit: Some(permit),
             responding: false,
+            reported_tokens: None,
             last_tokens: 0,
+            terminal_error: None,
             closed: false,
         };
-        if let Some(session) = session {
-            let update = match rung.wire {
-                RealtimeWire::OpenAiRealtime => {
-                    json!({"type": "session.update", "session": session})
+        match rung.wire {
+            RealtimeWire::OpenAiRealtime => {
+                if let Some(session) = session {
+                    let update = json!({"type": "session.update", "session": session});
+                    opened.send(&update).await?;
                 }
-            };
-            opened.send(&update).await?;
+            }
+            RealtimeWire::GeminiLive => {
+                let mut setup = session.unwrap_or_else(|| json!({}));
+                if let Some(fields) = setup.as_object_mut() {
+                    let model = if rung.model.starts_with("models/") {
+                        rung.model.clone()
+                    } else {
+                        format!("models/{}", rung.model)
+                    };
+                    fields.insert("model".to_owned(), JsonValue::String(model));
+                }
+                opened.send(&json!({"setup": setup})).await?;
+            }
         }
         Ok(opened)
     }
@@ -189,13 +230,24 @@ impl RealtimeVoiceSession {
     }
 
     /// The next server event, in order; `None` once the socket closed. A
-    /// `response.done` settles its response's permit on the tokens it
-    /// reports, and the next response's permit is admitted; a refused one
-    /// ends the session with its refusal.
+    /// `response.done`, or Gemini's `serverContent.turnComplete`, settles
+    /// its response's permit on the tokens it reports, and the next
+    /// response's permit is admitted. If that next permit is refused, this
+    /// completed event is returned before the next read reports the refusal.
+    /// Gemini's generation end or interruption alone does not
+    /// complete the turn.
     pub async fn next(&mut self) -> LlmResult<Option<JsonValue>> {
+        if let Some(error) = self.terminal_error.take() {
+            return Err(error);
+        }
         while !self.closed {
-            let frame = match self.socket.next().await {
-                Some(Ok(Message::Text(text))) => text,
+            let event: JsonValue = match self.socket.next().await {
+                Some(Ok(Message::Text(text))) => {
+                    serde_json::from_str(text.as_str()).map_err(|_| FatalLlmError::EmptyResponse)?
+                }
+                Some(Ok(Message::Binary(bytes))) if self.wire == RealtimeWire::GeminiLive => {
+                    serde_json::from_slice(&bytes).map_err(|_| FatalLlmError::EmptyResponse)?
+                }
                 // The pong a ping asks for goes out with the next send.
                 Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => continue,
                 Some(Ok(Message::Binary(_))) => {
@@ -210,12 +262,39 @@ impl RealtimeVoiceSession {
                     return Err(RetryableLlmError::ServerError.into());
                 }
             };
-            let event: JsonValue =
-                serde_json::from_str(frame.as_str()).map_err(|_| FatalLlmError::EmptyResponse)?;
-            match event["type"].as_str() {
-                Some("response.created") => self.responding = true,
-                Some("response.done") => self.answered(&event)?,
-                _ => {}
+            match self.wire {
+                RealtimeWire::OpenAiRealtime => match event["type"].as_str() {
+                    Some("response.created") => self.responding = true,
+                    Some("response.done") => {
+                        let reported = event
+                            .pointer("/response/usage/total_tokens")
+                            .and_then(JsonValue::as_u64);
+                        self.terminal_error = self.answered(reported).err();
+                    }
+                    _ => {}
+                },
+                RealtimeWire::GeminiLive => {
+                    let content = &event["serverContent"];
+                    let complete = content["turnComplete"].as_bool() == Some(true);
+                    if event.get("toolCall").is_some()
+                        || content.get("modelTurn").is_some()
+                        || content["generationComplete"].as_bool() == Some(true)
+                        || content["interrupted"].as_bool() == Some(true)
+                    {
+                        self.responding = true;
+                    }
+                    if (self.responding || complete)
+                        && let Some(tokens) = event
+                            .pointer("/usageMetadata/totalTokenCount")
+                            .and_then(JsonValue::as_u64)
+                    {
+                        self.reported_tokens = Some(tokens);
+                    }
+                    if complete {
+                        let reported = self.reported_tokens.take();
+                        self.terminal_error = self.answered(reported).err();
+                    }
+                }
             }
             return Ok(Some(event));
         }
@@ -235,11 +314,8 @@ impl RealtimeVoiceSession {
     /// A response ended: its permit settles on the tokens it reports, and
     /// the next response's is admitted, reserving at least what this one
     /// reported (FIX 11481).
-    fn answered(&mut self, event: &JsonValue) -> LlmResult<()> {
+    fn answered(&mut self, reported: Option<u64>) -> LlmResult<()> {
         self.responding = false;
-        let reported = event
-            .pointer("/response/usage/total_tokens")
-            .and_then(JsonValue::as_u64);
         let tokens = reported.unwrap_or(0);
         self.last_tokens = tokens;
         if let Some(permit) = self.permit.take() {

@@ -142,7 +142,7 @@ async fn import(
         let memory = credential_memory(
             server.vault(),
             Some(&auth),
-            owner.actor(),
+            owner.actor_for_read(server.vault())?,
             oneiron::EdgeActorClass::Human,
         );
         let mut approval = OwnerImportApproval {
@@ -181,7 +181,7 @@ async fn resume(
         let memory = credential_memory(
             server.vault(),
             Some(&auth),
-            owner.actor(),
+            owner.actor_for_read(server.vault())?,
             oneiron::EdgeActorClass::Human,
         );
         server
