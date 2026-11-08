@@ -45,16 +45,6 @@ pub(crate) struct PrefixExpansionPostingDecision {
 
 pub(super) const FINAL_TOKEN_PREFIX_WEIGHT: f64 = 0.5;
 
-/// The most query text the index reads: the facade's query ceiling, so a caller at the engine
-/// door tokenizes no more than a facade caller may send.
-pub(super) const MAX_QUERY_TEXT_BYTES: usize = crate::memory::caps::MAX_QUERY_BYTES;
-
-/// `query` cut to its first [`MAX_QUERY_TEXT_BYTES`] at a char boundary: the tail of a longer
-/// query is never tokenized.
-pub(super) fn bounded_query(query: &str) -> &str {
-    &query[..query.floor_char_boundary(MAX_QUERY_TEXT_BYTES)]
-}
-
 pub(super) const MAX_FINAL_TOKEN_PREFIX_TERMS: usize = 64;
 
 /// Bound term-key reads for any one prefix after the scoped expansion cap.
@@ -172,7 +162,6 @@ pub(crate) fn final_token_exact_posting_matches<F>(
 where
     F: FnMut(&EntityId) -> Result<bool>,
 {
-    let query = bounded_query(query);
     let trimmed_query_end = query.trim_end().len();
     if trimmed_query_end == 0 {
         return Ok(false);
@@ -213,7 +202,6 @@ pub(crate) fn final_token_prefix_expansion_has_scoped_and_rejected_postings<F>(
 where
     F: FnMut(&EntityId) -> Result<PrefixExpansionPostingDecision>,
 {
-    let query = bounded_query(query);
     let trimmed_query_end = query.trim_end().len();
     if trimmed_query_end == 0 {
         return Ok(false);
@@ -464,7 +452,6 @@ where
         return Ok(Vec::new());
     }
 
-    let query = bounded_query(query);
     let mut tokens: Vec<Token> = Vec::new();
     analyzer.analyze(query, &AnalyzerContext::for_query(), &mut tokens);
     if tokens.is_empty() {
@@ -572,10 +559,9 @@ fn resolve_lexical_query_hint_record(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<LexicalQueryHintResolution> {
-    if !id
-        .as_bytes()
-        .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
-    {
+    // A hint id is derived: an id without the derive stamp is no hint, and
+    // its posting needs no row read.
+    if !id.has_derived_stamp() {
         return Ok(LexicalQueryHintResolution::NonHint);
     }
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, id)? else {
@@ -590,9 +576,13 @@ fn resolve_lexical_query_hint_record(
     if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN {
         return Ok(LexicalQueryHintResolution::DeadHint);
     }
-    let body =
+    // Only a hint's own body names it a hint: a CLAIM body this cannot read
+    // is scored as itself, as every non-hint row is.
+    let Ok(body) =
         crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
-            .map_err(|_| corrupted("lexical query hint claim"))?;
+    else {
+        return Ok(LexicalQueryHintResolution::NonHint);
+    };
     if body.predicate != crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
         return Ok(LexicalQueryHintResolution::NonHint);
     }
@@ -602,12 +592,16 @@ fn resolve_lexical_query_hint_record(
     if !body.stale {
         return Ok(LexicalQueryHintResolution::DeadHint);
     }
-    let Some(target) = crate::claim::lexical_query_hint_target(&body)
+    // A hint body under any id but its own derived one is a dead hint, never
+    // the CLAIM's own searchable content.
+    let Some(hint) = crate::claim::canonical_lexical_query_hint(id, &body)
         .map_err(|_| corrupted("lexical query hint claim"))?
     else {
         return Ok(LexicalQueryHintResolution::DeadHint);
     };
-    Ok(LexicalQueryHintResolution::Live { target })
+    Ok(LexicalQueryHintResolution::Live {
+        target: hint.target,
+    })
 }
 
 fn lexical_query_hint_target_is_live_claim(

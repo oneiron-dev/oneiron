@@ -18,6 +18,7 @@ use crate::protocol::CountMode;
 use crate::protocol::PaginatedResponse;
 use crate::protocol::ResponseMeta;
 use crate::server::{QueryDoor, SyncServer, query_caller};
+use axum::body::Body;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::rejection::QueryRejection;
@@ -40,6 +41,8 @@ use utoipa::ToSchema;
 
 mod deadline;
 mod home_text;
+mod semantic_body;
+mod semantic_probe;
 use deadline::{
     SearchPage, read_by_deadline, search_deadline, search_page, search_page_by_deadline,
 };
@@ -838,7 +841,7 @@ pub(crate) struct SemanticSearchRequest {
         ),
         (
             status = 500,
-            description = "Vector search or projection failed.",
+            description = "Request body resource or read failure, vector search or projection failed.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -854,13 +857,13 @@ pub(crate) async fn search_semantic(
     parts: Parts,
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
-    body: Result<Json<SemanticSearchRequest>, axum::extract::rejection::JsonRejection>,
+    body: Body,
 ) -> Result<Json<Value>, ApiError> {
     let arrived = Instant::now();
     let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?.at(locality);
-    let Json(params) = body.map_err(|rejection| {
-        ApiError::bad_request(format!("invalid semantic search body: {rejection}"), None)
-    })?;
+    let decoded = semantic_body::read(&server, &parts.headers, body).await?;
+    let _decoded_memory = decoded.memory;
+    let params = decoded.params;
     server.ask_retrieval_query(
         query_caller(&auth),
         QueryDoor::SearchSemantic,
@@ -923,16 +926,23 @@ pub(crate) async fn search_semantic(
         page_limit,
         auth: page_auth.clone(),
     };
-    let question = text.to_owned();
+    let question = semantic_probe::Question::new(text);
     let page = match deadline {
         None => {
-            let embedding = match &space {
-                Some(space) => embed_semantic_text(&server, space.clone(), &question).await?,
-                None => server
-                    .embed_query_off_runtime(question.clone())
+            let probe = match &space {
+                Some(space) => {
+                    let embedding =
+                        embed_semantic_text(&server, space.clone(), question.as_str()).await?;
+                    question.finish(embedding)
+                }
+                None => question
+                    .embed_off_runtime(&server)
                     .await
                     .map_err(embed_query_error)?,
             };
+            let _probe_memory = probe.memory;
+            let embedding = probe.embedding;
+            let question = probe.question;
             let admission = admit_deep_retrieval(&server, depth)?;
             search_page(&server, page(embedding, question), admission.as_ref(), None)?
         }
@@ -949,12 +959,25 @@ pub(crate) async fn search_semantic(
                 count_mode,
                 auth,
                 move |server, deadline| {
-                    let embedding = match space {
+                    let probe = match space {
                         Some(space) => {
-                            runtime.block_on(embed_semantic_text(server, space, &question))?
+                            let embedding = runtime.block_on(embed_semantic_text(
+                                server,
+                                space,
+                                question.as_str(),
+                            ))?;
+                            question.finish(embedding)
                         }
-                        None => server.embed_query(&question).map_err(embed_query_error)?,
+                        None => {
+                            let embedding = server
+                                .embed_query(question.as_str())
+                                .map_err(embed_query_error)?;
+                            question.finish(embedding)
+                        }
                     };
+                    let _probe_memory = probe.memory;
+                    let embedding = probe.embedding;
+                    let question = probe.question;
                     search_page(
                         server,
                         page(embedding, question),

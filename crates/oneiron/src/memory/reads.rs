@@ -24,6 +24,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 mod receipt_page;
 
 pub use receipt_page::VaultReceiptsPage;
+pub(crate) use receipt_page::{ReceiptReader, receipts_page_for};
 
 const SNIPPET_MAX_CHARS: usize = 160;
 
@@ -667,9 +668,13 @@ impl Memory<'_> {
             }
         };
         let short_ref = self.short_ref_of(id)?;
-        let value = served(&body.value);
+        let (mut value, mut scope) = (served(&body.value), body.scope.as_ref().map(served));
+        if !secret {
+            self.mask_lifted_claim_parts(&mut value, scope.as_mut())?;
+        }
         let claim = crate::lens::RecordRef::from_id(ENTITY_TYPE_CLAIM, id, short_ref.as_deref());
-        // The label is the value this view serves: redacted for a secret.
+        // The label is the value this view serves: redacted for a secret, a
+        // lifted key as its handle (FIX 13735).
         let claim = match &value {
             serde_json::Value::String(text) => claim.with_label(text),
             other => claim.with_label(&other.to_string()),
@@ -690,7 +695,7 @@ impl Memory<'_> {
             lifecycle: body.lifecycle.as_str().to_owned(),
             source: body.source.map(|source| source.as_str().to_owned()),
             world_ref: body.world.map(|world| world.to_hex()),
-            scope: body.scope.as_ref().map(served),
+            scope,
             claim_scope: ClaimScope::of_body(body),
             made_by: self.collection_view(id)?.and_then(|view| view.made_by),
             valid_from: body.valid_from,
@@ -761,14 +766,23 @@ fn family_receipt(record: crate::receipt::ReceiptRecord) -> MemoryReceipt {
         policy_trace,
         mut fields,
     } = record;
+    let capture = receipt_kind == crate::receipt::ReceiptKind::Gate
+        && fields
+            .get("content_kind")
+            .is_some_and(|kind| kind == crate::codebase::CODE_SNAPSHOT_CAPTURE_CONTENT_KIND);
+    let (prefix, target_type) = if capture {
+        ("entity:", crate::registry::ENTITY_TYPE_CODE_ARTIFACT)
+    } else {
+        ("claim:", ENTITY_TYPE_CLAIM)
+    };
     let claim_ref = trigger_ref
         .as_deref()
-        .and_then(|reference| reference.strip_prefix("claim:"))
+        .and_then(|reference| reference.strip_prefix(prefix))
         .map(str::to_owned);
     let claim = claim_ref
         .as_deref()
         .and_then(|hex| EntityId::from_hex(hex).ok())
-        .map(|id| crate::lens::RecordRef::from_id(ENTITY_TYPE_CLAIM, &id, None));
+        .map(|id| crate::lens::RecordRef::from_id(target_type, &id, None));
     for (key, value) in [
         ("trigger_ref", trigger_ref),
         ("job_ref", job_ref),

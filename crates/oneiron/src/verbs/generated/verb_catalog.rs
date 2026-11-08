@@ -3,6 +3,7 @@
 pub enum AgentVerb {
     VaultCommitmentsCreate,
     VaultCommitmentsGet,
+    VaultCommitmentsLedger,
     VaultCommitmentsInstances,
     VaultCommitmentsProposals,
     VaultCommitmentsFulfill,
@@ -212,6 +213,13 @@ pub enum AgentVerb {
     VaultWeaveOwnerLinkWrong,
     VaultWeaveItemWrong,
     VaultWeaveOwnerItemWrong,
+    VaultWeaveAdminReport,
+    VaultWeaveAdminLens,
+    VaultWeaveAdminDigest,
+    VaultWeaveAdminLinkWrong,
+    VaultWeaveAdminItemWrong,
+    VaultStepUpPasskeysReset,
+    VaultStepUpTotpReset,
     VaultWeaveEnqueue,
     VaultWeaveSchedulesList,
     VaultWeaveSchedulesPut,
@@ -237,6 +245,8 @@ pub enum AgentVerb {
     VaultSkillsRestoredefaults,
     VaultSkillHubsPut,
     VaultSkillHubsGet,
+    VaultSkillHubsClawhubSearch,
+    VaultSkillHubsClawhubImport,
     VaultSkillHubsPublishersAdmit,
     VaultSkillHubsPublishersRevoke,
     VaultSkillHubsRefsGet,
@@ -246,6 +256,7 @@ pub enum AgentVerb {
     VaultPacksGet,
     VaultSkillsImport,
     VaultSkillsSync,
+    VaultSkillsProposalSettle,
     VaultSkillsReceipts,
     VaultSkillsConvert,
     VaultSkillsGet,
@@ -348,11 +359,13 @@ pub enum AgentVerb {
     VaultMembersProjection,
     VaultMembersAdd,
     VaultMembersInvitationSlip,
+    VaultMembersInvitationCode,
     VaultMembersChange,
     VaultMembersRemove,
     VaultMembersLeave,
     VaultMembersInvitations,
     VaultMembersAccept,
+    VaultMembersAcceptWithCredential,
     VaultMembersDecline,
     VaultMembersWithdrawInvitation,
     VaultSharedObject,
@@ -417,6 +430,7 @@ pub enum AgentVerb {
     VaultFilesSourcesDetach,
     VaultFilesSourcesList,
     VaultFilesSourcesFiles,
+    VaultFilesSourcesExclude,
     VaultResidenceMode,
     VaultResidenceOpen,
     VaultResidenceIndex,
@@ -482,6 +496,7 @@ pub enum AgentVerb {
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
     VaultCoachTrainingOffersSources,
+    VaultCoachTrainingRunsCancel,
     VaultDraftersList,
     VaultDraftersListAs,
     VaultDraftersStatus,
@@ -551,6 +566,7 @@ pub enum AgentVerb {
     VaultPolicyRelayDecide,
     VaultConsentApproveOnce,
     VaultConnectorsCallsApproveOnce,
+    VaultConnectorsRepliesRetryFailed,
     VaultConsentDeny,
     VaultConsentCreateStandingGrant,
     VaultConsentCreateAutoWeaveGrant,
@@ -589,6 +605,7 @@ pub enum AgentVerb {
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
     VaultSecretsCodeRunLifts,
+    VaultSecretsCodeRunRoomLifts,
     VaultSecretsLiftHistory,
     VaultSecretsRegister,
     VaultSecretsRotate,
@@ -636,6 +653,7 @@ pub enum AgentVerb {
     HostCompact,
     HostWake,
     HostBudgetHit,
+    VaultHooksChecks,
     VaultHooksReplay,
     VaultHooksRegenDue,
     VaultHooksRegenGet,
@@ -686,8 +704,11 @@ pub enum AgentVerb {
     VaultCodeProposalSettle,
     VaultCodeProposalSettlement,
     VaultCodeOplog,
+    VaultCodeSecretsGet,
+    VaultCodeSecretsPropose,
     ExecuteCode,
     VaultCodeModelHealCount,
+    VaultCodeCorrections,
     VaultCodeTypeDiagnostics,
     VaultCodeWaitsResolve,
     VaultCodeWaitsReceipt,
@@ -721,6 +742,10 @@ pub enum AgentVerb {
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
+    VaultCodeSecretsPurgeRequest,
+    VaultCodeSecretsPurgeGet,
+    VaultCodeSecretsPurgeExecute,
+    VaultCodeCheckoutHolderBind,
     VaultCodeCheckoutBind,
     VaultCodeCheckoutClaim,
     VaultCodeCheckoutGet,
@@ -834,6 +859,9 @@ pub enum AgentVerb {
     Ask,
     Wait,
     TasksAnswer,
+    TasksAnswerForwardChallenge,
+    TasksAnswerForward,
+    TasksAnswerForwardStatus,
     TasksOutcomes,
     VaultRoomsList,
     VaultRoomsMessages,
@@ -863,6 +891,7 @@ pub enum AgentVerb {
     VaultRoomsJoin,
     VaultRoomsInvite,
     VaultRoomsConsent,
+    VaultRoomsLeave,
     VaultRoomsOffer,
     VaultRoomsOfferAnswer,
     VaultRoomsOfferVote,
@@ -896,6 +925,9 @@ pub enum AgentVerb {
     VaultModelsManifestReplace,
     VaultSettingsWebConnector,
     VaultSettingsWebConnectorReplace,
+    VaultSettingsModelPack,
+    VaultSettingsModelPackReplace,
+    VaultModelPackRevert,
     VaultConnectorsWebUsage,
     VaultModelsOneironerBind,
     VaultModelsRoutesRead,
@@ -917,6 +949,7 @@ pub enum AgentVerb {
     AiStreamsDetach,
     AiStreamsAbort,
     AiStreamsTerminal,
+    AiStreamsRelease,
     AiReply,
     VaultReceiptsContext,
     VaultReceiptsCraftReplyManifest,
@@ -968,6 +1001,8 @@ pub enum AgentVerb {
     VaultQuestionsCreate,
     VaultQuestionsEdit,
     VaultQuestionsPause,
+    VaultQuestionsPrepare,
+    VaultQuestionsAdmit,
     VaultQuestionsBackfill,
     VaultQuestionsRead,
     VaultQuestionsOutcomeWindows,
@@ -1068,6 +1103,7 @@ pub enum AgentVerb {
     VaultSearchTemporal,
     VaultSearchBm25,
     VaultNeighbors,
+    VaultEdgesProvenance,
     VaultStructuralPut,
     VaultHabitsCheckin,
     VaultProductivityCreate,
@@ -1251,6 +1287,10 @@ pub enum AgentVerb {
     VaultMailInbox,
     VaultMailThreadsRead,
     VaultMailComplianceSearch,
+    VaultFilesSourcesConvert,
+    VaultSyncRepoManifestsConflictReview,
+    VaultSyncRepoManifestsConflictDiscard,
+    VaultDreamerFollowerKeyframe,
     ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
@@ -1291,6 +1331,7 @@ impl AgentVerb {
     pub const ALL: &[Self] = &[
         Self::VaultCommitmentsCreate,
         Self::VaultCommitmentsGet,
+        Self::VaultCommitmentsLedger,
         Self::VaultCommitmentsInstances,
         Self::VaultCommitmentsProposals,
         Self::VaultCommitmentsFulfill,
@@ -1500,6 +1541,13 @@ impl AgentVerb {
         Self::VaultWeaveOwnerLinkWrong,
         Self::VaultWeaveItemWrong,
         Self::VaultWeaveOwnerItemWrong,
+        Self::VaultWeaveAdminReport,
+        Self::VaultWeaveAdminLens,
+        Self::VaultWeaveAdminDigest,
+        Self::VaultWeaveAdminLinkWrong,
+        Self::VaultWeaveAdminItemWrong,
+        Self::VaultStepUpPasskeysReset,
+        Self::VaultStepUpTotpReset,
         Self::VaultWeaveEnqueue,
         Self::VaultWeaveSchedulesList,
         Self::VaultWeaveSchedulesPut,
@@ -1525,6 +1573,8 @@ impl AgentVerb {
         Self::VaultSkillsRestoredefaults,
         Self::VaultSkillHubsPut,
         Self::VaultSkillHubsGet,
+        Self::VaultSkillHubsClawhubSearch,
+        Self::VaultSkillHubsClawhubImport,
         Self::VaultSkillHubsPublishersAdmit,
         Self::VaultSkillHubsPublishersRevoke,
         Self::VaultSkillHubsRefsGet,
@@ -1534,6 +1584,7 @@ impl AgentVerb {
         Self::VaultPacksGet,
         Self::VaultSkillsImport,
         Self::VaultSkillsSync,
+        Self::VaultSkillsProposalSettle,
         Self::VaultSkillsReceipts,
         Self::VaultSkillsConvert,
         Self::VaultSkillsGet,
@@ -1636,11 +1687,13 @@ impl AgentVerb {
         Self::VaultMembersProjection,
         Self::VaultMembersAdd,
         Self::VaultMembersInvitationSlip,
+        Self::VaultMembersInvitationCode,
         Self::VaultMembersChange,
         Self::VaultMembersRemove,
         Self::VaultMembersLeave,
         Self::VaultMembersInvitations,
         Self::VaultMembersAccept,
+        Self::VaultMembersAcceptWithCredential,
         Self::VaultMembersDecline,
         Self::VaultMembersWithdrawInvitation,
         Self::VaultSharedObject,
@@ -1705,6 +1758,7 @@ impl AgentVerb {
         Self::VaultFilesSourcesDetach,
         Self::VaultFilesSourcesList,
         Self::VaultFilesSourcesFiles,
+        Self::VaultFilesSourcesExclude,
         Self::VaultResidenceMode,
         Self::VaultResidenceOpen,
         Self::VaultResidenceIndex,
@@ -1770,6 +1824,7 @@ impl AgentVerb {
         Self::VaultCoachTrainingOffersPilotsComplete,
         Self::VaultCoachTrainingOffersPilotsGet,
         Self::VaultCoachTrainingOffersSources,
+        Self::VaultCoachTrainingRunsCancel,
         Self::VaultDraftersList,
         Self::VaultDraftersListAs,
         Self::VaultDraftersStatus,
@@ -1839,6 +1894,7 @@ impl AgentVerb {
         Self::VaultPolicyRelayDecide,
         Self::VaultConsentApproveOnce,
         Self::VaultConnectorsCallsApproveOnce,
+        Self::VaultConnectorsRepliesRetryFailed,
         Self::VaultConsentDeny,
         Self::VaultConsentCreateStandingGrant,
         Self::VaultConsentCreateAutoWeaveGrant,
@@ -1877,6 +1933,7 @@ impl AgentVerb {
         Self::VaultSettingsLearningPut,
         Self::VaultSettingsLearningClear,
         Self::VaultSecretsCodeRunLifts,
+        Self::VaultSecretsCodeRunRoomLifts,
         Self::VaultSecretsLiftHistory,
         Self::VaultSecretsRegister,
         Self::VaultSecretsRotate,
@@ -1924,6 +1981,7 @@ impl AgentVerb {
         Self::HostCompact,
         Self::HostWake,
         Self::HostBudgetHit,
+        Self::VaultHooksChecks,
         Self::VaultHooksReplay,
         Self::VaultHooksRegenDue,
         Self::VaultHooksRegenGet,
@@ -1974,8 +2032,11 @@ impl AgentVerb {
         Self::VaultCodeProposalSettle,
         Self::VaultCodeProposalSettlement,
         Self::VaultCodeOplog,
+        Self::VaultCodeSecretsGet,
+        Self::VaultCodeSecretsPropose,
         Self::ExecuteCode,
         Self::VaultCodeModelHealCount,
+        Self::VaultCodeCorrections,
         Self::VaultCodeTypeDiagnostics,
         Self::VaultCodeWaitsResolve,
         Self::VaultCodeWaitsReceipt,
@@ -2009,6 +2070,10 @@ impl AgentVerb {
         Self::VaultCodeOriginAuthorityGet,
         Self::VaultCodeOriginAuthoritySet,
         Self::VaultCodeOriginPublications,
+        Self::VaultCodeSecretsPurgeRequest,
+        Self::VaultCodeSecretsPurgeGet,
+        Self::VaultCodeSecretsPurgeExecute,
+        Self::VaultCodeCheckoutHolderBind,
         Self::VaultCodeCheckoutBind,
         Self::VaultCodeCheckoutClaim,
         Self::VaultCodeCheckoutGet,
@@ -2122,6 +2187,9 @@ impl AgentVerb {
         Self::Ask,
         Self::Wait,
         Self::TasksAnswer,
+        Self::TasksAnswerForwardChallenge,
+        Self::TasksAnswerForward,
+        Self::TasksAnswerForwardStatus,
         Self::TasksOutcomes,
         Self::VaultRoomsList,
         Self::VaultRoomsMessages,
@@ -2151,6 +2219,7 @@ impl AgentVerb {
         Self::VaultRoomsJoin,
         Self::VaultRoomsInvite,
         Self::VaultRoomsConsent,
+        Self::VaultRoomsLeave,
         Self::VaultRoomsOffer,
         Self::VaultRoomsOfferAnswer,
         Self::VaultRoomsOfferVote,
@@ -2184,6 +2253,9 @@ impl AgentVerb {
         Self::VaultModelsManifestReplace,
         Self::VaultSettingsWebConnector,
         Self::VaultSettingsWebConnectorReplace,
+        Self::VaultSettingsModelPack,
+        Self::VaultSettingsModelPackReplace,
+        Self::VaultModelPackRevert,
         Self::VaultConnectorsWebUsage,
         Self::VaultModelsOneironerBind,
         Self::VaultModelsRoutesRead,
@@ -2205,6 +2277,7 @@ impl AgentVerb {
         Self::AiStreamsDetach,
         Self::AiStreamsAbort,
         Self::AiStreamsTerminal,
+        Self::AiStreamsRelease,
         Self::AiReply,
         Self::VaultReceiptsContext,
         Self::VaultReceiptsCraftReplyManifest,
@@ -2256,6 +2329,8 @@ impl AgentVerb {
         Self::VaultQuestionsCreate,
         Self::VaultQuestionsEdit,
         Self::VaultQuestionsPause,
+        Self::VaultQuestionsPrepare,
+        Self::VaultQuestionsAdmit,
         Self::VaultQuestionsBackfill,
         Self::VaultQuestionsRead,
         Self::VaultQuestionsOutcomeWindows,
@@ -2356,6 +2431,7 @@ impl AgentVerb {
         Self::VaultSearchTemporal,
         Self::VaultSearchBm25,
         Self::VaultNeighbors,
+        Self::VaultEdgesProvenance,
         Self::VaultStructuralPut,
         Self::VaultHabitsCheckin,
         Self::VaultProductivityCreate,
@@ -2539,6 +2615,10 @@ impl AgentVerb {
         Self::VaultMailInbox,
         Self::VaultMailThreadsRead,
         Self::VaultMailComplianceSearch,
+        Self::VaultFilesSourcesConvert,
+        Self::VaultSyncRepoManifestsConflictReview,
+        Self::VaultSyncRepoManifestsConflictDiscard,
+        Self::VaultDreamerFollowerKeyframe,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
@@ -2582,6 +2662,7 @@ impl AgentVerb {
         match self {
             Self::VaultCommitmentsCreate => "vault.commitments.create",
             Self::VaultCommitmentsGet => "vault.commitments.get",
+            Self::VaultCommitmentsLedger => "vault.commitments.ledger",
             Self::VaultCommitmentsInstances => "vault.commitments.instances",
             Self::VaultCommitmentsProposals => "vault.commitments.proposals",
             Self::VaultCommitmentsFulfill => "vault.commitments.fulfill",
@@ -2791,6 +2872,13 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => "vault.weave.owner.link.wrong",
             Self::VaultWeaveItemWrong => "vault.weave.item.wrong",
             Self::VaultWeaveOwnerItemWrong => "vault.weave.owner.item.wrong",
+            Self::VaultWeaveAdminReport => "vault.weave.admin.report",
+            Self::VaultWeaveAdminLens => "vault.weave.admin.lens",
+            Self::VaultWeaveAdminDigest => "vault.weave.admin.digest",
+            Self::VaultWeaveAdminLinkWrong => "vault.weave.admin.link.wrong",
+            Self::VaultWeaveAdminItemWrong => "vault.weave.admin.item.wrong",
+            Self::VaultStepUpPasskeysReset => "vault.step_up.passkeys.reset",
+            Self::VaultStepUpTotpReset => "vault.step_up.totp.reset",
             Self::VaultWeaveEnqueue => "vault.weave.enqueue",
             Self::VaultWeaveSchedulesList => "vault.weave.schedules.list",
             Self::VaultWeaveSchedulesPut => "vault.weave.schedules.put",
@@ -2816,6 +2904,8 @@ impl AgentVerb {
             Self::VaultSkillsRestoredefaults => "vault.skills.restoreDefaults",
             Self::VaultSkillHubsPut => "vault.skill_hubs.put",
             Self::VaultSkillHubsGet => "vault.skill_hubs.get",
+            Self::VaultSkillHubsClawhubSearch => "vault.skill_hubs.clawhub.search",
+            Self::VaultSkillHubsClawhubImport => "vault.skill_hubs.clawhub.import",
             Self::VaultSkillHubsPublishersAdmit => "vault.skill_hubs.publishers.admit",
             Self::VaultSkillHubsPublishersRevoke => "vault.skill_hubs.publishers.revoke",
             Self::VaultSkillHubsRefsGet => "vault.skill_hubs.refs.get",
@@ -2825,6 +2915,7 @@ impl AgentVerb {
             Self::VaultPacksGet => "vault.packs.get",
             Self::VaultSkillsImport => "vault.skills.import",
             Self::VaultSkillsSync => "vault.skills.sync",
+            Self::VaultSkillsProposalSettle => "vault.skills.proposal.settle",
             Self::VaultSkillsReceipts => "vault.skills.receipts",
             Self::VaultSkillsConvert => "vault.skills.convert",
             Self::VaultSkillsGet => "vault.skills.get",
@@ -2929,11 +3020,13 @@ impl AgentVerb {
             Self::VaultMembersProjection => "vault.members.projection",
             Self::VaultMembersAdd => "vault.members.add",
             Self::VaultMembersInvitationSlip => "vault.members.invitation_slip",
+            Self::VaultMembersInvitationCode => "vault.members.invitation_code",
             Self::VaultMembersChange => "vault.members.change",
             Self::VaultMembersRemove => "vault.members.remove",
             Self::VaultMembersLeave => "vault.members.leave",
             Self::VaultMembersInvitations => "vault.members.invitations",
             Self::VaultMembersAccept => "vault.members.accept",
+            Self::VaultMembersAcceptWithCredential => "vault.members.accept_with_credential",
             Self::VaultMembersDecline => "vault.members.decline",
             Self::VaultMembersWithdrawInvitation => "vault.members.withdraw_invitation",
             Self::VaultSharedObject => "vault.shared.object",
@@ -3006,6 +3099,7 @@ impl AgentVerb {
             Self::VaultFilesSourcesDetach => "vault.files.sources.detach",
             Self::VaultFilesSourcesList => "vault.files.sources.list",
             Self::VaultFilesSourcesFiles => "vault.files.sources.files",
+            Self::VaultFilesSourcesExclude => "vault.files.sources.exclude",
             Self::VaultResidenceMode => "vault.residence.mode",
             Self::VaultResidenceOpen => "vault.residence.open",
             Self::VaultResidenceIndex => "vault.residence.index",
@@ -3077,6 +3171,7 @@ impl AgentVerb {
             }
             Self::VaultCoachTrainingOffersPilotsGet => "vault.coach.training_offers.pilots.get",
             Self::VaultCoachTrainingOffersSources => "vault.coach.training_offers.sources",
+            Self::VaultCoachTrainingRunsCancel => "vault.coach.training_runs.cancel",
             Self::VaultDraftersList => "vault.drafters.list",
             Self::VaultDraftersListAs => "vault.drafters.list_as",
             Self::VaultDraftersStatus => "vault.drafters.status",
@@ -3148,6 +3243,7 @@ impl AgentVerb {
             Self::VaultPolicyRelayDecide => "vault.policy.relay.decide",
             Self::VaultConsentApproveOnce => "vault.consent.approve_once",
             Self::VaultConnectorsCallsApproveOnce => "vault.connectors.calls.approve_once",
+            Self::VaultConnectorsRepliesRetryFailed => "vault.connectors.replies.retry_failed",
             Self::VaultConsentDeny => "vault.consent.deny",
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
             Self::VaultConsentCreateAutoWeaveGrant => "vault.consent.create_auto_weave_grant",
@@ -3186,6 +3282,7 @@ impl AgentVerb {
             Self::VaultSettingsLearningPut => "vault.settings.learning.put",
             Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
             Self::VaultSecretsCodeRunLifts => "vault.secrets.code_run_lifts",
+            Self::VaultSecretsCodeRunRoomLifts => "vault.secrets.code_run_room_lifts",
             Self::VaultSecretsLiftHistory => "vault.secrets.lift_history",
             Self::VaultSecretsRegister => "vault.secrets.register",
             Self::VaultSecretsRotate => "vault.secrets.rotate",
@@ -3235,6 +3332,7 @@ impl AgentVerb {
             Self::HostCompact => "host.compact",
             Self::HostWake => "host.wake",
             Self::HostBudgetHit => "host.budget.hit",
+            Self::VaultHooksChecks => "vault.hooks.checks",
             Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultHooksRegenDue => "vault.hooks.regen.due",
             Self::VaultHooksRegenGet => "vault.hooks.regen.get",
@@ -3289,8 +3387,11 @@ impl AgentVerb {
             Self::VaultCodeProposalSettle => "vault.code.proposal_settle",
             Self::VaultCodeProposalSettlement => "vault.code.proposal_settlement",
             Self::VaultCodeOplog => "vault.code.oplog",
+            Self::VaultCodeSecretsGet => "vault.code.secrets.get",
+            Self::VaultCodeSecretsPropose => "vault.code.secrets.propose",
             Self::ExecuteCode => "execute_code",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
+            Self::VaultCodeCorrections => "vault.code.corrections",
             Self::VaultCodeTypeDiagnostics => "vault.code.type_diagnostics",
             Self::VaultCodeWaitsResolve => "vault.code.waits.resolve",
             Self::VaultCodeWaitsReceipt => "vault.code.waits.receipt",
@@ -3324,6 +3425,10 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
             Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
             Self::VaultCodeOriginPublications => "vault.code.origin.publications",
+            Self::VaultCodeSecretsPurgeRequest => "vault.code.secrets.purge.request",
+            Self::VaultCodeSecretsPurgeGet => "vault.code.secrets.purge.get",
+            Self::VaultCodeSecretsPurgeExecute => "vault.code.secrets.purge.execute",
+            Self::VaultCodeCheckoutHolderBind => "vault.code.checkout.holder.bind",
             Self::VaultCodeCheckoutBind => "vault.code.checkout.bind",
             Self::VaultCodeCheckoutClaim => "vault.code.checkout.claim",
             Self::VaultCodeCheckoutGet => "vault.code.checkout.get",
@@ -3437,6 +3542,9 @@ impl AgentVerb {
             Self::Ask => "ask",
             Self::Wait => "wait",
             Self::TasksAnswer => "tasks.answer",
+            Self::TasksAnswerForwardChallenge => "tasks.answer.forward.challenge",
+            Self::TasksAnswerForward => "tasks.answer.forward",
+            Self::TasksAnswerForwardStatus => "tasks.answer.forward.status",
             Self::TasksOutcomes => "tasks.outcomes",
             Self::VaultRoomsList => "vault.rooms.list",
             Self::VaultRoomsMessages => "vault.rooms.messages",
@@ -3468,6 +3576,7 @@ impl AgentVerb {
             Self::VaultRoomsJoin => "vault.rooms.join",
             Self::VaultRoomsInvite => "vault.rooms.invite",
             Self::VaultRoomsConsent => "vault.rooms.consent",
+            Self::VaultRoomsLeave => "vault.rooms.leave",
             Self::VaultRoomsOffer => "vault.rooms.offer",
             Self::VaultRoomsOfferAnswer => "vault.rooms.offer.answer",
             Self::VaultRoomsOfferVote => "vault.rooms.offer.vote",
@@ -3501,6 +3610,9 @@ impl AgentVerb {
             Self::VaultModelsManifestReplace => "vault.models.manifest.replace",
             Self::VaultSettingsWebConnector => "vault.settings.web_connector",
             Self::VaultSettingsWebConnectorReplace => "vault.settings.web_connector.replace",
+            Self::VaultSettingsModelPack => "vault.settings.model_pack",
+            Self::VaultSettingsModelPackReplace => "vault.settings.model_pack.replace",
+            Self::VaultModelPackRevert => "vault.model_pack.revert",
             Self::VaultConnectorsWebUsage => "vault.connectors.web.usage",
             Self::VaultModelsOneironerBind => "vault.models.oneironer.bind",
             Self::VaultModelsRoutesRead => "vault.models.routes.read",
@@ -3526,6 +3638,7 @@ impl AgentVerb {
             Self::AiStreamsDetach => "ai.streams.detach",
             Self::AiStreamsAbort => "ai.streams.abort",
             Self::AiStreamsTerminal => "ai.streams.terminal",
+            Self::AiStreamsRelease => "ai.streams.release",
             Self::AiReply => "ai.reply",
             Self::VaultReceiptsContext => "vault.receipts.context",
             Self::VaultReceiptsCraftReplyManifest => "vault.receipts.craft_reply_manifest",
@@ -3577,6 +3690,8 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => "vault.questions.create",
             Self::VaultQuestionsEdit => "vault.questions.edit",
             Self::VaultQuestionsPause => "vault.questions.pause",
+            Self::VaultQuestionsPrepare => "vault.questions.prepare",
+            Self::VaultQuestionsAdmit => "vault.questions.admit",
             Self::VaultQuestionsBackfill => "vault.questions.backfill",
             Self::VaultQuestionsRead => "vault.questions.read",
             Self::VaultQuestionsOutcomeWindows => "vault.questions.outcome_windows",
@@ -3677,6 +3792,7 @@ impl AgentVerb {
             Self::VaultSearchTemporal => "vault.search.temporal",
             Self::VaultSearchBm25 => "vault.search.bm25",
             Self::VaultNeighbors => "vault.neighbors",
+            Self::VaultEdgesProvenance => "vault.edges.provenance",
             Self::VaultStructuralPut => "vault.structural.put",
             Self::VaultHabitsCheckin => "vault.habits.checkin",
             Self::VaultProductivityCreate => "vault.productivity.create",
@@ -3864,6 +3980,14 @@ impl AgentVerb {
             Self::VaultMailInbox => "vault.mail.inbox",
             Self::VaultMailThreadsRead => "vault.mail.threads.read",
             Self::VaultMailComplianceSearch => "vault.mail.compliance.search",
+            Self::VaultFilesSourcesConvert => "vault.files.sources.convert",
+            Self::VaultSyncRepoManifestsConflictReview => {
+                "vault.sync.repo_manifests.conflict.review"
+            }
+            Self::VaultSyncRepoManifestsConflictDiscard => {
+                "vault.sync.repo_manifests.conflict.discard"
+            }
+            Self::VaultDreamerFollowerKeyframe => "vault.dreamer.follower.keyframe",
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
@@ -3906,6 +4030,7 @@ impl AgentVerb {
             self,
             Self::VaultCommitmentsCreate
                 | Self::VaultCommitmentsGet
+                | Self::VaultCommitmentsLedger
                 | Self::VaultCommitmentsInstances
                 | Self::VaultCommitmentsProposals
                 | Self::VaultCommitmentsFulfill
@@ -4115,6 +4240,13 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultWeaveAdminReport
+                | Self::VaultWeaveAdminLens
+                | Self::VaultWeaveAdminDigest
+                | Self::VaultWeaveAdminLinkWrong
+                | Self::VaultWeaveAdminItemWrong
+                | Self::VaultStepUpPasskeysReset
+                | Self::VaultStepUpTotpReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
@@ -4140,6 +4272,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsClawhubSearch
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsGet
@@ -4149,6 +4283,7 @@ impl AgentVerb {
                 | Self::VaultPacksGet
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsReceipts
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsGet
@@ -4251,11 +4386,13 @@ impl AgentVerb {
                 | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
+                | Self::VaultMembersInvitationCode
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultMembersInvitations
                 | Self::VaultMembersAccept
+                | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultSharedObject
@@ -4320,6 +4457,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesDetach
                 | Self::VaultFilesSourcesList
                 | Self::VaultFilesSourcesFiles
+                | Self::VaultFilesSourcesExclude
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -4385,6 +4523,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultCoachTrainingOffersSources
+                | Self::VaultCoachTrainingRunsCancel
                 | Self::VaultDraftersList
                 | Self::VaultDraftersListAs
                 | Self::VaultDraftersStatus
@@ -4454,6 +4593,7 @@ impl AgentVerb {
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
+                | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
@@ -4492,6 +4632,7 @@ impl AgentVerb {
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
                 | Self::VaultSecretsCodeRunLifts
+                | Self::VaultSecretsCodeRunRoomLifts
                 | Self::VaultSecretsLiftHistory
                 | Self::VaultSecretsRegister
                 | Self::VaultSecretsRotate
@@ -4539,6 +4680,7 @@ impl AgentVerb {
                 | Self::HostCompact
                 | Self::HostWake
                 | Self::HostBudgetHit
+                | Self::VaultHooksChecks
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -4589,8 +4731,11 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
+                | Self::VaultCodeSecretsGet
+                | Self::VaultCodeSecretsPropose
                 | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeCorrections
                 | Self::VaultCodeTypeDiagnostics
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
@@ -4624,6 +4769,10 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
+                | Self::VaultCodeSecretsPurgeRequest
+                | Self::VaultCodeSecretsPurgeGet
+                | Self::VaultCodeSecretsPurgeExecute
+                | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
                 | Self::VaultCodeCheckoutGet
@@ -4737,6 +4886,9 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForwardChallenge
+                | Self::TasksAnswerForward
+                | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
@@ -4766,6 +4918,7 @@ impl AgentVerb {
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsLeave
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
                 | Self::VaultRoomsOfferVote
@@ -4799,6 +4952,9 @@ impl AgentVerb {
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
                 | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultSettingsModelPack
+                | Self::VaultSettingsModelPackReplace
+                | Self::VaultModelPackRevert
                 | Self::VaultConnectorsWebUsage
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
@@ -4820,6 +4976,7 @@ impl AgentVerb {
                 | Self::AiStreamsDetach
                 | Self::AiStreamsAbort
                 | Self::AiStreamsTerminal
+                | Self::AiStreamsRelease
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::VaultReceiptsCraftReplyManifest
@@ -4871,6 +5028,8 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsPrepare
+                | Self::VaultQuestionsAdmit
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsOutcomeWindows
@@ -4949,6 +5108,7 @@ impl AgentVerb {
                 | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
+                | Self::VaultEdgesProvenance
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
@@ -5132,6 +5292,10 @@ impl AgentVerb {
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
+                | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -5223,6 +5387,7 @@ impl AgentVerb {
             self,
             Self::VaultCommitmentsCreate
                 | Self::VaultCommitmentsGet
+                | Self::VaultCommitmentsLedger
                 | Self::VaultCommitmentsInstances
                 | Self::VaultCommitmentsProposals
                 | Self::VaultCommitmentsFulfill
@@ -5432,6 +5597,13 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultWeaveAdminReport
+                | Self::VaultWeaveAdminLens
+                | Self::VaultWeaveAdminDigest
+                | Self::VaultWeaveAdminLinkWrong
+                | Self::VaultWeaveAdminItemWrong
+                | Self::VaultStepUpPasskeysReset
+                | Self::VaultStepUpTotpReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
@@ -5457,6 +5629,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsClawhubSearch
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsGet
@@ -5466,6 +5640,7 @@ impl AgentVerb {
                 | Self::VaultPacksGet
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsReceipts
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsGet
@@ -5568,11 +5743,13 @@ impl AgentVerb {
                 | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
+                | Self::VaultMembersInvitationCode
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultMembersInvitations
                 | Self::VaultMembersAccept
+                | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultSharedObject
@@ -5637,6 +5814,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesDetach
                 | Self::VaultFilesSourcesList
                 | Self::VaultFilesSourcesFiles
+                | Self::VaultFilesSourcesExclude
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -5702,6 +5880,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultCoachTrainingOffersSources
+                | Self::VaultCoachTrainingRunsCancel
                 | Self::VaultDraftersList
                 | Self::VaultDraftersListAs
                 | Self::VaultDraftersStatus
@@ -5771,6 +5950,7 @@ impl AgentVerb {
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
+                | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
@@ -5809,6 +5989,7 @@ impl AgentVerb {
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
                 | Self::VaultSecretsCodeRunLifts
+                | Self::VaultSecretsCodeRunRoomLifts
                 | Self::VaultSecretsLiftHistory
                 | Self::VaultSecretsRegister
                 | Self::VaultSecretsRotate
@@ -5856,6 +6037,7 @@ impl AgentVerb {
                 | Self::HostCompact
                 | Self::HostWake
                 | Self::HostBudgetHit
+                | Self::VaultHooksChecks
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -5906,8 +6088,11 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
+                | Self::VaultCodeSecretsGet
+                | Self::VaultCodeSecretsPropose
                 | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeCorrections
                 | Self::VaultCodeTypeDiagnostics
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
@@ -5941,6 +6126,10 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
+                | Self::VaultCodeSecretsPurgeRequest
+                | Self::VaultCodeSecretsPurgeGet
+                | Self::VaultCodeSecretsPurgeExecute
+                | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
                 | Self::VaultCodeCheckoutGet
@@ -6054,6 +6243,9 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForwardChallenge
+                | Self::TasksAnswerForward
+                | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
@@ -6083,6 +6275,7 @@ impl AgentVerb {
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsLeave
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
                 | Self::VaultRoomsOfferVote
@@ -6116,6 +6309,9 @@ impl AgentVerb {
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
                 | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultSettingsModelPack
+                | Self::VaultSettingsModelPackReplace
+                | Self::VaultModelPackRevert
                 | Self::VaultConnectorsWebUsage
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
@@ -6137,6 +6333,7 @@ impl AgentVerb {
                 | Self::AiStreamsDetach
                 | Self::AiStreamsAbort
                 | Self::AiStreamsTerminal
+                | Self::AiStreamsRelease
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::VaultReceiptsCraftReplyManifest
@@ -6188,6 +6385,8 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsPrepare
+                | Self::VaultQuestionsAdmit
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsOutcomeWindows
@@ -6266,6 +6465,7 @@ impl AgentVerb {
                 | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
+                | Self::VaultEdgesProvenance
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
@@ -6449,6 +6649,10 @@ impl AgentVerb {
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
+                | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -6565,7 +6769,9 @@ impl AgentVerb {
                 | Self::VaultConsentGraduationOffers
                 | Self::VaultConsentGraduationTrustTable
                 | Self::VaultSealPending
+                | Self::VaultSecretsCodeRunRoomLifts
                 | Self::VaultDisclosureReveals
+                | Self::VaultHooksChecks
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultArtifactsThreadsList
@@ -6646,6 +6852,7 @@ impl AgentVerb {
                 | Self::ExecuteCode
                 | Self::VaultCodeExportPreview
                 | Self::VaultCodeExportPreviewRead
+                | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeMergeQueueReviewPolicyGet
                 | Self::VaultCodeMergeQueueReviewPolicySet
                 | Self::VaultRepoSnapshotsGet
@@ -6687,6 +6894,7 @@ impl AgentVerb {
                 | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
+                | Self::VaultEdgesProvenance
                 | Self::VaultProductivityTree
                 | Self::VaultEsignCreate
                 | Self::VaultEsignGet
@@ -6717,6 +6925,7 @@ impl AgentVerb {
             self,
             Self::VaultCommitmentsCreate
                 | Self::VaultCommitmentsGet
+                | Self::VaultCommitmentsLedger
                 | Self::VaultCommitmentsInstances
                 | Self::VaultCommitmentsProposals
                 | Self::VaultCommitmentsFulfill
@@ -6900,6 +7109,13 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultWeaveAdminReport
+                | Self::VaultWeaveAdminLens
+                | Self::VaultWeaveAdminDigest
+                | Self::VaultWeaveAdminLinkWrong
+                | Self::VaultWeaveAdminItemWrong
+                | Self::VaultStepUpPasskeysReset
+                | Self::VaultStepUpTotpReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
@@ -6925,6 +7141,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsClawhubSearch
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsGet
@@ -6934,6 +7152,7 @@ impl AgentVerb {
                 | Self::VaultPacksGet
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsReceipts
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsGet
@@ -7035,11 +7254,13 @@ impl AgentVerb {
                 | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
+                | Self::VaultMembersInvitationCode
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultMembersInvitations
                 | Self::VaultMembersAccept
+                | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultSharedObject
@@ -7104,6 +7325,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesDetach
                 | Self::VaultFilesSourcesList
                 | Self::VaultFilesSourcesFiles
+                | Self::VaultFilesSourcesExclude
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -7168,6 +7390,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultCoachTrainingOffersSources
+                | Self::VaultCoachTrainingRunsCancel
                 | Self::VaultDraftersList
                 | Self::VaultDraftersListAs
                 | Self::VaultDraftersStatus
@@ -7237,6 +7460,7 @@ impl AgentVerb {
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
+                | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
@@ -7275,6 +7499,7 @@ impl AgentVerb {
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
                 | Self::VaultSecretsCodeRunLifts
+                | Self::VaultSecretsCodeRunRoomLifts
                 | Self::VaultSecretsLiftHistory
                 | Self::VaultSecretsRegister
                 | Self::VaultSecretsRotate
@@ -7322,6 +7547,7 @@ impl AgentVerb {
                 | Self::HostCompact
                 | Self::HostWake
                 | Self::HostBudgetHit
+                | Self::VaultHooksChecks
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -7362,7 +7588,10 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
+                | Self::VaultCodeSecretsGet
+                | Self::VaultCodeSecretsPropose
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeCorrections
                 | Self::VaultCodeTypeDiagnostics
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
@@ -7394,6 +7623,9 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
+                | Self::VaultCodeSecretsPurgeRequest
+                | Self::VaultCodeSecretsPurgeGet
+                | Self::VaultCodeSecretsPurgeExecute
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
                 | Self::VaultCodeCheckoutGet
@@ -7489,6 +7721,9 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForwardChallenge
+                | Self::TasksAnswerForward
+                | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
@@ -7518,6 +7753,7 @@ impl AgentVerb {
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsLeave
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
                 | Self::VaultRoomsOfferVote
@@ -7551,6 +7787,9 @@ impl AgentVerb {
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
                 | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultSettingsModelPack
+                | Self::VaultSettingsModelPackReplace
+                | Self::VaultModelPackRevert
                 | Self::VaultConnectorsWebUsage
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
@@ -7572,6 +7811,7 @@ impl AgentVerb {
                 | Self::AiStreamsDetach
                 | Self::AiStreamsAbort
                 | Self::AiStreamsTerminal
+                | Self::AiStreamsRelease
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::VaultReceiptsCraftReplyManifest
@@ -7622,6 +7862,8 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsPrepare
+                | Self::VaultQuestionsAdmit
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsOutcomeWindows
@@ -7860,6 +8102,10 @@ impl AgentVerb {
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
+                | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -8013,6 +8259,10 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultWeaveAdminLinkWrong
+                | Self::VaultWeaveAdminItemWrong
+                | Self::VaultStepUpPasskeysReset
+                | Self::VaultStepUpTotpReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesPut
                 | Self::VaultWeaveSchedulesClear
@@ -8028,6 +8278,7 @@ impl AgentVerb {
                 | Self::SelfInboxLater
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsSet
@@ -8035,6 +8286,7 @@ impl AgentVerb {
                 | Self::VaultPacksSync
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsArchive
                 | Self::VaultSkillsRestore
@@ -8103,10 +8355,12 @@ impl AgentVerb {
                 | Self::VaultMembersDelegate
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
+                | Self::VaultMembersInvitationCode
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultMembersAccept
+                | Self::VaultMembersAcceptWithCredential
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultSharedObject
@@ -8149,6 +8403,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesAttach
                 | Self::VaultFilesSourcesRescan
                 | Self::VaultFilesSourcesDetach
+                | Self::VaultFilesSourcesExclude
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidencePrune
@@ -8187,6 +8442,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersCandidatesPrepare
                 | Self::VaultCoachTrainingOffersPilotsPrepare
                 | Self::VaultCoachTrainingOffersPilotsComplete
+                | Self::VaultCoachTrainingRunsCancel
                 | Self::VaultDraftersPolicySet
                 | Self::VaultDraftersRevert
                 | Self::VaultDraftersRevertAs
@@ -8237,6 +8493,7 @@ impl AgentVerb {
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
+                | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
@@ -8314,6 +8571,7 @@ impl AgentVerb {
                 | Self::VaultCodeProposalResolve
                 | Self::VaultCodeProposalReview
                 | Self::VaultCodeProposalSettle
+                | Self::VaultCodeSecretsPropose
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
                 | Self::VaultCodeImport
@@ -8328,6 +8586,9 @@ impl AgentVerb {
                 | Self::VaultCodeOriginPublishExecute
                 | Self::VaultCodeOriginPublishCancel
                 | Self::VaultCodeOriginAuthoritySet
+                | Self::VaultCodeSecretsPurgeRequest
+                | Self::VaultCodeSecretsPurgeExecute
+                | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
                 | Self::VaultCodeCheckoutRenew
@@ -8402,6 +8663,7 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForward
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultRoomsThreadAudienceAdd
@@ -8418,6 +8680,7 @@ impl AgentVerb {
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsLeave
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
                 | Self::VaultRoomsOfferVote
@@ -8439,6 +8702,8 @@ impl AgentVerb {
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultSettingsModelPackReplace
+                | Self::VaultModelPackRevert
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesReplace
                 | Self::VaultSkillsAttributionSettle
@@ -8448,6 +8713,7 @@ impl AgentVerb {
                 | Self::AiStepsSubmit
                 | Self::AiStreamsOpen
                 | Self::AiStreamsAbort
+                | Self::AiStreamsRelease
                 | Self::AiReply
                 | Self::AiVoiceStart
                 | Self::AiVoiceAudio
@@ -8479,6 +8745,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsAdmit
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRefresh
                 | Self::VaultQuestionsOutcomesProject
@@ -8628,6 +8895,9 @@ impl AgentVerb {
                 | Self::VaultMailThreadsUnshare
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceSearch
+                | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictDiscard
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
@@ -8679,7 +8949,10 @@ impl AgentVerb {
         )
     }
     pub const fn is_task_work(self) -> bool {
-        matches!(self, Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer)
+        matches!(
+            self,
+            Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer | Self::TasksAnswerForward
+        )
     }
     pub const fn takes_task_decisions(self) -> bool {
         matches!(
@@ -8691,6 +8964,7 @@ impl AgentVerb {
         match self {
             Self::VaultCommitmentsCreate => &["spec"],
             Self::VaultCommitmentsGet => &["spec"],
+            Self::VaultCommitmentsLedger => &["spec"],
             Self::VaultCommitmentsInstances => &["spec"],
             Self::VaultCommitmentsProposals => &["spec"],
             Self::VaultCommitmentsFulfill => &["spec"],
@@ -8917,6 +9191,13 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
+            Self::VaultWeaveAdminReport => &["spec"],
+            Self::VaultWeaveAdminLens => &["spec"],
+            Self::VaultWeaveAdminDigest => &["spec"],
+            Self::VaultWeaveAdminLinkWrong => &["spec"],
+            Self::VaultWeaveAdminItemWrong => &["spec"],
+            Self::VaultStepUpPasskeysReset => &["spec"],
+            Self::VaultStepUpTotpReset => &["spec"],
             Self::VaultWeaveEnqueue => &["spec"],
             Self::VaultWeaveSchedulesList => &["spec"],
             Self::VaultWeaveSchedulesPut => &["spec"],
@@ -8942,6 +9223,8 @@ impl AgentVerb {
             Self::VaultSkillsRestoredefaults => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsClawhubSearch => &["spec"],
+            Self::VaultSkillHubsClawhubImport => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
             Self::VaultSkillHubsPublishersRevoke => &["spec"],
             Self::VaultSkillHubsRefsGet => &["spec"],
@@ -8951,6 +9234,7 @@ impl AgentVerb {
             Self::VaultPacksGet => &["spec"],
             Self::VaultSkillsImport => &["spec"],
             Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsProposalSettle => &["spec"],
             Self::VaultSkillsReceipts => &["spec"],
             Self::VaultSkillsConvert => &["spec"],
             Self::VaultSkillsGet => &["spec"],
@@ -9053,11 +9337,13 @@ impl AgentVerb {
             Self::VaultMembersProjection => &["spec"],
             Self::VaultMembersAdd => &["spec"],
             Self::VaultMembersInvitationSlip => &["spec"],
+            Self::VaultMembersInvitationCode => &["spec"],
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
             Self::VaultMembersInvitations => &["spec"],
             Self::VaultMembersAccept => &["spec"],
+            Self::VaultMembersAcceptWithCredential => &["spec"],
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultSharedObject => &["spec"],
@@ -9122,6 +9408,7 @@ impl AgentVerb {
             Self::VaultFilesSourcesDetach => &["spec"],
             Self::VaultFilesSourcesList => &["spec"],
             Self::VaultFilesSourcesFiles => &["spec"],
+            Self::VaultFilesSourcesExclude => &["spec"],
             Self::VaultResidenceMode => &["spec"],
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
@@ -9187,6 +9474,7 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
             Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
             Self::VaultCoachTrainingOffersSources => &["spec"],
+            Self::VaultCoachTrainingRunsCancel => &["spec"],
             Self::VaultDraftersList => &["spec"],
             Self::VaultDraftersListAs => &["spec"],
             Self::VaultDraftersStatus => &["spec"],
@@ -9256,6 +9544,7 @@ impl AgentVerb {
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
+            Self::VaultConnectorsRepliesRetryFailed => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
@@ -9294,6 +9583,7 @@ impl AgentVerb {
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
             Self::VaultSecretsCodeRunLifts => &["spec"],
+            Self::VaultSecretsCodeRunRoomLifts => &["spec"],
             Self::VaultSecretsLiftHistory => &["spec"],
             Self::VaultSecretsRegister => &["spec"],
             Self::VaultSecretsRotate => &["spec"],
@@ -9341,6 +9631,7 @@ impl AgentVerb {
             Self::HostCompact => &["spec"],
             Self::HostWake => &["spec"],
             Self::HostBudgetHit => &["spec"],
+            Self::VaultHooksChecks => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
@@ -9391,8 +9682,11 @@ impl AgentVerb {
             Self::VaultCodeProposalSettle => &["spec"],
             Self::VaultCodeProposalSettlement => &["spec"],
             Self::VaultCodeOplog => &["spec"],
+            Self::VaultCodeSecretsGet => &["spec"],
+            Self::VaultCodeSecretsPropose => &["spec"],
             Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeCorrections => &["spec"],
             Self::VaultCodeTypeDiagnostics => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
             Self::VaultCodeWaitsReceipt => &["spec"],
@@ -9426,6 +9720,10 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
+            Self::VaultCodeSecretsPurgeRequest => &["spec"],
+            Self::VaultCodeSecretsPurgeGet => &["spec"],
+            Self::VaultCodeSecretsPurgeExecute => &["spec"],
+            Self::VaultCodeCheckoutHolderBind => &["spec"],
             Self::VaultCodeCheckoutBind => &["spec"],
             Self::VaultCodeCheckoutClaim => &["spec"],
             Self::VaultCodeCheckoutGet => &["spec"],
@@ -9539,6 +9837,9 @@ impl AgentVerb {
             Self::Ask => &["spec"],
             Self::Wait => &["spec"],
             Self::TasksAnswer => &["spec"],
+            Self::TasksAnswerForwardChallenge => &["spec"],
+            Self::TasksAnswerForward => &["spec"],
+            Self::TasksAnswerForwardStatus => &["spec"],
             Self::TasksOutcomes => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref", "turn_ref", "thread_ref"],
@@ -9568,6 +9869,7 @@ impl AgentVerb {
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsInvite => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultRoomsLeave => &["spec", "room_ref"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
             Self::VaultRoomsOfferVote => &["spec"],
@@ -9601,6 +9903,9 @@ impl AgentVerb {
             Self::VaultModelsManifestReplace => &["spec"],
             Self::VaultSettingsWebConnector => &["spec"],
             Self::VaultSettingsWebConnectorReplace => &["spec"],
+            Self::VaultSettingsModelPack => &["spec"],
+            Self::VaultSettingsModelPackReplace => &["spec"],
+            Self::VaultModelPackRevert => &["spec"],
             Self::VaultConnectorsWebUsage => &["spec"],
             Self::VaultModelsOneironerBind => &["spec"],
             Self::VaultModelsRoutesRead => &["spec"],
@@ -9622,6 +9927,7 @@ impl AgentVerb {
             Self::AiStreamsDetach => &["spec"],
             Self::AiStreamsAbort => &["spec"],
             Self::AiStreamsTerminal => &["spec"],
+            Self::AiStreamsRelease => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
             Self::VaultReceiptsCraftReplyManifest => &["spec"],
@@ -9673,6 +9979,8 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
             Self::VaultQuestionsPause => &["spec"],
+            Self::VaultQuestionsPrepare => &["spec"],
+            Self::VaultQuestionsAdmit => &["spec"],
             Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsOutcomeWindows => &["spec"],
@@ -9773,6 +10081,7 @@ impl AgentVerb {
             Self::VaultSearchTemporal => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
+            Self::VaultEdgesProvenance => &["spec"],
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultProductivityCreate => &["spec"],
@@ -9956,6 +10265,10 @@ impl AgentVerb {
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
+            Self::VaultFilesSourcesConvert => &["spec"],
+            Self::VaultSyncRepoManifestsConflictReview => &["spec"],
+            Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
+            Self::VaultDreamerFollowerKeyframe => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -9997,6 +10310,7 @@ impl AgentVerb {
         match self {
             Self::VaultCommitmentsCreate => &["spec"],
             Self::VaultCommitmentsGet => &["spec"],
+            Self::VaultCommitmentsLedger => &["spec"],
             Self::VaultCommitmentsInstances => &["spec"],
             Self::VaultCommitmentsProposals => &["spec"],
             Self::VaultCommitmentsFulfill => &["spec"],
@@ -10206,6 +10520,13 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
+            Self::VaultWeaveAdminReport => &["spec"],
+            Self::VaultWeaveAdminLens => &["spec"],
+            Self::VaultWeaveAdminDigest => &["spec"],
+            Self::VaultWeaveAdminLinkWrong => &["spec"],
+            Self::VaultWeaveAdminItemWrong => &["spec"],
+            Self::VaultStepUpPasskeysReset => &["spec"],
+            Self::VaultStepUpTotpReset => &["spec"],
             Self::VaultWeaveEnqueue => &["spec"],
             Self::VaultWeaveSchedulesList => &["spec"],
             Self::VaultWeaveSchedulesPut => &["spec"],
@@ -10231,6 +10552,8 @@ impl AgentVerb {
             Self::VaultSkillsRestoredefaults => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsClawhubSearch => &["spec"],
+            Self::VaultSkillHubsClawhubImport => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
             Self::VaultSkillHubsPublishersRevoke => &["spec"],
             Self::VaultSkillHubsRefsGet => &["spec"],
@@ -10240,6 +10563,7 @@ impl AgentVerb {
             Self::VaultPacksGet => &["spec"],
             Self::VaultSkillsImport => &["spec"],
             Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsProposalSettle => &["spec"],
             Self::VaultSkillsReceipts => &["spec"],
             Self::VaultSkillsConvert => &["spec"],
             Self::VaultSkillsGet => &["spec"],
@@ -10342,11 +10666,13 @@ impl AgentVerb {
             Self::VaultMembersProjection => &["spec"],
             Self::VaultMembersAdd => &["spec"],
             Self::VaultMembersInvitationSlip => &["spec"],
+            Self::VaultMembersInvitationCode => &["spec"],
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
             Self::VaultMembersInvitations => &["spec"],
             Self::VaultMembersAccept => &["spec"],
+            Self::VaultMembersAcceptWithCredential => &["spec"],
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultSharedObject => &["spec"],
@@ -10411,6 +10737,7 @@ impl AgentVerb {
             Self::VaultFilesSourcesDetach => &["spec"],
             Self::VaultFilesSourcesList => &["spec"],
             Self::VaultFilesSourcesFiles => &["spec"],
+            Self::VaultFilesSourcesExclude => &["spec"],
             Self::VaultResidenceMode => &["spec"],
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
@@ -10476,6 +10803,7 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
             Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
             Self::VaultCoachTrainingOffersSources => &["spec"],
+            Self::VaultCoachTrainingRunsCancel => &["spec"],
             Self::VaultDraftersList => &["spec"],
             Self::VaultDraftersListAs => &["spec"],
             Self::VaultDraftersStatus => &["spec"],
@@ -10545,6 +10873,7 @@ impl AgentVerb {
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
+            Self::VaultConnectorsRepliesRetryFailed => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
@@ -10583,6 +10912,7 @@ impl AgentVerb {
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
             Self::VaultSecretsCodeRunLifts => &["spec"],
+            Self::VaultSecretsCodeRunRoomLifts => &["spec"],
             Self::VaultSecretsLiftHistory => &["spec"],
             Self::VaultSecretsRegister => &["spec"],
             Self::VaultSecretsRotate => &["spec"],
@@ -10630,6 +10960,7 @@ impl AgentVerb {
             Self::HostCompact => &["spec"],
             Self::HostWake => &["spec"],
             Self::HostBudgetHit => &["spec"],
+            Self::VaultHooksChecks => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
@@ -10680,8 +11011,11 @@ impl AgentVerb {
             Self::VaultCodeProposalSettle => &["spec"],
             Self::VaultCodeProposalSettlement => &["spec"],
             Self::VaultCodeOplog => &["spec"],
+            Self::VaultCodeSecretsGet => &["spec"],
+            Self::VaultCodeSecretsPropose => &["spec"],
             Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeCorrections => &["spec"],
             Self::VaultCodeTypeDiagnostics => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
             Self::VaultCodeWaitsReceipt => &["spec"],
@@ -10715,6 +11049,10 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
+            Self::VaultCodeSecretsPurgeRequest => &["spec"],
+            Self::VaultCodeSecretsPurgeGet => &["spec"],
+            Self::VaultCodeSecretsPurgeExecute => &["spec"],
+            Self::VaultCodeCheckoutHolderBind => &["spec"],
             Self::VaultCodeCheckoutBind => &["spec"],
             Self::VaultCodeCheckoutClaim => &["spec"],
             Self::VaultCodeCheckoutGet => &["spec"],
@@ -10828,6 +11166,9 @@ impl AgentVerb {
             Self::Ask => &["spec"],
             Self::Wait => &["spec"],
             Self::TasksAnswer => &["spec"],
+            Self::TasksAnswerForwardChallenge => &["spec"],
+            Self::TasksAnswerForward => &["spec"],
+            Self::TasksAnswerForwardStatus => &["spec"],
             Self::TasksOutcomes => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref"],
@@ -10857,6 +11198,7 @@ impl AgentVerb {
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsInvite => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultRoomsLeave => &["spec", "room_ref"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
             Self::VaultRoomsOfferVote => &["spec"],
@@ -10890,6 +11232,9 @@ impl AgentVerb {
             Self::VaultModelsManifestReplace => &["spec"],
             Self::VaultSettingsWebConnector => &["spec"],
             Self::VaultSettingsWebConnectorReplace => &["spec"],
+            Self::VaultSettingsModelPack => &["spec"],
+            Self::VaultSettingsModelPackReplace => &["spec"],
+            Self::VaultModelPackRevert => &["spec"],
             Self::VaultConnectorsWebUsage => &["spec"],
             Self::VaultModelsOneironerBind => &["spec"],
             Self::VaultModelsRoutesRead => &["spec"],
@@ -10911,6 +11256,7 @@ impl AgentVerb {
             Self::AiStreamsDetach => &["spec"],
             Self::AiStreamsAbort => &["spec"],
             Self::AiStreamsTerminal => &["spec"],
+            Self::AiStreamsRelease => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
             Self::VaultReceiptsCraftReplyManifest => &["spec"],
@@ -10962,6 +11308,8 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
             Self::VaultQuestionsPause => &["spec"],
+            Self::VaultQuestionsPrepare => &["spec"],
+            Self::VaultQuestionsAdmit => &["spec"],
             Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsOutcomeWindows => &["spec"],
@@ -11062,6 +11410,7 @@ impl AgentVerb {
             Self::VaultSearchTemporal => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
+            Self::VaultEdgesProvenance => &["spec"],
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultProductivityCreate => &["spec"],
@@ -11245,6 +11594,10 @@ impl AgentVerb {
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
+            Self::VaultFilesSourcesConvert => &["spec"],
+            Self::VaultSyncRepoManifestsConflictReview => &["spec"],
+            Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
+            Self::VaultDreamerFollowerKeyframe => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -11290,6 +11643,9 @@ impl AgentVerb {
             }
             Self::VaultCommitmentsGet => {
                 "Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt."
+            }
+            Self::VaultCommitmentsLedger => {
+                "Reads due-sorted open obligations owed by and to one counterparty contact, with their current commitment views."
             }
             Self::VaultCommitmentsInstances => {
                 "Lists the materialized occurrences of a commitment series, including closed obligations."
@@ -11901,10 +12257,31 @@ impl AgentVerb {
                 "The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."
             }
             Self::VaultWeaveItemWrong => {
-                "A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."
+                "A person labels a claim, project, budget or sieve audit item in their own lens as wrong; the label teaches the loops and the record stays."
             }
             Self::VaultWeaveOwnerItemWrong => {
-                "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."
+                "The owner labels a claim, project, budget or sieve audit item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."
+            }
+            Self::VaultWeaveAdminReport => {
+                "A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read."
+            }
+            Self::VaultWeaveAdminLens => {
+                "A weave Admin's live report rendered into its lens on the server's model, under the stepped-up Admin proof; the server holds its frame for the card's events."
+            }
+            Self::VaultWeaveAdminDigest => {
+                "One of a weave Admin's saved digests, or the newest, under the stepped-up Admin proof and the current read policy."
+            }
+            Self::VaultWeaveAdminLinkWrong => {
+                "A weave Admin labels a link its Admin report shows as wrong, under the stepped-up Admin proof, with the grant on the label; the link stays."
+            }
+            Self::VaultWeaveAdminItemWrong => {
+                "A weave Admin labels a claim, project, budget or sieve audit row its Admin report shows as wrong, under the stepped-up Admin proof; the row stays."
+            }
+            Self::VaultStepUpPasskeysReset => {
+                "The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential."
+            }
+            Self::VaultStepUpTotpReset => {
+                "The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged."
             }
             Self::VaultWeaveEnqueue => {
                 "Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."
@@ -11979,6 +12356,12 @@ impl AgentVerb {
                 "The owner registers or revises a hub source; hub trust never grants activation authority."
             }
             Self::VaultSkillHubsGet => "Reads one configured hub as the owner.",
+            Self::VaultSkillHubsClawhubSearch => {
+                "Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages."
+            }
+            Self::VaultSkillHubsClawhubImport => {
+                "Downloads an owner-selected ClawHub ZIP or pinned public-GitHub subtree and imports the same checked bytes through native publisher, scan and fit doors; provider contentHash is not a native pin."
+            }
             Self::VaultSkillHubsPublishersAdmit => {
                 "The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."
             }
@@ -12005,6 +12388,9 @@ impl AgentVerb {
             }
             Self::VaultSkillsSync => {
                 "The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."
+            }
+            Self::VaultSkillsProposalSettle => {
+                "The owner accepts the exact package in a pending hub update, or rejects only its proposal without changing the working skill."
             }
             Self::VaultSkillsReceipts => {
                 "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."
@@ -12303,10 +12689,13 @@ impl AgentVerb {
                 "Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."
             }
             Self::VaultMembersAdd => {
-                "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."
+                "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation."
             }
             Self::VaultMembersInvitationSlip => {
-                "An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."
+                "The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound."
+            }
+            Self::VaultMembersInvitationCode => {
+                "The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key."
             }
             Self::VaultMembersChange => {
                 "An Admin assigns another non-root role to a member who is not an Owner."
@@ -12320,6 +12709,9 @@ impl AgentVerb {
             }
             Self::VaultMembersAccept => {
                 "The invitee accepts their own invitation and joins the shared vault at its role."
+            }
+            Self::VaultMembersAcceptWithCredential => {
+                "The invitee accepts their own invitation and receives a regular member credential from the same writer, with required caller-chosen expiry and the same verified device key; plain acceptance stays unchanged."
             }
             Self::VaultMembersDecline => {
                 "The invitee declines their own invitation; nothing is granted."
@@ -12510,6 +12902,9 @@ impl AgentVerb {
             }
             Self::VaultFilesSourcesFiles => {
                 "The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."
+            }
+            Self::VaultFilesSourcesExclude => {
+                "The owner replaces a Files source's filters: the include patterns it reads, and the paths the host never opens. Absent keeps today's list; a list, even an empty one, replaces it."
             }
             Self::VaultResidenceMode => {
                 "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."
@@ -12705,6 +13100,9 @@ impl AgentVerb {
             }
             Self::VaultCoachTrainingOffersSources => {
                 "Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far."
+            }
+            Self::VaultCoachTrainingRunsCancel => {
+                "Cancel a staged trained embedder swap while its binding still waits or fills; an applied swap keeps the existing space-move undo door."
             }
             Self::VaultDraftersList => {
                 "The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible."
@@ -12903,6 +13301,9 @@ impl AgentVerb {
             Self::VaultConnectorsCallsApproveOnce => {
                 "The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."
             }
+            Self::VaultConnectorsRepliesRetryFailed => {
+                "The owner returns one Failed connector reply job (Ambiguous, owner-act Fault) to the queue now as its queued successor; the Failed predecessor row and its kept result stay as history."
+            }
             Self::VaultConsentDeny => {
                 "The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority."
             }
@@ -13016,6 +13417,9 @@ impl AgentVerb {
             }
             Self::VaultSecretsCodeRunLifts => {
                 "The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged."
+            }
+            Self::VaultSecretsCodeRunRoomLifts => {
+                "The owner lists value-free positive MESSAGE-linked secret lift proposals in one room overlay, under participant, historical sight and private-thread visibility. Absence is not clearance; no body, preview or dismissal is returned."
             }
             Self::VaultSecretsLiftHistory => {
                 "The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."
@@ -13153,6 +13557,9 @@ impl AgentVerb {
             }
             Self::HostBudgetHit => {
                 "Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."
+            }
+            Self::VaultHooksChecks => {
+                "The owner reads saved hook cycle and depth checks, including their causal lineage. Reads no hook arguments, body or result values and changes nothing; keeps the native list's oldest-key order and 1000-row limit."
             }
             Self::VaultHooksReplay => {
                 "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest."
@@ -13304,20 +13711,29 @@ impl AgentVerb {
             Self::VaultCodeOplog => {
                 "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."
             }
+            Self::VaultCodeSecretsGet => {
+                "Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only."
+            }
+            Self::VaultCodeSecretsPropose => {
+                "Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes."
+            }
             Self::ExecuteCode => {
-                "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."
+                "Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."
             }
             Self::VaultCodeModelHealCount => {
                 "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."
+            }
+            Self::VaultCodeCorrections => {
+                "Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only."
             }
             Self::VaultCodeTypeDiagnostics => {
                 "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."
             }
             Self::VaultCodeWaitsResolve => {
-                "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."
+                "Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption."
             }
             Self::VaultCodeWaitsReceipt => {
-                "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."
+                "Read a code consent wait as its authenticated owner or current policy-admitted power holder: effect, answer, settlement and replay-consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."
             }
             Self::VaultResultsStatus => {
                 "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."
@@ -13408,6 +13824,18 @@ impl AgentVerb {
             }
             Self::VaultCodeOriginPublications => {
                 "Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."
+            }
+            Self::VaultCodeSecretsPurgeRequest => {
+                "Plan an owner purge of marked keys from one served repository's history: each ref's move to its masked copy, the purged blobs, dropped signatures, keep roots and what it never reaches. No ref moves."
+            }
+            Self::VaultCodeSecretsPurgeGet => {
+                "Read one of the owner's secret purge plans and, once executed, its receipt."
+            }
+            Self::VaultCodeSecretsPurgeExecute => {
+                "Confirm one secret purge plan: move each ref to its masked copy through origin publication, release listed change owners, collect unreachable objects and file the receipt. No remote is pushed."
+            }
+            Self::VaultCodeCheckoutHolderBind => {
+                "Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted."
             }
             Self::VaultCodeCheckoutBind => {
                 "Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."
@@ -13734,6 +14162,15 @@ impl AgentVerb {
             Self::TasksAnswer => {
                 "Admits one person's word on an ask; the word is evidence, never approval."
             }
+            Self::TasksAnswerForwardChallenge => {
+                "The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it."
+            }
+            Self::TasksAnswerForward => {
+                "Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here."
+            }
+            Self::TasksAnswerForwardStatus => {
+                "Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result."
+            }
             Self::TasksOutcomes => {
                 "Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."
             }
@@ -13816,6 +14253,9 @@ impl AgentVerb {
             }
             Self::VaultRoomsConsent => {
                 "One party's answer to a join that waits on it, after which the join is decided again."
+            }
+            Self::VaultRoomsLeave => {
+                "Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership."
             }
             Self::VaultRoomsOffer => {
                 "Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."
@@ -13908,7 +14348,7 @@ impl AgentVerb {
                 "Reads the owner-pinned v2 model manifest, or none when no manifest is configured."
             }
             Self::VaultModelsManifestReplace => {
-                "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."
+                "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted."
             }
             Self::VaultSettingsWebConnector => {
                 "Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key."
@@ -13916,11 +14356,20 @@ impl AgentVerb {
             Self::VaultSettingsWebConnectorReplace => {
                 "Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."
             }
+            Self::VaultSettingsModelPack => {
+                "Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack."
+            }
+            Self::VaultSettingsModelPackReplace => {
+                "Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice."
+            }
+            Self::VaultModelPackRevert => {
+                "Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing."
+            }
             Self::VaultConnectorsWebUsage => {
                 "Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text."
             }
             Self::VaultModelsOneironerBind => {
-                "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides."
+                "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted."
             }
             Self::VaultModelsRoutesRead => {
                 "Reads one independent model slot route with its manifest pin and effective resident narrowing."
@@ -13979,6 +14428,9 @@ impl AgentVerb {
             Self::AiStreamsTerminal => {
                 "Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model."
             }
+            Self::AiStreamsRelease => {
+                "Explicitly discard this credential's model-stream replay and revoke its handles; the producer and durable terminal stay. Later subscribers get only future events; never-released replay stays unchanged."
+            }
             Self::AiReply => {
                 "Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."
             }
@@ -14004,13 +14456,13 @@ impl AgentVerb {
                 "Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."
             }
             Self::AiVoiceAudio => {
-                "Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path."
+                "Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech, or words that are not a backchannel, retire old output through the shared cancellation path, and a backchannel starts no reply."
             }
             Self::AiVoiceEvents => {
-                "Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events."
+                "Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts, notices and heard-playback records; advancing the cursor releases consumed events."
             }
             Self::AiVoiceAck => {
-                "Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed."
+                "Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed, with the samples it played, which the epoch's heard-playback record rests on."
             }
             Self::AiVoiceUsage => {
                 "Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment."
@@ -14124,6 +14576,8 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => "",
             Self::VaultQuestionsEdit => "",
             Self::VaultQuestionsPause => "",
+            Self::VaultQuestionsPrepare => "",
+            Self::VaultQuestionsAdmit => "",
             Self::VaultQuestionsBackfill => "",
             Self::VaultQuestionsRead => "",
             Self::VaultQuestionsOutcomeWindows => {
@@ -14158,14 +14612,14 @@ impl AgentVerb {
             Self::VaultDecisionsAsksConfirmGrant => "",
             Self::SelfDecisionsAsks => "",
             Self::ConnectorList => {
-                "Every live catalogued connector whose name or summary matches the query."
+                "Every matching live catalogued connector and first-party web interface, distinguished by source."
             }
             Self::ConnectorStatus => "One catalogued connector by name, removed ones included.",
             Self::ConnectorCall => {
-                "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."
+                "Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data."
             }
             Self::ConnectorSchema => {
-                "One catalogued connector tool's approved input schema, as the caller's own grant resolves it."
+                "One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest."
             }
             Self::ConnectorCallStatus => {
                 "Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it."
@@ -14304,7 +14758,7 @@ impl AgentVerb {
                 "The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent."
             }
             Self::VaultCalendarOccurrences => {
-                "Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions."
+                "Expands an admitted stored master in an inclusive UTC window under the caller's read scope, masking detached exceptions, as one page: an optional deadline_ms, and resume_from to continue."
             }
             Self::VaultCalendarInstancesMove => {
                 "The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances."
@@ -14313,10 +14767,10 @@ impl AgentVerb {
                 "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."
             }
             Self::VaultCalendarSearch => {
-                "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."
+                "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, as one page in time order: an optional deadline_ms, and resume_from to continue."
             }
             Self::VaultCalendarFreebusy => {
-                "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."
+                "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals, one page of the covered prefix: an optional deadline_ms, and resume_from to continue."
             }
             Self::VaultCalendarPrep => {
                 "Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack."
@@ -14399,6 +14853,9 @@ impl AgentVerb {
             }
             Self::VaultNeighbors => {
                 "The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight."
+            }
+            Self::VaultEdgesProvenance => {
+                "Audits one directed edge: each edge.provenance claim of it the caller may read, closed ones included, with its author, actor class, source revision, confidence and lifecycle."
             }
             Self::VaultStructuralPut => {
                 "Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit."
@@ -14763,7 +15220,7 @@ impl AgentVerb {
                 "Creates a NOTE of a registered kind, its first authored text as its birth."
             }
             Self::VaultNotesAuthorTake => {
-                "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target."
+                "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target; each link gets an edge.provenance claim citing the optional source_ref."
             }
             Self::VaultNotesFromEntity => {
                 "Creates a NOTE of a registered kind from an existing entity."
@@ -14871,7 +15328,7 @@ impl AgentVerb {
                 "The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."
             }
             Self::VaultIdentityPropose => {
-                "The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."
+                "The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals."
             }
             Self::VaultIdentityUndo => {
                 "The owner undoes one current topology event by appending a counter-event under its observed revision."
@@ -14944,6 +15401,18 @@ impl AgentVerb {
             }
             Self::VaultMailComplianceSearch => {
                 "Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."
+            }
+            Self::VaultFilesSourcesConvert => {
+                "The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."
+            }
+            Self::VaultSyncRepoManifestsConflictReview => {
+                "The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier."
+            }
+            Self::VaultSyncRepoManifestsConflictDiscard => {
+                "The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."
+            }
+            Self::VaultDreamerFollowerKeyframe => {
+                "The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed."
             }
             Self::ConnectorAnswer => {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."

@@ -45,6 +45,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut scope = None;
     let mut healer_case = None;
     let mut type_ref = None;
+    let mut type_parents = None;
     let mut budget = None;
     let mut launch = None;
     let mut room = None;
@@ -233,6 +234,11 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     })?,
                 );
             }
+            KEY_TASK_TYPE_PARENTS => {
+                type_parents = value
+                    .as_str()
+                    .and_then(|json| serde_json::from_str(json).ok());
+            }
             KEY_BUDGET => {
                 budget = Some(value.as_u64().ok_or(Error::Artifact(
                     ArtifactError::InvalidAgentDispatchInput("budget must be an integer"),
@@ -397,6 +403,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         // Rows written before OF-543 carry no stamp; they read as the
         // seeded root, the unsure placement, rather than failing decode.
         type_ref: type_ref.unwrap_or_default(),
+        type_parents,
         budget,
         launch,
         room,
