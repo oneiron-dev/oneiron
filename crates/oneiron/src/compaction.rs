@@ -139,6 +139,9 @@ pub use hooks::{
     CompactHooks, HOST_COMPACT, check_host_compact_rewrite,
     check_host_compact_rewrite_unverified_window, compact_invocation,
 };
+pub(crate) use hooks::{
+    keep_compact_hooks_in_room, post_compact_hooks_in_room, pre_compact_hooks_in_room,
+};
 pub use packet_source::{CompactionHostLog, CompactionSource, admit_compaction_source};
 pub(crate) use self_writer::{
     COMPACTION_STEP_RESPONSE_NAME, SelfLanding, admit_self_landing, admit_self_landing_on,

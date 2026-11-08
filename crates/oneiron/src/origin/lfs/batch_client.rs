@@ -11,10 +11,11 @@
 //! [`LfsTransport`], which carries it alone (FIX 19876). An object is
 //! streamed, never held whole in memory. A batch carries at most
 //! [`LFS_BATCH_OBJECTS`] objects, more go in further batches, so no count
-//! is refused.
+//! is refused. An upload's spool keeps the free disk its transport names
+//! ([`LfsTransport::spool_floor`]).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 
 use serde::{Deserialize, Serialize};
 
@@ -24,13 +25,15 @@ use super::transport::{
 };
 use super::{LFS_BASIC_TRANSFER, LfsOid};
 use crate::error::Result;
+use crate::origin::smart_http::{AtDiskFloor, SpillFloor};
 use crate::{TimeRange, Vault};
 
 /// Objects one batch call names: the size Git-LFS servers commonly take.
 const LFS_BATCH_OBJECTS: usize = 100;
 
-/// The bound of one batch answer read into memory.
-const LFS_BATCH_ANSWER_MAX_BYTES: u64 = 16 * 1024 * 1024;
+/// The bound of one batch answer read into memory. A host's credential
+/// broker reads a batch reply whole within it too.
+pub const LFS_BATCH_ANSWER_MAX_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Serialize)]
 struct BatchBody<'a> {
@@ -74,11 +77,12 @@ struct BatchActions {
 /// store through `transport`, each batch call under the remote's own
 /// credential. Answers the objects the remote is still not known to hold:
 /// one it refused, one this vault lacks, one whose transfer or verify
-/// failed, or one its answer left out.
+/// failed, or one its answer left out. A served host runs it over its
+/// credential broker's transport (FIX 19876).
 ///
 /// # Errors
 /// A batch call that fails or answers what does not decode.
-pub(crate) fn upload_lfs_objects(
+pub fn upload_lfs_objects(
     vault: &Vault,
     transport: &dyn LfsTransport,
     objects: &[(LfsOid, u64)],
@@ -152,11 +156,12 @@ pub(crate) fn upload_lfs_objects(
 /// batch call under `credential`, and installs it through `vault`'s LFS
 /// upload door at `now`. Answers the objects that did not arrive: one the
 /// remote refused or left out, one whose transfer failed, or one the door
-/// refused.
+/// refused. A served host runs it over its credential broker's transport
+/// for an outside import (FIX 19876).
 ///
 /// # Errors
 /// A batch call that fails or answers what does not decode.
-pub(crate) fn download_lfs_objects(
+pub fn download_lfs_objects(
     vault: &Vault,
     transport: &dyn LfsTransport,
     credential: LfsBatchCredential,
@@ -250,18 +255,45 @@ fn put_object(
     transport: &dyn LfsTransport,
     action: LfsActionRequest<'_>,
 ) -> Result<bool> {
-    let mut spool = tempfile::tempfile_in(vault.lfs_storage_dir())?;
+    let mut spool = UploadSpool {
+        file: tempfile::tempfile_in(vault.lfs_storage_dir())?,
+        floor: transport.spool_floor(),
+    };
     if !vault.has_lfs_object(action.oid, action.size)?
         || !vault.write_lfs_object_to(action.oid, &mut spool)?
     {
         return Ok(false);
     }
+    let mut spool = spool.file;
     spool.seek(SeekFrom::Start(0))?;
     let reply = transport.exchange(LfsRequest::ObjectUpload {
         action,
         body: spool,
     })?;
     Ok(reply.is_success())
+}
+
+/// The file an upload goes from, each write to which first asks `floor`,
+/// when there is one, for room above its reserve.
+struct UploadSpool<'a> {
+    file: std::fs::File,
+    floor: Option<&'a dyn SpillFloor>,
+}
+
+impl Write for UploadSpool<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self
+            .floor
+            .is_some_and(|floor| !floor.has_room_for(bytes.len() as u64))
+        {
+            return Err(io::Error::new(io::ErrorKind::StorageFull, AtDiskFloor));
+        }
+        self.file.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
 }
 
 /// Asks the href of `action` to verify the uploaded object it is for.
