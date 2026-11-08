@@ -116,6 +116,8 @@ side_tables! {
     /// Retired consult fan-out policy carrier; the policy manifest now governs.
     /// Declared so bytes written by older engines stay owned. Key: ().
     TASK_FANOUT_POLICY: VaultMeta b"tasks/fanout_policy/v1" Named;
+    /// One participant's explicit team choice. Key: caller attempt hex, `:`, team reference.
+    TEAM_BALLOT: VaultMeta b"team:ballot:v1:" Named;
     /// A team deliverable's owner review: team, leader, root TASK, output revision, reviewed
     /// claim fingerprint and what the review asks. Key: id16 (reviewed claim).
     TEAM_DELIVERABLE: VaultMeta b"team:deliverable:v1:" Named;
@@ -222,9 +224,17 @@ side_tables! {
     /// pinned to the exact bytes archived and naming the run. 32 bytes: the owner kept a restored
     /// attempt or record at that revision. Key: id16 (AttemptId, or a kept record's entity id).
     VAULT_CLEANUP_ATTEMPT_ARCHIVE: VaultMeta b"vault_cleanup.attempt_archive.v1/" Raw;
+    /// Explicit archived-attempt deletion: actual actor, time and optional originating run tag.
+    /// Key: id16 (AttemptId), not an entity id; contains no attempt payload.
+    VAULT_CLEANUP_ATTEMPT_DELETE: VaultMeta b"vault_cleanup.attempt_delete.v1:" Named Engine
+        => crate::vault_cleanup::erase_attempt_delete_actor_in_txn;
     /// One recorded vault-cleanup decision (accepted/auto), listing archived and skipped candidates.
     /// Key: id16.
     VAULT_CLEANUP_DIGEST: VaultMeta b"vault_cleanup.digest.v1:" Raw;
+    /// Which cleanup proposal, digest and run rows name an id, so an erase reads only those
+    /// (FIX 7616). Key: the named id16, the listing's tag byte (`p`, `d` or `r`), then the
+    /// listing row's id16. Value: empty.
+    VAULT_CLEANUP_ENTITY_ROW: VaultMeta b"vault_cleanup.entity_row.v1:" Raw;
     /// Mint-time evidence pinning a PERSON as extraction-produced and eligible for the claimless-
     /// person cleanup arm. Key: id16 (PERSON id).
     VAULT_CLEANUP_EXTRACTION_PERSON: VaultMeta b"vault_cleanup.extraction_person.v1:" Raw;
@@ -235,11 +245,6 @@ side_tables! {
     /// Durable cleanup-scan result for one attempt, closing the job-commit-to-queue-settlement crash
     /// gap. Key: id16 (AttemptId).
     VAULT_CLEANUP_RUN: VaultMeta b"vault_cleanup.run.v1:" Raw;
-    /// Rotating per-arm scan cursor (one row per CLEANUP_CHECKS entity type, plus one literal
-    /// "attempt" row for the completed-queue-record arm); both suffix shapes share this one prefix by
-    /// design and cannot collide (1 byte vs 7 ASCII bytes). Key: u8 (entity-type byte) OR literal
-    /// string "attempt".
-    VAULT_CLEANUP_SCAN_CURSOR: VaultMeta b"vault_cleanup.scan.v1:" Raw;
     /// Index of archived attempts under one TASK, used to restore them together when the task is
     /// touched. Key: BLAKE3 derive_key of the task reference (32) then id16 (AttemptId).
     VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE: VaultMeta b"vault_cleanup.task_attempt_archive.v1/" Raw;
@@ -312,6 +317,8 @@ side_tables! {
     /// the send is on, to the reader's primary route. Key: id16 (reader).
     WEAVE_DIGEST_CHANNEL_OVERRIDE: VaultMeta b"weave:digest_channel_override:v1:" Named Engine
         => crate::outbound::erase_weave_digest_channel_override_actor_in_txn;
+    /// Empty lens-rerender intent after erasure. Key: the full saved digest key.
+    WEAVE_DIGEST_RERENDER: VaultMeta b"weave:digest_rerender:v1:" Raw;
     /// One Coach change to an owner's digest rhythm or section order (FIX 5495): proposed,
     /// applied under his Grant, answered or undone, with the settings before and after. Key: id16
     /// (owner) + id16 (change).
@@ -321,10 +328,12 @@ side_tables! {
     WEAVE_DIGEST_SETTINGS: VaultMeta b"weave:digest_settings:v1:" Named;
     /// Source-to-digest invalidation index. Key: source id16 ‖ digest key.
     WEAVE_DIGEST_SOURCE: VaultMeta b"weave:digest_source:v1:" Raw;
+    /// The newest live lens of one reader. Key: reader kind byte + id16.
+    WEAVE_LIVE: VaultMeta b"weave:live:v1:" Raw;
     /// Weave digest schedule of one reader. Key: reader kind byte + id16.
     WEAVE_DIGEST_SCHEDULE: VaultMeta b"weave:schedule:v1:" Raw;
-    /// One immutable wrong-item label (a claim, project or budget row) filed from a live weave
-    /// report. Key: id16 (item id) + id16 (label receipt id).
+    /// One immutable wrong-item label filed from a live weave report. Key: family byte
+    /// (0 entity, 1 gate decision) + native id16 + id16 (label receipt id).
     WEAVE_WRONG_ITEM_LABEL: VaultMeta b"weave:wrong-item:v1:" Named;
     /// One immutable wrong-link label filed from a live weave report. Key: edge ref (33 bytes) +
     /// id16 (label receipt id).
@@ -335,6 +344,13 @@ side_tables! {
     /// One usage row per web connector call: provider, tool, key source, latency, cost and the
     /// provider's request id; never the query, URL or results. Key: u64 BE (ms) + id16.
     WEB_CONNECTOR_USAGE: VaultMeta b"web_connector:usage:v1:" Named;
+    /// A workflow leaf's custodied tool transcript pointer and exact settled state. Key: id16 (attempt).
+    WORKFLOW_TOOL_CHECKPOINT: VaultMeta b"workflow:tool_checkpoint:v1:" Named Authored
+        [refs: &[&[Field("content")], &[Field("retained")]]]
+        [accepts: crate::agent_dispatch::workflow_tool_checkpoint_accepts_masked]
+        => crate::agent_dispatch::erase_workflow_tool_actor_in_txn;
+    /// Content-free saved-tool fence, retained even when its payload cannot open. Key: id16 (attempt).
+    WORKFLOW_TOOL_CHECKPOINT_FENCE: VaultMeta b"workflow:tool_checkpoint_fence:v1:" Named;
     /// Guards a companion PERSON against being claimed by a second principal's onboarding. Key: id16
     /// (companion person id).
     WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw
@@ -363,6 +379,9 @@ side_tables! {
     /// bundle's world section carries whole (FIX 922). Purged with an erased world. Key: hex32
     /// (world) ":" string (window label).
     WORLD_KEY_SEALED_MIRROR: VaultMeta b"world_keys:mirror:v1:" Raw;
+    /// How many actor erases rewrote the sealed mirrors here (FIX 17210): a seal or a take that
+    /// read a mirror before one writes nothing after it. Key: the string `count`.
+    WORLD_KEY_SEALED_MIRROR_ERASES: VaultMeta b"world_keys:mirror_erases:v1:" Named;
     /// Which version of one sealed window's mirror last landed here in full, and under which
     /// forward pass (FIX 6509), or that the window's rows here were removed since (FIX 5506): a
     /// take of that version under that pass skips its forward pass. Purged with an erased world.

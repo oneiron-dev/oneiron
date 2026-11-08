@@ -46,9 +46,10 @@ Ops, host to worker, and what each gets back:
 
 Codec v1.1 adds the session ops (DESIGN-V2 R2, `exl3_session/ops.py`),
 advertised as `capabilities.sessions` `{minor: 1, ops}` only when the server
-loaded its session layer: `session.create`, `session.fork` and
-`session.append` (each with an input region), `session.suffix_commit`,
-`session.checkpoint`, `session.drop`, each answered by a frame of its own
+loaded its session layer: `session.create`, `session.fork`,
+`session.append` and `session.prepare` (each with an input region; I1 = C
+adds the last), `session.suffix_commit`, `session.checkpoint`,
+`session.drop`, each answered by a frame of its own
 name or `refused`; and `session.generate`, a `generate` whose `session`
 field names the working branch it runs on, with the same events. A
 connection's close cancels its calls, never its sessions: a session lives
@@ -75,7 +76,8 @@ the session minor staying 1 or 2 on its own. A `generate` or
 or 1), `deadline` (null, or the microseconds left at send, converted once
 to this process's monotonic clock) and `admission` (`{grant_id, revision,
 resource_class, profile_id, envelope_mib}`); a `session.suffix_commit`,
-`session.export` or `session.import` body may name the first three. A
+`session.prepare`, `session.export` or `session.import` body may name the
+first three. A
 field this worker cannot read, a grant for another resource class, or a
 grant revision below one it holds for that grant is refused before any
 work (`invalid_request`, `invalid_grant`, `stale_grant`); a call with no
@@ -92,6 +94,13 @@ receipt.
   priority, deadline_remaining_us?, next_boundary, reason?, stats}`). A
   revision not above the call's is not applied (`stale_revision`); a call
   that has ended gets `found: false`, outside the sequence.
+
+The evaluator op (FIX 14975, `exl3_evaluator.py`), advertised as
+`capabilities.evaluator` `{minor, ops, evidence, forced}`: `eval.generate`,
+a `generate` that also names the ids each pass is forced to first and
+whether it keeps each position's top two raw logits, answered by ONE frame
+of its own name with every generated token id, pass by pass. Only the
+host's drafter evaluator sends it.
 
 A connection that closes cancels its calls. The HTTP routes are untouched.
 """
@@ -113,6 +122,7 @@ import uuid
 from importlib import metadata
 
 import cache_usage
+import exl3_evaluator
 import exl3_executor
 import exl3_tools
 
@@ -422,7 +432,8 @@ class NativeServer:
             "model": self.state.model_id,
             "epoch": identity.epoch,
             "capabilities": {"ops": self.ops(), "input_encodings": list(INPUT_ENCODINGS), "stream": True,
-                             "tool_calls": True, "scheduling": scheduler.executor.capability()},
+                             "tool_calls": True, "scheduling": scheduler.executor.capability(),
+                             "evaluator": exl3_evaluator.capability()},
             "versions": reported_versions(),
         }
         if self.state.sessions is not None:
@@ -519,6 +530,11 @@ class Connection:
             return
         if op == "generate":
             self.generate(envelope, fds)
+            return
+        if op == exl3_evaluator.OP:
+            # An evaluation runs to its end with no deadline: a thread of its own.
+            threading.Thread(target=self.evaluate, args=(envelope, fds), name="exl3-native-eval",
+                             daemon=True).start()
             return
         sessions = self.state.sessions
         if sessions is not None and op in sessions.capability()["ops"]:
@@ -674,6 +690,55 @@ class Connection:
                                "scheduling": dict(work.evidence(accepted_ns), policy=executor.policy)})
         threading.Thread(target=call.run, name="exl3-native-call", daemon=True).start()
 
+    def evaluate(self, envelope, fds):
+        """An `eval.generate` (exl3_evaluator.py): the drafter evaluator's
+        call, run solo through the scheduler as the host asks and answered by
+        one frame of its own name, or `refused` before anything ran. The
+        connection's close ends its wait."""
+        request_id, body = envelope["request_id"], envelope["body"]
+        scheduler = self.state.scheduler
+        executor = scheduler.executor
+        try:
+            if envelope.get("epoch") != self.state.identity.epoch:
+                raise Refusal("epoch_mismatch", "the call names another incarnation of this worker")
+            params = body.get("params", {})
+            if not isinstance(params, dict) or "messages" in params or "tools" in params:
+                raise Refusal("invalid_request", "params must be an object without messages or tools")
+            try:
+                forced, evidence = exl3_evaluator.parse(body)
+                work = exl3_executor.WorkContext.from_body(body, time.monotonic_ns())
+            except (exl3_evaluator.EvaluationRefused, exl3_executor.SchedulingError) as error:
+                raise Refusal(error.code, str(error)) from None
+        except Refusal as refusal:
+            close_fds(fds)
+            self.send("refused", request_id, refusal.body())
+            return
+        try:
+            # It closes every descriptor the frame carried, whatever happens.
+            conversation = read_input(body.get("input"), fds)
+            executor.open_grant(work)
+        except Refusal as refusal:
+            self.send("refused", request_id, refusal.body())
+            return
+        except exl3_executor.SchedulingError as error:
+            self.send("refused", request_id, Refusal(error.code, str(error)).body())
+            return
+        if not scheduler.accept():
+            executor.close_grant(work)
+            self.send("refused", request_id, Refusal("draining", "the worker takes no new call").body())
+            return
+        try:
+            answer = exl3_evaluator.run(self.state, params, conversation, forced, evidence, work,
+                                        lambda: self.closed)
+        except Exception as error:  # the call's error is its answer, never a silence
+            print(f"NATIVE_EVAL_ERROR {type(error).__name__}: {error}", flush=True)
+            answer = {"outcome": "error",
+                      "error": {"type": type(error).__name__, "code": getattr(error, "code", None) or "server_error"}}
+        finally:
+            executor.close_grant(work)
+            scheduler.settle()
+        self.send(exl3_evaluator.OP, request_id, answer)
+
     def cancel(self, request_id):
         with self.lock:
             call = self.calls.get(request_id)
@@ -809,6 +874,15 @@ class NativeCall:
         if live and req is not None:
             self.state.scheduler.cancel(req)
 
+    def _final_stats(self, req):
+        stats = req.final_stats
+        if stats is None:
+            return None
+        # This call settles in run's finally, after sending its terminal.
+        # Leave the scheduler's count and captured snapshot untouched.
+        queue = dict(stats["queue"], open_calls=stats["queue"]["open_calls"] - 1)
+        return dict(stats, queue=queue)
+
     def _ending(self, outcome, req, extra=None):
         body = {"outcome": outcome}
         if extra:
@@ -817,7 +891,7 @@ class NativeCall:
             if req.partial_usage is not None:
                 body["usage"] = req.partial_usage
             if req.final_stats is not None:
-                body["stats"] = req.final_stats
+                body["stats"] = self._final_stats(req)
             if req.scheduling is not None:
                 body["scheduling"] = req.scheduling
         return body
@@ -888,7 +962,7 @@ class NativeCall:
             final["usage"] = result["usage"]
             final["timings"] = result["timings"]
             if req.final_stats is not None:
-                final["stats"] = req.final_stats
+                final["stats"] = self._final_stats(req)
             if req.scheduling is not None:
                 final["scheduling"] = req.scheduling
             self.end("final", final)

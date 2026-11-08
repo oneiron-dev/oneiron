@@ -106,6 +106,27 @@ pub fn read_skill_reliability(
     read_cell_in_txn(vault, &txn, &cell, &query.type_parents)
 }
 
+/// A person's measured fit for `query`: the (task-type, person) cell fed by
+/// the runs the person drove, for L05 (FIX 8968). Model-agnostic: the cell's
+/// executor is the person, not the model.
+pub fn person_skill_fit(
+    vault: &Vault,
+    person: &EntityId,
+    query: &SkillReliabilityQuery,
+) -> Result<LearningRead> {
+    query.validate()?;
+    let cell = LearningCell::new(LearningPredicate::Reliability, *person)
+        .executor(person.to_hex())
+        .type_ref(query.type_ref.clone())
+        .axis(query.axis.clone())
+        .project(query.project);
+    cell.validate()?;
+    let txn = vault.store.env.read_txn()?;
+    // Persons start from the shared borrowed/shipped prior, never a skill's
+    // provenance trust: the skill reader's fallback names a SKILL only.
+    crate::learning::read::read_learning_in_txn(vault, &txn, &cell, &query.type_parents)
+}
+
 /// Diagnostic unqualified read: the richest cell, never a pooled posterior.
 /// Selection for a task uses read_skill_reliability instead.
 pub fn skill_reliability_posterior(
@@ -127,7 +148,10 @@ pub fn skill_reliability_posterior_for_executor(
     resolved_reliability_posterior_in_txn(vault, &txn, skill, Some(executor))
 }
 
-pub(crate) fn validate_executor(executor: &str) -> Result<()> {
+/// Checks an executor id as the skill-reliability reads and the context-pack
+/// builder take it: `id@revision`, at most 256 bytes, no control characters.
+/// A host checks it before any pack work starts (FIX 1435).
+pub fn validate_executor(executor: &str) -> Result<()> {
     if executor.len() > 256
         || executor.chars().any(char::is_control)
         || !executor
@@ -228,11 +252,23 @@ pub(super) fn active_claims_in_txn(
     skill: &EntityId,
     predicate: &str,
 ) -> Result<Vec<(EntityId, ClaimBody, u64)>> {
+    active_claims_sourced_in_txn(vault, rtxn, skill, predicate).map(|(claims, _)| claims)
+}
+
+/// Active claims beside every claim body the predicate/lifecycle filter read.
+pub(super) fn active_claims_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    predicate: &str,
+) -> Result<(Vec<(EntityId, ClaimBody, u64)>, Vec<EntityId>)> {
     let mut rows = Vec::new();
+    let mut sources = Vec::new();
     for id in vault.claims_for_subject_in_txn(rtxn, skill)? {
         let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
             continue;
         };
+        sources.push(id);
         if body.predicate != predicate || body.lifecycle != ClaimLifecycleStatus::Active {
             continue;
         }
@@ -245,7 +281,7 @@ pub(super) fn active_claims_in_txn(
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         rows.push((id, body, header.occurred_start));
     }
-    Ok(rows)
+    Ok((rows, sources))
 }
 
 pub(super) fn active_reliability_heads_in_txn(

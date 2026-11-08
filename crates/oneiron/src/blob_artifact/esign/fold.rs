@@ -250,11 +250,13 @@ impl EsignState {
             EsignEvent::Sealed {
                 rejected,
                 item_sha256,
+                item_profiles,
             } => {
                 if !self.ready_to_seal()
                     || *rejected != self.rejection.is_some()
                     || item_sha256.len() != self.document.items.len()
                     || item_sha256.contains(&[0; 32])
+                    || item_profiles.len() != item_sha256.len()
                 {
                     return Err(invalid("seal outcome is not justified"));
                 }
@@ -295,9 +297,7 @@ pub(super) fn validate_value(field: &EsignField, value: &FieldValue) -> Result<(
             Ok(())
         }
         (FieldMeta::Select { options }, FieldValue::Text(v)) if options.contains(v) => Ok(()),
-        (FieldMeta::Email, FieldValue::Text(v))
-            if v.len() <= EMAIL_MAX_BYTES && v.contains('@') && !v.contains(['\r', '\n']) =>
-        {
+        (FieldMeta::Email, FieldValue::Text(v)) if v.contains('@') && !v.contains(['\r', '\n']) => {
             Ok(())
         }
         // No engine cap on a name (Rule 5): the field's box bounds what fits.

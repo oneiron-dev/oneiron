@@ -98,19 +98,33 @@ pub fn credit_adjustments(vault: &Vault, receipt_id: &str) -> Result<Vec<CreditA
         .collect())
 }
 
-fn chain_in_txn(
+pub(super) fn chain_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     base: &str,
 ) -> Result<Vec<(String, CreditAdjustmentReceipt)>> {
-    Ok(ADJUSTMENT
+    let mut chain: Vec<_> = ADJUSTMENT
         .scan_from(store, txn, format!("{base}\0").as_bytes())?
         .into_iter()
+        .chain(ADJUSTMENT.scan_from(store, txn, b"erased\0")?)
         .filter_map(|(key, row)| match row {
-            CreditJoinRow::Adjustment(adjustment) => Some((key, adjustment)),
-            CreditJoinRow::Decay(_) => None,
+            CreditJoinRow::Adjustment(adjustment) if adjustment.base == base => {
+                Some((key, adjustment))
+            }
+            _ => None,
         })
-        .collect())
+        .collect();
+    chain.sort_by_key(|(_, adjustment)| adjustment_index(adjustment));
+    Ok(chain)
+}
+
+fn adjustment_index(adjustment: &CreditAdjustmentReceipt) -> Option<u64> {
+    adjustment
+        .receipt_id
+        .strip_prefix(adjustment.base.as_str())?
+        .strip_prefix(":adjustment:")?
+        .parse()
+        .ok()
 }
 
 /// Freezes `decay`, the `credit_decay` the original projection of the
@@ -148,6 +162,18 @@ pub(super) fn latest_direct_in_txn(
             || credit.direct_subjects.clone(),
             |(_, last)| last.direct_subjects,
         ))
+}
+
+/// Every subject the credit stands with now: the latest adjustment's direct
+/// subjects and shares, else the sealed receipt's own (REVIEW-4322 P1). A
+/// subject a later adjustment adds still governs the person rows that fold
+/// this credit.
+pub(crate) fn effective_credit_subjects_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+) -> Result<Option<Vec<EntityId>>> {
+    Ok(retained_masses_in_txn(store, txn, credit)?.map(|masses| masses.into_keys().collect()))
 }
 
 /// The decay `credit` was projected under: the frozen one, or, for a
@@ -220,6 +246,16 @@ pub(super) fn effective_fields_in_txn(
     credit: &LateCreditReceipt,
     sealed: PackAttributionFields,
 ) -> Result<PackAttributionFields> {
+    let fields = super::judge_binding::with_workflow_judge_in_txn(
+        vault,
+        txn,
+        &credit.attempt_receipt,
+        sealed.clone(),
+    )
+    .unwrap_or_else(|error| {
+        tracing::warn!(kind = ?error.kind(), "a workflow's Done judge was not joined; its credit keeps the frozen judge");
+        sealed
+    });
     joined_fields_in_txn(
         vault,
         txn,
@@ -227,7 +263,7 @@ pub(super) fn effective_fields_in_txn(
         &credit.outcome_receipt,
         &credit.axis,
         credit.goal_revision.as_deref(),
-        sealed,
+        fields,
     )
 }
 
@@ -372,13 +408,23 @@ fn masses(direct: &[Option<EntityId>], shares: &[LateCreditShare]) -> BTreeMap<E
     out
 }
 
+/// What the retained credit proves about one subject's observation.
+pub(crate) enum StandingCreditObservation {
+    /// Erasure left no unambiguous latest mass. Keep the stored evidence.
+    Unknown,
+    /// A retained sealed credit or its latest adjustment names this mass.
+    Credited(bool, f64),
+    /// The standing credit names no mass for this subject.
+    Uncredited,
+}
+
 /// The observation `subject`'s evidence for `credit` currently stands at:
-/// the win and mass of the latest adjustment beside the sealed credit, or
-/// the sealed projection's own when no adjustment landed. `None` when the
-/// credit currently credits `subject` nothing. A failed credit is never
-/// adjusted, so its direct subjects stand whole at the failure. The
-/// anchored-amendment join (FIX 10148) restores to exactly this, never to
-/// the sealed projection alone.
+/// the win and mass of the latest retained adjustment, including adjustments
+/// moved by erasure, or the intact sealed projection when none landed.
+/// An erased attribution without an addressable latest adjustment is unknown,
+/// never a reason to restore an older sealed mass. A failed credit is never
+/// adjusted, so its direct subjects stand whole at the failure unless every
+/// judgment that seated a subject was explicitly displaced.
 ///
 /// # Errors
 ///
@@ -388,21 +434,100 @@ pub(crate) fn standing_credit_observation_in_txn(
     txn: &heed::RoTxn<'_>,
     credit: &LateCreditReceipt,
     subject: &EntityId,
-) -> Result<Option<(bool, f64)>> {
+) -> Result<StandingCreditObservation> {
+    let Some(masses) = retained_masses_in_txn(&vault.store, txn, credit)? else {
+        return Ok(StandingCreditObservation::Unknown);
+    };
+    Ok(match masses.get(subject) {
+        Some(_)
+            if !credit.succeeded
+                && failed_credit_subject_displaced_in_txn(vault, txn, credit, subject)? =>
+        {
+            StandingCreditObservation::Uncredited
+        }
+        Some(mass) => StandingCreditObservation::Credited(credit.succeeded, *mass),
+        None => StandingCreditObservation::Uncredited,
+    })
+}
+
+/// The latest retained masses, or unknown when erasure hid their order.
+fn retained_masses_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+) -> Result<Option<BTreeMap<EntityId, f64>>> {
     if !credit.succeeded {
-        return Ok(credit
-            .direct_subjects
-            .contains(&Some(*subject))
-            .then_some((false, 1.0)));
+        return Ok(Some(masses(&credit.direct_subjects, &[])));
     }
-    let chain = chain_in_txn(&vault.store, txn, &credit.receipt_id)?;
-    let (direct, shares) = match chain.last() {
+    let chain = chain_in_txn(store, txn, &credit.receipt_id)?;
+    // Non-base erasure keeps the factory receipt's numeric sequence, even
+    // though the row's storage key becomes opaque. Time is not its order.
+    let prefix = format!("{}:adjustment:", credit.receipt_id);
+    let mut seen = BTreeSet::new();
+    let mut latest: Option<(u64, &CreditAdjustmentReceipt)> = None;
+    for (_, adjustment) in &chain {
+        let Some(index) = adjustment
+            .receipt_id
+            .strip_prefix(&prefix)
+            .and_then(|index| index.parse::<u64>().ok())
+        else {
+            return Ok(None);
+        };
+        if !seen.insert(index) {
+            return Ok(None);
+        }
+        if latest.as_ref().is_none_or(|(prior, _)| index > *prior) {
+            latest = Some((index, adjustment));
+        }
+    }
+    let (direct, shares) = match latest {
         Some((_, last)) => (&last.direct_subjects, &last.shares),
+        None if credit.attribution.is_none() => return Ok(None),
         None => (&credit.direct_subjects, &credit.shares),
     };
-    Ok(masses(direct, shares)
-        .get(subject)
-        .map(|mass| (true, *mass)))
+    Ok(Some(masses(direct, shares)))
+}
+
+/// An explicit displacement removes a failed credit's seated loss only
+/// when its actual routing has no live seating judgment left.
+fn failed_credit_subject_displaced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    credit: &LateCreditReceipt,
+    subject: &EntityId,
+) -> Result<bool> {
+    let sequences: BTreeSet<_> = super::codec::evidence_after_in_txn(vault, txn, 0)?
+        .into_iter()
+        .filter(|(_, row)| row.receipt_ref == credit.attempt_receipt)
+        .map(|(sequence, _)| sequence)
+        .collect();
+    let judgments: BTreeMap<_, _> = super::attribution_judgments_in_txn(vault, txn)?
+        .into_iter()
+        .map(|judgment| (judgment.sequence, judgment))
+        .collect();
+    let mut seated = false;
+    for sequence in sequences {
+        let Some(judgment) = judgments.get(&sequence) else {
+            return Ok(false);
+        };
+        if !matches!(
+            judgment.verdict,
+            super::AttributionVerdict::SkillDefect | super::AttributionVerdict::ExecutionLapse
+        ) {
+            continue;
+        }
+        let Some(seated_subject) = judgment.subject else {
+            return Ok(false);
+        };
+        if seated_subject != *subject {
+            continue;
+        }
+        if !super::judgment_displaced_in_txn(vault, txn, sequence)? {
+            return Ok(false);
+        }
+        seated = true;
+    }
+    Ok(seated)
 }
 
 /// The observation a credit write for `subject` lands under `credit`'s
@@ -419,7 +544,6 @@ pub(super) fn effective_observation_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     credit: &LateCreditReceipt,
-    fields: &PackAttributionFields,
     subject: &EntityId,
     success: bool,
     weight: f64,
@@ -428,7 +552,6 @@ pub(super) fn effective_observation_in_txn(
         vault,
         txn,
         subject,
-        Some(fields.executor.as_str()),
         &credit.attempt_receipt,
     )? {
         Some(share) => Ok((false, f64::from(share))),
@@ -507,6 +630,9 @@ fn reconcile_in_txn(
     let decay = frozen_decay_in_txn(vault, txn, credit, &sealed)?;
     let shares = credit_shares_in_txn(vault, txn, &fields, &direct, decay)?;
     let chain = chain_in_txn(&vault.store, txn, &credit.receipt_id)?;
+    if retained_masses_in_txn(&vault.store, txn, credit)?.is_none() {
+        return Ok(());
+    }
     let (previous, last_direct, last_shares) = match chain.last() {
         Some((_, last)) => (
             Some(last.receipt_id.clone()),
@@ -515,6 +641,7 @@ fn reconcile_in_txn(
         ),
         None => (None, &credit.direct_subjects, &credit.shares),
     };
+    super::credit_judge::capture_in_txn(vault, txn, credit, &fields, now);
     // A replayed check or landing, or one that moves no credit, appends
     // nothing.
     if *last_direct == direct && *last_shares == shares {
@@ -526,7 +653,7 @@ fn reconcile_in_txn(
         if before.get(subject) != Some(weight) {
             let cell = credit_cell(&fields, &credit.axis, *subject);
             let (success, weight) =
-                effective_observation_in_txn(vault, txn, credit, &fields, subject, true, *weight)?;
+                effective_observation_in_txn(vault, txn, credit, subject, true, *weight)?;
             let evidence = credit_evidence(credit, &fields, success, weight);
             record_credit_in_txn(vault, txn, &fields, &cell, &evidence, now)?;
         }
@@ -543,7 +670,6 @@ fn reconcile_in_txn(
             vault,
             txn,
             subject,
-            Some(fields.executor.as_str()),
             &credit.attempt_receipt,
         )? {
             Some(share) => {
@@ -563,8 +689,7 @@ fn reconcile_in_txn(
     }
     let index = chain
         .last()
-        .and_then(|(key, _)| key.rsplit_once('\0'))
-        .and_then(|(_, index)| index.parse::<u64>().ok())
+        .and_then(|(_, adjustment)| adjustment_index(adjustment))
         .map_or(0, |index| index + 1);
     let sealed_checks = check_receipts(&sealed);
     let sealed_edges: BTreeSet<_> = sealed

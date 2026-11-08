@@ -215,6 +215,22 @@ pub(crate) enum RoomSideRow {
 }
 
 impl RoomSideRow {
+    /// The Offer wording, for its split-row codec; other tables have none.
+    pub(crate) fn offer_what_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Self::Offer { offer } => Some(&mut offer.card.what),
+            _ => None,
+        }
+    }
+
+    /// The Offer artifact ref, for its split-row codec; other tables have none.
+    pub(crate) fn offer_artifact_mut(&mut self) -> Option<&mut Option<String>> {
+        match self {
+            Self::Offer { offer } => Some(&mut offer.card.artifact_ref),
+            _ => None,
+        }
+    }
+
     /// The room the row belongs to, and the thread root a fact, join or
     /// card names; `None` when the row names an id that does not parse.
     pub(crate) fn place(&self) -> Option<(EntityId, Option<EntityId>)> {

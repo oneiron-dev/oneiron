@@ -17,13 +17,14 @@ use super::body::{HookBudgetOverrun, HookPreparation, HookSettledCallRef};
 use super::grant::HookGrant;
 use super::lineage::LineageLink;
 use super::source::{
-    self, ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SettlementPosition,
+    self, ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SchedulePosition,
+    SettlementPosition, SurfaceInboundPosition,
 };
 
 pub(crate) use erase::scrub_hook_source_in_txn;
 pub(super) use erase::{
-    dependencies_erased_in_txn, erased_dependency_ids_in_txn, scrub_intent_payload,
-    scrub_memo_payload, scrub_receipt_payload, scrub_verb_payload,
+    dependencies_erased_in_txn, erased_dependency_ids_in_txn, scrub_erased_actor_in_txn,
+    scrub_intent_payload, scrub_memo_payload, scrub_receipt_payload, scrub_verb_payload,
 };
 
 /// A run's identity: BLAKE3 over its derivation envelope and its position.
@@ -121,6 +122,8 @@ pub(super) struct CursorRow {
 enum CursorPosition {
     ClaimChangelog([u8; 16]),
     Settlement(u64),
+    Schedule(u64),
+    SurfaceInbound(u64),
 }
 
 impl CursorRow {
@@ -131,6 +134,10 @@ impl CursorRow {
                     CursorPosition::ClaimChangelog(position.0)
                 }
                 FactPosition::Settlement(position) => CursorPosition::Settlement(position.0),
+                FactPosition::Schedule(position) => CursorPosition::Schedule(position.0),
+                FactPosition::SurfaceInbound(position) => {
+                    CursorPosition::SurfaceInbound(position.0)
+                }
             }),
             paused: false,
             updated_at: at,
@@ -153,6 +160,12 @@ impl CursorRow {
             CursorPosition::Settlement(sequence) => {
                 FactPosition::Settlement(SettlementPosition(sequence))
             }
+            CursorPosition::Schedule(sequence) => {
+                FactPosition::Schedule(SchedulePosition(sequence))
+            }
+            CursorPosition::SurfaceInbound(sequence) => {
+                FactPosition::SurfaceInbound(SurfaceInboundPosition(sequence))
+            }
         })
     }
 }
@@ -163,7 +176,35 @@ pub(super) fn cursor(
     source: FactSource,
 ) -> Result<Option<CursorRow>> {
     let rtxn = vault.store.env.read_txn()?;
-    CURSORS.get(&vault.store, &rtxn, &(binding, [source.tag()]))
+    cursor_in_txn(vault, &rtxn, binding, source)
+}
+
+/// [`cursor`] in the caller's snapshot.
+pub(super) fn cursor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding: EntityId,
+    source: FactSource,
+) -> Result<Option<CursorRow>> {
+    CURSORS.get(&vault.store, txn, &(binding, [source.tag()]))
+}
+
+/// The bindings whose cursor in `source` stands unpaused, read in `txn`, in
+/// binding order. A binding with no cursor there, or a paused one, takes a
+/// start when it next runs or is enabled ([`source::enable_start_in_txn`]).
+pub(super) fn unpaused_cursor_bindings_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: FactSource,
+) -> Result<Vec<EntityId>> {
+    let mut bindings = Vec::new();
+    for row in CURSORS.iter_from(&vault.store, txn, &[])? {
+        let ((binding, tag), cursor) = row?;
+        if tag == [source.tag()] && !cursor.paused {
+            bindings.push(binding);
+        }
+    }
+    Ok(bindings)
 }
 
 pub(super) fn put_cursor_in_txn(
@@ -179,7 +220,9 @@ pub(super) fn put_cursor_in_txn(
 /// Commits a fact binding's cursor with its real enable, disable or
 /// replacement write. A selector-only update of an already-enabled binding
 /// keeps its cursor; a disabled-to-enabled transition starts at the enable
-/// write, including the settlement head (FIX 10078).
+/// write, including the settlement head (FIX 10078). A binding with no
+/// `previous` row is fresh, so a watcher's starts before the earliest tick of
+/// a TASK still open (FIX 4749).
 pub(crate) fn sync_binding_cursor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -214,7 +257,7 @@ pub(crate) fn sync_binding_cursor_in_txn(
         return Ok(());
     }
     for source in FactSource::ALL {
-        let start = source::enable_start_in_txn(vault, txn, &binding, source)?;
+        let start = source::enable_start_in_txn(vault, txn, &binding, source, previous.is_none())?;
         put_cursor_in_txn(vault, txn, binding, source, &CursorRow::new(start, at))?;
     }
     Ok(())
@@ -328,6 +371,54 @@ impl HookRunDerivation {
         verdict_evidence: &[EntityId],
         runtime_identity: Option<String>,
     ) -> Result<Self> {
+        Self::new_in_snapshot(
+            vault,
+            None,
+            binding_id,
+            binding,
+            grant,
+            entry,
+            reads,
+            verdict_evidence,
+            runtime_identity,
+        )
+    }
+
+    pub(in crate::runtime_hooks) fn new_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        binding_id: EntityId,
+        binding: &PackHookBinding,
+        grant: &HookGrant,
+        entry: &FactEntry,
+        reads: &[HookReadPin],
+        verdict_evidence: &[EntityId],
+        runtime_identity: Option<String>,
+    ) -> Result<Self> {
+        Self::new_in_snapshot(
+            vault,
+            Some(txn),
+            binding_id,
+            binding,
+            grant,
+            entry,
+            reads,
+            verdict_evidence,
+            runtime_identity,
+        )
+    }
+
+    fn new_in_snapshot(
+        vault: &Vault,
+        txn: Option<&heed::RoTxn<'_>>,
+        binding_id: EntityId,
+        binding: &PackHookBinding,
+        grant: &HookGrant,
+        entry: &FactEntry,
+        reads: &[HookReadPin],
+        verdict_evidence: &[EntityId],
+        runtime_identity: Option<String>,
+    ) -> Result<Self> {
         let selector = serde_json::to_vec(&binding.selector)
             .map_err(|_| Error::InvariantViolation("hook selector encode"))?;
         let mut params = blake3::Hasher::new();
@@ -346,30 +437,31 @@ impl HookRunDerivation {
             })
         }));
         for id in verdict_evidence {
-            let (revision, body_hash) = {
-                let txn = vault.store.env.read_txn()?;
-                let raw = crate::vault::entity_revision::read_entity_revision_in_txn(
-                    vault,
-                    &txn,
-                    id,
-                    crate::vault::ReadMode::Live,
-                )?;
-                let body_hash = raw
-                    .as_deref()
-                    .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
-                    .map(|body| *blake3::hash(body).as_bytes());
-                let revision = match body_hash.as_ref() {
-                    Some(hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
-                        vault, &txn, id, hash,
-                    )?,
-                    None => None,
-                };
-                (revision, body_hash)
+            let (revision, body_hash) = match txn {
+                Some(txn) => Self::evidence_revision_in_txn(vault, txn, id)?,
+                None => {
+                    let txn = vault.store.env.read_txn()?;
+                    Self::evidence_revision_in_txn(vault, &txn, id)?
+                }
             };
             dependencies.push(HookDependency {
                 id: *id,
                 revision,
                 body_hash,
+            });
+        }
+        // An inbound event's input names its actor too, so that actor's
+        // erase scrubs the run as its identity's does; a pinned dependency
+        // on the same id already does.
+        if let Some(surface) = &entry.surface
+            && !dependencies
+                .iter()
+                .any(|dependency| dependency.id == surface.actor)
+        {
+            dependencies.push(HookDependency {
+                id: surface.actor,
+                revision: None,
+                body_hash: None,
             });
         }
         dependencies.sort();
@@ -386,6 +478,29 @@ impl HookRunDerivation {
             runtime_identity,
             dependencies,
         })
+    }
+    fn evidence_revision_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<(Option<RevisionRef>, Option<[u8; 32]>)> {
+        let raw = crate::vault::entity_revision::read_entity_revision_in_txn(
+            vault,
+            txn,
+            id,
+            crate::vault::ReadMode::Live,
+        )?;
+        let body_hash = raw
+            .as_deref()
+            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
+            .map(|body| *blake3::hash(body).as_bytes());
+        let revision = match body_hash.as_ref() {
+            Some(hash) => {
+                crate::vault::entity_revision::revision_for_body_hash_in_txn(vault, txn, id, hash)?
+            }
+            None => None,
+        };
+        Ok((revision, body_hash))
     }
 }
 
@@ -515,7 +630,7 @@ pub(super) enum HookRunRef {
 }
 
 impl HookRunRef {
-    const fn key(self) -> RunKey {
+    pub(super) const fn key(self) -> RunKey {
         match self {
             Self::Fact(key) | Self::Verb(key) => key,
         }
@@ -572,7 +687,16 @@ pub(super) struct HookIntent {
 
 pub(super) fn memo(vault: &Vault, key: &RunKey) -> Result<Option<HookRunRecord>> {
     let rtxn = vault.store.env.read_txn()?;
-    MEMOS.get(&vault.store, &rtxn, key)
+    memo_in_txn(vault, &rtxn, key)
+}
+
+/// [`memo`] in the caller's snapshot.
+pub(super) fn memo_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &RunKey,
+) -> Result<Option<HookRunRecord>> {
+    MEMOS.get(&vault.store, txn, key)
 }
 
 /// The id of the receipt a run writes.
@@ -620,6 +744,36 @@ fn hook_run_read_rows_in(
             .chain(evidence)
             .collect(),
     ))
+}
+
+/// The source rows of a room Hook receipt's run (FIX 5429): the rows its
+/// verb run read and the rows its input showed, sorted. `None` when that
+/// receipt's provenance is unknown, so a room tail withholds it: the run is
+/// not a saved verb run, its input also showed content no host names rows
+/// for, or it ran on a write, whose args and answer are its caller's own
+/// content and name no row another reader could be checked against.
+pub(super) fn hook_verb_run_source_rows_in(
+    dbs: &impl SideTableDbs,
+    rtxn: &heed::RoTxn<'_>,
+    key: &RunKey,
+) -> Result<Option<Vec<EntityId>>> {
+    let Some(run) = super::verb::VERB_RUNS.get(dbs, rtxn, key)? else {
+        return Ok(None);
+    };
+    if run.unattributed
+        || crate::task_verb::verb_hook_boundary::row_domain(&run.verb) == super::VerbDomain::Write
+    {
+        return Ok(None);
+    }
+    let mut rows: Vec<EntityId> = run
+        .reads
+        .into_iter()
+        .flat_map(|pin| pin.rows.into_iter().map(|row| row.id))
+        .chain(run.dependencies)
+        .collect();
+    rows.sort_unstable();
+    rows.dedup();
+    Ok(Some(rows))
 }
 
 /// The Hook receipt projector: runs, newest first within the query's bound,

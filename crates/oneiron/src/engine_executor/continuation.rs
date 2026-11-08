@@ -16,24 +16,35 @@
 //! just before the turn instruction.
 //!
 //! The child runs the source's task, model, locality, seat effort, tier,
-//! clock and limits. Its config marker binds the source's teaching
-//! fingerprint and this continuation's digest, so a teaching that drifted
-//! since, or another continuation, refuses through the marker check. A cut
+//! clock and limits. It inherits the source's epochs and fold ledger as the
+//! start captured them, kept inside the copied prefix, so it neither renders
+//! that prefix whole nor compacts it again (FIX 4198). After a failed step,
+//! that capture is the earlier start's, so the fold verbs the failed step
+//! called are not inherited, and its copied calls keep their answers. The
+//! child's ledger then gives out handles past the highest one those answers
+//! name, so its next mark never reuses one (FIX 18695). Its first seed keeps
+//! the frozen config as child-owned content, so reopening does not need the
+//! parent's start body again. The child's own content and all current
+//! lease, source and cut checks still
+//! apply. Its config marker binds the source's teaching fingerprint and this
+//! continuation's digest, so a teaching that drifted since, or another
+//! continuation, refuses through the marker check. A cut
 //! that a call with an effect follows refuses
 //! ([`ContinuationRefusal::EffectTail`]); [`pre_fail_checkpoint`] never
-//! names one.
+//! names one. A cut also refuses so when a write receipt past it may have
+//! run (FIX 4199): a crash can leave the receipt with no call in the row.
 
-use super::record::{record_config_marker, validate_executor_config_marker};
-use super::store::{CONFIG_OUTPUT_PATH, terminal_output_seq};
-use super::types::{
-    EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorResult,
-};
+mod seed;
+
+use super::store::terminal_output_seq;
+use super::types::{EngineExecutorConfig, EngineExecutorError, EngineExecutorResult};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunReplayRecord, ExecutorStorage, SelfEffect, StepReplayCapsule,
-    StepStartBody, StoredRunContinuation, capsule_start_body, decode_code_run_replay_record,
-    encode_code_run_replay_record, put_run_continuation_row_in_txn, recorded_verb_call,
-    run_continuation_in_txn, seed_continuation_run, step_replay_capsules_in_txn,
+    StepStartBody, StoredRunContinuation, agent_attempt_run_ref, capsule_start_body,
+    decode_code_run_replay_record, encode_code_run_replay_record, put_run_continuation_row_in_txn,
+    recorded_verb_call, run_continuation_in_txn, step_replay_capsules_in_txn,
+    write_receipt_may_have_run,
 };
 use crate::task_verb::sdk::AgentVerb;
 use crate::{ContentPart, EntityId, Error, LlmMessage, LlmMessageRole, Vault};
@@ -42,9 +53,6 @@ use crate::{ContentPart, EntityId, Error, LlmMessage, LlmMessageRole, Vault};
 /// message, before the approved bytes as a part of their own.
 const CONTINUATION_NOTE_FRAME: &str =
     "An owner-approved note for this repaired run, which continues from where it failed:";
-
-/// The domain of a continuation checkpoint's id.
-const CHECKPOINT_REF_DOMAIN: &[u8] = b"oneiron:executor-continuation-checkpoint:v1";
 
 /// The domain of a continuation's digest, which its child run's config
 /// marker binds.
@@ -64,20 +72,17 @@ pub struct ExecutorCheckpointRef {
 }
 
 impl ExecutorCheckpointRef {
-    /// The checkpoint's own id, never the run's or the attempt's: BLAKE3
-    /// over a domain tag, the run and the step, cut to an id.
+    /// The checkpoint's own id, never the run's or the attempt's: the run and
+    /// the step under the one derived-id rule (FIX 9838).
     ///
     /// # Errors
     ///
-    /// A digest that falls in the reserved id range.
+    /// A derived id that falls in the reserved id range.
     pub fn id(&self) -> crate::Result<EntityId> {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(CHECKPOINT_REF_DOMAIN);
-        hasher.update(self.source_run.as_bytes());
-        hasher.update(&self.step.to_le_bytes());
-        let mut bytes = [0_u8; 16];
-        bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-        EntityId::from_bytes(bytes)
+        EntityId::derive(
+            crate::entity_id::derived_domains::EXECUTOR_CONTINUATION_CHECKPOINT,
+            &[self.source_run.as_bytes(), &self.step.to_le_bytes()],
+        )
     }
 }
 
@@ -109,7 +114,8 @@ pub enum ContinuationRefusal {
     /// proves the run's row.
     #[error("continuation_no_checkpoint")]
     NoCheckpoint,
-    /// The failing step committed effects after the cut.
+    /// The failing step committed effects after the cut, or a write receipt
+    /// past the cut may have run with no call in the row (FIX 4199).
     #[error("continuation_effect_tail")]
     EffectTail,
     /// The predecessor is not a Failed attempt, the checkpoint names another
@@ -173,6 +179,8 @@ struct ProvedStart {
     digest: [u8; 32],
     /// The lease generation of the capsule that holds it.
     lease_generation: u32,
+    actor: EntityId,
+    cut: seed::SourceCut,
 }
 
 /// Validates `continuation`, then writes it as `successor`'s, in `txn`, the
@@ -230,8 +238,10 @@ pub fn run_continuation(
 ///
 /// # Errors
 ///
-/// The refusals [`put_run_continuation_in_txn`] makes, checked again;
-/// [`ContinuationRefusal::SourceMissing`] when the successor carries no
+/// The source, cut and lease refusals [`put_run_continuation_in_txn`] makes,
+/// checked again. A fresh seed needs the source start body; a seeded child
+/// reads its own frozen content instead. [`ContinuationRefusal::SourceMissing`]
+/// when the successor carries no
 /// continuation; [`ContinuationRefusal::Occupied`] when its run is another
 /// one's; and a storage error for a successor that is not leased as the
 /// continued run.
@@ -240,128 +250,39 @@ pub fn fork_executor_run(
     leased_successor: &AttemptRecord,
     child_template: &EngineExecutorConfig,
 ) -> Result<PreparedExecutorContinuation, ContinuationRefusal> {
-    let successor = attempt_key(leased_successor.id)?;
-    let (row, proved) = {
+    let _custody = vault.store.gate_custody_read_guard()?;
+    let _bodies = vault.pin_all_result_bodies();
+    {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        let Some(row) = run_continuation_in_txn(vault, &txn, successor)? else {
-            return Err(ContinuationRefusal::SourceMissing);
-        };
-        if !matches!(leased_successor.state, AttemptState::Leased)
-            || leased_successor.retry_of != Some(row.predecessor)
-            || child_template.run_id != successor
+        let row = continuation_row_in_txn(vault, &txn, leased_successor, child_template)?;
+        if let Some(child) =
+            vault.get_code_run_replay_record_in_txn(&txn, &child_template.run_id)?
         {
-            return Err(Error::InvalidConfig(
-                "continuation fork: the successor is not leased as the continued run".to_owned(),
-            )
-            .into());
-        }
-        let proved = prove_in_txn(vault, &txn, &continuation_of(row.clone()))?;
-        if proved.digest != row.start_digest {
-            return Err(ContinuationRefusal::NoCheckpoint);
-        }
-        (row, proved)
-    };
-    let ProvedStart { body, prefix, .. } = proved;
-    let config = EngineExecutorConfig {
-        run_id: successor,
-        task: body.task,
-        prompt_package_root: child_template.prompt_package_root.clone(),
-        model: body.model,
-        model_locality: body.model_locality,
-        seat_effort: body.seat_effort,
-        global_tier: body.global_tier,
-        determinism: prefix.determinism,
-        limits: EngineExecutorLimits {
-            soft_steps: body.soft_steps,
-        },
-    };
-    let seed = ChildSeed {
-        config: &config,
-        prompt_fingerprint: &body.prompt_fingerprint,
-        digest: continuation_digest(&row),
-        source: row.source_run,
-    };
-    seed.seed_or_reopen(vault, prefix)?;
-    Ok(PreparedExecutorContinuation {
-        config,
-        resume_step: row.step,
-    })
-}
-
-/// The run a fork seeds: its config, the teaching it runs under, its
-/// continuation's digest and the run it forks from.
-struct ChildSeed<'a> {
-    config: &'a EngineExecutorConfig,
-    prompt_fingerprint: &'a str,
-    digest: [u8; 32],
-    source: EntityId,
-}
-
-impl ChildSeed<'_> {
-    /// Seeds the child's replay row from `prefix`, or re-opens the fork a
-    /// seed before this one made. The child holds the prefix's checkpoints,
-    /// bridge calls, bindings and outputs, each output as an occurrence of
-    /// its own, and a config marker of its own for the source's. A seed that
-    /// loses to a concurrent one re-opens that one.
-    fn seed_or_reopen(
-        &self,
-        vault: &Vault,
-        prefix: CodeRunReplayRecord,
-    ) -> Result<(), ContinuationRefusal> {
-        let storage = ExecutorStorage::Canonical(vault);
-        if let Some(child) = vault.get_code_run_replay_record(&self.config.run_id)? {
-            return self.reopen(&storage, &child);
-        }
-        let mut child = prefix;
-        child.run_id = self.config.run_id;
-        child.live_run = None;
-        child
-            .outputs
-            .retain(|output| output.path != CONFIG_OUTPUT_PATH);
-        let inherited = child.outputs.clone();
-        record_config_marker(
-            &storage,
-            &mut child,
-            self.config,
-            self.prompt_fingerprint,
-            Some(&self.digest),
-        )?;
-        match seed_continuation_run(vault, &child, self.source, &inherited) {
-            Ok(_) => Ok(()),
-            Err(Error::ConcurrentWrite(_)) => {
-                let seeded = vault
-                    .get_code_run_replay_record(&self.config.run_id)?
-                    .ok_or(Error::ConcurrentWrite("code-run continuation seed"))?;
-                self.reopen(&storage, &seeded)
-            }
-            Err(error) => Err(error.into()),
+            return seed::reopen(vault, &txn, &row, &child, child_template);
         }
     }
+    seed::create(vault, leased_successor, child_template)
+}
 
-    /// Re-opens a fork already seeded: the child's row must hold this
-    /// continuation's clock and config marker, else it is another run's.
-    fn reopen(
-        &self,
-        storage: &ExecutorStorage<'_>,
-        child: &CodeRunReplayRecord,
-    ) -> Result<(), ContinuationRefusal> {
-        if child.determinism != self.config.determinism {
-            return Err(ContinuationRefusal::Occupied);
-        }
-        match validate_executor_config_marker(
-            storage,
-            child,
-            self.config,
-            self.prompt_fingerprint,
-            Some(&self.digest),
-        ) {
-            Ok(_) => Ok(()),
-            Err(EngineExecutorError::Engine(Error::InvalidConfig(_))) => {
-                Err(ContinuationRefusal::Occupied)
-            }
-            Err(error) => Err(error.into()),
-        }
+fn continuation_row_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    leased_successor: &AttemptRecord,
+    child_template: &EngineExecutorConfig,
+) -> Result<StoredRunContinuation, ContinuationRefusal> {
+    let successor = attempt_key(leased_successor.id)?;
+    let row = run_continuation_in_txn(vault, txn, successor)?
+        .ok_or(ContinuationRefusal::SourceMissing)?;
+    if !matches!(leased_successor.state, AttemptState::Leased)
+        || leased_successor.retry_of != Some(row.predecessor)
+        || child_template.run_id != successor
+    {
+        return Err(Error::InvalidConfig(
+            "continuation fork: the successor is not leased as the continued run".to_owned(),
+        )
+        .into());
     }
+    Ok(row)
 }
 
 /// The approved note `run` carries, when it is a canonical run forked from a
@@ -406,9 +327,10 @@ pub(super) fn turn_note(
 /// The checkpoint a failed run continues from: the step of its latest
 /// captured start (by lease generation, then step), else its completed-step
 /// count, 0 with no replay row. When a call the row holds after that start
-/// may have committed an effect, and the failed step was checkpointed, it is
-/// the row's checkpoint count instead (FIX 3694 PR 2): the cut after the
-/// failed step, whose calls are then never made again.
+/// may have committed an effect, or a write receipt past it may have run
+/// (FIX 4199), and the failed step was checkpointed, it is the row's
+/// checkpoint count instead (FIX 3694 PR 2): the cut after the failed step,
+/// whose calls are then never made again.
 ///
 /// # Errors
 ///
@@ -461,17 +383,15 @@ fn pre_fail_checkpoint_of(
     let completed = source
         .as_ref()
         .map_or(0, |record| record.step_checkpoints.len() as u64);
-    let step = match latest {
-        Some(capsule)
-            if completed > capsule.step
-                && source
-                    .as_ref()
-                    .is_some_and(|record| effect_after(record, capsule)) =>
-        {
-            completed
+    let effect = match (latest, &source) {
+        (Some(capsule), Some(record)) if completed > capsule.step => {
+            effect_after(vault, rtxn, record, capsule)?
         }
-        Some(capsule) => capsule.step,
-        None => completed,
+        _ => false,
+    };
+    let step = match latest {
+        Some(capsule) if !effect => capsule.step,
+        _ => completed,
     };
     Ok(ExecutorCheckpointRef {
         source_run: run,
@@ -484,7 +404,8 @@ fn pre_fail_checkpoint_of(
 /// run's capsule for the step (its latest lease generation that holds a
 /// start) holds a start whose body is still there, clean and its digest,
 /// and whose prefix row the run's row still descends from; and no call
-/// after the cut may have committed an effect. A step with no start that is
+/// after the cut may have committed an effect, nor any write receipt past
+/// the cut may have run (FIX 4199). A step with no start that is
 /// the row's checkpoint count is a cut after the failed step, proved from
 /// the row the failure left ([`prove_final_row`]).
 fn prove_in_txn(
@@ -494,15 +415,7 @@ fn prove_in_txn(
 ) -> Result<ProvedStart, ContinuationRefusal> {
     let source_run = continuation.checkpoint.source_run;
     let step = continuation.checkpoint.step;
-    let failed = AttemptQueue::new(vault)
-        .get_in_txn(rtxn, continuation.predecessor)?
-        .is_some_and(|attempt| matches!(attempt.state, AttemptState::Failed));
-    if !failed || source_run.as_bytes() != continuation.predecessor.as_bytes() {
-        return Err(ContinuationRefusal::SourceMissing);
-    }
-    let Some(source) = vault.get_code_run_replay_record_in_txn(rtxn, &source_run)? else {
-        return Err(ContinuationRefusal::SourceMissing);
-    };
+    let source = source_in_txn(vault, rtxn, continuation)?;
     let capsules = step_replay_capsules_in_txn(vault, rtxn, source_run)?;
     let capsule = capsules
         .iter()
@@ -522,17 +435,38 @@ fn prove_in_txn(
         .iter()
         .skip(bridge_start)
         .any(continuation_tail_effect)
+        || write_receipt_after(vault, rtxn, &source, bridge_start)?
     {
         return Err(ContinuationRefusal::EffectTail);
     }
     Ok(proved)
 }
 
+fn source_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    continuation: &RunContinuation,
+) -> Result<CodeRunReplayRecord, ContinuationRefusal> {
+    let source_run = continuation.checkpoint.source_run;
+    let failed = AttemptQueue::new(vault)
+        .get_in_txn(rtxn, continuation.predecessor)?
+        .is_some_and(|attempt| matches!(attempt.state, AttemptState::Failed));
+    if !failed || source_run.as_bytes() != continuation.predecessor.as_bytes() {
+        return Err(ContinuationRefusal::SourceMissing);
+    }
+    vault
+        .get_code_run_replay_record_in_txn(rtxn, &source_run)?
+        .filter(|source| source.run_id == source_run)
+        .ok_or(ContinuationRefusal::SourceMissing)
+}
+
 /// Proves a cut after the failed run's last step, from the row its failure
 /// left (FIX 3694 PR 2): `step` is that row's checkpoint count, the config
 /// is the latest start the run captured before it, the row still descends
 /// from that start, and no step from that start on ended on a terminal
-/// marker. No call follows the cut, so none can have an effect after it.
+/// marker. No call follows the cut, so none can have an effect after it. A
+/// write receipt at the row's end may still have run with no call in the
+/// row; it refuses (FIX 4199).
 fn prove_final_row(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -558,6 +492,9 @@ fn prove_final_row(
     if terminal || !descends(source, &start.prefix, capsule.step, bridge_start) {
         return Err(ContinuationRefusal::NoCheckpoint);
     }
+    if write_receipt_after(vault, rtxn, source, source.bridge_calls.len())? {
+        return Err(ContinuationRefusal::EffectTail);
+    }
     let mut prefix = source.clone();
     prefix.live_run = None;
     let mut hasher = blake3::Hasher::new();
@@ -569,23 +506,71 @@ fn prove_final_row(
         prefix,
         digest: *hasher.finalize().as_bytes(),
         lease_generation: start.lease_generation,
+        actor: start.actor,
+        cut: start.cut,
     })
 }
 
 /// Whether a call `record` holds after the start `capsule` captured may have
-/// committed an effect.
-fn effect_after(record: &CodeRunReplayRecord, capsule: &StepReplayCapsule) -> bool {
-    capsule
+/// committed an effect, or a write receipt past that start may have run
+/// (FIX 4199).
+fn effect_after(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    record: &CodeRunReplayRecord,
+    capsule: &StepReplayCapsule,
+) -> crate::Result<bool> {
+    let Some(start) = capsule
         .start
         .as_ref()
         .and_then(|start| usize::try_from(start.bridge_start).ok())
-        .is_some_and(|start| {
-            record
-                .bridge_calls
-                .iter()
-                .skip(start)
-                .any(continuation_tail_effect)
-        })
+    else {
+        return Ok(false);
+    };
+    if record
+        .bridge_calls
+        .iter()
+        .skip(start)
+        .any(continuation_tail_effect)
+    {
+        return Ok(true);
+    }
+    write_receipt_after(vault, rtxn, record, start)
+}
+
+/// Whether a write receipt of `source`'s run, kept by a step that started at
+/// bridge position `cut` or later, may have run (FIX 4199). A step keeps a
+/// write's answer on its receipt before the row keeps the write's call, so a
+/// crash between the two leaves a write the row does not show.
+///
+/// Every such step started at a position from `cut` to the row's end, and
+/// each is read under the run reference its source attempt ran under. No
+/// write call follows the cut when this is asked: the row's own check
+/// refuses one first. So each such step's first write has ordinal 0. A
+/// source attempt that does not read gives no run reference, and its
+/// receipts may have run.
+///
+/// Only a receipt's explicit never-ran mark excludes it. This never infers
+/// that a write did not commit, and never reruns one from an absent
+/// outcome. The positive commit marker is the work of FIX 12507 and FIX
+/// 11887.
+fn write_receipt_after(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    source: &CodeRunReplayRecord,
+    cut: usize,
+) -> crate::Result<bool> {
+    let attempt = AttemptId::from_bytes(source.run_id.as_bytes())?;
+    let Ok(Some(attempt_record)) = AttemptQueue::new(vault).get_in_txn(rtxn, attempt) else {
+        return Ok(true);
+    };
+    let run_ref = agent_attempt_run_ref(attempt, attempt_record.run_id);
+    for step_start in cut..=source.bridge_calls.len() {
+        if write_receipt_may_have_run(vault, rtxn, &run_ref, source.run_id, step_start as u64, 0)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The start `capsule` holds, decoded, with the bridge log's length at it;
@@ -597,6 +582,9 @@ fn decode_start(
     capsule: &StepReplayCapsule,
 ) -> crate::Result<Option<(ProvedStart, usize)>> {
     let Some(start) = &capsule.start else {
+        return Ok(None);
+    };
+    let Some(actor) = capsule.content.actor() else {
         return Ok(None);
     };
     let Some(bytes) = capsule_start_body(vault, rtxn, capsule)? else {
@@ -617,6 +605,12 @@ fn decode_start(
             prefix,
             digest: start.digest,
             lease_generation: capsule.lease_generation,
+            actor,
+            cut: seed::SourceCut {
+                step: capsule.step,
+                bridge_start: start.bridge_start,
+                start_digest: start.digest,
+            },
         },
         bridge_start,
     )))
@@ -645,8 +639,10 @@ fn descends(
 /// have none: a context descriptor, a hidden thought, a memory search, an
 /// inference-defaults read, the leader's advice, a wait, a fold of the
 /// run's own log, and a verb call whose verb does not write. Any other call
-/// may, a verb this engine does not know as a read included.
-fn continuation_tail_effect(call: &CodeRunBridgeCall) -> bool {
+/// may, a verb this engine does not know as a read included. A callable's
+/// counterfactual judges the calls its removed load made the same way (FIX
+/// 3608).
+pub(crate) fn continuation_tail_effect(call: &CodeRunBridgeCall) -> bool {
     match call.effect {
         SelfEffect::Context
         | SelfEffect::Think

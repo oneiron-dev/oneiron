@@ -2,16 +2,20 @@
 //! executor's exhaust folded into one canonical artifact, its result
 //! reference attached and its row settled, in one write transaction.
 
+use crate::Vault;
 use crate::attempt_queue::{
-    AbandonAttempt, AbandonOutcome, AttemptId, AttemptQueue, CompleteAttempt, CompleteOutcome,
-    FailAttempt, FailOutcome, FinishAttemptLanding, FinishLandingOutcome, SetAttemptResult,
+    AbandonAttempt, AbandonOutcome, AttemptId, AttemptQueue, AttemptRecord, AttemptState,
+    CompleteAttempt, CompleteOutcome, FailAttempt, FailOutcome, FinishAttemptLanding,
+    FinishLandingOutcome, SetAttemptResult,
 };
 use crate::blob_artifact::{
     BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body,
     read_blob_artifact_head_in_txn,
 };
 use crate::dispatch_byoa::ERASED_TASK_FAILURE_REASON;
-use crate::dispatch_byoa::connector::{BYOA_CONNECTOR_SCHEMA_VERSION, BYOA_EXHAUST_MEDIA_TYPE};
+use crate::dispatch_byoa::connector::{
+    BYOA_CONNECTOR_SCHEMA_VERSION, BYOA_EXHAUST_MEDIA_TYPE, DevRunnerRefs,
+};
 use crate::dispatch_byoa::error::{
     ByoaError, ByoaResult, ERR_ARTIFACT_COLLISION, ERR_ATTEMPT_MISSING, ERR_CAPTURE_CONFLICT,
     invalid,
@@ -27,9 +31,53 @@ use crate::dispatch_byoa::repo_binding::mark_stale_capture_in_txn;
 use crate::dispatch_byoa::validate::validate_exhaust;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{ArtifactError, Error};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::temporal::TimeRange;
 
 use super::{ByoEndpointBackendFactory, ByoaDispatcher};
+
+pub(in crate::dispatch_byoa) enum TerminalCapture {
+    Captured(ByoaTerminalReceipt),
+    Erased(AttemptRecord),
+}
+
+/// Checks the same permanent roots as the BYOA payload erase fence.
+pub(super) fn task_inputs_erased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: Option<&str>,
+    dev_refs: Option<&DevRunnerRefs>,
+) -> ByoaResult<bool> {
+    let task = task_ref.and_then(|task| EntityId::from_hex(task).ok());
+    let refs = dev_refs.into_iter().flat_map(|refs| {
+        std::iter::once(&refs.actor)
+            .chain(refs.diagnostics.iter())
+            .chain(refs.evidence.iter())
+            .filter_map(|id| EntityId::from_bytes(*id).ok())
+    });
+    for id in task.into_iter().chain(refs) {
+        if vault
+            .store
+            .port_deletion_marked(txn, DeletionMarker::HardDelete, &id)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Called only after the terminal writer commits, never from inside it.
+pub(super) fn erased_capture_error(vault: &Vault, attempt: &AttemptRecord) -> ByoaError {
+    vault.store.notify_attempt_observers();
+    vault.store.notify_task_updates(
+        attempt
+            .task_ref
+            .as_deref()
+            .and_then(|task| EntityId::from_hex(task).ok()),
+    );
+    vault.store.notify_notification_updates();
+    ByoaError::TaskErased
+}
 
 impl<B, E> ByoaDispatcher<'_, B, E>
 where
@@ -49,21 +97,27 @@ where
     /// # Errors
     ///
     /// Refuses invalid BYOA rows, stale leases, conflicting results, artifact
-    /// collisions, and invalid exhaust without durable writes. No exhaust is
-    /// refused for its size.
+    /// collisions, and invalid exhaust without durable writes. Erased task
+    /// inputs instead commit the current lease's byte-free terminal settlement,
+    /// then return [`ByoaError::TaskErased`]. No exhaust is refused for its size.
     pub fn capture_terminal_exhaust(
         &mut self,
         request: CaptureByoaExhaust,
     ) -> ByoaResult<ByoaTerminalReceipt> {
-        self.vault
-            .try_with_write_txn_grouped(|wtxn| self.capture_terminal_exhaust_in_txn(wtxn, request))
+        let outcome = self.vault.try_with_write_txn_grouped(|wtxn| {
+            self.capture_terminal_exhaust_in_txn(wtxn, request)
+        })?;
+        match outcome {
+            TerminalCapture::Captured(receipt) => Ok(receipt),
+            TerminalCapture::Erased(attempt) => Err(erased_capture_error(self.vault, &attempt)),
+        }
     }
 
     pub(in crate::dispatch_byoa) fn capture_terminal_exhaust_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         request: CaptureByoaExhaust,
-    ) -> ByoaResult<ByoaTerminalReceipt> {
+    ) -> ByoaResult<TerminalCapture> {
         validate_exhaust(&request.exhaust)?;
         let mut reason = normalize_capture_reason(request.disposition, request.reason)?;
         if request.lease_owner.is_empty() || request.lease_owner.len() > 128 {
@@ -156,13 +210,22 @@ where
                 &provenance,
                 &envelope,
             )?;
-            return Ok(ByoaTerminalReceipt {
+            return Ok(TerminalCapture::Captured(ByoaTerminalReceipt {
                 attempt: record,
                 artifact_id,
                 artifact_version: version,
                 result_ref,
                 skipped_seats: Vec::new(),
-            });
+            }));
+        }
+        let payload = crate::dispatch_byoa::exhaust::decode_byoa_record(&record)?;
+        if task_inputs_erased_in_txn(
+            self.vault,
+            wtxn,
+            record.task_ref.as_deref(),
+            payload.dev_refs.as_ref(),
+        )? {
+            return self.settle_erased_capture_in_txn(wtxn, &record, &envelope, request.now);
         }
         self.land_terminal_capture_in_txn(
             wtxn,
@@ -178,6 +241,67 @@ where
                 now: request.now,
             },
         )
+        .map(TerminalCapture::Captured)
+    }
+
+    /// Uses only the current executor lease's existing fail/landing rights.
+    fn settle_erased_capture_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &AttemptRecord,
+        envelope: &ByoaExhaustEnvelope<ByoaExhaust>,
+        now: u64,
+    ) -> ByoaResult<TerminalCapture> {
+        let attempt = match (record.state, envelope.disposition) {
+            (
+                AttemptState::Leased,
+                ByoaTerminalDisposition::Completed
+                | ByoaTerminalDisposition::Failed
+                | ByoaTerminalDisposition::Abandoned,
+            ) => {
+                match crate::ports::JobQueue::port_job_fail(
+                    self.vault,
+                    wtxn,
+                    FailAttempt {
+                        id: record.id,
+                        lease_owner: envelope.lease_owner.clone(),
+                        attempt_count: envelope.attempt_count,
+                        reason: ERASED_TASK_FAILURE_REASON.to_owned(),
+                        now,
+                    },
+                )? {
+                    FailOutcome::Failed(attempt) | FailOutcome::AlreadyFailed(attempt) => attempt,
+                }
+            }
+            (
+                AttemptState::Landing,
+                ByoaTerminalDisposition::Cancelled | ByoaTerminalDisposition::Abandoned,
+            ) => {
+                match AttemptQueue::new(self.vault).finish_landing_in_txn(
+                    wtxn,
+                    FinishAttemptLanding {
+                        id: record.id,
+                        lease_owner: envelope.lease_owner.clone(),
+                        attempt_count: envelope.attempt_count,
+                        hand_off: false,
+                        scheduled_at: None,
+                        now,
+                    },
+                )? {
+                    FinishLandingOutcome::Landed(attempt) => attempt,
+                    FinishLandingOutcome::HandedOff { .. } => {
+                        return Err(invalid(ERR_CAPTURE_CONFLICT));
+                    }
+                }
+            }
+            _ => return Err(invalid(ERR_CAPTURE_CONFLICT)),
+        };
+        crate::agent_dispatch::AgentDispatcher::new(self.vault).settle_child_in_txn(
+            wtxn,
+            &attempt.id,
+            attempt.settled_at.unwrap_or(attempt.updated_at),
+        )?;
+        Ok(TerminalCapture::Erased(attempt))
     }
 
     /// Lands a first capture in `wtxn`: refuses a colliding artifact, writes
@@ -302,6 +426,13 @@ where
                 }
             },
         };
+        super::capture_fact::record_in_txn(
+            &self.vault.store,
+            wtxn,
+            request.attempt_id,
+            artifact_id,
+            &version,
+        )?;
         Ok(ByoaTerminalReceipt {
             attempt,
             artifact_id,

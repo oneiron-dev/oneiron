@@ -18,7 +18,7 @@ pub struct MetadataEdit {
 
 pub(crate) use crate::ports::{is_metadata_field, is_text_field, validate_metadata};
 
-pub(super) fn encode_value(value: &Value) -> Result<Vec<u8>> {
+pub(crate) fn encode_value(value: &Value) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, value)
         .map_err(|_| invalid("document metadata encoding"))?;
@@ -132,6 +132,9 @@ impl Vault {
             // A shared vault's role and record scope, in the committing writer
             // (FIX 9846).
             self.authorize_shared_content_write_in_txn(txn, *entity, &actor)?;
+            if let Some(refusal) = self.store.use_restricted_in_txn(txn, entity)? {
+                return Err(refusal);
+            }
             let mut head = storage::head(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &head)?;
             let before = doc.doc.oplog_vv();

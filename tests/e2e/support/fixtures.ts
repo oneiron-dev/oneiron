@@ -51,7 +51,7 @@ export interface BuildManifest {
   readonly assets: Readonly<Record<string, BuildAsset>>;
   readonly capabilities: readonly string[];
   readonly environment: Readonly<Record<string, string>>;
-  /** Linux containment launcher; must exec its argv in this file's CPU/memory/network budget. */
+  /** Pinned exec prefix inside the booked fleet job; resource limits belong to the fleet. */
   readonly launcher: readonly string[];
   readonly realModel?: {
     readonly revision: string;
@@ -188,10 +188,20 @@ export async function ownerBaseClaimScope(client: PublicHttpClient, ownerRef: st
   throw new FixturePinError("Fresh vault has no readable owner substrate facet");
 }
 
+const verifiedBuilds = new Map<string, Promise<BuildManifest>>();
 export async function loadBuildManifest(profile: Profile): Promise<BuildManifest> {
   const path = process.env.E2E_BUILD_MANIFEST;
   const digest = process.env.E2E_BUILD_MANIFEST_SHA256;
   if (!path || !isAbsolute(path) || !digest) throw new FixturePinError("Set absolute E2E_BUILD_MANIFEST and its E2E_BUILD_MANIFEST_SHA256 from the build lane");
+  const key = JSON.stringify([path, digest, profile]);
+  let verified = verifiedBuilds.get(key);
+  if (!verified) {
+    verified = verifyBuildManifest(path, digest, profile);
+    verifiedBuilds.set(key, verified);
+  }
+  return verified;
+}
+async function verifyBuildManifest(path: string, digest: string, profile: Profile): Promise<BuildManifest> {
   await verifyFile(path, digest);
   const value = JSON.parse(await readFile(path, "utf8")) as BuildManifest;
   if (value.version !== 1 || value.profile !== profile || !/^[a-f0-9]{40}$/.test(value.head) ||

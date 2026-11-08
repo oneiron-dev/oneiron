@@ -12,7 +12,7 @@ use super::{
 use crate::error::{Error, Result};
 use crate::serialize::{ExportBody, ExportValue};
 
-pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 4;
+pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -102,6 +102,10 @@ pub struct WholeVaultExportReceipt {
     /// because it did not open here, and where its holder's sealed copy
     /// stands once the export's audit recorded it.
     pub(crate) holder_requests: Vec<crate::authority::HolderExportRequest>,
+    /// Owner ruling 1-EXPORT = B: each world the owner's own export carries
+    /// that his recipient choice would keep from where it goes, and why.
+    /// None on this device.
+    pub(crate) notices: Vec<crate::share_travel::WorldRecipientNotice>,
 }
 
 impl WholeVaultExportReceipt {
@@ -116,6 +120,11 @@ impl WholeVaultExportReceipt {
     pub fn manifest(&self) -> &WholeVaultDocumentManifest {
         &self.manifest
     }
+    /// Owner ruling 1-EXPORT = B: each world this export carries that the
+    /// owner's recipient choice would keep from where it goes, and why.
+    pub fn notices(&self) -> &[crate::share_travel::WorldRecipientNotice] {
+        &self.notices
+    }
 }
 
 /// An archive payload in memory and its standalone validating manifest, for a
@@ -128,6 +137,8 @@ pub struct WholeVaultExport {
     pub(crate) manifest: WholeVaultDocumentManifest,
     /// OF-490: the diaries this export read, for the vault's own log.
     pub(crate) diary_reads: Vec<super::ExportDiaryRead>,
+    /// As [`WholeVaultExportReceipt::notices`].
+    pub(crate) notices: Vec<crate::share_travel::WorldRecipientNotice>,
 }
 
 impl WholeVaultExport {
@@ -138,6 +149,10 @@ impl WholeVaultExport {
     pub fn diary_reads(&self) -> &[super::ExportDiaryRead] {
         &self.diary_reads
     }
+    /// As [`WholeVaultExportReceipt::notices`].
+    pub fn notices(&self) -> &[crate::share_travel::WorldRecipientNotice] {
+        &self.notices
+    }
     pub fn manifest(&self) -> &WholeVaultDocumentManifest {
         &self.manifest
     }
@@ -147,7 +162,7 @@ impl WholeVaultExport {
     }
 }
 
-/// Eleven sections. Entities occur once. Derived evidence is an index into
+/// Twelve sections. Entities occur once. Derived evidence is an index into
 /// claim evidence, not a second authoritative body. Structural graph edges live
 /// beside the evidence ledger and carry full value metadata. The embedding
 /// setup is descriptors only (OF-370): no vector travels. Epoch floors carry a
@@ -168,25 +183,47 @@ pub struct WholeVaultDocument {
     /// The three kind slots; `None` when the export carries no setup (a
     /// records archive, OKF).
     pub slot_bindings: Option<PortableSlotBindings>,
-    /// Every session's epoch floor, in session order; empty outside a
+    /// Every lineage's epoch floor, in key order; empty outside a
     /// whole-vault export.
     pub epoch_floors: Vec<ExportEpochFloor>,
     /// FIX 2768: the allowlisted side-table rows that index the records here
     /// (blob versions, LFS objects, codebase snapshots, code revisions and
     /// code-document history); empty outside a whole-vault export.
     pub side_tables: Vec<super::ArchiveSideRow>,
+    /// FIX 1178: the birth envelope of each carried row that has one,
+    /// masked to the rows this document carries; empty in an archive an
+    /// older engine wrote.
+    #[serde(default)]
+    pub row_births: Vec<ExportRowBirth>,
 }
 
-/// Where one session's highest removed epoch summary left the count (OF-013):
-/// its epoch and the turn it ended at, nothing it said. An import raises the
-/// local floor to it and never lowers one.
+/// Where one lineage's highest removed epoch summary left the count
+/// (OF-013): its epoch and the turn it ended at, nothing it said. A lineage
+/// is a session's own log, or one conversation's turns within a session
+/// (FIX 5029). An import raises the local floor to it and never lowers one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportEpochFloor {
     /// The session's id, hex.
     pub session: String,
+    /// The conversation's id, hex, for a conversation's lineage; absent for
+    /// the session's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<String>,
     pub epoch: u64,
     pub turn_end: u64,
+}
+
+/// One carried row's birth envelope (FIX 1178): the row it belongs to and
+/// its birth as the source vault stamped it, masked to the rows the archive
+/// carries ([`crate::provenance::birth::RowBirth::masked`]). An import
+/// stamps it beside the landed row; it grants nothing on its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportRowBirth {
+    /// The born row's id, hex.
+    pub id: String,
+    pub birth: crate::provenance::birth::RowBirth,
 }
 
 /// The code runs' results (OF-190 B++): each run's result manifests, and
@@ -204,10 +241,45 @@ pub struct ExportRunResults {
 #[serde(deny_unknown_fields)]
 pub struct ExportRun {
     pub run_id: String,
+    /// Host-witnessed birth world, or required `null` when unknown. Not a
+    /// residence receipt or a complete served-world capture.
+    #[serde(deserialize_with = "Option::<String>::deserialize")]
+    pub birth_world: Option<String>,
     pub outputs: Vec<ExportRunOutput>,
+    /// The run's live result names. A binding whose occurrence was withheld
+    /// keeps its name and reason but no handle.
+    pub bindings: Vec<ExportRunBinding>,
+    /// Frozen nondeterministic inputs when the replay record supplied them.
+    /// Required on export and import; `null` means unknown, not zero.
+    #[serde(deserialize_with = "Option::<ExportDeterminism>::deserialize")]
+    pub determinism: Option<ExportDeterminism>,
     /// The run's fold receipts (ARCH-0079 #reader-forks), each beside the
     /// manifest of the occurrence it describes.
     pub receipts: Vec<ExportReaderFold>,
+}
+
+/// One archived result name and the occurrence it names: its path and its
+/// output handle. Same bytes under different paths are distinct
+/// occurrences, so the path is required. The handle is absent exactly when
+/// the occurrence's egress judgment withheld it; the name, path and reason
+/// still travel then.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportRunBinding {
+    pub name: String,
+    pub path: String,
+    pub handle: Option<String>,
+    pub withheld: Option<String>,
+}
+
+/// The replay record's frozen nondeterministic inputs. No bridge calls or
+/// checkpoints travel here; full replayability remains FIX 12543.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportDeterminism {
+    pub frozen_unix_ms: u64,
+    /// Lowercase hex, 64 characters.
+    pub rng_seed: String,
 }
 
 /// One fold receipt: the path of the folded occurrence in its run, and the
@@ -345,6 +417,15 @@ pub struct WholeVaultImportReceipt {
     /// withheld (their manifests stay in the archive only).
     pub imported_results: usize,
     pub withheld_results: usize,
+    /// Archived result names rebound to restored outputs, left unresolved, or
+    /// kept withheld by their occurrence's egress judgment.
+    pub bindings_bound: usize,
+    pub bindings_unresolved: usize,
+    pub bindings_withheld: usize,
+    /// Replay records written from restored outputs, or left untouched because
+    /// the existing record already carried the same archived facts.
+    pub records_rebuilt: usize,
+    pub records_skipped: usize,
     /// Custody records the owner's own archive carried, restored under their
     /// own ids, and those already here unchanged.
     pub restored_secrets: usize,

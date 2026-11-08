@@ -5,39 +5,41 @@ use std::io::Read;
 use std::sync::{Arc, mpsc};
 use std::time::Instant;
 
+use oneiron::code_sandbox::ProposalSpoolFloor;
 use oneiron::dispatch_byoa::{ByoaError, ByoaResult, ByoaStream};
-use oneiron::origin::smart_http::SpillFloor;
 
 /// Drains every byte `reader` yields into a spooled stream on its own thread.
 /// The disk floor and the run's deadline are its only stops; a read failure
 /// is an error, never an early end of the stream.
 pub(super) fn drain_spooled(
     mut reader: impl Read + Send + 'static,
-    floor: Option<Arc<dyn SpillFloor>>,
+    floor: Option<Arc<dyn ProposalSpoolFloor>>,
     deadline: Instant,
 ) -> mpsc::Receiver<ByoaResult<ByoaStream>> {
     let (done, drain) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let mut stream = ByoaStream::writer(floor, Some(deadline));
-        let mut chunk = [0_u8; 8192];
-        let spooled = loop {
-            match reader.read(&mut chunk) {
-                Ok(0) => break stream.finish(),
-                Ok(read) => {
-                    if let Err(error) = stream.append(&chunk[..read]) {
-                        break Err(error);
+    crate::engine_thread("seat-login-drain".into())
+        .spawn(move || {
+            let mut stream = ByoaStream::writer(floor, Some(deadline));
+            let mut chunk = [0_u8; 8192];
+            let spooled = loop {
+                match reader.read(&mut chunk) {
+                    Ok(0) => break stream.finish(),
+                    Ok(read) => {
+                        if let Err(error) = stream.append(&chunk[..read]) {
+                            break Err(error);
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => {
+                        break Err(ByoaError::Backend(
+                            "official seat output read failed".to_owned(),
+                        ));
                     }
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(_) => {
-                    break Err(ByoaError::Backend(
-                        "official seat output read failed".to_owned(),
-                    ));
-                }
-            }
-        };
-        let _ = done.send(spooled);
-    });
+            };
+            let _ = done.send(spooled);
+        })
+        .expect("failed to spawn thread");
     drain
 }
 

@@ -15,6 +15,8 @@ mod conformance;
 mod egress;
 #[cfg(target_os = "linux")]
 mod native;
+#[cfg(target_os = "linux")]
+mod native_mounts;
 
 #[cfg(target_os = "linux")]
 pub use boot::run as run_production;
@@ -53,12 +55,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub fn serve_localtest<T: Read + Write + 'static>(channel: T, workspace: &Path) -> Result<()> {
     let mut session = protocol::Session::new(channel);
     let setup = (|| {
-        let input = session.receive()?;
         let workspace = filesystem::Workspace::open(workspace)?;
         if !workspace.snapshot()?.is_empty() {
             return Err(Error::Filesystem("localtest workspace must be empty"));
         }
-        workspace.seed(&input.files)?;
+        let input = session.receive(&workspace)?;
         Ok((input, workspace))
     })();
     let outcome = match setup {
@@ -108,9 +109,8 @@ pub fn serve_fenced_container() -> Result<()> {
     std::fs::create_dir(root)?;
     let mut session = protocol::Session::new(Channel);
     let preparation = (|| {
-        let input = session.receive()?;
         let workspace = filesystem::Workspace::open(root)?;
-        workspace.seed(&input.files)?;
+        let input = session.receive(&workspace)?;
         Ok((input, workspace))
     })();
     let outcome = match preparation {

@@ -11,12 +11,14 @@
 //! home answers the ack it persisted; the journal keeps it only when it names
 //! that batch exactly and the home attests as the machine its socket proved.
 //! A home out of reach, refusing or moved stays pending by name, and the next
-//! pass retries. A home already holding a newer head of this machine's own
-//! log (a newer pass committed it) is nothing to ship and nothing pending:
-//! that pass acks it (FIX 6394). The owner drains a residence member this
-//! machine left through `drain_custody_residence_member_as`, which the home
-//! answers with its sweep ack; until then it stays a pending member. With
-//! nothing in custody, or every residence member current, it dials nothing.
+//! pass retries; so does a socket this machine's own setup could not open,
+//! told as its own, never as the home's refusal (FIX 22217). A home already
+//! holding a newer head of this machine's own log (a newer pass committed
+//! it) is nothing to ship and nothing pending: that pass acks it (FIX 6394).
+//! The owner drains a residence member this machine left through
+//! `drain_custody_residence_member_as`, which the home answers with its
+//! sweep ack; until then it stays a pending member. With nothing in custody,
+//! or every residence member current, it dials nothing.
 
 use std::sync::Arc;
 
@@ -24,6 +26,7 @@ use base64::Engine;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use super::rpc::RpcFault;
 use super::{ResidenceRpc, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::PeerMachine;
@@ -163,8 +166,8 @@ pub(crate) async fn relay_custody(
         return Ok(());
     }
     let connected = match residence_budgets(vault) {
-        Ok(budgets) => ResidenceRpc::connect(vault, config, budgets).await,
-        Err(error) => Err(error),
+        Ok(budgets) => ResidenceRpc::connect_by_side(vault, config, budgets).await,
+        Err(error) => Err(RpcFault::Local(error)),
     };
     let (mut rpc, home) = match connected {
         Ok(Some(rpc)) => match rpc.home {
@@ -178,9 +181,14 @@ pub(crate) async fn relay_custody(
             let why = "the residence home is out of reach; the next pass retries";
             return note_all(vault, owed, PendingCode::Offline, why).await;
         }
-        Err(_) => {
+        Err(RpcFault::Remote(_)) => {
             let why = "the residence home refused this machine's socket";
             return note_all(vault, owed, PendingCode::Denied, why).await;
+        }
+        Err(RpcFault::Local(error)) => {
+            tracing::debug!(%error, "custody relay: this machine's residence socket not set up");
+            let why = "this machine could not set up its residence socket; the next pass retries";
+            return note_all(vault, owed, PendingCode::Failed, why).await;
         }
     };
     let spec = TargetSpec::residence(home);
@@ -236,7 +244,7 @@ pub async fn drain_custody_residence_member_as(
         blocking(move || begun.begin_custody_member_drain_as(&begin_owner, &begin_target)).await?;
     let budgets = residence_budgets(vault)?;
     let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
-        return Err(TransportError::Storage("home node offline".into()));
+        return Err(TransportError::home_offline());
     };
     let PeerMachine::Proven { machine: home, .. } = rpc.home else {
         return Err(refused());

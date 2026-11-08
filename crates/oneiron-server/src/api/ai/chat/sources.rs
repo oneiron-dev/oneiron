@@ -13,14 +13,14 @@ use oneiron::memory::WitnessReceipt;
 use oneiron::skill_optimize::union_source_rows;
 
 /// What a turn's call has been read from so far, with completeness kept apart.
-pub(super) struct TurnSources {
+pub(crate) struct TurnSources {
     rows: Vec<EntityId>,
     complete: bool,
 }
 
 impl TurnSources {
     /// The answering agent's definition, its instructions' row.
-    pub(super) fn of_agent(agent: EntityId) -> Self {
+    pub(crate) fn of_agent(agent: EntityId) -> Self {
         Self {
             rows: vec![agent],
             complete: true,
@@ -29,7 +29,7 @@ impl TurnSources {
 
     /// The rows one part of the call was read from: `None`, a part whose
     /// rows are unknown, leaves the set unknown.
-    pub(super) fn add(&mut self, rows: Option<&[EntityId]>) {
+    pub(crate) fn add(&mut self, rows: Option<&[EntityId]>) {
         match rows {
             Some(rows) => self.rows.extend_from_slice(rows),
             None => self.complete = false,
@@ -37,7 +37,7 @@ impl TurnSources {
     }
 
     /// The craft notes the call is shown, each by its claim.
-    pub(super) fn craft(&mut self, entries: &[ManifestEntry]) {
+    pub(crate) fn craft(&mut self, entries: &[ManifestEntry]) {
         for entry in entries {
             match EntityId::from_hex(&entry.reference) {
                 Ok(row) => self.rows.push(row),
@@ -52,7 +52,7 @@ impl TurnSources {
     }
 
     /// The complete set, sorted and deduplicated; `None` when unknown.
-    pub(super) fn rows(self) -> Option<Vec<EntityId>> {
+    pub(crate) fn rows(self) -> Option<Vec<EntityId>> {
         union_source_rows([self.complete.then_some(self.rows)])
     }
 }
@@ -73,4 +73,11 @@ pub(super) fn witnessed(receipt: &WitnessReceipt) -> Option<Vec<EntityId>> {
         .iter()
         .map(|message| EntityId::from_hex(&message.id).ok())
         .collect()
+}
+
+/// The TURN a turn's witness wrote, from its own receipt (FIX 5033). `None`
+/// for an off-record witness, which writes no vault row, and for a TURN
+/// whose id does not read.
+pub(super) fn witnessed_turn(receipt: &WitnessReceipt) -> Option<EntityId> {
+    EntityId::from_hex(&receipt.turn.as_ref()?.id).ok()
 }

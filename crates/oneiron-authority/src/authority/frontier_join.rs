@@ -1,7 +1,7 @@
 //! A frontier join (FIX 7908, Phase2 B; CALLS "Phase2 frontier join"): one
-//! signed main-log row whose parents are a canonical group of a wide causal
-//! frontier's heads, so an act whose frontier is wider than one entry names
-//! takes the join tips as its parents and keeps every head in its causal
+//! signed main-log row whose parents are every head of a wide causal
+//! frontier (FIX 8527), so an act whose frontier is wider than one entry
+//! names takes the join as its parent and keeps every head in its causal
 //! past, instead of being refused.
 //!
 //! A join carries no semantic payload: no grant, role, clearance, consent or
@@ -11,9 +11,12 @@
 //! it: the host's slip issuer for a host-issued op, or the root a ReRoot
 //! retires ahead of that ReRoot (FIX 11867); or an owner anchor's own rows
 //! when a stored root's anchor signs it (FIX 8498): the signer domain the
-//! store doors vouch for it in, never a new constituency. Its parents are
-//! representation only: [`AUTHORITY_FRONTIER_JOIN_ARITY`] bounds one join's
-//! parents, never how many heads a frontier may hold.
+//! store doors vouch for it in, never a new constituency. Its parents have
+//! no count bound beyond the entry's own bytes, and [`MAX_PARENTS`] does not
+//! apply to them: the fold judges its signer on the merge of every head's
+//! state, so a signer whose standing is split across heads still joins
+//! them. A join signed before names at most [`MAX_PARENTS`] and reads as it
+//! did.
 //!
 //! A join covers the main log's heads, or the signer's own side heads where
 //! those alone fill one entry (FIX 11868): an owner anchor's own rows that
@@ -36,10 +39,6 @@ const ANCHOR_SIDE_JOIN_KEYS: [&str; 4] = [OP_KEY_KIND, "carrier", "anchor", "sid
 /// A join of a world's side leaves names its carrier and its world.
 const WORLD_JOIN_KEYS: [&str; 3] = [OP_KEY_KIND, "carrier", "world"];
 
-/// The parents one join names (CALLS "Phase2 frontier join arity"): the
-/// entry bound, a representation only, never a logical-head limit.
-pub const AUTHORITY_FRONTIER_JOIN_ARITY: usize = MAX_PARENTS;
-
 /// The signer family one join is signed in: the one of the rows it leads to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrontierJoinFamily {
@@ -47,7 +46,7 @@ pub enum FrontierJoinFamily {
     Install(EntityId),
     /// A live owner roster key: the host's slip issuer, ahead of a
     /// host-issued op, or the root a ReRoot retires, ahead of that ReRoot
-    /// (FIX 11867).
+    /// (FIX 11867), an Ed25519 or a P-256 root (FIX 11993).
     Host,
     /// A stored owner root's anchor, ahead of that anchor's own rows: its
     /// root record, its marks and the owner's kit push (FIX 8498, Engine
@@ -81,14 +80,17 @@ pub struct FrontierJoin {
 
 impl FrontierJoin {
     /// A join has no field to judge alone beyond its scope's signer family;
-    /// it names at least two parents and is signed by one Ed25519 key
-    /// alone: an install key, the host's slip issuer or an owner anchor, all
-    /// Ed25519.
+    /// it names at least two parents, with no upper count (FIX 8527), and is
+    /// signed by one key alone: an install key or an owner anchor, Ed25519,
+    /// or in the host family a live owner roster key in either root suite, as
+    /// a ReRoot's signer may be a P-256 root (FIX 11993). The signature's own
+    /// check binds key and suite.
     pub(super) fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
         if !self.scoped()
             || entry.parent_hashes.len() < 2
             || !entry.cosigns.is_empty()
-            || entry.signer.suite != AuthoritySignatureSuite::Ed25519
+            || (self.family != FrontierJoinFamily::Host
+                && entry.signer.suite != AuthoritySignatureSuite::Ed25519)
         {
             return Err(invalid_authority());
         }

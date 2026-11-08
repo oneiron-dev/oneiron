@@ -87,6 +87,8 @@ pub struct NapiQuoteSpan {
 /// Receipt for one witnessed turn.
 #[napi(object)]
 pub struct NapiWitnessReceipt {
+    /// Actual native TURN identity, not a vault record ref.
+    pub turn_id: String,
     /// TURN short ref.
     pub turn_short_id: String,
     /// MESSAGE short refs, input order.
@@ -441,6 +443,16 @@ pub struct NapiBlobVersionView {
     /// Unix seconds.
     pub created_at: i64,
 }
+/// A checked append's landed version or complete retained proposal.
+#[napi(object)]
+pub struct NapiBlobVersionAppendOutcome {
+    /// `landed` | `proposed`.
+    pub outcome: String,
+    /// Set only for `landed`.
+    pub view: Option<NapiBlobVersionView>,
+    /// The full engine proposal; set only for `proposed`.
+    pub proposal: Option<serde_json::Value>,
+}
 
 /// A recall's media query (OF-370): bytes the server embeds into one
 /// declared space, searched as that space's list beside the query's.
@@ -529,9 +541,25 @@ pub struct NapiMemoryStaleStamp {
     pub pact_epoch: f64,
 }
 
+/// Raw evidence from one exact embedding space, before fusion.
+#[napi(object)]
+pub struct NapiEmbeddingMatchEvidence {
+    pub space: String,
+    pub embedding_kind: String,
+    pub query_kind: String,
+    pub score: f64,
+    pub floor: f64,
+    pub strong: f64,
+    pub matched: bool,
+}
+
 /// One memory pack item (S6).
 #[napi(object)]
 pub struct NapiMemoryItem {
+    /// The ASSET id for a media or text asset hit.
+    pub asset_ref: Option<String>,
+    /// Raw per-kind evidence from each exact space, before fusion.
+    pub embedding_matches: Vec<NapiEmbeddingMatchEvidence>,
     /// Short ref, hydratable via `hydrate`; never revision-qualified.
     pub short_id: String,
     /// The revision the item was read at; `shortId@sourceRevisionRef` hydrates it.
@@ -556,6 +584,8 @@ pub struct NapiMemoryItem {
     pub world: Option<String>,
     /// Facet hex, when faceted.
     pub facet: Option<String>,
+    /// The claim's explicit project audience, not a topic or a WORLD.
+    pub project_ref: Option<String>,
     /// Salience, when stamped.
     pub salience: Option<f64>,
     /// A conversation record's current reactions, one grouped line per glyph;
@@ -870,6 +900,20 @@ pub struct NapiCalendarEventView {
     pub calendar_systems: Vec<String>,
     /// Whether this EVENT consumes availability.
     pub blocks_time: bool,
+    /// An all-day or floating EVENT's days or wall times, which it has in
+    /// place of UTC bounds.
+    pub civil: Option<NapiCalendarCivilSpan>,
+}
+
+/// The days or wall times of an all-day or floating calendar occurrence.
+#[napi(object)]
+pub struct NapiCalendarCivilSpan {
+    /// `all_day` (dates) or `floating` (wall times in any zone).
+    pub time_kind: String,
+    /// The first day (`2026-11-06`), or the wall time it starts.
+    pub start: String,
+    /// The day, or the wall time, it ends before.
+    pub end: String,
 }
 
 /// `calendarSearch` request.

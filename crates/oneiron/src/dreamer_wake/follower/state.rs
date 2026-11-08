@@ -5,6 +5,8 @@
 //! pins) and its model results (a suffix's readings with the cache evidence
 //! of its call, or a keyframe's folded text).
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
@@ -14,6 +16,7 @@ use crate::dreamer_wake::sieve::follower::{
 };
 use crate::dreamer_wake::{SieveSpan, SpanKind};
 use crate::error::{Error, Result};
+use crate::model_step_context::StepEffectBinding;
 use crate::ports::ChangeLogStoreRead;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
@@ -201,7 +204,7 @@ pub(crate) struct ReadingRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Receipt {
     pub(crate) completed_units: u64,
-    pub(crate) step_hashes: Vec<[u8; 32]>,
+    pub(crate) step_bindings: Vec<StepEffectBinding>,
     pub(crate) run_id: Option<String>,
     pub(crate) at: u64,
 }
@@ -459,10 +462,11 @@ pub(super) fn forget_frames_in_txn(
 /// whole, a suffix's result keeps its other readings, and a row that no
 /// longer decodes goes, so an erase never fails on it.
 pub(super) fn forget_results_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     turns: &[EntityId],
 ) -> Result<()> {
+    let store = write.store;
     let rows = RESULTS
         .iter_raw_from(store, txn, &[])?
         .collect::<Result<Vec<_>>>()?;
@@ -506,6 +510,9 @@ pub(super) fn forget_results_in_txn(
         match (kept, <ResultKey as SideKey>::decode_key(&raw)) {
             (Some(kept), Some(key)) => RESULTS.put(store, txn, &key, &kept)?,
             _ => {
+                crate::secret_custody::revoke_side_row_prefix_custody_in_txn(
+                    write, txn, &RESULTS, &raw,
+                )?;
                 RESULTS.delete_from(store, txn, &raw)?;
             }
         }
@@ -513,28 +520,56 @@ pub(super) fn forget_results_in_txn(
     Ok(())
 }
 
-/// The units and step hashes `attempt`'s results charge that no settlement
+/// Every TURN the results name — a keyframe's folded turns and every
+/// reading's TURN — for the exclusion hook, which must find folded words
+/// whose frames are already gone.
+pub(super) fn result_turns_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut turns = BTreeSet::new();
+    let rows = RESULTS
+        .iter_raw_from(store, txn, &[])?
+        .collect::<Result<Vec<_>>>()?;
+    for (_, value) in rows {
+        match RESULTS.decode_value(&value) {
+            Ok(FollowerResult::Keyframe { turns: folded, .. }) => {
+                turns.extend(folded);
+            }
+            Ok(FollowerResult::Readings { readings, .. }) => {
+                turns.extend(readings.iter().map(|reading| reading.turn));
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(turns)
+}
+
+/// The units and original step bindings `attempt`'s results charge that no settlement
 /// has paid yet: a result published before a crash still settles once.
-pub(crate) fn unpaid_in(vault: &Vault, attempt: AttemptId) -> Result<(u64, Vec<[u8; 32]>)> {
+pub(crate) fn unpaid_in(
+    vault: &Vault,
+    attempt: AttemptId,
+) -> Result<(u64, Vec<StepEffectBinding>)> {
     let rows = {
         let txn = vault.store.env.read_txn()?;
         RESULTS.scan_from(&vault.store, &txn, attempt.as_bytes())?
     };
     let store = DreamerRunnerStore::new(vault);
     let mut units = 0_u64;
-    let mut hashes = Vec::new();
+    let mut bindings = Vec::new();
     for (_, result) in rows {
         let receipt = result.receipt();
-        let mut paid = !receipt.step_hashes.is_empty();
-        for hash in &receipt.step_hashes {
-            paid &= store.checkpoint_step_charged(attempt, hash)?;
+        let mut paid = !receipt.step_bindings.is_empty();
+        for binding in &receipt.step_bindings {
+            paid &= store.checkpoint_step_charged(binding.attempt_id, &binding.step_hash)?;
         }
         if !paid {
             units = units.saturating_add(receipt.completed_units);
-            hashes.extend_from_slice(&receipt.step_hashes);
+            bindings.extend_from_slice(&receipt.step_bindings);
         }
     }
-    Ok((units, hashes))
+    Ok((units, bindings))
 }
 
 /// The document versions a scope pins.

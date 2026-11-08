@@ -1,7 +1,8 @@
 //! Executor driver: struct, constructors, and the witness-turn doors.
 
+use super::self_brief::{FoldBoundary, NativeBrief, SelfBriefPort};
 use super::types::{EngineExecutorResult, ExecutorLegibility, JsCodeModeRuntime};
-use crate::code_run::{ExecutorStorage, GatedActorWrite};
+use crate::code_run::{ExecutorStorage, FoldWordRef, GatedActorWrite};
 use crate::compaction::output::{OutputDecayPolicy, OutputWorkingContext};
 use crate::entity_id::EntityId;
 use crate::llm::seat::ModelSeat;
@@ -9,7 +10,7 @@ use crate::memory::WitnessReceipt;
 use crate::off_record::{ExecutorUtterance, OffRecordSession};
 use crate::result_memory::{ResultHold, ResultShare};
 use crate::{BudgetLease, Error, LlmBackend, Vault};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Engine-native executor driver.
 pub struct EngineNativeExecutor<'a> {
@@ -28,6 +29,10 @@ pub struct EngineNativeExecutor<'a> {
     /// What the context this run built last holds of its share: the bodies
     /// its Full views carry, given back when the next context is built.
     pub(super) context_holds: Vec<ResultHold>,
+    /// The folds whose stubs the request this run built last shows, with
+    /// their accepted summaries (FIX 18924): what its capsule's request
+    /// copies beside the answers its consoles may print.
+    pub(super) request_fold_words: Vec<FoldWordRef>,
     /// The host's compaction seat for this run, when it keeps one.
     pub(super) compaction: Option<&'a mut super::compaction::RunCompaction>,
     /// Feedback mode: each program is type-checked beside its run, and its
@@ -36,10 +41,13 @@ pub struct EngineNativeExecutor<'a> {
     /// This attempt's steps' checks, as they stand (FIX 8277). Kept while
     /// the step's host still reads the run's storage.
     pub(super) step_checks: std::sync::Mutex<Vec<std::sync::Arc<super::code_check::StepCell>>>,
+    /// The host's self-brief port for this run, when it lends one (FIX
+    /// 17594), with the prefix the run's requests carry.
+    pub(super) self_brief: Option<NativeBrief<'a>>,
     /// Next order for the public compatibility witness door, whose callers do
     /// not have an [`EngineExecutorConfig`] run id. Explicit-order witnesses
     /// bypass this allocator and retain their exact order.
-    next_witness_order: AtomicU32,
+    next_witness_order: AtomicU64,
     /// TEST-ONLY (ONE-1929): fails the run once at the moment BETWEEN the
     /// terminal replay commit and the implicit bubble, which is the exact
     /// window the checkpointed payload exists to survive.
@@ -59,6 +67,7 @@ impl<'a> EngineNativeExecutor<'a> {
         Self {
             result_share: vault.result_share(),
             context_holds: Vec::new(),
+            request_fold_words: Vec::new(),
             storage: ExecutorStorage::Canonical(vault),
             backend,
             seat: None,
@@ -75,7 +84,8 @@ impl<'a> EngineNativeExecutor<'a> {
             compaction: None,
             code_check: None,
             step_checks: std::sync::Mutex::default(),
-            next_witness_order: AtomicU32::new(0),
+            self_brief: None,
+            next_witness_order: AtomicU64::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
         }
@@ -105,6 +115,7 @@ impl<'a> EngineNativeExecutor<'a> {
         Ok(Self {
             result_share: storage.result_share(),
             context_holds: Vec::new(),
+            request_fold_words: Vec::new(),
             storage,
             backend,
             seat: None,
@@ -121,7 +132,8 @@ impl<'a> EngineNativeExecutor<'a> {
             compaction: None,
             code_check: None,
             step_checks: std::sync::Mutex::default(),
-            next_witness_order: AtomicU32::new(0),
+            self_brief: None,
+            next_witness_order: AtomicU64::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
         })
@@ -150,6 +162,17 @@ impl<'a> EngineNativeExecutor<'a> {
     #[must_use]
     pub fn with_code_check(mut self, feedback: &'a super::code_check::TypeFeedback) -> Self {
         self.code_check = Some(feedback);
+        self
+    }
+
+    /// Binds the host's self-brief port (FIX 17594, delivery slice D2): each
+    /// model request of the run carries the brief it prepares, as one
+    /// message right after the task, from the run's first request in this
+    /// executor and again past each fold batch the run commits. With none
+    /// bound, a request carries no brief.
+    #[must_use]
+    pub fn with_self_brief(mut self, port: &'a dyn SelfBriefPort) -> Self {
+        self.self_brief = Some(NativeBrief::new(port));
         self
     }
 
@@ -294,6 +317,16 @@ impl<'a> EngineNativeExecutor<'a> {
         // This is only an in-memory cache; the next assembly re-derives it
         // from the typed row joined to the committed SUMMARY.
         self.output_context.compact_span(request.turn_start, last);
+        // FIX 17594 (Engine call B): the committed swap is a brief boundary,
+        // named by the epoch, summary and steps it committed. Both the seat's
+        // landing and `integrate_compaction` land here.
+        self.brief_fold_committed(FoldBoundary::Epoch {
+            run_id,
+            epoch: plan.epoch,
+            summary_id: plan.summary_id,
+            first_step: request.turn_start,
+            last_step: last,
+        });
         Ok(plan)
     }
 
@@ -353,8 +386,7 @@ impl<'a> EngineNativeExecutor<'a> {
     ///
     /// # Errors
     ///
-    /// Same as [`Self::witness_turn`], plus `Error::InvalidConfig` when `order`
-    /// exceeds the witness MESSAGE order ceiling.
+    /// Same as [`Self::witness_turn`].
     pub fn witness_turn_at(
         &self,
         kind: ExecutorUtterance,
@@ -370,12 +402,13 @@ impl<'a> EngineNativeExecutor<'a> {
         // of the returned integer, not publication of any other memory.
         self.next_witness_order
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |order| {
-                if order > crate::gate::MAX_WITNESS_MESSAGE_ORDER {
-                    None
+                if order <= u64::from(u32::MAX) {
+                    Some(order + 1)
                 } else {
-                    order.checked_add(1)
+                    None
                 }
             })
+            .map(|order| order as u32)
             .map_err(|_| {
                 Error::InvalidConfig(
                     "engine executor compatibility witness order exhausted".to_owned(),
@@ -392,12 +425,6 @@ impl<'a> EngineNativeExecutor<'a> {
         occurred_at: u64,
         order: u32,
     ) -> EngineExecutorResult<Option<WitnessReceipt>> {
-        if order > crate::gate::MAX_WITNESS_MESSAGE_ORDER {
-            return Err(Error::InvalidConfig(
-                "engine executor witness order exceeds the MESSAGE order ceiling".to_owned(),
-            )
-            .into());
-        }
         self.verify_storage_dispatcher_binding()?;
         let assertions = self.gated_write.take_run_assertions();
         let result = self.storage.witness_executor_utterance_sourced(
@@ -426,12 +453,6 @@ impl<'a> EngineNativeExecutor<'a> {
         occurred_at: u64,
         order: u32,
     ) -> EngineExecutorResult<Option<WitnessReceipt>> {
-        if order > crate::gate::MAX_WITNESS_MESSAGE_ORDER {
-            return Err(Error::InvalidConfig(
-                "engine executor witness order exceeds the MESSAGE order ceiling".to_owned(),
-            )
-            .into());
-        }
         self.verify_storage_dispatcher_binding()?;
         let assertions = self.gated_write.take_run_assertions();
         let result = self.storage.witness_executor_result_sourced(

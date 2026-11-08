@@ -6,7 +6,7 @@ use super::authority::observe_authority_put;
 /// claim indexes, authority observation, entity indexes, short ids, and
 /// embeddings — and report the applied put.
 pub(super) fn stage_put_projections(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
     fixed: &super::admission::FixedPut<'_>,
@@ -22,7 +22,8 @@ pub(super) fn stage_put_projections(
     project_revisions: Vec<(EntityId, Vec<u8>)>,
     portable_agent_source: Option<(EntityId, Vec<u8>)>,
 ) -> Result<AppliedPut> {
-    crate::skill_hub::stage_refinement_origin(
+    let store = write.store;
+    crate::store::skill_refinement_origin::stage_refinement_origin(
         store,
         wtxn,
         &fixed.id,
@@ -72,6 +73,7 @@ pub(super) fn stage_put_projections(
         let first_stored = observe_authority_put(
             store,
             wtxn,
+            &fixed.id,
             &key,
             dispatch.authority_entry_observation.as_ref(),
             dispatch.authority_entry_hash_pin.as_ref(),
@@ -116,16 +118,20 @@ pub(super) fn stage_put_projections(
         .scope_stamps
         .stamp_put(store, wtxn, fixed.id, fixed.entity_type, data, row_put)?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_PERSON {
-        super::super::super::person_substrate::ensure_person_substrate(
-            store,
-            wtxn,
-            fixed.id,
-            fixed.occurred,
-            fixed.learned_at,
-        )?;
+        if let Some(substrate) = fixed.prepared_person_substrate {
+            substrate.apply_at_person_projection(store, wtxn)?;
+        } else {
+            super::super::super::person_substrate::ensure_person_substrate(
+                store,
+                wtxn,
+                fixed.id,
+                fixed.occurred,
+                fixed.learned_at,
+            )?;
+        }
     }
-    crate::agent_def::stage_birth_custody_put(store, wtxn, &fixed.id, fixed.entity_type, data)?;
-    crate::receipt::stage_receipt_archive_put(store, wtxn, &fixed.id, fixed.entity_type, data)?;
+    crate::agent_def::stage_birth_custody_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;
+    crate::receipt::stage_receipt_archive_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;
     crate::receipt::stage_receipt_record_index(store, wtxn, &fixed.id, fixed.entity_type, data)?;
 
     if let Some(plan) = short_id_plan {

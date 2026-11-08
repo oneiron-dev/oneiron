@@ -2,7 +2,7 @@
 
 use lopdf::{Document, Object};
 
-use crate::api::{Counter, VerifyCheckKind, VerifyFindingCode, note_current};
+use crate::api::{Counter, SealResourceLimits, VerifyCheckKind, VerifyFindingCode, note_current};
 use crate::memory::{LedgerHold, MemoryLedger, SealMemoryRefusal};
 use crate::native::held_bytes;
 
@@ -15,7 +15,9 @@ use super::verify_sig_pipeline::Checks;
 /// validate — CRLs against an embedded/anchored issuer cert with a fresh
 /// thisUpdate/nextUpdate window and no in-scope serial on its revoked list,
 /// OCSP responses with signature, responder authorization, cert-serial
-/// binding, freshness, and a `good` cert status. The material must also
+/// binding and freshness; only `good` supplies coverage, while authenticated
+/// `unknown` is unresolved. Optional `/VRI` does not preempt these global
+/// arrays. The material must also
 /// speak about the document's covered CMS signer/TSA chains: every covered
 /// certificate must appear in `/Certs` or be a trust anchor. A present DSS
 /// with no arrays at all is evidence-free and fails. Present-but-invalid
@@ -37,10 +39,20 @@ pub(super) fn verify_dss(
     covered: &[EmbeddedCert],
     at_unix: u64,
     memory: &MemoryLedger,
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
+    limits: &SealResourceLimits,
 ) -> Result<usize, SealMemoryRefusal> {
     let mut decoded = 0;
-    check_dss(doc, anchors, covered, at_unix, memory, &mut decoded, checks)?;
+    check_dss(
+        doc,
+        anchors,
+        covered,
+        at_unix,
+        memory,
+        &mut decoded,
+        checks,
+        limits,
+    )?;
     Ok(decoded)
 }
 
@@ -52,9 +64,10 @@ fn check_dss(
     at_unix: u64,
     memory: &MemoryLedger,
     decoded: &mut usize,
-    checks: &mut Checks,
+    checks: &mut Checks<'_>,
+    limits: &SealResourceLimits,
 ) -> Result<(), SealMemoryRefusal> {
-    let catalog = match pdf::catalog(doc) {
+    let catalog = match pdf::catalog(doc, limits)? {
         Some(c) => c,
         None => {
             if doc.trailer.has(b"Root") {
@@ -62,41 +75,48 @@ fn check_dss(
                     VerifyCheckKind::ValidationMaterial,
                     false,
                     VerifyFindingCode::ValidationMaterialInvalid,
-                );
+                )?;
             } else {
-                checks.absent(VerifyCheckKind::ValidationMaterial);
+                checks.absent(VerifyCheckKind::ValidationMaterial)?;
             }
             return Ok(());
         }
     };
     let Ok(dss_obj) = catalog.get(b"DSS") else {
-        checks.absent(VerifyCheckKind::ValidationMaterial);
+        checks.absent(VerifyCheckKind::ValidationMaterial)?;
         return Ok(());
     };
-    let dss = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok());
+    let dss = pdf::resolve(doc, dss_obj, limits)?.and_then(|o| o.as_dict().ok());
     let Some(dss) = dss else {
         checks.record(
             VerifyCheckKind::ValidationMaterial,
             false,
             VerifyFindingCode::ValidationMaterialInvalid,
-        );
+        )?;
         return Ok(());
     };
-    if dss.has(b"VRI") {
-        checks.record(
+    match dss_material_valid(doc, dss, anchors, covered, at_unix, memory, decoded, limits)? {
+        MaterialValidity::Valid => checks.record(
+            VerifyCheckKind::ValidationMaterial,
+            true,
+            VerifyFindingCode::ValidationMaterialInvalid,
+        )?,
+        MaterialValidity::Invalid => checks.record(
             VerifyCheckKind::ValidationMaterial,
             false,
             VerifyFindingCode::ValidationMaterialInvalid,
-        );
-        return Ok(());
+        )?,
+        MaterialValidity::Unresolved(reason) => {
+            checks.not_run_with_reason(VerifyCheckKind::ValidationMaterial, Some(reason))?;
+        }
     }
-    let ok = dss_material_valid(doc, dss, anchors, covered, at_unix, memory, decoded)?;
-    checks.record(
-        VerifyCheckKind::ValidationMaterial,
-        ok,
-        VerifyFindingCode::ValidationMaterialInvalid,
-    );
     Ok(())
+}
+
+enum MaterialValidity {
+    Valid,
+    Invalid,
+    Unresolved(VerifyFindingCode),
 }
 
 fn dss_material_valid(
@@ -107,13 +127,14 @@ fn dss_material_valid(
     at_unix: u64,
     memory: &MemoryLedger,
     decoded: &mut usize,
-) -> Result<bool, SealMemoryRefusal> {
+    limits: &SealResourceLimits,
+) -> Result<MaterialValidity, SealMemoryRefusal> {
     // Each entry decodes whole, its memory reserved first; the total across
     // all three arrays is counted, never capped, so material past the old
     // shared budget is read whole rather than called malformed.
-    let certs = dss_array(doc, dss, b"Certs", memory, decoded)?;
-    let crls = dss_array(doc, dss, b"CRLs", memory, decoded)?;
-    let ocsps = dss_array(doc, dss, b"OCSPs", memory, decoded)?;
+    let certs = dss_array(doc, dss, b"Certs", memory, decoded, limits)?;
+    let crls = dss_array(doc, dss, b"CRLs", memory, decoded, limits)?;
+    let ocsps = dss_array(doc, dss, b"OCSPs", memory, decoded, limits)?;
     material_valid(certs, crls, ocsps, anchors, covered, at_unix, memory)
 }
 
@@ -128,28 +149,28 @@ fn material_valid(
     covered: &[EmbeddedCert],
     at_unix: u64,
     memory: &MemoryLedger,
-) -> Result<bool, SealMemoryRefusal> {
+) -> Result<MaterialValidity, SealMemoryRefusal> {
     // A present DSS with all arrays absent is evidence-free: it must not
     // inflate a B-T document into B-LT.
     if matches!(certs, DssArray::Absent)
         && matches!(crls, DssArray::Absent)
         && matches!(ocsps, DssArray::Absent)
     {
-        return Ok(false);
+        return Ok(MaterialValidity::Invalid);
     }
     // /Certs first: CRL and OCSP issuer lookups draw from it. A
     // present-but-empty array breaks profile completeness.
     let embedded: Vec<EmbeddedCert> = match certs {
         DssArray::Absent => Vec::new(),
-        DssArray::Malformed => return Ok(false),
+        DssArray::Malformed => return Ok(MaterialValidity::Invalid),
         DssArray::Entries(entries) => {
             if entries.is_empty() {
-                return Ok(false);
+                return Ok(MaterialValidity::Invalid);
             }
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
                 let Some(c) = EmbeddedCert::admitted(e, memory)? else {
-                    return Ok(false);
+                    return Ok(MaterialValidity::Invalid);
                 };
                 v.push(c);
             }
@@ -166,22 +187,25 @@ fn material_valid(
             .any(|e| e.der == c.der)
     });
     if !bound {
-        return Ok(false);
+        return Ok(MaterialValidity::Invalid);
     }
     // Every CRL entry must be valid; collect the key-bound issuer certs the
     // valid CRLs authenticated under so the coverage rule below can match
     // them against each covered certificate's ACTUAL issuer (name+key).
     let crl_issuers: Vec<&EmbeddedCert> = match crls {
         DssArray::Absent => Vec::new(),
-        DssArray::Malformed => return Ok(false),
+        DssArray::Malformed => return Ok(MaterialValidity::Invalid),
         DssArray::Entries(entries) => {
             if entries.is_empty() {
-                return Ok(false);
+                return Ok(MaterialValidity::Invalid);
             }
+            memory.admit_len::<&EmbeddedCert>(entries.len())?;
             let mut v = Vec::with_capacity(entries.len());
             for e in &entries {
-                let Some(issuer) = crl_entry_valid(e, &embedded, anchors, covered, at_unix) else {
-                    return Ok(false);
+                let Some(issuer) =
+                    crl_entry_valid(e, &embedded, anchors, covered, at_unix, memory)?
+                else {
+                    return Ok(MaterialValidity::Invalid);
                 };
                 v.push(issuer);
             }
@@ -192,19 +216,22 @@ fn material_valid(
     // certificates the valid responses bind to with a `good` status, read
     // in place.
     let mut ocsp_targets: Vec<&[u8]> = Vec::new();
+    let mut ocsp_unknown = false;
     match ocsps {
         DssArray::Absent => {}
-        DssArray::Malformed => return Ok(false),
+        DssArray::Malformed => return Ok(MaterialValidity::Invalid),
         DssArray::Entries(entries) => {
             if entries.is_empty() {
-                return Ok(false);
+                return Ok(MaterialValidity::Invalid);
             }
             for e in &entries {
-                let Some(targets) = ocsp_entry_valid(e, &embedded, anchors, at_unix, memory)?
+                let Some(evidence) = ocsp_entry_valid(e, &embedded, anchors, at_unix, memory)?
                 else {
-                    return Ok(false);
+                    return Ok(MaterialValidity::Invalid);
                 };
-                ocsp_targets.extend(targets);
+                memory.admit_len::<&[u8]>(evidence.good_targets.len())?;
+                ocsp_unknown |= evidence.unknown;
+                ocsp_targets.extend(evidence.good_targets);
             }
         }
     }
@@ -214,19 +241,36 @@ fn material_valid(
     // (the covered cert's own signature verifies under the CRL-signing
     // key) or an OCSP SingleResponse bound to it with `cert_status` good.
     // Anchor certificates ride anchor trust and need no coverage. A
-    // cert-only DSS, evidence about an irrelevant issuer, or evidence
-    // authenticated by a same-subject/different-key shadow fails here —
-    // never AbsentAllowed.
-    let covered_ok = covered.iter().all(|c| {
-        if anchors.iter().any(|a| a.der == c.der) {
-            return true;
+    // cert-only DSS or otherwise insufficient valid coverage is unresolved,
+    // never a profile pass. Invalid evidence has already failed above.
+    let mut covered_ok = true;
+    for cert in covered {
+        if anchors.iter().any(|anchor| anchor.der == cert.der) {
+            continue;
         }
-        crl_issuers.iter().any(|i| issued_by(c, i)) || ocsp_targets.contains(&c.der.as_slice())
-    });
-    if !covered_ok {
-        return Ok(false);
+        let mut crl_covered = false;
+        for issuer in &crl_issuers {
+            if issued_by(cert, issuer, memory)? {
+                crl_covered = true;
+                break;
+            }
+        }
+        if !crl_covered && !ocsp_targets.contains(&cert.der.as_slice()) {
+            covered_ok = false;
+            break;
+        }
     }
-    Ok(true)
+    if ocsp_unknown {
+        return Ok(MaterialValidity::Unresolved(
+            VerifyFindingCode::RevocationStatusUnknown,
+        ));
+    }
+    if !covered_ok {
+        return Ok(MaterialValidity::Unresolved(
+            VerifyFindingCode::ValidationMaterialUnavailable,
+        ));
+    }
+    Ok(MaterialValidity::Valid)
 }
 
 /// A parsed certificate with its source DER (signature verification takes
@@ -240,6 +284,11 @@ pub(crate) struct EmbeddedCert {
 }
 
 impl EmbeddedCert {
+    /// The already-admitted certificate, borrowed without another decode.
+    pub(crate) fn certificate(&self) -> &x509_cert::Certificate {
+        &self.cert
+    }
+
     /// A test fixture's certificate, held on no ledger.
     #[cfg(test)]
     pub(crate) fn from_der(der_bytes: &[u8]) -> Option<Self> {
@@ -347,17 +396,18 @@ pub(super) fn dss_array(
     key: &[u8],
     memory: &MemoryLedger,
     decoded: &mut usize,
+    limits: &SealResourceLimits,
 ) -> Result<DssArray, SealMemoryRefusal> {
     let Ok(arr_obj) = dss.get(key) else {
         return Ok(DssArray::Absent);
     };
-    let Some(arr) = pdf::resolve(doc, arr_obj).and_then(|o| o.as_array().ok()) else {
+    let Some(arr) = pdf::resolve(doc, arr_obj, limits)?.and_then(|o| o.as_array().ok()) else {
         return Ok(DssArray::Malformed);
     };
     memory.admit_len::<Vec<u8>>(arr.len())?;
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
-        let Some(stream) = pdf::resolve(doc, item).and_then(|o| o.as_stream().ok()) else {
+        let Some(stream) = pdf::resolve(doc, item, limits)?.and_then(|o| o.as_stream().ok()) else {
             return Ok(DssArray::Malformed);
         };
         let data = match stream.decompressed_content_admitted(memory) {
@@ -392,7 +442,8 @@ pub(super) fn collect_reference_chain(
     id: lopdf::ObjectId,
     ids: &mut std::collections::BTreeSet<lopdf::ObjectId>,
     work: &mut usize,
-) -> Option<()> {
+    limits: &SealResourceLimits,
+) -> Result<Option<()>, SealMemoryRefusal> {
     let mut chain = std::collections::BTreeSet::new();
     let mut current = id;
     loop {
@@ -400,16 +451,21 @@ pub(super) fn collect_reference_chain(
         if ids.contains(&current) {
             break;
         }
-        if !chain.insert(current) {
-            return None;
+        if !pdf::admitted::btree_insert(limits, &mut chain, current)? {
+            return Ok(None);
         }
-        let Ok(next) = doc.objects.get(&current)?.as_reference() else {
+        let Some(object) = doc.objects.get(&current) else {
+            return Ok(None);
+        };
+        let Ok(next) = object.as_reference() else {
             break;
         };
         current = next;
     }
-    ids.extend(chain);
-    Some(())
+    for id in chain {
+        pdf::admitted::btree_insert(limits, ids, id)?;
+    }
+    Ok(Some(()))
 }
 
 /// Byte offset the effective `/DSS` revision provably ends before: the
@@ -432,11 +488,17 @@ pub(super) fn collect_reference_chain(
 /// revision no DocTimeStamp attests (probe_c regression). The evaluation
 /// and this measurement resolve through the same uncapped walk, so neither
 /// stops where the other goes on.
-pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
+pub(super) fn dss_revision_end(
+    doc: &Document,
+    bytes: &[u8],
+    limits: &SealResourceLimits,
+) -> Result<Option<u64>, SealMemoryRefusal> {
     let mut work = 0usize;
-    let collected = dss_object_ids(doc, &mut work);
+    let collected = dss_object_ids(doc, &mut work, limits);
     note_current(Counter::DssReferenceWork, work);
-    let ids = collected?;
+    let Some(ids) = collected? else {
+        return Ok(None);
+    };
     let mut newest = None;
     for (num, generation) in ids {
         match doc.reference_table.get(num) {
@@ -447,11 +509,14 @@ pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
                 let offset = u64::from(*offset);
                 newest = Some(newest.map_or(offset, |n: u64| n.max(offset)));
             }
-            _ => return None, // compressed or missing: coverage unprovable
+            _ => return Ok(None), // compressed or missing: coverage unprovable
         }
     }
-    let newest = newest?;
-    doc.reference_table
+    let Some(newest) = newest else {
+        return Ok(None);
+    };
+    Ok(doc
+        .reference_table
         .entries
         .values()
         .filter_map(|e| match e {
@@ -460,7 +525,7 @@ pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
         })
         .filter(|o| *o > newest)
         .min()
-        .or_else(|| pdf::last_startxref(bytes).ok())
+        .or_else(|| pdf::last_startxref(bytes).ok()))
 }
 
 /// Every object id the effective `/DSS` reaches through the chains the
@@ -470,32 +535,47 @@ pub(super) fn dss_revision_end(doc: &Document, bytes: &[u8]) -> Option<u64> {
 fn dss_object_ids(
     doc: &Document,
     work: &mut usize,
-) -> Option<std::collections::BTreeSet<lopdf::ObjectId>> {
-    let catalog = pdf::catalog(doc)?;
-    let dss_obj = catalog.get(b"DSS").ok()?;
+    limits: &SealResourceLimits,
+) -> Result<Option<std::collections::BTreeSet<lopdf::ObjectId>>, SealMemoryRefusal> {
+    let Some(catalog) = pdf::catalog(doc, limits)? else {
+        return Ok(None);
+    };
+    let Ok(dss_obj) = catalog.get(b"DSS") else {
+        return Ok(None);
+    };
     let mut ids: std::collections::BTreeSet<lopdf::ObjectId> = std::collections::BTreeSet::new();
     if let Ok(root) = doc.trailer.get(b"Root").and_then(Object::as_reference) {
-        collect_reference_chain(doc, root, &mut ids, work)?;
+        if collect_reference_chain(doc, root, &mut ids, work, limits)?.is_none() {
+            return Ok(None);
+        }
     }
     if let Object::Reference(id) = dss_obj {
-        collect_reference_chain(doc, *id, &mut ids, work)?;
+        if collect_reference_chain(doc, *id, &mut ids, work, limits)?.is_none() {
+            return Ok(None);
+        }
     }
-    let dss = pdf::resolve(doc, dss_obj).and_then(|o| o.as_dict().ok())?;
+    let Some(dss) = pdf::resolve(doc, dss_obj, limits)?.and_then(|o| o.as_dict().ok()) else {
+        return Ok(None);
+    };
     for key in [b"Certs".as_slice(), b"OCSPs".as_slice(), b"CRLs".as_slice()] {
         let Ok(arr_obj) = dss.get(key) else {
             continue;
         };
         if let Object::Reference(id) = arr_obj {
-            collect_reference_chain(doc, *id, &mut ids, work)?;
+            if collect_reference_chain(doc, *id, &mut ids, work, limits)?.is_none() {
+                return Ok(None);
+            }
         }
-        let Some(arr) = pdf::resolve(doc, arr_obj).and_then(|o| o.as_array().ok()) else {
+        let Some(arr) = pdf::resolve(doc, arr_obj, limits)?.and_then(|o| o.as_array().ok()) else {
             continue;
         };
         for item in arr {
             if let Object::Reference(id) = item {
-                collect_reference_chain(doc, *id, &mut ids, work)?;
+                if collect_reference_chain(doc, *id, &mut ids, work, limits)?.is_none() {
+                    return Ok(None);
+                }
             }
         }
     }
-    Some(ids)
+    Ok(Some(ids))
 }

@@ -16,7 +16,10 @@ use tokio::runtime::Handle;
 use super::catalog::{CatalogRefresh, merge, mesh_row, prune};
 use super::pump::{AbortOnDrop, Demand, demand};
 use super::staging::{BookedBody, Booking, StagingBudget};
-use super::{Batch, LLM_ALPN, Reply, Request, exchange, lock, put, take};
+use super::{
+    Batch, CountedConnection, DispatchError, LLM_ALPN, Reply, Request, dispatch_inference,
+    exchange, lock, take,
+};
 use crate::OwnServerTransport;
 
 /// How long a node has to answer the dial.
@@ -231,12 +234,12 @@ impl Leg {
     async fn catalog_on(&self, machine: MachineId) -> Result<Vec<LlmCatalogEntry>, Absent> {
         let conn = self.dial(machine).await?;
         let asked = tokio::time::timeout(CATALOG_TIMEOUT, async {
-            match exchange(&*conn, &Request::Catalog)
+            match exchange(&conn, &Request::Catalog)
                 .await
                 .map_err(|err| err.to_string())?
             {
                 Reply::Catalog(carried) => {
-                    let body = take(&*conn, carried, &self.budget)
+                    let body = take(&conn, carried, &self.budget)
                         .await
                         .map_err(|err| err.to_string())?;
                     serde_json::from_slice(&body.bytes)
@@ -289,11 +292,11 @@ impl Leg {
         lock(&self.proofs).insert(machine, peer);
     }
 
-    async fn dial(&self, machine: MachineId) -> Result<Box<dyn MeshConnection>, Absent> {
+    async fn dial(&self, machine: MachineId) -> Result<CountedConnection, Absent> {
         match tokio::time::timeout(DIAL_TIMEOUT, self.transport.dial(machine, LLM_ALPN)).await {
             Ok(Ok(conn)) => {
                 self.note_proof(machine, &*conn);
-                Ok(conn)
+                Ok(CountedConnection::new(conn))
             }
             Ok(Err(err)) => Err(format!("unreachable: {err}")),
             Err(_) => Err("did not answer".into()),
@@ -307,7 +310,7 @@ impl Leg {
         loop {
             let mut tried = Vec::new();
             for machine in self.nodes(&mut tried) {
-                match self.generate_on(machine, &body).await {
+                match self.generate_on(machine, &body, None).await {
                     Ok(answer) => {
                         self.taken();
                         return answer;
@@ -324,18 +327,18 @@ impl Leg {
         &self,
         machine: MachineId,
         body: &[u8],
+        lease: Option<&BudgetLease>,
     ) -> Result<LlmResult<LlmResponse>, Absent> {
         let conn = self.dial(machine).await?;
         let answer = async {
-            let request = put(&*conn, body.to_vec())
-                .await
-                .map_err(|err| err.to_string())?;
-            match exchange(&*conn, &Request::Generate { request })
-                .await
-                .map_err(|err| err.to_string())?
-            {
+            let reply = match dispatch_inference(&conn, body.to_vec(), lease, false).await {
+                Ok(reply) => reply,
+                Err(DispatchError::Transport(error)) => return Err(error.to_string()),
+                Err(DispatchError::Release(error)) => return Ok(Err(error)),
+            };
+            match reply {
                 Reply::Generated(Ok(carried)) => {
-                    let body = take(&*conn, carried, &self.budget)
+                    let body = take(&conn, carried, &self.budget)
                         .await
                         .map_err(|err| err.to_string())?;
                     Ok(serde_json::from_slice(&body.bytes)
@@ -365,7 +368,7 @@ impl Leg {
         loop {
             let mut tried = Vec::new();
             for machine in self.nodes(&mut tried) {
-                match self.stream_on(machine, &body, pump).await {
+                match self.stream_on(machine, &body, pump, None).await {
                     Ok(()) => return,
                     Err(why) => tried.push(format!("node {}: {why}", machine.to_hex())),
                 }
@@ -387,16 +390,19 @@ impl Leg {
         machine: MachineId,
         body: &[u8],
         pump: &Demand,
+        lease: Option<&BudgetLease>,
     ) -> Result<(), Absent> {
         let conn = self.dial(machine).await?;
         let ran = async {
-            let request = put(&*conn, body.to_vec())
-                .await
-                .map_err(|err| err.to_string())?;
-            let id = match exchange(&*conn, &Request::Stream { request })
-                .await
-                .map_err(|err| err.to_string())?
-            {
+            let reply = match dispatch_inference(&conn, body.to_vec(), lease, true).await {
+                Ok(reply) => reply,
+                Err(DispatchError::Transport(error)) => return Err(error.to_string()),
+                Err(DispatchError::Release(error)) => {
+                    pump.hand(Err(error), None).await;
+                    return Ok(());
+                }
+            };
+            let id = match reply {
                 Reply::Started(Ok(id)) => id,
                 Reply::Started(Err(error)) => {
                     pump.hand(Err(error), None).await;
@@ -409,12 +415,12 @@ impl Leg {
             let mut flowed = false;
             loop {
                 let Some(room) = pump.room().await else {
-                    let _ = exchange(&*conn, &Request::Cancel { stream: id }).await;
+                    let _ = exchange(&conn, &Request::Cancel { stream: id }).await;
                     return Ok(());
                 };
                 // Once events flow, a broken node ends the stream: its
                 // events cannot be taken back. Before, another node can run it.
-                let Some((events, end, booking)) = self.next_batch(&*conn, id).await else {
+                let Some((events, end, booking)) = self.next_batch(&conn, id).await else {
                     if !flowed {
                         return Err("broke before its first event".to_owned());
                     }
@@ -468,7 +474,7 @@ impl Leg {
     /// last, and the booking of its bytes; `None` when the node broke.
     async fn next_batch(
         &self,
-        conn: &dyn MeshConnection,
+        conn: &CountedConnection,
         id: u64,
     ) -> Option<(Vec<Result<String, LlmError>>, bool, Booking)> {
         let Ok(Reply::Events { events, end }) = exchange(conn, &Request::Next { stream: id }).await
@@ -557,15 +563,16 @@ impl OwnServerTransport for MeshPeerTransport {
     fn generate<'a>(
         &'a self,
         request: LlmRequest,
-        _lease: &'a BudgetLease,
+        lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
+        let lease = lease.clone();
         let (leg, machine) = (Arc::clone(&self.leg), self.machine);
         let task = self.runtime.spawn(async move {
             match serde_json::to_vec(&request) {
                 // A node that does not take the call fails it; no other
                 // node runs it.
                 Ok(body) => leg
-                    .generate_on(machine, &body)
+                    .generate_on(machine, &body, Some(&lease))
                     .await
                     .unwrap_or_else(|_| Err(RetryableLlmError::ServerError.into())),
                 Err(_) => Err(FatalLlmError::InvalidRequest.into()),
@@ -580,14 +587,19 @@ impl OwnServerTransport for MeshPeerTransport {
         })
     }
 
-    fn stream<'a>(&'a self, request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+    fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        let lease = lease.clone();
         let body = serde_json::to_vec(&request).map_err(|_| FatalLlmError::InvalidRequest)?;
         let (leg, machine) = (Arc::clone(&self.leg), self.machine);
         let (pump, end) = demand();
         let task = self.runtime.spawn(async move {
             // The node did not take the stream, or broke before its first
             // event: nothing went out, and no other node runs it.
-            if leg.stream_on(machine, &body, &pump).await.is_err() {
+            if leg
+                .stream_on(machine, &body, &pump, Some(&lease))
+                .await
+                .is_err()
+            {
                 pump.hand(Err(RetryableLlmError::ServerError.into()), None)
                     .await;
             }

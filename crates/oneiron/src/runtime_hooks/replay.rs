@@ -67,6 +67,12 @@ pub enum HookReplayCase {
         verb: String,
         phase: HookPhase,
     },
+    /// A run the run index names whose saved row is gone: only its run key
+    /// remains, so this entry carries nothing else (FIX 2394).
+    UnknownRun {
+        /// The run's key, as 64 hex.
+        run_key: String,
+    },
 }
 
 /// How a replayed outcome stands to the one its run recorded.
@@ -107,16 +113,19 @@ pub enum HookReplayResult {
     MissingHistory { reason: String },
 }
 
-/// A run the run index names, with its saved row.
+/// A run the run index names, with its saved row when it still has one.
 pub(super) enum SavedRun {
     Fact(RunKey, HookRunRecord),
     Verb(RunKey, HookVerbRunRecord),
+    /// The index names this run but its saved row is gone: the entry is
+    /// reported missing, never taken as index corruption (FIX 2394).
+    Missing(RunKey),
 }
 
 impl SavedRun {
     const fn key(&self) -> &RunKey {
         match self {
-            Self::Fact(key, _) | Self::Verb(key, _) => key,
+            Self::Fact(key, _) | Self::Verb(key, _) | Self::Missing(key) => key,
         }
     }
 }
@@ -131,6 +140,7 @@ pub(super) fn saved_runs(vault: &Vault, binding: EntityId, limit: usize) -> Resu
         .take(limit)
     {
         let (_, run) = row?;
+        let key = run.key();
         let saved = match run {
             HookRunRef::Fact(key) => store::MEMOS
                 .get(&vault.store, &rtxn, &key)?
@@ -139,9 +149,7 @@ pub(super) fn saved_runs(vault: &Vault, binding: EntityId, limit: usize) -> Resu
                 .get(&vault.store, &rtxn, &key)?
                 .map(|saved| SavedRun::Verb(key, saved)),
         };
-        runs.push(saved.ok_or(Error::CorruptedIndex(
-            "a hook run index row names no saved run",
-        ))?);
+        runs.push(saved.unwrap_or(SavedRun::Missing(key)));
     }
     Ok(runs)
 }
@@ -432,6 +440,14 @@ impl Replay<'_> {
                 },
                 result: self.verb_run(lane, saved),
             },
+            SavedRun::Missing(key) => HookReplayEntry {
+                case: HookReplayCase::UnknownRun {
+                    run_key: hex_lower(key),
+                },
+                result: HookReplayResult::MissingHistory {
+                    reason: "a hook run index row names no saved run".to_owned(),
+                },
+            },
         }
     }
 }
@@ -464,6 +480,39 @@ impl<'p> PinnedReads<'p> {
     ) -> std::result::Result<String, String> {
         // A read that fails fails as it did live, and was pinned by none.
         let live = read::answer(lane, grant, request, &mut self.scratch)?;
+        self.checked_response(request, live)
+    }
+
+    /// A verb run's pins keep its caller-narrowed selection. They restrict
+    /// replay to those exact rows; the current lane still admits each row.
+    fn answer_verb(
+        &mut self,
+        lane: &ScopedRead<'_>,
+        grant: &HookGrant,
+        request: &str,
+    ) -> std::result::Result<String, String> {
+        let Some(pin) = self
+            .pins
+            .get(self.served)
+            .filter(|pin| pin.request == request)
+        else {
+            return self.answer(lane, grant, request);
+        };
+        let Some(response) = read::answer_pinned(lane, grant, pin)? else {
+            self.served += 1;
+            self.missing
+                .get_or_insert_with(|| format!("a read's history is gone: {}", bounded(request)));
+            return Err("this read's history is gone".to_owned());
+        };
+        self.scratch.push(pin.clone());
+        self.checked_response(request, response)
+    }
+
+    fn checked_response(
+        &mut self,
+        request: &str,
+        live: String,
+    ) -> std::result::Result<String, String> {
         let pinned = self.pins.get(self.served);
         self.served += 1;
         let hash = blake3::hash(live.as_bytes()).to_hex();

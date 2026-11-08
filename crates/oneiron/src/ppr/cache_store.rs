@@ -8,12 +8,15 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
-use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::{ManifestDbs, Rows, Store};
 use oneiron_retrieval::pipeline::ScoredEntity;
 
 use super::query::DeferredPprCacheWrite;
-use super::walk::{CachedPprRow, PprCacheState, PprFrontierEntry, SCORE_EPSILON};
+use super::walk::{PprCacheState, PprFrontierEntry, SCORE_EPSILON};
+
+mod invalidation_plan;
+pub(crate) use invalidation_plan::{PprInvalidationProjection, PreparedPprInvalidation};
+use invalidation_plan::{delete_dep_rows_for_seed_hash, invalidate_ppr_caches};
 
 mod purge;
 pub(crate) use purge::purge_ppr_for_erase_in_txn;
@@ -362,45 +365,6 @@ pub(crate) fn cleanup_ppr_cache(
         dep_keys_to_delete.len() as u64,
     ))
 }
-fn invalidate_ppr_caches(store: &Store, wtxn: &mut RwTxn<'_>, entity_id: &EntityId) -> Result<()> {
-    let mut hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
-    let mut dep_keys_to_delete = Vec::new();
-    for entry in store
-        .ppr_cache_deps
-        .prefix_iter(&*wtxn, entity_id.as_bytes())?
-    {
-        let (key, _) = entry?;
-        if key.len() != CACHE_DEP_KEY_LEN {
-            dep_keys_to_delete.push(key.to_vec());
-            continue;
-        }
-
-        let mut seed_hash = [0_u8; SEED_HASH_LEN];
-        seed_hash.copy_from_slice(&key[ENTITY_ID_LEN..CACHE_DEP_KEY_LEN]);
-        hashes.insert(seed_hash);
-    }
-
-    for key in &dep_keys_to_delete {
-        store.ppr_cache_deps.delete(wtxn, key)?;
-    }
-
-    for seed_hash in hashes {
-        let Some(raw) = store.ppr_cache().get(&*wtxn, &seed_hash)? else {
-            delete_dep_rows_for_seed_hash(store, wtxn, &seed_hash)?;
-            continue;
-        };
-        if raw.len() < CACHE_HEADER_LEN {
-            store.ppr_cache().delete(wtxn, &seed_hash)?;
-            delete_dep_rows_for_seed_hash(store, wtxn, &seed_hash)?;
-            continue;
-        }
-        let mut patched = raw.to_vec();
-        patched[CACHE_STALE_OFFSET] = 1;
-        store.ppr_cache().put(wtxn, &seed_hash, &patched)?;
-    }
-
-    Ok(())
-}
 pub(super) fn seed_is_live_for_ppr(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -449,29 +413,6 @@ pub(super) fn store_cache_entry(
 
     Ok(true)
 }
-/// Every dependency row is read: past the table's threshold row the scan
-/// raises one check and deletes on.
-fn delete_dep_rows_for_seed_hash(
-    store: &Store,
-    wtxn: &mut RwTxn<'_>,
-    seed_hash: &[u8; SEED_HASH_LEN],
-) -> Result<()> {
-    let mut rows = ScanCount::start(store, wtxn, EngineScan::PprCacheDepRows, &[])?;
-    let mut dep_keys = Vec::new();
-    for entry in store.ppr_cache_deps.iter(&*wtxn)? {
-        let (key, _) = entry?;
-        rows.row();
-        if key.len() == CACHE_DEP_KEY_LEN && &key[ENTITY_ID_LEN..] == seed_hash {
-            dep_keys.push(key.to_vec());
-        }
-    }
-    rows.defer(store);
-
-    for key in dep_keys {
-        store.ppr_cache_deps.delete(wtxn, &key)?;
-    }
-    Ok(())
-}
 pub(crate) fn invalidate_ppr_for_edge(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -513,15 +454,7 @@ pub(super) fn parse_cache_header(bytes: &[u8]) -> Result<(u64, u64, u8)> {
     let stale = bytes[CACHE_STALE_OFFSET];
     Ok((computed_at, graph_version, stale))
 }
-pub(super) fn decode_cache_payload(payload: &[u8]) -> Result<CachedPprRow> {
-    if is_state_cache_payload(payload) {
-        let state = decode_cache_state(payload)?;
-        return Ok(CachedPprRow::State(state));
-    }
-
-    Ok(CachedPprRow::Scores(decode_legacy_cache_scores(payload)?))
-}
-fn decode_legacy_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
+fn decode_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
     if !payload.len().is_multiple_of(CACHE_ENTRY_LEN) {
         return Err(Error::CorruptedIndex("ppr cache scores"));
     }
@@ -542,13 +475,14 @@ fn decode_legacy_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
         })
         .collect()
 }
-fn is_state_cache_payload(payload: &[u8]) -> bool {
-    // Legacy score-only rows are exactly `[EntityId | f32] * n`, so their
-    // payload length is always a multiple of `CACHE_ENTRY_LEN`. Current state
-    // rows start with `FPRS` but have a 29-byte prefix, making that shape
-    // impossible; use both checks so a legacy EntityId may safely begin with
-    // the state magic bytes.
-    payload.starts_with(CACHE_STATE_MAGIC) && !payload.len().is_multiple_of(CACHE_ENTRY_LEN)
+/// True only for the pre-FPRS score-only cache shape: exactly
+/// `[EntityId | f32] * n`, so its length is always a multiple of
+/// `CACHE_ENTRY_LEN`. A current state row is `FPRS` plus a 29-byte prefix
+/// plus `20/24/16`-byte sections, whose total length is `29 + 4k` and can
+/// never be a multiple of 20, so no current row is misclassified. Callers
+/// treat a legacy-shaped row as a cold miss without parsing its bytes.
+pub(super) fn is_legacy_cache_payload(payload: &[u8]) -> bool {
+    payload.len().is_multiple_of(CACHE_ENTRY_LEN)
 }
 pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
     if payload.len() < CACHE_STATE_PREFIX_LEN {
@@ -599,7 +533,7 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
     let residual_start = frontier_start + frontier_bytes;
     let dependency_start = residual_start + residual_bytes;
 
-    let scores = decode_legacy_cache_scores(&payload[scores_start..frontier_start])?;
+    let scores = decode_cache_scores(&payload[scores_start..frontier_start])?;
     let mut frontier = Vec::with_capacity(frontier_count);
     let mut frontier_keys = HashSet::new();
     for chunk in payload[frontier_start..dependency_start].chunks_exact(CACHE_FRONTIER_ENTRY_LEN) {

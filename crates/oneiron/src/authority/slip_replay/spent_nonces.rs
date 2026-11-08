@@ -60,8 +60,7 @@ use crate::self_heal::{
     DiagnosticSourceKind, diagnostic_event_id, encode_diagnostic_event_body,
 };
 use crate::store::{
-    AfterCommit, DetachedWrite, active_write_txn_guard, release_vault_handle,
-    with_idempotency_intent,
+    AfterCommit, DetachedWrite, LeaderHolds, active_write_txn_guard, with_idempotency_intent,
 };
 use crate::{VAULT_WRITER_LEASE_HELD, Vault, VaultWriterLease};
 
@@ -536,6 +535,10 @@ pub(in crate::authority) struct SpendGuard {
 /// spend it answered is a row this writer reads; an absent or empty
 /// journal, the common path, costs one stat.
 pub(in crate::authority) fn spend_guard(vault: &Vault) -> Result<SpendGuard> {
+    // Inherited turn locks may be held by a thread that does not exist here.
+    if !vault.spent_nonces.in_own_process() {
+        return Err(Error::VaultServedElsewhere);
+    }
     let turn = spend_lock(vault.store.canonical_root())
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
@@ -1113,6 +1116,17 @@ impl SpentNonces {
     }
 }
 
+/// Notes a spend [`SpentNonces::admit`] took as queued when it drops
+/// ([`SpentNonces::note_queued`]), on the spend's path and on a panic
+/// between its admission and its queue alike (FIX 12351).
+struct QueuedNote<'a>(&'a SpentNonces);
+
+impl Drop for QueuedNote<'_> {
+    fn drop(&mut self) {
+        self.0.note_queued();
+    }
+}
+
 /// What an in-memory admission spends through (FIX 12023 W0): the handle this
 /// process serves, which the spend's rows are written on, and the authority
 /// second it opened at.
@@ -1184,15 +1198,21 @@ impl SpendDoor {
         if !admitted {
             return false;
         }
+        // Queued is noted when this guard drops: after the queue below, or
+        // as a panic in it unwinds, so no restore swap waits out its drain
+        // on a spend that will never queue (FIX 12351). The swap's fence
+        // still refuses a spent nonce whose row has not landed.
+        let queued = QueuedNote(&served.spent_nonces);
         NonceSpend {
             vault: Arc::downgrade(served),
+            holds: served.store.leader_holds(),
             key,
             admitted_at: now,
             proof_now,
             failures: 0,
         }
         .queue(served);
-        served.spent_nonces.note_queued();
+        drop(queued);
         // The reply goes out here. The spend is durable already: journaled
         // and fdatasynced inside `admit` (P1-a=B), its rows on their way
         // through the detached door. A crash before they land replays the
@@ -1234,6 +1254,9 @@ fn put_spend_rows_in_txn(
 /// One in-memory spend's rows, on their way through the detached door.
 struct NonceSpend {
     vault: Weak<Vault>,
+    /// The handles its vault's store leader holds, which its callbacks take
+    /// theirs through (FIX 12316).
+    holds: LeaderHolds,
     key: SpentKey,
     /// The authority second its admission took.
     admitted_at: u64,
@@ -1274,14 +1297,14 @@ impl NonceSpend {
 
     /// Lets go of its entry in its vault's set ([`SpentNonces::landed`]),
     /// its rows committed and visible. A vault already closing takes its set
-    /// with it. This runs on the store's leader, so it lets go of the handle
-    /// it took as the door lets go of its own, since it may be the last.
+    /// with it. This runs on the store's leader, so it takes its handle as
+    /// the door takes its own, since it may be the last.
     fn leave(&self) {
-        let Some(vault) = self.vault.upgrade() else {
+        let Some(vault) = self.holds.take(&self.vault) else {
             return;
         };
         vault.spent_nonces.landed(&self.key);
-        release_vault_handle(vault);
+        drop(vault);
     }
 
     /// Queues its rows again after a try whose rows did not land, or, once
@@ -1289,11 +1312,10 @@ impl NonceSpend {
     /// stays spent in memory either way, until its slip's replay window
     /// ends. This runs in the after-commit callback, on the store's leader,
     /// which drains the queue: it queues without waiting for the drain, and
-    /// lets go of the handle it took as the door lets go of its own, since it
-    /// may be the last.
+    /// takes its handle as the door takes its own, since it may be the last.
     fn retry(mut self) {
         self.failures += 1;
-        let Some(vault) = self.vault.upgrade() else {
+        let Some(vault) = self.holds.take(&self.vault) else {
             tracing::warn!(
                 failures = self.failures,
                 "a nonce spend's rows did not land as its vault closed; its nonce stayed spent while the vault was open"
@@ -1306,16 +1328,16 @@ impl NonceSpend {
                 failures = self.failures,
                 "a nonce spend's rows did not land; they are queued again"
             );
-            self.queue(&vault);
+            self.queue(vault.handle());
         } else {
             tracing::warn!(
                 failures = self.failures,
                 "a nonce spend's rows did not land in any try; its healer item is queued, and its nonce stays spent in memory"
             );
-            self.queue_healer_item(&vault);
+            self.queue_healer_item(vault.handle());
         }
         drop(leader);
-        release_vault_handle(vault);
+        drop(vault);
     }
 
     /// Queues its healer item on `served`'s detached door, counted on no
@@ -1338,7 +1360,7 @@ impl NonceSpend {
         let failures = u64::from(self.failures);
         let event = DiagnosticEvent {
             detector_id: NONCE_SPEND_DETECTOR.to_owned(),
-            event_class: DiagnosticEventClass::ChainVerifyFailure,
+            event_class: DiagnosticEventClass::DurableWriteFailure,
             signal: None,
             actor_class: "system".to_owned(),
             actor_ref: None,

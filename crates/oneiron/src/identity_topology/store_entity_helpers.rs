@@ -56,12 +56,17 @@ pub(crate) fn guard_batch_identity_delete_in_txn(
                 ),
             ));
         }
-        if let StoredIdentityOpAction::Merge { sources, survivor } = &record.action
-            && sources
+        // The enumerated action is the decision read whole (FIX 10188), where
+        // the stored record of a large merge is its manifest.
+        if let super::ledger_fold::IdentityTopologyAction::Apply(IdentityTopologyOp::Merge(
+            ref merge,
+        )) = event.action
+            && merge
+                .sources
                 .iter()
                 .any(|source| fold.current_event.get(source) == Some(&event.event_id))
-            && (*id == *survivor
-                || sources.contains(id)
+            && (*id == merge.survivor
+                || merge.sources.contains(id)
                 || super::admitted_author_in_txn(store, rtxn, event.event_id)?
                     .is_some_and(|actor| actor.entity_ref() == *id))
         {
@@ -75,10 +80,7 @@ pub(crate) fn guard_batch_identity_delete_in_txn(
             && !fold.resolved_proposals.contains_key(&event.event_id)
             && !fold.moot_proposals.contains(&event.event_id)
             && let super::ledger_fold::IdentityTopologyAction::Apply(op) = event.action
-            && matches!(
-                op,
-                IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
-            )
+            && op.is_resolvable_when_parked()
             && op.participants().contains(id)
         {
             return Err(Error::Sync(
@@ -147,6 +149,15 @@ pub(super) fn identity_topology_events_for_store_in_txn(
         ) {
             continue;
         }
+        // FIX 10188: an operation part is no event, and a manifest is its
+        // whole decision or, while a part is missing, nothing.
+        let Some(record) =
+            super::operation_parts::logical_identity_topology_event_for_store_in_txn(
+                store, rtxn, &event_id, record,
+            )?
+        else {
+            continue;
+        };
         events.push(IdentityTopologyEvent {
             event_id,
             seq: record.seq,
@@ -209,8 +220,11 @@ pub(super) fn desired_shell_edges_for_store_entity_in_txn(
         .current_event
         .get(entity)
         .ok_or(Error::CorruptedIndex("identity topology fold"))?;
-    let record = identity_topology_event_for_store_in_txn(store, rtxn, event_id)?
-        .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+    // The fold's current writer is a whole decision (FIX 10188): read it so,
+    // or a manifest's heads would read as corruption.
+    let record =
+        super::operation_parts::identity_topology_decision_for_store_in_txn(store, rtxn, event_id)?
+            .ok_or(Error::CorruptedIndex("identity topology event index"))?;
     Ok(match (&record.action, state) {
         (StoredIdentityOpAction::Merge { survivor, .. }, EntityLifecycleState::Merged) => {
             if store.port_deletion_marked(rtxn, DeletionMarker::HardDelete, survivor)? {

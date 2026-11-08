@@ -10,6 +10,8 @@ use super::declaration::LeaseUnit;
 use super::resident::{ResidentLedger, Residents};
 use crate::EntityId;
 use crate::agent_dispatch::SpendScopeId;
+use crate::federation::WalletRef;
+pub use crate::store::resident_budget_rows::AllocationRef;
 
 /// Who pays the provider for a call an offer serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -310,6 +312,13 @@ pub struct OfferBinding {
 }
 
 impl OfferBinding {
+    /// The same full binding identity that permits and gates compare.
+    /// A fingerprint identifies an offer; it grants no permission to use it.
+    #[must_use]
+    pub fn fingerprint(&self) -> String {
+        identity(self)
+    }
+
     pub(super) fn dispatch_binding(&self) -> DispatchBinding {
         DispatchBinding {
             subject: self.model.as_str().to_owned(),
@@ -362,19 +371,18 @@ fn identity(binding: &impl Serialize) -> String {
     blake3::hash(&bytes).to_hex().to_string()
 }
 
-/// Which allocation a lease draws on: its id and generation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AllocationRef {
-    pub id: String,
-    pub generation: u64,
-}
-
 /// The money one vault may commit, as the host issued it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Allocation {
     pub reference: AllocationRef,
     pub units: u64,
     pub unit: LeaseUnit,
+    /// The host wallet that funds this allocation (FIX 7766), host-supplied
+    /// metadata beside its generation reference: a run whose work an owner's
+    /// agent Grant funds takes a hold only on an allocation of the wallet
+    /// that Grant names. `None`: the host named none, and such a run takes
+    /// no hold on it.
+    pub wallet: Option<WalletRef>,
 }
 
 /// Why the host refused a vault a fresh allocation.
@@ -426,6 +434,8 @@ pub(super) struct LiveAllocation {
     pub(super) reference: AllocationRef,
     pub(super) unit: LeaseUnit,
     pub(super) meter: BudgetGuard,
+    /// The wallet the host named for this allocation (FIX 7766).
+    pub(super) wallet: Option<WalletRef>,
 }
 
 impl HostAccount {
@@ -473,6 +483,7 @@ impl HostAccount {
             reference: allocation.reference,
             unit: allocation.unit,
             meter,
+            wallet: allocation.wallet,
         });
         Ok(())
     }

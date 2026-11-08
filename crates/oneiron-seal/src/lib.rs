@@ -9,6 +9,7 @@
 //! `oneiron-seal-organ`, behind the organ host (the `organ` module).
 
 pub mod api;
+mod buffers;
 mod error;
 #[cfg(feature = "native")]
 mod memory;
@@ -18,13 +19,13 @@ mod native;
 pub mod organ;
 
 pub use api::{
-    Anomaly, BackendError, BackendRejectCode, BackendSignature, ByteRangeEvidence, Coverage,
-    DigestAlgorithm, ModificationLevel, Modifications, PadesProfile, PdfSealEngine,
-    PreparedRevision, ProfileDegradeReason, RevisionKind, RevisionReport, SealBackend, SealClock,
-    SealRequest, SealWarning, SealedPdf, Sha256Digest, SignDigestRequest, SignRevisionRequest,
-    SignatureAlgorithm, SignatureKind, SignatureReport, SignedRangeDigest, SigningIdentity,
-    VerifyCheck, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport,
-    VerifyVerdict,
+    ActiveContentFacts, Anomaly, BackendError, BackendRejectCode, BackendSignature,
+    ByteRangeEvidence, Coverage, DigestAlgorithm, ModificationLevel, Modifications, PadesProfile,
+    PdfSealEngine, PreparedRevision, ProfileDegradeReason, RevisionCoverage, RevisionKind,
+    RevisionReport, SealBackend, SealClock, SealRequest, SealWarning, SealedPdf, Sha256Digest,
+    SignDigestRequest, SignRevisionRequest, SignatureAlgorithm, SignatureKind, SignatureReport,
+    SignedRangeDigest, SigningIdentity, UncoveredByteRange, VerifyCheck, VerifyCheckKind,
+    VerifyCheckStatus, VerifyFindingCode, VerifyReport, VerifyVerdict,
 };
 #[cfg(feature = "native")]
 pub use api::{
@@ -32,9 +33,10 @@ pub use api::{
     OfflineFetcher, PDF_FORMAT_BYTES, PDF_FORMAT_OBJECTS, SealConfig, SealFetcher,
     SealObservations, SealObserved, SealResourceLimits, TsaEndpoint,
 };
+pub use buffers::{AdmittedBytes, AdmittedStr, SharedBytes, SharedStr};
 pub use error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
 #[cfg(feature = "native")]
-pub use memory::{AdmittedBytes, SealMemory, SealMemoryProvider, SealMemoryRefusal, SharedBytes};
+pub use memory::{SealMemory, SealMemoryProvider, SealMemoryRefusal};
 
 #[cfg(feature = "native")]
 pub use native::NativeSealEngine;

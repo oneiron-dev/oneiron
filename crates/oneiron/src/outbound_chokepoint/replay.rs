@@ -1,8 +1,10 @@
 //! Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes.
 
 use super::admission::{enforce_step_failure_policy, verify_booking_effect};
+use super::authority_standing::{frozen_grant_stop, withdrawn_owner};
 use super::types::{
-    OutboundEffectResult, OutboundTransport, PreparedAuthorization, PreparedEffect,
+    OutboundEffectCommand, OutboundEffectResult, OutboundTransport, PreparedAuthorization,
+    PreparedEffect, UncertainSendStep,
 };
 use crate::Vault;
 use crate::connector_key::{self, ConnectorKeyStatus, SlateDisposition};
@@ -12,11 +14,12 @@ use crate::gate::{self, GateOutcome};
 use crate::outbound::validate_publisher_signature_in_txn;
 use crate::outbound_consent::{FrozenCallValidation, OutboundBindingAuthority};
 use crate::outbound_intent_ledger::{
-    FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentId,
-    IntentLedgerError, IntentState, OutboundCallClass, OutboundSendOutcome,
-    RecordedOutboundOutcome, abandon_record, begin_definite_non_delivery_retry,
-    complete_record_bridged, defer_record, keep_reported_cost, provider_wait_edge,
-    record_definite_non_delivery, record_possible_delivery, record_provider_refusal,
+    DeliveryReadBack, FrozenOutboundCall, IntentDispatchResult, IntentEscalation,
+    IntentEscalationReason, IntentId, IntentLedgerError, IntentState, OutboundCallClass,
+    OutboundSendOutcome, RecordedOutboundOutcome, abandon_record,
+    begin_definite_non_delivery_retry, complete_record_bridged, defer_record, keep_reported_cost,
+    provider_wait_edge, record_definite_non_delivery, record_looked_up_non_delivery,
+    record_possible_delivery, record_provider_refusal,
 };
 
 /// The receipt reason a send held by its provider's stated wait carries
@@ -87,9 +90,30 @@ pub(super) fn replay_record<T: OutboundTransport>(
         (IntentState::Pending, None) if !record.idempotency_supported => {
             // FIX 9379: a transport whose own record proves this call
             // reached no provider retries it as a definite non-delivery.
-            if transport.known_non_delivery(&FrozenOutboundCall::from_record(&record)) {
-                let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
-                return replay_record(vault, authority, proven, prepared, now_ms, transport);
+            // FIX 8814 follow-up: so does one whose provider's own record
+            // reads back that it never sent; one that reads back the send
+            // completes it, never sending it twice.
+            let call = FrozenOutboundCall::from_record(&record);
+            let read_back = if transport.known_non_delivery(&call) {
+                DeliveryReadBack::NotDelivered
+            } else {
+                transport.read_back_delivery(&call)
+            };
+            match read_back {
+                DeliveryReadBack::NotDelivered => {
+                    let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
+                    return replay_record(vault, authority, proven, prepared, now_ms, transport);
+                }
+                DeliveryReadBack::Delivered => {
+                    return complete_read_back(vault, &record, now_ms, true, transport);
+                }
+                DeliveryReadBack::Unknown => {}
+            }
+            // FIX 4747: a transport that looks such a call up at its provider
+            // settles it by that lookup, or by the owner's answer, before any
+            // resend, never by abandoning it unasked.
+            if transport.looks_up_uncertain_sends() {
+                return step_uncertain_send(vault, authority, record, prepared, now_ms, transport);
             }
             // A previous node may have sent before crashing. The stop reason
             // does not carry this delivery fact; store it independently.
@@ -114,10 +138,34 @@ pub(super) fn replay_record<T: OutboundTransport>(
                 let txn = vault.store.env.read_txn().map_err(Error::from)?;
                 verify_booking_effect(vault, &txn, record.attempt_id, record.payload())?;
             }
-            // FIX 9379: as above, a proven non-delivery is retried as one.
-            if transport.known_non_delivery(&FrozenOutboundCall::from_record(&record)) {
-                let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
-                return replay_record(vault, authority, proven, prepared, now_ms, transport);
+            // FIX 9379 and the FIX 8814 follow-up: as above, a proven or
+            // read-back non-delivery is retried as one, and a read-back
+            // delivery completes.
+            let call = FrozenOutboundCall::from_record(&record);
+            let read_back = if transport.known_non_delivery(&call) {
+                DeliveryReadBack::NotDelivered
+            } else {
+                transport.read_back_delivery(&call)
+            };
+            match read_back {
+                DeliveryReadBack::NotDelivered => {
+                    let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
+                    return replay_record(vault, authority, proven, prepared, now_ms, transport);
+                }
+                DeliveryReadBack::Delivered => {
+                    return complete_read_back(vault, &record, now_ms, true, transport);
+                }
+                DeliveryReadBack::Unknown => {}
+            }
+            // FIX 4747: a provider that forgets its key after a window (LINE's
+            // retry key) deduplicates this resend only inside it, so the lookup
+            // decides, and the owner is asked once the window may have lapsed
+            // (review #6555).
+            if transport.looks_up_uncertain_sends()
+                && transport
+                    .idempotent_resend_is_time_bounded(&FrozenOutboundCall::from_record(&record))
+            {
+                return step_uncertain_send(vault, authority, record, prepared, now_ms, transport);
             }
             // This row was committed before a prior transport attempt. A crash
             // could have hidden a delivered response; persist that possibility
@@ -131,6 +179,38 @@ pub(super) fn replay_record<T: OutboundTransport>(
             "outbound state has no canonical recorded outcome",
         )),
     }
+}
+
+/// Completes `record` as a delivered send: its provider's own record read
+/// back that the send went (FIX 8814 follow-up), so it is never sent again.
+/// It settles as an acknowledged send does, a turn program's step with the
+/// body its transport hands on (none, when no send ran here).
+fn complete_read_back<T: OutboundTransport>(
+    vault: &Vault,
+    record: &crate::outbound_intent_ledger::IntentLedgerRecord,
+    now_ms: u64,
+    replayed: bool,
+    transport: &mut T,
+) -> Result<OutboundEffectResult, IntentLedgerError> {
+    let body = transport.take_settled_result();
+    let done = complete_record_bridged(vault, record.id, now_ms, |wtxn, done| {
+        crate::dreamer_runner::settle_program_outbound_in_txn(
+            vault,
+            wtxn,
+            done,
+            body,
+            now_ms / 1_000,
+        );
+    })?;
+    // Its settled budget warnings go out with it, as an acked send's do.
+    let mut result = effect_result(
+        &done.record,
+        Some(OutboundSendOutcome::Acked),
+        replayed,
+        None,
+    );
+    result.budget_settlement_events = done.budget_events;
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -188,13 +268,13 @@ fn send_pending_with_gate<T: OutboundTransport>(
     // validation behavior; connector text never opts a row into this branch.
     let requires_frozen_call_validation =
         record.capability_provenance().is_some() || record.resolved_endpoint.is_some();
+    // A grant no longer active stops the send as a grant that no longer
+    // stands (FIX 11591); every other rejection stays the binding's own.
     if requires_frozen_call_validation
-        && !matches!(
-            authority.validate_frozen_call_grant(vault, &call)?,
-            FrozenCallValidation::Valid
-        )
+        && let FrozenCallValidation::Rejected(rejected) =
+            authority.validate_frozen_call_grant(vault, &call)?
     {
-        let reason = IntentEscalationReason::BindingInvalid;
+        let reason = frozen_grant_stop(rejected);
         let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
         return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
@@ -262,14 +342,29 @@ fn send_pending_with_gate<T: OutboundTransport>(
         let posting_gate =
             vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
         // FIX 6424 part 2a: or the press a pinned family kept for this row.
-        let retry = record.admitted_approval.or_else(|| {
-            crate::outbound_intent_ledger::pinned_retry_approval(
-                vault,
-                &wtxn,
-                record.id,
-                &prepared.gate,
-            )
-        });
+        let family = prepared
+            .gate
+            .provenance
+            .approval_target
+            .as_ref()
+            .and_then(gate::ApprovalTarget::pinned_family);
+        let ordinary_target = family
+            == Some(crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate)
+            || (family
+                == Some(crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch)
+                && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &record)?.is_some());
+        let retry = if ordinary_target {
+            super::ordinary_slate::retry_approval_in_txn(vault, &wtxn, &record, &prepared.gate)?
+        } else {
+            record.admitted_approval.or_else(|| {
+                crate::outbound_intent_ledger::pinned_retry_approval(
+                    vault,
+                    &wtxn,
+                    record.id,
+                    &prepared.gate,
+                )
+            })
+        };
         let governance = gate::evaluate_external_effect_policy(
             &vault.store,
             &mut wtxn,
@@ -285,6 +380,14 @@ fn send_pending_with_gate<T: OutboundTransport>(
         if governance.outcome() != GateOutcome::Allow {
             let (decision_id, decision) =
                 gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
+            if ordinary_target
+                && decision
+                    .receipt_reasons()
+                    .iter()
+                    .any(|reason| *reason == crate::outbound_consent::SLATE_ALWAYS_ASK_REASON)
+            {
+                super::ordinary_slate::queue_owner_ask_in_txn(vault, &mut wtxn, &record)?;
+            }
             wtxn.commit().map_err(Error::from)?;
             let mut result =
                 gate_rejection(record.id, decision_id, decision).held_by(&posting_gate);
@@ -320,14 +423,19 @@ fn send_pending_with_gate<T: OutboundTransport>(
         enforce_step_failure_policy(vault, &txn, &policy, record.payload(), Some(actor))?;
     }
 
+    // FIX 11591: the owner whose word admitted this send is asked again at
+    // the last in-process boundary. One no longer a live owner stops it,
+    // keeping what it knew of its delivery; a read that fails keeps the path.
+    if let Some(reason) = withdrawn_owner(vault, &record) {
+        let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+        return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
+    }
     // F2 is checked again at the last in-process boundary before transport.
     if requires_frozen_call_validation
-        && !matches!(
-            authority.validate_frozen_call_grant(vault, &call)?,
-            FrozenCallValidation::Valid
-        )
+        && let FrozenCallValidation::Rejected(rejected) =
+            authority.validate_frozen_call_grant(vault, &call)?
     {
-        let reason = IntentEscalationReason::BindingInvalid;
+        let reason = frozen_grant_stop(rejected);
         let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
         return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
@@ -355,7 +463,30 @@ fn send_pending_with_gate<T: OutboundTransport>(
     // idempotency. Clear that permit durably immediately before transport so a
     // crash after the wire may have started is once again Q4 Pending/uncertain.
     let record = if record.recorded_outcome == Some(RecordedOutboundOutcome::DefiniteNonDelivery) {
-        let claimed = begin_definite_non_delivery_retry(vault, record.id, now_ms)?;
+        let (claimed, block) = begin_definite_non_delivery_retry(vault, record.id, now_ms)?;
+        if block != connector_key::BudgetBlock::Open {
+            let mut held = effect_result(&claimed, None, replayed, None);
+            match block {
+                connector_key::BudgetBlock::Paced { next_eligible_at } => {
+                    held.gate_outcome = Some(GateOutcome::Allow.as_str().to_owned());
+                    held.gate_reason_codes
+                        .push(crate::linear_sync::LINEAR_RATE_WINDOW_REASON.to_owned());
+                    held.paced_until = Some(next_eligible_at);
+                }
+                connector_key::BudgetBlock::Hard => {
+                    held.gate_outcome = Some(GateOutcome::Deny.as_str().to_owned());
+                    held.gate_reason_codes.push(
+                        gate::GateReasonCode::DenyEffectorBudgetExhausted
+                            .as_str()
+                            .to_owned(),
+                    );
+                    held.gate_receipt_reasons
+                        .push("effector_budget_exhausted".to_owned());
+                }
+                connector_key::BudgetBlock::Open => unreachable!(),
+            }
+            return Ok(held);
+        }
         if claimed.state == IntentState::Abandoned {
             return Ok(effect_result(
                 &claimed,
@@ -396,7 +527,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
             // A turn program's send settles its step in the Done commit,
             // with the body its transport returned (DOOR-141 PR2); any
             // other send writes nothing more, and nothing here fails it.
-            let body = transport.settled_result();
+            let body = transport.take_settled_result();
             let done = complete_record_bridged(vault, record.id, now_ms, |wtxn, done| {
                 crate::dreamer_runner::settle_program_outbound_in_txn(
                     vault,
@@ -406,13 +537,27 @@ fn send_pending_with_gate<T: OutboundTransport>(
                     now_ms / 1_000,
                 );
             })?;
-            Ok(effect_result(&done, Some(outcome), replayed, None))
+            let mut result = effect_result(&done.record, Some(outcome), replayed, None);
+            result.budget_settlement_events = done.budget_events;
+            Ok(result)
         }
-        OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
+        // A provider key makes its resend safe. FIX 4747: a call its
+        // transport looks up stays Pending and uncertain too, and its resend
+        // waits for that lookup or the owner's answer.
+        OutboundSendOutcome::Ambiguous
+            if record.idempotency_supported || transport.looks_up_uncertain_sends() =>
+        {
             let uncertain = record_possible_delivery(vault, record.id)?;
             Ok(effect_result(&uncertain, Some(outcome), replayed, None))
         }
         OutboundSendOutcome::Ambiguous => {
+            // FIX 8814 follow-up: a provider whose own record reads back the
+            // send settles the ambiguous reply as delivered. Read right after
+            // the reply, a "not sent" is not trusted: the send may still be
+            // landing, so anything but a delivery escalates as before.
+            if transport.read_back_delivery(&call) == DeliveryReadBack::Delivered {
+                return complete_read_back(vault, &record, now_ms, replayed, transport);
+            }
             record_possible_delivery(vault, record.id)?;
             let abandoned = abandon_record(
                 vault,
@@ -475,6 +620,52 @@ fn send_pending_with_gate<T: OutboundTransport>(
                 ))
             }
         },
+    }
+}
+
+/// The step an outcome-free Pending call that may have gone out takes
+/// before its resend, from its transport's provider lookup or the owner's
+/// answer (FIX 4747): settled delivered with nothing sent, sent as a
+/// definite non-delivery, or held Pending and uncertain, nothing sent, for
+/// the owner's ask.
+fn step_uncertain_send<T: OutboundTransport>(
+    vault: &Vault,
+    authority: &OutboundBindingAuthority,
+    record: crate::outbound_intent_ledger::IntentLedgerRecord,
+    prepared: Option<&PreparedEffect>,
+    now_ms: u64,
+    transport: &mut T,
+) -> Result<OutboundEffectResult, IntentLedgerError> {
+    match transport.uncertain_send_step(&FrozenOutboundCall::from_record(&record)) {
+        UncertainSendStep::Delivered => {
+            let done = complete_record_bridged(vault, record.id, now_ms, |_, _| {})?;
+            // Its settled budget warnings go out with it, as an acked send's do.
+            let mut result =
+                effect_result(&done.record, Some(OutboundSendOutcome::Acked), true, None);
+            result.budget_settlement_events = done.budget_events;
+            Ok(result)
+        }
+        UncertainSendStep::LookedUpUnsent => {
+            let proven = record_looked_up_non_delivery(vault, record.id, now_ms)?;
+            replay_record(vault, authority, proven, prepared, now_ms, transport)
+        }
+        UncertainSendStep::OwnerReleased => {
+            let released = record_definite_non_delivery(vault, record.id, now_ms)?;
+            replay_record(vault, authority, released, prepared, now_ms, transport)
+        }
+        // A provider's time-bounded dedupe proves nothing: the row is sent
+        // again still Pending and uncertain, never recorded as a non-delivery,
+        // so a resend resumed after the window looks up again (review #6555).
+        UncertainSendStep::ResendDeduplicated => {
+            let uncertain = record_possible_delivery(vault, record.id)?;
+            send_pending_with_gate(
+                vault, authority, uncertain, prepared, None, now_ms, true, transport,
+            )
+        }
+        UncertainSendStep::Hold => {
+            let uncertain = record_possible_delivery(vault, record.id)?;
+            Ok(effect_result(&uncertain, None, true, None))
+        }
     }
 }
 
@@ -577,20 +768,25 @@ pub(super) fn recovery_governance(
             return Ok(RecoveryGovernance::Block("charter_never_list"));
         }
     }
-    // FIX 990: a scoped call meets its tool's setting now, as the Gate met
-    // it at admission (a per-grant key's catalog slate included).
-    if record.capability_provenance().is_some() {
-        match connector_key::connector_tool_setting_in_txn(
-            &vault.store,
-            &txn,
-            key_ref,
-            &key,
-            &record.tool,
-        )? {
-            SlateDisposition::NeverAllow => return Ok(RecoveryGovernance::NeverAllow),
-            SlateDisposition::AlwaysAsk => return Ok(RecoveryGovernance::AlwaysAsk),
-            SlateDisposition::Auto | SlateDisposition::AlwaysAllow => {}
+    // Every keyed row meets never-allow. Always-ask also reaches ordinary
+    // dispatches whose native frozen target and owner release can be rebuilt.
+    match connector_key::connector_tool_setting_in_txn(
+        &vault.store,
+        &txn,
+        key_ref,
+        &key,
+        &record.tool,
+    )? {
+        SlateDisposition::NeverAllow => return Ok(RecoveryGovernance::NeverAllow),
+        SlateDisposition::AlwaysAsk if record.capability_provenance().is_some() => {
+            return Ok(RecoveryGovernance::AlwaysAsk);
         }
+        SlateDisposition::AlwaysAsk
+            if super::ordinary_slate::candidate_in_txn(vault, &txn, record)?.is_some() =>
+        {
+            return Ok(RecoveryGovernance::AlwaysAsk);
+        }
+        SlateDisposition::Auto | SlateDisposition::AlwaysAllow | SlateDisposition::AlwaysAsk => {}
     }
     Ok(RecoveryGovernance::Allow)
 }
@@ -601,19 +797,94 @@ pub(super) fn effect_result(
     replayed: bool,
     escalation_reason: Option<IntentEscalationReason>,
 ) -> OutboundEffectResult {
+    settled_result(
+        crate::outbound_intent_ledger::IntentResolution::from_record(record)
+            .expect("validated outbound intent has a resolution"),
+        record.id,
+        record.state,
+        send_outcome,
+        replayed,
+        escalation_reason,
+    )
+}
+
+/// The replay of a New or Park `command` whose call a restore kept only the
+/// accounting of (KS7-5, FIX 12117), read in `txn`: [`accounting_result`]
+/// under `intent_id`, or `None` for every other call.
+///
+/// # Errors
+///
+/// An accounting row that does not read; storage faults.
+pub(super) fn accounting_replay_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    command: &OutboundEffectCommand,
+    intent_id: IntentId,
+) -> Result<Option<OutboundEffectResult>, IntentLedgerError> {
+    let (OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared)) = command
+    else {
+        return Ok(None);
+    };
+    let accounting = crate::outbound_intent_ledger::checkpoint::call_accounting_in_txn(
+        vault,
+        txn,
+        prepared.attempt_id,
+        prepared.call_seq,
+    )?;
+    Ok(accounting.map(|accounting| accounting_result(intent_id, &accounting)))
+}
+
+/// The replay of call `intent_id`, which a restore kept only the accounting
+/// of (KS7-5, FIX 12117), as the owner's erase left it: acked, or stopped
+/// for its reason with whether it may have crossed the wire. A Done or
+/// Abandoned row replays the same way; nothing is gated, sent or charged.
+/// A suppressed semantic duplicate replays suppressed, without the receipt
+/// the restore did not keep.
+fn accounting_result(
+    intent_id: IntentId,
+    accounting: &crate::outbound_intent_ledger::CallAccounting,
+) -> OutboundEffectResult {
+    let (send_outcome, escalation_reason) = match accounting.recorded_outcome {
+        Some(RecordedOutboundOutcome::Acked) => (Some(OutboundSendOutcome::Acked), None),
+        Some(RecordedOutboundOutcome::Deferred) => (Some(OutboundSendOutcome::Deferred), None),
+        Some(RecordedOutboundOutcome::Abandoned(reason)) => (None, Some(reason)),
+        Some(RecordedOutboundOutcome::DefiniteNonDelivery) | None => (None, None),
+    };
+    let mut result = settled_result(
+        crate::outbound_intent_ledger::IntentResolution::from_accounting(accounting)
+            .expect("validated outbound call accounting has a resolution"),
+        intent_id,
+        accounting.state,
+        send_outcome,
+        true,
+        escalation_reason,
+    );
+    if escalation_reason == Some(IntentEscalationReason::DedupeSuppressed) {
+        result.gate_outcome = Some("allow".to_owned());
+        result.gate_reason_codes.push("gate.allow".to_owned());
+        result.dedupe_suppressed = true;
+    }
+    result
+}
+
+fn settled_result(
+    resolution: crate::outbound_intent_ledger::IntentResolution,
+    intent_id: IntentId,
+    state: IntentState,
+    send_outcome: Option<OutboundSendOutcome>,
+    replayed: bool,
+    escalation_reason: Option<IntentEscalationReason>,
+) -> OutboundEffectResult {
     OutboundEffectResult {
-        resolution: Some(
-            crate::outbound_intent_ledger::IntentResolution::from_record(record)
-                .expect("validated outbound intent has a resolution"),
-        ),
+        resolution: Some(resolution),
         dispatch: IntentDispatchResult {
             class: OutboundCallClass::Effectful,
-            intent_id: Some(record.id),
-            state: Some(record.state),
+            intent_id: Some(intent_id),
+            state: Some(state),
             send_outcome,
             replayed,
             escalation: escalation_reason.map(|reason| IntentEscalation {
-                intent_id: Some(record.id),
+                intent_id: Some(intent_id),
                 reason,
             }),
         },
@@ -622,10 +893,12 @@ pub(super) fn effect_result(
         gate_reason_codes: Vec::new(),
         gate_receipt_reasons: Vec::new(),
         budget_charge: None,
+        budget_settlement_events: Vec::new(),
         dedupe_suppressed: false,
         suppression_receipt: None,
         ceiling_count: None,
         approval_digest: None,
+        ask_consent: None,
         approval_actor: None,
         paced_until: None,
     }
@@ -659,10 +932,12 @@ pub(super) fn gate_rejection(
             .map(|reason| (*reason).to_owned())
             .collect(),
         budget_charge: None,
+        budget_settlement_events: Vec::new(),
         dedupe_suppressed: false,
         suppression_receipt: None,
         ceiling_count: None,
         approval_digest: None,
+        ask_consent: None,
         approval_actor: None,
         paced_until: None,
     }

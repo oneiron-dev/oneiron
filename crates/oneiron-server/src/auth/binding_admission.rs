@@ -13,6 +13,7 @@ use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use oneiron::authority::PeerMachine;
+use oneiron_vault_contract::MCP_CREDENTIAL_HEADER;
 use std::sync::Arc;
 
 /// What a deleted shared vault still answers: its holders read the deletion
@@ -89,12 +90,19 @@ fn managed_refusal(
 
 pub(crate) async fn admit_http_binding(
     State(server): State<Arc<SyncServer>>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     if !served_after_deletion(request.uri().path())
         && let Some(refusal) = deleted_vault_refusal(&server, request.uri().path())
     {
+        return refusal;
+    }
+    // A stock client's OAuth access token on `/mcp` goes on, from here, as
+    // the slip the server holds for it with a fresh holder proof, so the
+    // clock classification, the proof spent below and the gateway all read
+    // that slip; one that does not resolve is refused here (FIX 4902 slice C).
+    if let Err(refusal) = crate::api::swap_oauth_access_token(&server, &mut request) {
         return refusal;
     }
     // A facade or MCP call over a damaged authority clock floor (FIX 11190,
@@ -199,7 +207,7 @@ fn admit_binding(
     let mcp_credential = matches!(path, "/mcp" | "/mcp/tool-first" | "/v1/chat/completions")
         .then(|| {
             headers
-                .get("x-oneiron-mcp-credential")
+                .get(MCP_CREDENTIAL_HEADER)
                 .and_then(|value| value.to_str().ok())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
@@ -228,6 +236,12 @@ fn admit_binding(
         });
         match accepted {
             Ok((auth, proof)) => {
+                if let Some(slip) = auth.verified_slip() {
+                    crate::http_listener::attach_body_slip(
+                        Arc::clone(server.vault()),
+                        Arc::new(slip.clone()),
+                    );
+                }
                 machine =
                     super::machine_proof::peer_machine(headers, token, &proof, server.vault());
                 // A managed vault keeps the caller admitted here, with the

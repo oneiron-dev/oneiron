@@ -40,9 +40,9 @@ const HOLDER_NARROWS: SideTable<EntityId, KeySlateNarrows, Named> =
 /// elicitation row's key) and the facet set.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct KeySlateNarrows {
-    rows: BTreeMap<String, SlateHolderNarrow>,
-    facets: Option<SlateFacetNarrow>,
+pub(crate) struct KeySlateNarrows {
+    pub(crate) rows: BTreeMap<String, SlateHolderNarrow>,
+    pub(crate) facets: Option<SlateFacetNarrow>,
 }
 
 /// What a key's calls meet after a holder's narrow: the slate they meet,
@@ -121,6 +121,22 @@ pub(super) fn narrowed_setting_in_txn(
     Ok(narrow.map_or(base, |narrow| narrow.max(base)))
 }
 
+/// Key `key_id`'s holder narrows over `HOLDER_NARROWS` (FIX 9230): the whole
+/// overlay — rows by row key plus the facet narrow — for the per-grant-key
+/// overlays in the consent, slate and reach views. `None` is no overlay
+/// stored. Keyed by the per-grant key's id, as the table is.
+#[allow(
+    dead_code,
+    reason = "FIX 9230 seam for the L13/L06-A consent, slate and reach overlays"
+)]
+pub(crate) fn narrowed_settings_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key_id: &EntityId,
+) -> Result<Option<KeySlateNarrows>> {
+    HOLDER_NARROWS.get(store, txn, key_id)
+}
+
 /// The owner's ruling on slate `slate_id`, in his stamping writer: each
 /// per-grant key whose calls meet that slate drops its narrows of the rows
 /// he ruled on, and its facet narrow when he ruled on the facets. Its other
@@ -156,6 +172,39 @@ pub(super) fn clear_ruled_narrows_in_txn(
             HOLDER_NARROWS.delete(store, txn, &key_id)?;
         } else {
             HOLDER_NARROWS.put(store, txn, &key_id, &narrows)?;
+        }
+    }
+    Ok(())
+}
+
+/// This table's actor scrub (FIX 9231): an erase of `actor` drops every row
+/// and facet narrow it stamped, in the erase's writer. A narrow without its
+/// holder is meaningless, so the rows are dropped, not anonymized (J1); the
+/// facet narrow names the same actor and goes the same way (J2). A key whose
+/// overlay is empty afterwards keeps no row.
+pub(crate) fn erase_holder_narrows_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let holder = actor.to_hex();
+    for (key_id, mut narrows) in HOLDER_NARROWS.scan(&vault.store, wtxn)? {
+        let before = narrows.clone();
+        narrows.rows.retain(|_, narrow| narrow.actor != holder);
+        if narrows
+            .facets
+            .as_ref()
+            .is_some_and(|narrow| narrow.actor == holder)
+        {
+            narrows.facets = None;
+        }
+        if narrows == before {
+            continue;
+        }
+        if narrows == KeySlateNarrows::default() {
+            HOLDER_NARROWS.delete(&vault.store, wtxn, &key_id)?;
+        } else {
+            HOLDER_NARROWS.put(&vault.store, wtxn, &key_id, &narrows)?;
         }
     }
     Ok(())

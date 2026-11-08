@@ -11,7 +11,8 @@
 //! grants it again (`vault.connectors.read_grants.grant`, FIX 10962), which
 //! issues it anew at the same id. The consent registry lists every
 //! witness-read grant beside the owner's other grants, with its own one-tap
-//! revoke, and its receipts name the reason it was issued.
+//! revoke and, when revoked, its owner re-grant command with the exact agent
+//! and conversation. Its receipts name the reason it was issued.
 
 use crate::Vault;
 use crate::access_grant::{
@@ -21,7 +22,8 @@ use crate::access_grant::{
 use crate::authority::ActSurface;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::{
-    AuthenticatedOwner, ConsentDomain, ConsentGrantStatus, ConsentRegistryRow, ConsentRevokeAction,
+    AuthenticatedOwner, ConsentDomain, ConsentGrantStatus, ConsentRegistryRow,
+    ConsentRegrantAction, ConsentRevokeAction,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -74,6 +76,63 @@ impl Vault {
             Err(Error::Record(RecordError::AccessGrantAlreadyExists)) => Ok(()),
             issued => issued,
         }
+    }
+
+    /// Automatic issuance composed with a witness landing. Existing terminal
+    /// rows stand unchanged, just as through the self-contained issuer.
+    pub(crate) fn issue_connector_witness_read_grant_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        agent: EntityId,
+        conversation: EntityId,
+        now: u64,
+    ) -> Result<()> {
+        if !CONNECTOR_WITNESS_READ_GRANT {
+            return Ok(());
+        }
+        let id = connector_witness_read_grant_id(agent, conversation)?;
+        if self.get_access_grant_in_txn(txn, &id)?.is_some() {
+            return Ok(());
+        }
+        match self.create_access_grant_in_txn(
+            txn,
+            &id,
+            &witness_read_grant(agent, conversation, now),
+        ) {
+            Err(Error::Record(RecordError::AccessGrantAlreadyExists)) => Ok(()),
+            issued => issued,
+        }
+    }
+
+    /// The existing read-grant predicate at this record's actual scope.
+    /// This is not a claim that every other message read check has passed.
+    pub(crate) fn connector_witness_read_grant_allows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+        conversation: EntityId,
+        record: &oneiron_authority::federation::Scope,
+    ) -> Result<bool> {
+        let id = connector_witness_read_grant_id(agent, conversation)?;
+        if !matches!(
+            crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_ACCESS_GRANT,
+                ..
+            }
+        ) {
+            return Ok(false);
+        }
+        let Some(grant) = self.get_access_grant_in_txn(txn, &id)? else {
+            return Ok(false);
+        };
+        Ok(witness_read_conversation(&id, &grant) == Some(conversation)
+            && grant.allows_conversation_message_read(
+                agent,
+                conversation,
+                record,
+                self.instant_in_txn(txn)?.secs(),
+            ))
     }
 
     /// Revokes the witness-read grant at `grant_ref` on `owner`'s word. It
@@ -327,6 +386,13 @@ fn registry_row(
             command: CONNECTOR_WITNESS_READ_REVOKE_COMMAND.to_owned(),
             grant_ref: grant_ref.clone(),
         },
+        regrant_action: (grant.status == AccessGrantStatus::Revoked).then(|| {
+            ConsentRegrantAction {
+                command: "vault.connectors.read_grants.grant".to_owned(),
+                agent: grant.principal_ref.to_hex(),
+                conversation: conversation.to_hex(),
+            }
+        }),
         grant_ref,
         bypass: None,
         delegation: None,

@@ -276,6 +276,9 @@ impl AuthoredMin {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
+    /// Stored manifest bodies consulted by this fold, before any exclusions.
+    /// Data provenance only; these IDs confer no authority.
+    pub(crate) manifest_body_rows: std::collections::BTreeSet<crate::EntityId>,
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
@@ -296,7 +299,6 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) voice_ref_defaults: Option<crate::gate::voice_ref_limits::VoiceRefLimitPolicy>,
     pub(crate) voice_ref_limits: crate::gate::voice_ref_limits::VoiceRefLimitPolicy,
     pub(crate) sheet_answer_limits: Vec<SheetAnswerLimitRow>,
-    pub(crate) untrusted_sheet_answer_limits: Vec<SheetAnswerLimitRow>,
     pub(crate) sheet_answer_default_max_count: Option<u64>,
     pub(crate) sheet_answer_precedence: Option<SheetAnswerPrecedence>,
     pub(super) linear_mirror: Option<LinearMirrorPolicy>,
@@ -313,6 +315,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) retry_source_policy: Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(crate) compilation_policies: Vec<crate::edit_distance::miner::CompilationPolicy>,
     pub(crate) experiment_selection: Vec<SelectionPolicyRow>,
+    pub(crate) entity_resolution_bands:
+        Option<crate::gate::entity_resolution_bands::EntityResolutionBands>,
     pub(crate) carry_forward_confidence: crate::gate::carry_forward_policy::CarryForwardPolicy,
     pub(super) carry_forward_authored: bool,
     pub(crate) judge_calibration: Option<crate::gate::judge_calibration::JudgeCalibrationPolicy>,
@@ -340,7 +344,10 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) room_policy_rows: Vec<crate::gate::room_policy::RoomPolicyRow>,
     pub(crate) shared_act_policies:
         Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
+    pub(crate) owner_change_wait_secs: Option<u64>,
     pub(super) catastrophe_floor: Option<crate::consent::CatastropheFloor>,
+    pub(crate) code_consent_settlement:
+        Option<crate::gate::code_consent_settlement::ResolvedCodeConsentSettlement>,
     pub(super) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(super) owner_policy_precedence: PolicyOwnerPrecedence,
     pub(super) owner_policy_rows_dropped: bool,

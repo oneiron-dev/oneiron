@@ -8,7 +8,7 @@ use super::media::MediaCallProgress;
 use super::{LlmCapability, ModelId};
 
 #[derive(
-    Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema,
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema,
 )]
 pub enum LlmError {
     #[error("retryable LLM error: {0}")]
@@ -306,7 +306,15 @@ pub enum FatalLlmError {
     /// A request the provider refused, with its message: an HTTP 400's
     /// error text, bounded.
     #[error("invalid request: {message}")]
-    InvalidRequestDetail { message: String },
+    InvalidRequestDetail {
+        message: String,
+        /// The provider's structured error code, never inferred from its text.
+        code: Option<String>,
+    },
+    /// A provider's structured refusal because the input exceeds its context
+    /// window, with the same bounded provider message as other request errors.
+    #[error("context window exceeded: {message}")]
+    ContextWindowExceeded { message: String },
     #[error("authentication failed")]
     Auth,
     #[error("content filtered")]
@@ -351,6 +359,9 @@ pub enum LabelReadFailure {
     /// The read did not stop at the forced end of generation.
     #[error("not an end-of-generation stop")]
     NotEosStop,
+    /// The read exhausted its requested generation-token budget.
+    #[error("generation token limit")]
+    TokenCap,
     /// A label's probability is absent from the read.
     #[error("missing labels")]
     MissingLabels,

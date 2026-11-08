@@ -17,6 +17,7 @@ use super::codec::invalid_dreamer_runner;
 mod park;
 mod retry_policy;
 
+pub use crate::store::dreamer_attempt_payload::DreamerAttemptPayload;
 pub use park::ParkDreamerAttempt;
 
 use super::constants::DEFAULT_DREAMER_CHILD_RESERVE_UNITS;
@@ -357,14 +358,6 @@ pub enum DreamerConsolidationAdmissionOutcome {
     Admission(DreamerAdmissionOutcome),
 }
 
-/// Typed Dreamer attempt payload stored in the generic queue row.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DreamerAttemptPayload {
-    pub attempt_type: String,
-    pub input: Value,
-    pub parent_attempt: Option<AttemptId>,
-}
-
 /// Input for enqueueing a Dreamer attempt into the private runner queue.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnqueueDreamerAttempt {
@@ -623,6 +616,7 @@ pub struct DreamerAdmittedAttempt {
     pub status: DreamerAttemptStatus,
     pub budget: DreamerBudgetRecord,
     pub reservation: DreamerBudgetReservation,
+    pub(super) admitted_budget_line: super::AdmittedBudgetLine,
 }
 
 /// Private run-tree row keyed by attempt id.

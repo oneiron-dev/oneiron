@@ -1,8 +1,7 @@
-//! A residence search served in pages (FIX 8865). A search for more hits
-//! than one page carries is answered a page at a time from one final ranked
-//! list, read at one second; each page names the revision of that whole
-//! list, so no page mixes two lists and none is cut short as complete. A
-//! search one page holds keeps its single call.
+//! A residence search served in pages (FIX 8865, FIX 196), from one final
+//! grant-selected ranked list read at one second. Each page names the
+//! revision of that whole list, so no page mixes two lists and none is cut
+//! short as complete. A search one page holds keeps its single call.
 
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +29,46 @@ pub struct ResidenceSearchCursor {
     pub as_of: u64,
 }
 
+/// The tag that opens a caller filter's signed and hashed field (FIX 3977).
+const READ_FILTER_FIELD_TAG: &[u8] = b"oneiron.residence.search.read_filter.v1";
+
+/// A caller's retrieval filter as the one field a residence search signs and
+/// hashes (FIX 3977): its tag, then each field in order, a presence byte
+/// before each value: the entity types as a big-endian `u64` count and their
+/// bytes, the band and staleness as one byte each, and the minima as their
+/// big-endian `f32` bits. A search without a filter has no such field, so
+/// its bytes are the ones it always had.
+fn read_filter_transcript(filter: &crate::memory::ReadFilterInput) -> Vec<u8> {
+    let mut field = READ_FILTER_FIELD_TAG.to_vec();
+    match &filter.entity_types {
+        Some(types) => {
+            field.push(1);
+            field.extend((types.len() as u64).to_be_bytes());
+            field.extend(types.iter().copied());
+        }
+        None => field.push(0),
+    }
+    for byte in [
+        filter.max_sensitivity_band,
+        filter.include_stale.map(u8::from),
+    ] {
+        match byte {
+            Some(byte) => field.extend([1, byte]),
+            None => field.push(0),
+        }
+    }
+    for minimum in [filter.min_confidence, filter.min_salience] {
+        match minimum {
+            Some(minimum) => {
+                field.push(1);
+                field.extend(minimum.to_bits().to_be_bytes());
+            }
+            None => field.push(0),
+        }
+    }
+    field
+}
+
 /// A forwarded search's caller locality as its signed field (FIX 3550): one
 /// byte, 0 for a caller on the forwarding device and 1 for one off it.
 pub(super) const fn caller_locality_field(locality: CallerLocality) -> [u8; 1] {
@@ -42,23 +81,33 @@ pub(super) const fn caller_locality_field(locality: CallerLocality) -> [u8; 1] {
 /// The forwarded `residence.search` a device signs and its home verifies, as
 /// [`super::with_forwarded_search`] builds it, its caller's locality
 /// included, with a later page's cursor bound too: its offset and `as_of` as
-/// big-endian `u64`s and its revision. A first page signs the same bytes as
-/// a search of one call.
+/// big-endian `u64`s and its revision. A recall's explicit clock pin adds
+/// its own big-endian field before the cursor; an unpinned search is unchanged.
+/// A caller's retrieval filter adds its transcript after the pin
+/// (`read_filter_transcript`, FIX 3977); an unfiltered search is unchanged.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one signed transcript names every field the search request carries"
+)]
 pub fn with_forwarded_search_page<R>(
     query: &str,
     limit: usize,
     selector_wire: &[u8],
     scope: Option<&ResolvedRecallSelection>,
+    recall_as_of: Option<u64>,
+    filter: Option<&crate::memory::ReadFilterInput>,
     locality: CallerLocality,
     page: Option<&ResidenceSearchCursor>,
     with: impl FnOnce(&crate::authority::ForwardedRequest<'_>) -> R,
 ) -> R {
     let limit = (limit as u64).to_be_bytes();
     let scope = recall_scope_transcript(scope);
+    let recall_as_of = recall_as_of.map(u64::to_be_bytes);
+    let filter = filter.map(read_filter_transcript);
     let locality = caller_locality_field(locality);
     let offset = page.map(|page| page.offset.to_be_bytes());
     let as_of = page.map(|page| page.as_of.to_be_bytes());
-    let mut fields: Vec<&[u8]> = Vec::with_capacity(8);
+    let mut fields: Vec<&[u8]> = Vec::with_capacity(10);
     fields.extend([
         query.as_bytes(),
         limit.as_slice(),
@@ -66,6 +115,12 @@ pub fn with_forwarded_search_page<R>(
         scope.as_slice(),
         locality.as_slice(),
     ]);
+    if let Some(recall_as_of) = &recall_as_of {
+        fields.push(recall_as_of.as_slice());
+    }
+    if let Some(filter) = &filter {
+        fields.push(filter.as_slice());
+    }
     if let (Some(page), Some(offset), Some(as_of)) = (page, &offset, &as_of) {
         fields.extend([
             offset.as_slice(),
@@ -81,9 +136,14 @@ pub fn with_forwarded_search_page<R>(
 
 /// The actor-readable lexical candidates of a paged search, ranked `window`
 /// deep at `as_of` (unix seconds) past the read lane's candidate window, and
-/// how many rows the ranking held: fewer than `window` only once the matches
-/// ran out. The read key and `scope` are those of
-/// [`super::home_search_candidates`].
+/// whether its lexical scan exhausted the matches without a window cut.
+/// The read key and `scope` are those of
+/// [`super::home_search_candidates`]; `filter`, the caller's own retrieval
+/// filter, binds the read lane before its candidate cut (FIX 3977).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a paged search's candidates take every field its request carries"
+)]
 pub fn home_search_page_candidates(
     vault: &Vault,
     actor: ScopedReadActorKey,
@@ -91,9 +151,14 @@ pub fn home_search_page_candidates(
     window: usize,
     scope: Option<&ResolvedRecallSelection>,
     as_of: u64,
-) -> Result<(Vec<(EntityId, f32, WindowKey)>, usize)> {
-    let (found, ranked) = vault
+    recall_as_of: Option<u64>,
+    filter: Option<&crate::memory::ReadFilterInput>,
+) -> Result<(Vec<(EntityId, f32, WindowKey)>, bool)> {
+    let request = filter.map(crate::memory::ReadFilterInput::to_filter);
+    let (found, exhausted) = vault
         .scoped_read(actor)
+        .with_judged_at(recall_as_of)
+        .with_read_filter(request.as_ref())
         .residence_search_page(query, window, scope, as_of)?;
     let mut results = Vec::new();
     for hit in found {
@@ -102,12 +167,13 @@ pub fn home_search_page_candidates(
         };
         results.push((hit.id, hit.score, residence_window_for_blob(&raw)?));
     }
-    Ok((results, ranked))
+    Ok((results, exhausted))
 }
 
 /// The revision of a paged search's final list: its request and each hit's
 /// id and window, in rank order. Scores are left out, so a list whose order
-/// holds keeps its revision.
+/// holds keeps its revision. A caller's retrieval filter adds its transcript
+/// after `as_of` (FIX 3977); an unfiltered list keeps the revision it had.
 #[must_use]
 pub fn residence_search_revision(
     query: &str,
@@ -115,12 +181,24 @@ pub fn residence_search_revision(
     selector_wire: &[u8],
     scope: Option<&ResolvedRecallSelection>,
     as_of: u64,
+    filter: Option<&crate::memory::ReadFilterInput>,
     hits: &[(EntityId, WindowKey)],
 ) -> String {
     let limit = (limit as u64).to_be_bytes();
     let scope = recall_scope_transcript(scope);
     let as_of = as_of.to_be_bytes();
-    let fields: [&[u8]; 5] = [query.as_bytes(), &limit, selector_wire, &scope, &as_of];
+    let filter = filter.map(read_filter_transcript);
+    let mut fields: Vec<&[u8]> = Vec::with_capacity(6);
+    fields.extend([
+        query.as_bytes(),
+        limit.as_slice(),
+        selector_wire,
+        scope.as_slice(),
+        as_of.as_slice(),
+    ]);
+    if let Some(filter) = &filter {
+        fields.push(filter.as_slice());
+    }
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"oneiron.residence.search.page.v1");
     for field in fields {

@@ -70,8 +70,11 @@ use crate::connector_call_host::elicitation_response;
 use crate::server::SyncServer;
 
 mod owner;
+mod results;
+mod status;
 pub(crate) use owner::press_owner_consent;
 use owner::{owner_rules, spend_owner_consent, withdraw_owner_ask};
+pub(crate) use results::ConnectorResultInterest;
 
 /// A round's live lease, from when it arrived: how long one answer call
 /// waits on the owner's ruling. Never an expiry (FIX 3837).
@@ -175,6 +178,7 @@ struct LiveQuestions {
 #[derive(Default)]
 pub(crate) struct ConnectorElicitationRegistry {
     live: Mutex<HashMap<String, LiveQuestions>>,
+    live_results: Mutex<HashMap<(EntityId, EntityId), results::ObservedResult>>,
 }
 
 impl ConnectorElicitationRegistry {
@@ -251,26 +255,17 @@ impl ConnectorElicitationRegistry {
         Some((live_until_ms, entry.call_ref))
     }
 
-    /// Binds the questions `handle` names to the call `call_ref` whose row
-    /// keeps them (FIX 3837); `true` when it bound them. A set whose worker
-    /// already ended leaves the row's questions uncertain.
-    pub(crate) fn bind_call(
-        &self,
-        vault: &oneiron::Vault,
-        handle: &str,
-        call_ref: EntityId,
-    ) -> bool {
-        let bound = match self.lock().get_mut(handle) {
+    /// Binds live questions in memory before their row publishes the handle.
+    /// No vault writer is opened; the host marks a gone set uncertain after
+    /// the row commits.
+    pub(crate) fn bind_call(&self, handle: &str, call_ref: EntityId) -> bool {
+        match self.lock().get_mut(handle) {
             Some(entry) => {
                 entry.call_ref = Some(call_ref);
                 true
             }
             None => false,
-        };
-        if !bound && let Err(error) = vault.mark_connector_input_uncertain(&call_ref, handle) {
-            tracing::warn!(%error, "connector call questions not marked uncertain");
         }
-        bound
     }
 
     /// Whether the question set `handle` names is live here.
@@ -672,6 +667,7 @@ pub(crate) fn answer_connector_question(
                 questions,
                 live_until_ms,
             },
+            Vec::new(),
         ),
         WorkerEvent::Result(result) => ConnectorCallReply::project(
             &name,
@@ -728,9 +724,8 @@ fn check_answer(
     match tokio::runtime::Handle::try_current() {
         Ok(runtime) => drop(runtime.spawn_blocking(raise)),
         Err(_) => {
-            if let Err(error) = std::thread::Builder::new()
-                .name("connector-answer-check".to_owned())
-                .spawn(raise)
+            if let Err(error) =
+                crate::engine_thread("connector-answer-check".to_owned()).spawn(raise)
             {
                 tracing::warn!(%error, "connector answer check not started");
             }
@@ -761,6 +756,7 @@ fn owner_pending(claim: Claim<'_>, call_ref: EntityId) -> ConnectorCallReply {
             questions: claim.questions.clone(),
             live_until_ms: claim.live_until_ms,
         },
+        Vec::new(),
     )
     .noting(vec!["connector_answer_owner_pending".to_owned()])
 }

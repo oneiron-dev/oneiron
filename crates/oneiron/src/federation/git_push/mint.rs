@@ -15,6 +15,7 @@
 //! and touches GitPush rows only; a repeat the authority log already names
 //! changes nothing and signs nothing.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::authority::{ActSurface, AgentGrantAct, AgentGrantActRef};
@@ -113,6 +114,9 @@ impl Vault {
                 repo_bounds: None,
                 kind: FederationGrantKind::GitPush,
                 git_push_bounds: Some(bounds.clone()),
+                detach_on_member_leave: None,
+                verb_classes: BTreeSet::new(),
+                wallet_ref: None,
             };
             // Encoding validates: nothing is signed for a grant that cannot stand.
             let data = encode_federation_grant_body(&grant)?;
@@ -129,6 +133,8 @@ impl Vault {
                     repo_bounds: None,
                     grant_kind: FederationGrantKind::GitPush,
                     git_push_bounds: Some(bounds.clone()),
+                    verb_classes: BTreeSet::new(),
+                    wallet_ref: None,
                 },
             )?;
             self.apply_grant_row_op_in_txn(
@@ -141,6 +147,7 @@ impl Vault {
                         end: now,
                     },
                     learned_at: now,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -163,7 +170,8 @@ impl Vault {
     /// The owner revokes the GitPush grant `grant_ref`: his signed act,
     /// then the row's delete, in one writer, so no admission counts it
     /// again. A grant already revoked (its revoke act stands in the
-    /// authority log) answers unchanged and signs nothing.
+    /// authority log), or whose signed mint a counted membership withdrawal
+    /// names, answers unchanged and signs nothing.
     ///
     /// # Errors
     /// An owner refusal; `EntityNotFound` for an id that names no live
@@ -185,7 +193,12 @@ impl Vault {
                 } => body,
                 LiveEntityRow::Live { .. } => return Err(Error::EntityNotFound),
                 LiveEntityRow::DeletedShell | LiveEntityRow::Absent
-                    if self.revoked_agent_grants_in_txn(txn)?.contains(&grant_ref) =>
+                    if self.revoked_agent_grants_in_txn(txn)?.contains(&grant_ref)
+                        || self.membership_withdrew_owner_grant_in_txn(
+                            txn,
+                            grant_ref,
+                            FederationGrantKind::GitPush,
+                        )? =>
                 {
                     return Ok(GitPushRevokeOutcome {
                         member: None,
@@ -204,7 +217,12 @@ impl Vault {
                 txn,
                 owner,
                 surface,
-                AgentGrantAct::Revoke { grant: grant_ref },
+                AgentGrantAct::Revoke {
+                    grant: grant_ref,
+                    // A GitPush revoke acknowledges no topology decision:
+                    // explicit empty set, never a default (FIX 5114).
+                    acknowledged_topology: BTreeSet::new(),
+                },
             )?;
             // The withdrawal stays known here and reaches its peers, in this
             // writer (FIX-LIST 5107, 10772).

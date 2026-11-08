@@ -4,6 +4,16 @@ use serde::{Deserialize, Serialize};
 use crate::federation::{FederationDirectionScope, FederationPactScope, Scope};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 
+pub use crate::authority::{
+    FederationPactInactiveReason, FederationPactStatusRow, FederationStatus,
+};
+
+/// Reads this install's current pact status as the embedded vault owner.
+pub fn federation_status(memory: &Memory<'_>) -> MemoryResult<FederationStatus> {
+    let owner = memory.embedded_owner("vault.federation.status")?;
+    Ok(memory.vault().federation_status_as_owner(&owner)?)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConnectIdentity {
     pub vault: String,
@@ -17,6 +27,21 @@ pub struct MintConnectGrant {
     pub authority_scope: Scope,
     #[serde(default)]
     pub expires_at: Option<u64>,
+    /// Detach-on-member-leave setting (FIX 12555): the decimal shared logical
+    /// vault id whose genuine member leave releases this grant here. `None`
+    /// keeps generic shared Connect behavior. The person stored is the minting
+    /// owner, never an input.
+    #[serde(default)]
+    pub detach_on_member_leave: Option<String>,
+}
+
+/// The detach-on-member-leave binding actually persisted on a Connect grant
+/// (FIX 12555): the decimal shared vault id and the canonical person hex of
+/// the owner who chose it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConnectDetachBinding {
+    pub shared_vault: String,
+    pub person: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -25,6 +50,8 @@ pub struct ConnectGrant {
     pub guest_actor: String,
     pub resolved_scope: Scope,
     pub expires_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detach_on_member_leave: Option<ConnectDetachBinding>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

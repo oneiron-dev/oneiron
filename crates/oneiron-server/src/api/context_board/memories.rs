@@ -3,10 +3,10 @@
 use super::super::companion_scope_resolution_authorized;
 use super::super::core_engine_error;
 use super::super::parse_entity_id_param;
-use super::cursor::MEMORIES_CURSOR_SESSION_ID_MAX_BYTES;
 use super::cursor::SHARED_SESSION_SCOPE_IDS;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
+use oneiron::limit_ask::EngineLimit;
 use serde::Deserialize;
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -304,12 +304,14 @@ pub(crate) fn resolve_memories_request(
     })
 }
 
-/// The caller's explicit MEMORIES pins, refused past the bounded reference list.
+/// The caller's explicit MEMORIES pins, each held to the bounded reference
+/// size. The count is never refused here: it asks through the engine row
+/// where it is measured.
 fn bounded_pinned_refs(
     memories: Option<&ContextBoardMemoriesControls>,
 ) -> Result<&[String], ApiError> {
     let pinned_refs = memories.map_or(&[][..], |controls| controls.pinned_refs.as_slice());
-    if pinned_refs.len() > 128 || pinned_refs.iter().any(|reference| reference.len() > 128) {
+    if pinned_refs.iter().any(|reference| reference.len() > 128) {
         return Err(ApiError::bad_request(
             "memory pins exceed the bounded reference list",
             Some("memories.pinned_refs"),
@@ -338,6 +340,11 @@ pub(crate) async fn board_pins_section(
         manifest: true,
         hooks: hook_pins,
     };
+    // Physical68 ABC17: the submitted explicit refs, measured once before
+    // resolution. Ask-and-serve: the crossing asks, the pins resolve whole.
+    server
+        .vault
+        .measure_limit(EngineLimit::MemoryPinnedRefs, pins.refs.len() as u64);
     let read = super::super::scoped_read_for_core_auth(&server.vault, auth)?;
     let Some(pinned) = board_pins_projection(&server.vault, auth, read, room_id, &pins)? else {
         return Ok(None);
@@ -600,12 +607,6 @@ pub(crate) fn validate_session_id(session_id: &str, field: &'static str) -> Resu
     if session_id.trim().is_empty() {
         return Err(ApiError::bad_request(
             format!("{field} must be non-empty"),
-            Some(field),
-        ));
-    }
-    if session_id.len() > MEMORIES_CURSOR_SESSION_ID_MAX_BYTES {
-        return Err(ApiError::bad_request(
-            format!("{field} must be at most {MEMORIES_CURSOR_SESSION_ID_MAX_BYTES} bytes"),
             Some(field),
         ));
     }

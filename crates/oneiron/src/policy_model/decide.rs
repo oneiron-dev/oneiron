@@ -20,7 +20,7 @@ use crate::model_decision::{
     fit_state,
 };
 use crate::model_step_error::{DurableStepError, DurableStepResult};
-use crate::{EntityId, Error, Result};
+use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{
     BudgetGuard, BudgetLease, ContentPart, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
     ResponseFormat,
@@ -157,6 +157,7 @@ impl PolicyDecisions {
     )]
     pub(super) fn classify(
         &self,
+        vault: &Vault,
         request: &PolicyClassifyRequest,
         prompt: &PolicyClassifyPrompt,
         plane: AnswerPlane<'_>,
@@ -191,7 +192,7 @@ impl PolicyDecisions {
             })
             .collect::<Result<Vec<_>>>()?;
         // Never cut the policy or candidate to fit: a model must not clear a
-        // candidate it only partly read. The ladder refuses an oversized state.
+        // candidate it only partly read.
         let state = serde_json::json!({
             "subject": request.subject.as_str(),
             "content": prompt.user,
@@ -204,6 +205,7 @@ impl PolicyDecisions {
         });
         let deadline = clock.deadline(self.budget);
         let ladder = self.ladder.ladder();
+        let _ = vault.measure_decision_pack(&self.bands, questions.len());
         let decisions = ladder.run_pack(
             &questions.iter().collect::<Vec<_>>(),
             self.principal,
@@ -278,6 +280,7 @@ impl PolicyDecisions {
                     jurisdiction: policy.jurisdiction.clone(),
                     policy_version: policy.version.clone(),
                     row_ref: registered.row_ref.clone(),
+                    basis: registered.basis.clone(),
                 }
             }
         };
@@ -393,8 +396,14 @@ pub(super) async fn safeguard_verdict(
     }
     let decisions = match outcome {
         Ok(GeneratedDecisions::Decided { decisions, .. }) => decisions,
-        Ok(GeneratedDecisions::Unread(GeneratedMiss::Budget(_))) => {
-            return Ok(skipped(PolicySkipReason::BudgetExhausted, audit));
+        Ok(GeneratedDecisions::Unread(GeneratedMiss::Budget(denied))) => {
+            let reason = match denied {
+                crate::llm::BudgetDenied::Exhausted => PolicySkipReason::BudgetExhausted,
+                crate::llm::BudgetDenied::LeaseInvalid
+                | crate::llm::BudgetDenied::AdmissionDenied
+                | crate::llm::BudgetDenied::HostCheck => PolicySkipReason::AdmissionDenied,
+            };
+            return Ok(skipped(reason, audit));
         }
         // A raw read never traps, and a backend the read could not reach
         // gave no answer.

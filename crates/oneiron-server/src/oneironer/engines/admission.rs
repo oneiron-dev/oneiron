@@ -71,6 +71,10 @@ pub(crate) type PlatformAbsent = Arc<Mutex<[Option<&'static str>; 2]>>;
 pub(crate) const MLX_ABSENT: usize = 0;
 /// Index of the Core ML row in [`PlatformAbsent`].
 pub(crate) const COREML_ABSENT: usize = 1;
+/// The retained reason when another slot of this process holds the row's
+/// session (FIX 12881): a contention diagnostic read as `state: None`,
+/// `why: Some(_)` by the slot's status, never DOWN, Failed or slot health.
+const SESSION_OWNED_BY_ANOTHER_SLOT: &str = "session_owned_by_another_slot";
 
 /// A slot's platform admission, prepared as the slot is built and started
 /// once by the serving build.
@@ -127,9 +131,8 @@ impl Admission {
     /// Starts it on its own thread, which ends once each worker is added to
     /// the dispatcher or found absent.
     pub(crate) fn start(self) {
-        let spawned = std::thread::Builder::new()
-            .name("oneironer admission".to_owned())
-            .spawn(move || self.run());
+        let spawned =
+            crate::engine_thread("oneironer admission".to_owned()).spawn(move || self.run());
         if let Err(error) = spawned {
             tracing::warn!(%error, "oneironer platform admission did not start; Candle serves");
         }
@@ -155,7 +158,7 @@ impl Admission {
         match candidate::discover(&dir, &read.manifest) {
             Ok(candidate) => {
                 let spec = |claim| self.mlx_spec(&dir, &read, &candidate, &contest, claim);
-                self.add(MLX_ROW, &dir, &read.stack_sha16, spec);
+                self.add(MLX_ROW, MLX_ABSENT, &dir, &read.stack_sha16, spec);
             }
             Err(absent) => {
                 absent.log(MLX_ROW);
@@ -167,7 +170,7 @@ impl Admission {
         match candidate::discover_coreml(&dir, &read.manifest) {
             Ok(candidate) => {
                 let spec = |claim| self.coreml_spec(&dir, &read, &candidate, &contest, claim);
-                self.add(COREML_ROW, &dir, &read.stack_sha16, spec);
+                self.add(COREML_ROW, COREML_ABSENT, &dir, &read.stack_sha16, spec);
             }
             Err(absent) => {
                 absent.log(COREML_ROW);
@@ -180,10 +183,12 @@ impl Admission {
 
     /// Claims the bundle's `row` session for this process, then adds the
     /// worker `spec` builds. Candle serves alone when another slot of this
-    /// process holds the claim or the spec cannot be built.
+    /// process holds the claim or the spec cannot be built. A held claim is
+    /// retained in the row's [`PlatformAbsent`] cell for the slot's status.
     fn add(
         &self,
         row: &'static str,
+        absent_index: usize,
         dir: &Path,
         stack: &str,
         spec: impl FnOnce(Claim) -> anyhow::Result<WorkerSpec>,
@@ -193,6 +198,9 @@ impl Admission {
                 row,
                 "oneironer platform worker not started: another slot owns its session"
             );
+            if let Ok(mut retained) = self.absent.lock() {
+                retained[absent_index] = Some(SESSION_OWNED_BY_ANOTHER_SLOT);
+            }
             return;
         };
         match spec(claim).and_then(|spec| self.dispatcher.add(spec)) {

@@ -24,15 +24,48 @@ pub(crate) fn ensure_person_substrate(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<()> {
+    prepare_person_substrate(store, txn, person, occurred, learned_at)?.apply(store, txn)
+}
+
+#[derive(Debug)]
+pub(crate) struct PreparedPersonSubstrate {
+    person: EntityId,
+    facet: EntityId,
+    bytes: Option<Vec<u8>>,
+    occurred: TimeRange,
+    learned_at: u64,
+}
+
+pub(crate) fn prepare_person_substrate(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<PreparedPersonSubstrate> {
+    prepare_person_substrate_after_puts(store, txn, person, occurred, learned_at, &[])
+}
+
+pub(crate) fn prepare_person_substrate_after_puts(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+    occurred: TimeRange,
+    learned_at: u64,
+    preceding: &[crate::agent_def::SetupEntityPut<'_>],
+) -> Result<PreparedPersonSubstrate> {
     let facet = crate::write_envelope::claim_body::substrate_facet_id(person)?;
-    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &facet)? {
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("substrate header"))?;
-        if header.entity_type != ENTITY_TYPE_FACET
-            || !is_substrate(&raw[ENTITY_METADATA_HEADER_LEN..], person)
-        {
-            return Err(Error::CorruptedIndex("substrate identity collision"));
+    let exists = match preceding.iter().rev().find(|put| put.id == facet) {
+        Some(put) => {
+            if put.entity_type != ENTITY_TYPE_FACET || !is_substrate(&put.data, person) {
+                return Err(Error::CorruptedIndex("substrate identity collision"));
+            }
+            true
         }
+        None => person_substrate_exists(store, txn, person, facet)?,
+    };
+    let bytes = if exists {
+        None
     } else {
         // A caller can choose the id a PERSON's substrate lands at; an id that
         // has been an agent stays one (H215).
@@ -48,49 +81,130 @@ pub(crate) fn ensure_person_substrate(
         let mut bytes = Vec::new();
         rmpv::encode::write_value(&mut bytes, &body)
             .map_err(|_| Error::InvariantViolation("substrate encoding"))?;
-        super::put_apply::stage_entity_body_row(
-            store,
-            txn,
-            &facet,
-            ENTITY_TYPE_FACET,
-            occurred,
-            learned_at,
-            &bytes,
-        )?;
-        super::put_apply::stage_entity_index_rows(
-            store,
-            txn,
-            &facet,
-            ENTITY_TYPE_FACET,
-            occurred,
-            learned_at,
-        )?;
-        let prefix = store.short_id_prefix(ENTITY_TYPE_FACET)?;
-        let plan =
-            super::plan_short_id_update(store, txn, &facet, ENTITY_TYPE_FACET, &prefix, &bytes)?;
-        super::apply_short_id_plan(store, txn, &facet, plan)?;
-        store.scope_stamps.stamp_put(
-            store,
-            txn,
-            facet,
-            ENTITY_TYPE_FACET,
-            &bytes,
-            crate::batch::row_put::RowPut::Birth,
-        )?;
-    }
-    super::edge_apply::apply_edge_with_created_at(
-        store,
-        txn,
+        Some(bytes)
+    };
+    Ok(PreparedPersonSubstrate {
         person,
-        EdgeKind::HasFacet,
         facet,
-        1.0,
+        bytes,
+        occurred,
         learned_at,
-        oneiron_contracts::affect::Vad::NEUTRAL,
-        None,
-    )?;
-    Ok(())
+    })
 }
+
+impl PreparedPersonSubstrate {
+    pub(super) fn person(&self) -> EntityId {
+        self.person
+    }
+
+    pub(crate) fn facet_put(&self) -> Option<(EntityId, &[u8])> {
+        self.bytes.as_deref().map(|bytes| (self.facet, bytes))
+    }
+
+    pub(crate) fn apply(self, store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        self.apply_rows_in_txn(store, txn)
+    }
+
+    pub(super) fn apply_at_person_projection(
+        &self,
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+    ) -> Result<()> {
+        if person_substrate_exists(store, txn, self.person, self.facet)? {
+            return self.apply_has_facet(store, txn);
+        }
+        if self.bytes.is_none() {
+            return ensure_person_substrate(
+                store,
+                txn,
+                self.person,
+                self.occurred,
+                self.learned_at,
+            );
+        }
+        crate::agent_def::refuse_agent_id_retype_in_txn(
+            store,
+            txn,
+            &self.facet,
+            ENTITY_TYPE_FACET,
+        )?;
+        self.apply_rows_in_txn(store, txn)
+    }
+
+    fn apply_rows_in_txn(&self, store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        let facet = self.facet;
+        let occurred = self.occurred;
+        let learned_at = self.learned_at;
+        if let Some(bytes) = self.bytes.as_deref() {
+            super::put_apply::stage_entity_body_row(
+                store,
+                txn,
+                &facet,
+                ENTITY_TYPE_FACET,
+                occurred,
+                learned_at,
+                0,
+                bytes,
+            )?;
+            super::put_apply::stage_entity_index_rows(
+                store,
+                txn,
+                &facet,
+                ENTITY_TYPE_FACET,
+                occurred,
+                learned_at,
+            )?;
+            let prefix = store.short_id_prefix(ENTITY_TYPE_FACET)?;
+            let plan =
+                super::plan_short_id_update(store, txn, &facet, ENTITY_TYPE_FACET, &prefix, bytes)?;
+            super::apply_short_id_plan(store, txn, &facet, plan)?;
+            store.scope_stamps.stamp_put(
+                store,
+                txn,
+                facet,
+                ENTITY_TYPE_FACET,
+                bytes,
+                crate::batch::row_put::RowPut::Birth,
+            )?;
+        }
+        self.apply_has_facet(store, txn)
+    }
+
+    fn apply_has_facet(&self, store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        super::edge_apply::apply_edge_with_created_at(
+            store,
+            txn,
+            self.person,
+            EdgeKind::HasFacet,
+            self.facet,
+            1.0,
+            self.learned_at,
+            oneiron_contracts::affect::Vad::NEUTRAL,
+            None,
+        )?;
+        Ok(())
+    }
+}
+
+fn person_substrate_exists(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    person: EntityId,
+    facet: EntityId,
+) -> Result<bool> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &facet)? else {
+        return Ok(false);
+    };
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("substrate header"))?;
+    if header.entity_type != ENTITY_TYPE_FACET
+        || !is_substrate(&raw[ENTITY_METADATA_HEADER_LEN..], person)
+    {
+        return Err(Error::CorruptedIndex("substrate identity collision"));
+    }
+    Ok(true)
+}
+
 fn is_substrate(data: &[u8], person: EntityId) -> bool {
     let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..]) else {
         return false;
@@ -136,20 +250,21 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
         };
         if !policy_done
             && header.entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST
-            && let Some(bytes) =
-                crate::gate::normalize_policy_manifest_scope(&raw[ENTITY_METADATA_HEADER_LEN..])
+            && let Some(bytes) = store
+                .gate_hooks
+                .normalize_policy_manifest_scope(&raw[ENTITY_METADATA_HEADER_LEN..])
         {
             // A locally authored manifest keeps its origin across the upgrade;
             // replayed bytes gain no trust stamp from it.
-            if crate::gate::manifest_authenticity::manifest_is_trusted(
+            if store.gate_hooks.manifest_is_trusted(
                 store,
                 &txn,
                 &id,
                 &raw[ENTITY_METADATA_HEADER_LEN..],
             )? {
-                crate::gate::manifest_authenticity::stamp_manifest_origin(
-                    store, &mut txn, &id, &bytes, false,
-                )?;
+                store
+                    .gate_hooks
+                    .stamp_manifest_origin(store, &mut txn, &id, &bytes, false)?;
             }
             super::put_apply::stage_entity_body_row(
                 store,
@@ -158,6 +273,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 header.entity_type,
                 occurred,
                 header.learned_at,
+                header.row_version,
                 &bytes,
             )?;
             // Maintenance grant kinds have no short-id prefix.
@@ -200,7 +316,6 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
         if matches!(
             header.entity_type,
             crate::registry::ENTITY_TYPE_ACCESS_GRANT
-                | crate::registry::ENTITY_TYPE_OUTBOUND_GRANT
                 | crate::registry::ENTITY_TYPE_FEDERATION_GRANT
         ) {
             let old = &raw[ENTITY_METADATA_HEADER_LEN..];
@@ -208,11 +323,6 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 crate::registry::ENTITY_TYPE_ACCESS_GRANT => {
                     crate::access_grant::decode_access_grant_body(old)?;
                     old.to_vec()
-                }
-                crate::registry::ENTITY_TYPE_OUTBOUND_GRANT => {
-                    crate::outbound_grant::encode_standing_outbound_grant_body(
-                        &crate::outbound_grant::decode_standing_outbound_grant_body(old)?,
-                    )?
                 }
                 _ => crate::federation::encode_federation_grant_body(
                     &crate::federation::decode_federation_grant_body(old)?,
@@ -225,6 +335,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 header.entity_type,
                 occurred,
                 header.learned_at,
+                header.row_version,
                 &bytes,
             )?;
             // Maintenance grant kinds have no short-id prefix.
@@ -241,6 +352,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
             }
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            crate::ports::claim_order::observe_in_txn(store, &mut txn, header.row_version)?;
             let bytes = crate::claim::upgrade_pre_scope_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             let prefix = store.short_id_prefix(header.entity_type)?;
             let plan =
@@ -252,6 +364,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 header.entity_type,
                 occurred,
                 header.learned_at,
+                header.row_version,
                 &bytes,
             )?;
             super::apply_short_id_plan(store, &mut txn, &id, plan)?;

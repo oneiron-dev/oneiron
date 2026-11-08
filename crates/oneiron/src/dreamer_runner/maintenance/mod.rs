@@ -9,13 +9,24 @@ pub mod action_mode;
 pub mod agent_health;
 mod applied;
 pub mod attribution_audits;
+pub mod attribution_labels;
+pub(crate) use attribution_labels::{
+    erase_label_proposals_naming_in_txn, erase_unclear_note_copies_in_txn,
+    forget_unclear_notes_in_txn, withdraw_label_proposals_judged_by_in_txn,
+    withdraw_label_proposals_quoting_in_txn,
+};
 pub mod browser_candidate;
 pub mod browser_programs;
 mod calibration_asks;
+pub mod claim_source_recheck;
+pub use claim_source_recheck::CLAIM_SOURCE_RECHECK_FACET;
 pub mod coach;
 pub mod coach_diagnostic;
+mod coach_environment;
 pub mod coach_heal;
 pub mod coach_learning;
+mod coach_person;
+mod coach_prompt_repair;
 mod coach_repair;
 mod coach_research;
 mod coach_resolution;
@@ -32,10 +43,12 @@ mod curator;
 pub mod detectors;
 mod evaluation;
 mod feedback_triage;
+mod fold_suggestions;
 pub mod fork_promote;
 pub mod honesty;
 pub mod identity;
 pub mod judge_label_rechecks;
+mod layout_suggestions;
 pub(crate) mod optimize;
 pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
 mod person_threshold;
@@ -54,9 +67,11 @@ pub mod seal_checks;
 mod source_erase;
 pub(crate) use source_erase::erase_source_copies_in_txn;
 pub mod stewardship;
+
 #[cfg(test)]
 mod tests;
 mod type_tree_gate;
+pub(crate) use type_tree_gate::team_shape_tree_judge;
 pub(crate) mod type_tree_prior;
 pub mod type_tree_upkeep;
 use super::{
@@ -72,7 +87,8 @@ pub(crate) use curator::curator_slot_in_txn;
 pub use curator::{CuratorQuestions, CuratorRubric, CuratorTrigger};
 pub use evaluation::{
     DREAMER_TUNING_CONFIG_MEDIA_TYPE, DreamerTuningConfig, HarnessEvaluation,
-    HarnessEvaluationTarget, RetuneThresholds,
+    HarnessEvaluationTarget, HarnessOf360Evaluation, HarnessOf360Metric, HarnessOf360Observation,
+    HarnessOf360Scheduled, RetuneThresholds,
 };
 use rmpv::Value;
 pub const MAINTENANCE_QUEUE_KIND: &str = "dreamer.maintenance";
@@ -141,9 +157,33 @@ impl DreamerRunnerStore<'_> {
             now,
         )
     }
+    /// The Coach's drain of pending topology-audit candidates (FIX 7817),
+    /// queued in the writer that kept a candidate under the facet's one
+    /// fixed key: a queued or running drain absorbs it, and the drain reads
+    /// every pending candidate, so no candidate is ever without a way to its
+    /// review. The host's Coach runs it on its own line and clock.
+    pub(crate) fn enqueue_coach_topology_audit_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            txn,
+            coach::COACH_HOST_QUEUE_KIND,
+            DreamerAttemptPayload {
+                attempt_type: coach::COACH_TOPOLOGY_AUDIT_FACET.into(),
+                input: Value::Nil,
+                parent_attempt: None,
+            },
+            Some(coach::COACH_TOPOLOGY_AUDIT_FACET.into()),
+            None,
+            now,
+        )
+    }
     /// The Dreamer's nightly maintenance, co-committed with a Timer wake or
     /// a Nightly recipe: the curator pass (one per rubric cadence, however
-    /// many wakes ask), the relationship-stewardship pass, the identity
+    /// many wakes ask), a proposed digest-rhythm pass, the relationship-
+    /// stewardship pass, the identity
     /// re-check, the action-mode refresh (one per owner, OF-335) and the
     /// harness self-audit (one per wake key each).
     pub(crate) fn enqueue_dreamer_nightly_in_txn(
@@ -161,6 +201,7 @@ impl DreamerRunnerStore<'_> {
             run_id.clone(),
             now,
         )?;
+        self.enqueue_proactivity_policy_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
         self.enqueue_stewardship_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
         self.enqueue_identity_recheck_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
         self.enqueue_action_mode_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
@@ -224,6 +265,9 @@ pub(crate) fn execute(
         representation::REPRESENTATION_FACET => {
             representation::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
+        digest::policy_author::PROACTIVITY_POLICY_FACET => {
+            digest::policy_author::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
         stewardship::STEWARDSHIP_FACET => {
             stewardship::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
@@ -268,9 +312,21 @@ pub(crate) fn execute(
         coach::COACH_ROOM_UPKEEP_FACET => {
             room_upkeep::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
+        coach::COACH_FOLD_SUGGESTIONS_FACET => {
+            fold_suggestions::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
+        coach::COACH_LAYOUT_SUGGESTIONS_FACET => {
+            layout_suggestions::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
         // Judged on the host's lent model: the wake driver hands it to the
         // host's executor, so here it can only wait for one.
         compaction_check::COMPACTION_CHECK_FACET => return Ok(compaction_check::unlent()),
+        // A provider-deleted, kept message's claims are judged on the host's
+        // lent model (FIX 15414): the wake driver hands the re-check to the
+        // host's executor, so here it can only wait for one.
+        claim_source_recheck::CLAIM_SOURCE_RECHECK_FACET => {
+            return Ok(claim_source_recheck::unlent());
+        }
         // An urgent digest's harm question is asked on the host's shared
         // ladder (OF-194): the wake driver hands it to the host's executor,
         // so here it can only wait for one. Its witnessed answer runs here.
@@ -282,7 +338,7 @@ pub(crate) fn execute(
     }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: 0,
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     })
 }
 fn load_row<T: serde::Serialize + serde::de::DeserializeOwned>(

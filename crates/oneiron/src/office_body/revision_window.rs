@@ -20,6 +20,10 @@
 //! native id an earlier group reported back — never a guess. Each applied
 //! group's order is verified against its body state before the next group
 //! runs; any divergence refuses the export and nothing lands.
+//!
+//! DOCX allows one formatting revision per run, with no nested rPrChange.
+//! Overlapping authors keep their exact in-engine commits; export uses the
+//! whole-window default-author fallback. Disjoint spans stay native.
 
 use super::author_token::DOCX_AUTHOR_TOKEN_MARKER;
 use super::*;
@@ -131,18 +135,22 @@ fn window_actors(
 /// Whether `error` failing this group's apply matches a cross-group shape
 /// the sequential path cannot project (FIX 595 review P1-2/P1-3): formatting
 /// over an earlier group's pending revision (the remark pass swallows the
-/// native conflict into an invalid transaction), or a delete over earlier
-/// groups' tracked segments or a moved copy (the native delete verb
-/// refuses). The caller falls back to the single-revision projection for
-/// the whole window instead of failing the export.
+/// native conflict into an invalid transaction), a story runs edit over an
+/// earlier group's tracked segments, or a delete over earlier groups' tracked
+/// segments or a moved copy (the native verbs refuse). Story and delete
+/// failures surface as document errors. The caller falls back to the
+/// single-revision projection for the whole window instead of failing the export.
 fn needs_default_author_fallback(built: &[DocxChange], error: &DoceditError) -> bool {
     match error {
         DoceditError::InvalidTransaction(_) => built
             .iter()
             .any(|change| matches!(change, DocxChange::SetRuns { .. })),
-        DoceditError::Document(_) => built
-            .iter()
-            .any(|change| matches!(change, DocxChange::Delete { .. })),
+        DoceditError::Document(_) => built.iter().any(|change| {
+            matches!(
+                change,
+                DocxChange::Delete { .. } | DocxChange::SetStoryRuns { .. }
+            )
+        }),
     }
 }
 
@@ -283,11 +291,61 @@ impl Vault {
         let source = self.body_source(artifact, head)?;
         let limits = self.office_docx_limits(None)?;
         let date = timestamp(at)?.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let default_projection = || -> Result<Option<DocxSequentialProjection>> {
+            // The full window from the import frontier, exactly the
+            // pre-PR export: `scratch` already replayed earlier
+            // groups, so a tail diff would drop their edits from
+            // the original package (FIX 595 sol review).
+            let import_state = docx::read(
+                &doc.fork_at(&from)
+                    .map_err(|_| invalid("unknown body frontier"))?,
+            )?;
+            let changes = docx::changes(&import_state, &live)?;
+            if changes.is_empty() {
+                return Ok(None);
+            }
+            let token = format!(
+                "{DOCX_AUTHOR_TOKEN_MARKER}{}",
+                self.new_entity_id()?.to_hex()
+            );
+            let mut group = blake3::Hasher::new();
+            group.update(b"oneiron.office_body.docx_revision_group.v1\0");
+            for part in [
+                token.as_str(),
+                date.as_str(),
+                format!("{changes:?}").as_str(),
+            ] {
+                group.update(&(part.len() as u64).to_le_bytes());
+                group.update(part.as_bytes());
+            }
+            let revision = DocxRevision {
+                author: token.clone(),
+                date: date.clone(),
+                group: group.finalize().to_hex()[..16].to_owned(),
+            };
+            let bytes = crate::office_body::document_resources()
+                .docx(|| project_docx(&source, &changes, &revision, limits))
+                .map_err(|error| {
+                    docx_error(&error, "the body could not be projected onto its package")
+                })?;
+            return Ok(Some(DocxSequentialProjection {
+                bytes,
+                changes: changes.len(),
+                authors: vec![OfficeBodyExportAuthor {
+                    actor: Some(default_actor),
+                    token,
+                }],
+            }));
+        };
         let mut session = crate::office_body::document_resources()
             .docx(|| DocxProjection::parse(&source, limits))
             .map_err(|error| {
                 docx_error(&error, "the body could not be projected onto its package")
             })?;
+        // Existing deletions and move sources stay locked in the body, but
+        // are absent from accept-all order. Read that visibility without
+        // resolving any source revisions in the exported package.
+        let source_visible: HashSet<String> = session.accepted_id_order().into_iter().collect();
         // Native ids stay stable in memory: imported ids address themselves
         // until a move replaces one with its copy's id.
         let mut native: HashMap<String, String> = HashMap::new();
@@ -407,6 +465,37 @@ impl Vault {
                         // emits Deletes for every prior new) or never inserted
                         // (a ghost): nothing to delete.
                     }
+                    DocxChange::SetStoryText { scope, block, text } => {
+                        main.push(DocxChange::SetStoryText {
+                            scope: scope.clone(),
+                            block: block.clone(),
+                            text: text.clone(),
+                        });
+                    }
+                    DocxChange::SetStoryRuns { scope, block, runs } => {
+                        main.push(DocxChange::SetStoryRuns {
+                            scope: scope.clone(),
+                            block: block.clone(),
+                            runs: runs.clone(),
+                        });
+                    }
+                    DocxChange::SetStoryCell {
+                        scope,
+                        block,
+                        row,
+                        col,
+                        paragraph,
+                        text,
+                    } => {
+                        main.push(DocxChange::SetStoryCell {
+                            scope: scope.clone(),
+                            block: block.clone(),
+                            row: *row,
+                            col: *col,
+                            paragraph: paragraph.clone(),
+                            text: text.clone(),
+                        });
+                    }
                 }
             }
             let imported: HashSet<&str> = state
@@ -487,63 +576,7 @@ impl Vault {
                 let events = match gate {
                     Ok(events) => events,
                     Err(error) if needs_default_author_fallback(&built, &error) => {
-                        // Cross-group shape (FIX 595 review P1-2/P1-3): an
-                        // earlier group's pending revision blocks this group,
-                        // so project the whole window as one default-author
-                        // revision, exactly the pre-PR export, instead of
-                        // failing the export. Later groups cannot continue on
-                        // the session (order is verified per group against
-                        // body state), so the window collapses into one group
-                        // under a fresh token. A persistent single-shot
-                        // failure is not a sequential regression; the
-                        // single-shot error then replaces this one.
-                        // The full window from the import frontier, exactly the
-                        // pre-PR export: `scratch` already replayed earlier
-                        // groups, so a tail diff would drop their edits from
-                        // the original package (FIX 595 sol review).
-                        let import_state = docx::read(
-                            &doc.fork_at(&from)
-                                .map_err(|_| invalid("unknown body frontier"))?,
-                        )?;
-                        let changes = docx::changes(&import_state, &live)?;
-                        if changes.is_empty() {
-                            return Ok(None);
-                        }
-                        let token = format!(
-                            "{DOCX_AUTHOR_TOKEN_MARKER}{}",
-                            self.new_entity_id()?.to_hex()
-                        );
-                        let mut group = blake3::Hasher::new();
-                        group.update(b"oneiron.office_body.docx_revision_group.v1\0");
-                        for part in [
-                            token.as_str(),
-                            date.as_str(),
-                            format!("{changes:?}").as_str(),
-                        ] {
-                            group.update(&(part.len() as u64).to_le_bytes());
-                            group.update(part.as_bytes());
-                        }
-                        let revision = DocxRevision {
-                            author: token.clone(),
-                            date: date.clone(),
-                            group: group.finalize().to_hex()[..16].to_owned(),
-                        };
-                        let bytes = crate::office_body::document_resources()
-                            .docx(|| project_docx(&source, &changes, &revision, limits))
-                            .map_err(|error| {
-                                docx_error(
-                                    &error,
-                                    "the body could not be projected onto its package",
-                                )
-                            })?;
-                        return Ok(Some(DocxSequentialProjection {
-                            bytes,
-                            changes: changes.len(),
-                            authors: vec![OfficeBodyExportAuthor {
-                                actor: Some(default_actor),
-                                token,
-                            }],
-                        }));
+                        return default_projection();
                     }
                     Err(error) => {
                         return Err(docx_error(
@@ -579,12 +612,23 @@ impl Vault {
                     let mut expected = Vec::with_capacity(state.blocks.len());
                     for block in &state.blocks {
                         let id = block.id.as_str();
-                        if !block.imported && !surviving.contains(id) {
+                        if (block.imported && !source_visible.contains(id))
+                            || (!block.imported && !surviving.contains(id))
+                        {
                             continue;
                         }
-                        expected.push(native_id(&native, id)?);
+                        expected.push((native_id(&native, id)?, block.text.as_str()));
                     }
-                    if session.accepted_id_order() != expected {
+                    let actual = session.accepted_id_order();
+                    if !actual.iter().eq(expected.iter().map(|(id, _)| id))
+                        && !(end == window.len()
+                            && session.terminal_final_delete_matches(&built, &actual, &expected))
+                    {
+                        // A normalized final-mark carrier survives physically,
+                        // but has no logical id to compare or safely re-address.
+                        if session.deleted_final_mark_survives(&built) {
+                            return default_projection();
+                        }
                         return Err(invalid("the sequential projection diverged from the body"));
                     }
                     total += built.len();
@@ -597,7 +641,9 @@ impl Vault {
                 let mut expected = Vec::with_capacity(state.blocks.len());
                 for block in &state.blocks {
                     let id = block.id.as_str();
-                    if !block.imported && !surviving.contains(id) {
+                    if (block.imported && !source_visible.contains(id))
+                        || (!block.imported && !surviving.contains(id))
+                    {
                         continue;
                     }
                     expected.push(native_id(&native, id)?);
@@ -674,6 +720,8 @@ impl Vault {
                 artifact: *artifact,
                 version: version.version,
                 frontier: head.frontier.clone(),
+                held_ids: None,
+                rebind_frontier: None,
                 source_version: head.source_version,
                 actor: BodyActor::Actor(request.actor.entity_ref()),
                 author: author.shown.clone(),
@@ -681,16 +729,16 @@ impl Vault {
                 at,
                 changes: projection.changes as u64,
                 recalc: None,
+                recalc_failure: None,
                 recalc_zone: Some(request.zone.clone()),
                 effects: Vec::new(),
-                rebind_frontier: None,
             };
-            EXPORTS.put(
-                &self.store,
-                wtxn,
-                &version_key(artifact, version.version),
-                &record,
-            )?;
+            let export_key = version_key(artifact, version.version);
+            EXPORTS.put(&self.store, wtxn, &export_key, &record)?;
+            // The token lookup names this row in the same writer (FIX 12403).
+            if let Some(token) = record.token.as_deref() {
+                author_token::index::note_export_put(&self.store, wtxn, &export_key, token)?;
+            }
             for (index, binding) in projection.authors.iter().enumerate() {
                 let key = (*artifact, version.version, index as u64);
                 // Erased-wins at commit time (FIX 595 review): a contributor
@@ -703,6 +751,7 @@ impl Vault {
                     binding.actor = None;
                 }
                 EXPORT_AUTHORS.put(&self.store, wtxn, &key, &binding)?;
+                author_token::index::note_author_put(&self.store, wtxn, &key, &binding.token)?;
             }
             Ok(OfficeBodyExport {
                 frontier: head.frontier.clone(),

@@ -79,7 +79,7 @@ pub(super) fn read_id(
 }
 
 pub(crate) fn require_type(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     expected: u8,
@@ -251,13 +251,48 @@ pub(crate) fn has_edge(
 }
 
 pub(crate) fn conversation_of(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     record: &EntityId,
 ) -> Result<EntityId> {
+    let room = room_of(store, txn, record)?;
+    require_type(store, txn, &room, ENTITY_TYPE_CONVERSATION)?;
+    Ok(room)
+}
+
+/// The conversation `record` was witnessed into, by its one ChildOf edge or
+/// its redaction pin, whether or not that conversation is still live
+/// (FIX 5029): a turn of a deleted conversation still names it, so a reader
+/// of another conversation can tell the turn is not its own.
+///
+/// # Errors
+///
+/// A record with no single conversation, a pin that disagrees with its
+/// edge, an absent record with no pin, and storage errors.
+pub(crate) fn room_of(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+) -> Result<EntityId> {
+    named_room(store, txn, record)?
+}
+
+/// [`room_of`], with storage errors apart (FIX 5029): the outer `Err` is a
+/// storage error, the inner one a record that names no single conversation.
+/// A turn whose conversation was purged keeps neither its edge nor a pin and
+/// names none, so a reader of another conversation skips it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn named_room(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+) -> Result<Result<EntityId>> {
     let row = live_entity_row_in_txn(store, txn, record)?;
     let pin = super::redacted::read(store, txn, record)?;
-    let room = match row {
+    Ok(match row {
         LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_TURN,
             ..
@@ -268,28 +303,24 @@ pub(crate) fn conversation_of(
             if owners.is_empty()
                 && let Some(pin) = &pin
             {
-                pin.room
+                Ok(pin.room)
+            } else if owners.len() != 1 {
+                Err(invalid("record needs exactly one conversation"))
+            } else if pin.as_ref().is_some_and(|pin| pin.room != owners[0]) {
+                Err(Error::CorruptedIndex("DAG room pin"))
             } else {
-                if owners.len() != 1 {
-                    return Err(invalid("record needs exactly one conversation"));
-                }
-                if pin.as_ref().is_some_and(|pin| pin.room != owners[0]) {
-                    return Err(Error::CorruptedIndex("DAG room pin"));
-                }
-                owners[0]
+                Ok(owners[0])
             }
         }
         LiveEntityRow::DeletedShell | LiveEntityRow::Absent => {
-            pin.ok_or(Error::EntityNotFound)?.room
+            pin.map(|pin| pin.room).ok_or(Error::EntityNotFound)
         }
-        _ => return Err(invalid("unexpected entity type")),
-    };
-    require_type(store, txn, &room, ENTITY_TYPE_CONVERSATION)?;
-    Ok(room)
+        _ => Err(invalid("unexpected entity type")),
+    })
 }
 
 pub(super) fn require_member(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     conversation: &EntityId,
     record: &EntityId,
@@ -303,7 +334,7 @@ pub(super) fn require_member(
 /// The parent a record keeps: its `Parent` edge, or, once a purged ancestor
 /// took the edge, the parent its erasure pin kept.
 pub(crate) fn parent(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     record: &EntityId,
 ) -> Result<Option<EntityId>> {
@@ -325,7 +356,7 @@ pub(crate) fn parent(
 /// acyclicity at every step. It reads the whole chain, however long, and
 /// counts it (rule 5). No partial result is ever returned.
 pub(crate) fn chain(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     conversation: &EntityId,
     leaf: EntityId,
@@ -349,7 +380,7 @@ pub(crate) fn chain(
 }
 
 pub(crate) fn is_sub_session_record(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     record: &EntityId,
 ) -> Result<bool> {
@@ -376,7 +407,11 @@ pub(crate) fn is_sub_session_record(
     }
 }
 
-pub(crate) fn is_thread_record(store: &Store, txn: &RoTxn<'_>, record: &EntityId) -> Result<bool> {
+pub(crate) fn is_thread_record(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+) -> Result<bool> {
     match live_entity_row_in_txn(store, txn, record)? {
         LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_TURN,

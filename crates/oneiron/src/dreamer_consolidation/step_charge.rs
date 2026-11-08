@@ -1,6 +1,8 @@
 //! Attempt-local step spend due to the shared wake ledger after memo replay.
 
+use super::parallel::ExtractedPartition;
 use super::recipe_failure::RecipeFailure;
+use super::sieve_ports::SliceStep;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{DreamerParkCause, DreamerRunnerStore};
@@ -8,7 +10,9 @@ use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
 use crate::error::{Error, Result};
-use oneiron_model::llm::{LlmResponse, LlmUsage};
+use crate::model_step_context::{StepEffectBinding, StepOutcome};
+use crate::model_step_error::{DurableStepError, DurableStepResult};
+use oneiron_model::llm::{DreamerFailureDecision, LlmResponse, LlmUsage};
 
 /// A checkpoint charges only steps without a durable paid receipt. An earlier
 /// unbilled memo (for example, after a trap refunded its reservation) still
@@ -16,7 +20,7 @@ use oneiron_model::llm::{LlmResponse, LlmUsage};
 #[derive(Default)]
 pub(super) struct StepChargeTally {
     pub(super) units: u64,
-    pub(super) step_hashes: Vec<[u8; 32]>,
+    pub(super) step_bindings: Vec<StepEffectBinding>,
 }
 
 impl StepChargeTally {
@@ -50,7 +54,7 @@ impl StepChargeTally {
             reason: reason.to_owned(),
             cause,
             completed_units: self.units,
-            step_hashes: self.step_hashes.clone(),
+            step_bindings: self.step_bindings.clone(),
         }
     }
 
@@ -87,11 +91,17 @@ impl StepChargeTally {
             reason: reason.to_owned(),
             cause,
             completed_units: self.units,
-            step_hashes: self
-                .step_hashes
+            step_bindings: self
+                .step_bindings
                 .iter()
                 .copied()
-                .filter(|hash| *hash != step_hash)
+                .filter(|binding| {
+                    *binding
+                        != StepEffectBinding {
+                            attempt_id,
+                            step_hash,
+                        }
+                })
                 .collect(),
         })
     }
@@ -115,11 +125,17 @@ impl StepChargeTally {
             reason: reason.to_owned(),
             cause: DreamerParkCause::Retry,
             completed_units: self.units,
-            step_hashes: self
-                .step_hashes
+            step_bindings: self
+                .step_bindings
                 .iter()
                 .copied()
-                .filter(|hash| *hash != step_hash)
+                .filter(|binding| {
+                    *binding
+                        != StepEffectBinding {
+                            attempt_id,
+                            step_hash,
+                        }
+                })
                 .collect(),
         })
     }
@@ -131,12 +147,16 @@ impl StepChargeTally {
         step_hash: [u8; 32],
         usage: &LlmUsage,
     ) -> Result<()> {
-        if self.step_hashes.contains(&step_hash)
+        let binding = StepEffectBinding {
+            attempt_id,
+            step_hash,
+        };
+        if self.step_bindings.contains(&binding)
             || DreamerRunnerStore::new(vault).checkpoint_step_charged(attempt_id, &step_hash)?
         {
             return Ok(());
         }
-        self.step_hashes.push(step_hash);
+        self.step_bindings.push(binding);
         self.record_usage(usage);
         Ok(())
     }
@@ -152,10 +172,16 @@ impl StepChargeTally {
         step_hash: [u8; 32],
         usage: &LlmUsage,
     ) -> Result<()> {
-        let tallied = self.step_hashes.len();
+        let tallied = self.step_bindings.len();
         self.record_terminal(ctx.vault, attempt_id, step_hash, usage)?;
-        if self.step_hashes.len() > tallied {
-            ctx.note_terminal_step_charge(step_hash, usage_units(usage));
+        if self.step_bindings.len() > tallied {
+            ctx.note_terminal_step_charge(
+                StepEffectBinding {
+                    attempt_id,
+                    step_hash,
+                },
+                usage_units(usage),
+            );
         }
         Ok(())
     }
@@ -213,4 +239,103 @@ pub(super) fn retry_fallback(response: &LlmResponse) -> bool {
         DreamerParkCause::of_response(response),
         DreamerParkCause::Retry
     )
+}
+
+/// What one slice's terminal step left, once its spend is accounted:
+/// the single classification the serial finish and the window arms
+/// that never reach a finish both tally by, so a paid extraction
+/// settles identically whichever arm accounts it (FIX 12487 round 1).
+pub(super) enum SliceFate {
+    Finished {
+        binding: StepEffectBinding,
+        response: LlmResponse,
+        failure_policy: Option<DreamerFailureDecision>,
+    },
+    Trapped,
+    Checkpoint,
+    Refused(String),
+}
+
+/// Accounts one slice step's outcome into `charges` and reports its
+/// fate. `record_terminal` and `record_usage` are the only charge
+/// sources for a partition (it registers no metered run line), so
+/// every paid outcome must pass here exactly once.
+pub(super) fn tally_slice_outcome(
+    vault: &Vault,
+    outcome: DurableStepResult<StepOutcome>,
+    unsaved_usage: Option<LlmUsage>,
+    charges: &mut StepChargeTally,
+) -> Result<SliceFate> {
+    Ok(match outcome {
+        Ok(StepOutcome::Finished {
+            binding,
+            response,
+            failure_policy,
+            ..
+        }) => {
+            charges.record_terminal(
+                vault,
+                binding.attempt_id,
+                binding.step_hash,
+                &response.usage,
+            )?;
+            SliceFate::Finished {
+                binding,
+                response,
+                failure_policy,
+            }
+        }
+        Ok(StepOutcome::Trapped { .. }) => SliceFate::Trapped,
+        Err(DurableStepError::SpentFinalizeRefused { usage }) => {
+            charges.record_usage(&usage);
+            SliceFate::Checkpoint
+        }
+        Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
+            charges.record_usage(&usage);
+            SliceFate::Refused(format!("extraction reply refused: {}", errors.join("; ")))
+        }
+        Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
+            SliceFate::Checkpoint
+        }
+        Err(error) => {
+            if let DurableStepError::SpentLlm { usage, .. }
+            | DurableStepError::SpentFallback { usage, .. } = &error
+            {
+                charges.record_usage(usage);
+            } else if let Some(usage) = unsaved_usage {
+                charges.record_usage(&usage);
+            }
+            SliceFate::Refused(error.to_string())
+        }
+    })
+}
+
+/// Accounts an extracted prefix whose finish never tallies it (a
+/// window slot whose branch would not re-open, or whose extraction a
+/// changed prior set discards for a fresh run): the finish loop's own
+/// classification, so the paid steps settle beside their receipts
+/// instead of refunding at zero. Reports whether any slice trapped:
+/// that step already parked the attempt under its durable trap, so
+/// the caller must settle the trapped exit, never extract past it
+/// (FIX 12487 round 2).
+pub(super) fn tally_extracted_outcomes(
+    vault: &Vault,
+    extracted: ExtractedPartition,
+    charges: &mut StepChargeTally,
+) -> Result<bool> {
+    let mut trapped = false;
+    for SliceStep {
+        outcome,
+        unsaved_usage,
+        ..
+    } in extracted.steps
+    {
+        if matches!(
+            tally_slice_outcome(vault, outcome, unsaved_usage, charges)?,
+            SliceFate::Trapped
+        ) {
+            trapped = true;
+        }
+    }
+    Ok(trapped)
 }

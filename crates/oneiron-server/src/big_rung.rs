@@ -31,6 +31,7 @@ use serde_json::{Value, json};
 use crate::config::models::{BigReply, BigSettings};
 use crate::models::{CallDeadline, ModelRuntime};
 
+mod cost;
 mod joint;
 mod note;
 mod route;
@@ -291,11 +292,11 @@ impl BigModel {
         content.push(ContentPart::Text {
             text: format!(
                 "Question: {}\n{}\n{rubric}State (JSON): {state}\n{reply}",
-                call.question.text,
+                call.question_text(),
                 contract_line(&call.question.contract),
             ),
         });
-        Ok(LlmRequest {
+        let mut request = LlmRequest {
             model,
             envelope: CallEnvelope {
                 seat_effort: None,
@@ -306,6 +307,7 @@ impl BigModel {
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, self.wording.clone()),
@@ -318,7 +320,11 @@ impl BigModel {
             params: joint.map_or_else(BTreeMap::new, |_| JointRead::params()),
             provider_options: BTreeMap::new(),
             host_segments: None,
-        })
+        };
+        if let Some(labels) = call.labels {
+            labels.bind(&mut request);
+        }
+        Ok(request)
     }
 }
 
@@ -433,6 +439,7 @@ fn abstained() -> ProviderDecision {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     }
 }
 
@@ -498,7 +505,7 @@ impl DecisionModel for BigModel {
         // The decision's clock bounds the whole call (FIX 7792): every send,
         // wait and fallback; past it the call ends incomplete, every rung it
         // admitted settled.
-        let deadline = CallDeadline::caller_in(left);
+        let deadline = CallDeadline::caller_with_wait_cap(left, ladder.cooling_wait_budget(left));
         // A seat's answer names the rung model that served it; one model
         // alone answers or nothing does, so its pin names it already.
         let (response, served, binding) = self
@@ -549,6 +556,7 @@ impl DecisionModel for BigModel {
                 .map_err(|_| failed("model trial usage lock"))?
                 .push(response.usage.clone());
         }
+        let cost = self.completion_cost(&binding.rung.model, &response.usage);
         let served = served.map(|model| ProviderPin {
             rung: self.pin.rung,
             model: model.to_string(),
@@ -569,7 +577,11 @@ impl DecisionModel for BigModel {
             let decision = joint
                 .decision(&call.question.contract, response.token_scores.as_ref())
                 .unwrap_or_else(abstained);
-            return Ok(ProviderDecision { served, ..decision });
+            return Ok(ProviderDecision {
+                served,
+                cost_per_thousand: Some(cost),
+                ..decision
+            });
         }
         let Some((answer, probability)) = self.reply.read(&text) else {
             return Ok(ProviderDecision {
@@ -584,6 +596,7 @@ impl DecisionModel for BigModel {
                 paired: None,
                 person: None,
                 served,
+                cost_per_thousand: Some(cost),
             },
             None => ProviderDecision {
                 served,

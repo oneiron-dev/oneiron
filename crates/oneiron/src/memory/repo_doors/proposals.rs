@@ -23,9 +23,9 @@ use std::collections::BTreeSet;
 use super::symbols::symbol_run;
 use super::work::{RepoOwnWork, open_local_repo, resolve_repo_queue_target};
 use super::{
-    NO_PATHS, RepoMergeQueueEnqueueInput, RepoMergeQueueEnqueueOutput, RepoProposalSubmitInput,
-    RepoProposalSubmitOutput, RepoQueueEntryView, RepoRunAnswer, RepoRunBinding, RepoRunStamp,
-    refusal_error, repo_target,
+    NO_PATHS, RepoMergeQueueEnqueueInput, RepoMergeQueueEnqueueOutput, RepoProposalResolveInput,
+    RepoProposalSubmitInput, RepoProposalSubmitOutput, RepoQueueEntryView, RepoRunAnswer,
+    RepoRunBinding, RepoRunStamp, refusal_error, repo_target,
 };
 use crate::code_document::CodeOpProvenance;
 use crate::code_symbol::{CodeSymbolManifest, code_symbol_entity_id};
@@ -168,7 +168,7 @@ pub(crate) fn repo_touched_symbols(
     if let Some(manifest) = manifest {
         for symbol in &manifest.symbols {
             if paths.contains(&symbol.path) {
-                touched.insert(code_symbol_entity_id(&manifest.repo_ref, symbol)?.to_hex());
+                touched.insert(code_symbol_entity_id(&manifest.repo_identity, symbol)?.to_hex());
             }
         }
     }
@@ -223,13 +223,64 @@ impl Memory<'_> {
     /// review policy names the catalog and `sources` mints the actor's
     /// session and provenance, after the run is admitted and before the
     /// proposal's writer, which judges the run, its declaration and that
-    /// provenance again. Nothing lands, is approved or is queued.
+    /// provenance again. Nothing lands, is approved or is queued. The answer
+    /// names the submission admission receipt (FIX 4338); a `repair_of`
+    /// source the lane reads is linked as that failed proposal's
+    /// replacement in the same writer (FIX 4364).
     pub fn repo_proposal_submit_for_run(
         &self,
         binding: &RepoRunBinding,
         input: RepoProposalSubmitInput,
         policy: Option<&dyn RepoReviewPolicy>,
         sources: impl FnOnce(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
+    ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
+        self.repo_proposal_submit(binding, input, policy, sources, None, None)
+    }
+
+    /// A fresh run-bound review of an approved file's proved redacted
+    /// resolution. The current run reads the source and edits the target;
+    /// no authority or attribution comes from the source's old run.
+    pub fn repo_proposal_rereview_for_run(
+        &self,
+        binding: &RepoRunBinding,
+        original: EntityId,
+        input: RepoProposalSubmitInput,
+        policy: Option<&dyn RepoReviewPolicy>,
+        sources: impl FnOnce(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
+    ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
+        self.repo_proposal_submit(binding, input, policy, sources, Some(original), None)
+    }
+
+    /// Proposes one typed conflict resolution under this run's own work,
+    /// lease, declaration and provenance. Nothing is approved or landed here.
+    pub fn repo_proposal_resolve_for_run(
+        &self,
+        binding: &RepoRunBinding,
+        input: RepoProposalResolveInput,
+        policy: Option<&dyn RepoReviewPolicy>,
+        sources: impl FnMut(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
+    ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
+        let conflict = (input.branch_subject, input.conflict, input.branch);
+        let change = RepoProposalSubmitInput {
+            work: input.work,
+            path: input.path,
+            content: input.content,
+            message: input.message,
+            declaration: input.declaration,
+            // A conflict resolution repairs no failed proposal.
+            repair_of: None,
+        };
+        self.repo_proposal_submit(binding, change, policy, sources, None, Some(conflict))
+    }
+
+    fn repo_proposal_submit(
+        &self,
+        binding: &RepoRunBinding,
+        input: RepoProposalSubmitInput,
+        policy: Option<&dyn RepoReviewPolicy>,
+        sources: impl FnOnce(&RepoRunStamp) -> MemoryResult<RepoRunSources>,
+        original: Option<EntityId>,
+        conflict: Option<(EntityId, EntityId, String)>,
     ) -> MemoryResult<RepoRunAnswer<RepoProposalSubmitOutput>> {
         let own = self.repo_own_work(
             binding,
@@ -239,16 +290,33 @@ impl Memory<'_> {
         )?;
         let now = self.vault.now_recorded_at();
         let admission = self.repo_publish_admission(binding, &own, input.declaration, now)?;
+        if let Some(original) = original {
+            self.repo_lane_reads(binding, &[original])?;
+        }
         // Unbound, the vault's own review policy (FIX 8268).
         let review = match policy {
             Some(policy) => policy.review(own.stamp.project, own.stamp.repo)?,
             None => RepoProposalReview::VaultDefault,
         };
         let membership = &own.admitted.membership;
-        let RepoRef::LocalFolder { path: folder, .. } = &membership.repo_ref else {
-            return Err(refusal_error(RepoAccessRefusal::WrongRef));
+        let (repo_ref, repo) = match self
+            .vault
+            .open_served_queue_for_artifact(own.stamp.repo, &membership.repo_ref)?
+        {
+            Some((queue, source_repo, frozen_ref)) => {
+                if frozen_ref != own.stamp.git_ref {
+                    return Err(refusal_error(RepoAccessRefusal::WrongRef));
+                }
+                (source_repo, queue.into_repository())
+            }
+            None => {
+                let Some(repo) = open_local_repo(self.vault, &membership.repo_ref) else {
+                    return Err(refusal_error(RepoAccessRefusal::WrongRef));
+                };
+                (membership.repo_ref.clone(), repo)
+            }
         };
-        let Some(repo) = open_local_repo(self.vault, &membership.repo_ref) else {
+        let RepoRef::LocalFolder { path: folder, .. } = &repo_ref else {
             return Err(refusal_error(RepoAccessRefusal::WrongRef));
         };
         let green = GitOid::parse_hex(own.stamp.base_green.as_str())?;
@@ -261,16 +329,42 @@ impl Memory<'_> {
                 &["Open a fresh work at the current green and propose the change there."],
             ));
         }
+        // A re-review keeps its original's lineage: it repairs nothing
+        // (FIX 4364).
+        if original.is_some() && input.repair_of.is_some() {
+            return Err(MemoryError::bad_request(
+                "a re-review cannot also repair a failed proposal",
+            ));
+        }
+        // A repair source the run's lane does not read answers as an
+        // absent one: no existence oracle (FIX 4364).
+        if let Some(source) = input.repair_of
+            && self.repo_lane_readable(binding, vec![source])?.is_empty()
+        {
+            return Err(MemoryError::not_found("repository proposal not found"));
+        }
         let sources = sources(&own.stamp)?;
         let request = RepoMutationRequest::new(
             RepoRef::LocalFolder {
                 path: folder.clone(),
                 commit: own.stamp.base_green.clone(),
             },
-            RepoMutationOperation::CommitFile {
-                path: input.path.clone(),
-                content: input.content,
-                message: input.message,
+            match conflict {
+                Some((branch_subject, open_conflict_claim_id, branch_name)) => {
+                    RepoMutationOperation::ResolveConflictFile {
+                        branch_subject,
+                        open_conflict_claim_id,
+                        branch_name,
+                        path: input.path.clone(),
+                        content: input.content,
+                        message: input.message,
+                    }
+                }
+                None => RepoMutationOperation::CommitFile {
+                    path: input.path.clone(),
+                    content: input.content,
+                    message: input.message,
+                },
             },
         )
         .with_write_actor(binding.actor)
@@ -282,37 +376,56 @@ impl Memory<'_> {
             ..own.stamp.clone()
         };
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, [input.path.as_str()]);
-        let proposed =
-            self.vault
-                .propose_repo_mutation_for_run(request, review, base, stamp, |txn| {
-                    let now = self.vault.now_recorded_at();
-                    if let Err(refused) =
-                        admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)?
-                    {
-                        return Ok(Err(refused));
-                    }
-                    require_run_provenance_in_txn(
-                        self.vault,
-                        txn,
-                        sources.provenance_claim,
-                        binding.actor.entity_ref(),
-                        own.stamp.work,
-                    )?;
-                    Ok(Ok(()))
-                })?;
+        let check = |txn: &heed::RoTxn<'_>| {
+            let now = self.vault.now_recorded_at();
+            if let Err(refused) =
+                admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)?
+            {
+                return Ok(Err(refused));
+            }
+            require_run_provenance_in_txn(
+                self.vault,
+                txn,
+                sources.provenance_claim,
+                binding.actor.entity_ref(),
+                own.stamp.work,
+            )?;
+            Ok(Ok(()))
+        };
+        let proposed = match original {
+            Some(original) => self
+                .vault
+                .propose_repo_rereview_for_run(original, request, review, base, stamp, check)?,
+            None => self.vault.propose_repo_mutation_for_run(
+                request,
+                review,
+                base,
+                stamp,
+                input.repair_of,
+                check,
+            )?,
+        };
         let proposal = proposed.map_err(refusal_error)?;
+        let admission_receipt = self
+            .vault
+            .repo_proposal_admission_receipt(&proposal)?
+            .ok_or(Error::CorruptedIndex(
+                "a stored proposal has no admission receipt",
+            ))?;
         // The answer names the proposal (its `repo.proposed_diff` journal
-        // claim's id), its session and its provenance claim: send-time
-        // admission judges each of them (FIX 7069).
+        // claim's id), its admission receipt, its session and its provenance
+        // claim: send-time admission judges each of them (FIX 7069).
         Ok(RepoRunAnswer {
             rows: vec![
                 own.stamp.repo,
                 proposal.id,
+                admission_receipt,
                 proposal.session,
                 proposal.provenance_claim,
             ],
             output: RepoProposalSubmitOutput {
                 proposal: proposal.id,
+                admission_receipt,
                 work: input.work,
                 path: proposal.ordinary_file()?.0.to_owned(),
                 base_green: own.stamp.base_green.clone(),
@@ -362,9 +475,13 @@ impl Memory<'_> {
             return Err(refusal_error(RepoAccessRefusal::StaleLease));
         }
         let membership = &own.admitted.membership;
-        let pointers =
-            resolve_repo_queue_target(self.vault, &membership.repo_ref, &own.stamp.git_ref)?
-                .map_err(refusal_error)?;
+        let pointers = resolve_repo_queue_target(
+            self.vault,
+            own.stamp.repo,
+            &membership.repo_ref,
+            &own.stamp.git_ref,
+        )?
+        .map_err(refusal_error)?;
         if pointers.green != own.stamp.base_green {
             return Err(MemoryError::new(
                 MEMORY_CODE_INVALID_STATE,
@@ -372,7 +489,7 @@ impl Memory<'_> {
                 &["Open a fresh work at the current green and propose the change again."],
             ));
         }
-        let queue = MergeQueue::open(self.vault, membership.repo_ref.clone())?;
+        let queue = pointers.queue;
         let candidates = rows
             .iter()
             .map(|row| self.repo_run_candidate(row, &own.stamp.base_green))
@@ -422,7 +539,7 @@ impl Memory<'_> {
             }))
         })?;
         let batch = formed.map_err(refusal_error)?;
-        let (entry, blockers) =
+        let (entry, listed) =
             self.repo_entry_view(binding, &queue, batch, self.vault.now_recorded_at())?;
         // Each queued proposal, its session and its provenance claim are
         // served rows too, so send-time admission judges them (FIX 7069).
@@ -430,7 +547,7 @@ impl Memory<'_> {
         for row in &rows {
             answer_rows.extend([row.id, row.session, row.provenance_claim]);
         }
-        answer_rows.extend(blockers);
+        answer_rows.extend(listed);
         Ok(RepoRunAnswer {
             rows: answer_rows,
             output: entry,
@@ -438,22 +555,21 @@ impl Memory<'_> {
     }
 
     /// The queue entries accepted from the run's work `work` in the queue of
-    /// `repo_ref`, each with what it waits behind now, and the blockers they
-    /// list (FIX 6949).
+    /// `repo_ref`, each with what it waits behind now, and the blockers and
+    /// receipts they list (FIX 6949, FIX 4338).
     pub(super) fn repo_queue_entries(
         &self,
         binding: &RepoRunBinding,
-        repo_ref: &RepoRef,
+        queue: &MergeQueue<'_>,
         work: EntityId,
     ) -> MemoryResult<(Vec<RepoQueueEntryView>, Vec<EntityId>)> {
-        let queue = MergeQueue::open(self.vault, repo_ref.clone())?;
         let now = self.vault.now_recorded_at();
         let mut entries = Vec::new();
         let mut listed = Vec::new();
         for batch in queue.run_batches_of(work)? {
-            let (entry, blockers) = self.repo_entry_view(binding, &queue, batch, now)?;
+            let (entry, rows) = self.repo_entry_view(binding, queue, batch, now)?;
             entries.push(entry);
-            listed.extend(blockers);
+            listed.extend(rows);
         }
         Ok((entries, listed))
     }
@@ -546,7 +662,8 @@ impl Memory<'_> {
         })
     }
 
-    /// A run's queue entry as it reads it, with the blockers its lane reads.
+    /// A run's queue entry as it reads it, with the blockers and the
+    /// receipts its lane reads (FIX 4338), and those rows for its answer.
     fn repo_entry_view(
         &self,
         binding: &RepoRunBinding,
@@ -556,6 +673,19 @@ impl Memory<'_> {
     ) -> MemoryResult<(RepoQueueEntryView, Vec<EntityId>)> {
         let blockers = queue.run_batch_blockers(&batch, now)?;
         let blockers = self.repo_lane_readable(binding, blockers)?;
+        let receipts = queue.batch_receipts(&batch)?;
+        let readable = self.repo_lane_readable(
+            binding,
+            receipts
+                .admission
+                .into_iter()
+                .chain(receipts.completion)
+                .chain(receipts.proposals.iter().copied())
+                .collect(),
+        )?;
+        let reads = |id: &EntityId| readable.contains(id);
+        let mut rows = blockers.clone();
+        rows.extend(readable.iter().copied());
         let order = batch.run_order.ok_or(Error::InvariantViolation(
             "a run's queue entry lost its order",
         ))?;
@@ -569,17 +699,22 @@ impl Memory<'_> {
                 base_green: batch.base_green,
                 expected_head: batch.expected_head,
                 landed_head: batch.landed_head,
-                blockers: blockers.clone(),
+                blockers,
+                admission_receipt: receipts.admission.filter(reads),
+                completion_receipt: receipts.completion.filter(reads),
+                proposal_admission_receipts: receipts.proposals.into_iter().filter(reads).collect(),
             },
-            blockers,
+            rows,
         ))
     }
 }
 
 /// Whether `row` is a one-file change no batch has taken yet.
 fn unqueued_candidate(row: &RepoProposal) -> bool {
-    row.operation == RepoProposalOperation::CommitFile
-        && row.merge_stack.is_none()
+    matches!(
+        row.operation,
+        RepoProposalOperation::CommitFile | RepoProposalOperation::ResolveConflictFile { .. }
+    ) && row.merge_stack.is_none()
         && row.operation_seq.is_none()
         && matches!(
             row.status,

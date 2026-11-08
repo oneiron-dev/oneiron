@@ -223,7 +223,9 @@ pub(crate) fn stage_machine_claim_transition(
         vault_id,
         target,
         birth_digest: rows.birth.digest,
-        // Empty means a direct child of birth in the signed event codec.
+        // The complete prior frontier, however many tips: the codec pages a
+        // wide one, and only its put door's advisory count reads the width
+        // (FIX 8673). Empty means a direct child of birth.
         predecessors: before.frontier,
         authority_head,
         actor,
@@ -333,6 +335,7 @@ pub(crate) fn stage_machine_claim_transition(
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: None,
             data: crate::claim::encode_claim_body(&control)?,
             allow_maintenance: false,
             allow_reserved_predicate: true,

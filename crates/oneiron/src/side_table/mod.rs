@@ -11,7 +11,8 @@ pub(crate) mod classified;
 mod codec;
 mod decls;
 mod erased;
-mod key;
+use oneiron_store::side_table::key;
+mod raw_reverse;
 #[cfg(test)]
 mod tests;
 
@@ -134,6 +135,16 @@ pub(crate) struct StagedRow {
 }
 
 impl StagedRow {
+    /// The actual backing capacity of this row's encoded value.
+    pub(crate) fn value_capacity_bytes(&self) -> u64 {
+        self.value.capacity() as u64
+    }
+
+    /// The actual backing capacity of this row's encoded key.
+    pub(crate) fn key_capacity_bytes(&self) -> u64 {
+        self.key.capacity() as u64
+    }
+
     pub(crate) fn put(&self, dbs: &impl SideTableDbs, txn: &mut RwTxn<'_>) -> Result<()> {
         let admitted = self
             .decl
@@ -292,6 +303,8 @@ pub(crate) fn decodes<V, C: SideCodec<V>>(bytes: &[u8]) -> bool {
 }
 
 type RawRows<'txn> = Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>)>> + 'txn>;
+type RawRowsWithBorrowedValues<'txn> =
+    Box<dyn Iterator<Item = Result<(Vec<u8>, Cow<'txn, [u8]>)>> + 'txn>;
 
 /// The exclusive upper bound of every key that starts with `prefix`; `None` when no byte string
 /// is above them all.
@@ -584,6 +597,33 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         Ok(self
             .raw_rows(dbs, txn, key_prefix, false)?
             .map(move |row| row.map(|(key, value)| (key[prefix_len..].to_vec(), value))))
+    }
+
+    /// Forward raw rows, retaining transaction-backed values as borrowed bytes.
+    /// Overlay-owned values remain owned; keys still name the suffix after the table prefix.
+    pub(crate) fn iter_raw_borrowed_values_from<'txn>(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &'txn RoTxn<'_>,
+        key_prefix: &[u8],
+    ) -> Result<RawRowsWithBorrowedValues<'txn>> {
+        let mut scan = self.decl.prefix.to_vec();
+        scan.extend_from_slice(key_prefix);
+        let prefix_len = self.decl.prefix.len();
+        Ok(match self.decl.db {
+            SideDb::VaultMeta => Box::new(
+                dbs.side_vault_meta()
+                    .prefix_iter(txn, &scan)?
+                    .map(move |row| row.map(|(key, value)| (key[prefix_len..].to_vec(), value))),
+            ),
+            SideDb::SyncState => Box::new(
+                dbs.side_sync_state()?
+                    .prefix_iter(txn, self.str_key(&scan)?)?
+                    .map(move |row| {
+                        row.map(|(key, value)| (key.as_bytes()[prefix_len..].to_vec(), value))
+                    }),
+            ),
+        })
     }
 
     /// The rows whose keys fall between `start` and `end`, ascending, decoded as the caller pulls

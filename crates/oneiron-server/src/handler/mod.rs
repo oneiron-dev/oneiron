@@ -25,14 +25,17 @@ mod mcp_socket;
 pub(crate) mod mesh;
 #[cfg(test)]
 mod note_socket_tests;
+mod peer_serve;
 mod protocol_close;
 #[cfg(test)]
 mod residence_socket_tests;
+mod sealed_updates;
 pub(crate) mod selector_scope;
 mod socket_stop;
 mod transport;
 mod window_copy;
 mod window_pads;
+mod window_ready;
 #[cfg(test)]
 pub(crate) mod window_row_tests;
 mod window_sync;

@@ -192,6 +192,12 @@ fn link<H: bindings::GuestImports + 'static>(
                     Ok((cx.data_mut().host.output_bytes(path, frame),))
                 },
             )?,
+            "oneiron.store.bytes" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, RequestState<H>>, (start, frame): (bool, Vec<u8>)| {
+                    Ok((cx.data_mut().host.store_bytes(start, frame),))
+                },
+            )?,
             "oneiron.propose.open" => unary!(root, wit, proposal_open, String),
             "oneiron.propose.chunk" => root.func_wrap(
                 wit,
@@ -262,10 +268,6 @@ pub fn validate_step_result(
     result: &bindings::StepResult,
     tier: SandboxGuestTier,
 ) -> wasmtime::Result<()> {
-    const MAX_BYTES: usize = 1024 * 1024;
-    if result.result_json.len() > MAX_BYTES {
-        return Err(wasmtime::Error::msg("component output limit"));
-    }
     let _: serde_json::Value = serde_json::from_str(&result.result_json)?;
     if tier != SandboxGuestTier::Foreign && !result.proposals.is_empty() {
         return Err(wasmtime::Error::msg("first-party proposals refused"));

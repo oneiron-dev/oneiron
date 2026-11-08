@@ -2,8 +2,8 @@
 //! the queue, its queueing and re-queueing under a sweep, and what a leased
 //! job reads. The queue stays the authority on job state; a job parked on
 //! its parts (FIX 7549) is the `work_store` child's to wake.
+use super::target::Target;
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 use super::{
     COACH_FEEDBACK_TRIAGE_FACET, FEEDBACK_TRIAGE_INBOX_SOURCE, FeedbackTriageHandoff,
@@ -16,16 +16,6 @@ use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::{EntityId, Error, Result, Vault};
-
-/// A triage job's input as it rides the queue.
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct JobInput {
-    source: String,
-    id: String,
-    revision: String,
-    evidence: EntityId,
-}
 
 pub(super) fn invalid_job() -> Error {
     Error::InvalidConfig("invalid feedback triage job".into())
@@ -40,25 +30,15 @@ pub(super) fn attempt_id(id: &EntityId) -> Result<AttemptId> {
 }
 
 fn job_input(source_ref: &FeedbackTriageSourceRef, evidence: EntityId) -> Result<Value> {
-    rmpv::ext::to_value(JobInput {
-        source: source_ref.source.clone(),
-        id: source_ref.id.clone(),
-        revision: source_ref.revision.clone(),
+    Target::Retained {
+        source_ref: source_ref.clone(),
         evidence,
-    })
-    .map_err(|_| invalid_job())
+    }
+    .encode()
 }
 
 pub(crate) fn job_target(input: &Value) -> Result<(FeedbackTriageSourceRef, EntityId)> {
-    let job: JobInput = rmpv::ext::from_value(input.clone()).map_err(|_| invalid_job())?;
-    Ok((
-        FeedbackTriageSourceRef {
-            source: job.source,
-            id: job.id,
-            revision: job.revision,
-        },
-        job.evidence,
-    ))
+    Target::decode(input)?.retained()
 }
 
 /// Queues one revision's triage job on the Coach's host queue under
@@ -106,17 +86,17 @@ pub(super) fn requeue_unacknowledged(
     run_id: Option<&str>,
     now: u64,
 ) -> Result<usize> {
+    // The open rows and the erased-evidence backstop's, not every handoff
+    // ever made (FIX 7550).
     let handoffs = {
         let txn = vault.store.env.read_txn()?;
-        HANDOFFS.scan(&vault.store, &txn)?
+        let keys = super::handoff_index::requeue_keys(vault, &txn)?;
+        super::handoff_index::rows(&vault.store, &txn, keys)?
     };
     let sweep_ref = attempt_ref(sweep)?;
     let queue = AttemptQueue::new(vault);
     let mut requeued = 0;
     for (key, read) in handoffs {
-        if read.erased_at.is_some() {
-            continue;
-        }
         // An acknowledged row stays out unless its evidence is erased, for
         // the backstop below (FIX 10921).
         if read.result.is_some() {
@@ -130,8 +110,8 @@ pub(super) fn requeue_unacknowledged(
             let Some(mut handoff) = HANDOFFS.get(&vault.store, txn, &key)? else {
                 return Ok(false);
             };
-            if handoff.erased_at.is_some() {
-                return Ok(false);
+            if handoff.erased_at().is_some() {
+                return work_store::reconcile_in_txn(vault, txn, &key, &mut handoff, now);
             }
             // The erase backstop (FIX 10921): an acknowledged row whose
             // evidence the owner erased settles here and queues nothing.
@@ -154,17 +134,11 @@ pub(super) fn requeue_unacknowledged(
             if erased::settle_erased_in_txn(vault, txn, &key, &mut handoff, now)? {
                 return Ok(false);
             }
-            handoff.attempt = enqueue_triage_in_txn(
-                vault,
-                txn,
-                &handoff.source_ref,
-                handoff.evidence,
-                sweep,
-                run_id,
-                now,
-            )?;
+            let (source_ref, evidence) = handoff.retained()?;
+            handoff.attempt =
+                enqueue_triage_in_txn(vault, txn, source_ref, evidence, sweep, run_id, now)?;
             handoff.queued_by = sweep_ref;
-            HANDOFFS.put(&vault.store, txn, &key, &handoff)?;
+            super::handoff_index::put_handoff_in_txn(&vault.store, txn, &key, &handoff)?;
             Ok(true)
         })?;
         requeued += usize::from(again);
@@ -179,13 +153,12 @@ pub(super) fn job_item(
     vault: &Vault,
     handoff: &FeedbackTriageHandoff,
 ) -> Result<FeedbackTriageItem> {
-    Ok(
-        if handoff.source_ref.source == FEEDBACK_TRIAGE_INBOX_SOURCE {
-            FeedbackTriageItem::Inbox(Box::new(inbox_note(vault, &handoff.source_ref)?))
-        } else {
-            FeedbackTriageItem::Github(Box::new(github::evidence_issue(vault, handoff)?))
-        },
-    )
+    let (source_ref, _) = handoff.retained()?;
+    Ok(if source_ref.source == FEEDBACK_TRIAGE_INBOX_SOURCE {
+        FeedbackTriageItem::Inbox(Box::new(inbox_note(vault, source_ref)?))
+    } else {
+        FeedbackTriageItem::Github(Box::new(github::evidence_issue(vault, handoff)?))
+    })
 }
 
 impl Vault {
@@ -213,8 +186,8 @@ impl Vault {
             let erased = erased::evidence_erased_in_txn(self, &txn, &handoff)?;
             (handoff, binding_in_txn(self, &txn)?.skill, erased)
         };
-        if let Some(result) = handoff.result {
-            return Ok(FeedbackTriageJob::Acknowledged(result));
+        if let Some(result) = &handoff.result {
+            return Ok(FeedbackTriageJob::Acknowledged(result.clone()));
         }
         if handoff.attempt != attempt_ref(attempt.status.attempt.id)? {
             return Err(invalid_job());
@@ -226,9 +199,10 @@ impl Vault {
             return Ok(FeedbackTriageJob::Unbound);
         };
         let item = job_item(self, &handoff)?;
+        let (source_ref, evidence) = handoff.retained()?;
         Ok(FeedbackTriageJob::Pending(Box::new(FeedbackTriageInput {
-            source_ref: handoff.source_ref,
-            evidence: handoff.evidence,
+            source_ref: source_ref.clone(),
+            evidence,
             item,
             skill,
             work: handoff.work,

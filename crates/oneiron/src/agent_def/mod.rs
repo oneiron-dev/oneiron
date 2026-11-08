@@ -12,7 +12,6 @@
 
 mod byte_observation;
 mod codec;
-mod decode;
 mod doors;
 mod id_pin;
 mod manifest;
@@ -59,7 +58,8 @@ pub(crate) use self::id_pin::{
 };
 pub(crate) use self::manifest::{
     SEEDED_AGENT_DEFINITION_TIMESTAMP, ensure_seeded_agent_persons_in_txn,
-    seed_system_agent_definitions, system_export_identity, validate_reserved_logical_id,
+    seed_system_agent_definitions, seeded_row_matches_manifest, seeded_system_agent_ids,
+    system_export_identity, validate_reserved_logical_id,
 };
 pub(crate) use self::models::{list_admits, listed_entry, no_listed_model};
 pub(crate) use self::types::forked_from_row_ref;
@@ -95,6 +95,10 @@ mod tests;
 
 mod portable;
 mod portable_binding;
+mod setup_plan;
+pub(crate) use setup_plan::{
+    PreparedSetupOwner, SetupEntityPut, setup_entity_type_in_txn, take_setup_owner_before,
+};
 mod portable_knowledge;
 #[cfg(test)]
 pub(crate) use portable::agent_pack_files;
@@ -103,7 +107,8 @@ pub(crate) use portable::{
     agent_pack_files_travelling, resolve_agent_skill_refs, select_agent_knowledge,
 };
 pub(crate) use portable_binding::{
-    agent_fork_hash_in_txn, bind_agent_birth_in_txn, import_agent_fork_hash_in_txn,
+    PreparedAgentDefinitionBirth, agent_fork_hash_in_txn, bind_agent_birth_in_txn,
+    import_agent_fork_hash_in_txn,
 };
 pub(crate) use portable_knowledge::{KnowledgeFormat, decode_agent_knowledge};
 

@@ -2,6 +2,7 @@
 //! base (`base`) or in an off-record session overlay (`session`), plus the
 //! turn-speaker wire helpers. Surface re-exported by [`super`].
 
+mod archive;
 mod assertions;
 mod base;
 mod codec;
@@ -16,7 +17,8 @@ mod wake_outcome;
 pub use stream::*;
 pub(crate) use stream::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
-    message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,
+    message_stream_finality_in_txn, message_stream_held_generations_in_txn,
+    scrub_stream_seed_actor_in_txn,
 };
 mod validation;
 
@@ -32,10 +34,15 @@ pub use self::types::{
 pub use self::wake_outcome::{TurnProgramWakeOutcome, UnpersistedWakeReason};
 pub(crate) use self::wake_outcome::{erase_turn_wake_label_in_txn, turn_wake_outcome_in_txn};
 
+pub(crate) use self::archive::{
+    ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
+    archived_message_body,
+};
 pub(crate) use self::codec::{
     IMPORTED_SOURCE_KEY, guard_import_stamp, turn_admits_message_bodies, witness_message_body,
 };
 pub(crate) use self::program::ImportedTurnStamp;
+pub use self::program::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
 
 pub(super) use self::validation::validate_witness_occurrence;
 pub(crate) use self::validation::{

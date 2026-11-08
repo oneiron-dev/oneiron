@@ -9,6 +9,41 @@ use crate::side_table::{self as t, SideTableDecl};
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_TOPOLOGY_SEQ, CONTENT),
     (&t::IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN, CONTENT),
+    // The compliance log and setting are live: a restore never takes back a
+    // logged search or turns a switched-off search on again (FIX 12560).
+    // An import's queue, occurrences and progress stand with the rows they
+    // landed, as the image holds them (FIX 12559).
+    (&t::MAIL_PACK_ATTACHMENT, CONTENT),
+    (&t::MAIL_PACK_ATTACHMENT_ERASE, CONTENT),
+    (&t::MAIL_PACK_BODY_QUEUE, CONTENT),
+    (&t::MAIL_PACK_CALENDAR_RESOURCE, CONTENT),
+    (&t::MAIL_PACK_CALENDAR_SYNC, CONTENT),
+    // A re-check and the ids it names stand with the occurrence and the
+    // findings it settled, as the image holds them (FIX 15414).
+    (&t::MAIL_PACK_CLAIM_RECHECK, CONTENT),
+    (&t::MAIL_PACK_CLAIM_RECHECK_NAMED, CONTENT),
+    (&t::MAIL_PACK_COMPLIANCE_EVENT, LIVE),
+    (&t::MAIL_PACK_COMPLIANCE_SETTING, LIVE),
+    // An owed forget stands with the rows it still owes, as the image holds them.
+    (&t::MAIL_PACK_FORGET_OWED, CONTENT),
+    // An owed header retirement stands with the revision it names, as the
+    // image holds it (FIX 15413).
+    (&t::MAIL_PACK_HEADER_RETIREMENT, CONTENT),
+    // Derived beside the UID map, restored with it.
+    (&t::MAIL_PACK_IMAP_ID_PLACE, CONTENT),
+    // A UID names one message for as long as its UIDVALIDITY stands.
+    (&t::MAIL_PACK_IMAP_UID, CONTENT),
+    (&t::MAIL_PACK_MBOX_IMPORT, CONTENT),
+    (&t::MAIL_PACK_OCCURRENCE, CONTENT),
+    (&t::MAIL_PACK_OCCURRENCE_ROW, CONTENT),
+    // A drafted reply stands as the vault held it: its state and its approval.
+    (&t::MAIL_PACK_REPLY_DRAFT, LIVE),
+    // A source's owner, custody name and settings are live configuration.
+    (&t::MAIL_PACK_SOURCE, LIVE),
+    (&t::MAIL_PACK_SOURCE_INDEX, LIVE),
+    (&t::MAIL_PACK_SYNC, CONTENT),
+    // A thread's epoch stands with the conversations it named.
+    (&t::MAIL_PACK_THREAD_EPOCH, CONTENT),
     (&t::ENTITY_TEXT_INDEXED_IDLE_DELAY_MS, CONTENT),
     // FIX 9970: a turn's unpersisted-wake label stands with the turn as the
     // image holds it, as the wakes its landing did record do.
@@ -27,6 +62,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // Content-owned audit, never authority (FIX 10260).
     (&t::MESSAGE_REPLY_ASSERTIONS, CONTENT),
     (&t::MESSAGE_STREAM_ACTIVE, CONTENT),
+    (&t::MESSAGE_STREAM_ERASED, CONTENT),
     (&t::MESSAGE_STREAM_POLICY, LIVE),
     (&t::MESSAGE_STREAM_RECEIPT, CONTENT),
     (&t::MODEL_STEP_SUBMISSION, CONTENT),
@@ -102,12 +138,24 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OUTBOUND_CONNECTOR_CALL_CALLER, LIVE),
     (&t::OUTBOUND_DEDUPE_RESERVATION, LIVE),
     (&t::OUTBOUND_DEDUPE_INTENT, LIVE),
+    (&t::OUTBOUND_INTENT_ACCOUNTING, LIVE),
     (&t::OUTBOUND_INTENT_ATTEMPT_INDEX, LIVE),
     (&t::OUTBOUND_INTENT_ATTEMPT_FORMAT, LIVE),
     (&t::OUTBOUND_INTENT_LEDGER_RECORD, LIVE),
     (&t::OUTBOUND_INTENT_SETTLEMENT, LIVE),
+    (&t::OUTBOUND_INTENT_PARTY, LIVE),
+    (&t::OUTBOUND_INTENT_PARTY_OF, LIVE),
+    (&t::OUTBOUND_INTENT_LATE_RECIPIENT, LIVE),
+    // A parked task question stands with the live send and its live custody
+    // key (FIX 16029): live state replaces the image's; absent stays absent.
+    // Its owner Ask restores as content (DECISION_ASK), so the poller's pass
+    // (`forget_ended_remote_task_inputs`) reconciles the two: an Ask of a
+    // question no row holds is withdrawn, and a waiting row's missing Ask is
+    // queued again, each Ask checked by its typed identity, never its number.
+    (&t::OUTBOUND_REMOTE_TASK_INPUT, LIVE),
+    (&t::OUTBOUND_REMOTE_TASK_POLL, LIVE),
+    (&t::OUTBOUND_REMOTE_TASK_SESSION_END, LIVE),
     (&t::OUTBOUND_INTENT_UNAVAILABLE, LIVE),
-    (&t::OUTBOUND_PINNED_APPROVAL, LIVE),
     (&t::OUTBOUND_SUPPRESSION_INDEX, LIVE),
     (&t::OUTBOUND_SUPPRESSION_RECEIPT, LIVE),
     (&t::OUTBOUND_DIRECT_RECEIPT, LIVE),
@@ -150,6 +198,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PORTS_CHANGE, CONTENT),
     (&t::PORTS_CHANGE_BY_ACTOR, CONTENT),
     (&t::PORTS_CHANGE_BY_ENTITY, CONTENT),
+    (&t::PORTS_CLAIM_ROW_FLOOR, LIVE),
     (&t::PORTS_CLOCK_FLOOR, LIVE),
     (&t::PORTS_DEPENDENCY, CONTENT),
     (&t::PORTS_DEPENDENCY_REVERSE, CONTENT),
@@ -157,6 +206,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PORTS_DEPENDENT_WALK_CHECK, LIVE),
     (&t::PORTS_DEPENDENT_WALK_POLICY, LIVE),
     (&t::PORTS_DEPENDENT_WALK_SETTLED, CONTENT),
+    (&t::PORTS_DOCUMENT_MUTATION_HEAD, CONTENT),
     (&t::PORTS_ID_FLOOR, LIVE),
     (&t::PORTS_STALE, CONTENT),
     (&t::PORTS_TOMBSTONE, CONTENT),
@@ -211,6 +261,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // state, so a restore keeping current authority keeps the current vault's.
     (&t::PROVENANCE_BODY_RESPONSE, CONTENT),
     (&t::PROVENANCE_BODY_RESPONSE_OWNER, LIVE),
+    // Historical source facts are custody state: the current vault's is kept.
+    (&t::PROVENANCE_BODY_SOURCE, LIVE),
     (&t::PROVENANCE_ROW_BIRTH, CONTENT),
     (&t::PROVENANCE_WITHHELD_SECRET, LIVE),
     // Acts that already left the vault: a restore never revives a withdrawn submission or replays

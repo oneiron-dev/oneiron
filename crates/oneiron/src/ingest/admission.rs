@@ -32,15 +32,19 @@ impl ImportedEvidenceEntityResolution {
 }
 
 /// The inbound-content screen a caller ran immediately before admitting one
-/// imported claim (CAL-09): the verdict class and the screener's own reason
-/// codes. It rides the claim's evidence beside its source record, so each
-/// admission keeps the verdict it was admitted under.
+/// imported claim (CAL-09): the verdict class, the screener's own reason
+/// codes, and the screener's name when it gives one. It rides the claim's
+/// evidence beside its source record, so each admission keeps the verdict
+/// it was admitted under and what produced it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedEvidenceScreen {
     /// `clear`, `flagged` or `indeterminate`.
     pub verdict: String,
     /// The screener's reason codes; empty for a clear body.
     pub reason_codes: Vec<String>,
+    /// The screener that produced the verdict, by the name it gives; `None`
+    /// when no screener ran or it gives none.
+    pub screener: Option<String>,
 }
 
 /// Write metadata for admitting one normalized imported evidence claim.
@@ -144,6 +148,7 @@ pub fn admit_imported_evidence_claim_typed(
         admission,
         None,
         false,
+        crate::core_write::CoreWriteLaneRef::Unbound,
     )
 }
 
@@ -164,6 +169,7 @@ pub(crate) fn admit_imported_evidence_claim_typed_for_machine(
         admission,
         None,
         true,
+        crate::core_write::CoreWriteLaneRef::Unbound,
     )
 }
 
@@ -172,6 +178,7 @@ pub(crate) fn admit_imported_evidence_claim_for_memory(
     vault: &crate::Vault,
     claim: &NormalizedIngestClaim,
     admission: ImportedEvidenceAdmission,
+    lane: crate::core_write::CoreWriteLaneRef<'_>,
 ) -> crate::Result<()> {
     admit_imported_evidence_claim_typed_guarded(
         vault,
@@ -181,6 +188,7 @@ pub(crate) fn admit_imported_evidence_claim_for_memory(
         &admission,
         Some(crate::memory::guard_existing_claim_in_txn),
         false,
+        lane,
     )
 }
 
@@ -195,6 +203,7 @@ fn admit_imported_evidence_claim_typed_guarded(
     admission: &ImportedEvidenceAdmission,
     guard: Option<ClaimAuthorGuard>,
     sign_machine: bool,
+    lane: crate::core_write::CoreWriteLaneRef<'_>,
 ) -> crate::Result<()> {
     // `companion.expression.*` has typed doors that own its supersession
     // chain: writing a head means closing the one the family's own precedence
@@ -220,7 +229,7 @@ fn admit_imported_evidence_claim_typed_guarded(
     }
 
     if guard.is_some() {
-        return vault.try_with_actor_content_write_txn(admission.actor, |content| {
+        return vault.try_with_actor_content_write_txn(admission.actor, lane, |content| {
             admit_imported_evidence_in_content(
                 vault,
                 content,
@@ -257,43 +266,82 @@ fn admit_imported_evidence_claim_typed_guarded(
             admission.learned_at,
         )
         .commit_with_target_guard(|txn| {
-            // Check both predicate directions in the SAME writer snapshot as the
-            // candidate write. A generic incoming predicate cannot disguise an
-            // overwrite of an existing private keyed revision.
-            let owned_door = || {
-                crate::error::Error::Claim(crate::error::ClaimError::KeyValueWriteRequiresOwnedDoor)
-            };
-            if predicate == crate::claim::KEY_VALUE_PREDICATE {
-                return Err(owned_door());
-            }
-            if vault.local_hard_delete_marker_exists_in_txn(txn, &admission.claim_id)? {
+            guard_imported_claim_target(vault, txn, predicate, admission)
+        })
+}
+
+/// The registered MACHINE import door composed into the caller's writer.
+/// Errors must abort that writer, including any earlier batches it staged.
+pub(crate) fn admit_imported_evidence_claim_typed_for_machine_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    predicate: &str,
+    value: MsgpackValue,
+    source_record_id: &str,
+    admission: &ImportedEvidenceAdmission,
+) -> crate::Result<()> {
+    let (candidate, mut envelope) =
+        imported_candidate(predicate, value, source_record_id, admission)?;
+    vault.sign_registered_machine_claim_in_txn(
+        txn,
+        &admission.claim_id,
+        &candidate,
+        &mut envelope,
+    )?;
+    guard_imported_claim_target(vault, txn, predicate, admission)?;
+    vault
+        .batch_in()
+        .claim_candidate(
+            &admission.claim_id,
+            candidate,
+            &envelope,
+            admission.occurred,
+            admission.learned_at,
+        )
+        .apply(txn)
+}
+
+fn guard_imported_claim_target(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    admission: &ImportedEvidenceAdmission,
+) -> crate::Result<()> {
+    // Check both predicate directions in the SAME writer snapshot as the
+    // candidate write. A generic incoming predicate cannot disguise an
+    // overwrite of an existing private keyed revision.
+    let owned_door =
+        || crate::error::Error::Claim(crate::error::ClaimError::KeyValueWriteRequiresOwnedDoor);
+    if predicate == crate::claim::KEY_VALUE_PREDICATE {
+        return Err(owned_door());
+    }
+    if vault.local_hard_delete_marker_exists_in_txn(txn, &admission.claim_id)? {
+        return Err(crate::error::Error::InvalidClaimBody(
+            "import cannot recreate an erased claim id",
+        ));
+    }
+    if let Some(raw) = vault.get_raw_in(txn, &admission.claim_id)? {
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or(
+            crate::error::Error::CorruptedIndex("import claim target header"),
+        )?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            // An erased body no longer identifies its predicate. Never
+            // reuse its id through this caller-selected import door.
+            if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN {
                 return Err(crate::error::Error::InvalidClaimBody(
                     "import cannot recreate an erased claim id",
                 ));
             }
-            if let Some(raw) = vault.get_raw_in(txn, &admission.claim_id)? {
-                let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or(
-                    crate::error::Error::CorruptedIndex("import claim target header"),
-                )?;
-                if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                    // An erased body no longer identifies its predicate. Never
-                    // reuse its id through this caller-selected import door.
-                    if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN {
-                        return Err(crate::error::Error::InvalidClaimBody(
-                            "import cannot recreate an erased claim id",
-                        ));
-                    }
-                    let body = crate::claim::decode_claim_body(
-                        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-                        true,
-                    )?;
-                    if !crate::claim::claim_generic_readable(&body) {
-                        return Err(owned_door());
-                    }
-                }
+            let body = crate::claim::decode_claim_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )?;
+            if !crate::claim::claim_generic_readable(&body) {
+                return Err(owned_door());
             }
-            Ok(())
-        })
+        }
+    }
+    Ok(())
 }
 
 /// Actor-bound import inside an existing content transaction. The web doors
@@ -435,25 +483,29 @@ pub(super) fn imported_candidate(
     let imported_evidence = imported_evidence_value(&admission.source_id, source_record_id);
     let mut evidence = imported_evidence.clone();
     if let (Some(screen), MsgpackValue::Map(entries)) = (&admission.screen, &mut evidence) {
-        entries.push((
-            MsgpackValue::from("screen"),
-            MsgpackValue::Map(vec![
-                (
-                    MsgpackValue::from("verdict"),
-                    MsgpackValue::from(screen.verdict.as_str()),
+        let mut fields = vec![
+            (
+                MsgpackValue::from("verdict"),
+                MsgpackValue::from(screen.verdict.as_str()),
+            ),
+            (
+                MsgpackValue::from("reason_codes"),
+                MsgpackValue::Array(
+                    screen
+                        .reason_codes
+                        .iter()
+                        .map(|code| MsgpackValue::from(code.as_str()))
+                        .collect(),
                 ),
-                (
-                    MsgpackValue::from("reason_codes"),
-                    MsgpackValue::Array(
-                        screen
-                            .reason_codes
-                            .iter()
-                            .map(|code| MsgpackValue::from(code.as_str()))
-                            .collect(),
-                    ),
-                ),
-            ]),
-        ));
+            ),
+        ];
+        if let Some(screener) = &screen.screener {
+            fields.push((
+                MsgpackValue::from("screener"),
+                MsgpackValue::from(screener.as_str()),
+            ));
+        }
+        entries.push((MsgpackValue::from("screen"), MsgpackValue::Map(fields)));
     }
     let candidate = ClaimCandidate::new(
         predicate.to_owned(),

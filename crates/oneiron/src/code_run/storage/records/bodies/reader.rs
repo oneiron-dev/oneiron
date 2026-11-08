@@ -7,7 +7,7 @@
 use std::io::{Read, Write};
 
 use super::*;
-use crate::result_body::ResultBodyPin;
+use crate::store::result_body_reader::{CodeRunResultBodyReader, Source};
 use crate::store::result_body_rows::code_run_row_inline;
 
 impl Vault {
@@ -53,22 +53,26 @@ impl Vault {
             _pin: pin,
         }))
     }
-}
-
-/// One result body as it streams ([`Vault::code_run_result_body_reader_in_txn`]):
-/// read once, through [`Self::copy_checked`].
-pub(crate) struct CodeRunResultBodyReader<'t> {
-    source: Source<'t>,
-    len: u64,
-    digest: [u8; 32],
-    _pin: ResultBodyPin,
-}
-
-/// Where a streamed body's bytes are: its row, lent by the read
-/// transaction (its tag first), or its file.
-enum Source<'t> {
-    Inline(std::borrow::Cow<'t, [u8]>),
-    File(BodyFile),
+    /// A bounded range under the caller's snapshot. The caller holds custody
+    /// and a body pin across all ranges, but drops each transaction before
+    /// an admission check that may open a snapshot of its own.
+    pub(crate) fn read_code_run_raw_output_range_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        output: &CodeRunRawOutput,
+        offset: u64,
+        len: usize,
+    ) -> Result<Option<Vec<u8>>> {
+        validate_raw_output(output)?;
+        let Some(row) = RAW_OUTPUTS.get_borrowed(&self.store, rtxn, &output.handle)? else {
+            return Ok(None);
+        };
+        let key = body_key_row_in_txn(&self.store, rtxn, &output.raw_blake3)?;
+        read_body_row_range(output, &row, key.as_ref(), offset, len, || {
+            Ok(vec![self.store.body_dir()?])
+        })
+        .map(Some)
+    }
 }
 
 impl CodeRunResultBodyReader<'_> {

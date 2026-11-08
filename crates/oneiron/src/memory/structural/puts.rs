@@ -18,8 +18,8 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::task_body::TaskRole;
 
 use super::{
-    BlobArtifactInput, BlobVersionView, EntityRefReceipt, HabitCheckinInput, StructuralPutInput,
-    ensure_structural_create_in_txn, type_byte_for_kind,
+    BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView, EntityRefReceipt,
+    HabitCheckinInput, StructuralPutInput, ensure_structural_create_in_txn, type_byte_for_kind,
 };
 
 mod guarded;
@@ -161,9 +161,14 @@ impl Memory<'_> {
         self.entity_ref_receipt_of(&id, ENTITY_TYPE_BLOB_ARTIFACT)
     }
 
-    /// Appends one content-addressed version to a blob artifact. The whole
-    /// append (ASSET bytes + `blob.version` LEDGER claim + version chain)
-    /// is one engine transaction; re-appending head bytes is a dedupe no-op.
+    /// Appends a checked content-addressed version on one engine transaction.
+    /// Uploads, first versions and identical head bytes land immediately. A
+    /// later AgentRun output waits beside the live artifact as a proposal;
+    /// its authorized Keep appends the version and its ledger claim.
+    ///
+    /// The ledger claim is born at this surface's birth position, which its
+    /// host bound (`with_birth_position`, FIX 3171), never at a place the
+    /// caller names. A proposal keeps that position for its Keep.
     ///
     /// Exempt from the hard-delete recreation refusal BY CONSTRUCTION: no
     /// caller-supplied id is written here — the ASSET id is content-derived
@@ -172,6 +177,10 @@ impl Memory<'_> {
     /// integrity for content-addressed storage remains: a hard-deleted
     /// ASSET can be re-materialized by re-supplying identical bytes to a
     /// live artifact.
+    ///
+    /// The content's size is measured against `blob_content_bytes`
+    /// (FIX 76): past it the row asks, and the content is stored whole, as
+    /// one version, never refused for its size.
     pub fn append_blob_version(
         &self,
         artifact_ref: &str,
@@ -179,7 +188,11 @@ impl Memory<'_> {
         run_ref: Option<&str>,
         occurred_at: u64,
         learned_at: Option<u64>,
-    ) -> MemoryResult<BlobVersionView> {
+    ) -> MemoryResult<BlobVersionAppendOutcome> {
+        let _ = self.vault.measure_limit(
+            crate::limit_ask::EngineLimit::BlobContentBytes,
+            bytes.len() as u64,
+        );
         let artifact_id = self.resolve_ref(artifact_ref)?;
         let provenance = match run_ref {
             Some(run_ref) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
@@ -191,9 +204,9 @@ impl Memory<'_> {
             start: occurred_at,
             end: occurred_at,
         };
-        let record = self.with_actor_content_write_txn(|content| {
-            Ok(content.update_artifact(artifact_id, |txn| {
-                self.vault.append_blob_artifact_version_in_txn(
+        let outcome = self.with_actor_content_write_txn(|content| {
+            Ok(content.update_artifact(artifact_id, |txn, lane| {
+                self.vault.append_blob_artifact_version_checked_in_txn(
                     txn,
                     &artifact_id,
                     bytes,
@@ -201,25 +214,34 @@ impl Memory<'_> {
                     self.write_actor(),
                     occurred,
                     learned_at.unwrap_or(occurred_at),
+                    self.birth_position(),
+                    lane,
                 )
             })?)
         })?;
-        Ok(BlobVersionView {
-            artifact_ref: artifact_id.to_hex(),
-            version: record.version,
-            content_hash_hex: hex_string(&record.content_hash),
-            claim_ref: record.claim_id.to_hex(),
-            created_at: record.created_at,
-            artifact: Some(crate::lens::RecordRef::from_id(
-                ENTITY_TYPE_BLOB_ARTIFACT,
-                &artifact_id,
-                None,
-            )),
-            claim: Some(crate::lens::RecordRef::from_id(
-                crate::registry::ENTITY_TYPE_CLAIM,
-                &record.claim_id,
-                None,
-            )),
+        Ok(match outcome {
+            crate::blob_artifact::BlobArtifactAppendOutcome::Landed(record) => {
+                BlobVersionAppendOutcome::Landed(BlobVersionView {
+                    artifact_ref: artifact_id.to_hex(),
+                    version: record.version,
+                    content_hash_hex: hex_string(&record.content_hash),
+                    claim_ref: record.claim_id.to_hex(),
+                    created_at: record.created_at,
+                    artifact: Some(crate::lens::RecordRef::from_id(
+                        ENTITY_TYPE_BLOB_ARTIFACT,
+                        &artifact_id,
+                        None,
+                    )),
+                    claim: Some(crate::lens::RecordRef::from_id(
+                        crate::registry::ENTITY_TYPE_CLAIM,
+                        &record.claim_id,
+                        None,
+                    )),
+                })
+            }
+            crate::blob_artifact::BlobArtifactAppendOutcome::Proposed(proposal) => {
+                BlobVersionAppendOutcome::Proposed(proposal)
+            }
         })
     }
 

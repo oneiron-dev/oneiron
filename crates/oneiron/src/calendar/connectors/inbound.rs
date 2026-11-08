@@ -1,5 +1,6 @@
 //! Pull orchestration: apply, admit, enqueue, and reconcile.
 
+use super::door::CalendarConnectorOperation;
 use super::outbound::{CalendarRemoteObjectRow, ingest_error, write_remote_object};
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
@@ -13,9 +14,12 @@ use super::seat::{
 use crate::attempt_queue::EnqueueAttempt;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::CalendarPassportPresence;
-use crate::calendar::ingest::admit_calendar_import_claim;
+use crate::calendar::ingest::{
+    ConnectorAdmissionSource, ConnectorScreen, admit_calendar_import_claim,
+    admit_calendar_import_claim_in_txn,
+};
 use crate::calendar::passport::live_passport_for;
-use crate::calendar::safeguard::{CalendarInboundBody, screen_then_claim};
+use crate::calendar::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
 use crate::entity_id::EntityId;
 use crate::vault::Vault;
 
@@ -28,36 +32,77 @@ use crate::vault::Vault;
 /// Gate-backed imported-evidence door, and re-enqueues one attempt inside the
 /// configured jitter window.
 ///
+/// The safeguard dial is off and no screener runs. An owner's pull
+/// ([`run_calendar_connector_sync_with_screener`]) runs under the owner's
+/// CAL-09 dial instead.
+///
 /// # Errors
 ///
 /// [`CalendarConnectorError`] for seat, transport, parse, timezone, and store
 /// failures. A failure applies nothing further and enqueues nothing.
 pub fn run_calendar_connector_sync(
     vault: &Vault,
-    seat: &CalendarConnectorSeatState,
+    operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
     now: u64,
     jitter_seed: u64,
 ) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
+    run_calendar_connector_sync_with_screener(
+        vault,
+        operation,
+        transport,
+        None,
+        false,
+        now,
+        jitter_seed,
+    )
+}
+
+/// [`run_calendar_connector_sync`] with CAL-09's safeguard wired, as a feed
+/// poll wires it: when `safeguard_enabled`, `screener` (or its recorded
+/// absence) produces a verdict immediately before every imported-claim
+/// admission the pull makes, its absence sweeps and remote deletions
+/// included.
+///
+/// # Errors
+///
+/// Same contract as [`run_calendar_connector_sync`].
+pub fn run_calendar_connector_sync_with_screener(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    transport: &dyn CalendarRemoteTransport,
+    screener: Option<&dyn CalendarBodyScreener>,
+    safeguard_enabled: bool,
+    now: u64,
+    jitter_seed: u64,
+) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
+    let seat = &operation.registration().seat;
     seat.validate()?;
     if seat.kill_switch_engaged() {
         // No pull, no write, no next attempt — and nothing erased.
         return Ok(CalendarSyncOutcome::Killed);
     }
 
+    operation.revalidate(vault)?;
     let batch = transport.pull(
         &seat.config.secret_ref,
         &seat.config.calendar_ref,
         seat.cursor.as_deref(),
     )?;
 
+    let screen = ConnectorScreen {
+        screener,
+        safeguard_enabled,
+    };
     let mut counters = SyncCounters::default();
     for change in &batch.changes {
         apply_remote_change(
             vault,
+            operation,
             seat,
             transport.provider_key(),
             change,
+            screen,
             now,
             &mut counters,
         )?;
@@ -92,16 +137,22 @@ struct SyncCounters {
     status_cancellations: u32,
 }
 
-/// Applies one pulled change under the echo law.
+/// Applies one pulled change under the echo law, each admission under
+/// `screen`.
 fn apply_remote_change(
     vault: &Vault,
+    operation: &CalendarConnectorOperation,
     seat: &CalendarConnectorSeatState,
     provider: &'static str,
     change: &RemoteCalendarChange,
+    screen: ConnectorScreen<'_>,
     now: u64,
     counters: &mut SyncCounters,
 ) -> Result<(), CalendarConnectorError> {
     let system = seat.config.system.as_str();
+    // FIX 4797: the vault's one calendar admission turn, from the echo
+    // classification through the sweep and the remote object row.
+    let _turn = crate::calendar::ingest::admission_turn(vault)?;
     match change {
         RemoteCalendarChange::Upsert(object) => {
             let feed = super::remote::parse_remote_resource(object)?;
@@ -112,7 +163,7 @@ fn apply_remote_change(
             let source = pull_source_record_id(provider, seat, &primary.uid);
             // Archived before any semantic write, once the bytes are known to
             // parse: a later write renders over exactly this copy.
-            let source_blob_ref = super::resource::archive_remote_source(
+            let archived = super::resource::archive_remote_source(
                 vault,
                 system,
                 &seat.config.calendar_ref,
@@ -120,7 +171,14 @@ fn apply_remote_change(
                 &object.ics,
                 now,
             )?;
+            let source_blob_ref = archived.blob_ref();
             crate::calendar::ingest::preflight_connector_feed(vault, system, &source, &feed, now)?;
+            let admission_source = ConnectorAdmissionSource {
+                record: source.as_str(),
+                source_version: Some(source_blob_ref.as_str()),
+                screen,
+                source: Some(archived),
+            };
             for parsed in &feed.events {
                 let normalized = RemoteCalendarChange::Upsert(RemoteCalendarObject {
                     href: object.href.clone(),
@@ -143,10 +201,7 @@ fn apply_remote_change(
                         crate::calendar::ingest::admit_connector_event(
                             vault,
                             system,
-                            crate::calendar::ingest::ConnectorAdmissionSource {
-                                record: source.as_str(),
-                                source_version: Some(source_blob_ref.as_str()),
-                            },
+                            admission_source,
                             parsed,
                             now,
                         )?;
@@ -160,13 +215,14 @@ fn apply_remote_change(
             crate::calendar::ingest::sweep_connector_resource(
                 vault,
                 system,
-                &source,
+                admission_source,
                 &feed,
                 &primary.uid,
                 now,
             )?;
             write_remote_object(
                 vault,
+                operation,
                 &CalendarRemoteObjectRow {
                     system: system.to_owned(),
                     calendar_ref: seat.config.calendar_ref.clone(),
@@ -177,7 +233,9 @@ fn apply_remote_change(
                     content_hash: super::remote::ics_content_hash(&object.ics, &primary.uid)?,
                     last_seen_at: now,
                     source_blob_ref: Some(source_blob_ref),
+                    carrier: None,
                 },
+                None,
             )?;
             Ok(())
         }
@@ -186,7 +244,7 @@ fn apply_remote_change(
                 classify_remote_change(None, change),
                 EchoDisposition::ApplyRemoteDeletion
             );
-            apply_remote_deletion(vault, seat, provider, uid, now, counters)
+            apply_remote_deletion(vault, seat, provider, uid, screen, now, counters)
         }
     }
 }
@@ -203,6 +261,7 @@ fn apply_remote_deletion(
     seat: &CalendarConnectorSeatState,
     provider: &'static str,
     uid: &str,
+    screen: ConnectorScreen<'_>,
     now: u64,
     counters: &mut SyncCounters,
 ) -> Result<(), CalendarConnectorError> {
@@ -231,10 +290,16 @@ fn apply_remote_deletion(
         }
         after = ids.last().copied();
     }
+    let record = pull_source_record_id(provider, seat, uid);
     crate::calendar::ingest::delete_connector_resource(
         vault,
         &seat.config.system,
-        &pull_source_record_id(provider, seat, uid),
+        ConnectorAdmissionSource {
+            record: &record,
+            source_version: None,
+            screen,
+            source: None,
+        },
         uid,
         now,
     )?;
@@ -286,6 +351,31 @@ pub(super) fn admit_screened(
     Ok(screened.value)
 }
 
+pub(super) fn admit_screened_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    event_ref: EntityId,
+    body: &CalendarInboundBody,
+    source_record_id: &str,
+    predicate: &str,
+    value: rmpv::Value,
+    now: u64,
+) -> Result<EntityId, CalendarConnectorError> {
+    let screened = screen_then_claim(false, None, body, |_request| {
+        admit_calendar_import_claim_in_txn(
+            vault,
+            txn,
+            &event_ref,
+            predicate,
+            value,
+            source_record_id,
+            now,
+        )
+    })
+    .map_err(CalendarError::from)?;
+    Ok(screened.value)
+}
+
 /// Enqueues the next poll attempt, due inside the configured jitter window.
 ///
 /// Attempt-queue work, not a new recurrence primitive: the generation-scoped
@@ -327,11 +417,15 @@ fn enqueue_next_sync(
 /// a reconciliation pull that itself fails must not mask it.
 pub(super) fn reconcile_remote_object(
     vault: &Vault,
-    seat: &CalendarConnectorSeatState,
+    operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
     uid: &str,
     now: u64,
 ) {
+    if operation.revalidate(vault).is_err() {
+        return;
+    }
+    let seat = &operation.registration().seat;
     let Ok(batch) = transport.pull(
         &seat.config.secret_ref,
         &seat.config.calendar_ref,
@@ -358,9 +452,11 @@ pub(super) fn reconcile_remote_object(
             &object.ics,
             now,
         )
-        .ok();
+        .ok()
+        .map(|source| source.blob_ref());
         let _ = write_remote_object(
             vault,
+            operation,
             &CalendarRemoteObjectRow {
                 system: seat.config.system.clone(),
                 calendar_ref: seat.config.calendar_ref.clone(),
@@ -371,7 +467,9 @@ pub(super) fn reconcile_remote_object(
                 content_hash: parsed.content_hash,
                 last_seen_at: now,
                 source_blob_ref,
+                carrier: None,
             },
+            None,
         );
     }
 }

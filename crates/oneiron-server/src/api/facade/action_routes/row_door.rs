@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{Extensions, HeaderMap, HeaderValue, header};
 use axum::response::Response;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
@@ -19,10 +19,10 @@ use oneiron::receipt::{
     ActionInputs, CallAttemptWitness, CallOutcome, CallReceiptInput, CallTransport,
 };
 use oneiron::runtime_hooks::VerbHookStop;
-use oneiron::skill_attribution::RunWriteToken;
+use oneiron::skill_attribution::run_write_token_of_origin;
 use tower::ServiceExt;
 
-use super::super::host_doors::support::with_calling_run_writes;
+use super::super::host_doors::support::{with_calling_action_program, with_calling_run_writes};
 use super::super::{FacadeApiError, FacadeCallOutput};
 use crate::api::call_receipt::{
     self, CallStamp, HeldOuterAttempt, RECEIPT_REF_HEADER, attempt_collector,
@@ -65,6 +65,9 @@ pub(super) struct FacadeRowDoor {
     runtime: tokio::runtime::Handle,
     read_key: ScopedReadActorKey,
     credential: Option<CoreAuth>,
+    /// The credential the action came in on: a replayed answer is released
+    /// again for it (FIX 8158).
+    replay_auth: CoreAuth,
     server: Arc<SyncServer>,
     refused: Mutex<Option<AgentVerbRefusalWords>>,
     stamp: Mutex<CallStamp>,
@@ -72,6 +75,10 @@ pub(super) struct FacadeRowDoor {
     /// each row runs on a spawned task, and a live-run hold in it reaches the
     /// action's receipt only through this (FIX 8107).
     collector: Option<std::sync::mpsc::Sender<CallAttemptWitness>>,
+    /// The action call's admission observer, taken where the door is built
+    /// as its collector is: a row's wait in a line shows on the action's
+    /// admission receipt (FIX 4735).
+    observer: Option<Arc<dyn oneiron::work_line::LineObserver>>,
     /// The action's own live-run hold, as the hold witnessed it, once taken.
     outer: Mutex<Option<CallAttemptWitness>>,
 }
@@ -109,6 +116,7 @@ impl FacadeRowDoor {
         extensions: Extensions,
         read_key: ScopedReadActorKey,
         credential: Option<CoreAuth>,
+        replay_auth: CoreAuth,
     ) -> Self {
         Self {
             rows: super::super::recorded_facade_routes(Arc::clone(server))
@@ -118,10 +126,12 @@ impl FacadeRowDoor {
             runtime: tokio::runtime::Handle::current(),
             read_key,
             credential,
+            replay_auth,
             server: Arc::clone(server),
             refused: Mutex::new(None),
             stamp: Mutex::new(CallStamp::Unrecorded),
             collector: attempt_collector(),
+            observer: crate::api::admission_observer(),
             outer: Mutex::new(None),
         }
     }
@@ -147,14 +157,21 @@ impl FacadeRowDoor {
     async fn answer(
         rows: Router,
         request: Request,
-    ) -> (CallStamp, Result<serde_json::Value, RowRefusal>) {
+    ) -> (CallStamp, Result<AgentVerbAnswer, RowRefusal>) {
         let response = match rows.oneshot(request).await {
             Ok(response) => response,
             Err(never) => match never {},
         };
         // Read before the body: success and refusal state it alike.
         let stamp = CallStamp::of_headers(response.headers());
-        (stamp, Self::body(response).await)
+        let rows = response
+            .extensions()
+            .get::<super::super::FacadeResultRows>()
+            .and_then(|rows| rows.0.clone());
+        let answer = Self::body(response)
+            .await
+            .map(|output| AgentVerbAnswer::new(output, rows));
+        (stamp, answer)
     }
 
     /// A row reply's JSON on success, else its refusal as answered, with
@@ -170,9 +187,10 @@ impl FacadeRowDoor {
         } else {
             serde_json::from_slice(&bytes).map_err(|_| refused())?
         };
-        // A 202 is a pending hook ask's refusal envelope, not a successful row
-        // answer (FIX 1450); decode its error and hook below as for any refusal.
-        if status.is_success() && status != StatusCode::ACCEPTED {
+        // Only the native pending-ask or paced-hold envelope makes a
+        // successful status a held call (FIX 1450, FIX 8753); an accepted
+        // asynchronous job is a row answer.
+        if status.is_success() && !FacadeApiError::is_held_call(status.as_u16(), &body) {
             return Ok(body);
         }
         let text = |pointer: &str| {
@@ -209,16 +227,19 @@ impl FacadeRowDoor {
     /// A row's answer as the run takes it: its output, a verb hook's stop
     /// as the typed stop (FIX 1450), or any other refusal as its code, its
     /// words kept for the action's record.
-    fn answered(&self, answer: Result<serde_json::Value, RowRefusal>) -> RowAnswer {
+    fn answered(&self, answer: Result<AgentVerbAnswer, RowRefusal>) -> RowAnswer {
         match answer {
-            Ok(output) => Ok(Ok(AgentVerbAnswer::new(output, None))),
+            Ok(output) => Ok(Ok(output)),
             Err(RowRefusal {
                 hook: Some(stop), ..
             }) => Err(oneiron::Error::from(*stop)),
             Err(RowRefusal { words, hook: None }) => {
                 let code = words.code.clone();
                 *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(words);
-                Ok(Err(AgentVerbRefusal { code }))
+                Ok(Err(AgentVerbRefusal {
+                    hook_notice: None,
+                    code,
+                }))
             }
         }
     }
@@ -228,7 +249,9 @@ impl FacadeRowDoor {
     /// Posts the row to its facade route. The step's invocation rides as
     /// `x-oneiron-invocation`, so the route's verb hooks fire once for it.
     /// Its writes are witnessed for the leased run `origin` seals (FIX
-    /// 10748), and its receipt names the action's hold (FIX 10938).
+    /// 10748), and its receipt names the action's hold (FIX 10938). A row
+    /// the credential's own call runs meets the route's destination release
+    /// before the run reads it (`released_value`, FIX 21054).
     fn post_row(
         &self,
         call: &SelfAgentVerbCall,
@@ -236,9 +259,10 @@ impl FacadeRowDoor {
         invocation: oneiron::runtime_hooks::InvocationId,
     ) -> RowAnswer {
         let refused = || AgentVerbRefusal {
+            hook_notice: None,
             code: MEMORY_CODE_INTERNAL.to_owned(),
         };
-        let run_writes = RunWriteToken::of_origin(origin);
+        let run_writes = run_write_token_of_origin(origin);
         let outer = *self.outer.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(auth) = &self.credential {
             let auth = auth.clone();
@@ -270,8 +294,15 @@ impl FacadeRowDoor {
                     (request_digest, inputs, attempt),
                     &answer,
                 );
+                // The run reads what the row's route would send: its answer
+                // judged for this caller's destination, beside its rows
+                // (FIX 21054).
                 let answer = answer
-                    .map(|answer| answer.value)
+                    .map(|output| {
+                        let rows = output.rows.clone();
+                        let (_, sent) = super::super::released_value(&server, &auth, verb, output);
+                        AgentVerbAnswer::new(sent, rows)
+                    })
                     .map_err(|error| RowRefusal {
                         words: AgentVerbRefusalWords {
                             code: error.body.error.code,
@@ -283,9 +314,14 @@ impl FacadeRowDoor {
                     });
                 let _ = sender.send((stamp, answer));
             };
+            // An action program's row: a whole-vault export it calls
+            // follows the world settings (FIX 9591).
             self.runtime.spawn(with_attempt_collector(
                 self.collector.clone(),
-                with_calling_run_writes(run_writes, row),
+                crate::api::facade::with_admission_observer(
+                    self.observer.clone(),
+                    with_calling_run_writes(run_writes, with_calling_action_program(row)),
+                ),
             ));
             let Ok((stamp, answer)) = receiver.recv() else {
                 return Ok(Err(refused()));
@@ -326,7 +362,10 @@ impl FacadeRowDoor {
         };
         self.runtime.spawn(with_attempt_collector(
             self.collector.clone(),
-            with_calling_run_writes(run_writes, row),
+            crate::api::facade::with_admission_observer(
+                self.observer.clone(),
+                with_calling_run_writes(run_writes, with_calling_action_program(row)),
+            ),
         ));
         let Ok((stamp, answer)) = receiver.recv() else {
             return Ok(Err(refused()));
@@ -392,6 +431,55 @@ fn record_credential_row(
 }
 
 impl AgentVerbDoor for FacadeRowDoor {
+    /// A cached action answer, released again for the action's credential
+    /// now (FIX 8158, Engine 11:40 A): a source row it no longer reads, or
+    /// one erased since, refuses the replay; a detail its destination may
+    /// not hold is withheld as a waiter's replay withholds it. Rows it never
+    /// listed are unknown and pass, as there.
+    fn replay_action_answer(
+        &self,
+        verb: &str,
+        mut answer: AgentVerbAnswer,
+    ) -> oneiron::Result<AgentVerbAnswer> {
+        let vault = self.server.vault();
+        let auth = &self.replay_auth;
+        let sources: Vec<oneiron::EntityId> = answer
+            .rows
+            .iter()
+            .flatten()
+            .chain(answer.observations.iter().flat_map(|seen| &seen.rows))
+            .copied()
+            .collect();
+        if !super::super::release::rows_still_admitted(vault, auth, &sources, false) {
+            return Err(oneiron::Error::EntityNotFound);
+        }
+        let destination = auth.destination();
+        for seen in &answer.observations {
+            let frame = serde_json::to_value(&seen.frame).unwrap_or(serde_json::Value::Null);
+            if super::super::release::known_denied_rows(
+                vault,
+                &destination,
+                &seen.rows,
+                &frame,
+                false,
+            ) {
+                return Err(oneiron::Error::EntityNotFound);
+            }
+        }
+        answer.output = super::super::release::replayed_value(
+            vault,
+            auth,
+            verb,
+            oneiron::runtime_hooks::verb::InvocationRelease {
+                peer: auth.peer(),
+                value: answer.output,
+                rows: answer.rows.clone(),
+            },
+            false,
+        );
+        Ok(answer)
+    }
+
     fn call(
         &self,
         call: &SelfAgentVerbCall,
@@ -410,15 +498,16 @@ impl AgentVerbDoor for FacadeRowDoor {
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        Ok(matches!(
-            call,
-            RunCall::Bridge(
-                SelfEffect::MemorySearch
-                    | SelfEffect::MemoryPutEdge
-                    | SelfEffect::ConsultResult
-                    | SelfEffect::WorkflowDispatch
-            )
-        )
+        Ok((matches!(call, RunCall::Bridge(effect) if effect.is_repo())
+            || matches!(
+                call,
+                RunCall::Bridge(
+                    SelfEffect::MemorySearch
+                        | SelfEffect::MemoryPutEdge
+                        | SelfEffect::ConsultResult
+                        | SelfEffect::WorkflowDispatch
+                )
+            ))
         .then(|| self.read_key.clone()))
     }
 

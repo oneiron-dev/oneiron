@@ -301,11 +301,24 @@ pub struct AgentHealthCard {
     pub diagnostics: Vec<EntityId>,
     /// Receipt and attempt ids, newest last.
     pub evidence: Vec<EntityId>,
+    /// Host-local model-input read-row union behind the merged numbers.
+    /// `None` when any contributing read is unknown. These may be native
+    /// side-table keys, not primary entities or authority/erasure proofs.
+    /// Routing, recipients and owner-copy policy are outside this union.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub source_rows: Option<Vec<EntityId>>,
     pub window_from: u64,
     pub window_to: u64,
     /// The number the dial was held against, and the dial.
     pub measured: i64,
     pub dial: i64,
+    /// The exact native dial and measured values, frozen from the newest
+    /// finding. Units are signal-specific: `long_wait` share, `cost_spike`
+    /// ratio, `silent` minutes for the dial; `long_wait` share, `cost_spike`
+    /// ratio, `silent` quiet seconds for the measured. `None` for other
+    /// signals or when the raw pair was unknown.
+    pub exact_dial: Option<f64>,
+    pub exact_measured: Option<f64>,
     pub counter_evidence: Vec<AgentHealthCounter>,
     /// The agent said it was stuck: its TASK is Blocked.
     pub agent_blocked: bool,
@@ -327,6 +340,10 @@ pub struct AgentHealthCard {
     /// The newest ask of the Coach (`ask_coach`), and its answer once drafted.
     #[serde(default)]
     pub coach: Option<AgentHealthCoachAsk>,
+    /// An erase scrubbed an unattributed Coach draft on this card. Kept
+    /// across newer asks so saved copies cannot regain the erased text.
+    #[serde(default)]
+    pub legacy_draft_scrubbed: bool,
     /// The typed brief the newest finding's review observed on the TASK
     /// (`brief`): a witness, never a launch snapshot. An ask and an outcome
     /// receipt each keep their own copy.
@@ -350,11 +367,12 @@ pub struct AgentHealthCard {
     pub causes: Vec<HealthCauseSource>,
     /// The activity the newest `silent` finding judged its attempt by
     /// (OF-568 L5): its own call and model step at its lease generation, its
-    /// actor's newest call that names no attempt, and another session's
-    /// newest call. While the card is open, a review that finds the attempt
-    /// active again refreshes it to the activity it read (FIX 8376). `None`
-    /// on every other signal. Neither `evidence` nor the watermark counts it,
-    /// so it never reopens a settled card.
+    /// actor's newest call that names no attempt, another session's newest
+    /// call, and the runtime's in-memory `stream_at` and `tool_finished_at`
+    /// while this vault runs the lease. While the card is open, a review that
+    /// finds the attempt active again refreshes it to the activity it read
+    /// (FIX 8376). `None` on every other signal. Neither `evidence` nor the
+    /// watermark counts it, so it never reopens a settled card.
     pub silence: Option<HealthSilenceActivity>,
     /// Every note and steer taken through the card (`moves`), oldest first,
     /// kept across merges and reopens. Neither `evidence` nor the watermark
@@ -382,12 +400,20 @@ pub(super) struct Finding {
     /// exists at emission (an actor-only call stream).
     pub(super) generation: Option<u32>,
     pub(super) evidence: Vec<EntityId>,
+    pub(super) source_rows: Option<Vec<EntityId>>,
     pub(super) window: (u64, u64),
     /// The stable number the DIAGNOSTIC carries, and the dial.
     pub(super) actual: i64,
     pub(super) dial: i64,
     /// The number the card shows; it may move while the evidence holds.
     pub(super) measured: i64,
+    /// The exact native dial and measured values, frozen at detection. Units
+    /// are signal-specific: `long_wait` share, `cost_spike` ratio, `silent`
+    /// minutes for the dial; `long_wait` share, `cost_spike` ratio, `silent`
+    /// quiet seconds for the measured. `Some` only when both were captured;
+    /// otherwise `None` (unknown), never backfilled.
+    pub(super) exact_dial: Option<f64>,
+    pub(super) exact_measured: Option<f64>,
     pub(super) counter: Vec<AgentHealthCounter>,
     pub(super) confession: Option<EntityId>,
     /// The agent said it was stuck: a Blocked TASK, or a blocked report since

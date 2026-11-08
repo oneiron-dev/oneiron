@@ -1,37 +1,20 @@
-//! Field vocabulary shared by document writes and value-based recovery.
+//! Core half of `ports::document_fields`: its store-layer items live in `oneiron_store::ports::document_fields` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::ports::document_fields::*;
 
 use crate::{Error, Result};
 use rmpv::Value;
 
-fn invalid(reason: &'static str) -> Error {
-    crate::error::ArtifactError::InvalidEditManifest(reason).into()
-}
-
-/// Editable labels and prose, never identity, scope, authority or claim values.
-pub(crate) fn is_metadata_field(field: &str) -> bool {
-    matches!(
-        field,
-        "title"
-            | "tags"
-            | "kind_label"
-            | "pins"
-            | "keep"
-            | "name"
-            | "label"
-            | "description"
-            | "desc"
-            | "summary"
-            | "instructions"
-            | "why"
-    )
-}
-
-pub(crate) fn is_text_field(field: &str) -> bool {
-    matches!(field, "body" | "text" | "txt" | "content" | "markdown")
-        || (is_metadata_field(field) && !matches!(field, "tags" | "pins"))
-}
-
 pub(crate) fn validate_metadata(field: &str, value: &Value) -> Result<()> {
+    validate_metadata_shape(field, value)?;
+    scan_value(value)
+}
+
+/// The shared field rules without the secret scan. A NOTE loads and stores
+/// its fields by these: its writes are scanned and masked under the owner's
+/// scan switch when they persist, so a load reads back what was stored.
+pub(crate) fn validate_metadata_shape(field: &str, value: &Value) -> Result<()> {
     let valid = match field {
         "tags" => value
             .as_array()
@@ -42,7 +25,7 @@ pub(crate) fn validate_metadata(field: &str, value: &Value) -> Result<()> {
     if !valid {
         return Err(invalid("invalid editable metadata field or value"));
     }
-    scan_value(value)
+    Ok(())
 }
 
 fn scan_value(value: &Value) -> Result<()> {

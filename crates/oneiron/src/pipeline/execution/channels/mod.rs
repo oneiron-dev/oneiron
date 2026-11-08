@@ -161,6 +161,7 @@ impl PipelineBuilder<'_> {
         let mut ppr_expand_executed = false;
         let capture_retrieval_trace = self.capture_retrieval_trace;
         let capture_replay_enabled = self.captures_replay();
+        let mut replay_inputs_memory = None;
         let trace_candidate_limit = self.result_limit;
         let mut telemetry_signals = self.telemetry_signals();
         if occurred_range.is_some() && !telemetry_signals.contains(&RetrievalSignal::Temporal) {
@@ -173,6 +174,16 @@ impl PipelineBuilder<'_> {
                 mut claim_gate,
                 widening_probe: mut claim_gate_widening_probe,
             } = self.scoped_channel_admission(rtxn, authority_filter)?;
+            // REVIEW-5141 P1: the attempt's suppression baseline, captured
+            // BEFORE channel probing/fetching (fresh gate, so 0). The D19
+            // delta compares against this, not against a count taken after
+            // the fetch imports — that later count already holds the
+            // attempt's own suppressions and the delta could never fire.
+            let attempt_suppressed_baseline = claim_gate
+                .decisions
+                .values()
+                .filter(|decision| decision.is_none())
+                .count();
             let mut fused_trace_scores = None;
             let mut vector_channel_index = None;
             let mut phonetic_channel_index = None;
@@ -311,7 +322,7 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
-            let text_channel_index = self.run_text_channel(
+            let (text_channel_index, text_exhausted) = self.run_text_channel(
                 rtxn,
                 stages.next_if(self.text_search.is_some()),
                 TextChannelInputs {
@@ -491,6 +502,7 @@ impl PipelineBuilder<'_> {
                     revisions: HashMap::new(),
                     words_bound: Default::default(),
                     diagnostics,
+                    text_exhausted,
                     scores: Vec::new(),
                     cited_messages: HashMap::new(),
                     capabilities: Vec::new(),
@@ -503,6 +515,7 @@ impl PipelineBuilder<'_> {
                         authority_filter.credential.as_ref(),
                         filter_config.device_local,
                     )?,
+                    read_suppressed_candidates: metadata_cache.read_suppressed,
                     deferred_ppr_cache_writes: Vec::new(),
                     cosine_ghosts_dampened: 0,
                     disclosure_clamped: Vec::new(),
@@ -531,12 +544,14 @@ impl PipelineBuilder<'_> {
                             occurred_range,
                             temporal_now,
                             rerank_query,
+                            &mut replay_inputs_memory,
                         )
                     }),
                     ppr_expand_executed: false,
                     early_empty_no_telemetry: !capture_replay_enabled,
                     temporal_report: metadata_cache.temporal_report,
                     critical: Default::default(),
+                    replay_inputs_memory,
                 });
             }
 
@@ -623,7 +638,24 @@ impl PipelineBuilder<'_> {
                 &mut metadata_cache,
                 &mut claim_gate,
             )?;
-            if before_status_gate > 0 && scores.is_empty() {
+            // FIX 199: an unscoped search whose only matches are
+            // gate-rejected claims reaches this gate with an empty fused
+            // union (the fetch drops rejections before fusion, and their
+            // suppressions now arrive via import_claim_gate_decisions), so
+            // `before_status_gate > 0` never fires and the run reports
+            // NoData with 0. Suppressions newly observed during this
+            // attempt (counted against the attempt-start baseline above,
+            // which predates the fetch imports) are the same evidence:
+            // report AllActivated. The delta keeps a retry that evaluates
+            // nothing new on today's NoData path.
+            let suppressed_now = claim_gate
+                .decisions
+                .values()
+                .filter(|decision| decision.is_none())
+                .count();
+            if scores.is_empty()
+                && (before_status_gate > 0 || suppressed_now > attempt_suppressed_baseline)
+            {
                 empty_reason = Some(EmptyReason::AllActivated);
             }
             let mut blend_allowed_ids = score_id_set(&scores);
@@ -688,6 +720,25 @@ impl PipelineBuilder<'_> {
 
             let before_limit = scores.len();
             fusion::sort_scored_entities_desc(&mut scores);
+            // The effort's default now anchor is no query evidence; a window
+            // the query's words or the host named is (FIX 22182).
+            let temporal_is_query = self.temporal_search.as_ref().is_some_and(|config| {
+                !config.effort_anchor || config.query_occurred_range.is_some()
+            });
+            // In the blend's order, before the rerank block is taken: the
+            // block then holds the rows the query matched before the rows it
+            // did not, so no match is left outside it and cut (FIX 22182).
+            entity_rank::rank_unmatched_below_matches(
+                &mut scores,
+                &acc.signal_components,
+                entity_rank::MatchReading {
+                    temporal_is_query,
+                    every_kind: true,
+                },
+                &self.read,
+                rtxn,
+                &mut metadata_cache,
+            )?;
 
             let RerankApplied {
                 merged_components: rerank_merged_components,
@@ -709,9 +760,15 @@ impl PipelineBuilder<'_> {
                 },
             )?;
 
-            entity_rank::rank_unmatched_entities_below_matches(
+            // A reranked order stands, but for the named entities PPR pools
+            // a principal's mass into.
+            entity_rank::rank_unmatched_below_matches(
                 &mut scores,
                 &acc.signal_components,
+                entity_rank::MatchReading {
+                    temporal_is_query,
+                    every_kind: false,
+                },
                 &self.read,
                 rtxn,
                 &mut metadata_cache,
@@ -824,6 +881,7 @@ impl PipelineBuilder<'_> {
                     diversity.apply(scores, self.result_limit, &self.ppr_community)
                 })?;
             }
+            let text_exhausted = text_exhausted && scores.len() <= self.result_limit;
             match world_share {
                 Some(share) => {
                     let had_rows = !scores.is_empty();
@@ -908,6 +966,7 @@ impl PipelineBuilder<'_> {
                     occurred_range,
                     temporal_now,
                     rerank_query,
+                    &mut replay_inputs_memory,
                 )
             });
             // A hit whose indexed revision cannot be read has no pin, so it
@@ -965,6 +1024,7 @@ impl PipelineBuilder<'_> {
                 revisions,
                 words_bound: words_revisions.into_keys().collect(),
                 diagnostics,
+                text_exhausted,
                 scores,
                 cited_messages,
                 capabilities,
@@ -977,6 +1037,7 @@ impl PipelineBuilder<'_> {
                     authority_filter.credential.as_ref(),
                     filter_config.device_local,
                 )?,
+                read_suppressed_candidates: metadata_cache.read_suppressed,
                 deferred_ppr_cache_writes,
                 cosine_ghosts_dampened,
                 disclosure_clamped,
@@ -993,6 +1054,7 @@ impl PipelineBuilder<'_> {
                 early_empty_no_telemetry: false,
                 temporal_report: metadata_cache.temporal_report,
                 critical,
+                replay_inputs_memory,
             })
         }
     }

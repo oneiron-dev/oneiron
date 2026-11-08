@@ -25,7 +25,7 @@ use crate::Vault;
 use crate::agent_dispatch::AgentDispatcher;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
+use crate::ports::{DeletionMarker, TombstoneStoreRead, names_no_actor_in_txn as names_no_actor};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::team::{ErasedPackSpan, PlannedIntentView, SpawnErasure};
@@ -97,6 +97,33 @@ impl PlannedIntent {
 }
 
 impl AgentDispatcher<'_> {
+    /// Clears a hard-erased skill's retained revision witness in frozen packs,
+    /// keeping their bytes and every other intent field in the caller's writer.
+    pub(crate) fn erase_planned_pack_revision_in_txn(
+        store: &Store,
+        wtxn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+    ) -> Result<()> {
+        if !hard_marked_in_txn(store, wtxn, entity)? {
+            return Ok(());
+        }
+        let mut changed = Vec::new();
+        for row in INTENTS.iter_from(store, wtxn, &[])? {
+            let (key, mut intent) = row?;
+            if intent
+                .pattern_pack
+                .as_mut()
+                .is_some_and(|pack| pack.erase_revision_for(entity))
+            {
+                changed.push((key, intent));
+            }
+        }
+        for (key, intent) in changed {
+            INTENTS.put(store, wtxn, &key, &intent)?;
+        }
+        Ok(())
+    }
+
     /// An actor's scrub of the planned intents (FIX 4582, Engine 10-22).
     /// Behind its permanent hard-delete marker it is an erase, as an asker
     /// or a target: [`Self::erase_planned_intent_content_in_txn`]. Without
@@ -300,7 +327,8 @@ impl AgentDispatcher<'_> {
 /// takes its erased form first, so a copy read before an erase writes the
 /// erased form back. An erased row stays erased. A marker or selector that
 /// cannot be read leaves `row` as it is: the fence never fails the write it
-/// stands in.
+/// stands in. A frozen pack keeps its body and drops only a revision witness
+/// whose skill has a permanent hard-delete marker in the same transaction.
 ///
 /// # Errors
 ///
@@ -318,6 +346,12 @@ pub(super) fn put_intent_in_txn(
     };
     if reached.asker || reached.target || row.phase == IntentPhase::Erased {
         row.erase(reached);
+    }
+    if let Some(pack) = row.pattern_pack.as_mut()
+        && let Some((entity, _)) = pack.revision()
+        && marked_in_txn(store, wtxn, Some(entity))
+    {
+        pack.erase_revision_for(&entity);
     }
     INTENTS.put(store, wtxn, key, row)
 }
@@ -351,21 +385,4 @@ fn asker_erased_in_txn(store: &Store, txn: &heed::RoTxn<'_>, selector: Option<[u
             tracing::warn!("planned intent fence: an erased-asker selector could not be read");
             false
         })
-}
-
-/// Whether `id` is a stored row of a type no actor has: no person, machine
-/// or AGENT_DEF. A missing row may have been one.
-fn names_no_actor(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    Ok(store
-        .port_entity_raw(txn, id)?
-        .as_deref()
-        .and_then(crate::batch::EntityMetadataHeader::parse)
-        .is_some_and(|header| {
-            !matches!(
-                header.entity_type,
-                crate::registry::ENTITY_TYPE_PERSON
-                    | crate::registry::ENTITY_TYPE_MACHINE
-                    | crate::registry::ENTITY_TYPE_AGENT_DEF
-            )
-        }))
 }

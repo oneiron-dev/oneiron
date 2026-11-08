@@ -4,7 +4,7 @@ use super::*;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
-use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::side_table::{self, Named, Raw, SideKey, SideTable};
 use serde::{Deserialize, Serialize};
 
 /// In-flight streamed message recovery seed. Key: id16 (message id).
@@ -17,6 +17,46 @@ const RECEIPT: SideTable<EntityId, MessageStreamReceipt, Named> =
 /// (hex32(message id) ":" hex32(generation)).
 const RECEIPT_BY_REF: SideTable<String, MessageStreamReceipt, Named> =
     SideTable::new(&side_table::MESSAGE_STREAM_RECEIPT_BY_REF);
+/// The stream generations an erase dropped (FIX 9973). The erase's own
+/// transaction marks each seed it drops, so a resident stream of that
+/// generation, whose text and turn outlive its row in memory, reads as gone
+/// once the erase commits and is retired; a rolled-back erase leaves no
+/// mark. A mark names the generation only. Key: hex32(message id) ":"
+/// hex32(generation).
+const ERASED: SideTable<String, (), Raw> = SideTable::new(&side_table::MESSAGE_STREAM_ERASED);
+fn erased_key(message: &EntityId, generation: &EntityId) -> String {
+    format!("{}:{}", message.to_hex(), generation.to_hex())
+}
+/// Whether an erase dropped `seed`'s generation (FIX 9973).
+pub(super) fn stream_generation_erased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seed: &Seed,
+) -> Result<bool> {
+    ERASED.contains(
+        &vault.store,
+        txn,
+        &erased_key(&seed.message_id, &seed.generation),
+    )
+}
+/// Whether an erase committed over `seed`'s stream (FIX 9973): one that
+/// dropped this generation's seed, or a hard delete of its MESSAGE, TURN or
+/// conversation. A missing seed alone proves nothing.
+pub(super) fn stream_erased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seed: &Seed,
+) -> Result<bool> {
+    if stream_generation_erased_in_txn(vault, txn, seed)? {
+        return Ok(true);
+    }
+    for id in [&seed.message_id, &seed.turn, &seed.conversation] {
+        if vault.local_hard_delete_marker_exists_in_txn(txn, id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Seed {
     pub message_id: EntityId,
@@ -121,20 +161,27 @@ impl Seed {
 }
 /// Drops the recovery seeds an erase of `id` covers: the message's own, and
 /// every seed whose turn or conversation is `id`. A seed holds accepted reply
-/// text, so it leaves with its record. Registered in `deletion/derived_rows.rs`.
+/// text, so it leaves with its record, and each one dropped marks its
+/// generation erased in the same transaction (FIX 9973), so the resident
+/// stream goes once the erase commits. A message's own seed that does not
+/// decode still goes, unmarked. Registered in `deletion/derived_rows.rs`.
 pub(crate) fn erase_stream_seeds_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    if let Ok(Some(seed)) = ACTIVE.get(store, txn, id) {
+        ERASED.put(store, txn, &erased_key(id, &seed.generation), &())?;
+    }
     ACTIVE.delete(store, txn, id)?;
-    let covered: Vec<EntityId> = ACTIVE
+    let covered: Vec<(EntityId, EntityId)> = ACTIVE
         .scan(store, txn)?
         .into_iter()
         .filter(|(_, seed)| seed.turn == *id || seed.conversation == *id)
-        .map(|(message, _)| message)
+        .map(|(message, seed)| (message, seed.generation))
         .collect();
-    for message in covered {
+    for (message, generation) in covered {
+        ERASED.put(store, txn, &erased_key(&message, &generation), &())?;
         ACTIVE.delete(store, txn, &message)?;
     }
     Ok(())
@@ -202,6 +249,43 @@ pub(crate) fn redact_receipt_assertions_in_txn(
     Ok(())
 }
 
+/// A native session terminal's receipt pair, in the sink that staged its MESSAGE.
+/// Its caller has already admitted that exact new row in this same transaction.
+pub(in crate::memory::witness) fn keep_session_terminal_in_txn(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &mut heed::RwTxn<'_>,
+    receipt: &MessageStreamReceipt,
+) -> Result<()> {
+    RECEIPT.put(dbs, txn, &receipt.message_id, receipt)?;
+    let reference = format!(
+        "{}:{}",
+        receipt.message_id.to_hex(),
+        receipt.generation.to_hex()
+    );
+    RECEIPT_BY_REF.put(dbs, txn, &reference, receipt)
+}
+
+pub(in crate::memory::witness) fn receipt_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    message: EntityId,
+) -> Result<Option<MessageStreamReceipt>> {
+    RECEIPT.get(dbs, txn, &message)
+}
+
+pub(in crate::memory::witness) fn generation_receipt_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    message: EntityId,
+    generation: EntityId,
+) -> Result<Option<MessageStreamReceipt>> {
+    RECEIPT_BY_REF.get(
+        dbs,
+        txn,
+        &format!("{}:{}", message.to_hex(), generation.to_hex()),
+    )
+}
+
 pub(super) fn receipt(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -217,6 +301,28 @@ pub(crate) fn message_stream_finality_in_txn(
     message: &EntityId,
 ) -> Result<Option<(StreamFinality, EntityId)>> {
     Ok(receipt(vault, txn, *message)?.map(|done| (done.finality, done.generation)))
+}
+/// The generations of a MESSAGE its stream lifecycle still holds (FIX 5033):
+/// the latest terminal's, which a read of the MESSAGE's latest generation
+/// addresses, and the in-flight or recoverable stream's, while its recovery
+/// seed stands. `None` when a recovery seed stands that does not decode: its
+/// generation is unknown, so the caller holds every generation.
+pub(crate) fn message_stream_held_generations_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    message: &EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    let active = ACTIVE.get_lenient(&vault.store, txn, message)?;
+    if active.is_none() && ACTIVE.contains(&vault.store, txn, message)? {
+        return Ok(None);
+    }
+    let latest = receipt(vault, txn, *message)?.map(|done| done.generation);
+    Ok(Some(
+        latest
+            .into_iter()
+            .chain(active.map(|seed| seed.generation))
+            .collect(),
+    ))
 }
 /// A finalized continuation changed the final words its TURN projects:
 /// re-dirty the TURN in this commit so consolidation selects it again, past
@@ -345,5 +451,101 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let suffix = reference[10..].to_owned();
         Ok(RECEIPT_BY_REF.get(&self.store, &txn, &suffix)?)
+    }
+    /// The live MESSAGE a stored continuation names in the caller's snapshot.
+    /// Fresh, missing or malformed seeds and absent or non-MESSAGE records
+    /// stay unknown; no source is reconstructed from a terminal receipt.
+    pub(crate) fn message_stream_continuation_source_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        message: &EntityId,
+    ) -> Result<Option<EntityId>> {
+        let Some(seed) = ACTIVE.get_lenient(&self.store, txn, message)? else {
+            return Ok(None);
+        };
+        if seed.message_id != *message || !seed.continuation {
+            return Ok(None);
+        }
+        let Some(raw) =
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &seed.message_id)?
+        else {
+            return Ok(None);
+        };
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+            return Ok(None);
+        };
+        if header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE {
+            return Ok(None);
+        }
+        Ok(Some(seed.message_id))
+    }
+}
+
+impl crate::off_record::FloorWrites<'_> {
+    /// Selects only plan MESSAGEs not already held by base, before replay.
+    pub(crate) fn promoted_stream_messages_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        plan: &crate::session_overlay::PromotePlan,
+        fresh: Option<&std::collections::BTreeSet<EntityId>>,
+    ) -> Result<std::collections::BTreeSet<EntityId>> {
+        let mut messages = std::collections::BTreeSet::new();
+        for op in &plan.ops {
+            if let crate::batch::BatchOp::Put {
+                id, entity_type, ..
+            } = op
+                && *entity_type == crate::registry::ENTITY_TYPE_MESSAGE
+                && fresh.is_none_or(|fresh| fresh.contains(id))
+                && !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, id)?
+            {
+                messages.insert(*id);
+            }
+        }
+        Ok(messages)
+    }
+
+    /// Carries the newly saved MESSAGEs' terminal history from the exact source
+    /// view, after native replay and body holds, in that same writer.
+    pub(crate) fn keep_promoted_stream_receipts_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        plan: &crate::session_overlay::PromotePlan,
+        messages: &std::collections::BTreeSet<EntityId>,
+    ) -> Result<()> {
+        use crate::session_overlay::{OverlayKeyspace, SnapshotMergeRow};
+
+        let snapshot = plan.source_snapshot();
+        for id in messages {
+            if let Some(bytes) =
+                snapshot.staged_value(OverlayKeyspace::VaultMeta, &RECEIPT.key_bytes(id))
+            {
+                let receipt = RECEIPT.decode_value(bytes)?;
+                if receipt.message_id != *id {
+                    return Err(Error::CorruptedIndex("stream receipt message"));
+                }
+                RECEIPT.put(&vault.store, txn, id, &receipt)?;
+            }
+            let prefix = RECEIPT_BY_REF.key_bytes(&format!("{}:", id.to_hex()));
+            let generations =
+                snapshot.merge_plan(OverlayKeyspace::VaultMeta, |key| key.starts_with(&prefix));
+            for row in generations.rows {
+                let SnapshotMergeRow::Single {
+                    key,
+                    value: Some(bytes),
+                } = row
+                else {
+                    continue;
+                };
+                let receipt = RECEIPT_BY_REF.decode_value(&bytes)?;
+                let reference = format!("{}:{}", id.to_hex(), receipt.generation.to_hex());
+                if receipt.message_id != *id || key != RECEIPT_BY_REF.key_bytes(&reference) {
+                    return Err(Error::CorruptedIndex("stream receipt generation"));
+                }
+                RECEIPT_BY_REF.put(&vault.store, txn, &reference, &receipt)?;
+            }
+        }
+        Ok(())
     }
 }

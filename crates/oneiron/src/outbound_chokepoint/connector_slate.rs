@@ -1,5 +1,5 @@
 //! FIX 990: the tool's capability setting (DEC-0006) at the last boundary
-//! before a Pending scoped call's send, live or hostless.
+//! before a Pending connector call's send, live or hostless.
 //!
 //! The boundary reads one snapshot of the call's key, its approved manifest,
 //! the tool's setting (a per-grant key's catalog slate included) and the
@@ -10,8 +10,8 @@
 //! `never allow` stops the request: its ledger row is abandoned, keeping
 //! what it knew of its delivery, so no later sweep sends it. `always ask`
 //! sends only on the owner's press on exactly this call: the press the
-//! current pass's own admission spent, carried in memory (its kept copy is
-//! best-effort); else the copy kept beside this row; else a still-available
+//! current pass's own admission spent, committed in its Pending row; else
+//! the original proof on this row; else a still-available
 //! marker for the row's own recomposed target, spent here once and kept for
 //! its retry. A spent marker is no fresh authority. With none of them the
 //! row stays Pending and names its approve-once digest. Nothing here
@@ -25,11 +25,12 @@ use crate::connector_key::SlateDisposition;
 use crate::consent::EffectDigest;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, GateError};
+use crate::gate::ExternalEffectGateInput;
 use crate::outbound_consent::{SLATE_ALWAYS_ASK_REASON, frozen_scoped_candidate_in_txn};
 use crate::outbound_intent_ledger::{
     AdmittedApproval, IntentEscalationReason, IntentLedgerError, IntentLedgerRecord, IntentState,
     PinnedApproval, PinnedApprovalFamily, abandon_record, keep_pinned_approval_in_txn,
-    keep_press_after_admission, pinned_retry_approval, read_intent_record_in_txn,
+    pinned_retry_approval, read_intent_record_in_txn,
 };
 
 /// CALLS `SLATE-990-neverallow-terminal`: a Pending call whose tool the
@@ -40,7 +41,6 @@ use crate::outbound_intent_ledger::{
 pub(super) const NEVER_ALLOW_STOPS_PENDING: bool = true;
 
 /// What the writer found for an `always ask` call.
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum Release {
     /// A press already proved for this row, or the setting moved off ask.
     Send,
@@ -48,6 +48,43 @@ enum Release {
     Spent,
     /// No press: the call waits for the owner.
     Ask,
+    /// The row already left Pending before this writer.
+    Current(IntentLedgerRecord),
+}
+
+struct Candidate {
+    gate: ExternalEffectGateInput,
+    digest: EffectDigest,
+    actor: Option<EntityId>,
+    remember_context: Option<crate::connector_key::ConnectorToolRememberContext>,
+    family: PinnedApprovalFamily,
+}
+
+fn candidate_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &IntentLedgerRecord,
+) -> Result<Option<Candidate>, IntentLedgerError> {
+    if record.capability_provenance().is_some() {
+        return Ok(
+            frozen_scoped_candidate_in_txn(vault, txn, record)?.map(|candidate| Candidate {
+                gate: candidate.gate,
+                digest: candidate.digest,
+                actor: Some(candidate.actor),
+                remember_context: candidate.prepared.remember_context(),
+                family: PinnedApprovalFamily::ScopedMcp,
+            }),
+        );
+    }
+    Ok(
+        super::ordinary_slate::candidate_in_txn(vault, txn, record)?.map(|candidate| Candidate {
+            gate: candidate.gate,
+            digest: candidate.digest,
+            actor: candidate.actor,
+            remember_context: None,
+            family: candidate.family,
+        }),
+    )
 }
 
 /// The last snapshot before `record`'s send: `None` lets the send go on;
@@ -118,22 +155,36 @@ fn always_ask(
 ) -> Result<Option<OutboundEffectResult>, IntentLedgerError> {
     let candidate = {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        frozen_scoped_candidate_in_txn(vault, &txn, record)?
+        candidate_in_txn(vault, &txn, record)?
     };
     let Some(candidate) = candidate else {
         return Ok(Some(held(record, replayed, None)));
     };
     let digest = candidate.digest;
     let release = vault.try_with_write_txn(|wtxn| -> Result<Release, IntentLedgerError> {
-        let current = read_intent_record_in_txn(vault, wtxn, &record.id)?;
-        if current.is_none_or(|row| row.state != IntentState::Pending) {
+        let Some(current) = read_intent_record_in_txn(vault, wtxn, &record.id)? else {
+            return Err(Error::EntityNotFound.into());
+        };
+        if current.state != IntentState::Pending {
+            return Ok(Release::Current(current));
+        }
+        if current.payload() != record.payload() {
             return Ok(Release::Ask);
         }
-        match setting_in_txn(vault, wtxn, record)? {
+        match setting_in_txn(
+            vault,
+            wtxn,
+            record,
+            candidate.gate.scoped_mcp_call.as_ref(),
+            candidate.remember_context,
+        )? {
             SlateDisposition::AlwaysAsk => {}
             // A later pass stops it.
             SlateDisposition::NeverAllow => return Ok(Release::Ask),
             SlateDisposition::Auto | SlateDisposition::AlwaysAllow => return Ok(Release::Send),
+        }
+        if crate::outbound_consent::code_wait_retry_approval_in_txn(vault, wtxn, record)? {
+            return Ok(Release::Send);
         }
         if pinned_retry_approval(vault, wtxn, record.id, &candidate.gate)
             .is_some_and(|kept| kept.effect_digest() == digest)
@@ -143,23 +194,33 @@ fn always_ask(
         match crate::consent::approve_once_authorization_in_txn(&vault.store, wtxn, &digest) {
             Ok(Some(tap)) => {
                 crate::consent::spend_approve_once_in_txn(&vault.store, wtxn, &tap)?;
+                // The keep rides the spend's writer (FIX 9229): a failed keep
+                // aborts the spend too, so the marker stays available and the
+                // owner can press again.
+                let kept = PinnedApproval::new(
+                    candidate.family,
+                    AdmittedApproval::from_gate(record.id, digest),
+                );
+                keep_pinned_approval_in_txn(vault, wtxn, Some(kept))?;
                 Ok(Release::Spent)
             }
-            Ok(None) | Err(Error::Gate(GateError::ConsentApproveOnceSpent(_))) => Ok(Release::Ask),
+            Ok(None) | Err(Error::Gate(GateError::ConsentApproveOnceSpent(_))) => {
+                if matches!(
+                    candidate.family,
+                    PinnedApprovalFamily::ConnectorSlate | PinnedApprovalFamily::LinearDispatch
+                ) {
+                    super::ordinary_slate::queue_owner_ask_in_txn(vault, wtxn, &current)?;
+                }
+                Ok(Release::Ask)
+            }
             Err(error) => Err(error.into()),
         }
     })?;
     match release {
+        Release::Current(current) => Ok(Some(effect_result(&current, None, replayed, None))),
         Release::Send => Ok(None),
         Release::Spent => {
             let subject = bytes_to_hex_lower(&record.id);
-            let kept = PinnedApproval::new(
-                PinnedApprovalFamily::ScopedMcp,
-                AdmittedApproval::from_gate(record.id, digest),
-            );
-            keep_press_after_admission(vault, &subject, |wtxn| {
-                keep_pinned_approval_in_txn(vault, wtxn, Some(kept))
-            })?;
             tracing::info!(
                 reason = "connector_slate_always_ask_press_spent",
                 intent = %subject,
@@ -177,10 +238,12 @@ fn always_ask(
 
 /// The tool's setting under `record`'s key now, in `txn`. A row with no key
 /// meets none.
-fn setting_in_txn(
+pub(super) fn setting_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: &IntentLedgerRecord,
+    call: Option<&crate::consent::tool_scope::ScopedMcpCallContext>,
+    context: Option<crate::connector_key::ConnectorToolRememberContext>,
 ) -> Result<SlateDisposition, IntentLedgerError> {
     let Some(key_ref) = record.budget_accounting.key_ref.as_ref() else {
         return Ok(SlateDisposition::Auto);
@@ -188,13 +251,27 @@ fn setting_in_txn(
     let Some(key) = crate::connector_key::read_key_for_pack_in_txn(vault, txn, key_ref)? else {
         return Ok(SlateDisposition::AlwaysAsk);
     };
-    Ok(crate::connector_key::connector_tool_setting_in_txn(
+    let setting = crate::connector_key::connector_tool_setting_in_txn(
         &vault.store,
         txn,
         key_ref,
         &key,
         &record.tool,
-    )?)
+    )?;
+    if setting == SlateDisposition::AlwaysAsk
+        && let Some(call) = call
+        && crate::connector_key::connector_tool_remembered_in_txn(
+            &vault.store,
+            txn,
+            key_ref,
+            &key,
+            call,
+            context,
+        )?
+    {
+        return Ok(SlateDisposition::Auto);
+    }
+    Ok(setting)
 }
 
 /// `record` kept Pending for the owner's press, naming the digest and actor
@@ -202,13 +279,13 @@ fn setting_in_txn(
 fn held(
     record: &IntentLedgerRecord,
     replayed: bool,
-    target: Option<(EffectDigest, EntityId)>,
+    target: Option<(EffectDigest, Option<EntityId>)>,
 ) -> OutboundEffectResult {
     let mut held = effect_result(record, None, replayed, None);
     held.gate_outcome = Some("pending".to_owned());
     held.gate_receipt_reasons
         .push(SLATE_ALWAYS_ASK_REASON.to_owned());
     held.approval_digest = target.map(|(digest, _)| digest.to_hex());
-    held.approval_actor = target.map(|(_, actor)| actor);
+    held.approval_actor = target.and_then(|(_, actor)| actor);
     held
 }

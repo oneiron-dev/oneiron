@@ -114,6 +114,13 @@ pub const MEMORY_CODE_WRONG_ROOT: &str = "WRONG_ROOT";
 /// Distinct from `FORBIDDEN`: nothing was refused, the verb is only waiting,
 /// like a gate's pending write.
 pub const MEMORY_CODE_PENDING_ASK: &str = "PENDING_ASK";
+/// A count-bound budget window paced the call, and the engine holds it in its
+/// caller's fair line until its turn (FIX 8753, ARCH-0044 C5): `resets_at`
+/// names the earliest it runs, and the message its deadline, after which it
+/// ends unrun. Nothing was refused and nothing more is sent: a retry with
+/// the same invocation reads what the call came to. Distinct from
+/// `PENDING_ASK`: no one is asked.
+pub const MEMORY_CODE_PACED_HOLD: &str = "PACED_HOLD";
 /// A write named a record ref that does not resolve under its writer's own
 /// scoped read (OF-063): invented, missing and unreadable are this one
 /// refusal. The message names the field pointer, never the ref. The write
@@ -228,6 +235,9 @@ pub struct MemoryError {
     /// The typed legal-hold notice behind this refusal, when its producer supplied one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub legal_hold: Option<Box<crate::error::LegalHoldNotice>>,
+    /// The held room join's original intent and every consent it still needs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_join_hold: Option<Box<crate::room_join::RoomJoinHold>>,
 }
 
 /// A wrong-root refusal's correction: the name the caller wrote, the
@@ -274,6 +284,7 @@ impl MemoryError {
             resets_at: Vec::new(),
             reason_codes: Vec::new(),
             legal_hold: None,
+            room_join_hold: None,
         }
     }
 

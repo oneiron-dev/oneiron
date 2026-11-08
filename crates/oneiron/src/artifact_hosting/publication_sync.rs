@@ -51,11 +51,22 @@ pub enum ArtifactPublicationOutcome {
     Applied,
     /// A row it names has not arrived by window sync yet; send it again.
     Staged,
-    /// Malformed or inconsistent; sending it again would change nothing.
+    /// Admission denied, malformed or inconsistent; nothing was applied.
     Refused,
 }
 
 impl ArtifactPublicationOutcome {
+    /// Reads the outcome from an exactly framed whole-publication receipt.
+    pub fn from_receipt(payload: &[u8]) -> Option<Self> {
+        let [_, _, .., outcome] = payload else {
+            return None;
+        };
+        if payload.len() != RECEIPT_LEN {
+            return None;
+        }
+        Self::from_byte(*outcome)
+    }
+
     const fn byte(self) -> u8 {
         match self {
             Self::Applied => 0,
@@ -370,12 +381,7 @@ impl Vault {
             return Ok(Refused);
         };
         // The fork hash is recomputed from the manifest, never taken on trust.
-        let Ok(rebuilt) = CodebaseSnapshot::new(
-            snapshot.project_id.clone(),
-            snapshot.repo_ref.clone(),
-            snapshot.commit_hash.clone(),
-            snapshot.files.clone(),
-        ) else {
+        let Ok(rebuilt) = snapshot.rebuilt_with_files(snapshot.files.clone()) else {
             return Ok(Refused);
         };
         if rebuilt.fork_hash != hash
@@ -414,17 +420,32 @@ impl Vault {
             return Ok(Staged);
         }
         for file in &snapshot.files {
-            // Checks the ASSET is there and hashes to the manifest's name.
-            if crate::codebase::read_asset_blob_in_txn(self, wtxn, &file.content_hash).is_err() {
+            // Checks the ASSET is there and hashes to the manifest's name,
+            // its bytes streamed through the checked reader and never held
+            // whole (FIX 7202).
+            let checked = crate::codebase::with_asset_blob_reader_in_txn(
+                self,
+                wtxn,
+                &file.content_hash,
+                |_| Ok(()),
+            );
+            if checked.is_err() {
                 return Ok(Staged);
             }
         }
-        self.put_filtered_codebase_snapshot_in_txn(
-            wtxn,
-            owner,
-            snapshot,
-            crate::secret_snapshot::SnapshotCustodyReport::default(),
-        )?;
+        // Keep a readable report for an identical retained manifest. Every
+        // case still replaces the snapshot and repairs its indexes (FIX 294).
+        let custody_report = if let Ok(Some(existing)) =
+            self.get_codebase_snapshot_in_txn(wtxn, owner)
+            && existing == *snapshot
+            && let Ok(Some(report)) =
+                self.get_codebase_snapshot_custody_report_in_txn(wtxn, &snapshot.fork_hash)
+        {
+            report
+        } else {
+            crate::secret_snapshot::SnapshotCustodyReport::default()
+        };
+        self.put_filtered_codebase_snapshot_in_txn(wtxn, owner, snapshot, custody_report)?;
         Ok(Applied)
     }
 

@@ -13,7 +13,7 @@ publish = false
 doctest = false
 
 # Every primitive is pinned to an exact release; see README.md for the choice and
-# its audit status. A bump is a reviewed change with its known-answer tests rerun.
+# its audit status.
 [dependencies]
 aes-gcm = { version = "=0.11.1", default-features = false, features = ["aes", "alloc", "zeroize"] }
 argon2 = { version = "=0.6.0", default-features = false, features = ["alloc", "zeroize"] }
@@ -25,10 +25,14 @@ ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["all
 hkdf = "=0.13.0"
 # Direct only to turn on their providers' wiping of internal MAC and hash state.
 hmac = { version = "=0.13.0", features = ["zeroize"] }
+# RFC 6238 SHA-1 profile; both exact versions are already in Cargo.lock.
+hmac-sha1 = { package = "hmac", version = "=0.12.1" }
+sha1 = "=0.10.6"
 poly1305 = { version = "=0.9.1", features = ["zeroize"] }
 rmp-serde = { workspace = true }
 ml-kem = { version = "=0.3.2", features = ["zeroize"] }
 rand_core = "=0.10.1"
+schemars = "=0.8.22"
 serde = { workspace = true }
 sha2 = { version = "=0.11.0", features = ["zeroize"] }
 sha3 = { version = "=0.11.0", features = ["zeroize"] }

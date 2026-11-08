@@ -179,6 +179,23 @@ impl UnfinalizedContextPack<'_> {
         read.filter_context_pack_critical_under(&mut self.value, &self.critical, disclosure)
     }
 
+    /// [`Self::filter_scoped_under`], which also records in `producers` the
+    /// messages whose words each TURN it keeps joins as `txt` (FIX 1435).
+    /// The receipt is the same.
+    pub fn filter_scoped_listing_producers(
+        &mut self,
+        read: &crate::claim::ScopedRead<'_>,
+        disclosure: Option<&DisclosureContext>,
+        producers: &mut super::super::ComposedFieldProducers,
+    ) -> Result<crate::claim::ScopedReadReceipt> {
+        read.filter_context_pack_listing_producers(
+            &mut self.value,
+            &self.critical,
+            disclosure,
+            producers,
+        )
+    }
+
     /// Cuts the pack to a response's limits by the pipeline's share-aware
     /// selection: its results to the per-kind `budget` and `results`, then its
     /// neighbors to `neighbors`, critical rows first in each, an `All`-world
@@ -261,7 +278,10 @@ impl UnfinalizedContextPack<'_> {
         // flattening it cannot hide a room's failure.
         let mut replay_config = self.replay_config.take();
         if let Some(value) = replay_config.as_mut() {
-            value["projection"] = super::replay::projection_config(config);
+            value["projection"] = super::replay::projection_config(
+                config,
+                crate::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER,
+            );
             value["terminal_kind"] = "projected_json".into();
         }
         let telemetry_run_id = finalize_context_pack_telemetry(

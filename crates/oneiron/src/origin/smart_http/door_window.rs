@@ -29,6 +29,10 @@ use crate::origin::receive_scan_verdict::DoorScanVerdict;
 use crate::receive_scan::PushedBlob;
 use crate::store::code_snapshot::RepoRef;
 
+mod blob_header;
+pub(super) use blob_header::decode_tip_path;
+use blob_header::parse_blob_record_header;
+
 /// What the door answered while the objects were quarantined.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DoorWindowVerdict {
@@ -287,7 +291,8 @@ fn scan_window(
         true,
         context.scan,
         &mut |at, blob| {
-            if let Some(pointer) = LfsPushedPointer::from_pointer_content(&blob.path, &blob.content)
+            if let Some(pointer) =
+                LfsPushedPointer::from_pointer_content(blob.path_bytes(), &blob.content)
             {
                 lfs_pointers.push(pointer);
                 pointer_moves.push(at.cloned());
@@ -295,6 +300,7 @@ fn scan_window(
             if let Some(scan) = scan.as_mut() {
                 scan.blob(&blob, Framed::Tip(at));
             }
+            Ok(())
         },
     )?;
     let ref_lfs_pointers = request
@@ -379,7 +385,10 @@ pub(super) fn for_each_framed_blob(
     scan: ScanBounds,
     each: &mut dyn FnMut(PushedBlob),
 ) -> std::result::Result<(), InputRefused> {
-    read_framed_stream(stream, terminated, false, scan, &mut |_, blob| each(blob))
+    read_framed_stream(stream, terminated, false, scan, &mut |_, blob| {
+        each(blob);
+        Ok(())
+    })
 }
 
 /// The entries of `items`, one per pointer of a push, that one ref is held
@@ -418,7 +427,7 @@ fn read_framed_stream(
     terminated: bool,
     moves: bool,
     scan: ScanBounds,
-    each: &mut dyn FnMut(Option<&FramedMove>, PushedBlob),
+    each: &mut dyn FnMut(Option<&FramedMove>, PushedBlob) -> std::result::Result<(), InputRefused>,
 ) -> std::result::Result<(), InputRefused> {
     let mut header = Vec::new();
     let mut at = None;
@@ -433,9 +442,9 @@ fn read_framed_stream(
         let header = header
             .strip_suffix(b"\n")
             .ok_or_else(|| serve_failed("door blob stream ends inside a record header"))?;
-        let header = std::str::from_utf8(header)
-            .map_err(|_| serve_failed("door blob record header must be UTF-8"))?;
-        if moves && let Some(framed) = header.strip_prefix("move ") {
+        if moves && let Some(framed) = header.strip_prefix(b"move ") {
+            let framed = std::str::from_utf8(framed)
+                .map_err(|_| serve_failed("door move record header must be UTF-8"))?;
             at = Some(parse_framed_move(framed)?);
             continue;
         }
@@ -455,7 +464,16 @@ fn read_framed_stream(
                 return Err(serve_failed("door history record is not terminated").into());
             }
         }
-        each(at.as_ref(), PushedBlob { path, oid, content });
+        let tip_raw_path = moves.then(|| decode_tip_path(&path)).transpose()?;
+        each(
+            at.as_ref(),
+            PushedBlob {
+                path,
+                tip_raw_path,
+                oid,
+                content,
+            },
+        )?;
     }
 }
 
@@ -570,7 +588,14 @@ fn verdict_line(verdict: &DoorWindowVerdict) -> String {
         }
         DoorWindowVerdict::NotInvoked => "oneiron door: no request".to_owned(),
         DoorWindowVerdict::Rejected { reasons } => {
-            bounded_verdict_line("oneiron door refused this push: ", reasons)
+            // Printable emission guard (FIX20 PART): a decoded tip control
+            // path must not inject raw lines/control bytes here; escape the
+            // displayed reasons before the existing bound/truncate.
+            let escaped: Vec<String> = reasons
+                .iter()
+                .map(|reason| reason.escape_default().to_string())
+                .collect();
+            bounded_verdict_line("oneiron door refused this push: ", &escaped)
         }
     }
 }
@@ -704,24 +729,4 @@ fn parse_framed_move(framed: &str) -> Result<FramedMove> {
         old: parse_optional_oid(old)?,
         new: parse_optional_oid(new)?.ok_or_else(unshaped)?,
     })
-}
-
-/// `blob <oid> <bytes> <path>` — the path is last because it is the one field
-/// that may carry spaces; the three before it are fixed and are validated here.
-fn parse_blob_record_header(header: &str) -> Result<(String, u64, String)> {
-    let mut fields = header.splitn(4, ' ');
-    let unshaped = || serve_failed("door blob record header is not `blob <oid> <bytes> <path>`");
-    if fields.next() != Some("blob") {
-        return Err(unshaped());
-    }
-    let oid = fields.next().ok_or_else(unshaped)?;
-    let len = fields.next().ok_or_else(unshaped)?;
-    let path = fields.next().ok_or_else(unshaped)?;
-    if oid.is_empty() || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) || path.is_empty() {
-        return Err(unshaped());
-    }
-    let len = len
-        .parse::<u64>()
-        .map_err(|_| serve_failed("door blob record declares an unparsable length"))?;
-    Ok((oid.to_owned(), len, path.to_owned()))
 }

@@ -1,9 +1,11 @@
 //! Base-apply Put arm: validated puts with births and projections.
 
-use super::validation::{birth_stamp_target, consume_preflight_decisions, validate_put_type};
+use super::validation::{
+    birth_stamp_target, consume_preflight_decisions, source_free_text_birth, validate_put_type,
+};
 use super::*;
 use crate::error::RegistryError;
-use crate::ppr;
+use crate::store::ppr_cache_invalidation as ppr;
 use crate::temporal::TimeRange;
 use zeroize::Zeroizing;
 
@@ -14,11 +16,12 @@ pub(super) fn apply_put_arm(
     analyzer: &crate::analyzer::MultilingualAnalyzer,
     wtxn: &mut RwTxn<'_>,
     state: &mut BatchApplyState,
-    gate_mode: &ApplyOpsGateMode,
+    gate_mode: &mut ApplyOpsGateMode,
     id: EntityId,
     mut entity_type: u8,
     occurred: TimeRange,
     learned_at: u64,
+    row_version: Option<u64>,
     data: Vec<u8>,
     allow_maintenance: bool,
     allow_reserved_predicate: bool,
@@ -28,7 +31,7 @@ pub(super) fn apply_put_arm(
     mut put_options: PutOptions,
     origin: BaseWriteOrigin<'_>,
     text_index_trusted: bool,
-    authority_beside: Option<crate::authority::RowsBeside<'_>>,
+    authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
 ) -> Result<()> {
     let mut data = Zeroizing::new(data);
@@ -56,19 +59,38 @@ pub(super) fn apply_put_arm(
         put_options.storage.asset_file = Some(file);
     }
     let sources = state.text_births.get(&id).map(Vec::as_slice);
+    let source_free =
+        source_free_text_birth(entity_type, &id, sources, &state.derived_from_edge_sources);
     if let Some(facet) = birth_stamp_target(
         store,
         wtxn,
         id,
         entity_type,
         replicated,
-        (state.birth_mask, sources),
+        (state.birth_mask, sources, source_free),
+        &data,
     )? {
         let owner = crate::vault::embedded_owner_actor_id()?;
         if state.birth_mask.is_none()
             && facet == crate::write_envelope::claim_body::substrate_facet_id(owner)?
             && stored_entity_type(store, wtxn, &owner)?.is_none()
         {
+            let prepared_owner = if gate_mode
+                .prepared_setup_owner
+                .as_ref()
+                .is_some_and(|prepared| prepared.matches(id, owner))
+            {
+                gate_mode.prepared_setup_owner.take()
+            } else {
+                None
+            };
+            let (owner_body, owner_substrate) = match prepared_owner {
+                Some(prepared) => {
+                    let (body, substrate) = prepared.into_person_put();
+                    (body, Some(substrate))
+                }
+                None => (crate::vault::encode_embedded_owner_actor_body()?, None),
+            };
             apply_ops_with_origin(
                 store,
                 config,
@@ -79,16 +101,18 @@ pub(super) fn apply_put_arm(
                     entity_type: crate::registry::ENTITY_TYPE_PERSON,
                     occurred,
                     learned_at,
-                    data: crate::vault::encode_embedded_owner_actor_body()?,
+                    data: owner_body,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
                     hub_sync_imported: false,
+                    row_version: None,
                 }],
                 text_index_trusted,
                 ApplyOpsGateMode::new(
                     state.record_gate_decisions,
                     state.persist_gate_pending_consent,
-                ),
+                )
+                .with_prepared_person_substrate(owner_substrate),
                 origin,
             )?;
         }
@@ -110,6 +134,13 @@ pub(super) fn apply_put_arm(
             oneiron_contracts::affect::Vad::NEUTRAL,
             None,
         )?;
+        // FIX 8741: the same transaction records that this text was born
+        // source-free, so a read tells it from a text whose sources are gone.
+        if source_free {
+            crate::federation::record_scope::asset_text::stamp_source_free_birth(
+                store, wtxn, id, facet,
+            )?;
+        }
         ppr::invalidate_ppr_for_edge(store, wtxn, &id, &facet)?;
         state.had_graph_mutation = true;
     }
@@ -126,6 +157,10 @@ pub(super) fn apply_put_arm(
     put_options.consent.can_resolve_pending =
         state.pending_gate_consent_at_batch_start.contains(&id);
     put_options.decision.preflight = preflight_decision_id;
+    put_options.decision.pending_auto_probe = preflight_decision_id
+        .and_then(|decision| state.pending_auto_probes.get(&decision))
+        .copied()
+        .filter(|probe| probe.matches(&id, preflight_decision_id));
     let pending_prompt = super::pending_prompt_for(&state.births, &id);
     // A TURN or MESSAGE written again may change its words under a
     // temporal key the sieve has passed: its turn is owed a new
@@ -138,8 +173,33 @@ pub(super) fn apply_put_arm(
     );
     let rewritten = text_row && stored_entity_type(store, wtxn, &id)?.is_some();
     let born_turn = entity_type == crate::registry::ENTITY_TYPE_TURN && !rewritten;
+    let prepared_person_substrate = if entity_type == crate::registry::ENTITY_TYPE_PERSON
+        && gate_mode
+            .prepared_person_substrate
+            .as_ref()
+            .is_some_and(|substrate| substrate.person() == id)
+    {
+        gate_mode.prepared_person_substrate.take()
+    } else {
+        None
+    };
+    let prepared_agent_birth = if entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF
+        && gate_mode
+            .prepared_agent_birth
+            .as_ref()
+            .is_some_and(|birth| birth.id() == id)
+    {
+        gate_mode.prepared_agent_birth.take()
+    } else {
+        None
+    };
     let applied = apply_put_beside(
-        store,
+        &crate::secret_custody::CustodyWrite {
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+        },
         wtxn,
         PutRequest {
             row: PutRow {
@@ -148,6 +208,7 @@ pub(super) fn apply_put_arm(
                 occurred,
                 learned_at,
                 data: &data,
+                row_version,
             },
             options: put_options,
             context: PutContext {
@@ -163,6 +224,8 @@ pub(super) fn apply_put_arm(
                 posture: config.privacy.posture,
                 owner_authored: None,
                 pending_prompt: pending_prompt.as_deref(),
+                prepared_person_substrate: prepared_person_substrate.as_ref(),
+                prepared_agent_birth: prepared_agent_birth.as_ref(),
             },
         },
         authority_beside,
@@ -217,13 +280,15 @@ pub(super) fn apply_put_arm(
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
+                row_version: None,
             }],
             text_index_trusted,
             ApplyOpsGateMode::new(
                 state.record_gate_decisions,
                 state.persist_gate_pending_consent,
             )
-            .with_birth_mask(state.birth_mask),
+            .with_birth_mask(state.birth_mask)
+            .with_prepared_setup_owner(gate_mode.take_setup_owner_before(source_id)),
             origin,
         )?;
     }
@@ -261,8 +326,17 @@ pub(super) fn apply_put_arm(
         && !(allow_maintenance && allow_reserved_predicate)
         && !applied.is_lexical_query_hint_claim
     {
-        let deleted =
-            delete_lexical_query_hint_claims_for_target(store, wtxn, &id, &HashSet::new())?;
+        let deleted = delete_lexical_query_hint_claims_for_target(
+            &crate::secret_custody::CustodyWrite {
+                store,
+                config,
+                analyzer,
+                text_index_trusted,
+            },
+            wtxn,
+            &id,
+            &HashSet::new(),
+        )?;
         for (deleted_id, neighbors) in &deleted.deleted {
             state.pending_embedding_tokens_written.remove(deleted_id);
             #[cfg(feature = "sync")]

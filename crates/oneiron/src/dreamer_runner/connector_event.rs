@@ -195,6 +195,14 @@ impl<'p, E> ConnectorEventExecutor<'p, E> {
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ConnectorEventExecutor<'_, E> {
+    fn runs_coach_host_jobs(&self) -> bool {
+        self.inner.runs_coach_host_jobs()
+    }
+
+    fn runs_coach_heals(&self) -> bool {
+        self.inner.runs_coach_heals()
+    }
+
     async fn execute_partition_window<'w>(
         &mut self,
         window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
@@ -219,7 +227,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ConnectorEventExecuto
             );
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         };
         // The pass hands the reply off and settles at once: it spent nothing,
@@ -237,7 +245,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ConnectorEventExecuto
         }
         Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         })
     }
 }

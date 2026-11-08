@@ -43,6 +43,43 @@ pub enum AuthorityEntryStatus {
     Unknown,
 }
 
+struct PreparedAuthorityLogRows {
+    ids: Vec<EntityId>,
+    ops: Vec<BatchOp>,
+    pending: Option<super::history_admission::PendingAuthorityHistory>,
+}
+
+impl PreparedAuthorityLogRows {
+    // Encoding and ordering are captured without writes, then consumed at the
+    // original call site in the same writer through the native batch path.
+    fn apply(
+        self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<super::history_admission::AuthorityPut> {
+        let Self { ids, ops, pending } = self;
+        if ops.is_empty() {
+            return Ok(super::history_admission::AuthorityPut::Stored(ids));
+        }
+        apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            wtxn,
+            ops,
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        if let Some(pending) = pending {
+            return Ok(super::history_admission::AuthorityPut::Pending(pending));
+        }
+        Ok(super::history_admission::AuthorityPut::Stored(ids))
+    }
+}
+
 impl Vault {
     /// Engine-authored write door for signed AUTHORITY_LOG entries.
     ///
@@ -148,6 +185,16 @@ impl Vault {
         entries: &[(AuthorityLogEntry, TimeRange, u64)],
         keep_pending: bool,
     ) -> Result<super::history_admission::AuthorityPut> {
+        self.prepare_authority_log_rows_in_txn(wtxn, entries, keep_pending)?
+            .apply(self, wtxn)
+    }
+
+    fn prepare_authority_log_rows_in_txn(
+        &self,
+        wtxn: &heed::RoTxn<'_>,
+        entries: &[(AuthorityLogEntry, TimeRange, u64)],
+        keep_pending: bool,
+    ) -> Result<PreparedAuthorityLogRows> {
         let mut ids = Vec::with_capacity(entries.len());
         let mut ops = Vec::with_capacity(entries.len());
         // Rows of this batch, for an ancestry that runs through one.
@@ -205,6 +252,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_AUTHORITY_LOG,
                 occurred: *occurred,
                 learned_at: *learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
@@ -212,7 +260,11 @@ impl Vault {
             });
         }
         if ops.is_empty() {
-            return Ok(super::history_admission::AuthorityPut::Stored(ids));
+            return Ok(PreparedAuthorityLogRows {
+                ids,
+                ops,
+                pending: None,
+            });
         }
         // A batch of granting rows, each of whose fold past an adopted image
         // needs history this vault does not hold, is evidence, not log (FIX
@@ -241,21 +293,7 @@ impl Vault {
             .into_iter()
             .filter_map(|index| ops[index].take())
             .collect();
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            wtxn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
-        if let Some(pending) = pending {
-            return Ok(super::history_admission::AuthorityPut::Pending(pending));
-        }
-        Ok(super::history_admission::AuthorityPut::Stored(ids))
+        Ok(PreparedAuthorityLogRows { ids, ops, pending })
     }
 
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.
@@ -306,8 +344,10 @@ impl Vault {
                 return Ok(AuthorityEntryStatus::Stored(entry));
             }
         }
-        let adopted =
-            super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&self.store, &rtxn)?;
+        let adopted = super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(
+            &self.store,
+            &rtxn,
+        )?;
         Ok(match adopted {
             Some(adopted) if adopted.image().rows.contains_key(hash) => {
                 AuthorityEntryStatus::CoveredAttested {
@@ -385,6 +425,34 @@ impl Vault {
         })
     }
 
+    /// The store-order index's one-shot backfill (FIX 12369), beside the
+    /// first-seen sidecars': sequence every stored row the index does not
+    /// hold yet and mark it complete, so later folds resume by sequence.
+    fn backfill_authority_store_order(&self) -> Result<()> {
+        let rtxn = self.store.env.read_txn()?;
+        if super::store_order::complete_next_in_txn(&self.store, &rtxn)?.is_some() {
+            return Ok(());
+        }
+        drop(rtxn);
+        let sequenced = self.with_write_txn_grouped(|wtxn| {
+            let sequenced = super::store_order::backfill_in_txn(&self.store, wtxn)?;
+            if sequenced {
+                advance_authority_cache_generation(&self.store, wtxn)?;
+            }
+            Ok(sequenced)
+        })?;
+        if sequenced {
+            // A continuation cached before the backfill carries no sequence,
+            // or a stale one after a repair resequence. Dropping the cached
+            // fold makes the next fold start whole and leave a continuation
+            // that resumes by sequence.
+            if let Ok(mut cache) = self.store.authority_fold_cache.lock() {
+                *cache = None;
+            }
+        }
+        Ok(())
+    }
+
     /// Advance the persisted authority-observation floor in test fixtures.
     /// The generic sync-state write door remains guarded.
     #[cfg(any(test, feature = "test-hooks"))]
@@ -418,6 +486,7 @@ impl Vault {
     /// roster, hold local quorum, or change this vault's id.
     pub fn authority_fold(&self) -> Result<AuthorityFold> {
         self.backfill_authority_first_seen_sidecars()?;
+        self.backfill_authority_store_order()?;
         // Update the monotonic local observation in a committed writer before
         // the cached read view opens its own snapshot.
         self.with_write_txn_grouped(|wtxn| {
@@ -445,6 +514,26 @@ impl Vault {
             .in_host_custody(key))
     }
 
+    /// The federation pacts this install holds inactive for a
+    /// `scope_commitment_mismatch` (FIX 11730): each one's folded scope does
+    /// not match its signed commitment under the live opening key this
+    /// install holds for it, by pact id, ascending. Every other machine's
+    /// fold of the same log is unchanged; a fresh dual-signed re-pact heals
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// Storage and fold errors.
+    pub fn federation_scope_commitment_mismatches(&self) -> Result<Vec<[u8; 32]>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(self
+            .authority_view_readonly_in_txn(&rtxn)?
+            .scope_commitment_mismatches()
+            .iter()
+            .copied()
+            .collect())
+    }
+
     /// This vault's authority id, as the shared verified fold of the current
     /// snapshot names it; `None` until the vault is rooted. It only reads:
     /// unlike [`Self::authority_fold`] it moves no first-seen clock, so a
@@ -458,11 +547,23 @@ impl Vault {
         Ok(self.authority_view_readonly_in_txn(&rtxn)?.vault_id)
     }
 
-    /// This vault's authority-row generation: it moves on every commit to
-    /// the authority log, a grant's revoke among them, and on nothing
-    /// outside it (a scope or world setting held elsewhere leaves it). A
-    /// kept inference snapshot restores only at the generation its read was
-    /// admitted at (V2-R3). It only reads.
+    /// Moves the authority head for a revoke stored outside the authority log
+    /// (FIX 11810), such as a legacy token's sync-state marker. The caller
+    /// writes the marker in this same transaction; aborting discards both.
+    /// Existing head pollers then judge their credential again after commit.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors or an exhausted generation counter.
+    pub fn note_non_authority_revoke_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        advance_authority_cache_generation(&self.store, txn)
+    }
+
+    /// This vault's authority generation: it moves on every commit to the
+    /// authority log, a grant's revoke among them, and on a legacy token
+    /// revoke's marker. A scope or world setting held elsewhere leaves it.
+    /// A kept inference snapshot restores only at the generation its read
+    /// was admitted at (V2-R3). It only reads.
     ///
     /// # Errors
     ///

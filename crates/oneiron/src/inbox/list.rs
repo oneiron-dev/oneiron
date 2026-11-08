@@ -16,13 +16,15 @@ use super::actions::NotificationAction;
 use super::notification::{
     NotificationBody, NotificationKind, NotificationSource, decode_notification_body,
 };
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::entity_id::EntityId;
 use crate::inbox::notification_recipient::{
     NotificationRecipientScope, notification_body_json, notification_recipient_scope,
     notification_scoped_to_caller,
 };
+use crate::limit_ask::EngineLimit;
 use crate::memory::{Memory, verify_actor_binding_in_txn};
+use crate::ports::ClaimReadStatus;
 use crate::registry::ENTITY_TYPE_NOTIFICATION;
 use crate::store::Callback;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -30,10 +32,6 @@ use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// Rows a page serves when its caller names no limit.
 pub const INBOX_PAGE_DEFAULT: usize = 100;
-
-/// The most rows one page serves: a larger limit is served a page at a time
-/// through `next_after` (Rule 5).
-pub const INBOX_PAGE_MAX: usize = 1_000;
 
 /// Type-index rows one admission round reads.
 const INBOX_SCAN_WINDOW: usize = 256;
@@ -77,12 +75,11 @@ pub struct NotificationPage {
     pub rows: Vec<NotificationRow>,
     /// Explicit end marker: `None` means no further delivered row exists.
     pub next_after: Option<String>,
-    /// The rows this page could hold: the caller's limit, or
-    /// [`INBOX_PAGE_MAX`] when it asked for more.
+    /// The rows this page could hold: the caller's limit.
     #[serde(default)]
     pub effective_limit: usize,
-    /// The caller's limit was past [`INBOX_PAGE_MAX`] and this page was
-    /// served at it; `next_after` continues to the rest.
+    /// Whether the request was larger than one page (always false: the page
+    /// holds the caller's limit; `next_after` continues when more rows remain).
     #[serde(default)]
     pub limit_clamped: bool,
 }
@@ -205,8 +202,8 @@ impl InboxMarkWriteScope {
 impl Memory<'_> {
     /// One page of the notifications delivered to this actor, in entity-ID
     /// order after the exclusive `after` cursor. A short page or an absent
-    /// `next_after` means the inbox ended. A limit past [`INBOX_PAGE_MAX`] is
-    /// served a page of that many at a time.
+    /// `next_after` means the inbox ended. A limit is served a page of that
+    /// many at a time.
     pub fn inbox_list(&self, after: Option<&str>, limit: usize) -> MemoryResult<NotificationPage> {
         if limit == 0 {
             return Err(MemoryError::bad_request_with(
@@ -214,14 +211,19 @@ impl Memory<'_> {
                 &["Request one row or more and continue from next_after."],
             ));
         }
-        let limit_clamped = limit > INBOX_PAGE_MAX;
-        let limit = limit.min(INBOX_PAGE_MAX);
+        let limit_clamped = false;
         let mut start = after
             .map(EntityId::from_hex)
             .transpose()
             .map_err(|_| MemoryError::bad_request("after must be a notification id"))?;
         let caller = self.actor().to_hex();
         let read = self.read_lane(ClaimReadStatus::Recorded)?;
+        // The requested page, asked after the cursor validated and the read
+        // lane opened (its verification snapshot closed) and before the round
+        // loop. Best effort: the page serves its rows either way.
+        let _ = self
+            .vault()
+            .measure_limit(EngineLimit::RequestedResultRows, limit as u64);
         let mut rows = Vec::new();
         let mut has_more = false;
         'scan: loop {

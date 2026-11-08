@@ -3,16 +3,19 @@ mod auxiliary;
 mod query;
 use super::*;
 use crate::attempt_queue::{
-    AttemptId, AttemptRecord, AttemptState, ClaimOutcome, CompleteAttempt, CompleteOutcome,
-    EnqueueOutcome, FailAttempt, FailOutcome,
+    AttemptRecord, ClaimOutcome, CompleteOutcome, EnqueueOutcome, FailOutcome,
 };
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::deletion::TombstoneValueV2;
 use crate::edge::EdgeInfo;
 use crate::error::{Error, Result};
 use crate::registry::*;
+use crate::store::attempt_id::AttemptId;
 use crate::store::attempt_inputs::ClaimAttempt;
+use crate::store::attempt_inputs::CompleteAttempt;
 use crate::store::attempt_inputs::EnqueueAttempt;
+use crate::store::attempt_inputs::FailAttempt;
+use crate::store::attempt_state::AttemptState;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{EdgeKind, EntityId, TimeRange};
 use oneiron_retrieval::pipeline::ScoredEntity;
@@ -179,18 +182,9 @@ impl EntityStore for Memory {
             .filter(|(source, _)| source.document == *id)
             .flat_map(|(_, ids)| ids.iter().copied())
             .collect();
+        // The dependents go stale; none is queued for regeneration (FIX 12327).
         for dependent in deps {
             self.port_retrieval_mark_stale(txn, &dependent)?;
-            self.port_job_enqueue(
-                txn,
-                EnqueueAttempt {
-                    kind: "derived.regenerate".into(),
-                    payload: [id.as_bytes().as_slice(), dependent.as_bytes()].concat(),
-                    dedupe_key: Some(format!("{}:{}", id.to_hex(), dependent.to_hex())),
-                    run_id: None,
-                    now: 0,
-                },
-            )?;
         }
         txn.edges.retain(|(s, _, d), _| s != id && d != id);
         txn.shorts.remove(id);
@@ -297,7 +291,7 @@ impl EdgeStore for Memory {
             kind,
             weight,
             self.clock.now_recorded_at(),
-            crate::affect::Vad::NEUTRAL,
+            oneiron_contracts::affect::Vad::NEUTRAL,
             None,
         )?;
         if kind == EdgeKind::DerivedFrom {

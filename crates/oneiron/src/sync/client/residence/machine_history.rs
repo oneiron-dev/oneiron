@@ -16,6 +16,8 @@
 //! A home that may not read a target's world is not asked for it (FIX 922
 //! item 11).
 
+mod freshness;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -83,6 +85,7 @@ pub(crate) async fn fetch_owed_machine_history(
     let vault = manager.vault();
     let owed = owed_targets(vault).map_err(storage)?;
     if owed.is_empty() {
+        freshness::refresh_unproven_pins(manager, config).await;
         return Ok(0);
     }
     let local = owed.iter().map(|(target, _)| (*target, false)).collect();
@@ -92,6 +95,7 @@ pub(crate) async fn fetch_owed_machine_history(
         .filter(|(target, _)| still.contains(target))
         .collect();
     if asked.is_empty() {
+        freshness::refresh_unproven_pins(manager, config).await;
         return Ok(0);
     }
     let selector = config.residence_selector.as_ref().ok_or_else(refused)?;
@@ -99,7 +103,7 @@ pub(crate) async fn fetch_owed_machine_history(
         .encode(encode_sync_selector(selector).map_err(|_| refused())?);
     let budgets = residence_budgets(vault)?;
     let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
-        return Err(TransportError::Storage("home node offline".into()));
+        return Err(TransportError::home_offline());
     };
     let mut landed = 0;
     let mut fetched = Vec::new();
@@ -284,6 +288,7 @@ fn land_row(
                 end: header.occurred_end,
             },
             learned_at: header.learned_at,
+            row_version: header.row_version,
             body: &raw[ENTITY_METADATA_HEADER_LEN..],
         },
         ImportTier::OwnDevice,

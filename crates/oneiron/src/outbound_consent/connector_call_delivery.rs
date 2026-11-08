@@ -100,7 +100,24 @@ impl Vault {
         call_ref: &EntityId,
     ) -> Result<Option<ConnectorCallState>, IntentLedgerError> {
         let txn = self.store.env.read_txn().map_err(Error::from)?;
-        if let Some(pending) = PENDING_CALLS.get(&self.store, &txn, call_ref)? {
+        self.connector_call_state_in_txn(&txn, call_ref)
+            .map_err(IntentLedgerError::from)
+    }
+
+    /// [`Self::connector_call_state`], read in the caller's transaction
+    /// `txn` (FIX 6656). The canonical wait settlement reads a call's caller
+    /// here, in the writer that settles the call's wait. It takes no
+    /// snapshot before that writer.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn connector_call_state_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        call_ref: &EntityId,
+    ) -> crate::Result<Option<ConnectorCallState>> {
+        if let Some(pending) = PENDING_CALLS.get(&self.store, txn, call_ref)? {
             return Ok(Some(ConnectorCallState {
                 input: pending.input.as_ref().map(|input| input.view()),
                 settled: pending.settled.as_ref().map(SettledConnectorCall::outcome),
@@ -110,6 +127,7 @@ impl Vault {
                 .filter(|_| pending.settled.is_none())
                 .map(str::to_owned),
                 principal_ref: pending.principal_ref,
+                grant_id: pending.grant_id,
                 name: pending.name,
                 tool: pending.tool,
                 held_at_ms: Some(pending.held_at_ms),
@@ -119,10 +137,11 @@ impl Vault {
             }));
         }
         Ok(ACKNOWLEDGED_CALLS
-            .get(&self.store, &txn, call_ref)?
+            .get(&self.store, txn, call_ref)?
             .map(|row| ConnectorCallState {
                 settled: row.settled.as_ref().map(SettledConnectorCall::outcome),
                 principal_ref: row.principal_ref,
+                grant_id: None,
                 name: row.name,
                 tool: row.tool,
                 held_at_ms: None,

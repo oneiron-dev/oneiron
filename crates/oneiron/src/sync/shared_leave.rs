@@ -8,8 +8,13 @@
 //! door answers (`Vault::removed_member_notices_signed`), each signed by the
 //! home root. A deletion counts only from a notice this device verified
 //! against the home root it already trusts, or the successor that root
-//! handed on to in a signed handoff the home sends beside the notices
-//! ([`VerifiedLeaveNotice`], FIX 2053).
+//! handed leave-notice verification on to in the signed delegations the
+//! home sends beside the notices, and no authority row
+//! ([`VerifiedLeaveNotice`], FIX 2053, FIX 7932). Where those delegations do
+//! not reach from a root this env trusts to the notice's signer, the notice
+//! is pending ([`LeaveNoticeCheck::Pending`]), confirms nothing and purges
+//! nothing, and nothing more is fetched through the revoked slip: a later
+//! delivery whose delegations reach it judges it again.
 //!
 //! What goes is only what is provably that vault's: the queued window
 //! updates (`q:`, with their `d:` sidecars), the unacknowledged text frames
@@ -18,22 +23,19 @@
 //! files its purge leaves unnamed go with an orphan collection housekeeping
 //! runs once they are past the collector's grace (FIX 2413).
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
+use crate::authority::{LeaveNoticeContinuity, NoticeSignerStanding};
 use crate::error::{Error, Result};
 use crate::federation::{SharedActOutcome, SharedVaultChange, SignedSharedActOutcome};
-use crate::side_table::{self, Named, Raw, SideTable};
+use crate::side_table::{self, Raw, SideTable};
+use crate::store::shared_leave_receipt::LEAVE_RECEIPTS;
+pub use crate::store::shared_leave_receipt::{SharedLeaveKind, SharedLeaveReceipt};
 
 mod collect;
 
 pub(crate) use collect::{
     collect_left_env_bodies, collect_left_env_bodies_admitted, left_env_body_collect_due_at,
 };
-
-/// This device's leave records, keyed by the notice's receipt id.
-const LEAVE_RECEIPTS: SideTable<String, SharedLeaveReceipt, Named> =
-    SideTable::new(&side_table::SYNC_SHARED_LEAVE_RECEIPT);
 
 /// Unacknowledged local text-document frames.
 const QUEUED_TEXT_FRAMES: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_QD_E);
@@ -46,47 +48,47 @@ const QUEUED_NOTE_COMMANDS: SideTable<Vec<u8>, Vec<u8>, Raw> =
 /// ([`crate::store::local_replica::purge_left_shared_env_in_txn`]).
 const LEAVE_PURGE_ROWS_PER_PASS: usize = 4096;
 
-/// How this member's membership ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SharedLeaveKind {
-    /// The member left.
-    Left,
-    /// A holder removed the member, an Owner removed as Owner included.
-    Removed,
-    /// The Owner handed ownership on and kept no role.
-    Transferred,
-    /// Another person recovered ownership from this Owner.
-    Recovered,
-    /// The shared vault was deleted. Only a verified home-signed notice says
-    /// so ([`VerifiedLeaveNotice`]).
-    Deleted,
-}
-
 /// A home-signed outcome notice (FIX 2053) this device verified against the
 /// home root it already trusts: its signer is a live root in the authority
-/// log this env folded, or the successor a signed handoff from such a root
-/// names, never just the key the notice carries, and it names this env's
-/// authority vault, its local vault id and this member. Only such a notice
-/// confirms a deleted vault.
+/// log this env folded, or the successor signed leave-notice delegations
+/// from such a root hand on to (FIX 7932), never just the key the notice
+/// carries, and it names this env's authority vault, its local vault id and
+/// this member. Only such a notice confirms a deleted vault.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedLeaveNotice {
     outcome: SharedActOutcome,
 }
 
+/// What a home-signed leave notice proves in this env (FIX 2053, FIX 7919,
+/// FIX 7932).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeaveNoticeCheck {
+    /// It verified: its signer is a root this env trusts, or every link from
+    /// one to it verified.
+    Verified(VerifiedLeaveNotice),
+    /// It names this env's vault and member and its signature holds under
+    /// the key it names, but the delegations beside it do not reach that key
+    /// from a root this env trusts. It proves nothing and confirms nothing.
+    /// The home keeps the notice, and a later delivery whose delegations
+    /// reach it judges it again.
+    Pending,
+    /// It does not verify: it changes nothing.
+    Refused,
+}
+
 impl VerifiedLeaveNotice {
     /// Verifies `signed` in `vault`, the env that holds shared vault
-    /// `vault_id`, as `member`'s own notice. `handoff` is what the home sent
-    /// beside it: the signed rows that hand its root on, a ReRoot or the host
-    /// root's own rotation, and the rows they stand on that this env did not
-    /// fold, parents first. A home that re-rooted since this env last folded
-    /// signs with a key only those rows name. They fold with this env's rows
-    /// in memory as its own log folds, never written (FIX 3797), and only a
-    /// live Owner of that fold signs a notice that verifies; below an image
-    /// this env adopted and has not hydrated, the ReRoot chain alone extends
-    /// its folded roster. No rows the home sends prove that it holds back no
-    /// sibling handoff. `None` when the notice does not verify: such a notice
-    /// changes nothing.
+    /// `vault_id`, as `member`'s own notice. `continuity` is what the home
+    /// sent beside it: the leave-notice delegations on its root chain to the
+    /// key that signed it (FIX 7932). A home that re-rooted since this env
+    /// last folded signs with a key only those delegations name. The notice
+    /// verifies when its signer is a live Owner of this env's own,
+    /// unconflicted fold, or the end of delegations that walk back, each
+    /// signed by its predecessor and naming the one before it, to such an
+    /// Owner ([`Vault::leave_notice_signer_standing`]); nothing is written
+    /// and no roster is built. A gap leaves the notice pending; a link this
+    /// env knows otherwise refuses it. No delegation the home sends proves
+    /// that it holds back no sibling handoff.
     ///
     /// # Errors
     ///
@@ -96,28 +98,30 @@ impl VerifiedLeaveNotice {
         vault_id: u64,
         member: &str,
         signed: &SignedSharedActOutcome,
-        handoff: &[Vec<u8>],
-    ) -> Result<Option<Self>> {
+        continuity: &LeaveNoticeContinuity,
+    ) -> Result<LeaveNoticeCheck> {
         let outcome = &signed.outcome;
         if outcome.vault_id != vault_id || outcome.recipient != member {
-            return Ok(None);
-        }
-        let Some((authority_vault_id, roster)) = vault.roster_through_handoff(handoff)? else {
-            return Ok(None);
-        };
-        if authority_vault_id != signed.authority_vault_id
-            || !crate::authority::roster_has_live_owner(&roster, &signed.signature.public_key)
-        {
-            return Ok(None);
+            return Ok(LeaveNoticeCheck::Refused);
         }
         let transcript =
             crate::federation::shared_act_outcome_transcript(&signed.authority_vault_id, outcome)?;
         if !crate::authority::verify_authority_signature(&signed.signature, &transcript) {
-            return Ok(None);
+            return Ok(LeaveNoticeCheck::Refused);
         }
-        Ok(Some(Self {
-            outcome: outcome.clone(),
-        }))
+        Ok(
+            match vault.leave_notice_signer_standing(
+                &signed.authority_vault_id,
+                &signed.signature.public_key,
+                continuity,
+            )? {
+                NoticeSignerStanding::Trusted => LeaveNoticeCheck::Verified(Self {
+                    outcome: outcome.clone(),
+                }),
+                NoticeSignerStanding::Pending => LeaveNoticeCheck::Pending,
+                NoticeSignerStanding::Refused => LeaveNoticeCheck::Refused,
+            },
+        )
     }
 
     /// The notice the home signed.
@@ -130,43 +134,53 @@ impl VerifiedLeaveNotice {
     /// reads it, or [`SharedLeaveKind::Deleted`] for the vault's deletion.
     #[must_use]
     pub fn kind(&self) -> Option<SharedLeaveKind> {
-        let notice = &self.outcome;
-        if matches!(notice.change, SharedVaultChange::VaultDeleted { .. }) {
-            return Some(SharedLeaveKind::Deleted);
-        }
-        left_change(notice, notice.vault_id, &notice.recipient)
+        leave_kind(&self.outcome)
     }
 }
 
-/// The local record that this device left a shared vault: the notice it
-/// confirmed and the unsynced edits the leave discarded. Local only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SharedLeaveReceipt {
-    /// The shared-act receipt the notice names.
-    pub notice_receipt: String,
-    pub vault_id: u64,
-    /// The member (person id, hex) who left.
-    pub member: String,
-    pub kind: SharedLeaveKind,
-    /// When the shared vault recorded the change.
-    pub changed_at: u64,
-    /// When this device discarded its queued edits.
-    pub completed_at: u64,
-    /// Queued window updates discarded (`q:` rows).
-    pub discarded_window_updates: u64,
-    /// Unacknowledged text frames discarded (`qd:e:` rows).
-    pub discarded_text_frames: u64,
-    /// Pending NOTE commands discarded (`qn:e:` rows).
-    pub discarded_note_commands: u64,
-    /// Every unsynced edit the leave discarded: the three counts together.
-    pub discarded_unsynced_edits: u64,
-    /// The env's replica rows the leave purged: entity, edge, index, side and
-    /// sync rows.
-    pub purged_rows: u64,
-    /// The entities the purge kept: authority log and machine rows, rows a
-    /// legal hold names, and the pinned pack map.
-    pub kept_entities: u64,
+/// How `notice` ends its recipient's membership: as [`left_change`] reads
+/// it for its own vault and recipient, or [`SharedLeaveKind::Deleted`] for
+/// the vault's deletion. Only a verified notice confirms either.
+fn leave_kind(notice: &SharedActOutcome) -> Option<SharedLeaveKind> {
+    if matches!(notice.change, SharedVaultChange::VaultDeleted { .. }) {
+        return Some(SharedLeaveKind::Deleted);
+    }
+    left_change(notice, notice.vault_id, &notice.recipient)
+}
+
+/// The first of `notices` that verifies in `vault` as `member`'s own notice
+/// ending its membership in shared vault `vault_id`, the vault's deletion
+/// included ([`VerifiedLeaveNotice::verify`] beside `continuity`). With none,
+/// [`LeaveNoticeCheck::Pending`] while any is pending (FIX 7919, FIX 7932);
+/// else [`LeaveNoticeCheck::Refused`]. A notice that ends no membership is
+/// passed over, never kept pending.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn first_verified_leave(
+    vault: &Vault,
+    vault_id: u64,
+    member: &str,
+    notices: &[SignedSharedActOutcome],
+    continuity: &LeaveNoticeContinuity,
+) -> Result<LeaveNoticeCheck> {
+    let mut pending = false;
+    for signed in notices {
+        if leave_kind(&signed.outcome).is_none() {
+            continue;
+        }
+        match VerifiedLeaveNotice::verify(vault, vault_id, member, signed, continuity)? {
+            verified @ LeaveNoticeCheck::Verified(_) => return Ok(verified),
+            LeaveNoticeCheck::Pending => pending = true,
+            LeaveNoticeCheck::Refused => {}
+        }
+    }
+    Ok(if pending {
+        LeaveNoticeCheck::Pending
+    } else {
+        LeaveNoticeCheck::Refused
+    })
 }
 
 /// How `notice` ends `member`'s membership in shared vault `vault_id`, when
@@ -214,11 +228,23 @@ pub fn left_change(
 ///
 /// Storage errors.
 pub fn has_left(vault: &Vault) -> Result<bool> {
+    crate::store::shared_leave_receipt::has_left(&vault.store)
+}
+
+/// Whether the env's recorded leave already purged to its final pass: a
+/// restart derives this instead of reconfirming, so a completed purge never
+/// re-owes its orphan-body collection. No receipt reads false.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn leave_purge_complete(vault: &Vault) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    Ok(LEAVE_RECEIPTS
-        .iter_from(&vault.store, &txn, &[])?
-        .next()
-        .is_some())
+    let Some(first) = LEAVE_RECEIPTS.iter_from(&vault.store, &txn, &[])?.next() else {
+        return Ok(false);
+    };
+    let (_, receipt) = first?;
+    Ok(receipt.purge_complete)
 }
 
 /// Confirms, in `vault` (the env that holds the shared vault), the leave or
@@ -231,18 +257,31 @@ pub fn has_left(vault: &Vault) -> Result<bool> {
 /// lane first (`SyncConnection::check_shared_leave` does), so no buffered
 /// update lands after the discard and nothing refills the env.
 ///
+/// `unqueued` counts the valid run-buffer updates the leave arms discarded
+/// without queueing; it enters the window count at first confirm only.
+///
+/// Only a notice proved on evidence that closes reaches here: a pending one
+/// ([`LeaveNoticeCheck::Pending`]) is no [`VerifiedLeaveNotice`] (FIX 7919).
+///
 /// # Errors
 ///
 /// A notice that ends no membership; storage errors.
 pub fn confirm_verified_shared_leave(
     vault: &Vault,
     notice: &VerifiedLeaveNotice,
+    unqueued: u64,
 ) -> Result<SharedLeaveReceipt> {
     let Some(kind) = notice.kind() else {
         return Err(not_a_leave());
     };
     let outcome = notice.outcome();
-    confirm_leave(vault, (outcome.vault_id, &outcome.recipient), outcome, kind)
+    confirm_leave(
+        vault,
+        (outcome.vault_id, &outcome.recipient),
+        outcome,
+        kind,
+        unqueued,
+    )
 }
 
 fn not_a_leave() -> Error {
@@ -256,6 +295,7 @@ fn confirm_leave(
     (vault_id, member): (u64, &str),
     notice: &SharedActOutcome,
     kind: SharedLeaveKind,
+    unqueued: u64,
 ) -> Result<SharedLeaveReceipt> {
     let purge = |wtxn: &mut heed::RwTxn<'_>, receipt: &mut SharedLeaveReceipt| -> Result<bool> {
         let pass = crate::store::local_replica::purge_left_shared_env_in_txn(
@@ -274,6 +314,7 @@ fn confirm_leave(
         .fold(0_u64, |total, rows| total.saturating_add(count(rows)));
         receipt.purged_rows = receipt.purged_rows.saturating_add(rows);
         receipt.kept_entities = count(pass.kept_total);
+        receipt.purge_complete = pass.complete;
         LEAVE_RECEIPTS.put(&vault.store, wtxn, &notice.receipt_id, receipt)?;
         if pass.complete {
             // The final pass owes the env its orphan body collection.
@@ -283,12 +324,23 @@ fn confirm_leave(
     };
     let (mut receipt, mut complete) = vault.with_write_txn_grouped(|wtxn| {
         if let Some(mut receipt) = LEAVE_RECEIPTS.get(&vault.store, wtxn, &notice.receipt_id)? {
+            if receipt.purge_complete {
+                return Ok((receipt, true));
+            }
             // Confirmed before: finish the purge an interrupted call left.
             let complete = purge(wtxn, &mut receipt)?;
             return Ok((receipt, complete));
         }
+        // Durable `q:` rows that landed plus valid run-buffer entries that
+        // never did (leave-only Pause, published before `running=false`). No
+        // double count: the durable discard touches NO memory, and `unqueued`
+        // counts ONLY remaining valid entries after the final single try. The
+        // confirmed-before branch above ignores `unqueued`; a txn-failure
+        // retry re-adds the same un-reset value with the still-present
+        // durable rows.
         let discarded_window_updates =
-            crate::sync::queue::discard_updates_for_leave_in_txn(vault, wtxn)?;
+            crate::sync::queue::discard_updates_for_leave_in_txn(vault, wtxn)?
+                .saturating_add(unqueued);
         let discarded_text_frames =
             count(QUEUED_TEXT_FRAMES.delete_from(&vault.store, wtxn, &[])?);
         let discarded_note_commands =
@@ -308,6 +360,7 @@ fn confirm_leave(
                 .saturating_add(discarded_note_commands),
             purged_rows: 0,
             kept_entities: 0,
+            purge_complete: false,
         };
         let complete = purge(wtxn, &mut receipt)?;
         Ok((receipt, complete))

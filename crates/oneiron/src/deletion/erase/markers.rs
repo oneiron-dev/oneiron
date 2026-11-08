@@ -16,6 +16,18 @@ impl Vault {
         HARD_DELETE_MARKER.contains(&self.store, txn, &HexId(*id))
     }
 
+    /// The target has a permanent hard-delete marker and the delete rail
+    /// finds no active body or residue left to purge. This proves neither
+    /// owner authority nor checkpoint retirement.
+    pub(crate) fn hard_deleted_without_active_scope_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(self.local_hard_delete_marker_exists_in_txn(txn, id)?
+            && !self.active_delete_scope_exists_in_txn(txn, id)?)
+    }
+
     /// Removes a headerless tombstone replay's stale `dt:` and row-fence
     /// poison once a delete-protected engine row is successfully admitted.
     /// This is called in the SAME transaction as protected-row
@@ -28,7 +40,7 @@ impl Vault {
         id: &EntityId,
         entity_type: u8,
     ) -> Result<bool> {
-        if !crate::dreamer_runner::authority::is_base_agent_actor(id)?
+        if !crate::store::base_agent::is_base_agent_actor(id)?
             && !crate::registry::is_delete_protected_engine_record(entity_type)
             && !crate::store::project_kind::is_project_revision_type(&self.store, entity_type)
         {
@@ -191,7 +203,11 @@ impl Vault {
                 txn,
                 id,
             )?
-            || crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, txn, id)?
+            || crate::store::claim_refinement_control::claim_refinement_scope_exists_in_txn(
+                &self.store,
+                txn,
+                id,
+            )?
             || crate::store::skill_refinement_custody::refinement_custody_exists_in_txn(
                 &self.store,
                 txn,
@@ -205,7 +221,11 @@ impl Vault {
             || self.port_short_id_mapping_exists(txn, id)?
             || crate::tagging::erase_scope_exists_in_txn(&self.store, txn, id)?
             || crate::store::turn_missing::delete_scope_exists_in_txn(&self.store, txn, id)?
-            || crate::identity_redirect::redirect_row_exists_in_txn(&self.store, txn, id)?
+            || crate::store::identity_redirect_rows::redirect_row_exists_in_txn(
+                &self.store,
+                txn,
+                id,
+            )?
             || self.store.known_history_scope_exists_in_txn(txn, id)?
             || crate::world_keys::world_pad_scope_exists_in_txn(&self.store, txn, id)?
         {

@@ -97,8 +97,35 @@ impl Vault {
         self.claim_in_txn(
             rtxn,
             id,
+            None,
             super::history_projection::resolved_machine_history,
         )
+    }
+
+    /// The targeted claim and the actual history carriers the same read
+    /// consulted. These ids name source entities, not grants or a frozen
+    /// snapshot of their bytes.
+    pub(crate) fn get_claim_with_sources_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<(Option<ClaimBody>, Vec<EntityId>)> {
+        let mut sources = Vec::new();
+        let mut history_sources = Vec::new();
+        let body =
+            self.claim_in_txn(rtxn, id, Some(&mut sources), |store, txn, fold, target| {
+                let (projection, carriers) =
+                    super::history_projection::resolved_machine_history_with_sources(
+                        store, txn, fold, target,
+                    )?;
+                history_sources.extend(carriers);
+                Ok(projection)
+            })?;
+        sources.extend(history_sources);
+        if body.is_some() {
+            sources.push(*id);
+        }
+        Ok((body, sources))
     }
 
     /// [`Vault::get_claim_in_txn`] for a door that only restricts the claim:
@@ -113,6 +140,7 @@ impl Vault {
         self.claim_in_txn(
             rtxn,
             id,
+            None,
             super::history_projection::machine_history_for_restriction,
         )
     }
@@ -121,7 +149,8 @@ impl Vault {
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
-        history: fn(
+        mut sources: Option<&mut Vec<EntityId>>,
+        mut history: impl FnMut(
             &crate::store::Store,
             &heed::RoTxn<'_>,
             &crate::authority::AuthorityFold,
@@ -130,20 +159,45 @@ impl Vault {
     ) -> Result<Option<ClaimBody>> {
         let body = crate::ports::ClaimStore::port_claim_get(self, rtxn, id)?;
         let Some(body) = body else { return Ok(None) };
-        if crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
-            || !super::history_store::machine_history_ids_for_target(&self.store, rtxn, *id)?
-                .is_empty()
-            || self
-                .store
-                .vault_meta
-                .get(rtxn, &super::history_projection::pin_key(*id))?
-                .is_some()
+        if crate::authority::machine_claim_needs_history_observing(
+            &self.store,
+            rtxn,
+            &body,
+            |actor| {
+                if let Some(rows) = sources.as_deref_mut() {
+                    rows.push(actor);
+                }
+            },
+        )? || match sources.as_deref_mut() {
+            Some(rows) => super::history_store::machine_history_present_for_target_observing(
+                &self.store,
+                rtxn,
+                *id,
+                |control| rows.push(control),
+            )?,
+            None => {
+                super::history_store::machine_history_present_for_target(&self.store, rtxn, *id)?
+            }
+        } || self
+            .store
+            .vault_meta
+            .get(rtxn, &super::history_projection::pin_key(*id))?
+            .is_some()
         {
             let fold = self.authority_fold_readonly_in_txn(rtxn)?;
             let projection = history(&self.store, rtxn, &fold, *id)?;
             // A superseded history's same-id successor is an ordinary claim.
             if !projection.admits_successor_by(crate::claim::claim_author(&body))
-                || crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
+                || crate::authority::machine_claim_needs_history_observing(
+                    &self.store,
+                    rtxn,
+                    &body,
+                    |actor| {
+                        if let Some(rows) = sources.as_deref_mut() {
+                            rows.push(actor);
+                        }
+                    },
+                )?
             {
                 return Ok(Some(super::history_projection::project_machine_claim(
                     &projection,
@@ -400,26 +454,4 @@ pub(crate) fn facet_refs_in_port<P: crate::ports::EdgeStoreRead>(
     Ok(facets)
 }
 
-/// Reads the immutable writer identity already stamped by `WriteEnvelope`
-/// into candidate evidence. Missing, duplicate, malformed, or reserved actor
-/// refs fail closed by returning no producer match.
-pub(crate) fn session_claim_producer(body: &ClaimBody) -> Option<EntityId> {
-    let Value::Map(entries) = body.evidence.as_ref()? else {
-        return None;
-    };
-    let mut producer = None;
-    for (key, value) in entries {
-        if key.as_str() != Some(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY) {
-            continue;
-        }
-        if producer.is_some() {
-            return None;
-        }
-        let Value::Binary(bytes) = value else {
-            return None;
-        };
-        let actor_bytes: [u8; ENTITY_ID_LEN] = bytes.as_slice().try_into().ok()?;
-        producer = Some(EntityId::from_bytes(actor_bytes).ok()?);
-    }
-    producer
-}
+pub(crate) use crate::store::claim_projection::session_claim_producer;

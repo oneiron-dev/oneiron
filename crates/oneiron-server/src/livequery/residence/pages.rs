@@ -37,7 +37,9 @@ fn search_changed() -> AppError {
 
 /// One page of a search served in pages, with the cursor of the next. A
 /// forwarded search's verified caller is written to `attribution`, as for
-/// a search of one call (FIX 3550).
+/// a search of one call (FIX 3550), and `off_carrier` says whether it sits
+/// off the carrying device: every page is its own call, so each page's
+/// reply carries the rule its send judges again (FIX 11991).
 pub(super) fn search_pages(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -45,6 +47,7 @@ pub(super) fn search_pages(
     input: SearchRequest,
     budgets: ResidenceOperationBudgets,
     attribution: &mut Option<ForwardedAttribution>,
+    off_carrier: &mut bool,
 ) -> Result<Answer, AppError> {
     let selector_wire = base64::engine::general_purpose::STANDARD
         .decode(&input.selector)
@@ -57,6 +60,9 @@ pub(super) fn search_pages(
     *attribution = forwarded
         .as_ref()
         .map(|forwarded| ForwardedAttribution::of(&forwarded.caller));
+    *off_carrier = forwarded
+        .as_ref()
+        .is_some_and(|forwarded| forwarded.locality == oneiron::claim::CallerLocality::OffDevice);
     let admission = match &forwarded {
         Some(caller) => caller.admission(server, peer, &selector)?,
         None => admitted(server, auth, peer, &selector)?,
@@ -70,25 +76,29 @@ pub(super) fn search_pages(
         Some(caller) => caller.read_key(),
         None => device_search_read_key(server, auth)?,
     };
-    let as_of = match &input.page {
-        Some(page) => page.as_of,
-        None => std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_secs()),
-    };
+    let as_of = input
+        .as_of
+        .or_else(|| input.page.as_ref().map(|page| page.as_of))
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_secs())
+        });
     let current_windows: HashSet<_> = read_window_list(&server.root_doc).into_iter().collect();
     let mut selected_by_window = HashMap::new();
     // The ranking starts as deep as a search of one call reads and doubles
     // until it holds the request or every match.
     let mut window = input.limit.max(oneiron::memory::caps::MAX_SEARCH_LIMIT);
     let hits = loop {
-        let (candidates, ranked) = home_search_page_candidates(
+        let (candidates, exhausted) = home_search_page_candidates(
             &server.vault,
             actor.clone(),
             &input.query,
             window,
             input.scope.as_ref(),
             as_of,
+            input.as_of,
+            input.filter.as_ref(),
         )
         .map_err(|_| AppError::internal_server_error("scoped search unavailable"))?;
         let mut hits = Vec::new();
@@ -110,7 +120,7 @@ pub(super) fn search_pages(
                 }
             }
         }
-        if hits.len() == input.limit || ranked < window {
+        if hits.len() == input.limit || exhausted {
             break hits;
         }
         window = window.saturating_mul(2);
@@ -123,6 +133,7 @@ pub(super) fn search_pages(
         &selector_wire,
         input.scope.as_ref(),
         as_of,
+        input.filter.as_ref(),
         &listed,
     );
     let offset = match &input.page {

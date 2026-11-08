@@ -51,6 +51,7 @@ pub(crate) struct OneironerFilter {
     encoder: Option<Arc<dyn ExtractionEncoder>>,
     /// The vault manifest's tagger binding when the slot's tagger is not it.
     differs_from_binding: Option<String>,
+    language: Option<String>,
     /// Who its calls are made for: the server's vault, whose calls the
     /// dispatcher shares its room by (FIX 9519).
     caller: ExtractionCaller,
@@ -59,10 +60,16 @@ pub(crate) struct OneironerFilter {
 impl OneironerFilter {
     /// The filter over `server`'s tagger slot.
     pub(crate) fn of_server(server: &SyncServer) -> Self {
-        let slot = server.tagger.as_ref();
+        let slot = server.tagger_slot();
         Self {
-            encoder: slot.map(|slot| Arc::clone(slot.tagger()) as Arc<dyn ExtractionEncoder>),
-            differs_from_binding: slot.and_then(|slot| unselected_binding(slot, server.vault())),
+            encoder: slot
+                .as_ref()
+                .map(|slot| Arc::clone(slot.tagger()) as Arc<dyn ExtractionEncoder>),
+            language: slot
+                .as_ref()
+                .and_then(|slot| slot.config().language.clone()),
+            differs_from_binding: slot
+                .and_then(|slot| unselected_binding(slot.as_ref(), server.vault())),
             caller: ExtractionCaller::vault(server.vault()),
         }
     }
@@ -104,7 +111,7 @@ impl TextFilter for OneironerFilter {
             context: Vec::new(),
             following: Vec::new(),
             register: EncoderRegister::Live,
-            language: None,
+            language: self.language.clone(),
             speaker: None,
         };
         // Neither a chat turn nor the tag door: a bulk call (FIX 6755).

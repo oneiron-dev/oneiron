@@ -1,11 +1,9 @@
 //! Dispatch payload kind carried by the background attempt queue.
 
-/// Payload-level attempt type carried inside the `"dreamer"` queue kind —
-/// invisible to existing dreamer consumers, which match on their own types.
-pub const AGENT_DISPATCH_ATTEMPT_TYPE: &str = "agent.dispatch";
+pub use crate::store::dispatch_attempt_kind::AGENT_DISPATCH_ATTEMPT_TYPE;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 24] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 27] = [
     "schema_version",
     "target",
     "agent_def",
@@ -30,4 +28,7 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 24] = [
     "comm",
     "direct_spawn",
     "requester",
+    "task_type_parents",
+    "caller_origin",
+    "funding",
 ];

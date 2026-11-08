@@ -40,9 +40,7 @@ pub(crate) struct ConnectorAdmissionPolicy {
 }
 impl ConnectorAdmissionPolicy {
     pub(crate) fn decode(value: &Value) -> Option<Self> {
-        let rows = value
-            .as_array()
-            .filter(|rows| !rows.is_empty() && rows.len() <= 512)?;
+        let rows = value.as_array().filter(|rows| !rows.is_empty())?;
         let mut table = Self::default();
         for row in rows {
             let entries = row.as_map()?;
@@ -71,7 +69,7 @@ impl ConnectorAdmissionPolicy {
                     }
                     let number = |name: &str| -> Option<usize> {
                         let n = usize::try_from(values.get(name)?.as_u64()?).ok()?;
-                        (1..=4096).contains(&n).then_some(n)
+                        (1..).contains(&n).then_some(n)
                     };
                     let quotas = ConnectorAdmissionQuotas {
                         max_tools: number("max_tools")?,

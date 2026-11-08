@@ -5,7 +5,8 @@
 
 use super::{
     LinePos, ReadBounds, Reply, ResultBody, Scan, Seek, count_lf, decode, encoded_len,
-    floor_boundary, invalid_input, lfs_before, refusal, scan_limit, seek_line, view, whole_index,
+    floor_boundary, index_prefix_len, invalid_input, lfs_before, refusal, scan_limit, seek_line,
+    view, window_index,
 };
 use crate::Result;
 use crate::code_run::CodeRunOutputKind;
@@ -54,17 +55,63 @@ pub(super) fn slice(
     input: Value,
     bounds: &ReadBounds<'_>,
 ) -> Result<Reply> {
+    Ok(slice_delivered(body, reference, input, bounds)?.0)
+}
+
+/// [`slice`], with the range of the body its reply shows, in whole-body
+/// offsets (FIX 7735): the bytes its `text` or `base64` holds, taken here
+/// before the reply is encoded. A refusal, a reply that stops at the scan
+/// bound and an empty reply show none.
+pub(super) fn slice_delivered(
+    body: &dyn ResultBody,
+    reference: &str,
+    input: Value,
+    bounds: &ReadBounds<'_>,
+) -> Result<(Reply, Option<(u64, u64)>)> {
     let input: SliceInput = match decode(input) {
         Ok(input) => input,
-        Err(refused) => return Ok(Reply::Denied(refused)),
+        Err(refused) => return Ok((Reply::Denied(refused), None)),
     };
     let text = body.kind() == CodeRunOutputKind::Text;
     let len = body.len();
     let mut scan = Scan::new(bounds.scan_bytes());
-    let index = whole_index(body);
-    let index = index.as_deref();
     let bytes_span = input.bytes.as_deref().map(span);
     let lines_span = input.lines.as_deref().map(span);
+    // B1: the byte target, when the input spans bytes alone; hoisted above
+    // index construction so an inside-prefix target skips setup.
+    // Both-spans input stays denied below.
+    let byte_start = match (bytes_span, lines_span) {
+        (Some(Some((start, _))), None) => Some(start.min(len)),
+        _ => None,
+    };
+    let from = input.cursor.map_or(LinePos::START, |cursor| LinePos {
+        offset: cursor.offset.min(len),
+        lfs: cursor.line,
+    });
+    let mut index = if text || lines_span.is_some() {
+        let prefix = index_prefix_len(body);
+        match (byte_start, prefix) {
+            // UTF-8 snapping can move the target back by three bytes. If
+            // that reaches the charged prefix, avoid charging it twice.
+            (Some(start), Some(prefix)) if start.saturating_sub(3) < prefix => None,
+            // Byte arm outside (or without) the prefix: force the eager
+            // path with a consistent cursor at the prefix end, so the
+            // lookup keeps its jump; the eager skip then only drops a
+            // single-block index, which jumps nowhere past the scan.
+            (Some(_), _) => window_index(
+                body,
+                &mut scan,
+                LinePos {
+                    offset: prefix.unwrap_or(0),
+                    lfs: 0,
+                },
+            )?,
+            // Lines arm (and denied shapes): the actual cursor.
+            (None, _) => window_index(body, &mut scan, from)?,
+        }
+    } else {
+        None
+    };
     // The range asked for, in bytes: by lines, its first line found by the
     // line index or a bounded scan, its end only within one reply of it.
     let (start, end, asked_end, by_lines) = match (bytes_span, lines_span) {
@@ -76,17 +123,13 @@ pub(super) fn slice(
         ),
         (None, Some(Some((first, last)))) => {
             if !text {
-                return Ok(Reply::Denied(refusal("lines_on_binary")));
+                return Ok((Reply::Denied(refusal("lines_on_binary")), None));
             }
-            let from = input.cursor.map_or(LinePos::START, |cursor| LinePos {
-                offset: cursor.offset.min(len),
-                lfs: cursor.line,
-            });
-            let start = match seek_line(body, index, from, first, &mut scan)? {
+            let start = match seek_line(body, index.as_mut(), from, first, &mut scan)? {
                 Seek::At(start) => start,
                 Seek::End(_) => len,
                 Seek::Limit(at) => {
-                    return Ok(Reply::Output(json!({
+                    let reply = json!({
                         "ref": reference,
                         "done": false,
                         "scanned": [from.offset, at.offset],
@@ -95,7 +138,8 @@ pub(super) fn slice(
                             "lines": asked(first, last),
                             "cursor": {"offset": at.offset, "line": at.lfs},
                         },
-                    })));
+                    });
+                    return Ok((Reply::Output(reply), None));
                 }
             };
             let end = match last {
@@ -116,9 +160,8 @@ pub(super) fn slice(
             (start, end, None, Some((first, last)))
         }
         _ => {
-            return Ok(Reply::Denied(invalid_input(
-                "slice takes bytes: [start, end?] or lines: [start, end?]",
-            )));
+            let refused = invalid_input("slice takes bytes: [start, end?] or lines: [start, end?]");
+            return Ok((Reply::Denied(refused), None));
         }
     };
     // Text starts on a character boundary: back to the start of a
@@ -142,7 +185,7 @@ pub(super) fn slice(
     let end_at = usize::try_from(end - from).unwrap_or(usize::MAX);
     let first_line = match by_lines {
         Some((line, _)) => Some(line),
-        None if text => lfs_before(body, index, start, &mut scan)?,
+        None if text => lfs_before(body, index.as_ref(), start, &mut scan)?,
         None => None,
     };
     loop {
@@ -182,7 +225,9 @@ pub(super) fn slice(
             };
         }
         if encoded_len(&reply) <= bounds.reply_bytes || take == 0 {
-            return Ok(Reply::Output(reply));
+            let base = body.base();
+            let delivered = (stop > start).then_some((base + start, base + stop));
+            return Ok((Reply::Output(reply), delivered));
         }
         take /= 2;
     }

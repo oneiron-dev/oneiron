@@ -1,4 +1,5 @@
 //! Claims are the document state machine. The audit copy survives document deletion.
+use super::field_admission::InspectedPages;
 use super::model::*;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
@@ -76,11 +77,11 @@ fn chain_read_in(
             Ok(row) => row,
             Err(unreadable) => return Ok(Err(unreadable)),
         };
-        held |= !crate::gate::claim_consolidation_eligible_in_txn(
+        held |= !vault.store.gate_hooks.claim_consolidation_eligible_in_txn(
             &vault.store,
             txn,
             &id,
-            crate::gate::ConsolidationReader::EsignLedger,
+            oneiron_store::consolidation_reader::ConsolidationReader::EsignLedger,
         )?;
         if rows.insert(row.sequence, row).is_some() {
             return Ok(Err(invalid("forked document event sequence")));
@@ -128,7 +129,7 @@ pub(crate) fn esign_document_page_in_txn(
     after: Option<EntityId>,
     limit: usize,
 ) -> Result<(Vec<EntityId>, Option<EntityId>)> {
-    let claims = crate::claim::claim_ids_for_predicate_page_in_txn(
+    let claims = crate::store::claim_projection::claim_ids_for_predicate_page_in_txn(
         &vault.store,
         txn,
         DRAFT_PREDICATE,
@@ -244,6 +245,28 @@ pub(super) fn append(
     actor: EsignAuditActor,
     now: u64,
 ) -> Result<EsignState> {
+    append_inspected(
+        vault,
+        txn,
+        document,
+        event,
+        actor,
+        now,
+        &InspectedPages::default(),
+    )
+}
+/// [`append`] with the pages its event's items had inspected before this
+/// writer (FIX 9609): its field admission lays the fields out on them and
+/// parses no PDF they hold.
+pub(super) fn append_inspected(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    document: EntityId,
+    event: EsignEvent,
+    actor: EsignAuditActor,
+    now: u64,
+    inspected: &InspectedPages,
+) -> Result<EsignState> {
     if vault.get_blob_artifact_in_txn(txn, &document)?.is_none() {
         return Err(Error::EntityNotFound);
     }
@@ -261,7 +284,7 @@ pub(super) fn append(
     };
     // Refuse unrenderable input before any event or Completed recipient state
     // commits. Signed rechecks all of that recipient's saved values as a backstop.
-    super::field_admission::validate_event_fields(vault, txn, &state, &event)?;
+    super::field_admission::validate_event_fields(vault, txn, &state, &event, inspected)?;
     let row = EsignEventRow {
         sequence: rows.len() as u64,
         previous_sha256: rows.last().map(hash).transpose()?.unwrap_or([0; 32]),

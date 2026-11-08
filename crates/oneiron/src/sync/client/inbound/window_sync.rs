@@ -11,15 +11,14 @@ use super::super::base::SyncClient;
 use super::super::types::SyncResidenceMode;
 use crate::error::{Error, SyncError, SyncProtocolValidation};
 use crate::sync::SyncEvent;
-use crate::sync::bridge::persist_window_update;
 use crate::sync::loro_support::{doc_version_vector, export_updates_since};
 use crate::sync::schema::create_window_doc;
 use crate::sync::transport;
 use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, TransportError, window_sub_tags};
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
-    LoadedWindow, ReplacementByteBound, WindowExport, apply_pending_window_updates,
-    load_window_from_state, persisted_window_pads,
+    LoadedWindow, QueuedSends, ReplacementByteBound, WindowExport, apply_pending_window_updates,
+    load_window_from_state,
 };
 
 impl SyncClient {
@@ -30,6 +29,24 @@ impl SyncClient {
         payload: &[u8],
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+        // A world the owner keeps on one other machine left this one and never
+        // lands here again (FIX 14534): its frames read as nothing, but for
+        // the home's version vector, which carries no content and tells the
+        // eviction what the home holds of the window. Nothing is answered.
+        if let Some(world) = key.world()
+            && crate::sync::residence::world_placed_elsewhere(&self.vault, world)
+                .map_err(|error| TransportError::Storage(error.to_string()))?
+        {
+            if matches!(
+                sub_tag,
+                window_sub_tags::VV_REQUEST | window_sub_tags::VV_RESPONSE
+            ) {
+                let home = VersionVector::decode(payload)
+                    .map_err(|_| TransportError::VersionVectorDecode)?;
+                self.note_home_window_vv(window_key, home)?;
+            }
+            return Ok(Vec::new());
+        }
         // A window the server stopped pushing to this socket changed. An owner-lane device that
         // follows it asks for it again, and the request subscribes it again; anything else reads
         // the notice as nothing, since the server may not know what this device follows. A world
@@ -52,7 +69,7 @@ impl SyncClient {
                 .map_err(|e| TransportError::Storage(e.to_string()))?;
             return Ok(vec![
                 transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
-                    .into_result()?,
+                    .into_own_frame()?,
             ]);
         }
         // A device syncs what it opened (ARCH-0023b): a window this device
@@ -108,6 +125,11 @@ impl SyncClient {
                 {
                     return Err(TransportError::InvalidPayload("unpromoted window control"));
                 }
+                // The home's grant on this socket, which a per-window
+                // re-bootstrap waits for before it asks for the window (FIX 20202).
+                if sub_tag == window_sub_tags::PROMOTION_GRANTED {
+                    self.promotions_granted.insert(key.clone());
+                }
                 // The setup window's catch-up asks for the window only once the home granted it.
                 if sub_tag == window_sub_tags::PROMOTION_GRANTED && !catch_up {
                     return Ok(Vec::new());
@@ -124,10 +146,10 @@ impl SyncClient {
                         window_sub_tags::VV_REQUEST,
                         &doc_version_vector(&window.doc),
                     )
-                    .into_result()?,
+                    .into_own_frame()?,
                 ])
             }
-            window_sub_tags::RESIDENCE_ACK
+            window_sub_tags::RESIDENCE_ACK | window_sub_tags::RESIDENCE_HELD
                 if self.config.residence_mode == SyncResidenceMode::Opened =>
             {
                 // The receipt binds what was sent for the row (FIX 7107).
@@ -180,7 +202,7 @@ impl SyncClient {
                             window_sub_tags::VV_RESPONSE,
                             &doc_version_vector(doc),
                         )
-                        .into_result()?,
+                        .into_own_frame()?,
                     ]);
                 }
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
@@ -199,11 +221,11 @@ impl SyncClient {
                         window_sub_tags::VV_RESPONSE,
                         &doc_version_vector(doc),
                     )
-                    .into_result()?,
+                    .into_own_frame()?,
                 );
                 // Record the server VV only after a fully valid exchange — it
                 // becomes the convergence witness for this window (ONE-1128).
-                self.server_vvs.insert(window_key.to_string(), server_vv);
+                self.note_home_window_vv(window_key, server_vv)?;
                 Ok(responses)
             }
             window_sub_tags::UPDATE => {
@@ -219,8 +241,15 @@ impl SyncClient {
                     return Ok(Vec::new());
                 }
                 // The home this connection proved, if it proved one, sent these bytes.
-                match self.import_own_device_window_update(window_key, payload, self.home_peer) {
-                    Ok(()) => Ok(Vec::new()),
+                let mut answers = Vec::new();
+                match self.import_own_device_window_update(
+                    window_key,
+                    payload,
+                    self.home_peer,
+                    Some(&mut answers),
+                ) {
+                    // What answers a deferred sealed update this import let in (FIX 10474).
+                    Ok(()) => Ok(answers),
                     // The update builds on history this window's own shallow root cut away: no
                     // update can bring it level, the server's replacement can.
                     Err(_) if self.update_reaches_below_root(&key, payload) => {
@@ -232,6 +261,14 @@ impl SyncClient {
                 }
             }
             window_sub_tags::REPLACEMENT => {
+                // FIX 4748: a peer's state-only copy goes in only when it holds
+                // everything this device holds of the window; else this device
+                // keeps its own and sends the peer its writes first.
+                if self.peer_session.is_some()
+                    && let Some(answer) = self.kept_out_peer_state_copy(window_key, payload)?
+                {
+                    return Ok(answer);
+                }
                 // The snapshot is its envelope's payload, joined from frames each
                 // within the floor and checked whole against the header's digest
                 // (FIX 8247); the replacement's admission bounds it.
@@ -239,7 +276,15 @@ impl SyncClient {
                 // The home this connection proved, if it proved one, sent the
                 // snapshot: its MESSAGE rows take the own-device lane (FIX 12111).
                 let own_device = self.own_device_import(self.home_peer);
-                // Judged again once no demotion holds the window closed.
+                // A peer session retires no queued send: the home session
+                // replays every one (FIX 4748).
+                let queued = if self.peer_session.is_some() {
+                    QueuedSends::Keep
+                } else {
+                    QueuedSends::Retire
+                };
+                // Judged again once no demotion holds the window closed. A fault
+                // not this vault's own is the home's, refused (FIX 22153).
                 let (window, conflicts) = self
                     .manager
                     .replace_window_bounded(
@@ -251,6 +296,7 @@ impl SyncClient {
                                 .unwrap_or(false)
                         },
                         ReplacementByteBound::NetworkFrame,
+                        queued,
                         own_device.as_ref(),
                     )
                     .map_err(|error| match error {
@@ -259,10 +305,7 @@ impl SyncClient {
                         }) => TransportError::Storage(
                             "window replacement waits on a held window".to_string(),
                         ),
-                        Error::Sync(SyncError::SyncProtocolError {
-                            context: SyncProtocolValidation::ReplacementRejected,
-                        }) => TransportError::InvalidPayload("window replacement rejected"),
-                        error => TransportError::Storage(error.to_string()),
+                        e => TransportError::from_applied(&e, "window replacement rejected"),
                     })?;
                 if !conflicts.is_empty() {
                     let _ = self.event_tx.send(SyncEvent::ReplacementConflicts {
@@ -273,11 +316,17 @@ impl SyncClient {
                 // The replaced window starts a fresh exchange: what the server held of the old
                 // one witnesses nothing about the new one.
                 self.server_vvs.remove(window_key);
+                self.kept_out_peer_copies.remove(window_key);
+                // The home's replacement installed, the evidence a per-window
+                // re-bootstrap waits for (FIX 20202); a peer's copy is not it.
+                if self.peer_session.is_none() {
+                    self.replacements_installed.insert(key.clone());
+                }
                 let vv = doc_version_vector(&window.doc);
                 drop(window);
                 Ok(vec![
                     transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
-                        .into_result()?,
+                        .into_own_frame()?,
                 ])
             }
             window_sub_tags::VV_RESPONSE => {
@@ -299,21 +348,49 @@ impl SyncClient {
                     &delta,
                     Some(&window.doc),
                 )?;
-                self.server_vvs.insert(window_key.to_string(), server_vv);
+                self.note_home_window_vv(window_key, server_vv)?;
                 Ok(responses)
             }
             _ => Ok(Vec::new()),
         }
     }
 
-    fn staged_entity_evidence(
+    /// Records `home`, the home's version vector of `window_key`, as this
+    /// connection's convergence witness, and keeps a world window's beside
+    /// the window (FIX 14534), so an eviction after a restart or a tightening
+    /// still knows what the home holds of it. A peer session's vector is the
+    /// session's convergence witness only (FIX 4748): what a peer holds says
+    /// nothing of what the home holds, so none is kept as the home's.
+    fn note_home_window_vv(
+        &mut self,
+        window_key: &str,
+        home: VersionVector,
+    ) -> std::result::Result<(), TransportError> {
+        // A peer session's vector is no home witness (FIX 4748). A world
+        // window's, and a BASE window's an owner's discard took rows from,
+        // which its projection waits to see cover the window (FIX 14534 part
+        // E), is kept as the home's.
+        if self.peer_session.is_none()
+            && (WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some())
+                || self.discard_touched(window_key)?)
+        {
+            crate::sync::residence::put_home_window_vv(&self.vault, window_key, &home)
+                .map_err(|error| TransportError::Storage(error.to_string()))?;
+        }
+        self.server_vvs.insert(window_key.to_string(), home);
+        Ok(())
+    }
+
+    pub(in crate::sync::client) fn staged_entity_evidence(
         &self,
     ) -> std::result::Result<
         std::collections::HashMap<crate::EntityId, (WindowKey, Vec<u8>)>,
         TransportError,
     > {
         let mut evidence = std::collections::HashMap::new();
-        for (key, bytes, _) in &self.staged_world_updates {
+        // A sealed update deferred in its envelope proves edges as a staged
+        // one does (FIX 10474).
+        for (key, bytes) in self.waiting_world_updates() {
             let live = self.ensure_window(key.as_str())?;
             let candidate = live.doc.fork();
             let imported = candidate
@@ -378,16 +455,30 @@ impl SyncClient {
         Ok(evidence)
     }
 
+    /// Imports each staged world update whose edges now resolve until a pass
+    /// lets none in, each deferred sealed update whose isolated check now
+    /// passes installed first (FIX 10474). What answers one whose pads did
+    /// not install goes into `answers`, the frames its caller returns to the
+    /// home; a caller with none keeps that update deferred, its pads' repair
+    /// scheduled, for a drain that can answer.
     pub(in crate::sync::client) fn drain_staged_world_updates(
         &mut self,
+        mut answers: Option<&mut Vec<Vec<u8>>>,
     ) -> std::result::Result<(), TransportError> {
         let mut healed = Vec::new();
         loop {
-            if self.staged_world_updates.is_empty() {
+            if self.staged_world_count() == 0 {
                 break;
             }
             let evidence = self.staged_entity_evidence()?;
-            let mut progressed = false;
+            let mut progressed =
+                self.install_deferred_sealed_updates(&evidence, answers.as_deref_mut())?;
+            // An installed one is staged now, as its window imports it.
+            let evidence = if progressed {
+                self.staged_entity_evidence()?
+            } else {
+                evidence
+            };
             let mut index = 0;
             while index < self.staged_world_updates.len() {
                 let key = self.staged_world_updates[index].0.clone();
@@ -542,106 +633,150 @@ impl SyncClient {
         }
         let vv_before = window.doc.oplog_vv();
         let key = WindowKey::new(window_key);
-        // FIX 11709: the MESSAGE rows an own machine's proven connection sent
-        // take the own-device lane in the doors this import and its retained
-        // world pass run, and no others.
-        crate::sync::ingest::with_own_device_import(
+        let positions = crate::sync::origin_positions::prepare(
             &self.vault,
             own_device,
-            (&key, &window.doc),
+            &key,
+            &window.doc,
             payload,
-            || self.land_window_update(window, &key, payload),
-        )?;
-        // A no-op import can still reveal a same-process durability gap:
-        // compare the live doc with exactly what restart would load from
-        // `d:w:` + surviving `u:w:` rows, then heal only the missing live-doc
-        // delta.
-        if window.doc.oplog_vv() == vv_before {
-            let durable_doc = match load_window_from_state(&self.vault, "local", &key) {
-                Ok(doc) => doc,
-                Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
-                    let doc = create_window_doc("local", &key);
-                    if let Err(e) = apply_pending_window_updates(&self.vault, &doc, &key) {
+        );
+        let result = (|| {
+            // FIX 11709: the MESSAGE rows an own machine's proven connection sent
+            // take the own-device lane in the doors this import and its retained
+            // world pass run, and no others.
+            crate::sync::ingest::with_own_device_import(
+                &self.vault,
+                own_device,
+                (&key, &window.doc),
+                payload,
+                || self.land_window_update(window, &key, payload),
+            )?;
+            if let Some(positions) = positions.as_ref()
+                && let Err(error) = positions.finish(&self.vault, &window.doc)
+            {
+                tracing::warn!(%error, "optional own-device position import did not settle");
+            }
+            // A no-op import can still reveal a same-process durability gap:
+            // compare the live doc with exactly what restart would load from
+            // `d:w:` + surviving `u:w:` rows, then heal only the missing live-doc
+            // delta.
+            if window.doc.oplog_vv() == vv_before {
+                let durable_doc = match load_window_from_state(&self.vault, "local", &key) {
+                    Ok(doc) => doc,
+                    Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+                        let doc = create_window_doc("local", &key);
+                        if let Err(e) = apply_pending_window_updates(&self.vault, &doc, &key) {
+                            self.manager.discard_window(&key);
+                            return Err(TransportError::Storage(format!(
+                                "load durable window updates: {e}"
+                            )));
+                        }
+                        doc
+                    }
+                    Err(e) => {
                         self.manager.discard_window(&key);
                         return Err(TransportError::Storage(format!(
-                            "load durable window updates: {e}"
+                            "load durable window state: {e}"
                         )));
                     }
-                    doc
+                };
+                let live_vv = window.doc.oplog_vv();
+                let durable_vv = durable_doc.oplog_vv();
+                if matches!(live_vv.partial_cmp(&durable_vv), Some(Less | Equal)) {
+                    return Ok(());
                 }
-                Err(e) => {
+                let fr_key = format!("fr:w:{window_key}");
+                match self.vault.sync_state_get(&fr_key) {
+                    Ok(Some(_)) => {
+                        self.manager.discard_window(&key);
+                        return Err(TransportError::Storage(
+                            "post-scrub echo deferred to full resync".to_string(),
+                        ));
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        self.manager.discard_window(&key);
+                        return Err(TransportError::Storage(format!(
+                            "read full-resync marker: {e}"
+                        )));
+                    }
+                }
+                let missing =
+                    match export_updates_since(&window.doc, &doc_version_vector(&durable_doc)) {
+                        Ok(missing) => missing,
+                        Err(e) => {
+                            self.manager.discard_window(&key);
+                            return Err(TransportError::Storage(format!(
+                                "export durable delta: {e}"
+                            )));
+                        }
+                    };
+                // Its pads persist by reference where custody here holds them
+                // (FIX 7107); a BASE window's as the owner's discard projects
+                // it, for what the home holds of it (FIX 14534 part E).
+                let durable_vv = durable_doc.oplog_vv();
+                if let Err(e) = crate::sync::window::persist_window_arrival(
+                    &self.vault,
+                    &key,
+                    &window.doc,
+                    &durable_vv,
+                    &missing,
+                    false,
+                ) {
                     self.manager.discard_window(&key);
                     return Err(TransportError::Storage(format!(
-                        "load durable window state: {e}"
+                        "persist live durable delta: {e}"
                     )));
                 }
-            };
-            let live_vv = window.doc.oplog_vv();
-            let durable_vv = durable_doc.oplog_vv();
-            if matches!(live_vv.partial_cmp(&durable_vv), Some(Less | Equal)) {
                 return Ok(());
             }
-            let fr_key = format!("fr:w:{window_key}");
-            match self.vault.sync_state_get(&fr_key) {
-                Ok(Some(_)) => {
-                    self.manager.discard_window(&key);
-                    return Err(TransportError::Storage(
-                        "post-scrub echo deferred to full resync".to_string(),
-                    ));
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    self.manager.discard_window(&key);
-                    return Err(TransportError::Storage(format!(
-                        "read full-resync marker: {e}"
-                    )));
-                }
-            }
-            let missing = match export_updates_since(&window.doc, &doc_version_vector(&durable_doc))
-            {
-                Ok(missing) => missing,
-                Err(e) => {
-                    self.manager.discard_window(&key);
-                    return Err(super::map_delta_export_err(e));
-                }
-            };
-            // Its pads persist by reference where custody here holds them
-            // (FIX 7107).
-            let missing = persisted_window_pads(&self.vault, &key, &missing, Some(&window.doc));
-            if let Err(e) = persist_window_update(&self.vault, window_key, &missing) {
-                self.manager.discard_window(&key);
+            // Remote imports never fire Observer A (local-only), so persist the
+            // accepted update bytes ourselves: without a u:w: row, remote state —
+            // including tombstones, whose LMDB purge already ran — would vanish
+            // from the doc on restart. Its pads persist by reference where
+            // custody here holds them (FIX 7107); a BASE window's as the owner's
+            // discard projects it (FIX 14534 part E). The home sent it, unless
+            // this connection is a federation peer's.
+            let from_home = self.config.federation_peer.is_none();
+            if let Err(e) = crate::sync::window::persist_window_arrival(
+                &self.vault,
+                &key,
+                &window.doc,
+                &vv_before,
+                payload,
+                from_home,
+            ) {
+                // Never leave RAM ahead of durable state on a FAILED persist
+                // (client analog of the ONE-1129 server evict-on-persist-failure):
+                // the import advanced this doc's version vector, so keeping the
+                // doc registered would tell the server — on the next VV exchange —
+                // that we already hold bytes that never became durable; they would
+                // never be re-sent and would vanish from the doc on restart
+                // (tombstones included). Discard the live window WITHOUT
+                // persisting (a persist would durably commit the unconfirmed
+                // import); the next open reloads from durable state and the
+                // ONE-1127/1128 VV exchange re-delivers the update.
+                self.manager.discard_window(&WindowKey::new(window_key));
                 return Err(TransportError::Storage(format!(
-                    "persist live durable delta: {e}"
+                    "persist remote update: {e}"
                 )));
             }
-            return Ok(());
+            let _ = self.event_tx.send(SyncEvent::WindowUpdated {
+                window_key: window_key.to_string(),
+            });
+            Ok(())
+        })();
+        if result.is_ok()
+            && let Some(positions) = positions
+            && let Some(identity) = self.manager.weak_window_if_same(window)
+            && let Some(positions) = positions.select_deferred(window, identity)
+        {
+            self.asset_bodies
+                .get_mut()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain_positions(positions);
         }
-        // Remote imports never fire Observer A (local-only), so persist the
-        // accepted update bytes ourselves: without a u:w: row, remote state —
-        // including tombstones, whose LMDB purge already ran — would vanish
-        // from the doc on restart. Its pads persist by reference where
-        // custody here holds them (FIX 7107).
-        let persisted = persisted_window_pads(&self.vault, &key, payload, Some(&window.doc));
-        if let Err(e) = persist_window_update(&self.vault, window_key, &persisted) {
-            // Never leave RAM ahead of durable state on a FAILED persist
-            // (client analog of the ONE-1129 server evict-on-persist-failure):
-            // the import advanced this doc's version vector, so keeping the
-            // doc registered would tell the server — on the next VV exchange —
-            // that we already hold bytes that never became durable; they would
-            // never be re-sent and would vanish from the doc on restart
-            // (tombstones included). Discard the live window WITHOUT
-            // persisting (a persist would durably commit the unconfirmed
-            // import); the next open reloads from durable state and the
-            // ONE-1127/1128 VV exchange re-delivers the update.
-            self.manager.discard_window(&WindowKey::new(window_key));
-            return Err(TransportError::Storage(format!(
-                "persist remote update: {e}"
-            )));
-        }
-        let _ = self.event_tx.send(SyncEvent::WindowUpdated {
-            window_key: window_key.to_string(),
-        });
-        Ok(())
+        result
     }
 
     /// Imports `payload` into `window`'s live document, `key`'s, where Observer
@@ -688,6 +823,15 @@ impl SyncClient {
         payload: &[u8],
         server_vv: &VersionVector,
     ) -> std::result::Result<Option<Vec<u8>>, TransportError> {
+        // A window an owner's discard projected holds rewritten deletes at
+        // the operations it rewrote: none goes to a home that does not hold
+        // those operations already (FIX 14534 part E, E2 = A).
+        if self
+            .projection_floor(window.key.as_str())?
+            .is_some_and(|floor| !server_vv.includes_vv(&floor))
+        {
+            return Ok(None);
+        }
         let export = crate::sync::window::export_window_since_for(
             &self.vault,
             &window.key,
@@ -702,6 +846,97 @@ impl SyncClient {
             WindowExport::Replacement(snapshot) if server_vv.is_empty() => Some(snapshot),
             WindowExport::Replacement(_) => None,
         })
+    }
+
+    /// FIX 4748: what answers a peer's state-only copy `copy` of `window_key` that this peer
+    /// session keeps out, or `None` when the copy goes in: it holds everything this device holds
+    /// of the window ([`crate::sync::peer_route::installs_peer_state_copy`]), so installing it
+    /// loses none of this device's writes.
+    ///
+    /// A copy kept out leaves the window as it is. This device sends the peer its own writes the
+    /// copy lacks, then asks for the window again, so the next copy holds them. It asks again
+    /// only while the peer's copies move on: a copy that holds nothing the last one kept out did
+    /// not is answered with nothing, so a peer that does not take the writes sets off no round of
+    /// copies; the window waits for the session's next vector round or change notice. Writes no
+    /// update can carry (the peer lacks history below this window's own root) are not sent, and
+    /// the window waits for the home. The queue is untouched either way. A copy a peer sends as
+    /// the first update of a window this device asked for with an empty vector is imported as
+    /// any update is, a merge that keeps every write.
+    fn kept_out_peer_state_copy(
+        &mut self,
+        window_key: &str,
+        copy: &[u8],
+    ) -> std::result::Result<Option<Vec<Vec<u8>>>, TransportError> {
+        let copy_vv = loro::LoroDoc::decode_import_blob_meta(copy, true)
+            .map_err(|_| TransportError::InvalidPayload("window replacement rejected"))?
+            .partial_end_vv;
+        let window = self.ensure_window(window_key)?;
+        if crate::sync::peer_route::installs_peer_state_copy(&copy_vv, &window.doc.oplog_vv()) {
+            return Ok(None);
+        }
+        let moved_on = self
+            .kept_out_peer_copies
+            .get(window_key)
+            .is_none_or(|last| !last.includes_vv(&copy_vv));
+        if !moved_on {
+            return Ok(Some(Vec::new()));
+        }
+        self.kept_out_peer_copies
+            .insert(window_key.to_owned(), copy_vv.clone());
+        let Some(writes) = self.export_to_server(&window, &copy_vv.encode(), &copy_vv)? else {
+            tracing::warn!(
+                window = window_key,
+                "a peer's window copy lacks writes of this device no update can carry: the \
+                 window waits for the home"
+            );
+            return Ok(Some(Vec::new()));
+        };
+        let mut answer = self.window_pad_frames(
+            window_key,
+            window_sub_tags::UPDATE,
+            None,
+            &writes,
+            Some(&window.doc),
+        )?;
+        answer.push(
+            transport::encode_window_sync(
+                window_key,
+                window_sub_tags::VV_REQUEST,
+                &doc_version_vector(&window.doc),
+            )
+            .into_own_frame()?,
+        );
+        Ok(Some(answer))
+    }
+
+    /// Whether an owner's discard took rows from BASE window `window_key`.
+    fn discard_touched(&self, window_key: &str) -> std::result::Result<bool, TransportError> {
+        let storage = |error: crate::error::Error| TransportError::Storage(error.to_string());
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| storage(error.into()))?;
+        crate::sync::window::discard_touched_in(&self.vault.store, &txn, window_key)
+            .map_err(storage)
+    }
+
+    /// The floor an owner's discard projection filed for BASE window
+    /// `window_key`, if one did.
+    fn projection_floor(
+        &self,
+        window_key: &str,
+    ) -> std::result::Result<Option<VersionVector>, TransportError> {
+        let storage = |error: crate::error::Error| TransportError::Storage(error.to_string());
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| storage(error.into()))?;
+        crate::sync::window::projection_floor_in(&self.vault.store, &txn, window_key)
+            .map_err(storage)
     }
 
     /// `REPLACEMENT_REQUEST` frames asking the server for each of `windows` whole.
@@ -724,5 +959,5 @@ impl SyncClient {
 /// A device's request for the server's replacement of `window_key`.
 fn replacement_request(window_key: &str) -> std::result::Result<Vec<u8>, TransportError> {
     transport::encode_window_sync(window_key, window_sub_tags::REPLACEMENT_REQUEST, &[])
-        .into_result()
+        .into_own_frame()
 }

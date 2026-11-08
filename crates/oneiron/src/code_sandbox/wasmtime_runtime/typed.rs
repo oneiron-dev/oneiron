@@ -4,6 +4,7 @@ use super::{HostEvent, State, StreamTarget, bindings::*, failure};
 use crate::Result;
 use crate::code_sandbox::SandboxBoundaryContract;
 use serde_json::{Value, json};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use wasmtime::StoreContextMut;
 use wasmtime::component::Linker;
@@ -60,6 +61,20 @@ impl State {
     /// the call runs as any other does (FIX 8676).
     fn begin_call(&mut self) {
         self.calls.host_calls = self.calls.host_calls.saturating_add(1);
+    }
+
+    /// The import's answer for its guest, or the trap that ends a step its
+    /// host stopped at the step's deadline (FIX 7703). The stop is the
+    /// host's own latch, never a value the guest reads, so no guest code
+    /// catches it and runs on past the safe point; a resumed step reads the
+    /// settled call's answer from the row the host kept.
+    fn answer<T>(&self, reply: T) -> wasmtime::Result<(T,)> {
+        if self.deadline_stop.load(Ordering::Acquire) {
+            return Err(wasmtime::Error::msg(
+                "component step stopped at its deadline",
+            ));
+        }
+        Ok((reply,))
     }
 
     fn call(&mut self, name: &'static str, input: Value) -> Reply<Value> {
@@ -173,7 +188,7 @@ pub(super) fn link_imports(
                         .data_mut()
                         .call("sandbox.fs.read_file", json!({"path":path}))
                         .and_then(|value| file_bytes(&value));
-                    Ok((reply,))
+                    cx.data().answer(reply)
                 },
             ),
             "sandbox.credential.call" => root.func_wrap(
@@ -194,7 +209,7 @@ pub(super) fn link_imports(
                             )
                             .map(|value| value.to_string())
                     })();
-                    Ok((reply,))
+                    cx.data().answer(reply)
                 },
             ),
             // The verb table is the host's own generated catalog: no bridge row.
@@ -231,7 +246,7 @@ pub(super) fn link_imports(
                         }
                         field::<Value>(&value, "output").map(|output| output.to_string())
                     })();
-                    Ok((reply,))
+                    cx.data().answer(reply)
                 },
             ),
             "oneiron.clock.now_unix_ms" => {
@@ -242,7 +257,7 @@ pub(super) fn link_imports(
                         .call("oneiron.clock.now_unix_ms", json!({}))
                         .and_then(|value| field::<u64>(&value, "value"))
                         .map_err(wasmtime::Error::msg)?;
-                    Ok((value,))
+                    cx.data().answer(value)
                 })
             }
             "oneiron.output.text" => root.func_wrap(
@@ -255,13 +270,22 @@ pub(super) fn link_imports(
                         "store" => StreamTarget::Store { start },
                         _ => return Err(wasmtime::Error::msg("unknown streamed output target")),
                     };
-                    Ok((cx.data_mut().output(target, frame.into_bytes())?,))
+                    let sent = cx.data_mut().output(target, frame.into_bytes())?;
+                    cx.data().answer(sent)
                 },
             ),
             "oneiron.output.bytes" => root.func_wrap(
                 wit,
                 |mut cx: StoreContextMut<'_, State>, (path, frame): (String, Vec<u8>)| {
-                    Ok((cx.data_mut().output(StreamTarget::File(path), frame)?,))
+                    let sent = cx.data_mut().output(StreamTarget::File(path), frame)?;
+                    cx.data().answer(sent)
+                },
+            ),
+            "oneiron.store.bytes" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, State>, (start, frame): (bool, Vec<u8>)| {
+                    let sent = cx.data_mut().output(StreamTarget::Store { start }, frame)?;
+                    cx.data().answer(sent)
                 },
             ),
             "oneiron.random.bytes" => root.func_wrap(
@@ -272,7 +296,7 @@ pub(super) fn link_imports(
                         .data_mut()
                         .call("oneiron.random.bytes", json!({"length":length}))
                         .and_then(|value| base64_bytes(&value));
-                    Ok((reply,))
+                    cx.data().answer(reply)
                 },
             ),
             "vault.agents.put" => root.func_wrap(
@@ -294,7 +318,7 @@ pub(super) fn link_imports(
                             disposition: field(&value, "disposition")?,
                         })
                     })();
-                    Ok((reply,))
+                    cx.data().answer(reply)
                 },
             ),
             "self.json.validate" => root.func_wrap(
@@ -310,7 +334,7 @@ pub(super) fn link_imports(
                             .call("self.json.validate", json!({"schema":schema,"value":value}))
                             .and_then(|result| field(&result, "valid"))
                     })();
-                    Ok((reply,))
+                    cx.data().answer(reply)
                 },
             ),
             "self.report_blocked" => root.func_wrap(
@@ -325,7 +349,7 @@ pub(super) fn link_imports(
                         )
                         .and_then(|value| field(&value, "receipt"))
                         .map(|receipt| BlockedOutput { receipt });
-                    Ok((reply,))
+                    cx.data().answer(reply)
                 },
             ),
             "ask" => root.func_wrap(
@@ -337,7 +361,7 @@ pub(super) fn link_imports(
                         .call(public, json!({"prompt":input.prompt}))
                         .and_then(|value| field(&value, "waitId"))
                         .map(|wait_id| WaitOutput { wait_id });
-                    Ok((reply,))
+                    cx.data().answer(reply)
                 },
             ),
             "self.speak" | "self.think" | "self.express" => root.func_wrap(
@@ -353,7 +377,7 @@ pub(super) fn link_imports(
                                 is_visible: field(&value, "isVisible")?,
                             })
                         });
-                    Ok((reply,))
+                    cx.data().answer(reply)
                 },
             ),
             _ => return Err(failure("canonical WIT import has no engine bridge")),

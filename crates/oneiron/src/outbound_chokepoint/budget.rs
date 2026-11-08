@@ -13,8 +13,8 @@ use super::types::OutboundEffectResult;
 use crate::Vault;
 use crate::connector_key::{
     self, ConnectorKeyStatus, ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetCharge,
-    EffectorBudgetChargeOutcome, EffectorBudgetDebit, EffectorBudgetLocation,
-    EffectorBudgetOnExhaust, SpendReserve,
+    EffectorBudgetChargeOutcome, EffectorBudgetDebit, EffectorBudgetOnExhaust,
+    EffectorSpendReservationRow, SpendReserve,
 };
 use crate::error::Error;
 use crate::gate::{self, GateOutcome};
@@ -111,10 +111,12 @@ fn paced_result(intent_id: IntentId, next_eligible_at: u64, reason: &str) -> Out
         gate_reason_codes: vec![reason.to_owned()],
         gate_receipt_reasons: Vec::new(),
         budget_charge: None,
+        budget_settlement_events: Vec::new(),
         dedupe_suppressed: false,
         suppression_receipt: None,
         ceiling_count: None,
         approval_digest: None,
+        ask_consent: None,
         approval_actor: None,
         paced_until: Some(next_eligible_at),
     }
@@ -142,7 +144,7 @@ pub(super) fn spend_price_in_txn(
 pub(super) type ReservedSpend = (
     Vec<EffectorBudgetDebit>,
     ConnectorSpendBasis,
-    Vec<EffectorBudgetLocation>,
+    Vec<EffectorSpendReservationRow>,
 );
 
 /// FIX 8689: what the primary key's preauthorizing Spend rows, and its

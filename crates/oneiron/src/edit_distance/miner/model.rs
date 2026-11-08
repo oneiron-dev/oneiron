@@ -10,7 +10,7 @@ use super::config::{ROW_VERSION, SKILL_EDIT_VERDICT_ACCEPTED, SKILL_EDIT_VERDICT
 use super::target::CompilationTarget;
 use crate::edit_distance::attribution::AmendmentJudgment;
 use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, EndpointRef};
-use crate::edit_distance::{RetainedProposal, StoredProposal};
+use crate::edit_distance::{JoinedProposal, RetainedProposal};
 use crate::entity_id::EntityId;
 use crate::write_envelope::WriteActor;
 
@@ -286,8 +286,10 @@ pub(super) struct AmendmentSource {
 pub(super) enum SourceEnds {
     /// A recorded window: one artifact holds both ends and every change (the shared opened row).
     Recorded(Arc<RetainedProposal>),
-    /// Two endpoint texts, each read through its own row.
-    Endpoints(String, String),
+    /// Two endpoint texts, each read through its own row, beside the final
+    /// end's artifact (the settlement's own row) for endpoint-position ranges
+    /// (FIX 12715).
+    Endpoints(EntityId, String, String),
 }
 
 /// Every persisted proposal row (finalized windows and endpoint-only
@@ -295,7 +297,7 @@ pub(super) enum SourceEnds {
 /// resolves it and the opened row is kept for the rest of the pass (one
 /// snapshot-parse per artifact per pass).
 pub(super) struct ArtifactIndex {
-    pub(super) records: BTreeMap<EntityId, StoredProposal>,
+    pub(super) records: BTreeMap<EntityId, JoinedProposal>,
     pub(super) opened: RefCell<BTreeMap<EntityId, Arc<RetainedProposal>>>,
 }
 
@@ -328,10 +330,12 @@ impl ArtifactIndex {
                 }
                 self.opened(&artifact.entity_id()).map(SourceEnds::Recorded)
             }
-            DeltaSource::Reconstructed => Some(SourceEnds::Endpoints(
-                self.end_text(&delta.proposed_ref)?,
-                self.end_text(&delta.final_ref)?,
-            )),
+            DeltaSource::Reconstructed => {
+                let before = self.end_text(&delta.proposed_ref)?;
+                let after = self.end_text(&delta.final_ref)?;
+                let artifact = delta.final_ref.proposal_artifact()?.entity_id();
+                Some(SourceEnds::Endpoints(artifact, before, after))
+            }
             DeltaSource::FieldDiff => None,
         }
     }

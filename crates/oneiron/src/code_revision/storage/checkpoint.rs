@@ -8,11 +8,11 @@
 //! session of the revision they name. A row whose revision no record or
 //! proposal names is not compartmented.
 //!
-//! A revision's commit metadata names its author, and its integrity fold
-//! binds those bytes, so no split leaves a no-one form: a revision that
-//! carries one stays under the vault-wide seal, named with its session. No
-//! revision row names another actor. Nothing calls this until KS7-5, and only
-//! once CHECKPOINT_PAYLOADS_ENABLED is on.
+//! A finalized or stranded revision's author is erasable attribution, outside
+//! its integrity fold (FIX 6258): the split leaves the metadata naming no one
+//! under the session, and the author is an actor part, so a restore whose
+//! author did not open gives the revision the erase leaves. No revision row
+//! names another actor.
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
@@ -32,26 +32,32 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
-    self, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator, Unresolved,
+    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
+    Unresolved,
 };
 
-/// The carrier a revision's commit metadata is: it names the author, and the
-/// revision's integrity fold binds it.
-const COMMIT_AUTHOR: &str = "code revision commit metadata names its author";
+/// The field a revision's author fills.
+const COMMIT_AUTHOR: &str = "commit_author";
 
-/// Files a revision's row under its session, or leaves it under the
-/// vault-wide seal when its commit metadata names an author.
-pub(crate) fn revision_row(
-    out: &mut Captured,
-    revision: &CodeRevision,
-    at: RowLocator,
-    bytes: Vec<u8>,
-) {
-    let owner = OwnerRef::entity(&revision.session_id);
-    if revision.commit_metadata.is_some() {
-        out.unclassified(at, Some(owner), Unresolved::ActorSplit(COMMIT_AUTHOR));
-    } else {
-        out.exact(owner, at, bytes);
+/// Moves a revision's author out, leaving its metadata naming no one.
+pub(crate) fn take_author(revision: &mut CodeRevision) -> Vec<(String, EntityId)> {
+    revision
+        .commit_metadata
+        .as_mut()
+        .and_then(|meta| meta.author.take())
+        .map(|actor| (COMMIT_AUTHOR.to_owned(), actor))
+        .into_iter()
+        .collect()
+}
+
+/// Puts an opened author back where the split left none.
+pub(crate) fn put_author(revision: &mut CodeRevision, field: &str, actor: EntityId) -> Result<()> {
+    match revision.commit_metadata.as_mut() {
+        Some(meta) if field == COMMIT_AUTHOR && meta.author.is_none() => {
+            meta.author = Some(actor);
+            Ok(())
+        }
+        _ => Err(rows::bad_part()),
     }
 }
 
@@ -80,7 +86,8 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             continue;
         }
         sessions.insert(row.key, row.value.session_id);
-        revision_row(&mut out, &row.value, row.at, row.bytes);
+        let owner = OwnerRef::entity(&row.value.session_id);
+        rows::split_actors(&mut out, owner, RECORDS, row, take_author)?;
     }
     proposals::capture(dbs, txn, &mut sessions, &mut out)?;
     for row in rows::typed_rows(dbs, txn, INTEGRITY, &mut out)? {
@@ -166,11 +173,30 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     }
 }
 
-/// Puts `opened`'s code-revision rows back exactly.
+/// A finalized or stranded revision with its opened author back; one whose
+/// author did not open names no one, as the erase leaves it.
+fn join(
+    _: &RoTxn<'_>,
+    at: &RowLocator,
+    value: &[u8],
+    parts: &[&ActorPart],
+) -> Result<Option<Vec<u8>>> {
+    if at.in_table(RECORDS.decl()) {
+        let revision = rows::join_actors(RECORDS, value, parts, put_author)?;
+        return RECORDS.encode_value(&revision).map(Some);
+    }
+    if proposals::owns(at) {
+        return proposals::join(value, parts).map(Some);
+    }
+    Err(rows::bad_part())
+}
+
+/// Puts `opened`'s code-revision rows back: content as it is, and each
+/// revision with the author that opened.
 pub(crate) fn restore_in_txn(
     dbs: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, rows::no_join)
+    rows::restore_parts(dbs, txn, &opened, check, join)
 }

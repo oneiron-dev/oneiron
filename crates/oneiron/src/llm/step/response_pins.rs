@@ -35,7 +35,7 @@ use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead as _;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideKey, SideTable};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -55,13 +55,14 @@ const PINS: SideTable<EntityId, Vec<StepResponseRef>, Named> =
 
 /// Pins `claim`'s response to the exact version `pin` names, in the write
 /// that files the claim and appends the version: both commit or roll back
-/// with it.
+/// with it. `store` is where the claim lives: base, or a room's view for a
+/// step a room's run stages, whose pin drops with the room (FIX 4818).
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub(super) fn register_step_response_pin_in_txn(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     claim: &EntityId,
     pin: &StepResponseRef,
@@ -86,11 +87,12 @@ pub(super) fn register_step_response_pin_in_txn(
 ///
 /// Storage and custody errors.
 pub(crate) fn release_step_response_pins_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     claim: &EntityId,
     erase: bool,
 ) -> Result<()> {
+    let store = write.store;
     let pins = match PINS.get(store, txn, claim)? {
         Some(pins) => {
             PINS.delete(store, txn, claim)?;
@@ -102,7 +104,7 @@ pub(crate) fn release_step_response_pins_in_txn(
         },
     };
     for pin in &pins {
-        release_pin_in_txn(store, txn, claim, pin, erase)?;
+        release_pin_in_txn(write, txn, claim, pin, erase)?;
     }
     Ok(())
 }
@@ -123,7 +125,7 @@ fn carried_pin_in_txn(
 
 /// [`carried_pin_in_txn`] over a stored row already read. Most claims are
 /// not a step's: their bodies are never decoded here (as
-/// `response_bodies::step_claim_carriage` reads them).
+/// `store::model_step_response_carriage::step_claim_carriage` reads them).
 fn carried_pin_in_raw(raw: &[u8]) -> Option<StepResponseRef> {
     if raw.len() <= ENTITY_METADATA_HEADER_LEN || raw[0] != ENTITY_TYPE_CLAIM {
         return None;
@@ -149,12 +151,13 @@ fn carried_pin_in_raw(raw: &[u8]) -> Option<StepResponseRef> {
 /// any of them goes, the version released when no other retained claim pins
 /// it, then an erase's retirement staged or owed.
 fn release_pin_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     claim: &EntityId,
     pin: &StepResponseRef,
     erase: bool,
 ) -> Result<()> {
+    let store = write.store;
     #[cfg(unix)]
     let custody = if erase {
         let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&pin.content_hash)?;
@@ -173,7 +176,7 @@ fn release_pin_in_txn(
     let _ = erase;
     if !pinned_elsewhere_in_txn(store, txn, claim, pin)? {
         crate::blob_artifact::release_response_version_in_txn(
-            store,
+            write,
             txn,
             &pin.artifact_id,
             pin.version,
@@ -232,6 +235,29 @@ fn pinned_elsewhere_in_txn(
     Ok(false)
 }
 
+/// Whether another retained step claim keeps an exact version a native
+/// archive owner is releasing. This is the same local and carried-pin
+/// walk as a step teardown, not authority to erase an archive.
+pub(crate) fn step_response_version_pinned_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    except: &EntityId,
+    artifact: &EntityId,
+    version: u64,
+    content_hash: &[u8; 32],
+) -> Result<bool> {
+    pinned_elsewhere_in_txn(
+        store,
+        txn,
+        except,
+        &StepResponseRef {
+            artifact_id: *artifact,
+            version,
+            content_hash: *content_hash,
+        },
+    )
+}
+
 /// A stored row of `kind` with its body, under no delete this vault holds.
 fn row_retained(store: &Store, txn: &RoTxn<'_>, id: &EntityId, kind: u8) -> Result<bool> {
     let Some(raw) = store.port_entity_raw(txn, id)? else {
@@ -273,18 +299,19 @@ fn rests_in_retired(
 ///
 /// Storage and custody errors.
 pub(crate) fn prune_step_response_pins_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     erased_assets: &BTreeSet<EntityId>,
     erased_digests: &BTreeSet<[u8; 32]>,
 ) -> Result<()> {
+    let store = write.store;
     for (claim, pins) in PINS.scan(store, txn)? {
         if store.port_entity_raw(txn, &claim)?.is_none() {
             PINS.delete(store, txn, &claim)?;
             continue;
         }
         if !row_retained(store, txn, &claim, ENTITY_TYPE_CLAIM)? {
-            release_step_response_pins_in_txn(store, txn, &claim, false)?;
+            release_step_response_pins_in_txn(write, txn, &claim, false)?;
             continue;
         }
         let mut erased = false;
@@ -292,7 +319,7 @@ pub(crate) fn prune_step_response_pins_in_txn(
             erased |= rests_in_retired(pin, erased_assets, erased_digests)?;
         }
         if erased {
-            super::response_bodies::retire_step_claim_in_txn(store, txn, claim.as_bytes())?;
+            super::response_bodies::retire_step_claim_in_txn(write, txn, claim.as_bytes())?;
             continue;
         }
         let mut standing = Vec::with_capacity(pins.len());

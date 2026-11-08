@@ -8,6 +8,7 @@ use crate::entity_id::EntityId;
 use crate::pipeline::{PipelineBuilder, Signal, WorldScope};
 use crate::store::RetrievalAction;
 use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
+use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
 use crate::write_envelope::profile_snapshot::PsychProfileKey;
 
 use oneiron_model::llm::ModelId;
@@ -15,7 +16,7 @@ use oneiron_model::llm::ModelId;
 use super::super::types::{
     ContextPackRetrievalBudget, DEFAULT_CONTEXT_FRACTION, DEFAULT_MAX_FIELD_CHARS,
     DEFAULT_MAX_NEIGHBORS, DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION, DEFAULT_WINDOW_TOKEN_BUDGET,
-    FieldProfile, MAX_CONTEXT_NEIGHBORS, MAX_EDGE_HOP, PackFormat, TokenAllocation,
+    FieldProfile, PackFormat, TokenAllocation,
 };
 
 #[must_use = "ContextPackBuilder executes no query until a terminal `.run*()` method is called"]
@@ -40,6 +41,9 @@ pub struct ContextPackBuilder<'a> {
     pub(super) field_profile: FieldProfile,
     /// The explicit token ceiling ([`Self::token_budget`]); `None` = unset.
     pub(super) token_budget: Option<usize>,
+    /// The pack tokenizer for every serialization budget gate
+    /// ([`Self::pack_tokenizer`]); selected before any gate runs.
+    pub(super) tokenizer: PackTokenizer,
     /// The stored profile's window budget ([`Self::memory_profile`]).
     pub(super) profile_token_budget: Option<usize>,
     /// The declared share of the active model's window the default budget
@@ -90,6 +94,12 @@ impl<'a> ContextPackBuilder<'a> {
         self.pipeline = self.pipeline.retrieval_effort(effort, seeds);
         self
     }
+    /// Account for this pack's copied media queries on the host's memory line.
+    pub fn media_query_memory(mut self, memory: &crate::host_memory::MachineMemory) -> Self {
+        self.pipeline = self.pipeline.media_query_memory(memory);
+        self
+    }
+
     /// Adds one typed media-space list to this pack's retrieval (OF-370); see
     /// [`crate::pipeline::PipelineBuilder::search_media`].
     pub fn search_media(
@@ -181,6 +191,7 @@ impl<'a> ContextPackBuilder<'a> {
             format: PackFormat::default(),
             field_profile: FieldProfile::default(),
             token_budget: None,
+            tokenizer: DEFAULT_CONTEXT_PACK_TOKENIZER,
             profile_token_budget: None,
             context_fraction: DEFAULT_CONTEXT_FRACTION,
             model_window_tokens: None,
@@ -572,7 +583,7 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn edge_hop(mut self, depth: u32) -> Self {
-        self.edge_hop = depth.min(MAX_EDGE_HOP);
+        self.edge_hop = depth;
         self
     }
 
@@ -582,7 +593,7 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn selected_edge_budget(mut self, n: usize) -> Self {
-        self.selected_edge_budget = n.min(MAX_CONTEXT_NEIGHBORS);
+        self.selected_edge_budget = n;
         if let Some(budget) = self.retrieval_budget.as_mut() {
             budget.selected_edges = self.selected_edge_budget;
         }
@@ -616,6 +627,15 @@ impl<'a> ContextPackBuilder<'a> {
 
     pub fn token_budget(mut self, budget: usize) -> Self {
         self.token_budget = Some(budget);
+        self
+    }
+
+    /// Selects the pack tokenizer for every serialization budget gate
+    /// (opt-in reader measurement). The default is the engine-normalized
+    /// `o200k` counter; selection never changes authority, ranking, or row
+    /// order.
+    pub fn pack_tokenizer(mut self, tokenizer: PackTokenizer) -> Self {
+        self.tokenizer = tokenizer;
         self
     }
 
@@ -745,7 +765,7 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn retrieval_budget(mut self, budget: ContextPackRetrievalBudget) -> Self {
-        let selected_edges = budget.selected_edges.min(MAX_CONTEXT_NEIGHBORS);
+        let selected_edges = budget.selected_edges;
         self.selected_edge_budget = selected_edges;
         self.retrieval_budget = Some(ContextPackRetrievalBudget {
             selected_edges,

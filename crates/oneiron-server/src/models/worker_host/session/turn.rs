@@ -17,8 +17,6 @@
 //! reached restores one from a kept snapshot when the worker imports them
 //! (`restore.rs`), and otherwise creates one. A turn that finds its session
 //! parking takes it back; one that finds it restoring runs plain.
-use std::path::Path;
-
 use oneiron::llm::{
     CanonicalCheckpointRef, ManifestDigest, MessageStamp, SegmentManifest, SessionBinding,
     SessionCreate, SessionCreated, SessionFork, SessionForked, SessionGenerate,
@@ -32,7 +30,7 @@ use super::policy;
 use super::registry::{self, Ops, PendingTurn, Phase, Place, Serves, Session, send};
 use super::restore;
 use crate::models::native_exl3::session_capability;
-use crate::models::worker_host::NativeRoute;
+use crate::models::worker_host::{NativeLaunch, NativeRoute};
 
 /// What a turn forks from: its session's handle, the generation the host
 /// expects, and the checkpoint it published.
@@ -43,52 +41,77 @@ struct Opened {
 }
 
 /// Opens a session turn for a call to `route`'s incarnation `epoch` at
-/// `socket`, whose lease saw `observed`, sending `conversation` with
+/// `launch`, whose lease saw `observed`, sending `conversation` with
 /// `params`. `manifest` must describe the call's messages exactly, name its
 /// conversation and leave an ephemeral tail after its canonical path.
 /// Returns the `session` field of the call's `session.generate`, or `None`
 /// to send it as a plain `generate`.
 pub(in crate::models) async fn open_turn(
     route: &NativeRoute,
-    socket: &Path,
+    launch: &NativeLaunch,
     epoch: &str,
     observed: Option<&WorkerDescriptor>,
     manifest: &SegmentManifest,
     conversation: &JsonValue,
     params: &JsonValue,
-) -> Option<JsonValue> {
-    let messages = conversation.get("messages")?.as_array()?;
-    let anchor = manifest.anchor()?;
-    let admitted = lifecycle::admission(&anchor.vault)?;
-    let cut = policy::canonical_cut(manifest)?;
-    let newest = policy::newest_user(manifest).filter(|index| *index >= cut)?;
+    lease: &oneiron::BudgetLease,
+) -> oneiron::LlmResult<Option<JsonValue>> {
+    let Some(messages) = conversation.get("messages").and_then(JsonValue::as_array) else {
+        return Ok(None);
+    };
+    let Some(anchor) = manifest.anchor() else {
+        return Ok(None);
+    };
+    let Some(admitted) = lifecycle::admission(&anchor.vault) else {
+        return Ok(None);
+    };
+    let Some(cut) = policy::canonical_cut(manifest) else {
+        return Ok(None);
+    };
+    let Some(newest) = policy::newest_user(manifest).filter(|index| *index >= cut) else {
+        return Ok(None);
+    };
     if !policy::describes(manifest, messages) {
-        return None;
+        return Ok(None);
     }
     let tools = conversation.get("tools").cloned();
+    let Some(observed) = observed else {
+        return Ok(None);
+    };
     let key = SessionKey {
         anchor: anchor.clone(),
-        identity: observed?.identity.clone(),
+        identity: observed.identity.clone(),
         conditioning: policy::conditioning(params, tools.as_ref()),
     };
     let worker_id = route.worker.spec().worker_id.clone();
     let place = Place {
-        socket: socket.to_path_buf(),
+        launch: launch.clone(),
         epoch: epoch.to_owned(),
         worker: route.worker.clone(),
+        ledger: super::super::session_device_ledger(&route.worker),
     };
-    let ops = serves(&worker_id, &place).await?;
-    let path = manifest.messages().get(..cut)?;
+    let Some(ops) = serves(&worker_id, &place).await else {
+        return Ok(None);
+    };
+    let Some(path) = manifest.messages().get(..cut) else {
+        return Ok(None);
+    };
     if !attaches(&worker_id, &place, &key, path) {
-        return None;
+        return Ok(None);
     }
     let turn = Turn {
         manifest: manifest.digest(),
         path,
         admitted,
+        lease,
     };
-    let opened = session(&worker_id, &place, &key, ops, &turn).await?;
+    let Some(opened) = session(&worker_id, &place, &key, ops, &turn).await? else {
+        return Ok(None);
+    };
     let binding = key.binding();
+    let Some(canonical_messages) = u64::try_from(cut).ok() else {
+        return Ok(None);
+    };
     let fork = SessionFork {
         target: opened.target.clone(),
         stamp: SessionOpStamp {
@@ -96,29 +119,35 @@ pub(in crate::models) async fn open_turn(
             generation: opened.generation,
         },
         expected: opened.published.clone(),
-        canonical_messages: u64::try_from(cut).ok()?,
+        canonical_messages,
     };
-    let forked: SessionForked = match send(&place, SessionOp::Fork, &fork, Some(conversation)).await
-    {
-        Ok(forked) => forked,
-        Err(reason) => {
-            registry::drop_session(&worker_id, epoch, &binding, reason);
-            return None;
-        }
-    };
+    let forked: SessionForked =
+        match registry::send_released(&place, SessionOp::Fork, &fork, conversation, lease).await {
+            Ok(forked) => forked,
+            Err(registry::ReleasedSessionFault::Invalidation(reason)) => {
+                registry::drop_session(&worker_id, epoch, &binding, reason);
+                return Ok(None);
+            }
+            Err(registry::ReleasedSessionFault::Release(error)) => return Err(error),
+        };
+    // What the session's prepared tail gave this turn (I1 = C).
+    super::prepare::forked(&binding, forked.prepared.as_ref());
     let stale = policy::stale_after_fork(opened.published.as_ref(), anchor.head, &forked);
+    let dispatch_lease = lease.has_dispatch_release().then(|| lease.clone());
     {
         let mut workers = registry::lock();
         // A lock since the admission keeps the fork unregistered: the lock
         // retires the session, or already has.
         if lifecycle::admission(&anchor.vault) != Some(admitted) {
-            return None;
+            return Ok(None);
         }
-        let session = registry::current(&mut workers, &worker_id, &place)?
-            .sessions
-            .get_mut(&binding)
-            .filter(|session| session.handle == opened.target.handle)?;
-        session.residency = forked.residency;
+        let Some(session) = registry::current(&mut workers, &worker_id, &place)
+            .and_then(|worker| worker.sessions.get_mut(&binding))
+            .filter(|session| session.handle == opened.target.handle)
+        else {
+            return Ok(None);
+        };
+        session.observe(forked.residency);
         session.stale = stale;
         session.phase = Phase::Ready;
         // A restored session's first attach below the frontier it published
@@ -129,20 +158,24 @@ pub(in crate::models) async fn open_turn(
         {
             lifecycle::count(Counted::Replay);
         }
+        let Some(newest) = messages.get(newest) else {
+            return Ok(None);
+        };
         session.pending = Some(PendingTurn {
             manifest: *manifest.digest(),
             canonical: messages[..cut].to_vec(),
-            newest: messages.get(newest)?.clone(),
+            newest: newest.clone(),
             tools,
             base: opened.published,
+            dispatch_lease,
         });
     }
-    serde_json::to_value(SessionGenerate {
+    Ok(serde_json::to_value(SessionGenerate {
         target: opened.target,
         branch: forked.branch,
         op_id: policy::next_op_id(),
     })
-    .ok()
+    .ok())
 }
 
 /// Whether a turn on `key` whose canonical path is `path` may run on a
@@ -187,12 +220,13 @@ async fn serves(worker_id: &str, place: &Place) -> Option<Ops> {
     let known = registry::bind(&mut registry::lock(), worker_id, place).serves;
     let serves = match known {
         Serves::Unasked => {
-            let capability = session_capability(&place.socket).await;
+            let capability = session_capability(&place.launch, &place.epoch).await;
             let serves = match &capability {
                 Some(capability) if policy::serves_sessions(capability) => Serves::Yes(Ops {
                     restore: capability.serves(SessionOp::Restore),
                     snapshot: capability.serves(SessionOp::Export)
                         && capability.serves(SessionOp::Import),
+                    prepare: capability.serves(SessionOp::Prepare),
                 }),
                 _ => Serves::No,
             };
@@ -215,6 +249,7 @@ struct Turn<'a> {
     manifest: &'a ManifestDigest,
     path: &'a [MessageStamp],
     admitted: Admitted,
+    lease: &'a oneiron::BudgetLease,
 }
 
 /// The session `key` names on `place`, reused when it still serves (and,
@@ -228,7 +263,7 @@ async fn session(
     key: &SessionKey,
     ops: Ops,
     turn: &Turn<'_>,
-) -> Option<Opened> {
+) -> oneiron::LlmResult<Option<Opened>> {
     let binding = key.binding();
     let (found, retired, restoring) = {
         let mut workers = registry::lock();
@@ -278,9 +313,9 @@ async fn session(
         registry::release_later(target, at, reason);
     }
     if restoring {
-        return None;
+        return Ok(None);
     }
-    match found {
+    Ok(match found {
         Some((opened, residency)) => {
             resident(worker_id, place, &binding, opened, residency, ops.restore).await
         }
@@ -293,8 +328,9 @@ async fn session(
                     turn.manifest,
                     turn.path,
                     turn.admitted,
+                    turn.lease,
                 )
-                .await
+                .await?
             } else {
                 None
             };
@@ -307,7 +343,7 @@ async fn session(
                 None => create(worker_id, place, key, turn.admitted).await,
             }
         }
-    }
+    })
 }
 
 /// `opened` as it may fork now: as it is when its checkpoint is resident or
@@ -346,7 +382,7 @@ async fn resident(
             if let Some(session) = registry::current(&mut workers, worker_id, place)
                 .and_then(|worker| worker.sessions.get_mut(binding))
             {
-                session.residency = restored.residency;
+                session.observe(restored.residency);
             }
             Some(opened)
         }
@@ -380,12 +416,19 @@ async fn create(
         op_id: policy::next_op_id(),
     };
     let created: SessionCreated = send(place, SessionOp::Create, &body, None).await.ok()?;
+    let target = SessionTarget {
+        handle: created.handle,
+        binding: key.binding(),
+    };
     let session = Session {
         key: key.clone(),
         handle: created.handle,
         generation: created.generation,
         published: None,
         residency: SessionResidency::default(),
+        // No residency report was observed for it yet: its row starts
+        // unreported, never a fabricated default.
+        owner: registry::mint_owner(place, key.anchor.vault, target, None),
         pending: None,
         stale: None,
         path: Vec::new(),
@@ -406,7 +449,7 @@ async fn create(
             worker.sessions.insert(key.binding(), session);
             None
         } else {
-            Some(worker.owe(key.anchor.vault, session.target(), session.residency))
+            Some(worker.owe_session(session))
         }
     };
     if let Some((target, at)) = refused {

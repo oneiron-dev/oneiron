@@ -2,6 +2,7 @@
 
 use std::io;
 use std::net::{SocketAddr, TcpStream};
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -17,8 +18,26 @@ pub struct HttpRequest {
 pub struct HttpResponse {
     pub url: String,
     pub status: u16,
-    pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
+    /// HTTP field values as received, without UTF-8 decoding.
+    pub headers: Vec<(String, Vec<u8>)>,
+    #[serde(
+        serialize_with = "serialize_response_body",
+        deserialize_with = "deserialize_response_body"
+    )]
+    pub body: bytes::Bytes,
+}
+
+fn serialize_response_body<S: serde::Serializer>(
+    body: &bytes::Bytes,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(body.as_ref(), serializer)
+}
+
+fn deserialize_response_body<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<bytes::Bytes, D::Error> {
+    <Vec<u8> as serde::Deserialize<'de>>::deserialize(deserializer).map(Into::into)
 }
 
 /// The same engine proxy serves native sockets, DNS and browser HTTP reads.
@@ -50,11 +69,26 @@ pub trait EgressRelay: Send + Sync + 'static {
     fn record_session(&self, manifest: &crate::SessionManifest) -> io::Result<()>;
     fn record_abandoned(&self, manifest: &crate::SessionManifest) -> io::Result<()>;
     fn datagram(&self, target: SocketAddr, bytes: &[u8]) -> io::Result<Vec<u8>>;
+    /// Prepares one guest datagram to `target` for the worker that answers
+    /// it (FIX 6298). A guest's send calls this before the send is
+    /// acknowledged and before its worker starts, so an error here fails or
+    /// back-pressures the send itself. A relay whose host is across a
+    /// channel, such as a VM's, returns only once the host has admitted the
+    /// datagram and holds its room. The default prepares
+    /// [`EgressRelay::datagram`], which runs when the worker answers.
+    fn prepare_datagram(
+        self: Arc<Self>,
+        target: SocketAddr,
+        bytes: Vec<u8>,
+    ) -> io::Result<PreparedDatagram> {
+        Ok(PreparedDatagram::new(move || self.datagram(target, &bytes)))
+    }
     fn fetch(&self, request: HttpRequest) -> io::Result<HttpResponse>;
     fn transferred(&self, target: SocketAddr, content_hash: [u8; 32], bytes: u64);
     /// The host floor this relay's guest network work is charged to: each
-    /// socket's entry and writer, and each relayed datagram (FIX 5978,
-    /// FIX 5979). A relay names its floor; none defaults to charging nothing.
+    /// socket's entry and writer, each relayed datagram, and each connected
+    /// stream's relay (FIX 5978, FIX 5979, FIX 6301). A relay names its
+    /// floor; none defaults to charging nothing.
     fn host_net_floor(&self) -> &dyn crate::HostNetFloor;
     /// Records a loopback call the fence refused, as a blocked receipt that
     /// names its address. A relay that keeps no receipts records nothing; a
@@ -62,11 +96,101 @@ pub trait EgressRelay: Send + Sync + 'static {
     fn record_refusal(&self, _refusal: &LoopbackRefusal) -> io::Result<()> {
         Ok(())
     }
+    /// Records one credential forwarding/resolution decision as metadata
+    /// only. A relay that keeps no receipts records nothing; a record that
+    /// fails never changes what the guest is answered.
+    fn record_credential(&self, _record: &CredentialEgressRecord) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// One guest datagram a relay has prepared ([`EgressRelay::prepare_datagram`]).
+///
+/// The worker that relays the datagram owns it, and with it what its answer
+/// needs, such as a VM's admitted channel to the host (FIX 6298).
+#[must_use = "a prepared datagram is relayed only when it is answered"]
+pub struct PreparedDatagram {
+    answer: Box<dyn FnOnce() -> io::Result<Vec<u8>> + Send>,
+}
+
+impl PreparedDatagram {
+    /// A prepared datagram whose exchange `answer` completes.
+    pub fn new(answer: impl FnOnce() -> io::Result<Vec<u8>> + Send + 'static) -> Self {
+        Self {
+            answer: Box::new(answer),
+        }
+    }
+
+    /// Completes the exchange and returns the datagram's answer. A relay's
+    /// blocking receive ends here.
+    pub fn answer(self) -> io::Result<Vec<u8>> {
+        (self.answer)()
+    }
+}
+
+/// One credential forwarding/resolution decision, as metadata only.
+///
+/// Plain owned descriptor: the actual VM id, the opaque handle ref, the
+/// actual operation/effect when known, the normalized destination
+/// scheme/bare host when known, the outcome status, and the material byte
+/// count on success only. No raw args, credential material, resolver or
+/// transport error text, HTTP body, final URL, or content hash claim.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CredentialEgressRecord {
+    pub vm_id: String,
+    pub handle_ref: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheme: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub status: CredentialEgressStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub material_bytes: Option<usize>,
+}
+
+/// How one credential forwarding/resolution decision ended.
+///
+/// `Forwarded` means the transport read returned `Ok`; `Resolved` means
+/// inject only resolved, measured and scrubbed, never a transport
+/// injection or HTTP response.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialEgressStatus {
+    Forwarded,
+    Resolved,
+    InvalidDestination,
+    Unarmed,
+    AllowlistDenied,
+    ResolverFailed,
+    EmptyMaterial,
+    TransportFailed,
+    TransportUnavailable,
+}
+
+impl CredentialEgressStatus {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Forwarded => "forwarded",
+            Self::Resolved => "resolved",
+            Self::InvalidDestination => "invalid_destination",
+            Self::Unarmed => "unarmed",
+            Self::AllowlistDenied => "allowlist_denied",
+            Self::ResolverFailed => "resolver_failed",
+            Self::EmptyMaterial => "empty_material",
+            Self::TransportFailed => "transport_failed",
+            Self::TransportUnavailable => "transport_unavailable",
+        }
+    }
 }
 
 /// A guest call the fence refused because only the guest's own loopback
-/// (127.0.0.0/8 and ::1) holds listeners, inside its own session. The guest
-/// is answered an errno; the host records this.
+/// (127.0.0.0/8, its IPv4-mapped form, and ::1) holds listeners, inside its
+/// own session. The guest is answered an errno; the host records this.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LoopbackRefusal {
     pub operation: LoopbackOperation,
@@ -104,10 +228,8 @@ pub enum LoopbackRefusalReason {
     /// The unspecified address (0.0.0.0, ::), or a listen with no bind
     /// before it, which would take it.
     Wildcard,
-    /// Neither 127.0.0.0/8 nor ::1.
+    /// Neither 127.0.0.0/8 (an IPv4-mapped form included) nor ::1.
     NotLoopback,
-    /// An IPv4-mapped IPv6 address (::ffff:a.b.c.d).
-    MappedAddress,
     /// A datagram socket: the fence keeps stream listeners only.
     Datagram,
     /// An accept on a socket that is not listening.
@@ -122,7 +244,6 @@ impl LoopbackRefusalReason {
         match self {
             Self::Wildcard => "wildcard",
             Self::NotLoopback => "not_loopback",
-            Self::MappedAddress => "mapped_address",
             Self::Datagram => "datagram",
             Self::NotListening => "not_listening",
             Self::NoListener => "no_listener",

@@ -11,6 +11,32 @@ use super::{
     Inner, LaunchFailure, LoadGrant, Phase, RunningWorker, WORKER_CRASH_BACKOFF_SECS, WorkerExit,
 };
 
+/// A shared worker owns this executor until its real lifecycle ends; an
+/// embedded serving runtime can stop without dropping the worker's custody.
+/// The receiver only acknowledges executor startup, not worker readiness.
+pub(super) fn spawn_driver(inner: Arc<Inner>) -> tokio::sync::oneshot::Receiver<()> {
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let worker = Arc::clone(&inner);
+    let thread = std::thread::Builder::new()
+        .name("oneiron-model-worker".to_owned())
+        .spawn(move || {
+            match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => {
+                    let _ = started.send(());
+                    runtime.block_on(drive(worker));
+                }
+                Err(error) => worker.driver_start_failed(error),
+            }
+        });
+    if let Err(error) = thread {
+        inner.driver_start_failed(error);
+    }
+    ready
+}
+
 /// How one incarnation ended.
 enum Ended {
     Exited(WorkerExit),
@@ -30,6 +56,23 @@ fn backoff_delay(attempt: usize) -> Duration {
 }
 
 impl Inner {
+    /// Both executor failures precede install, launch, and device reservation.
+    fn driver_start_failed(&self, error: std::io::Error) {
+        let reason = format!("model worker executor did not start: {error}");
+        tracing::warn!(worker = %self.spec.worker_id, %reason);
+        {
+            let mut state = self.lock();
+            state.phase = Phase::Stopped;
+            state.driving = false;
+            state.failure_detail = Some(WorkerFailureDetail {
+                model: self.spec.model.clone(),
+                phase: WorkerPhase::Launch,
+                reason,
+            });
+        }
+        self.notify();
+    }
+
     fn retiring(&self) -> bool {
         self.lock().retiring
     }
@@ -446,6 +489,10 @@ pub(super) async fn drive(inner: Arc<Inner>) {
         inner.finish_or_restart(Phase::Stopped);
         return;
     };
+    if !inner.wait_for_predecessors().await {
+        inner.finish_or_restart(Phase::Stopped);
+        return;
+    }
     let worker = inner.spec.worker_id.clone();
     let mut attempt = 0_usize;
     'install: loop {

@@ -3,35 +3,14 @@
 use super::types::EngineExecutorResult;
 use crate::code_run::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
+    ExecutorWireRepairs,
 };
-use crate::code_sandbox::source::{SourceLanguage, prepare_source};
 use crate::{ContentPart, Error, FinishReason, LlmResponse};
 
 /// Line-oriented markdown fence delimiter. The LANGUAGE SUFFIX after it is
 /// inert packaging metadata: `ts`, `typescript`, `js`, `javascript`,
 /// `readscript`, and arbitrary tags all follow the same path.
 const CODE_FENCE: &str = "```";
-
-/// What ONE-1929 had to remove from one model reply to reach a bare program.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) struct ExecutorWireRepairs {
-    pub trimmed_transport_whitespace: bool,
-    pub stripped_code_fence: bool,
-    pub stripped_exec_wrapper: bool,
-    pub discarded_console_blocks: u32,
-}
-
-impl ExecutorWireRepairs {
-    /// Whether this turn needed ANY healing. One healed turn counts once, no
-    /// matter how many of these repairs it took.
-    #[must_use]
-    pub(crate) const fn healed(self) -> bool {
-        self.trimmed_transport_whitespace
-            || self.stripped_code_fence
-            || self.stripped_exec_wrapper
-            || self.discarded_console_blocks != 0
-    }
-}
 
 /// One model reply, normalized onto the strict bare wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +25,7 @@ pub(super) struct HealedExecutorReply {
 /// Normalizes one provider reply into the bare executable program the
 /// sandbox runs (ONE-1929).
 ///
-/// The model-facing wire is strict bare executable plain JavaScript. The
+/// The model-facing wire is strict bare executable source (TypeScript or JavaScript). The
 /// executor may remove PACKAGING once, but it never trusts model-authored
 /// console text: forged console blocks are deleted outright — not compared,
 /// diffed, logged, or kept as a diagnostic — and the sandbox's own
@@ -95,17 +74,30 @@ pub(super) fn heal_executor_reply(
 /// the post-hook view a step heals, with no copy of the reply made for it
 /// (FIX 448).
 pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecutorReply> {
+    heal_executor_text_tracking_repairs(text, &mut ExecutorWireRepairs::default())
+}
+
+/// [`heal_executor_text`], writing each repair into `repairs` as it is made.
+/// A reply the normalization refuses leaves the repairs made before the
+/// refusal in `repairs`, for its correction record (FIX 4412).
+pub(super) fn heal_executor_text_tracking_repairs(
+    text: &str,
+    repairs: &mut ExecutorWireRepairs,
+) -> EngineExecutorResult<HealedExecutorReply> {
+    *repairs = ExecutorWireRepairs::default();
     let (candidate, trailing) = partition_reply(text);
-    let (cleaned_trailing, trailing_discards) =
-        partition_top_level_console_blocks(trailing, ConsoleRegion::Trailing)?;
+    // Each scan adds every block it discarded to the shared count, a scan
+    // that later refuses included, so a refused reply's record names the
+    // repairs made before its refusal (FIX 4412).
+    let cleaned_trailing = partition_top_level_console_blocks_into(
+        trailing,
+        ConsoleRegion::Trailing,
+        &mut repairs.discarded_console_blocks,
+    )?;
     let trailing_speak = cleaned_trailing.trim();
 
     let trimmed = candidate.trim();
-    let mut repairs = ExecutorWireRepairs {
-        trimmed_transport_whitespace: trimmed.len() != candidate.len(),
-        discarded_console_blocks: trailing_discards,
-        ..ExecutorWireRepairs::default()
-    };
+    repairs.trimmed_transport_whitespace = trimmed.len() != candidate.len();
 
     let unfenced = match strip_one_whole_fence(trimmed)? {
         Some(interior) => {
@@ -114,14 +106,11 @@ pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecu
         }
         None => trimmed,
     };
-    let (deconsoled, candidate_discards) =
-        partition_top_level_console_blocks(unfenced, ConsoleRegion::Candidate)?;
-    repairs.discarded_console_blocks = repairs
-        .discarded_console_blocks
-        .checked_add(candidate_discards)
-        .ok_or(Error::ArithmeticOverflow(
-            "executor discarded console blocks",
-        ))?;
+    let deconsoled = partition_top_level_console_blocks_into(
+        unfenced,
+        ConsoleRegion::Candidate,
+        &mut repairs.discarded_console_blocks,
+    )?;
     let unwrapped = match strip_one_whole_exec_wrapper(&deconsoled) {
         Some(interior) => {
             repairs.stripped_exec_wrapper = true;
@@ -129,15 +118,11 @@ pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecu
             // console blocks directly inside it are top-level model packaging
             // too. Scan that interior once; a nested second exec wrapper still
             // protects its own body and survives into the mandatory gate.
-            let (cleaned, wrapper_discards) =
-                partition_top_level_console_blocks(interior, ConsoleRegion::Candidate)?;
-            repairs.discarded_console_blocks = repairs
-                .discarded_console_blocks
-                .checked_add(wrapper_discards)
-                .ok_or(Error::ArithmeticOverflow(
-                    "executor discarded console blocks",
-                ))?;
-            cleaned
+            partition_top_level_console_blocks_into(
+                interior,
+                ConsoleRegion::Candidate,
+                &mut repairs.discarded_console_blocks,
+            )?
         }
         None => deconsoled,
     };
@@ -147,7 +132,7 @@ pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecu
     Ok(HealedExecutorReply {
         code: code.to_owned(),
         trailing_speak: (!trailing_speak.is_empty()).then(|| trailing_speak.to_owned()),
-        repairs,
+        repairs: *repairs,
     })
 }
 
@@ -157,9 +142,9 @@ pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecu
 /// A reply that OPENS with a whole markdown fence hands everything after that
 /// fence's closer line to ONE-1686 as trailing prose; anything else is one
 /// undivided candidate, so prose the partition cannot classify stays in front
-/// of the code and fails the mandatory structural gate instead of being
-/// silently split off. Two sibling fenced programs partition the same way and
-/// the second fence reaches that gate as residual structure — they are never
+/// of the code for the sandbox to parse instead of being silently split off.
+/// Two sibling fenced programs partition the same way and the second fence
+/// reaches that gate as residual structure — they are never
 /// joined into one source.
 fn partition_reply(text: &str) -> (&str, &str) {
     let lines = reply_lines(text);
@@ -244,12 +229,11 @@ fn strip_one_whole_exec_wrapper(input: &str) -> Option<&str> {
 /// existing caller-owned re-execute path. No error variant and no second
 /// retry loop is introduced.
 ///
-/// The executable-source preflight is deliberately a shape check, not a
-/// parser: general JavaScript syntax errors are NOT structural garbage and
-/// stay on the existing runtime-error path.
+/// This gate checks wire structure only. Language preparation and the
+/// sandbox parser handle source syntax on the existing runtime-error path.
 fn mandatory_structural_gate(code: &str, trailing_speak: &str) -> EngineExecutorResult<()> {
     if code.is_empty() {
-        return Err(Error::InvalidClaimBody("executor LLM response missing plain JS").into());
+        return Err(Error::InvalidClaimBody("executor LLM response missing program").into());
     }
     if has_residual_wire_structure_in_source(code) {
         return Err(Error::InvalidClaimBody(
@@ -262,11 +246,6 @@ fn mandatory_structural_gate(code: &str, trailing_speak: &str) -> EngineExecutor
             "executor LLM response trailed a second program instead of prose",
         )
         .into());
-    }
-    if !looks_like_plain_js(code) && !looks_like_typescript(code) {
-        return Err(
-            Error::InvalidClaimBody("executor LLM response is not executable plain JS").into(),
-        );
     }
     Ok(())
 }
@@ -396,7 +375,31 @@ pub(super) fn partition_top_level_console_blocks(
     input: &str,
     region: ConsoleRegion,
 ) -> EngineExecutorResult<(String, u32)> {
-    ConsoleScanner::new(input, region).run()
+    let mut discarded = 0;
+    let out = partition_top_level_console_blocks_into(input, region, &mut discarded)?;
+    Ok((out, discarded))
+}
+
+/// [`partition_top_level_console_blocks`], adding each block it discards to
+/// `discarded` as it goes: a scan that refuses a later block still counts
+/// the ones it already discarded (FIX 4412).
+///
+/// # Errors
+///
+/// As [`partition_top_level_console_blocks`], and a count past `u32`.
+fn partition_top_level_console_blocks_into(
+    input: &str,
+    region: ConsoleRegion,
+    discarded: &mut u32,
+) -> EngineExecutorResult<String> {
+    let mut scanner = ConsoleScanner::new(input, region);
+    let scanned = scanner.scan();
+    *discarded = discarded
+        .checked_add(scanner.discarded)
+        .ok_or(Error::ArithmeticOverflow(
+            "executor discarded console blocks",
+        ))?;
+    scanned.map(|()| scanner.out)
 }
 
 /// The source-aware scanner behind [`partition_top_level_console_blocks`].
@@ -430,13 +433,15 @@ impl<'a> ConsoleScanner<'a> {
         }
     }
 
-    fn run(mut self) -> EngineExecutorResult<(String, u32)> {
+    /// Scans the whole input into `out`, counting each discarded block in
+    /// `discarded` as it goes.
+    fn scan(&mut self) -> EngineExecutorResult<()> {
         while self.cursor < self.input.len() {
             if !self.take_wire_token()? {
                 self.take_source_span();
             }
         }
-        Ok((self.out, self.discarded))
+        Ok(())
     }
 
     /// Consumes one wrapper/fence/console token when the cursor sits in a
@@ -609,68 +614,4 @@ fn advance_quoted_state(state: &mut SourceState, rest: &str, ch: char) -> usize 
         *state = SourceState::Code;
     }
     ch.len_utf8()
-}
-
-/// The executable-source preflight: a SHAPE check on the healed program.
-///
-/// It refuses prose, not imperfect JavaScript. A structurally clean source
-/// with a genuine syntax error still reaches the sandbox and fails on the
-/// existing runtime-error path, which is the boundary this ticket keeps.
-fn looks_like_plain_js(text: &str) -> bool {
-    let trimmed = text.trim_start();
-    let first_line = trimmed.lines().next().unwrap_or_default().trim_start();
-    [
-        "await ",
-        "const ",
-        "let ",
-        "var ",
-        "if ",
-        "for ",
-        "while ",
-        "switch ",
-        "try ",
-        "return ",
-        "throw ",
-        "function ",
-        "async ",
-        "class ",
-        "import ",
-        "export ",
-        "self.",
-        "ask(",
-        "finish(",
-        "console.log(",
-        "writeOutput(",
-    ]
-    .iter()
-    .any(|prefix| first_line.starts_with(prefix))
-}
-
-/// The first-line openings of a TypeScript program the JavaScript shape list
-/// does not hold (FIX 8276).
-const TYPESCRIPT_OPENINGS: &[&str] = &[
-    "type ",
-    "interface ",
-    "enum ",
-    "namespace ",
-    "declare ",
-    "abstract ",
-    "@",
-];
-
-/// A TypeScript program whose first line opens with syntax the JavaScript
-/// shape list does not hold (FIX 8276). Only one Oxc prepares as TypeScript
-/// passes, so prose that opens with one of these words fails the gate as it
-/// always did, and every reply the JavaScript list passes is unchanged.
-fn looks_like_typescript(text: &str) -> bool {
-    let first_line = text
-        .trim_start()
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .trim_start();
-    let opens = TYPESCRIPT_OPENINGS
-        .iter()
-        .any(|prefix| first_line.starts_with(prefix));
-    opens && prepare_source(text).language() == SourceLanguage::TypeScript
 }

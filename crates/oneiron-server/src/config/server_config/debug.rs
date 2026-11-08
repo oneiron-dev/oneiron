@@ -37,10 +37,6 @@ impl fmt::Debug for SyncServerConfig {
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
             .field(
-                "max_ephemeral_payload_bytes",
-                &self.max_ephemeral_payload_bytes,
-            )
-            .field(
                 "max_ephemeral_snapshot_bytes",
                 &self.max_ephemeral_snapshot_bytes,
             )
@@ -53,6 +49,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("skills", &self.skills)
             .field("line", &self.line)
             .field("channel_endpoints", &self.channel_endpoints)
+            .field("apns", &self.apns)
             .field("linear", &self.linear)
             .field("ingress", &self.ingress)
             .field("merge_queue", &self.merge_queue)
@@ -66,6 +63,8 @@ impl fmt::Debug for ServeConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ServeConfig")
             .field("vault_path", &self.vault_path)
+            .field("config_path", &self.config_path)
+            .field("embedded_holder_overrides", &self.embedded_holder_overrides)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)
@@ -103,10 +102,6 @@ impl fmt::Debug for ServeConfig {
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
             .field(
-                "max_ephemeral_payload_bytes",
-                &self.max_ephemeral_payload_bytes,
-            )
-            .field(
                 "max_ephemeral_snapshot_bytes",
                 &self.max_ephemeral_snapshot_bytes,
             )
@@ -133,10 +128,12 @@ impl fmt::Debug for ServeConfig {
             .field("gpu", &self.gpu)
             .field("native_mail", &self.native_mail)
             .field("device_sync", &self.device_sync)
+            .field("shared_env", &self.shared_env)
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
             .field("channel_endpoints", &self.channel_endpoints)
+            .field("apns", &self.apns)
             .field("linear", &self.linear)
             .field("privacy_posture", &self.privacy_posture)
             .field(

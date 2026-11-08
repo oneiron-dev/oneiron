@@ -315,17 +315,7 @@ pub struct UnitAbstention {
     pub judged_live: Option<crate::office_body::LivePin>,
 }
 
-/// A unit the ask will not read as given.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub struct UnitRefusal {
-    pub unit: Value,
-    pub reason: String,
-    /// The live body the ask read the unit on, when it read one (FIX 12018).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub judged_live: Option<crate::office_body::LivePin>,
-}
+pub use crate::blob_artifact::unit_refusal::UnitRefusal;
 
 /// What one artifact ask did: the proposal held for Keep (none when no unit
 /// was answered), the units left unanswered and those refused.
@@ -338,6 +328,10 @@ pub struct ArtifactAskRun {
     /// as its version CLAIM and ASSET, the asked artifact's head and every
     /// folder file's head alike. Ids only.
     pub read_rows: Vec<EntityId>,
+    /// First selected sheet row not completed when the run yielded at its
+    /// deadline or answer-batch threshold. The suffix has no fabricated
+    /// decisions or receipts. Other adapters currently return `None`.
+    pub next_sheet_row: Option<u32>,
 }
 
 /// The cell a decided answer writes: a yes/no as a boolean, a pick as its

@@ -11,12 +11,14 @@ use super::{
     PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION, VAULT_CLEANUP_ACTOR, VAULT_CLEANUP_RECEIPT_PREFIX,
 };
 use crate::Vault;
-use crate::attempt_queue::AttemptId;
 use crate::deletion::DeleteReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::attempt_id::AttemptId;
+use crate::store::receipt_row::{
+    ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt,
+};
 use rmpv::Value;
 use std::collections::BTreeMap;
 
@@ -157,7 +159,14 @@ pub(super) fn put_proposal_in_txn(
         ),
     ]);
     let encoded = encode_row(&row, PROPOSAL_ROW_LABEL)?;
-    PROPOSAL.put(&vault.store, wtxn, &proposal.id, &encoded)?;
+    // Its candidates are indexed with it, so an erase finds it (FIX 7616).
+    super::entity_rows::put_in_txn(
+        &vault.store,
+        wtxn,
+        super::entity_rows::Listing::Proposal,
+        proposal.id.as_bytes(),
+        &encoded,
+    )?;
     // An open proposal is pending digest work too.
     crate::batch::queue_proactivity_change(vault, wtxn);
     Ok(())
@@ -230,7 +239,14 @@ pub(super) fn put_digest_in_txn(
         row.push((Value::from(KEY_REJECTED), id_value_list(&digest.rejected)));
     }
     let encoded = encode_row(&Value::Map(row), DIGEST_ROW_LABEL)?;
-    DIGEST.put(&vault.store, wtxn, &digest.id, &encoded)?;
+    // Its slots are indexed with it, so an erase finds it (FIX 7616).
+    super::entity_rows::put_in_txn(
+        &vault.store,
+        wtxn,
+        super::entity_rows::Listing::Digest,
+        digest.id.as_bytes(),
+        &encoded,
+    )?;
     // The decision is pending digest work: the deadline re-reads after commit.
     crate::batch::queue_proactivity_change(vault, wtxn);
     Ok(())
@@ -351,7 +367,7 @@ pub fn is_vault_cleanup_receipt(record: &ReceiptRecord) -> bool {
 /// Storage errors; [`Error::CorruptedIndex`] on an unreadable row.
 pub(crate) fn cleanup_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut count = crate::scan_check::ScanCount::start(
+    let mut count = crate::store::scan_count::ScanCount::start(
         &vault.store,
         &rtxn,
         crate::store::EngineScan::ReceiptSourceRows,
