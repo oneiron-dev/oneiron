@@ -60,6 +60,9 @@ pub(crate) struct ApplyOpsGateMode {
     /// The body file each ASSET put this batch stages as a manifest names,
     /// published before the batch (FIX 3677); consumed by that put.
     pub(super) asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
+    /// The bytes of each interpreted body file this batch puts, read by the
+    /// door's secret scan and mask in place of its manifest (FIX 22075).
+    pub(super) asset_file_bodies: HashMap<EntityId, Vec<u8>>,
     /// The rows this batch's replication applier put
     /// (`BatchBuilder::put_replicated`) and nothing else (FIX 7925): replay
     /// keeps its signed bytes for read quarantine instead of the local
@@ -94,6 +97,7 @@ impl ApplyOpsGateMode {
             nsw_plans: HashMap::new(),
             owner_authored: None,
             asset_files: HashMap::new(),
+            asset_file_bodies: HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
             marked_carriers: std::collections::BTreeMap::new(),
             caller_envelopes: HashMap::new(),
@@ -137,6 +141,13 @@ impl ApplyOpsGateMode {
         files: HashMap<EntityId, crate::store::AssetBodyFacts>,
     ) -> Self {
         self.asset_files = files;
+        self
+    }
+
+    /// Hands the door the bytes of each interpreted body file this batch
+    /// puts (FIX 22075).
+    pub(super) fn with_asset_file_bodies(mut self, bodies: HashMap<EntityId, Vec<u8>>) -> Self {
+        self.asset_file_bodies = bodies;
         self
     }
 
