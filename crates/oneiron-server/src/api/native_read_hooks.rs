@@ -408,8 +408,9 @@ pub(crate) async fn resume_native_read(
         }) => VerbAskResumed::RanWithProducers {
             result: Ok(value),
             producers,
+            hook_notice: None,
         },
-        Ok(answer) => VerbAskResumed::Ran(Ok(answer.value)),
-        Err(refused) => VerbAskResumed::Ran(Err(refused.into_memory_error())),
+        Ok(answer) => VerbAskResumed::Ran((Ok(answer.value), None)),
+        Err(refused) => VerbAskResumed::Ran((Err(refused.into_memory_error()), None)),
     }
 }
