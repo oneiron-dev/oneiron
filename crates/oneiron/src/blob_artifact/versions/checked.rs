@@ -7,6 +7,7 @@ use super::{
     read_blob_artifact_head_in_txn, read_blob_artifact_highwater_in_txn,
 };
 use crate::Vault;
+use crate::blob_artifact::BlobContent;
 use crate::blob_artifact::native_output::NativeOutput;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -27,19 +28,21 @@ type CheckedAppend = (
 );
 
 impl Vault {
-    /// Lands `bytes` as the next version, or decides they wait as a proposal.
-    /// A landing version past the asset plane's inline size goes to its body
-    /// file under `mint`, taken before `wtxn` opened, so its ASSET is a file
-    /// manifest rather than one value holding the bytes (FIX 20812); the
-    /// same bytes as the head land nothing new and stage nothing.
-    /// A landed version's claim is born at `producer_position` (FIX 3171).
+    /// Lands `content` as the next version, or decides it waits as a
+    /// proposal. A landing version past the asset plane's inline size goes
+    /// to its body file under `mint`, taken before `wtxn` opened, so its
+    /// ASSET is a file manifest rather than one value holding the bytes
+    /// (FIX 20812); the same bytes as the head land nothing new. A body file
+    /// an ingress door measured is staged from that file, the head's bytes
+    /// too, so it is never held whole (FIX 22074). A landed version's claim
+    /// is born at `producer_position` (FIX 3171).
     #[expect(clippy::too_many_arguments)]
     pub(super) fn decide_blob_artifact_append_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         artifact_id: &EntityId,
         fork_parent: Option<u64>,
-        bytes: &[u8],
+        content: BlobContent<'_>,
         mint: Option<&BodyMint>,
         provenance: &BlobVersionProvenance,
         made_by: Option<&MadeBy>,
@@ -50,10 +53,10 @@ impl Vault {
         lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<CheckedAppend> {
         let later = read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?.is_some();
-        let content_hash = blake3::hash(bytes);
+        let content_hash = content.blake3();
         let dedupe = fork_parent.is_none()
             && read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
-                .is_some_and(|head| head.content_hash == *content_hash.as_bytes());
+                .is_some_and(|head| head.content_hash == content_hash);
         if later && !dedupe && matches!(provenance, BlobVersionProvenance::AgentRun { .. }) {
             if let Some(named) = made_by {
                 validate_version_made_by_in_txn(self, wtxn, named)?;
@@ -81,14 +84,24 @@ impl Vault {
             };
             return Ok((None, fork_base, None));
         }
-        let staged = if dedupe {
-            None
-        } else {
-            self.stage_version_slice_in_txn(wtxn, bytes, mint)?
+        let staged = match content {
+            BlobContent::Bytes(_) if dedupe => None,
+            BlobContent::Bytes(bytes) => self.stage_version_slice_in_txn(wtxn, bytes, mint)?,
+            BlobContent::File(file) => {
+                let staged = self.stage_blob_body_in_txn(wtxn, &mut file.reader()?, mint)?;
+                file.check(staged.facts().len, staged.facts().blake3)?;
+                Some(staged)
+            }
         };
-        let body = staged
-            .as_ref()
-            .map_or(VersionBody::Bytes(bytes), VersionBody::Staged);
+        let body = match (&staged, content) {
+            (Some(staged), _) => VersionBody::Staged(staged),
+            (None, BlobContent::Bytes(bytes)) => VersionBody::Bytes(bytes),
+            (None, BlobContent::File(_)) => {
+                return Err(Error::InvariantViolation(
+                    "a blob body file is staged before its version lands",
+                ));
+            }
+        };
         let version = self.append_blob_artifact_version_body_with_authority_in_txn(
             wtxn,
             artifact_id,
@@ -114,7 +127,8 @@ impl Vault {
     /// landed append uses the content writer's actual credential lane. The
     /// hold on a body file, a landed version's or a waiting proposal's, comes
     /// back beside the outcome: the caller took `mint` before its writer
-    /// opened and keeps the hold until it commits (FIX 20812).
+    /// opened and keeps the hold until it commits (FIX 20812). `content` is
+    /// a slice or a body file an ingress door measured (FIX 22074).
     /// `producer_position` is the position the producing Memory's host bound
     /// (FIX 3171). A landed version's claim is born there. A proposal keeps
     /// it for Keep, so the claim is born at the producer's position, never
@@ -124,7 +138,7 @@ impl Vault {
         &self,
         wtxn: &mut RwTxn<'_>,
         artifact_id: &EntityId,
-        bytes: &[u8],
+        content: BlobContent<'_>,
         mint: Option<&BodyMint>,
         provenance: &BlobVersionProvenance,
         actor: WriteActor,
@@ -137,7 +151,7 @@ impl Vault {
             wtxn,
             artifact_id,
             None,
-            bytes,
+            content,
             mint,
             provenance,
             None,
@@ -153,11 +167,12 @@ impl Vault {
         let body = self
             .get_blob_artifact_in_txn(wtxn, artifact_id)?
             .ok_or(Error::EntityNotFound)?;
-        let output = direct_append_output(body, bytes, provenance, None, actor, learned_at);
+        let output = direct_append_output(body, content, provenance, None, actor, learned_at);
         self.propose_direct_append_output_in_txn(
             wtxn,
             artifact_id,
             &output,
+            content,
             mint,
             (actor, learned_at),
             fork_base,
@@ -167,9 +182,12 @@ impl Vault {
     }
 }
 
+/// The waiting output a later AgentRun append becomes: its bytes in memory
+/// for a slice; none for a body file, which its proposal stages from the
+/// file (FIX 22074).
 pub(super) fn direct_append_output(
     body: BlobArtifactBody,
-    bytes: &[u8],
+    content: BlobContent<'_>,
     provenance: &BlobVersionProvenance,
     made_by: Option<&MadeBy>,
     actor: WriteActor,
@@ -184,7 +202,10 @@ pub(super) fn direct_append_output(
         run_ref: run_ref.clone(),
         name: body.name,
         media_type: body.media_type,
-        bytes: bytes.to_vec(),
+        bytes: match content {
+            BlobContent::Bytes(bytes) => bytes.to_vec(),
+            BlobContent::File(_) => Vec::new(),
+        },
         report: "{}".to_owned(),
         made_by: made_by.cloned().or_else(|| {
             Some(default_version_made_by(

@@ -25,7 +25,9 @@ use super::codec::{RECORD, settlement_key_parts};
 use super::receipts::{already_settled, settlement_receipt_record};
 use super::records::{SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleSelectOutcome};
 use crate::Vault;
-use crate::blob_artifact::{BLOB_ARTIFACT_RUN_REF_MAX_BYTES, CalcEngineStamp};
+use crate::blob_artifact::{
+    BLOB_ARTIFACT_RUN_REF_MAX_BYTES, BlobBodyFile, BlobContent, CalcEngineStamp,
+};
 use crate::edit_roundtrip::{
     EditManifest, EditProposal, OfficeFormat, RecalcStatus, SheetAnswerBundle, StructureSummary,
     ValidationCheck, ValidationReport,
@@ -422,6 +424,62 @@ impl Vault {
         self.propose_output(
             artifact_id,
             output,
+            BlobContent::Bytes(&output.bytes),
+            reader,
+            (actor, retained_at),
+            None,
+            None,
+            false,
+            read_rows,
+            delta_receipt,
+        )
+    }
+
+    /// [`Self::propose_native_output_with_reads`] of a body file an ingress
+    /// door decoded before any writer opened (FIX 22074): `output` names the
+    /// output and holds no bytes; `body` holds them. A body no longer than
+    /// the asset plane's inline size is read once and waits in its row; a
+    /// longer one waits in its own body file, staged from `body`, never held
+    /// whole, and an office export is opened as a package from the file.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::propose_native_output_with_reads`]'s errors, the file's read
+    /// errors, and [`Error::InvariantViolation`] for an `output` that holds
+    /// bytes or a file that changes under the door.
+    pub fn propose_native_output_file(
+        &self,
+        artifact_id: &EntityId,
+        output: &NativeOutput,
+        body: &BlobBodyFile<'_>,
+        reader: Option<MadeByReader<'_>>,
+        (actor, retained_at): (WriteActor, u64),
+        read_rows: &[EntityId],
+        delta_receipt: Option<&str>,
+    ) -> Result<PendingProposalView> {
+        if !output.bytes.is_empty() {
+            return Err(Error::InvariantViolation(
+                "a native output proposed from a body file holds no bytes of its own",
+            ));
+        }
+        if let Some(bytes) = body.inline_bytes()? {
+            let output = NativeOutput {
+                bytes,
+                ..output.clone()
+            };
+            return self.propose_native_output_with_reads(
+                artifact_id,
+                &output,
+                reader,
+                (actor, retained_at),
+                read_rows,
+                delta_receipt,
+            );
+        }
+        self.propose_output(
+            artifact_id,
+            output,
+            BlobContent::File(body),
             reader,
             (actor, retained_at),
             None,
@@ -435,10 +493,12 @@ impl Vault {
     /// [`Self::propose_native_output`] for a direct AgentRun append that did
     /// not settle: the proposal and the caller's live content-write authority
     /// commit under one check (FIX 8208).
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn propose_native_output_with_write_grant(
         &self,
         artifact_id: &EntityId,
         output: &NativeOutput,
+        content: BlobContent<'_>,
         reader: Option<MadeByReader<'_>>,
         actor: WriteActor,
         retained_at: u64,
@@ -448,6 +508,7 @@ impl Vault {
         self.propose_output(
             artifact_id,
             output,
+            content,
             reader,
             (actor, retained_at),
             None,
@@ -474,6 +535,7 @@ impl Vault {
         self.propose_output(
             artifact_id,
             output,
+            BlobContent::Bytes(&output.bytes),
             reader,
             (actor, retained_at),
             Some((base, hold)),
@@ -484,10 +546,13 @@ impl Vault {
         )
     }
 
+    /// Retains `output`, whose bytes are `content`, as a waiting proposal.
+    #[expect(clippy::too_many_arguments)]
     fn propose_output(
         &self,
         artifact_id: &EntityId,
         output: &NativeOutput,
+        content: BlobContent<'_>,
         reader: Option<MadeByReader<'_>>,
         (actor, retained_at): (WriteActor, u64),
         deck: Option<((u64, [u8; 32]), DeckExportHold)>,
@@ -499,8 +564,12 @@ impl Vault {
         let body = self
             .get_blob_artifact(artifact_id)?
             .ok_or(Error::EntityNotFound)?;
-        let report =
-            output_retention::validate_native_output(output, &body, authorize_content_write)?;
+        let report = output_retention::validate_native_output(
+            output,
+            content,
+            &body,
+            authorize_content_write,
+        )?;
         let head = self.blob_artifact_head(artifact_id)?;
         let base = match (base_override, &deck) {
             (Some(base), _) => Some(base),
@@ -511,8 +580,8 @@ impl Vault {
         // before the writer that keeps its row opens; the row names it
         // (FIX 20812).
         let staged = self.stage_pending_output_body(
-            &output.bytes,
-            self.asset_body_mint([output.bytes.len() as u64])?.as_ref(),
+            content,
+            self.asset_body_mint([content.len()])?.as_ref(),
         )?;
         // The producer is bound once, here, at proposal authentication and
         // retention: Keep preserves this envelope instead of rebinding it to

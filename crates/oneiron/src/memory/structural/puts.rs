@@ -189,10 +189,51 @@ impl Memory<'_> {
         occurred_at: u64,
         learned_at: Option<u64>,
     ) -> MemoryResult<BlobVersionAppendOutcome> {
-        let _ = self.vault.measure_limit(
-            crate::limit_ask::EngineLimit::BlobContentBytes,
-            bytes.len() as u64,
-        );
+        self.append_blob_content(
+            artifact_ref,
+            crate::blob_artifact::BlobContent::Bytes(bytes),
+            run_ref,
+            occurred_at,
+            learned_at,
+        )
+    }
+
+    /// [`Self::append_blob_version`] of a body file an ingress door decoded
+    /// before any writer opened (FIX 22074): a body no longer than the asset
+    /// plane's inline size is read once and appended as a slice; a longer
+    /// one is staged from the file inside the content writer, and waits in
+    /// its own body file when it is proposed, never held whole.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::append_blob_version`]'s errors and the file's read errors.
+    pub fn append_blob_version_file(
+        &self,
+        artifact_ref: &str,
+        body: &crate::blob_artifact::BlobBodyFile<'_>,
+        run_ref: Option<&str>,
+        occurred_at: u64,
+        learned_at: Option<u64>,
+    ) -> MemoryResult<BlobVersionAppendOutcome> {
+        let inline = body.inline_bytes()?;
+        let content = match &inline {
+            Some(bytes) => crate::blob_artifact::BlobContent::Bytes(bytes),
+            None => crate::blob_artifact::BlobContent::File(body),
+        };
+        self.append_blob_content(artifact_ref, content, run_ref, occurred_at, learned_at)
+    }
+
+    fn append_blob_content(
+        &self,
+        artifact_ref: &str,
+        content: crate::blob_artifact::BlobContent<'_>,
+        run_ref: Option<&str>,
+        occurred_at: u64,
+        learned_at: Option<u64>,
+    ) -> MemoryResult<BlobVersionAppendOutcome> {
+        let _ = self
+            .vault
+            .measure_limit(crate::limit_ask::EngineLimit::BlobContentBytes, content.len());
         let artifact_id = self.resolve_ref(artifact_ref)?;
         let provenance = match run_ref {
             Some(run_ref) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
@@ -207,13 +248,13 @@ impl Memory<'_> {
         // A landing version or a waiting proposal past the inline size goes
         // to its body file under an instance minted before the writer opens;
         // its hold outlives the commit (FIX 20812).
-        let mint = self.vault.asset_body_mint([bytes.len() as u64])?;
+        let mint = self.vault.asset_body_mint([content.len()])?;
         let (outcome, _hold) = self.with_actor_content_write_txn(|content| {
             Ok(content.update_artifact(artifact_id, |txn, lane| {
                 self.vault.append_blob_artifact_version_checked_in_txn(
                     txn,
                     &artifact_id,
-                    bytes,
+                    content,
                     mint.as_ref(),
                     &provenance,
                     self.write_actor(),

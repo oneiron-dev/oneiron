@@ -1268,22 +1268,42 @@ impl Memory<'_> {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(&input.content_base64)
             .map_err(|_| invalid("content_base64 is not base64"))?;
-        let output = NativeOutput {
-            run_ref: input.run_ref.clone(),
-            name: input.name.clone(),
-            media_type: input.media_type.clone(),
-            bytes,
-            report: input.report.to_string(),
-            made_by: input.made_by.clone(),
-        };
-        let read_rows = input
-            .read_rows
-            .iter()
-            .map(|reference| entity(reference))
-            .collect::<MemoryResult<Vec<_>>>()?;
+        let output = native_output_of(input, bytes);
+        let read_rows = read_row_ids(input)?;
         Ok(self.vault().propose_native_output_with_reads(
             &entity(&input.artifact_ref)?,
             &output,
+            self.made_by_reader(output.made_by.as_ref())?,
+            (self.artifact_actor(), self.vault().now_recorded_at()),
+            &read_rows,
+            input.delta_receipt.as_deref(),
+        )?)
+    }
+
+    /// [`Self::artifacts_propose_output`] of an output an ingress door
+    /// decoded into `body` before any writer opened (FIX 22074): `input`
+    /// names the output and holds no content of its own. A body past the
+    /// asset plane's inline size waits in its own body file, staged from
+    /// `body`, never held whole.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::artifacts_propose_output`]'s errors, an `input` that holds
+    /// content, and the file's read errors.
+    pub fn artifacts_propose_output_file(
+        &self,
+        input: &NativeOutputRequest,
+        body: &crate::blob_artifact::BlobBodyFile<'_>,
+    ) -> MemoryResult<PendingProposalView> {
+        if !input.content_base64.is_empty() {
+            return Err(invalid("content arrives in the body file, not in the request").into());
+        }
+        let output = native_output_of(input, Vec::new());
+        let read_rows = read_row_ids(input)?;
+        Ok(self.vault().propose_native_output_file(
+            &entity(&input.artifact_ref)?,
+            &output,
+            body,
             self.made_by_reader(output.made_by.as_ref())?,
             (self.artifact_actor(), self.vault().now_recorded_at()),
             &read_rows,
@@ -1375,4 +1395,25 @@ fn slide_review_error(error: SlideReviewError) -> MemoryError {
         SlideReviewError::Vault(error) => MemoryError::from(error),
         other => MemoryError::from(Error::InvalidConfig(other.to_string())),
     }
+}
+
+/// The native output `input` names, holding `bytes`.
+fn native_output_of(input: &NativeOutputRequest, bytes: Vec<u8>) -> NativeOutput {
+    NativeOutput {
+        run_ref: input.run_ref.clone(),
+        name: input.name.clone(),
+        media_type: input.media_type.clone(),
+        bytes,
+        report: input.report.to_string(),
+        made_by: input.made_by.clone(),
+    }
+}
+
+/// The rows `input` declares it read.
+fn read_row_ids(input: &NativeOutputRequest) -> MemoryResult<Vec<EntityId>> {
+    input
+        .read_rows
+        .iter()
+        .map(|reference| entity(reference))
+        .collect()
 }
