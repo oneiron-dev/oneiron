@@ -138,7 +138,8 @@ pub(crate) use self::program_resume::{
 };
 pub(crate) use self::wait_delivery::wait_delivered_in_txn;
 pub(crate) use self::wait_holders::{
-    WaitReply, erase_settled_reply_of_erased_run_in_txn, wait_delivery_owners, wait_reply_in_txn,
+    WaitReply, erase_settled_reply_of_erased_run_in_txn, release_settled_for_caller_in_txn,
+    wait_delivery_owners, wait_reply_in_txn,
 };
 
 // The lift sweep's typed acceptance for this module's authored side
