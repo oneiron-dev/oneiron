@@ -1177,9 +1177,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/decision_graph/mod.rs` | src | m | 12 crate-vis | — | Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question |
 | `src/decision_host/adapters.rs` | src | m | 2 crate-vis | — | Decision host adapters: the engine traits its rungs and notes implement |
 | `src/decision_host/attach.rs` | src | s | 6 fn · 4 crate-vis | — | Decision host attach: the server's decision ladder and its config |
+| `src/decision_host/big_binding.rs` | src | s | 1 struct · 3 fn | BigRung | The Big rung's binding (OF-495): the big model on the seat `[models.decisions.big]` names, and the provider… |
 | `src/decision_host/claim_merge.rs` | src | s | 1 fn | — | The decision host's caller of the session-branch claim merge (OF-493 row G, FIX 1328): the useful-upstream… |
 | `src/decision_host/doors.rs` | src | m | 14 fn · 14 crate-vis | — | Decision host doors: the ladder, dials and the hooks built on them |
-| `src/decision_host/mod.rs` | src | m | 1 struct · 6 fn · 2 const · 9 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
+| `src/decision_host/mod.rs` | src | m | 1 struct · 6 fn · 2 const · 1 re-export · 9 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
 | `src/decision_host/native_capture.rs` | src | s | 3 crate-vis | — | Post-settlement evidence for house reads on their actual admitted run |
 | `src/decision_host/notes.rs` | src | s | 2 crate-vis | — | The host's notes beside decided answers (FIX 3040, 654): a critic review's evidence refs and suggested… |
 | `src/decision_host/refresh.rs` | src | s | 2 crate-vis | — | Decision host person- and think-threshold refresh |
@@ -1291,6 +1292,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/peer_serve.rs` | src | s | 10 crate-vis | — | FIX 4748: this machine serving another machine of its vault while their home is down (owner RULING B… |
 | `src/handler/protocol_close.rs` | src | s | 9 crate-vis | — | A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would… |
 | `src/handler/residence_socket_tests.rs` | test | XL | — | — | A real enrol: root + thin index, one opened item, remote search and offline honesty |
+| `src/handler/root_updates.rs` | src | s | 1 crate-vis | — | Root exports leave as one immutable image |
 | `src/handler/sealed_updates.rs` | src | s | 3 crate-vis | — | The home's side of the sealed world-update relay (DEC-0005 fix 8: "The cloud relays its sealed updates… |
 | `src/handler/selector_scope.rs` | src | s | 1 crate-vis | — | Single-vault selector grant scope shared by handler and livequery (FIX 9251) |
 | `src/handler/socket_stop.rs` | src | s | 5 crate-vis | — | An upgraded socket's transport under its server's stop (OF-237) |
