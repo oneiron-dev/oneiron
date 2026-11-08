@@ -15740,7 +15740,7 @@ impl AgentVerb {
                 "Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving."
             }
             Self::VaultMailReplyDraft => {
-                "Drafts a plain-text reply to a mail thread the caller reads, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first."
+                "Drafts a reply to a mail thread the caller reads, in plain text with an optional simple HTML alternative, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first."
             }
             Self::VaultMailReplyDrafts => {
                 "The drafted replies on the mail threads the caller reads, newest first, each with its words, recipient, frozen plan and state."

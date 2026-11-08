@@ -102,6 +102,10 @@ pub(super) struct MailReplyDraftRow {
     to: String,
     subject: String,
     body: String,
+    /// The HTML alternative, as the mail HTML gate wrote it (fix list row
+    /// 17645).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    body_html: Option<String>,
     /// Who drafted it; `None` once that actor was erased.
     drafted_by: Option<EntityId>,
     state: MailReplyDraftState,
@@ -127,8 +131,15 @@ pub struct MailReplyDraftRequest {
     /// message this mailbox did not send when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_turn_ref: Option<String>,
-    /// The reply's plain text.
+    /// The reply's plain text: the whole reply for a reader without HTML.
     pub body: String,
+    /// The reply as HTML, sent beside the text as its alternative: text,
+    /// links (`http`, `https`, `mailto`), paragraphs, line breaks, headings,
+    /// lists, quotes, code and simple emphasis, with `dir` and `lang`. Any
+    /// other element or attribute is refused, not dropped; no image, style or
+    /// script is sent. At most 256 KiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_html: Option<String>,
     /// The caller's key for this draft: the same key with the same body is
     /// the same draft; with another body, its next revision.
     pub request_key: String,
@@ -147,6 +158,10 @@ pub struct MailReplyDraftView {
     pub to: String,
     pub subject: String,
     pub body: String,
+    /// The HTML alternative that sends beside the text, exactly as it
+    /// sends; show it inert (fix list row 17645).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_html: Option<String>,
     /// The frozen send plan the owner approves, exactly.
     pub plan_ref: String,
     pub state: MailReplyDraftState,
@@ -207,6 +222,7 @@ fn view(id: EntityId, row: &MailReplyDraftRow) -> MailReplyDraftView {
         to: row.to.clone(),
         subject: row.subject.clone(),
         body: row.body.clone(),
+        body_html: row.body_html.clone(),
         plan_ref: row.plan_ref.clone(),
         state: row.state,
         outcome: row.outcome.clone(),
@@ -405,6 +421,7 @@ fn message_for(
     send_ref: &str,
     parent: &MailReplyHeaders,
     body: &str,
+    html: Option<&str>,
     composed_at: u64,
 ) -> MemoryResult<ReplyMessage> {
     let to = reply_recipient(parent)?;
@@ -418,6 +435,7 @@ fn message_for(
         to: &to,
         subject: &subject,
         body,
+        html,
         parent_message_id,
         parent_references: &parent.references,
         send_ref,
@@ -433,6 +451,7 @@ fn plan_for(
     send_ref: &str,
     parent: &MailReplyHeaders,
     body: &str,
+    html: Option<&str>,
     composed_at: u64,
 ) -> MemoryResult<GmailSendPlan> {
     let refuse = |message: &str| MemoryError::bad_request(message.to_owned());
@@ -448,7 +467,7 @@ fn plan_for(
     let thread = GmailReplyThread::new(thread_id, parent_id, &parent.references)
         .map_err(|error| refuse(&error.to_string()))?;
     let subject = reply_subject(parent.subject.as_deref().unwrap_or_default());
-    GmailSendPlan::new(
+    let plan = GmailSendPlan::new(
         adapter,
         send_ref,
         &to,
@@ -457,7 +476,13 @@ fn plan_for(
         Some(thread),
         composed_at,
     )
-    .map_err(|error| refuse(&error.to_string()))
+    .map_err(|error| refuse(&error.to_string()))?;
+    match html {
+        Some(html) => plan
+            .with_html(html)
+            .map_err(|error| refuse(&error.to_string())),
+        None => Ok(plan),
+    }
 }
 
 /// What sends an approved reply.
@@ -637,37 +662,52 @@ impl Memory<'_> {
         // The mailbox's own person approves it, so they are asked.
         let asked = row.owner.filter(|person| *person != actor);
         let (parent_turn, parent) = parent_of(&messages, parent_turn)?;
+        // The HTML as it would send, so a redraft of the same words is the
+        // same revision (fix list row 17645).
+        let html = input
+            .body_html
+            .as_deref()
+            .map(crate::channel_identity_provider::mail_html::sanitize_mail_html)
+            .transpose()
+            .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         if let Some(prior) = &prior {
             if prior.state != MailReplyDraftState::Proposed {
                 return Err(invalid_state(
                     "the draft was approved or discarded; draft under another request key",
                 ));
             }
-            if prior.body == input.body && prior.parent_turn == parent_turn {
+            if prior.body == input.body
+                && prior.body_html == html
+                && prior.parent_turn == parent_turn
+            {
                 return Ok(view(id, prior));
             }
         }
         let revision = prior.as_ref().map_or(1, |prior| prior.revision + 1);
         let send_ref = format!("mail-reply:{}:{revision}", id.to_hex());
         let now = crate::unix_seconds_now();
-        let (identity, plan_ref, to, message) = match route {
+        let raw_html = input.body_html.as_deref();
+        let (identity, plan_ref, to, body_html, message) = match route {
             ReplyRoute::Gmail(identity) => {
                 let adapter = adapter_of(vault, identity)?;
-                let plan = plan_for(&adapter, &send_ref, &parent, &input.body, now)?;
+                let plan = plan_for(&adapter, &send_ref, &parent, &input.body, raw_html, now)?;
                 plan.keep(vault)?;
                 (
                     Some(identity),
                     plan.content_ref().to_owned(),
                     plan.recipient().to_owned(),
+                    plan.body_html().map(str::to_owned),
                     None,
                 )
             }
             ReplyRoute::Account(_) => {
-                let message = message_for(&row.address, &send_ref, &parent, &input.body, now)?;
+                let message =
+                    message_for(&row.address, &send_ref, &parent, &input.body, raw_html, now)?;
                 (
                     None,
                     message.content_ref(),
                     message.to.clone(),
+                    message.html.clone(),
                     Some(message),
                 )
             }
@@ -683,6 +723,7 @@ impl Memory<'_> {
             to,
             subject: reply_subject(parent.subject.as_deref().unwrap_or_default()),
             body: input.body.clone(),
+            body_html,
             drafted_by: Some(actor),
             state: MailReplyDraftState::Proposed,
             approved_at: None,
