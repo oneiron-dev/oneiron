@@ -446,6 +446,7 @@ impl<'v> Landing<'v> {
                 content_hashes: Vec::new(),
                 stage,
                 presence: MailPresence::Present,
+                presence_generation: 0,
                 labels: Vec::new(),
                 rfc_message_id: None,
                 from: None,
