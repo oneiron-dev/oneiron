@@ -3,16 +3,20 @@
 //! auto-migrates to its successor", on Eiri DEC-0004 #deprecation's
 //! schedule).
 //!
-//! A host runs [`Vault::run_model_pack_retirement`] on its housekeeping
-//! tick, with the access its offers hold, and the vault's clock names the
-//! day. A pass first moves a pin whose pack retired to the successor
-//! ([`migrated_model_pack_preference`]) and records the active pack's
-//! retirement-day move as a change that keeps the pack before it, so the
-//! change's notice offers the revert (FIX 5369). Then, at each of
+//! The pass is a sweep of the engine's housekeeping pass
+//! (`HousekeepingSweep::ModelPackRetirement`, FIX 20193), so every host that
+//! runs the pass runs it the same way: a serving host on its tick, with the
+//! access its offers hold, and `oneiron maintain` on a stopped vault, with
+//! none. The vault's clock names the day. A pass first moves a pin whose
+//! pack retired to the successor ([`migrated_model_pack_preference`]) and
+//! records the active pack's retirement-day move as a change that keeps the
+//! pack before it, so the change's notice offers the revert (FIX 5369).
+//! Then, at each of
 //! [`MODEL_PACK_RETIREMENT_NOTICE_DAYS`](crate::settings::model_pack::MODEL_PACK_RETIREMENT_NOTICE_DAYS),
 //! it tells each owner once of the active pack's retirement, and of each
-//! retiring model a role resolves to on the host's access. A retired
-//! model's roles move to its successor in the resolver itself
+//! retiring model a role resolves to on the host's access, while the pack
+//! binds roles: an owner's manifest that outranks it leaves no notice. A
+//! retired model's roles move to its successor in the resolver itself
 //! ([`super::resolve_model_pack_role`]). The notices sent are recorded by
 //! subject, retirement day and mark, so a restart or a second pass never
 //! sends one twice.
@@ -22,8 +26,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ACTIVE, AccessSnapshot, ModelPackChangeCause, PREFERENCE, SECONDS_PER_DAY,
-    manifest_outranks_model_pack, model_pack_role_key, resolve_model_pack_role,
+    ACTIVE, AccessSnapshot, MODEL_PACK_COMPACTION_KEY, ModelPackChangeCause, PREFERENCE,
+    SECONDS_PER_DAY, manifest_outranks_model_pack, model_pack_role_key, resolve_model_pack_role,
 };
 use crate::Vault;
 use crate::error::Result;
@@ -55,13 +59,13 @@ struct RetirementNoticeSent {
 
 /// What one retirement pass did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ModelPackRetirementReport {
+pub(crate) struct ModelPackRetirementReport {
     /// Retirement notices sent, one per subject and mark, each to every
     /// owner.
-    pub notices: u32,
+    pub(crate) notices: u32,
     /// Whether the pass moved a pin or recorded the active pack's
     /// retirement-day move.
-    pub migrated: bool,
+    pub(crate) migrated: bool,
 }
 
 /// One notice a pass owes.
@@ -186,17 +190,18 @@ fn model_notice_text(
 }
 
 impl Vault {
-    /// One retirement pass (FIX 5368), for a host's housekeeping tick:
-    /// `access` is what the host's offers hold, against which the active
-    /// pack's roles resolve. It moves a pin whose pack retired to its
-    /// successor, records the active pack's retirement-day move as a change
-    /// (with its notice and revert, FIX 5369), and sends each retirement
-    /// notice due today once, to every owner. A pass with nothing due reads
-    /// one snapshot and writes nothing.
+    /// One retirement pass (FIX 5368), the housekeeping pass's
+    /// `ModelPackRetirement` sweep and its only caller (FIX 20193): `access`
+    /// is what the host's offers hold, against which the active pack's roles
+    /// resolve, and none on a host with no model offers. It moves a pin whose
+    /// pack retired to its successor, records the active pack's
+    /// retirement-day move as a change (with its notice and revert, FIX
+    /// 5369), and sends each retirement notice due today once, to every
+    /// owner. A pass with nothing due reads one snapshot and writes nothing.
     ///
     /// # Errors
-    /// Storage errors. The pass is retried whole on the next tick.
-    pub fn run_model_pack_retirement(
+    /// Storage errors. The sweep is retried whole on a later pass.
+    pub(crate) fn run_model_pack_retirement(
         &self,
         access: &AccessSnapshot,
     ) -> Result<ModelPackRetirementReport> {
@@ -258,10 +263,12 @@ impl Vault {
     }
 
     /// What a retirement pass owes on `today`, read in `txn`. An engine call
-    /// (CALLS, FIX 5368): the active pack's own notices and its move go out
-    /// whether or not an owner's manifest outranks the pack, as they concern
-    /// the owner's setting; model notices follow the roles the pack binds,
-    /// so a manifest that outranks it leaves none.
+    /// (CALLS, FIX 5368, 20193): the retirement-day move of a pin or of the
+    /// recorded pack runs whether or not an owner's manifest outranks the
+    /// pack, as it concerns the owner's setting. The notices follow the roles
+    /// the pack binds, by the test the role pick reads
+    /// ([`manifest_outranks_model_pack`]): a manifest that outranks the pack
+    /// leaves no notice, of the pack or of a model, as the pack picks nothing.
     fn model_pack_retirement_work_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -284,7 +291,10 @@ impl Vault {
             });
         let following = preference.as_ref().unwrap_or(&stored);
         let mut notices = Vec::new();
-        if let Some(active) = select_model_pack(&packs, pack_of, following, today) {
+        // A pack an owner's manifest outranks binds no role: no notice talks
+        // of a pack that picks nothing, or of a model no role of it uses.
+        let binds = !manifest_outranks_model_pack(read_manifest(&self.store, txn)?.as_ref());
+        if binds && let Some(active) = select_model_pack(&packs, pack_of, following, today) {
             let pack = &active.pack;
             if let Some(retirement) = pack.retirement
                 && let Some(mark) = retirement_notice_mark(retirement, today)
@@ -308,34 +318,30 @@ impl Vault {
                     });
                 }
             }
-            // A pack an owner's manifest outranks binds no role, so no model
-            // of it is in use.
-            if !manifest_outranks_model_pack(read_manifest(&self.store, txn)?.as_ref()) {
-                for (model, roles) in models_in_use(pack, access, today) {
-                    let Some(retiring) = pack.model_retirement(&model) else {
-                        continue;
-                    };
-                    let retirement = retiring.retirement;
-                    let Some(mark) = retirement_notice_mark(retirement, today) else {
-                        continue;
-                    };
-                    let key = notice_key(
-                        retirement.retires_epoch_day,
-                        mark,
-                        &format!("model:{model}"),
-                    );
-                    if NOTICES.get(&self.store, txn, &key)?.is_none() {
-                        notices.push(DueNotice {
-                            key,
-                            subject: model.to_string(),
-                            detail: model_notice_text(
-                                pack,
-                                retiring,
-                                &roles,
-                                retirement.retires_epoch_day - today,
-                            ),
-                        });
-                    }
+            for (model, roles) in models_in_use(pack, access, today) {
+                let Some(retiring) = pack.model_retirement(&model) else {
+                    continue;
+                };
+                let retirement = retiring.retirement;
+                let Some(mark) = retirement_notice_mark(retirement, today) else {
+                    continue;
+                };
+                let key = notice_key(
+                    retirement.retires_epoch_day,
+                    mark,
+                    &format!("model:{model}"),
+                );
+                if NOTICES.get(&self.store, txn, &key)?.is_none() {
+                    notices.push(DueNotice {
+                        key,
+                        subject: model.to_string(),
+                        detail: model_notice_text(
+                            pack,
+                            retiring,
+                            &roles,
+                            retirement.retires_epoch_day - today,
+                        ),
+                    });
                 }
             }
         }
@@ -358,16 +364,19 @@ fn notice_key(retires_epoch_day: u32, mark: u32, subject: &str) -> (u64, u64, St
 }
 
 /// Each model `pack`'s roles resolve to on `access` today, with the role
-/// keys that resolve to it: only the engine's own roles, as only those read
-/// a pack's pick.
+/// keys that resolve to it: only the keys that read a pack's pick, the
+/// engine's own roles and the compaction model (FIX 20042).
 fn models_in_use(
     pack: &ModelPack,
     access: &AccessSnapshot,
     today: u32,
 ) -> BTreeMap<ModelId, Vec<String>> {
     let mut used: BTreeMap<ModelId, Vec<String>> = BTreeMap::new();
-    for role in MODEL_ROLES {
-        let key = model_pack_role_key(role);
+    let keys = MODEL_ROLES
+        .into_iter()
+        .map(model_pack_role_key)
+        .chain([MODEL_PACK_COMPACTION_KEY.to_owned()]);
+    for key in keys {
         if let Some(variant) = resolve_model_pack_role(pack, &key, access, today) {
             used.entry(variant.model).or_default().push(key);
         }
