@@ -364,7 +364,7 @@ impl Vault {
         landing: Landing,
     ) -> Result<LandingReceipt> {
         let at = self.now_recorded_at();
-        self.with_write_txn_grouped(|wtxn| {
+        let receipt = self.with_write_txn_grouped(|wtxn| {
             let key = (*artifact, *fork);
             let mut record = open_record(&self.store, wtxn, artifact, fork)?;
             // "The opener's lineage and its forks never settle their own proposal."
@@ -438,7 +438,10 @@ impl Vault {
             }
             FORKS.put(&self.store, wtxn, &key, &record)?;
             Ok(receipt)
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*artifact);
+        Ok(receipt)
     }
 
     /// Record the deck oracle's receipt for its profile, as the evidence of

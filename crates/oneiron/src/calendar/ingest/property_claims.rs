@@ -116,13 +116,31 @@ fn values(event: &ParsedVEvent) -> Vec<(&'static str, Value)> {
     }
     if let Some(rrule) = &p.rrule {
         values.push((PREDICATE_CALENDAR_RRULE, Value::from(rrule.as_str())));
-        if let Some(start) = event.starts_at_utc {
+        let all_day = p.time_kind == Some(CalendarTimeKind::AllDay);
+        let seed = match event.starts_at_utc {
+            Some(start) => Some((start, rrule.clone(), p.timezone.as_deref().unwrap_or("UTC"))),
+            // An all-day or floating series names civil time and no instant:
+            // its master steps on the UTC carrier, where its date and floating
+            // recurrence ids key too (FIX 16568).
+            None if all_day || p.time_kind == Some(CalendarTimeKind::Floating) => p
+                .wall_time
+                .and_then(crate::calendar::series::civil_start_key)
+                .map(|start| {
+                    (
+                        start,
+                        crate::calendar::series::civil_rule(rrule, all_day),
+                        "UTC",
+                    )
+                }),
+            None => None,
+        };
+        if let Some((start, rule, tz)) = seed {
             values.push((
                 PREDICATE_CALENDAR_SERIES_MASTER,
                 Value::Map(vec![
-                    ("rrule".into(), rrule.as_str().into()),
+                    ("rrule".into(), rule.into()),
                     ("dtstart_utc".into(), start.into()),
-                    ("tz".into(), p.timezone.as_deref().unwrap_or("UTC").into()),
+                    ("tz".into(), tz.into()),
                 ]),
             ));
         }
