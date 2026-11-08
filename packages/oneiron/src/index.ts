@@ -1764,6 +1764,12 @@ export class Oneiron {
         erase: (input: Facade.OutboundCallRequestEraseRequest): Facade.OutboundCallRequestErased => this.#call(() => this.#client.vaultOutboundCallsRequestErase(input) as Facade.OutboundCallRequestErased),
       },
     },
+    outbound: {
+      uncertain_send: {
+        /** The owner answers the ask on a scheduled send that may have gone out and that the provider cannot confirm: send it once more, or leave it unsent. */
+        answer: (input: Facade.UncertainSendAnswer): Facade.UncertainSendAnswered => this.#call(() => this.#client.vaultOutboundUncertainSendAnswer(input) as Facade.UncertainSendAnswered),
+      },
+    },
     research: {
       /** The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave. */
       create_child: (input: Facade.ResearchChildWire): Facade.ResearchChildReceipt => this.#call(() => this.#client.vaultResearchCreateChild(input) as Facade.ResearchChildReceipt),
