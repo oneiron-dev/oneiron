@@ -6691,6 +6691,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_proposal_rereview(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.proposal_rereview")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.proposal_rereview", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_conflict_record(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.code.conflict_record")?;
         let output = py
@@ -6709,6 +6716,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.code.proposal_resolve")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.code.proposal_resolve", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_proposal_resolve_rereview(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.proposal_resolve_rereview")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.proposal_resolve_rereview", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }
@@ -7041,6 +7062,16 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.code.origin.publish.cancel", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_devices_predecessor_name(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.devices.predecessor.name")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.devices.predecessor.name", input)
             })
             .map_err(raise)?;
         encode(&output)
