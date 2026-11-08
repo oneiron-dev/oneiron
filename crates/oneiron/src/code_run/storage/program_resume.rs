@@ -120,12 +120,15 @@ pub(crate) enum ProgramResumeKind {
     /// row's answer stands for them.
     #[default]
     Settled,
-    /// A callable a later entry cannot answer from its row alone: its body
-    /// reached the wait the entry parked on (whether or not it then
-    /// returned), the bridge halted inside it, or its own calls published
-    /// outputs. Its own calls follow it, up to that wait. A later entry
-    /// holds on it.
+    /// A callable whose body unwound on the wait the entry parked on: it
+    /// had not returned. Its own calls follow it, up to that wait. A later
+    /// entry runs its body again, its own calls answered from those rows,
+    /// the wait's from its delivered reply.
     OpenCallable,
+    /// A callable a later entry cannot answer from its row, nor run again:
+    /// its body returned past the entry's wait, the bridge halted inside it,
+    /// or its own calls stored outputs. A later entry holds on it.
+    HeldCallable,
 }
 
 /// What one pinned entry commits beside its checkpoint: every call it
