@@ -117,6 +117,12 @@
     and no admission/heap/lifecycle claim.
   - `src/parser/cmap_parser.rs` (FIX 12777 codespace metadata): validates every codespace range with the same one-or-more grammar without collecting the discarded range payload. Keeps the private empty `CsRange` marker consumed by `ToUnicodeCMap`, which ignores that payload. Mapping data, accepted input and public error classes are unchanged; sections, maps and admission plumbing remain separate. No new cap, refusal or format.
 
+  - CMap reverse-map/fallback allocation (FIX 12777, narrow slice): `src/encodings/cmap.rs`
+    builds the reverse map over borrowed Unicode slices with a per-iteration stack
+    singleton, cloning only new keys and multi-unit incremented ranges, and
+    `get_or_replacement_char` allocates its fallback vector lazily. Key content,
+    push order, missing-code behavior and the forward maps are unchanged; no new API,
+    and no admission/heap/lifecycle claim.
   - Cooperative hosted container reads (FIX 7943/11549, partial): default no-op
     `DecodeAdmission::checkpoint` reports native xref/object/stream positions;
     controlled reads opt into sequential loading even when Rayon is compiled.

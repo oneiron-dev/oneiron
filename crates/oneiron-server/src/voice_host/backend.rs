@@ -21,6 +21,7 @@ pub(super) struct CallBackend {
     server: Arc<SyncServer>,
     router: Arc<ModelRouter>,
     run: RunAdmission,
+    phone: Option<Arc<super::phone::PhoneCallRead>>,
 }
 
 impl CallBackend {
@@ -33,7 +34,23 @@ impl CallBackend {
             server,
             router,
             run,
+            phone: None,
         }
+    }
+
+    pub(super) fn for_phone(
+        server: Arc<SyncServer>,
+        router: Arc<ModelRouter>,
+        run: RunAdmission,
+        phone: Arc<super::phone::PhoneCallRead>,
+    ) -> Result<Self, super::HostError> {
+        let caller = phone.admitted_media_agent(server.vault())?;
+        Ok(Self {
+            server,
+            router,
+            run: run.initiated_by(Some(caller)),
+            phone: Some(phone),
+        })
     }
 
     /// The ladder serving the request's model, and the request as the vault
@@ -43,6 +60,19 @@ impl CallBackend {
             .router
             .served(&request.model)
             .ok_or(FatalLlmError::InvalidRequest)?;
+        let ladder = match &self.phone {
+            Some(phone) => {
+                phone
+                    .admitted_media_agent(self.server.vault())
+                    .map_err(|_| FatalLlmError::InvalidRequest)?;
+                Arc::new(
+                    ladder
+                        .for_model_list(phone.models())
+                        .map_err(|_| FatalLlmError::InvalidRequest)?,
+                )
+            }
+            None => ladder,
+        };
         let context = HostInferenceContext {
             binding: HostInferenceBinding::Advertised {
                 model: request.model.clone(),

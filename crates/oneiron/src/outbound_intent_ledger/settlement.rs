@@ -242,6 +242,31 @@ fn update_settlement_in_txn(
     Ok(())
 }
 
+/// Drops row `id`'s settlement as the stood-down row it belongs to is
+/// superseded (FIX 4747 slice 4), in the caller's writer: only while its
+/// reserved budget already came out, or it reserved none, so the send's next
+/// admission reserves its own. `false`, and nothing dropped, while its
+/// reservation still stands reserved or settled.
+///
+/// # Errors
+/// Storage and row-codec faults.
+pub(super) fn forget_released_settlement_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &IntentId,
+) -> IntentLedgerResult<bool> {
+    let settlement = intent_settlement_in_txn(vault, wtxn, id)?;
+    if settlement
+        .reservation
+        .as_ref()
+        .is_some_and(|reservation| reservation.status != ReservationStatus::Released)
+    {
+        return Ok(false);
+    }
+    SETTLEMENT.delete(&vault.store, wtxn, id)?;
+    Ok(true)
+}
+
 /// Keeps the budget admission reserved for row `id`, in the admission's
 /// writer (FIX 7964), with what its preauthorized spend stood on (FIX
 /// 8689) and the preauthorizing rows it met (FIX 11662). A charge that
@@ -530,6 +555,32 @@ pub(super) fn forget_remote_task_in_txn(
     update_settlement_in_txn(vault, wtxn, id, |settlement| {
         settlement.remote_task = None;
     })
+}
+
+/// Polls row `id`'s remote task `task_id` in the MCP session `session`
+/// from now on, in `wtxn` (FIX 16028): the connector ended the one the task
+/// was created in. A handle naming another task, or keeping no poll, stays
+/// as it is. Whether the handle changed.
+pub(super) fn renew_remote_task_session_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &IntentId,
+    task_id: &str,
+    session: Option<String>,
+) -> IntentLedgerResult<bool> {
+    let mut renewed = false;
+    update_settlement_in_txn(vault, wtxn, id, |settlement| {
+        if let Some(poll) = settlement
+            .remote_task
+            .as_mut()
+            .filter(|handle| handle.id == task_id)
+            .and_then(|handle| handle.poll.as_mut())
+        {
+            poll.session = session;
+            renewed = true;
+        }
+    })?;
+    Ok(renewed)
 }
 
 /// Row `id`'s provider wait and its edge, when that edge is still ahead of
