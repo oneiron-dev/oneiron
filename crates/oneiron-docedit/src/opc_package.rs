@@ -90,7 +90,10 @@ impl Source for [u8] {
         len: usize,
         read: impl FnOnce(&mut dyn Read) -> Result<T>,
     ) -> Result<Option<T>> {
-        match offset.checked_add(len).and_then(|end| self.get(offset..end)) {
+        match offset
+            .checked_add(len)
+            .and_then(|end| self.get(offset..end))
+        {
             Some(mut bytes) => read(&mut bytes).map(Some),
             None => Ok(None),
         }
@@ -134,7 +137,71 @@ impl<R: Read + Seek> Source for ReaderSource<'_, R> {
         reader
             .seek(SeekFrom::Start(offset as u64))
             .map_err(Error::Io)?;
-        read(&mut (&mut **reader).take(len as u64)).map(Some)
+        let mut range = RangeRead {
+            inner: (&mut **reader).take(len as u64),
+            failed: None,
+        };
+        let verdict = read(&mut range);
+        // The whole range is read, as the slice source holds it whole: a
+        // source that fails or ends early anywhere in it fails the package
+        // with its own error, before the payload's verdict.
+        range.drain();
+        if let Some(error) = range.failed {
+            return Err(Error::Io(error));
+        }
+        verdict.map(Some)
+    }
+}
+
+/// A payload range as it streams from a reader source, keeping the
+/// source's own read error apart from what a decoder makes of it.
+struct RangeRead<R> {
+    inner: std::io::Take<R>,
+    failed: Option<std::io::Error>,
+}
+
+impl<R: Read> Read for RangeRead<R> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            match self.inner.read(out) {
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    let reported =
+                        std::io::Error::new(error.kind(), "opc package source read failed");
+                    self.failed.get_or_insert(error);
+                    return Err(reported);
+                }
+                Ok(read) => return Ok(read),
+            }
+        }
+    }
+}
+
+impl<R: Read> RangeRead<R> {
+    /// Reads what the payload's reader left of the range, holding none of
+    /// it, and notes a source that fails or ends before the range does.
+    fn drain(&mut self) {
+        if self.failed.is_some() {
+            return;
+        }
+        let mut scratch = [0u8; 8192];
+        loop {
+            match self.inner.read(&mut scratch) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    self.failed = Some(error);
+                    return;
+                }
+            }
+        }
+        if self.inner.limit() > 0 {
+            self.failed = Some(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "opc package source ended inside an entry",
+            ));
+        }
     }
 }
 
@@ -712,9 +779,7 @@ fn descriptor_end<S: Source + ?Sized>(
     };
     let declared = u32::try_from(entry.declared_size).ok();
     Ok(
-        if word(0)? == Some(entry.crc)
-            && word(4)? == Some(entry.comp_size)
-            && word(8)? == declared
+        if word(0)? == Some(entry.crc) && word(4)? == Some(entry.comp_size) && word(8)? == declared
         {
             data_end + 12
         } else if word(0)? == Some(DATA_DESCRIPTOR_SIGNATURE)
@@ -784,29 +849,32 @@ fn crc32(data: &[u8]) -> u32 {
 }
 
 fn read_u16<S: Source + ?Sized>(bytes: &S, offset: usize) -> Result<u16> {
-    let slice = bytes
-        .range(offset, 2)?
-        .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
-            "opc read past end of buffer",
-        )))?;
+    let slice =
+        bytes
+            .range(offset, 2)?
+            .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc read past end of buffer",
+            )))?;
     Ok(u16::from_le_bytes([slice[0], slice[1]]))
 }
 
 fn read_u32<S: Source + ?Sized>(bytes: &S, offset: usize) -> Result<u32> {
-    let slice = bytes
-        .range(offset, 4)?
-        .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
-            "opc read past end of buffer",
-        )))?;
+    let slice =
+        bytes
+            .range(offset, 4)?
+            .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc read past end of buffer",
+            )))?;
     Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
 fn read_name<S: Source + ?Sized>(bytes: &S, offset: usize, len: usize) -> Result<String> {
-    let raw = bytes
-        .range(offset, len)?
-        .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
-            "opc part name truncated",
-        )))?;
+    let raw =
+        bytes
+            .range(offset, len)?
+            .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc part name truncated",
+            )))?;
     String::from_utf8(raw.to_vec()).map_err(|_| {
         Error::Artifact(ArtifactError::EditRoundtripFailed(
             "opc part name is not valid UTF-8",
