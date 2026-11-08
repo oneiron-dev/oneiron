@@ -42,6 +42,9 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 }),
             }
         } else {
+            let mut media_memory = self
+                .media_memory
+                .map(crate::host_memory::MachineMemory::empty_lease);
             let media: Vec<_> = media
                 .iter()
                 .map(|seed| {
@@ -53,6 +56,17 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                     )
                 })
                 .collect();
+            if let Some(memory) = media_memory.as_mut() {
+                memory.materialized(
+                    0,
+                    (media.capacity() as u64).saturating_mul(std::mem::size_of::<(
+                        &str,
+                        crate::embed::InputKind,
+                        &[f32],
+                        &[crate::embed::InputKind],
+                    )>() as u64),
+                );
+            }
             self.scoped_read.search_seeded(
                 query,
                 vector,
