@@ -1377,6 +1377,7 @@ selfFocusUnsubscribe(input: unknown): unknown
   inOffRecordSession(sessionRef: string): NativeClient
   withReadCredential(credential: string): NativeClient
   lastReceiptRef(): string | null
+  lastHookNotice(): string | null
   /** What `openWithHostRoot` did with its root; `null` on every other handle. */
   hostRootProfile(): HostRootProfile | null
   /** The engine-limit crossings this client's own vault kept; `null` on a remote, attached, or rebound view. */

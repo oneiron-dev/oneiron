@@ -718,6 +718,7 @@ pub(super) async fn mcp_endpoint(
             status: 200,
             body: saved,
             release,
+            refusal_hook_notice: None,
         };
         if failed || held {
             claim.finish_failed(outcome);

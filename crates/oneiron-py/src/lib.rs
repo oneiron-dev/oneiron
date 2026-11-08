@@ -356,6 +356,11 @@ impl NativeClient {
         self.inner.last_receipt_ref()
     }
 
+    /// The content-free hook notice beside the last facade reply.
+    fn last_hook_notice(&self) -> Option<String> {
+        self.inner.last_hook_notice()
+    }
+
     /// The engine `[limits]` rows this client's own vault crossed, as the
     /// host kept them: one entry per row that asked, as JSON. `None` on a
     /// remote, attached, or rebound view; an empty list where no row crossed
