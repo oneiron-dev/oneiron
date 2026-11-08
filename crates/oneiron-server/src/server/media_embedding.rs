@@ -126,6 +126,7 @@ impl MediaEmbedRefusal {
                 | Self::Call(LlmError::Fatal(
                     FatalLlmError::InvalidRequest
                         | FatalLlmError::InvalidRequestDetail { .. }
+                        | FatalLlmError::ContextWindowExceeded { .. }
                         | FatalLlmError::ContentFiltered
                         | FatalLlmError::EmptyResponse
                 ))
@@ -699,6 +700,7 @@ impl RuntimeMediaEmbedder {
             operation: AiOperation::Embed,
             parts,
             references: Vec::new(),
+            mask: None,
             params: if name_width {
                 BTreeMap::from([(
                     "dimensions".to_owned(),
