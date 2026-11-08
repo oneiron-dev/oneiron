@@ -51,11 +51,9 @@ use heed::{RoTxn, RwTxn};
 use super::{BodyDir, BodyFile, BodyKeyRow, ManifestDbs, Store, body_file_name};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
-use crate::entity_id::derived_domains::{ASSET_BODY_FILE, ASSET_BODY_HELD};
+use crate::entity_id::derived_domains::{ASSET_BODY_FILE, ASSET_BODY_HELD, ASSET_BODY_REVISION};
 use crate::error::{Error, Result};
-use crate::provenance::body::{
-    publish_body_in_txn, release_body_in_txn, release_owner_bodies_in_txn,
-};
+use crate::provenance::body::{owned_bodies_in_txn, publish_body_in_txn, release_body_in_txn};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::store::body_descriptor::{BodyLocation, BodyRef, BodyState, OwnedBody};
 use crate::store::owned_body::owned_body_in_txn;
@@ -240,6 +238,128 @@ fn held_occurrence(id: &EntityId, body: &BodyRef) -> Result<EntityId> {
     EntityId::derive(
         ASSET_BODY_HELD,
         &[id.as_bytes(), &body.blake3, &body.bytes.to_be_bytes()],
+    )
+}
+
+/// The occurrence `id`'s revisions keep a superseded body file of `id`
+/// under (FIX 22091): apart from a legal hold's, so either lets go alone.
+fn revision_occurrence(id: &EntityId, body: &BodyRef) -> Result<EntityId> {
+    EntityId::derive(
+        ASSET_BODY_REVISION,
+        &[id.as_bytes(), &body.blake3, &body.bytes.to_be_bytes()],
+    )
+}
+
+/// The body file a stored revision `raw` of ASSET `id` names, when one of
+/// `id`'s descriptors still holds exactly the file its manifest names: the
+/// current one (the live row's, or an older row's with the same body), the
+/// one its revisions keep it under since a later write superseded it, or a
+/// legal hold's (FIX 22091). `None` for any row that is not an ASSET's, an
+/// inline revision, and a file no descriptor holds any longer, which keeps
+/// the manifest it was stored as. A revision is not the live row, so a
+/// descriptor that names another file is no fault here.
+///
+/// # Errors
+///
+/// Storage errors as they occur.
+pub(crate) fn revision_file_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<Option<AssetFileManifest>> {
+    if EntityMetadataHeader::parse(raw).is_none_or(|header| header.entity_type != ENTITY_TYPE_ASSET)
+    {
+        return Ok(None);
+    }
+    let Some(manifest) = raw
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .and_then(AssetFileManifest::decode)
+    else {
+        return Ok(None);
+    };
+    let body = manifest.facts.body_ref();
+    let held = BodyState::Complete { body: body.clone() };
+    for occurrence in [
+        current_occurrence(id)?,
+        revision_occurrence(id, &body)?,
+        held_occurrence(id, &body)?,
+    ] {
+        if owned_body_in_txn(store, txn, id, &occurrence)?.is_some_and(|owned| owned.state == held)
+        {
+            return Ok(Some(manifest));
+        }
+    }
+    Ok(None)
+}
+
+/// [`short_content_hash_in_txn`] for a selected revision `raw` of `id`:
+/// the live row's as that; an older one's from the manifest of the file
+/// its descriptors still hold ([`revision_file_in_txn`]), else from its
+/// stored body, as an inline revision's.
+///
+/// # Errors
+///
+/// [`short_content_hash_in_txn`]'s errors, and storage errors.
+pub(crate) fn revision_content_hash_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<u8> {
+    let live =
+        crate::ports::EntityStoreRead::port_entity_with_raw(
+            store,
+            txn,
+            id,
+            |live| Ok(live == raw),
+        )?;
+    if live == Some(true) {
+        return short_content_hash_in_txn(store, txn, id, raw);
+    }
+    Ok(match revision_file_in_txn(store, txn, id, raw)? {
+        Some(manifest) => manifest.facts.short_hash(),
+        None => crate::batch::short_id_content_hash(
+            raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default(),
+        ),
+    })
+}
+
+/// Releases every body `id` holds but the files its revisions keep (FIX
+/// 22091): its current one, and a legal hold's once the hold has lifted.
+fn release_unkept_bodies_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    for owned in owned_bodies_in_txn(store, txn, id)? {
+        let kept = match owned.state.held() {
+            Some(body) => owned.occurrence == revision_occurrence(id, body)?,
+            None => false,
+        };
+        if !kept {
+            release_body_in_txn(store, txn, id, &owned.occurrence)?;
+        }
+    }
+    Ok(())
+}
+
+/// Publishes `id`'s descriptor of the superseded body file `body` under
+/// `occurrence`.
+fn keep_superseded_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    occurrence: EntityId,
+    body: &BodyRef,
+) -> Result<()> {
+    publish_body_in_txn(
+        store,
+        txn,
+        &OwnedBody {
+            owner: *id,
+            occurrence,
+            mark_occurrence: occurrence,
+            state: BodyState::Complete { body: body.clone() },
+            result: None,
+            code_run_output: None,
+        },
     )
 }
 
@@ -539,27 +659,27 @@ pub(crate) fn stage_asset_body_in_txn(
     if prior == next {
         return Ok(());
     }
+    let superseded = prior.as_ref().and_then(|prior| prior.state.held());
+    // The put captured the row it replaces among `id`'s revisions, manifest
+    // and all; its file stays while they keep it, so a revision read
+    // resolves its body as an inline revision keeps its bytes (FIX 22091).
+    // The owner's teardown releases it with every other descriptor.
+    if let Some(superseded) = superseded {
+        keep_superseded_in_txn(
+            store,
+            txn,
+            id,
+            revision_occurrence(id, superseded)?,
+            superseded,
+        )?;
+    }
     if crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())? {
-        if let Some(superseded) = prior.as_ref().and_then(|prior| prior.state.held()) {
-            let superseded_occurrence = held_occurrence(id, superseded)?;
-            publish_body_in_txn(
-                store,
-                txn,
-                &OwnedBody {
-                    owner: *id,
-                    occurrence: superseded_occurrence,
-                    mark_occurrence: superseded_occurrence,
-                    state: BodyState::Complete {
-                        body: superseded.clone(),
-                    },
-                    result: None,
-                    code_run_output: None,
-                },
-            )?;
+        if let Some(superseded) = superseded {
+            keep_superseded_in_txn(store, txn, id, held_occurrence(id, superseded)?, superseded)?;
         }
         release_body_in_txn(store, txn, id, &occurrence)?;
     } else {
-        release_owner_bodies_in_txn(store, txn, id)?;
+        release_unkept_bodies_in_txn(store, txn, id)?;
     }
     if let Some(next) = next {
         publish_body_in_txn(store, txn, &next)?;

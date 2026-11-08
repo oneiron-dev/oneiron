@@ -8,7 +8,8 @@ use std::io::Read;
 use heed::RoTxn;
 
 use super::{
-    AssetFileKind, AssetFileManifest, CheckedAssetBody, asset_file_in_txn, asset_file_of_raw_in_txn,
+    AssetFileKind, AssetFileManifest, CheckedAssetBody, asset_file_in_txn,
+    asset_file_of_raw_in_txn, revision_file_in_txn,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
@@ -88,7 +89,17 @@ impl crate::Vault {
         let Some(manifest) = asset_file_of_raw_in_txn(&self.store, txn, id, &raw)? else {
             return Ok(raw);
         };
-        let body = self.asset_file_body(txn, &manifest)?;
+        self.row_with_file_body_in_txn(txn, &manifest, &raw)
+    }
+
+    /// `raw`'s metadata header followed by the whole body `manifest` names.
+    fn row_with_file_body_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        manifest: &AssetFileManifest,
+        raw: &[u8],
+    ) -> Result<Vec<u8>> {
+        let body = self.asset_file_body(txn, manifest)?;
         let mut row = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
         row.extend_from_slice(&raw[..ENTITY_METADATA_HEADER_LEN]);
         row.extend_from_slice(&body);
@@ -97,8 +108,10 @@ impl crate::Vault {
 
     /// [`Self::materialized_row_in_txn`] for a selected revision `raw` of
     /// `id`: the one that is the live row reads as its body; an older one
-    /// keeps the manifest it was stored as, whose file a later write may have
-    /// released.
+    /// reads as the body of the file its manifest names while one of `id`'s
+    /// descriptors holds it ([`revision_file_in_txn`]): its revisions keep a
+    /// file a later write superseded (FIX 22091). Another keeps the manifest
+    /// it was stored as.
     ///
     /// # Errors
     ///
@@ -112,10 +125,13 @@ impl crate::Vault {
         let live = self
             .store
             .port_entity_with_raw(txn, id, |live| Ok(live == raw.as_slice()))?;
-        if live != Some(true) {
-            return Ok(raw);
+        if live == Some(true) {
+            return self.materialized_row_in_txn(txn, id, raw);
         }
-        self.materialized_row_in_txn(txn, id, raw)
+        match revision_file_in_txn(&self.store, txn, id, &raw)? {
+            Some(manifest) => self.row_with_file_body_in_txn(txn, &manifest, &raw),
+            None => Ok(raw),
+        }
     }
 
     /// Runs `read` over ASSET `id`'s body as it streams, whichever plane
