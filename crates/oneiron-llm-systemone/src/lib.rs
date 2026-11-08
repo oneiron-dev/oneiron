@@ -5,10 +5,11 @@
 //! HTTPS client with a bearer key, or a host's (the credential broker, which
 //! adds the key from the vault for one call at a time).
 
+use oneiron::code_run::model_call::native_seat_read_digests;
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionImage, DecisionRung, ImageBox, ProviderPin,
-    RemoteDecisionSeat, SeatAnswer, SeatFuture, SeatRequest,
+    RemoteDecisionSeat, SeatAnswer, SeatFuture, SeatRead, SeatReadFuture, SeatRequest,
 };
 use oneiron::{BudgetLease, FatalLlmError, LlmResult, LlmUsage, RetryableLlmError};
 use serde::Deserialize;
@@ -212,26 +213,25 @@ impl SystemOneSeat {
             time_left,
         })
     }
-}
 
-impl RemoteDecisionSeat for SystemOneSeat {
-    fn pin(&self) -> ProviderPin {
-        self.pin.clone()
-    }
-
-    fn image_edge(&self) -> Option<u32> {
-        Some(MAX_IMAGE_EDGE)
-    }
-
-    fn ask<'a>(
-        &'a self,
+    async fn ask_inner(
+        &self,
         request: SeatRequest,
-        lease: &'a BudgetLease,
-        time_left: std::time::Duration,
-    ) -> SeatFuture<'a> {
-        Box::pin(async move {
+        lease: &BudgetLease,
+        time_left: Duration,
+        capture: bool,
+    ) -> SeatRead {
+        let mut digests = None;
+        let result = async {
             request.validate_remote()?;
             let sent = self.build(&request, time_left).await?;
+            if capture {
+                // Fingerprint the built JSON tree, not the pre-transform request
+                // or its wire encoding. The host warns/skips missing evidence.
+                digests = serde_json::from_slice::<Value>(&sent.body)
+                    .ok()
+                    .and_then(|body| native_seat_read_digests(&body).ok());
+            }
             let model = sent.model.clone();
             let response = self.transport.send(sent, lease).await?;
             if !(200..300).contains(&response.status) {
@@ -261,7 +261,44 @@ impl RemoteDecisionSeat for SystemOneSeat {
                 "output_tokens": wire.usage.output_tokens,
             });
             Ok(parsed)
+        }
+        .await;
+        SeatRead {
+            request: digests,
+            result,
+        }
+    }
+}
+
+impl RemoteDecisionSeat for SystemOneSeat {
+    fn pin(&self) -> ProviderPin {
+        self.pin.clone()
+    }
+
+    fn image_edge(&self) -> Option<u32> {
+        Some(MAX_IMAGE_EDGE)
+    }
+
+    fn ask<'a>(
+        &'a self,
+        request: SeatRequest,
+        lease: &'a BudgetLease,
+        time_left: std::time::Duration,
+    ) -> SeatFuture<'a> {
+        Box::pin(async move {
+            self.ask_inner(request, lease, time_left, false)
+                .await
+                .result
         })
+    }
+
+    fn ask_recorded<'a>(
+        &'a self,
+        request: SeatRequest,
+        lease: &'a BudgetLease,
+        time_left: Duration,
+    ) -> SeatReadFuture<'a> {
+        Box::pin(self.ask_inner(request, lease, time_left, true))
     }
 }
 
