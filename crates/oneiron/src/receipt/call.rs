@@ -325,6 +325,49 @@ pub fn call_json_digest(value: &serde_json::Value) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
+/// [`call_json_digest`] of a JSON object one member of which its host holds
+/// outside memory (FIX 22074): `head` is every other member, and
+/// `write_value` writes `member`'s value as its canonical JSON text, quotes
+/// and all, where the member's key sorts. A member `head` still names is
+/// read from `write_value` alone. The digest is the one the whole object
+/// would have.
+///
+/// # Errors
+///
+/// What `write_value` returns.
+pub fn call_json_digest_with_member(
+    head: &serde_json::Map<String, serde_json::Value>,
+    member: &str,
+    write_value: impl FnOnce(&mut blake3::Hasher) -> std::io::Result<()>,
+) -> std::io::Result<String> {
+    let mut keys: Vec<&str> = head
+        .keys()
+        .map(String::as_str)
+        .filter(|key| *key != member)
+        .chain(std::iter::once(member))
+        .collect();
+    keys.sort_unstable();
+    let mut hasher = blake3::Hasher::new();
+    let mut write_value = Some(write_value);
+    hasher.update(b"{");
+    for (index, key) in keys.into_iter().enumerate() {
+        if index > 0 {
+            hasher.update(b",");
+        }
+        write_canonical(&mut hasher, &serde_json::Value::String(key.to_owned()));
+        hasher.update(b":");
+        if key == member {
+            if let Some(write_value) = write_value.take() {
+                write_value(&mut hasher)?;
+            }
+        } else if let Some(item) = head.get(key) {
+            write_canonical(&mut hasher, item);
+        }
+    }
+    hasher.update(b"}");
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
 /// BLAKE3 of raw bytes, lowercase hex: the digest of a body that is not JSON.
 #[must_use]
 pub fn call_bytes_digest(bytes: &[u8]) -> String {

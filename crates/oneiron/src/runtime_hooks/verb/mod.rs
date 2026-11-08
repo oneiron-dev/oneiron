@@ -13,6 +13,7 @@ mod call_scope;
 mod chain;
 mod credential;
 mod golden;
+mod held_member;
 mod paced;
 mod plain_resume;
 mod record;
@@ -47,6 +48,7 @@ pub use credential::{
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
     VerbAskInstrument, VerbAskMcpCeiling, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
 };
+pub(crate) use held_member::hold_member;
 pub(super) use paced::scrub_erased_paced_in_txn;
 pub use paced::{PACED_VERB_WAIT_DEFAULT_SECS, is_paced_verb};
 pub(crate) use paced::{
@@ -201,6 +203,12 @@ impl VerbHookPre {
     #[must_use]
     pub fn call(&self) -> &VerbCall {
         &self.call
+    }
+
+    /// Whether the call passed its chain with no hook live on it: its args
+    /// are its caller's own, untouched, and no post chain runs on it.
+    pub(crate) fn passed_through(&self) -> bool {
+        self.carry.is_none()
     }
 
     /// The consumed ask this resumed call runs on, if it resumed one.

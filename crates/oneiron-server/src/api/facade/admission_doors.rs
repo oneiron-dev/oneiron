@@ -146,7 +146,11 @@ pub(crate) fn call_verb<'a>(
                 None => {}
             }
         }
-        let digest = oneiron::receipt::call_json_digest(&value);
+        // An artifact write whose content its body held as a file states
+        // the input as it arrived, not the input without it (FIX 22074).
+        let digest = call
+            .arrival_digest(verb)
+            .map_or_else(|| oneiron::receipt::call_json_digest(&value), str::to_owned);
         let room = call.room_turn()?.map(|id| id.to_hex()).unwrap_or_default();
         let fingerprint = crate::api::facade::invocation_body(
             Some(call.auth()),

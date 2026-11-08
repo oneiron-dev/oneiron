@@ -225,9 +225,18 @@ fn clock_corrupt_refusal() -> Response {
 
 /// Whether `verb` is never restriction-only (FIX 11666): the table lists
 /// only revoke/erase rows, so a call of either needs no input to classify
-/// and its secret's plaintext copies nowhere here.
+/// and its secret's plaintext copies nowhere here. An artifact write is
+/// none either, and its content, of any length, is never read whole here
+/// (FIX 22074).
 fn never_restrictive_verb(verb: &str) -> bool {
-    matches!(verb, "vault.secrets.register" | "vault.secrets.rotate")
+    matches!(
+        verb,
+        "vault.secrets.register"
+            | "vault.secrets.rotate"
+            | "vault.artifacts.create"
+            | "vault.artifacts.append"
+            | "vault.artifacts.propose_output"
+    )
 }
 
 /// Whether an MCP call's body names a verb that is never restriction-only
