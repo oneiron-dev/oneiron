@@ -280,7 +280,7 @@ impl RecordingJsHost<'_, '_> {
         runtime: &mut dyn JsCodeModeRuntime,
         parent: &StepCancellation,
     ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
-        on_callable_stack(|| {
+        let answered = on_callable_stack(|| {
             self.call_skill_on_stack(seq, started_at_ms, call, skill, runtime, parent)
         })
         .unwrap_or_else(|| {
@@ -293,7 +293,14 @@ impl RecordingJsHost<'_, '_> {
                 }),
                 None,
             ))
-        })
+        });
+        // However the call ended, before its caller goes on: a callable that
+        // ran its body again must have met every call it settled before
+        // (FIX 5878).
+        if let Some(injection) = self.injection.as_mut() {
+            injection.returned(seq);
+        }
+        answered
     }
 
     fn call_skill_on_stack(
@@ -348,6 +355,14 @@ impl RecordingJsHost<'_, '_> {
                 Err(stopped) => return Ok((stopped, None)),
             }
         };
+        // A callable running its body again runs the call it ran before: a
+        // hook that redirects it holds the entry, and the body's calls are
+        // refused (FIX 5878).
+        if hooked.as_ref().is_some_and(|hooked| hooked.1.is_some())
+            && let Some(injection) = self.injection.as_mut()
+        {
+            injection.redirected(seq);
+        }
         let Some(executor) = self.skill_executor.clone() else {
             return Ok(failed("skills_call_no_executor".to_owned()));
         };
@@ -394,15 +409,13 @@ impl RecordingJsHost<'_, '_> {
         self.callable_rows.0.extend(loaded);
         self.callable_depth -= 1;
         // A pinned entry's callable (FIX 5878): where its own calls end in
-        // the entry's log, and how a later entry answers it. One that ran its
-        // body again must have met every call it settled before. A body that
+        // the entry's log, and how a later entry answers it. A body that
         // unwound on the entry's wait runs again; one that returned past that
         // wait (a caught wait's owner sits inside it), one the bridge halted
         // inside, or one whose own calls stored outputs, fresh or reusing a
         // recorded one, that a whole answer would leave unconsumed for a
         // later store of the same bytes, holds; any other answers whole.
         if let Some(injection) = self.injection.as_mut() {
-            injection.returned(seq);
             let kind = if self.hard_failure.is_some() || self.left_a_gap || self.declined.is_some()
             {
                 ProgramResumeKind::HeldCallable
