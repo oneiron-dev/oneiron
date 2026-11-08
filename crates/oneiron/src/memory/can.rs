@@ -25,10 +25,13 @@ pub enum CanAnswer {
 pub struct CanEffectAnswer {
     pub verdict: CanEffectVerdict,
     /// The Gate's reason codes (`GateReasonCode::as_str` tokens, without
-    /// `allow`).
+    /// `allow`), or, when the act stops before the Gate, the connector
+    /// driver's stop code (for example `connector_endpoint_not_installed`).
     pub reasons: Vec<String>,
     /// Each administrative hold, its reason token without its
-    /// `gate.pending.` prefix (for example `charter_drift`).
+    /// `gate.pending.` prefix (for example `charter_drift`), or, when the act
+    /// stops before the Gate, the connector driver's hold code (for example
+    /// `standing_grant_required`).
     pub holds: Vec<String>,
     /// An allowed send would take its place in a full envelope window
     /// rather than go now.
@@ -70,6 +73,23 @@ impl CanEffectAnswer {
             checked_at,
         }
     }
+
+    /// The answer of an act that stops before the Gate judges it, dated
+    /// `checked_at`: `verdict` with the stop's own `reasons` and `holds`.
+    pub(crate) fn stopped(
+        verdict: CanEffectVerdict,
+        reasons: Vec<String>,
+        holds: Vec<String>,
+        checked_at: u64,
+    ) -> Self {
+        Self {
+            verdict,
+            reasons,
+            holds,
+            waits_for_envelope_window: false,
+            checked_at,
+        }
+    }
 }
 
 impl Memory<'_> {
@@ -82,6 +102,11 @@ impl Memory<'_> {
             CanRequest::Effect(effect) => match &effect.effect {
                 CanEffect::OutboundSchedule(schedule) => Ok(CanAnswer::Effect(
                     self.can_outbound_schedule(&schedule.outbound_schedule)?,
+                )),
+                CanEffect::ConnectorCall(call) => Ok(CanAnswer::Effect(
+                    self.vault
+                        .can_connector_call(self, &call.connector_call)
+                        .map_err(crate::verbs::connector_call_error)?,
                 )),
             },
         }
