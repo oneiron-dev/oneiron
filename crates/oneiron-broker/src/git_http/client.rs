@@ -2,33 +2,16 @@
 //! header and the spooled body first, the credential only once the broker
 //! has the body and its digest checks, then the reply as it streams.
 
-use std::future::Future;
 use std::time::Duration;
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncRead;
 use tokio::net::UnixStream;
 use zeroize::Zeroizing;
 
-use super::{GitCallHeader, GitPrepared};
-use crate::frame::{
-    GIT_CALL, MAX_HEADER, STREAM_CHUNK, read_chunk, read_reply_header, read_segment,
-    read_stream_end, write_segment,
-};
-use crate::{
-    BrokerConnection, BrokerError, Failure, MAX_SECRET, Outcome, PROTOCOL_VERSION, Refusal,
-    StreamPart,
-};
-
-/// One step on the broker's socket, within `idle`.
-async fn step<T>(
-    idle: Duration,
-    io: impl Future<Output = std::io::Result<T>>,
-) -> Result<T, BrokerError> {
-    tokio::time::timeout(idle, io)
-        .await
-        .map_err(|_| BrokerError::Lost)?
-        .map_err(|_| BrokerError::Lost)
-}
+use super::GitCallHeader;
+use crate::exchange::client::{ReplyBody, open, prepare};
+use crate::frame::GIT_CALL;
+use crate::{BrokerConnection, BrokerError, Outcome, Refusal, StreamPart};
 
 impl BrokerConnection {
     /// Opens the git exchange `call`: checks it, writes its header and its
@@ -52,49 +35,16 @@ impl BrokerConnection {
     ) -> Result<PreparedGitCall, BrokerError> {
         call.check().map_err(BrokerError::Refused)?;
         let head = serde_json::to_vec(call).map_err(|_| BrokerError::Refused(Refusal::Frame))?;
-        if head.len() > MAX_HEADER {
-            return Err(BrokerError::Refused(Refusal::Frame));
-        }
-        let (mut stream, idle) = self.into_parts();
-        step(idle, async {
-            stream.write_all(&GIT_CALL.to_be_bytes()).await?;
-            write_segment(&mut stream, &head).await
-        })
+        let (stream, idle) = prepare(
+            self,
+            GIT_CALL,
+            &head,
+            &call.call,
+            &call.digest,
+            call.body_len,
+            body,
+        )
         .await?;
-        let short = || BrokerError::Refused(Refusal::Body);
-        let mut left = call.body_len;
-        let mut buffer = vec![0; STREAM_CHUNK];
-        while left > 0 {
-            let want = usize::try_from(left).map_or(STREAM_CHUNK, |left| left.min(STREAM_CHUNK));
-            let read = body.read(&mut buffer[..want]).await.map_err(|_| short())?;
-            if read == 0 {
-                return Err(short());
-            }
-            step(idle, write_segment(&mut stream, &buffer[..read])).await?;
-            left -= read as u64;
-        }
-        // A body past its length is refused before any credential.
-        let mut past = [0; 1];
-        if body.read(&mut past).await.map_err(|_| short())? != 0 {
-            return Err(short());
-        }
-        step(idle, async {
-            write_segment(&mut stream, &[]).await?;
-            stream.flush().await
-        })
-        .await?;
-        let prepared = step(idle, read_segment(&mut stream, MAX_HEADER)).await?;
-        let prepared: GitPrepared =
-            serde_json::from_slice(&prepared).map_err(|_| BrokerError::Lost)?;
-        if prepared.version != PROTOCOL_VERSION
-            || prepared.call != call.call
-            || prepared.digest != call.digest
-        {
-            return Err(BrokerError::Lost);
-        }
-        if let Some(reason) = prepared.refused {
-            return Err(BrokerError::Refused(reason));
-        }
         Ok(PreparedGitCall {
             stream,
             idle,
@@ -126,32 +76,10 @@ impl PreparedGitCall {
     /// [`BrokerError::Refused`] for a secret too long to frame, before it
     /// is written; [`BrokerError::Lost`] when the connection breaks or
     /// answers another exchange: the request may have left.
-    pub async fn open(mut self, secret: Zeroizing<Vec<u8>>) -> Result<GitReply, BrokerError> {
-        if secret.len() > MAX_SECRET {
-            return Err(BrokerError::Refused(Refusal::Secret));
-        }
-        let written = step(self.idle, async {
-            write_segment(&mut self.stream, &secret).await?;
-            self.stream.flush().await
-        })
-        .await;
-        drop(secret);
-        written?;
-        let reply = read_reply_header(&mut self.stream)
-            .await
-            .map_err(|_| BrokerError::Lost)?;
-        if reply.version != PROTOCOL_VERSION
-            || reply.call != self.call
-            || reply.digest != self.digest
-        {
-            return Err(BrokerError::Lost);
-        }
-        Ok(GitReply {
-            outcome: reply.outcome,
-            stream: self.stream,
-            idle: self.idle,
-            ended: None,
-        })
+    pub async fn open(self, secret: Zeroizing<Vec<u8>>) -> Result<GitReply, BrokerError> {
+        let (outcome, body) =
+            open(self.stream, self.idle, &self.call, &self.digest, secret).await?;
+        Ok(GitReply { outcome, body })
     }
 }
 
@@ -162,10 +90,7 @@ impl PreparedGitCall {
 #[derive(Debug)]
 pub struct GitReply {
     outcome: Outcome,
-    stream: UnixStream,
-    idle: Duration,
-    /// How the body ended, once it has: clean (`None`) or cut.
-    ended: Option<Option<Failure>>,
+    body: ReplyBody,
 }
 
 impl GitReply {
@@ -185,17 +110,6 @@ impl GitReply {
     ///
     /// [`BrokerError::Lost`]: the reply is broken, and counts as cut.
     pub async fn next(&mut self) -> Result<StreamPart, BrokerError> {
-        if let Some(end) = self.ended {
-            return Ok(end.map_or(StreamPart::End, StreamPart::Cut));
-        }
-        let chunk = read_chunk(&mut self.stream)
-            .await
-            .map_err(|_| BrokerError::Lost)?;
-        if let Some(chunk) = chunk {
-            return Ok(StreamPart::Chunk(chunk));
-        }
-        let end = step(self.idle, read_stream_end(&mut self.stream)).await?;
-        self.ended = Some(end);
-        Ok(end.map_or(StreamPart::End, StreamPart::Cut))
+        self.body.next().await
     }
 }

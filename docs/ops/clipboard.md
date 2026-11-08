@@ -42,8 +42,21 @@ show active, readable clips; cleanup and erasure also reach closed/retracted
 or source-withdrawn clips whose stored text remains. Destructive selection and
 its pre-scrub recheck validate the raw stored CLAIM's exact predicate, world
 and subject; ordinary page reads retain the native visibility filter. The page
-retains only its selected text. This owner API is not an agent grant
-or proof that ordinary recall excludes the Clipboard world.
+retains only its selected text. This owner API is not an agent grant.
+
+Implicit recall removes live WORLD rows marked `system_role: clipboard`
+from the actor's resolved default world subset before retrieval. The role
+check shares one later snapshot across the selected worlds; it does not
+change how reading defaults were resolved. Base-only defaults need no extra
+read. Unmarked and non-Clipboard worlds remain selected. Native storage or
+malformed WORLD-body errors propagate rather than being treated as an
+unmarked world.
+
+Explicit `All`, `World`, `Worlds`, `world_ref` and `recall_view` selection
+remain unchanged. Selection never grants authority: the existing credential,
+world/privacy and disclosure checks still decide what the caller can read.
+This is native default isolation, not a separate Clipboard search, related
+chip, ranking policy or proof of foreign-remapped role coverage.
 
 ## Retention and erasure
 
@@ -131,9 +144,9 @@ checks and delete outcomes still govern the work; selected text bytes are
 not measured disk reclamation.
 
 This source does not supply a visual purpose-question layout, the separate
-Cmd-K/related-clip consumer, default recall isolation or end-to-end
-sync/key-release proof. The ordinary scanner still masks at the native CLAIM
-door; no handle is guessed from text to pretend a purpose question exists.
+Cmd-K/related-clip consumer or end-to-end sync/key-release proof. The ordinary
+scanner still masks at the native CLAIM door; no handle is guessed from text
+to pretend a purpose question exists.
 No pasteboard, GUI, runtime, deployment or automatic-cleanup result is claimed
 by this source description.
 

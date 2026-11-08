@@ -5,20 +5,48 @@
 //! principal's key: only the hits that key admits stay, in their cached order
 //! and with their cached scores, and the answer carries that read's receipt.
 //! Nothing runs again (no search, rerank or refill), and the stored replay
-//! record is not rewritten.
-use super::super::SelfDispatchOutcome;
+//! record is not rewritten. A replayed verb answer is released again by the
+//! door that served it, for its caller now (FIX 8158).
+//!
+//! A cached fold answer whose words a withdrawal took is tested again too
+//! (FIX 18924): it fails with `response_erased`, as its record's erased
+//! form does, and is never returned.
+use super::super::storage::{RESPONSE_ERASED, fold_answer_withdrawn};
+use super::super::{AgentVerbDoor, SelfDispatchOutcome, SelfEffect, SelfFailedResult};
 use crate::claim::{PointRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::{Result, Vault};
 
 /// `outcome` as `key` reads it now, beside the receipt it answers under: a
 /// replayed search keeps the hits `key` admits, under that read's receipt;
-/// any other outcome keeps `receipt` and is returned as it was.
+/// a fold answer whose words are withdrawn fails with `response_erased`
+/// (FIX 18924); a replayed verb answer is what `replay`'s door releases of
+/// it for verb it names; any other outcome keeps `receipt` and is returned
+/// as it was.
 pub(super) fn rescoped(
     vault: &Vault,
     key: &ScopedReadActorKey,
+    replay: Option<(&dyn AgentVerbDoor, &str)>,
     outcome: SelfDispatchOutcome,
     receipt: ScopedReadReceipt,
 ) -> Result<(SelfDispatchOutcome, ScopedReadReceipt)> {
+    if let SelfDispatchOutcome::Fold(answer) = &outcome
+        && fold_answer_withdrawn(vault, answer)?
+    {
+        let erased = SelfDispatchOutcome::Failed(SelfFailedResult {
+            effect: SelfEffect::Fold,
+            error: RESPONSE_ERASED.to_owned(),
+            code: None,
+            disk_floor: None,
+        });
+        return Ok((erased, receipt));
+    }
+    let outcome = match (outcome, replay) {
+        (SelfDispatchOutcome::AgentVerb(answer), Some((door, verb))) => {
+            let answer = door.replay_action_answer(verb, answer)?;
+            return Ok((SelfDispatchOutcome::AgentVerb(answer), receipt));
+        }
+        (outcome, _) => outcome,
+    };
     let SelfDispatchOutcome::MemorySearch(mut search) = outcome else {
         return Ok((outcome, receipt));
     };

@@ -2,9 +2,14 @@
 //! FIX 12264): the frontier a version projects, and the anchorable units at
 //! a frontier. Entry: `Vault::office_body_units_in_txn`.
 
+use std::collections::BTreeMap;
+
 use super::*;
 use oneiron_docedit::live::{LiveDeck, NodeId};
 use oneiron_docedit::xlsx_body::XlsxAxisEdit;
+
+/// A kept export's native and creation ids by model node (FIX 12346).
+pub(crate) type HeldDeckIds = BTreeMap<u64, (Option<u32>, Option<String>)>;
 
 /// One live body's anchorable units at a frontier.
 pub(crate) enum OfficeBodyUnits {
@@ -28,10 +33,6 @@ pub(crate) struct DeckUnits {
     pub(crate) bound: u64,
     pub(crate) nodes: Vec<DeckUnit>,
 }
-
-/// A deck export's own ids by model node: each node's native id and
-/// creation id in that version's file (FIX 12346).
-pub(crate) type DeckExportIds = std::collections::BTreeMap<u64, (Option<u32>, Option<String>)>;
 
 /// One slide or shape of a live deck.
 pub(crate) struct DeckUnit {
@@ -124,18 +125,22 @@ impl Vault {
             .map(export_frontier))
     }
 
-    /// The ids a deck export a Keep did not bind gave its nodes in its file
-    /// (FIX 12346); `None` for a bound export, the imported version, another
-    /// format, or a version with no export record.
-    pub(crate) fn office_body_deck_export_ids_in_txn(
+    /// The ids a kept deck export held when its Keep did not bind the deck
+    /// (FIX 12346). `None` for every other export and for old records.
+    pub(crate) fn office_body_held_ids_in_txn(
         &self,
         txn: &RoTxn<'_>,
         artifact: &EntityId,
         version: u64,
-    ) -> Result<Option<DeckExportIds>> {
+    ) -> Result<Option<HeldDeckIds>> {
         Ok(EXPORTS
             .get(&self.store, txn, &version_key(artifact, version))?
-            .and_then(|record| record.deck_ids))
+            .and_then(|record| record.held_ids)
+            .map(|ids| {
+                ids.into_iter()
+                    .map(|id| (id.node, (id.native_id, id.creation_id)))
+                    .collect()
+            }))
     }
 
     /// The head frontier of the artifact's live body; `None` for no body.

@@ -103,7 +103,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_REASSERT_MARKER, CONTENT),
     // The sealed bundle's custody and cursors follow the live vault. So do
     // the late joiners' pad grants the home keeps with its generations, and
-    // the admissions queued for it (FIX 4271).
+    // the admissions queued for it (FIX 4271). Request-bound publication
+    // pairs in the same table also stay LIVE, sealed and generation-bound.
     (&t::SYNC_RESIDENCE_BUNDLE_ACCESS, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_GENERATION, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_PART, LIVE),
@@ -125,6 +126,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_SEALED_UPDATE_QUEUE, LIVE),
     (&t::SYNC_SEALED_UPDATE_OUTBOX, LIVE),
     (&t::SYNC_SEALED_UPDATE_OUTBOX_ID, LIVE),
+    // A window's ready generation is this vault's own record of the
+    // exchanges its live connections owe, so it follows the live vault: a
+    // restore neither drops one owed nor brings back an image's (FIX 19634).
+    (&t::WINDOW_READY_GENERATION, LIVE),
     (&t::SYNC_RETAINED_WORK_CARRIER, CONTENT),
     (&t::SYNC_RETAINED_WORK_CURSOR, CONTENT),
     (&t::SYNC_MAINTENANCE_RETAINED_WORK, CONTENT),

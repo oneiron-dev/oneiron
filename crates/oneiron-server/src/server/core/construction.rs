@@ -204,6 +204,12 @@ impl SyncServer {
             config.limits.renderer_work,
             config.limits.queue_wait(),
         );
+        let context_reads = crate::admission::Admission::new(
+            crate::wire_telemetry::LimitRow::ContextReads,
+            Arc::clone(wire_telemetry.limit_questions()),
+            config.limits.context_reads,
+            config.limits.queue_wait(),
+        );
         // Task work waits in the vault's own line, which the embedded SDK, a
         // code run's own ask and wait and a pumped agent share with the
         // served doors; this server sets its `[limits]` row on it.
@@ -214,6 +220,15 @@ impl SyncServer {
                 crate::wire_telemetry::LimitRow::TaskWork,
                 Arc::clone(wire_telemetry.limit_questions()),
             )),
+        );
+        // Guests' network work charges the process's descriptor line, which
+        // this server's listeners share, sized and asked as its `[limits]`
+        // row is, before any worker or guest starts (FIX 6299, FIX 6304).
+        crate::http_listener::attach_host_floor(
+            &vault,
+            &config.limits,
+            &retained,
+            wire_telemetry.limit_questions(),
         );
         let decisions = crate::decision_host::DecisionHost::new(&vault);
         let run_receipts = Arc::new(crate::models::ServerReceipts::hooked(vault.clone()));
@@ -268,8 +283,20 @@ impl SyncServer {
         // Another vault of this process reads this one through this handle
         // (FIX 11157): the read-only door refuses a root held open here.
         vault.register_served();
+        // FIX 9609: the engine inspects the PDFs a field save or a sign act
+        // lays fields on through this server's organ host, before its writer.
+        #[cfg(unix)]
+        let organs = Arc::new(oneiron_organ_host::OrganHost::with_floor(
+            oneiron_organ_host::HostConfig::default(),
+            Arc::new(crate::machine::OrganFloor(memory.clone())),
+        ));
+        #[cfg(unix)]
+        vault.install_esign_page_inspector(Arc::new(crate::api::EsignOrganPageInspector::new(
+            Arc::clone(&organs),
+            memory.clone(),
+        )));
         let hyde_queue_wait = config.limits.queue_wait();
-        Ok(Self {
+        let server = Self {
             note_editors: super::NoteEditors::default(),
             artifact_previews: super::ArtifactPreviews::default(),
             live_voice: Default::default(),
@@ -298,6 +325,7 @@ impl SyncServer {
             )?,
             memory: memory.clone(),
             renderer_turns,
+            context_reads,
             renderer_scratch: Default::default(),
             wire_telemetry,
             mesh_pressure: crate::wire_telemetry::PoolPressure::mesh(),
@@ -339,6 +367,7 @@ impl SyncServer {
             browser_guest: None,
             browser_readiness: Default::default(),
             desktop_guest: None,
+            artifact_backend: None,
             desktop_seats: Arc::default(),
             browser_seats: Arc::default(),
             web_fetcher: std::sync::OnceLock::new(),
@@ -346,6 +375,7 @@ impl SyncServer {
             self_brief_sessions,
             deep_retrieval: None,
             model_slots: Arc::new(Default::default()),
+            trained_embedders: Default::default(),
             model_setup: None,
             model_setup_runtime: std::sync::OnceLock::new(),
             gpu_pool: std::sync::OnceLock::new(),
@@ -358,10 +388,7 @@ impl SyncServer {
             mesh_transport: std::sync::OnceLock::new(),
             builtin_handles: Arc::default(),
             #[cfg(unix)]
-            organs: Arc::new(oneiron_organ_host::OrganHost::with_floor(
-                oneiron_organ_host::HostConfig::default(),
-                Arc::new(crate::machine::OrganFloor(memory.clone())),
-            )),
+            organs,
             #[cfg(unix)]
             organ_dir: None,
             run_receipts,
@@ -385,6 +412,10 @@ impl SyncServer {
             booking_test_now_secs: None,
             #[cfg(test)]
             booking_test_clock_from: None,
-        })
+        };
+        // FIX 2462: a workbook the native formula engine refuses
+        // recalculates through LibreOffice, where this host has it.
+        crate::xlsx_recalc::install(&server);
+        Ok(server)
     }
 }

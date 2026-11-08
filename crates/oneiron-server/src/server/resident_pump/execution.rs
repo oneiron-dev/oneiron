@@ -285,21 +285,38 @@ pub(super) fn run_bound(
     if status.input.room.is_some() {
         scope_funding(vault, metered.as_ref(), true).map_err(EngineRunError::Payer)?;
     }
+    // FIX 7766: this path's runs bind no owner's agent Grant wallet, so work
+    // one funds stops here, typed, before any call: never billed to the
+    // host's default allocation.
+    if crate::ai_host::payer_funding::attempt_grant_funding(vault, status.attempt.id)
+        .map_err(EngineRunError::Payer)?
+        .is_some()
+    {
+        return Err(EngineRunError::Payer(
+            crate::ai_host::payer_funding::PayerFault::GrantWalletUnbound {
+                scope: metered.clone(),
+            },
+        ));
+    }
     // The run's caller, as this host leased it: its reader children and its
     // compaction read under that one binding.
-    let caller = pump_caller(actor);
+    let caller = pump_caller(actor).with_caller_origin(status.input.caller_origin);
     // A scoped child queued under the run borrows the lease of the attempt
     // it is (FIX 7507): it lives only while this host holds that lease. No
     // clock is lent, so its children keep one window from its first spawn,
     // and its ordinary readers outlive it as before.
     let parent = crate::ai_host::scoped_child::ReaderParentHost::for_attempt(&status.attempt);
-    let mut seat = seats.seat_with_parent(
-        run_id,
-        metered.clone(),
-        caller.locality(),
-        provider.reader_window_tokens(),
-        parent.as_ref(),
-    );
+    let mut seat = seats
+        .seat_with_parent(
+            &oneiron::code_run::ReaderJobs::canonical(vault),
+            oneiron::code_run::ReaderActor::of(actor),
+            run_id,
+            metered.clone(),
+            caller.locality(),
+            provider.reader_window_tokens(),
+            parent.as_ref(),
+        )
+        .map_err(text)?;
     // FIX 4539: its reader and summary children are held to the list its
     // frozen definition names, as its own seat is.
     seat.listed = definition.models.clone();

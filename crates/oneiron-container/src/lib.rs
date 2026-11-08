@@ -10,13 +10,13 @@ mod transport;
 pub use cli_env::{apply_cli_env_to_command, set_cli_env};
 pub use egress::{
     CredentialEgressRecord, CredentialEgressStatus, EgressRelay, HttpRequest, HttpResponse,
-    LoopbackOperation, LoopbackRefusal, LoopbackRefusalReason,
+    LoopbackOperation, LoopbackRefusal, LoopbackRefusalReason, PreparedDatagram,
 };
 pub use host_net_floor::{
     HOST_NET_BYTE_FLOOR, HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit,
     UnmeteredFloor, floor_saturated, known_floor, saturated_floor,
 };
-pub use relay_protocol::{RelayReply, RelayRequest, read_relay, write_relay};
+pub use relay_protocol::{RelayAnswer, RelayReply, RelayRequest, read_relay, write_relay};
 pub use transport::{SessionLease, SessionTransport};
 #[cfg(target_os = "linux")]
 mod launcher;
@@ -33,7 +33,7 @@ pub use launcher::launch as launch_fenced;
 #[cfg(target_os = "linux")]
 pub use linux::{landlock_abi, landlock_restrict, landlock_ruleset};
 #[cfg(target_os = "linux")]
-pub use supervisor::{NativeFenceGuard, serve_native as serve_native_fence};
+pub use supervisor::{LoopbackConnection, NativeFenceGuard, serve_native as serve_native_fence};
 
 use crate::cli_env::ApplyCliEnv as _;
 use std::collections::VecDeque;

@@ -58,6 +58,16 @@ pub(crate) fn install_served_transports(server: &SyncServer, models: Option<&Mod
     if let (Some(broker), Some(models)) = (server.broker_context(), models) {
         transports = transports.with_broker_model_listing(broker.secret_use_models(models));
     }
+    // The built-in Google Sheets connector sends through the credential
+    // broker (FIX 4862): serve's own context, else the `[models.broker]`
+    // one, made at the first Sheets call.
+    if let Some(sheets) = server
+        .broker_context()
+        .map(crate::models::BrokerContext::sheets_broker)
+        .or_else(|| crate::models::BrokerContext::sheets_broker_from_config(models))
+    {
+        transports = transports.with_sheets_broker(sheets);
+    }
     // Config validation refused a bad application at load; this only keeps a
     // host that skipped it without Apple push.
     let apns_applications = server.config.apns.applications.clone();

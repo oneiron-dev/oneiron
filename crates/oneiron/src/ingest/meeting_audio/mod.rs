@@ -13,9 +13,11 @@ mod error;
 mod evaluation;
 mod metrics;
 mod packing;
+mod persistence;
 mod producer;
 mod provenance;
 mod recorded_evaluation;
+mod session_input;
 mod types;
 
 pub use alignment::align_words_to_speakers;
@@ -31,11 +33,13 @@ pub use metrics::{
     E3Assignment, E3Score, WerAlignment, WerCounts, aggregate_wer, e3_score, wer_counts,
 };
 pub use packing::pack_speech;
+pub use persistence::{MeetingTranscriptVersionPin, StoredMeetingTranscript};
 pub use producer::produce_meeting_transcript;
 pub use recorded_evaluation::{
     LabelledReference, RecordedArm, RecordedEvaluation, RecordedEvaluationRun, RecordedFile,
     ReferenceDocument, SpeakerScore, WordCluster, evaluate_recorded_audio,
 };
+pub use session_input::MeetingTranscriptSessionInput;
 pub use types::{
     AllowedWordCorrection, AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile,
     BatchAsrRequest, BatchDefault, BulkImportAuthorizer, BulkImportBinding, BulkImportReceipt,
