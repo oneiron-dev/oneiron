@@ -3,6 +3,8 @@
 //! draft canon pins). DCR sits beside CIMD (ARCH-0028:90). Only public clients are admitted:
 //! every client proves its code with PKCE, never with a secret.
 
+use std::collections::BTreeSet;
+
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
@@ -301,7 +303,27 @@ impl Vault {
         if clients.len() < OAUTH_CLIENTS_MAX {
             return Ok(true);
         }
-        let mut in_use = std::collections::BTreeSet::new();
+        let in_use = self.oauth_clients_in_use_in_txn(txn, now)?;
+        let unused = clients
+            .into_iter()
+            .filter(|(_, client)| !in_use.contains(&client.client_id))
+            .min_by_key(|(_, client)| client.registered_at);
+        let Some((key, _)) = unused else {
+            return Ok(false);
+        };
+        CLIENTS.delete(&self.store, txn, &key)?;
+        Ok(true)
+    }
+
+    /// The client IDs in use at `now`: each one a standing token family (not revoked, not lapsed)
+    /// or a request still within its lifetime names. A client in use never yields its slot in
+    /// the clients table, and the sweep of lapsed rows keeps its row.
+    pub(super) fn oauth_clients_in_use_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        now: u64,
+    ) -> Result<BTreeSet<String>> {
+        let mut in_use = BTreeSet::new();
         for (_, family) in FAMILIES.scan(&self.store, txn)? {
             if !family.revoked && now < family.expires_at {
                 in_use.insert(family.client_id);
@@ -312,15 +334,7 @@ impl Vault {
                 in_use.insert(request.client_id);
             }
         }
-        let unused = clients
-            .into_iter()
-            .filter(|(_, client)| !in_use.contains(&client.client_id))
-            .min_by_key(|(_, client)| client.registered_at);
-        let Some((key, _)) = unused else {
-            return Ok(false);
-        };
-        CLIENTS.delete(&self.store, txn, &key)?;
-        Ok(true)
+        Ok(in_use)
     }
 
     /// The client `client_id` names, as last stored; `None` for one this vault does not know. A

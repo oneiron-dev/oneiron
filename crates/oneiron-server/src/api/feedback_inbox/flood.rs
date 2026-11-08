@@ -1,8 +1,10 @@
-//! The open inbox's flood cap: the one refusal its keyless intake makes.
+//! The open inbox's flood cap: the one refusal its keyless intake makes. The
+//! OAuth server's two open doors, registration and authorize, are capped by
+//! it too (FIX 4902).
 //!
 //! Attempts are counted per sender and for the inbox as a whole, in
 //! hour-long windows. Past either count an attempt is shed until the window turns, which
-//! the route answers as a typed 429 with `retry-after`: pre-auth anonymous
+//! the route answers as a typed 429 with `retry-after` ([`Shed::response`]): pre-auth anonymous
 //! shedding, the exception the rate law allows (ARCH-0044 C5). Every attempt
 //! the cap admits is counted, and a shed one is not, so the sender map never
 //! holds more senders than the inbox admits in one window.
@@ -11,6 +13,9 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
+
+use axum::http::StatusCode;
+use axum::response::Response;
 
 const WINDOW: Duration = Duration::from_secs(3_600);
 
@@ -34,6 +39,19 @@ struct Window {
 pub(crate) struct Shed {
     /// Until the window turns.
     pub(crate) retry_after: Duration,
+}
+
+impl Shed {
+    /// The cap's refusal: a typed 429 whose state is `state`, with `retry-after` until the window
+    /// turns and `no-store`. Every door the cap guards answers a shed attempt with it.
+    pub(crate) fn response(self, state: &str, message: &str) -> Response {
+        super::refusal(
+            StatusCode::TOO_MANY_REQUESTS,
+            state,
+            message,
+            Some(self.retry_after.as_secs()),
+        )
+    }
 }
 
 impl FloodCap {

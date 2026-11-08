@@ -12,6 +12,10 @@
 //! page's poll secret ride only in a body, a header or the client's own redirect, never in this
 //! vault's paths, logs or stored rows. The `/mcp` door that accepts the tokens, and its 401
 //! with `WWW-Authenticate`, are `mcp_gateway::oauth_call`'s (slice C).
+//!
+//! Registration and authorize are the two doors a stranger can make write: one stores a client,
+//! the other records a request, sends the owner an ask, and may fetch and store a client's
+//! metadata document. Each is capped per client address and per vault ([`OAuthFloodCaps`]).
 
 mod authorize;
 mod client_document;
@@ -20,13 +24,20 @@ mod metadata;
 mod registration;
 mod token;
 
+use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::Router;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use oneiron::authority::{
+    OAUTH_AUTHORIZATIONS_PER_HOUR, OAUTH_AUTHORIZATIONS_PER_SOURCE_PER_HOUR,
+    OAUTH_REGISTRATIONS_PER_HOUR, OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR,
+};
 
+use crate::api::FloodCap;
 use crate::server::SyncServer;
 
 /// The protected resource's path under the origin: the MCP endpoint.
@@ -44,7 +55,8 @@ const REGISTER_PATH: &str = "/oauth/register";
 const REVOKE_PATH: &str = "/oauth/revoke";
 
 /// The OAuth routes, mounted beside `/oauth/client/*`. The metadata documents are public and
-/// cacheable; every other reply is private (`no-store`, `no-referrer`, `nosniff`).
+/// cacheable; every other reply is private (`no-store`, `no-referrer`, `nosniff`). The router
+/// holds the open doors' flood caps.
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     let private = Router::new()
         .route(REGISTER_PATH, post(registration::register))
@@ -52,6 +64,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route(AUTHORIZE_STATUS_PATH, get(authorize::status))
         .route(TOKEN_PATH, post(token::token))
         .route(REVOKE_PATH, post(token::revoke))
+        .layer(axum::Extension(Arc::new(OAuthFloodCaps::new(
+            Instant::now(),
+        ))))
         .layer(axum::middleware::from_fn(private_response));
     Router::new()
         .route(
@@ -67,6 +82,55 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             get(metadata::authorization_server),
         )
         .merge(private)
+}
+
+/// The flood caps of the two open doors (FIX 4902): the open inbox's cap ([`FloodCap`]), one per
+/// door, counting attempts per client address (`ClientAddress`, the key the inbox and public
+/// booking charge: the connection's peer, or the client a configured trusted proxy names) and
+/// for the vault as a whole, in hour windows, under the engine's limits
+/// (`OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR` and the rest). A door asks its cap once it knows
+/// it serves OAuth, before it reads the request's body or its client; an attempt past either
+/// count gets the cap's typed 429 with `retry-after` until the window turns, and nothing else
+/// of it is read. Pre-auth anonymous shedding, the exception the rate law allows (ARCH-0044 C5).
+/// The caps live in this process only: a restart forgets them.
+struct OAuthFloodCaps {
+    registration: FloodCap,
+    authorization: FloodCap,
+}
+
+impl OAuthFloodCaps {
+    fn new(now: Instant) -> Self {
+        Self {
+            registration: FloodCap::new(
+                OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR,
+                OAUTH_REGISTRATIONS_PER_HOUR,
+                now,
+            ),
+            authorization: FloodCap::new(
+                OAUTH_AUTHORIZATIONS_PER_SOURCE_PER_HOUR,
+                OAUTH_AUTHORIZATIONS_PER_HOUR,
+                now,
+            ),
+        }
+    }
+
+    /// Counts one registration from `source`, or answers its refusal.
+    fn shed_registration(&self, source: Option<IpAddr>) -> Option<Response> {
+        let shed = self.registration.admit(source, Instant::now()).err()?;
+        Some(shed.response(
+            "oauth_registration_flood",
+            "this vault takes no more app registrations this hour",
+        ))
+    }
+
+    /// Counts one authorize request from `source`, or answers its refusal.
+    fn shed_authorization(&self, source: Option<IpAddr>) -> Option<Response> {
+        let shed = self.authorization.admit(source, Instant::now()).err()?;
+        Some(shed.response(
+            "oauth_authorization_flood",
+            "this vault takes no more sign-in requests this hour",
+        ))
+    }
 }
 
 /// This vault's public OAuth identity, from `oauth_resource_indicator`.

@@ -375,6 +375,7 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 | `hard_erase_sweep` | day; hour while an erasure waits | the history an erase left in sync carriers (the 30-day erasure deadline) |
 | `ppr_cache_eviction` | day | cached graph walks older than the longest serve window (168 h) |
 | `drafter_corpus_sweep` | day, and at start | drafter training examples past the newest `DRAFTER_EXAMPLES_KEPT` (their keys retire), sealed drafter corpora no prepared, training or returned drafter version names, and stray files in a kept one |
+| `oauth_expiry` | hour | an app's OAuth sign-in rows past their lifetime: sign-in requests (their inbox ask offers no tap any more), codes, access and refresh tokens, token families past their last refresh token, and stale copies of an app's client metadata document that no sign-in uses |
 
 The signing sweeps and the cache eviction walk their records a page at a time and go on from
 where they stopped on the next pass. A sweep that fails, or that could not finish some of its

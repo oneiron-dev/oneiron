@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// One sweep the housekeeping pass knows. The engine runs the first
-/// seventeen; the rest need a host's authority and are reported, never run.
+/// eighteen; the rest need a host's authority and are reported, never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HousekeepingSweep {
@@ -60,6 +60,11 @@ pub enum HousekeepingSweep {
     /// (FIX 14973, FIX 15259), and of the training examples past the
     /// drafter traffic's bound (FIX 15128).
     DrafterCorpusSweep,
+    /// Drops the OAuth server's rows past their lifetime (FIX 4902):
+    /// authorization requests, codes, tokens, token families past their last
+    /// refresh token, and stale metadata-document clients no sign-in uses.
+    #[serde(rename = "oauth_expiry")]
+    OAuthExpiry,
     /// Due signing reminders.
     EsignReminders,
     /// Consult deadlines and their expiry digests.
@@ -115,7 +120,7 @@ pub const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -133,6 +138,7 @@ impl HousekeepingSweep {
         Self::BodyLineIndexRebuild,
         Self::AnnotationBodyAnchors,
         Self::DrafterCorpusSweep,
+        Self::OAuthExpiry,
         Self::EsignReminders,
         Self::ConsultSettlement,
         Self::PolicyHoldPrune,
@@ -161,6 +167,7 @@ impl HousekeepingSweep {
             Self::BodyLineIndexRebuild => "body_line_index_rebuild",
             Self::AnnotationBodyAnchors => "annotation_body_anchors",
             Self::DrafterCorpusSweep => "drafter_corpus_sweep",
+            Self::OAuthExpiry => "oauth_expiry",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
             Self::PolicyHoldPrune => "policy_hold_prune",
@@ -190,7 +197,10 @@ impl HousekeepingSweep {
     /// corpus sweep runs at open and daily, beside the night's own sweeps
     /// around its export, so a version superseded, rejected or erased
     /// between nights, or a write a stopped process left, keeps no sealed
-    /// bytes past the next start or day.
+    /// bytes past the next start or day. The OAuth server's lapsed rows go
+    /// hourly, as the lease, confirm and print expiries go besides their
+    /// noted deadlines; a read drops each it finds lapsed, so nothing waits
+    /// on them and they note no deadline.
     pub const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
             Runner::Engine {
@@ -199,9 +209,10 @@ impl HousekeepingSweep {
             }
         }
         match self {
-            Self::SecretLeaseExpiry | Self::CriticalConfirmExpiry | Self::VoicePrintRetention => {
-                engine(HOUR)
-            }
+            Self::SecretLeaseExpiry
+            | Self::CriticalConfirmExpiry
+            | Self::VoicePrintRetention
+            | Self::OAuthExpiry => engine(HOUR),
             Self::SymbolLeaseExpiry => engine(5 * MINUTE),
             Self::EsignExpiry
             | Self::EsignSealBackstop
