@@ -242,14 +242,20 @@ unchanged.
 - **Generated-image deck assets:** their adapter receipts stay engine-side.
 - **The Office oracle:** live Word, Excel and PowerPoint runs are Phase 2.
 
-## Bubble-size sequence writes
+## Native chart sequence writes
 
 `deck.transaction` schema 2 accepts `set_series_values` with `sequence: "size"`
 for a bubble series' existing workbook-backed `c:bubbleSize` range. The write uses
 that range's existing length, updates its workbook cells and every overlapping
 cache together, and re-imports before landing. The other sequence names remain
-`name`, `categories` and `values`. Literal, external, formula-backed, shared or
-length-changing ranges keep the native writer's existing refusals. Live exports
+`name`, `categories` and `values`. For workbook-backed multi-level categories,
+`categories` takes the same leaf-first, level-major vector the native reader
+returns, including missing points. A same-length write updates each retained
+level's points in place and all overlapping workbook-backed caches; the level
+order, outer point count, formulas and unrelated XML remain unchanged. Writing a
+missing value removes every cached point with that index, including duplicates.
+Literal, external, formula-backed, shared or length-changing ranges keep the
+native writer's existing refusals. Live exports
 still use the full rewrite when a size sequence is added or removed, is literal,
 grows beyond its existing range, or the checked native write refuses. This does
 not add a stock-chart seeder or change stock-placeholder read/skip behavior.
@@ -280,3 +286,27 @@ from an omitted setting. With no setting, the old serialized profile/key fields,
 order and hash remain unchanged. Numeric defaults, profile-name gates, asset and
 package admission, actor/rights/secret checks, and land/propose/rebind ordering are
 unchanged. The generated SDK carries the optional request field.
+## Nested DOCX story paragraph reads
+
+The native `read_docx_scoped_blocks` reader includes paragraphs inside nested
+tables of the exact named story. Existing top-level and direct-cell results
+keep their order and lookup priority; new descendants follow them. Descendants
+use their real native paragraph ids and accepted inline text, not an enclosing
+cell alias. Existing tracked/structural, literal-prefix and inline-anchor locks
+are retained through all cell ancestors, and locked content stays readable.
+The body-only read and the ordinary all-story reply are unchanged. This native
+reader extension does not by itself establish nested live-unit projection,
+annotation freshness, shared-body editing or whole ParagraphAsk support.
+
+### Nested tables in named DOCX stories
+
+The native `read_docx_body` story list includes nested tables after its previous
+blocks. Table and paragraph ids remain local to the exact story scope. Existing
+story-table import, text edits, and diff use these actual ids without a new
+locator shape. The body-only read and scoped paragraph read are unchanged.
+
+Native story-cell edits resolve the actual nested table and its own guard in
+both transaction-base and live state. Ancestor tracking and vertical-merge laws
+remain in force; same-transaction insertions retain their existing insertion
+semantics. No selector falls back to a sibling, ancestor, other story, or body.
+This retained source slice is not a production compile or a full FIX 14487 claim.

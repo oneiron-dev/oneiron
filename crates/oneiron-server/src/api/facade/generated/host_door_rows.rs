@@ -10,6 +10,7 @@
 //! - `vault.shape.apply`
 //! - `vault.shape.groups`
 //! - `vault.shape.groups.resolve`
+//! - `vault.proactivity.digest.get`
 //! - `tasks.wave`
 //! - `vault.fanout.spawn`
 //! - `vault.budgets.resident_shares`
@@ -70,6 +71,7 @@
 //! - `self.secrets.renew`
 //! - `self.secrets.teardown`
 //! - `self.secrets.use`
+//! - `vault.shares.issue_view_link`
 //! - `vault.shares.revoke`
 //! - `vault.shares.view`
 //! - `vault.artifacts.live_preview.read`
@@ -81,6 +83,7 @@
 //! - `vault.code.checkout.publish`
 //! - `vault.code.checkout.settle`
 //! - `vault.code.checkout.teardown`
+//! - `vault.code.snapshots.capture`
 //! - `vault.code.symbols.neighbors`
 //! - `vault.connectors.read_grants.grant`
 //! - `vault.connectors.read_grants.revoke`
@@ -652,7 +655,11 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultHooksReplay,
     VaultHooksRegenDue,
     VaultHooksRegenGet,
+    VaultHooksRegenHistory,
+    VaultHooksRegenRevert,
+    VaultHooksRegenRun,
     VaultHooksRegenAdopt,
+    VaultHooksRegenCancel,
     VaultArtifactsPublishApproval,
     VaultArtifactsPublish,
     VaultArtifactsRepoint,
@@ -758,6 +765,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultAgentsGrantsRevoke,
     VaultAgentsVerbClassesGet,
     VaultAgentsVerbClassesConfigure,
+    VaultOauthAuthorizationAnswer,
     VaultRepoGitPushMint,
     VaultRepoGitPushRevoke,
     VaultRepoAnchorBind,
@@ -956,6 +964,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultMailPackInstall,
     VaultMailReplyApprove,
     VaultMailSourcesSync,
+    VaultMailSourcesSearch,
     VaultFilesSourcesConvert,
 }
 impl HostDoorRow {
@@ -1430,7 +1439,11 @@ impl HostDoorRow {
             "vault.hooks.replay" => Self::VaultHooksReplay,
             "vault.hooks.regen.due" => Self::VaultHooksRegenDue,
             "vault.hooks.regen.get" => Self::VaultHooksRegenGet,
+            "vault.hooks.regen.history" => Self::VaultHooksRegenHistory,
+            "vault.hooks.regen.revert" => Self::VaultHooksRegenRevert,
+            "vault.hooks.regen.run" => Self::VaultHooksRegenRun,
             "vault.hooks.regen.adopt" => Self::VaultHooksRegenAdopt,
+            "vault.hooks.regen.cancel" => Self::VaultHooksRegenCancel,
             "vault.artifacts.publish_approval" => Self::VaultArtifactsPublishApproval,
             "vault.artifacts.publish" => Self::VaultArtifactsPublish,
             "vault.artifacts.repoint" => Self::VaultArtifactsRepoint,
@@ -1540,6 +1553,7 @@ impl HostDoorRow {
             "vault.agents.grants.revoke" => Self::VaultAgentsGrantsRevoke,
             "vault.agents.verb_classes.get" => Self::VaultAgentsVerbClassesGet,
             "vault.agents.verb_classes.configure" => Self::VaultAgentsVerbClassesConfigure,
+            "vault.oauth.authorization.answer" => Self::VaultOauthAuthorizationAnswer,
             "vault.repo.git_push.mint" => Self::VaultRepoGitPushMint,
             "vault.repo.git_push.revoke" => Self::VaultRepoGitPushRevoke,
             "vault.repo.anchor.bind" => Self::VaultRepoAnchorBind,
@@ -1746,6 +1760,7 @@ impl HostDoorRow {
             "vault.mail.pack.install" => Self::VaultMailPackInstall,
             "vault.mail.reply.approve" => Self::VaultMailReplyApprove,
             "vault.mail.sources.sync" => Self::VaultMailSourcesSync,
+            "vault.mail.sources.search" => Self::VaultMailSourcesSearch,
             "vault.files.sources.convert" => Self::VaultFilesSourcesConvert,
             _ => return None,
         })
@@ -1764,6 +1779,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.shape.apply"
                 | "vault.shape.groups"
                 | "vault.shape.groups.resolve"
+                | "vault.proactivity.digest.get"
                 | "tasks.wave"
                 | "vault.fanout.spawn"
                 | "vault.budgets.resident_shares"
@@ -1825,6 +1841,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "self.secrets.renew"
                 | "self.secrets.teardown"
                 | "self.secrets.use"
+                | "vault.shares.issue_view_link"
                 | "vault.shares.revoke"
                 | "vault.shares.view"
                 | "vault.artifacts.live_preview.read"
@@ -1836,6 +1853,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.code.checkout.publish"
                 | "vault.code.checkout.settle"
                 | "vault.code.checkout.teardown"
+                | "vault.code.snapshots.capture"
                 | "vault.code.symbols.neighbors"
                 | "vault.connectors.read_grants.grant"
                 | "vault.connectors.read_grants.revoke"

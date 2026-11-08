@@ -282,16 +282,25 @@ side_tables! {
     /// A hook's regen record: the contract its last good body passed under, its intent, and a
     /// regen decision waiting to be enacted. Key: id16 (binding).
     HOOKS_REGEN: VaultMeta b"hooks:regen:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_regen_accepts_masked];
+    /// One step in a hook's regen history (FIX 4691): a regen decision with its golden manifest,
+    /// or an adoption, cancel or revert of one; body hashes only, never a body. Key: hash32
+    /// (blake3 of the hook's pack, a zero byte and its name) + u64be (sequence within the hook).
+    HOOKS_REGEN_RECEIPT: VaultMeta b"hooks:regen_receipt:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_regen_receipt_accepts_masked];
     /// Each hook binding's runs in commit order, each naming its saved row: a fact run's memo or
     /// a verb run's saved copy. Key: id16 (binding) + u64be (commit time, Unix ms) + hash32 (run
     /// key).
     HOOKS_RUN_INDEX: VaultMeta b"hooks:run_index:v1:" Named;
-    /// The settlement feed fact hooks follow: one row per settled proposal. Key: u64be (sequence).
+    /// The settlement feed fact hooks follow: one row per settled proposal while a fact binding
+    /// reads the feed; an erase leaves a row naming the erased proposal or settler as an empty
+    /// erased row, and the runner prunes the rows every binding passed, every row while no fact
+    /// binding is enabled. Key: u64be (sequence).
     HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
     /// The last settlement sequence handed out. Key: ().
     HOOKS_SETTLED_NEXT: VaultMeta b"hooks:settled_next:v1" Named;
     /// The inbound surface-event feed fact hooks follow (FIX 4749): one row per admitted
-    /// connector SurfaceEvent, its ids and tokens only. Key: u64be (sequence).
+    /// connector SurfaceEvent while a fact binding reads the feed, its ids and tokens only; an
+    /// erase leaves a row naming the erased entity as an empty erased row, and the runner prunes
+    /// the rows every binding passed. Key: u64be (sequence).
     HOOKS_SURFACE_INBOUND: VaultMeta b"hooks:surface_inbound:v1:" Named;
     /// The last inbound surface-event sequence handed out. Key: ().
     HOOKS_SURFACE_INBOUND_NEXT: VaultMeta b"hooks:surface_inbound_next:v1" Named;
@@ -301,8 +310,9 @@ side_tables! {
     /// Each TASK the due index holds (FIX 4749): the due time it holds, and the tick sequence
     /// its release committed, if it has ticked. Key: id16 (TASK).
     HOOKS_TASK_DUE_REVERSE: VaultMeta b"hooks:task_due_reverse:v1:" Named;
-    /// The tick feed fact hooks follow (FIX 4749): one row per due TASK released. Key: u64be
-    /// (sequence).
+    /// The tick feed fact hooks follow (FIX 4749): one row per due TASK released; an erase
+    /// leaves an erased TASK's row as an empty erased row, and the runner prunes the rows every
+    /// binding passed, but an open TASK's own tick. Key: u64be (sequence).
     HOOKS_TICK: VaultMeta b"hooks:tick:v1:" Named;
     /// The last tick sequence handed out. Key: ().
     HOOKS_TICK_NEXT: VaultMeta b"hooks:tick_next:v1" Named;

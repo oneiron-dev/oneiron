@@ -96,16 +96,16 @@ pub(crate) fn record_external_effect_policy(
     crate::off_record::FloorWrites::new(store).append_egress_gate_decision(wtxn, &candidate)?;
     if decision.outcome() == GateOutcome::Allow {
         // Fix list row 17645: and each grant that released another recipient
-        // of the same message.
-        for (grant_id, grant) in matched_grant.into_iter().chain(recipient_grants) {
-            touch_standing_outbound_grant_in_txn(store, wtxn, &grant_id, grant, created_at)?;
+        // of the same message. This layout records each one's consent Used receipt.
+        for grant in matched_grant.into_iter().chain(recipient_grants) {
+            record_standing_outbound_grant_use_in_txn(store, wtxn, &grant, &candidate.diff_handle)?;
         }
     }
     if decision.outcome() == GateOutcome::Allow
         && approval_context != ApprovalContext::Observe
         && let Some(reservation) = envelope_reservation
     {
-        reservation.commit_in_txn(store, wtxn, created_at)?;
+        reservation.commit_in_txn(store, wtxn)?;
     }
     store.diagnostics.gate.record_decision(&decision);
 

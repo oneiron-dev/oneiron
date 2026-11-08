@@ -4,13 +4,16 @@
 //! its own tick, off the request path, and the owner runs
 //! [`Vault::housekeeping_all`] through `oneiron maintain`. A host that binds
 //! model offers calls the `_with_access` form of each, lending the access its
-//! offers hold to the model pack retirement sweep (FIX 20193). Each sweep has a
-//! cadence and its own bound. Its schedule lives in the LIVE
-//! `HOUSEKEEPING_SCHEDULE` side table and is written when a run ends, so a
-//! restart in the middle of a pass resumes the sweeps that had not finished,
-//! never runs a finished one early, and never skips one forever. A sweep that
-//! fails or panics is reported and retried on a later pass; it never stops the
-//! others.
+//! offers hold to the model pack retirement sweep (FIX 20193); `oneiron
+//! maintain` lends the access the router `serve` would build holds: the
+//! routes its `[models]` config binds and their on-device views, and the
+//! models the vault's mesh discovery rows hold (FIX 22059, 22189). Each
+//! sweep has a cadence and its own bound. Its schedule lives in
+//! the LIVE `HOUSEKEEPING_SCHEDULE` side table and is written when a run ends,
+//! so a restart in the middle of a pass resumes the sweeps that had not
+//! finished, never runs a finished one early, and never skips one forever. A
+//! sweep that fails or panics is reported and retried on a later pass; it
+//! never stops the others.
 //!
 //! The pass only retires what the engine already said would retire: a lease
 //! past its expiry, a print past its retention deadline, a confirm past its
@@ -20,7 +23,7 @@
 //!
 //! A host that stops a vault between uses asks [`Vault::housekeeping_wake_at`]
 //! when it must run the vault again for a retirement that comes due, a model
-//! pack's notice marks and retirement day included (FIX 22059).
+//! pack's notice mark or retirement-day move included (FIX 22059).
 
 mod claim_vad_payment;
 mod report;
@@ -102,9 +105,10 @@ impl Vault {
 
     /// Runs every engine sweep now, due or not, and reschedules each from
     /// now: the owner's "run housekeeping now". The model pack retirement
-    /// sweep runs against no model access, as on a stopped vault: model
-    /// offers live only on a serving host, so a retiring model's notices
-    /// wait for its pass (FIX 22059).
+    /// sweep runs against no model access: a host that holds model offers,
+    /// `serve` or `oneiron maintain` with the offers its config and the
+    /// vault's mesh discovery rows bind, calls
+    /// [`Self::housekeeping_all_with_access`] (FIX 22059, 22189).
     pub fn housekeeping_all(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
         self.housekeeping_all_with_access(budget, &AccessSnapshot::new())
     }
@@ -136,11 +140,13 @@ impl Vault {
     /// and the erasure sweep's due time while an obligation waits, and a left
     /// env's owed body collection (FIX 2413), and the earliest deadline of
     /// the retained peer work (FIX 11183), and a paced verb call's window or
-    /// deadline (FIX 8753), and the model pack retirement pass's next notice
-    /// mark or retirement day (FIX 22059). Cache and retention hygiene never
-    /// wake a vault. Reads one row per sweep, the schedule, the retained
-    /// work queues and the installed model packs' kept checks (FIX 20043),
-    /// so a host can ask every time it stops the vault.
+    /// deadline (FIX 8753), and the first day to come on which the model
+    /// pack retirement pass owes work, a notice mark with no notice recorded
+    /// or a retirement-day move (FIX 22059). Cache and retention hygiene
+    /// never wake a vault. Reads one row per sweep, the schedule, the
+    /// retained work queues, and the installed model packs' kept checks
+    /// (FIX 20043) and notice records, so a host can ask every time it stops
+    /// the vault.
     pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
         let states = schedule::read_states(self)?;
         let noted = {

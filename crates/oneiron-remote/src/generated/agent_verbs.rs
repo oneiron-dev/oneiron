@@ -222,6 +222,9 @@ impl OneironClient {
                 "self.grants.answer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::GrantAnswered,
                 >(client, verb, &input),
+                "vault.proactivity.digest.get" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::maintenance::digest::ProactivityDigestView>,
+                >(client, verb, &input),
                 "vault.personas.preview" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PersonaSnapshotPreview,
                 >(client, verb, &input),
@@ -2043,6 +2046,9 @@ impl OneironClient {
                 "vault.shares.create" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ShareCreated,
                 >(client, verb, &input),
+                "vault.shares.issue_view_link" => remote_agent_verb_output::<
+                    oneiron::authority::PairingLink,
+                >(client, verb, &input),
                 "vault.shares.revoke" => remote_agent_verb_output::<
                     oneiron::receipt::ShareRevokeReceipt,
                 >(client, verb, &input),
@@ -2070,8 +2076,20 @@ impl OneironClient {
                 "vault.hooks.regen.get" => remote_agent_verb_output::<
                     Option<oneiron::memory::hook_regen_doors::HookRegenView>,
                 >(client, verb, &input),
+                "vault.hooks.regen.history" => remote_agent_verb_output::<
+                    Vec<oneiron::runtime_hooks::HookRegenReceipt>,
+                >(client, verb, &input),
+                "vault.hooks.regen.revert" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::PackPutReceipt,
+                >(client, verb, &input),
+                "vault.hooks.regen.run" => remote_agent_verb_output::<
+                    Option<oneiron::memory::hook_regen_doors::HookRegenView>,
+                >(client, verb, &input),
                 "vault.hooks.regen.adopt" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackPutReceipt,
+                >(client, verb, &input),
+                "vault.hooks.regen.cancel" => remote_agent_verb_output::<
+                    oneiron::runtime_hooks::HookRegenCancel,
                 >(client, verb, &input),
                 "vault.artifacts.publish_approval" => remote_agent_verb_output::<
                     oneiron::artifact_hosting::door_types::ArtifactPublishApproval,
@@ -2409,6 +2427,9 @@ impl OneironClient {
                 "vault.code.snapshots.ingest" => remote_agent_verb_output::<
                     oneiron::memory::codebase_doors::CodeSnapshotView,
                 >(client, verb, &input),
+                "vault.code.snapshots.capture" => remote_agent_verb_output::<
+                    oneiron::memory::codebase_doors::CodeSnapshotView,
+                >(client, verb, &input),
                 "vault.code.snapshots.get" => remote_agent_verb_output::<
                     Option<oneiron::memory::codebase_doors::CodeSnapshotView>,
                 >(client, verb, &input),
@@ -2501,6 +2522,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.agents.verb_classes.configure" => remote_agent_verb_output::<
                     oneiron::policy_manifest_doors::AgentVerbClassesReceipt,
+                >(client, verb, &input),
+                "vault.oauth.authorization.answer" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OAuthAuthorizationAnswered,
                 >(client, verb, &input),
                 "vault.repo.git_push.mint" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::GitPushGrantMintOutput,
@@ -3890,6 +3914,12 @@ impl OneironClient {
                 "self.history" => remote_agent_verb_output::<
                     oneiron::engine_executor::history::FoldHistory,
                 >(client, verb, &input),
+                "self.hooks.regen.adopt" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::PackPutReceipt,
+                >(client, verb, &input),
+                "self.hooks.regen.get" => remote_agent_verb_output::<
+                    Option<oneiron::memory::hook_regen_doors::HookRegenView>,
+                >(client, verb, &input),
                 "vault.runs.review" => remote_agent_verb_output::<
                     oneiron::memory::run_review::RunReview,
                 >(client, verb, &input),
@@ -3997,6 +4027,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.mail.sources.sync" => remote_agent_verb_output::<
                     oneiron::mail_pack::MailSyncReport,
+                >(client, verb, &input),
+                "vault.mail.sources.search" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailSearchReport,
                 >(client, verb, &input),
                 "vault.mail.inbox" => {
                     remote_agent_verb_output::<oneiron::mail_pack::MailInboxPage>(
@@ -4914,6 +4947,21 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.grants.answer", value)
+    }
+    pub fn vault_proactivity_digest_get(
+        &self,
+        input: &oneiron::dreamer_runner::maintenance::digest::DigestReadRequest,
+    ) -> Result<
+        Option<oneiron::dreamer_runner::maintenance::digest::ProactivityDigestView>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.proactivity.digest.get", value)
     }
     pub fn vault_personas_preview(
         &self,
@@ -12214,6 +12262,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.shares.create", value)
     }
+    pub fn vault_shares_issue_view_link(
+        &self,
+        input: &oneiron::task_verb::sdk::ShareViewLinkRequest,
+    ) -> Result<oneiron::authority::PairingLink, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shares.issue_view_link", value)
+    }
     pub fn vault_shares_revoke(
         &self,
         input: &oneiron::task_verb::sdk::ShareRevokeRequest,
@@ -12326,6 +12386,42 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.hooks.regen.get", value)
     }
+    pub fn vault_hooks_regen_history(
+        &self,
+        input: &oneiron::memory::hook_regen_doors::HookRegenHistoryRequest,
+    ) -> Result<Vec<oneiron::runtime_hooks::HookRegenReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.hooks.regen.history", value)
+    }
+    pub fn vault_hooks_regen_revert(
+        &self,
+        input: &oneiron::memory::hook_regen_doors::HookRegenRevertRequest,
+    ) -> Result<oneiron::task_verb::sdk::PackPutReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.hooks.regen.revert", value)
+    }
+    pub fn vault_hooks_regen_run(
+        &self,
+        input: &oneiron::memory::hook_regen_doors::HookRegenBindingRequest,
+    ) -> Result<Option<oneiron::memory::hook_regen_doors::HookRegenView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.hooks.regen.run", value)
+    }
     pub fn vault_hooks_regen_adopt(
         &self,
         input: &oneiron::memory::hook_regen_doors::HookRegenAdoptRequest,
@@ -12337,6 +12433,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.hooks.regen.adopt", value)
+    }
+    pub fn vault_hooks_regen_cancel(
+        &self,
+        input: &oneiron::memory::hook_regen_doors::HookRegenCancelRequest,
+    ) -> Result<oneiron::runtime_hooks::HookRegenCancel, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.hooks.regen.cancel", value)
     }
     pub fn vault_artifacts_publish_approval(
         &self,
@@ -13670,6 +13778,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.code.snapshots.ingest", value)
     }
+    pub fn vault_code_snapshots_capture(
+        &self,
+        input: &oneiron::memory::codebase_doors::CodeSnapshotCaptureRequest,
+    ) -> Result<oneiron::memory::codebase_doors::CodeSnapshotView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.snapshots.capture", value)
+    }
     pub fn vault_code_snapshots_get(
         &self,
         input: &oneiron::memory::codebase_doors::CodeSnapshotRequest,
@@ -14018,6 +14138,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.agents.verb_classes.configure", value)
+    }
+    pub fn vault_oauth_authorization_answer(
+        &self,
+        input: &oneiron::task_verb::sdk::OAuthAuthorizationAnswer,
+    ) -> Result<oneiron::task_verb::sdk::OAuthAuthorizationAnswered, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.oauth.authorization.answer", value)
     }
     pub fn vault_repo_git_push_mint(
         &self,
@@ -19577,6 +19709,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("self.history", value)
     }
+    pub fn self_hooks_regen_adopt(
+        &self,
+        input: &oneiron::memory::hook_regen_doors::HookRegenAdoptRequest,
+    ) -> Result<oneiron::task_verb::sdk::PackPutReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.hooks.regen.adopt", value)
+    }
+    pub fn self_hooks_regen_get(
+        &self,
+        input: &oneiron::memory::hook_regen_doors::HookRegenBindingRequest,
+    ) -> Result<Option<oneiron::memory::hook_regen_doors::HookRegenView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.hooks.regen.get", value)
+    }
     pub fn vault_runs_review(
         &self,
         input: &oneiron::memory::run_review::RunReviewRequest,
@@ -20008,6 +20164,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.mail.sources.sync", value)
+    }
+    pub fn vault_mail_sources_search(
+        &self,
+        input: &oneiron::mail_pack::MailSourceSearchRequest,
+    ) -> Result<oneiron::mail_pack::MailSearchReport, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.sources.search", value)
     }
     pub fn vault_mail_inbox(
         &self,

@@ -67,6 +67,7 @@ both bindings and their export-census tests in one change.
 - `self.grants.asked`
 - `vault.companions.access_requests.answer`
 - `self.grants.answer`
+- `vault.proactivity.digest.get`
 - `vault.personas.preview`
 - `vault.personas.export`
 - `vault.personas.edit`
@@ -662,6 +663,7 @@ both bindings and their export-census tests in one change.
 - `self.secrets.teardown`
 - `self.secrets.use`
 - `vault.shares.create`
+- `vault.shares.issue_view_link`
 - `vault.shares.revoke`
 - `vault.shares.view`
 - `host.compact`
@@ -671,7 +673,11 @@ both bindings and their export-census tests in one change.
 - `vault.hooks.replay`
 - `vault.hooks.regen.due`
 - `vault.hooks.regen.get`
+- `vault.hooks.regen.history`
+- `vault.hooks.regen.revert`
+- `vault.hooks.regen.run`
 - `vault.hooks.regen.adopt`
+- `vault.hooks.regen.cancel`
 - `vault.artifacts.publish_approval`
 - `vault.artifacts.publish`
 - `vault.artifacts.repoint`
@@ -782,6 +788,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.cache.get`
 - `vault.code.cache.reuse`
 - `vault.code.snapshots.ingest`
+- `vault.code.snapshots.capture`
 - `vault.code.snapshots.get`
 - `vault.code.snapshots.read`
 - `vault.code.symbols.definitions`
@@ -811,6 +818,7 @@ both bindings and their export-census tests in one change.
 - `vault.agents.grants.revoke`
 - `vault.agents.verb_classes.get`
 - `vault.agents.verb_classes.configure`
+- `vault.oauth.authorization.answer`
 - `vault.repo.git_push.mint`
 - `vault.repo.git_push.revoke`
 - `vault.connectors.read_grants.grant`
@@ -1259,6 +1267,8 @@ both bindings and their export-census tests in one change.
 - `self.run.attach`
 - `self.folds.describe`
 - `self.history`
+- `self.hooks.regen.adopt`
+- `self.hooks.regen.get`
 - `vault.runs.review`
 - `vault.runs.settle`
 - `vault.runs.settlement`
@@ -1295,6 +1305,7 @@ both bindings and their export-census tests in one change.
 - `vault.mail.sources.sync_status`
 - `vault.mail.sources.import_mbox`
 - `vault.mail.sources.sync`
+- `vault.mail.sources.search`
 - `vault.mail.inbox`
 - `vault.mail.threads.read`
 - `vault.mail.attachments.open`
