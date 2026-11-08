@@ -12,9 +12,15 @@ use super::{Codec, MIN_ENCODED_BYTES, too_large};
 use crate::error::ApiError;
 
 /// Ephemeral and custody calls keep the codec's existing in-memory path.
-/// A held room NOTE's editor close need not carry its session header.
+/// A held room NOTE's editor close need not carry its session header. The
+/// artifact write routes stage too: their content streams to a file, so a
+/// compressed body is never held whole either (FIX 22074).
 pub(super) fn stages(request: &Request) -> bool {
-    let Some(verb) = request.uri().path().strip_prefix("/v1/core/facade/") else {
+    let path = request.uri().path();
+    if request.method() == axum::http::Method::POST && artifact_write(path) {
+        return true;
+    }
+    let Some(verb) = path.strip_prefix("/v1/core/facade/") else {
         return false;
     };
     !request
@@ -29,6 +35,21 @@ pub(super) fn stages(request: &Request) -> bool {
                 | "vault.secrets.custody.submit"
                 | "vault.notes.editor.close"
         )
+}
+
+/// `POST /v1/core/artifacts`, `.../{artifact}/versions` and
+/// `.../{artifact}/outputs`: the routes whose `content_base64` streams.
+fn artifact_write(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix("/v1/core/artifacts") else {
+        return false;
+    };
+    rest.is_empty()
+        || rest
+            .strip_prefix('/')
+            .and_then(|rest| rest.split_once('/'))
+            .is_some_and(|(artifact, route)| {
+                !artifact.is_empty() && matches!(route, "versions" | "outputs")
+            })
 }
 
 /// Both encoded and decoded lengths meet the same ceiling as the RAM path.
