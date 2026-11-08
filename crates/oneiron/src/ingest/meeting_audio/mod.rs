@@ -17,6 +17,7 @@ mod persistence;
 mod producer;
 mod provenance;
 mod recorded_evaluation;
+mod session_input;
 mod types;
 
 pub use alignment::align_words_to_speakers;
@@ -38,6 +39,7 @@ pub use recorded_evaluation::{
     LabelledReference, RecordedArm, RecordedEvaluation, RecordedEvaluationRun, RecordedFile,
     ReferenceDocument, SpeakerScore, WordCluster, evaluate_recorded_audio,
 };
+pub use session_input::MeetingTranscriptSessionInput;
 pub use types::{
     AllowedWordCorrection, AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile,
     BatchAsrRequest, BatchDefault, BulkImportAuthorizer, BulkImportBinding, BulkImportReceipt,

@@ -4,7 +4,9 @@
 //! subject of the pair, the asked owner among them, is live. Its ask is
 //! bound in the ask's admission, and the owner's word scores both forks in
 //! the ask's settling commit, which reads the capsule and both answers the
-//! run owns again first. An erase deletes it and retires its ask
+//! run owns again first. That commit reads each answer only while the
+//! pair's kept source admission and the owner's own admission hold in it
+//! (FIX 20607). An erase deletes it and retires its ask
 //! ([`super::fork_erase`]).
 
 use super::super::super::contribution::{
@@ -143,8 +145,9 @@ pub(crate) fn bind_owner_pair_ask_in_txn(
 }
 
 /// Keeps a word admitted by the ask's settling writer when a temporary
-/// subject fence prevents scoring. It carries no owner proof; a retry uses
-/// the existing capsule, provenance and held-answer checks.
+/// subject fence, or a source admission that lapsed (FIX 20607), prevents
+/// scoring. It carries no owner proof; a retry uses the existing capsule,
+/// provenance and held-answer checks, and asks the source admission again.
 ///
 /// # Errors
 ///
@@ -205,10 +208,13 @@ pub(crate) fn close_owner_pair_in_txn(
 /// in the pair's one evidence mode, and keeps the pair judged. Nothing is
 /// written unless every subject of the pair is live, its capsule still holds
 /// its content at its request, and each fork is still the unscored fork it
-/// showed, its answer still the body the run holds. The refusal names its
-/// kind as the fork writers do (FIX 6256): a subject gone now is the
-/// fence's `Unfinished`, content or an answer an erase retired is `Erased`,
-/// and anything else no longer kept as shown is `Unreadable`.
+/// showed, its answer still the body the run holds. Each answer is read
+/// only while the pair's kept source admission holds in this writer, and
+/// the owner reads the source under the owner's own admission (FIX 20607).
+/// The refusal names its kind as the fork writers do (FIX 6256): a subject
+/// gone now, or a source admission that lapsed, is `Unfinished`, never
+/// lasting; content or an answer an erase retired is `Erased`, and anything
+/// else no longer kept as shown is `Unreadable`.
 ///
 /// # Errors
 ///
@@ -262,6 +268,11 @@ pub(crate) fn judge_owner_pair_in_txn(
         }
         if fork.response_erased {
             return Ok(Err(Unavailable::Erased));
+        }
+        // The owner's word is recorded only from answers the owner may read
+        // now: the kept Grant, rows and Scopes, asked in this writer.
+        if !pair.source.owner_reads_in(vault, txn, pair.owner)? {
+            return Ok(Err(Unavailable::Unfinished));
         }
         if !answer_held_in_txn(vault, txn, pair.run, fork)? {
             return Ok(Err(Unavailable::Unreadable));

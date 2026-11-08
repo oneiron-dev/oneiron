@@ -152,6 +152,9 @@ pub struct ScopedRead<'a> {
     judged_at: Option<u64>,
 }
 
+mod owned;
+pub use owned::OwnedScopedRead;
+
 mod admission;
 mod commitment_reminder_wording;
 mod edge_admission;
