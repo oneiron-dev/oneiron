@@ -99,7 +99,7 @@ impl Vault {
     /// The served repository at `repo_dir` opened through a commit it
     /// published, with its id: where its published refs are read. `None`
     /// when no commit it published opens.
-    fn published_origin_repo(
+    pub(in crate::origin) fn published_origin_repo(
         &self,
         wire: &GitWire<'_>,
         repo_dir: &Path,

@@ -364,7 +364,7 @@ fn identity(binding: &impl Serialize) -> String {
 }
 
 /// The money one vault may commit, as the host issued it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Allocation {
     pub reference: AllocationRef,
     pub units: u64,

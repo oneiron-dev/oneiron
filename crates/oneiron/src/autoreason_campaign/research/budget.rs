@@ -105,7 +105,9 @@ fn read_in_txn(
             (&mut read.work_reserved, &mut read.work_spent)
         };
         match row.settlement {
-            None => *reserved = reserved.saturating_add(row.units),
+            None | Some(RsiSettlement::Unknown) => {
+                *reserved = reserved.saturating_add(row.units);
+            }
             Some(RsiSettlement::Spent(units) | RsiSettlement::Exposure(units)) => {
                 *spent = spent.saturating_add(units);
             }
@@ -285,8 +287,9 @@ fn finish(
 /// Settle a reservation with its actual units: tokens on a work line,
 /// exposure on the exploration line. The unspent rest is released.
 /// # Errors
-/// An unknown reservation, more units than reserved, a reservation already
-/// settled otherwise, or storage errors.
+/// An unknown reservation, more exploration exposure than reserved, a
+/// reservation already settled otherwise, or storage errors. Token spend is
+/// recorded whole, including spend past the reservation.
 pub fn settle_research_work(
     vault: &Vault,
     root: AttemptId,
@@ -306,6 +309,24 @@ pub fn settle_research_work(
                 RsiSettlement::Exposure(actual)
             }
         })
+    })
+}
+
+/// End token work without substituting its reservation for a missing meter.
+/// The unknown receipt keeps the reservation committed, not falsely spent.
+pub(super) fn settle_research_work_unknown(
+    vault: &Vault,
+    root: AttemptId,
+    id: EntityId,
+) -> Result<ResearchReservation> {
+    finish(vault, root, id, |row| {
+        if !matches!(row.line, ResearchReservationLine::Work { .. }) {
+            return Err(invalid(
+                "an unknown token measurement requires a work reservation",
+            ));
+        }
+        vault.settle_rsi_budget_unknown(id).map_err(rsi_error)?;
+        Ok(RsiSettlement::Unknown)
     })
 }
 
