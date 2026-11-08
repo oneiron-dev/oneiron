@@ -167,7 +167,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pptx_comments/model.rs` | src | m | 8 struct · 5 enum · 6 fn · 17 crate-vis | PptxAnchorOutcome, PptxAuthor, PptxCommentAction, PptxCommentEdit, PptxCommentEffects, PptxCommentLimits, PptxCommentTarget, PptxDriftReason +5 | PowerPoint comment requests, inspection facts, codec limits and typed refusals |
 | `src/pptx_comments/xml.rs` | src | s | 17 crate-vis | — | PPTX comment XML spans, queries and surgery |
 | `src/pptx_comments/xml/parse.rs` | src | m | 5 crate-vis | — | Namespace-aware parsing for PPTX comment XML |
-| `src/resource.rs` | src | m | 4 struct · 2 enum · 1 trait · 27 fn · 1 const | CapacityHit, Dimension, Hold, MeasuringPort, ResourcePort, ResourceRefusal, Resources | The memory one document operation reserves before it allocates, and the deadline it runs within (Rule 5; FIX… |
+| `src/resource.rs` | src | m | 4 struct · 2 enum · 2 trait · 28 fn · 1 const | CapacityHit, Dimension, Hold, MeasuringPort, ResourceAllocation, ResourcePort, ResourceRefusal, Resources | The memory one document operation reserves before it allocates, and the deadline it runs within (Rule 5; FIX… |
 | `src/retained_opc/mod.rs` | src | s | 1 enum · 2 fn · 1 type · 1 re-export · 2 crate-vis | Error | Bounded, retained OPC archives |
 | `src/retained_opc/package.rs` | src | m | 2 struct · 1 enum · 8 fn · 1 re-export · 1 crate-vis | Editability, Limits, Package | Retained OPC package state and copy-through writing |
 | `src/retained_opc/package/open.rs` | src | m | 1 fn · 5 crate-vis | — | Retained ZIP admission, metadata inspection and expansion |
@@ -189,7 +189,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/xlsx_body/insert.rs` | src | m | 1 struct · 2 fn · 3 crate-vis | XlsxLines | What inserted rows and columns take from their neighbours, as Excel's insert gives it by default (FIX 3695)… |
 | `src/xlsx_body/layout.rs` | src | m | 6 crate-vis | — | Worksheet layout and pivot/formula retargeting |
 | `src/xlsx_body/links.rs` | src | s | 3 crate-vis | — | The workbook's links to itself (FIX 9080) |
-| `src/xlsx_body/model.rs` | src | m | 10 struct · 4 enum · 14 fn · 2 const · 7 crate-vis | XlsxArea, XlsxBook, XlsxCell, XlsxChange, XlsxLock, XlsxName, XlsxProjection, XlsxSheet +6 | SpreadsheetML model, validation and A1 rules |
+| `src/xlsx_body/model.rs` | src | m | 10 struct · 5 enum · 14 fn · 2 const · 7 crate-vis | XlsxArea, XlsxBook, XlsxCell, XlsxCellRecalc, XlsxChange, XlsxLock, XlsxName, XlsxProjection +7 | SpreadsheetML model, validation and A1 rules |
 | `src/xlsx_body/project.rs` | src | m | 2 fn · 5 crate-vis | — | Workbook format, cell and name projection |
 | `src/xlsx_body/read.rs` | src | m | 1 fn · 6 crate-vis | — | Workbook cells, tables, styles, names and shared-string reads |
 | `src/xlsx_body/retain.rs` | src | s | 4 crate-vis | — | Writing into a stored cell or defined name (FIX 8571, FIX 8572): only what a change names is written, and… |
