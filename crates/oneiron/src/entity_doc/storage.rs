@@ -32,10 +32,32 @@ pub enum TextField {
     MapField(String),
 }
 
+/// The kind of owner a document head belongs to (FIX 11535). The head is
+/// keyed by its owner's id either way; only a stored entity has a ledger row.
+/// An entity's head names no kind: only an artifact's head writes one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum DocumentOwnerKind {
+    /// A stored entity: a record whose text lives on this plane.
+    #[default]
+    Entity,
+    /// A finalized proposal-text artifact (ED-00), which has no ledger row:
+    /// its artifact record names this head.
+    ProposalArtifact,
+}
+
+impl DocumentOwnerKind {
+    fn is_entity(&self) -> bool {
+        *self == Self::Entity
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Head {
     pub entity: String,
+    #[serde(default, skip_serializing_if = "DocumentOwnerKind::is_entity")]
+    pub owner_kind: DocumentOwnerKind,
     pub incarnation: String,
     pub document: String,
     pub field: TextField,
@@ -51,8 +73,8 @@ pub(super) struct Head {
     pub succeeds: Option<super::succession::Succession>,
 }
 
-/// Pointer from an entity to its owning document, plus generation/pending
-/// counters.
+/// Pointer from an owner (a stored entity or a proposal artifact) to its
+/// document, plus generation/pending counters.
 pub(super) const ENTITY_DOC_HEAD: SideTable<HexId, Head, Named> =
     SideTable::new(&side_table::ENTITY_DOC_HEAD);
 
@@ -93,7 +115,23 @@ pub(super) fn head(
     if h.entity != entity.to_hex() {
         return Err(Error::CorruptedIndex("document head entity mismatch"));
     }
+    if h.owner_kind != DocumentOwnerKind::Entity {
+        return Err(Error::EntityNotFound);
+    }
     Ok(h)
+}
+
+/// The head of `owner`'s document, by the owner kind it names: a stored
+/// entity's as [`head`] reads it, or a proposal artifact's when the
+/// artifact's record, read in the same transaction, names this head (FIX
+/// 11535). Any other id is not found.
+pub(super) fn head_by_owner_kind(store: &Store, txn: &RoTxn<'_>, owner: &EntityId) -> Result<Head> {
+    match ENTITY_DOC_HEAD.get_lenient(store, txn, &HexId(*owner))? {
+        Some(h) if h.owner_kind == DocumentOwnerKind::ProposalArtifact => {
+            super::artifact::record_named_head(store, txn, owner, h)
+        }
+        _ => head(store, txn, owner),
+    }
 }
 
 pub(super) fn load(
@@ -180,29 +218,41 @@ pub(super) fn persist_scanned(
     scan: impl FnOnce(&Vault, &mut RwTxn<'_>, &EntityId, &Head, &str) -> Result<bool>,
 ) -> Result<()> {
     let store = &vault.store;
+    // Only a stored entity's document owes its entity's own work: the tag,
+    // NOTE, text-index, revision and question passes. A proposal artifact's
+    // shares the rows, token uses and lift with it (FIX 11535).
+    let entity_owned = h.owner_kind == DocumentOwnerKind::Entity;
     // A MESSAGE or TURN whose text changes owes its turn a sieve read and,
     // on an armed vault, a tag pass (ARCH-0036) and a vector of the new text
     // (ARCH-0004), committed with the text. A write that leaves the text as
     // it was (a birth, a migration, a compaction) owes nothing.
-    let retag = match crate::tagging::text_entity_type_in_txn(vault, txn, entity)? {
-        Some(entity_type) => text_changed(store, txn, entity, doc)?.then_some(entity_type),
-        None => None,
+    let retag = if entity_owned {
+        match crate::tagging::text_entity_type_in_txn(vault, txn, entity)? {
+            Some(entity_type) => text_changed(store, txn, entity, doc)?.then_some(entity_type),
+            None => None,
+        }
+    } else {
+        None
     };
     let text = doc.text();
     let remark = scan(vault, txn, entity, h, &text)?;
     // A NOTE written on this plane keeps the NOTE door's seal (OF-073 stage
     // 1); no body length refuses it (rule 5, FIX 10345).
-    if vault.get_entity_type_in_txn(txn, entity)? == Some(crate::registry::ENTITY_TYPE_NOTE) {
+    if entity_owned
+        && vault.get_entity_type_in_txn(txn, entity)? == Some(crate::registry::ENTITY_TYPE_NOTE)
+    {
         let read: &RoTxn<'_> = txn;
         let moved = before.is_some_and(|before| before.encode() != doc.doc.oplog_vv().encode());
         crate::note::check_doc_plane_note_commit_in_txn(store, read, *entity, || {
             Ok(moved || text_changed(store, read, entity, doc)?)
         })?;
     }
-    vault.ensure_text_index_trusted()?;
-    crate::vault::ensure_text_index_manifest_matches_wtxn(store, txn, &vault.analyzer)?;
+    if entity_owned {
+        vault.ensure_text_index_trusted()?;
+        crate::vault::ensure_text_index_manifest_matches_wtxn(store, txn, &vault.analyzer)?;
+    }
     let birth = h.generation == 0;
-    if birth {
+    if birth && entity_owned {
         index_document(vault, txn, entity, h, doc)?;
     }
     h.generation = h
@@ -226,10 +276,12 @@ pub(super) fn persist_scanned(
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
     // The stamp tokens its new changes name, for the hold check (FIX 11965).
     super::token_uses::record_token_uses_in_txn(store, txn, entity, doc, before)?;
-    history::capture_document_revision_in_txn(store, txn, entity, h, doc, birth)?;
-    // FIX 4817: a home part's new revision withdraws what wore the old one.
-    let custody = crate::secret_custody::CustodyWrite::of(vault);
-    crate::ports::withdraw_changed_home_dependents_in_txn(&custody, txn, entity)?;
+    if entity_owned {
+        history::capture_document_revision_in_txn(store, txn, entity, h, doc, birth)?;
+        // FIX 4817: a home part's new revision withdraws what wore the old one.
+        let custody = crate::secret_custody::CustodyWrite::of(vault);
+        crate::ports::withdraw_changed_home_dependents_in_txn(&custody, txn, entity)?;
+    }
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::embed::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
@@ -237,6 +289,9 @@ pub(super) fn persist_scanned(
     }
     if remark {
         super::lift::remark_entity_text_in_txn(vault, txn, entity, &text)?;
+    }
+    if !entity_owned {
+        return Ok(());
     }
     // A live edit wakes the questions watching the unit or its RESTS_ON
     // sources, as a batch write does; the door wakes the pump after commit.
@@ -441,6 +496,7 @@ impl Vault {
 
             let mut h = Head {
                 entity: entity.to_hex(),
+                owner_kind: DocumentOwnerKind::Entity,
                 incarnation: EntityId::now().to_hex(),
                 document: entity.to_hex(),
                 field: field.clone(),

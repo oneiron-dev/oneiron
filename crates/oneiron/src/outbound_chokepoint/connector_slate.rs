@@ -183,6 +183,9 @@ fn always_ask(
             SlateDisposition::NeverAllow => return Ok(Release::Ask),
             SlateDisposition::Auto | SlateDisposition::AlwaysAllow => return Ok(Release::Send),
         }
+        if crate::outbound_consent::code_wait_retry_approval_in_txn(vault, wtxn, record)? {
+            return Ok(Release::Send);
+        }
         if pinned_retry_approval(vault, wtxn, record.id, &candidate.gate)
             .is_some_and(|kept| kept.effect_digest() == digest)
         {
