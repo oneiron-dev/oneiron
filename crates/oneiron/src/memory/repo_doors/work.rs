@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::{
-    NO_PATHS, RepoRunAdmitted, RepoRunAnswer, RepoRunBinding, RepoRunStamp, RepoSnapshotView,
-    RepoSnapshotsIngestInput, RepoSnapshotsIngestOutput, RepoWorkOpenInput, RepoWorkOpenOutput,
-    RepoWorkView, refusal_error, repo_target,
+    NO_PATHS, RepoRunAdmitted, RepoRunAnswer, RepoRunBinding, RepoRunSelection, RepoRunStamp,
+    RepoSnapshotView, RepoSnapshotsIngestInput, RepoSnapshotsIngestOutput, RepoWorkOpenInput,
+    RepoWorkOpenOutput, RepoWorkView, refusal_error, repo_target,
 };
 use crate::code_view::{CodeViewSet, ViewReceipt, view_receipt_in_txn};
 use crate::codebase::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
@@ -218,9 +218,32 @@ impl Memory<'_> {
         binding: &RepoRunBinding,
         input: RepoSnapshotsIngestInput,
     ) -> MemoryResult<RepoRunAnswer<RepoSnapshotsIngestOutput>> {
-        let target = repo_target(input.repo, &input.git_ref, NO_PATHS);
-        let admitted = self.repo_run_admit(binding, &target, RepoAccessIntent::Read)?;
-        self.repo_lane_reads(binding, &[input.repo])?;
+        self.repo_snapshots_ingest_for_run_selected(binding, input, None)
+    }
+
+    pub(crate) fn repo_snapshots_ingest_for_run_selected(
+        &self,
+        binding: &RepoRunBinding,
+        input: RepoSnapshotsIngestInput,
+        selection: Option<RepoRunSelection>,
+    ) -> MemoryResult<RepoRunAnswer<RepoSnapshotsIngestOutput>> {
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let (selected, portable_hit, admission) = self.vault.admit_repo_run_with_portable_in_txn(
+            &txn,
+            binding,
+            input.repo,
+            input.portable_repo.as_ref(),
+            &input.git_ref,
+            NO_PATHS,
+            RepoAccessIntent::Read,
+        )?;
+        drop(txn);
+        let admitted = admission.map_err(refusal_error)?;
+        if selection.is_some_and(|gate| gate.repo != selected || gate.portable_hit != portable_hit)
+        {
+            return Err(Error::ConcurrentWrite("the run's gated repo selection changed").into());
+        }
+        self.repo_lane_reads(binding, &[selected])?;
         let membership = &admitted.membership;
         let RepoRef::LocalFolder { path, .. } = &membership.repo_ref else {
             return Err(refusal_error(RepoAccessRefusal::WrongRef));
@@ -228,7 +251,7 @@ impl Memory<'_> {
         let Some(commit) = repo_ref_pin(self.vault, &membership.repo_ref, &input.git_ref) else {
             return Err(refusal_error(RepoAccessRefusal::WrongRef));
         };
-        let Some(anchor) = self.vault.get_codebase_snapshot(&input.repo)? else {
+        let Some(anchor) = self.vault.get_codebase_snapshot(&selected)? else {
             return Err(refusal_error(RepoAccessRefusal::NoMembership));
         };
         // The paths kept are the selection; the final writer admits each of
@@ -250,26 +273,33 @@ impl Memory<'_> {
             (TimeRange { start: at, end: at }, at),
             &select,
             |txn| {
-                let selected = repo_target(input.repo, &input.git_ref, kept.borrow().iter());
-                Ok(
-                    match self.vault.admit_repo_run_in_txn(
+                let (selected_again, hit_again, admission) =
+                    self.vault.admit_repo_run_with_portable_in_txn(
                         txn,
                         binding,
-                        &selected,
+                        input.repo,
+                        input.portable_repo.as_ref(),
+                        &input.git_ref,
+                        kept.borrow().iter(),
                         RepoAccessIntent::Read,
-                    )? {
-                        Ok(again) if again.same_lease(&admitted) => Ok(()),
-                        Ok(_) => Err(RepoAccessRefusal::StaleLease),
-                        Err(refused) => Err(refused),
-                    },
-                )
+                    )?;
+                if selected_again != selected || hit_again != portable_hit {
+                    return Err(Error::ConcurrentWrite(
+                        "the run's repo ingest selection changed",
+                    ));
+                }
+                Ok(match admission {
+                    Ok(again) if again.same_lease(&admitted) => Ok(()),
+                    Ok(_) => Err(RepoAccessRefusal::StaleLease),
+                    Err(refused) => Err(refused),
+                })
             },
         )?;
         let imported = imported.map_err(refusal_error)?;
         Ok(RepoRunAnswer {
-            rows: vec![input.repo, imported.code_artifact_id],
+            rows: vec![selected, imported.code_artifact_id],
             output: RepoSnapshotView {
-                repo: input.repo,
+                repo: selected,
                 git_ref: input.git_ref,
                 commit: commit.as_str().to_owned(),
                 snapshot: bytes_to_hex_lower(&imported.snapshot.fork_hash),
@@ -289,13 +319,38 @@ impl Memory<'_> {
         binding: &RepoRunBinding,
         input: RepoWorkOpenInput,
     ) -> MemoryResult<RepoRunAnswer<RepoWorkOpenOutput>> {
-        let target = repo_target(input.repo, &input.git_ref, NO_PATHS);
-        let admitted = self.repo_run_admit(binding, &target, RepoAccessIntent::Read)?;
-        self.repo_lane_reads(binding, &[input.repo])?;
+        self.repo_work_open_for_run_selected(binding, input, None)
+    }
+
+    pub(crate) fn repo_work_open_for_run_selected(
+        &self,
+        binding: &RepoRunBinding,
+        input: RepoWorkOpenInput,
+        selection: Option<RepoRunSelection>,
+    ) -> MemoryResult<RepoRunAnswer<RepoWorkOpenOutput>> {
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let (selected_repo, portable_hit, admission) =
+            self.vault.admit_repo_run_with_portable_in_txn(
+                &txn,
+                binding,
+                input.repo,
+                input.portable_repo.as_ref(),
+                &input.git_ref,
+                NO_PATHS,
+                RepoAccessIntent::Read,
+            )?;
+        drop(txn);
+        let admitted = admission.map_err(refusal_error)?;
+        if selection
+            .is_some_and(|gate| gate.repo != selected_repo || gate.portable_hit != portable_hit)
+        {
+            return Err(Error::ConcurrentWrite("the run's gated repo selection changed").into());
+        }
+        self.repo_lane_reads(binding, &[selected_repo])?;
         let membership = &admitted.membership;
         let queue = resolve_repo_queue_target(
             self.vault,
-            input.repo,
+            selected_repo,
             &membership.repo_ref,
             &input.git_ref,
         )?
@@ -315,8 +370,6 @@ impl Memory<'_> {
         // Each masked file's descriptor rides the work's receipt (FIX 8965).
         let projections = copy.projections();
         let selected = copy.into_contents();
-        // The final writer admits every selected path again (FIX 8799).
-        let selected_target = repo_target(input.repo, &input.git_ref, selected.keys());
         let entries = selected
             .iter()
             .map(|(path, bytes)| {
@@ -328,7 +381,7 @@ impl Memory<'_> {
             })
             .collect();
         let snapshot = CodebaseSnapshot::new(
-            input.repo.to_hex(),
+            selected_repo.to_hex(),
             membership.repo_ref.clone(),
             Some(queue.green.clone()),
             entries,
@@ -340,24 +393,32 @@ impl Memory<'_> {
             &selected,
             projections,
             |txn, view| {
-                Ok(
-                    match self.vault.admit_repo_run_in_txn(
+                let (selected_again, hit_again, admission) =
+                    self.vault.admit_repo_run_with_portable_in_txn(
                         txn,
                         binding,
-                        &selected_target,
+                        input.repo,
+                        input.portable_repo.as_ref(),
+                        &input.git_ref,
+                        selected.keys(),
                         RepoAccessIntent::Read,
-                    )? {
-                        Ok(again) if again.same_lease(&admitted) => Ok(again.stamp(
-                            binding,
-                            &input.git_ref,
-                            &queue.green,
-                            base.fork_hash,
-                            view,
-                        )),
-                        Ok(_) => Err(RepoAccessRefusal::StaleLease),
-                        Err(refused) => Err(refused),
-                    },
-                )
+                    )?;
+                if selected_again != selected_repo || hit_again != portable_hit {
+                    return Err(Error::ConcurrentWrite(
+                        "the run's repo work selection changed",
+                    ));
+                }
+                Ok(match admission {
+                    Ok(again) if again.same_lease(&admitted) => Ok(again.stamp(
+                        binding,
+                        &input.git_ref,
+                        &queue.green,
+                        base.fork_hash,
+                        view,
+                    )),
+                    Ok(_) => Err(RepoAccessRefusal::StaleLease),
+                    Err(refused) => Err(refused),
+                })
             },
         )?;
         let receipt = opened.map_err(refusal_error)?;
@@ -366,7 +427,7 @@ impl Memory<'_> {
             .clone()
             .ok_or(Error::InvariantViolation("a run's work lost its stamp"))?;
         Ok(RepoRunAnswer {
-            rows: vec![input.repo],
+            rows: vec![selected_repo],
             output: work_view(&receipt, &stamp),
         })
     }

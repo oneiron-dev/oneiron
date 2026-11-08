@@ -20,10 +20,11 @@ use crate::store::{BODY_INSTANCES, BODY_KEYS, Store, remembered_body_instances_i
 /// incomplete one's retained part: its own digest holder row, the digest's
 /// key row and every instance row remembered under it, the erase debts its
 /// instances carry with each erase's note of them, the result body row of
-/// that digest, and this occurrence's result taint and secret marks. A
-/// descriptor that holds no bytes needs none of them; its own row names the
-/// owner. A key with no row behind it keeps nothing. Nothing is opened,
-/// decrypted, published or repaired.
+/// that digest, and the result taint and secret marks of the occurrence the
+/// descriptor marks (`OwnedBody::mark_occurrence`). A descriptor that holds
+/// no bytes needs none of them; its own row names the owner. A key with no
+/// row behind it keeps nothing. Nothing is opened, decrypted, published or
+/// repaired.
 ///
 /// # Errors
 ///
@@ -51,12 +52,14 @@ pub(crate) fn retained_body_side_keys_in_txn(
             .and_then(|handle| std::str::from_utf8(handle).ok())
         {
             // The marks of this occurrence alone, keyed as
-            // `ResultOccurrence::mark_key` spells them: a MESSAGE that keeps
-            // a run's result carries them under its own occurrence.
+            // `ResultOccurrence::mark_key` spells them under the occurrence
+            // the descriptor marks: a MESSAGE that keeps a run's result
+            // carries them under its own occurrence, a code-run raw hold
+            // under its owner/path occurrence (FIX 7364).
             let mark = format!(
                 "{}{}",
                 crate::code_run::ResultOccurrence::marks_prefix(handle),
-                body.occurrence.to_hex()
+                body.mark_occurrence.to_hex()
             );
             for decl in [
                 &side_table::CODE_RUN_RAW_OUTPUT_TAINT,
