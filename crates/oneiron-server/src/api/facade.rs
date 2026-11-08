@@ -172,6 +172,8 @@ mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
 pub(super) mod role_picks;
+// FIX 13274: the owner reviews and settles a retained document-copy edit.
+mod repo_copy_edit_doors;
 mod root_request_doors;
 mod run_read_doors;
 mod run_review_doors;

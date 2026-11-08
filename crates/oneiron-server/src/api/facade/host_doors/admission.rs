@@ -443,6 +443,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultPolicyOwnerRowChange
         | Row::VaultConsentApproveOnce
         | Row::VaultConnectorsCallsApproveOnce
+        | Row::VaultCampaignHeld
+        | Row::VaultCampaignApproveOnce
         | Row::VaultConnectorsSlatesRedraft
         | Row::VaultConnectorsSlatesScopeOutcome
         | Row::VaultConnectorsSlatesRevisionOffers

@@ -388,6 +388,8 @@ pub enum AgentVerb {
     VaultFederationBurstPolicy,
     VaultFederationBurstPolicySet,
     VaultSyncQuarantineHeldEdits,
+    VaultSyncDocumentsCopyEditReview,
+    VaultSyncDocumentsCopyEditSettle,
     VaultSyncRetainedWorkWaitSet,
     VaultFederationBurstIngress,
     VaultFederationBurstDisposition,
@@ -565,6 +567,8 @@ pub enum AgentVerb {
     VaultPolicyOutboundDecide,
     VaultPolicyRelayDecide,
     VaultConsentApproveOnce,
+    VaultCampaignHeld,
+    VaultCampaignApproveOnce,
     VaultConnectorsCallsApproveOnce,
     VaultConnectorsRepliesRetryFailed,
     VaultConsentDeny,
@@ -1235,6 +1239,7 @@ pub enum AgentVerb {
     VaultNotesAuthorTake,
     VaultNotesFromEntity,
     VaultNotesRead,
+    VaultNotesReadIndexed,
     VaultNotesHistory,
     VaultNotesFork,
     VaultNotesForksRead,
@@ -1722,6 +1727,8 @@ impl AgentVerb {
         Self::VaultFederationBurstPolicy,
         Self::VaultFederationBurstPolicySet,
         Self::VaultSyncQuarantineHeldEdits,
+        Self::VaultSyncDocumentsCopyEditReview,
+        Self::VaultSyncDocumentsCopyEditSettle,
         Self::VaultSyncRetainedWorkWaitSet,
         Self::VaultFederationBurstIngress,
         Self::VaultFederationBurstDisposition,
@@ -1899,6 +1906,8 @@ impl AgentVerb {
         Self::VaultPolicyOutboundDecide,
         Self::VaultPolicyRelayDecide,
         Self::VaultConsentApproveOnce,
+        Self::VaultCampaignHeld,
+        Self::VaultCampaignApproveOnce,
         Self::VaultConnectorsCallsApproveOnce,
         Self::VaultConnectorsRepliesRetryFailed,
         Self::VaultConsentDeny,
@@ -2569,6 +2578,7 @@ impl AgentVerb {
         Self::VaultNotesAuthorTake,
         Self::VaultNotesFromEntity,
         Self::VaultNotesRead,
+        Self::VaultNotesReadIndexed,
         Self::VaultNotesHistory,
         Self::VaultNotesFork,
         Self::VaultNotesForksRead,
@@ -3063,6 +3073,8 @@ impl AgentVerb {
             Self::VaultFederationBurstPolicy => "vault.federation.burst.policy",
             Self::VaultFederationBurstPolicySet => "vault.federation.burst.policy.set",
             Self::VaultSyncQuarantineHeldEdits => "vault.sync.quarantine.held_edits",
+            Self::VaultSyncDocumentsCopyEditReview => "vault.sync.documents.copy_edit.review",
+            Self::VaultSyncDocumentsCopyEditSettle => "vault.sync.documents.copy_edit.settle",
             Self::VaultSyncRetainedWorkWaitSet => "vault.sync.retained_work.wait.set",
             Self::VaultFederationBurstIngress => "vault.federation.burst.ingress",
             Self::VaultFederationBurstDisposition => "vault.federation.burst.disposition",
@@ -3254,6 +3266,8 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => "vault.policy.outbound.decide",
             Self::VaultPolicyRelayDecide => "vault.policy.relay.decide",
             Self::VaultConsentApproveOnce => "vault.consent.approve_once",
+            Self::VaultCampaignHeld => "vault.campaign.held",
+            Self::VaultCampaignApproveOnce => "vault.campaign.approve_once",
             Self::VaultConnectorsCallsApproveOnce => "vault.connectors.calls.approve_once",
             Self::VaultConnectorsRepliesRetryFailed => "vault.connectors.replies.retry_failed",
             Self::VaultConsentDeny => "vault.consent.deny",
@@ -3940,6 +3954,7 @@ impl AgentVerb {
             Self::VaultNotesAuthorTake => "vault.notes.author_take",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
             Self::VaultNotesRead => "vault.notes.read",
+            Self::VaultNotesReadIndexed => "vault.notes.read_indexed",
             Self::VaultNotesHistory => "vault.notes.history",
             Self::VaultNotesFork => "vault.notes.fork",
             Self::VaultNotesForksRead => "vault.notes.forks.read",
@@ -4433,6 +4448,8 @@ impl AgentVerb {
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
                 | Self::VaultSyncQuarantineHeldEdits
+                | Self::VaultSyncDocumentsCopyEditReview
+                | Self::VaultSyncDocumentsCopyEditSettle
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstDisposition
@@ -4610,6 +4627,8 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultCampaignHeld
+                | Self::VaultCampaignApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
@@ -5258,6 +5277,7 @@ impl AgentVerb {
                 | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
+                | Self::VaultNotesReadIndexed
                 | Self::VaultNotesHistory
                 | Self::VaultNotesFork
                 | Self::VaultNotesForksRead
@@ -5796,6 +5816,8 @@ impl AgentVerb {
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
                 | Self::VaultSyncQuarantineHeldEdits
+                | Self::VaultSyncDocumentsCopyEditReview
+                | Self::VaultSyncDocumentsCopyEditSettle
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstDisposition
@@ -5973,6 +5995,8 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultCampaignHeld
+                | Self::VaultCampaignApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
@@ -6621,6 +6645,7 @@ impl AgentVerb {
                 | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
+                | Self::VaultNotesReadIndexed
                 | Self::VaultNotesHistory
                 | Self::VaultNotesFork
                 | Self::VaultNotesForksRead
@@ -6793,6 +6818,7 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsLog
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
+                | Self::VaultCampaignHeld
                 | Self::VaultConsentCreateBypassGrant
                 | Self::VaultConsentActiveBypassGrants
                 | Self::VaultConsentBypassedEffectReceipts
@@ -6942,6 +6968,7 @@ impl AgentVerb {
                 | Self::VaultSummariesRead
                 | Self::VaultSummariesProposalsRead
                 | Self::VaultNotesRead
+                | Self::VaultNotesReadIndexed
                 | Self::VaultNotesHistory
                 | Self::VaultNotesForksRead
                 | Self::VaultNotesProposalsRead
@@ -7313,6 +7340,8 @@ impl AgentVerb {
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
                 | Self::VaultSyncQuarantineHeldEdits
+                | Self::VaultSyncDocumentsCopyEditReview
+                | Self::VaultSyncDocumentsCopyEditSettle
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstDisposition
@@ -7489,6 +7518,8 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultCampaignHeld
+                | Self::VaultCampaignApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
@@ -8410,6 +8441,7 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
                 | Self::VaultFederationBurstPolicySet
+                | Self::VaultSyncDocumentsCopyEditSettle
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstReviewRelease
@@ -8528,6 +8560,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultCampaignApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
@@ -9093,6 +9126,7 @@ impl AgentVerb {
                 "brief",
                 "ttl",
                 "parent_ref",
+                "due_at",
             ],
             Self::TasksWave => &["spec"],
             Self::VaultFanoutSpawn => &["spec"],
@@ -9407,6 +9441,8 @@ impl AgentVerb {
             Self::VaultFederationBurstPolicy => &["spec"],
             Self::VaultFederationBurstPolicySet => &["spec"],
             Self::VaultSyncQuarantineHeldEdits => &["spec"],
+            Self::VaultSyncDocumentsCopyEditReview => &["spec"],
+            Self::VaultSyncDocumentsCopyEditSettle => &["spec"],
             Self::VaultSyncRetainedWorkWaitSet => &["spec"],
             Self::VaultFederationBurstIngress => &["spec"],
             Self::VaultFederationBurstDisposition => &["spec"],
@@ -9584,6 +9620,8 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultCampaignHeld => &["spec"],
+            Self::VaultCampaignApproveOnce => &["spec"],
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
             Self::VaultConnectorsRepliesRetryFailed => &["spec"],
             Self::VaultConsentDeny => &["spec"],
@@ -10254,6 +10292,7 @@ impl AgentVerb {
             Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
+            Self::VaultNotesReadIndexed => &["spec"],
             Self::VaultNotesHistory => &["spec"],
             Self::VaultNotesFork => &["spec"],
             Self::VaultNotesForksRead => &["spec"],
@@ -10742,6 +10781,8 @@ impl AgentVerb {
             Self::VaultFederationBurstPolicy => &["spec"],
             Self::VaultFederationBurstPolicySet => &["spec"],
             Self::VaultSyncQuarantineHeldEdits => &["spec"],
+            Self::VaultSyncDocumentsCopyEditReview => &["spec"],
+            Self::VaultSyncDocumentsCopyEditSettle => &["spec"],
             Self::VaultSyncRetainedWorkWaitSet => &["spec"],
             Self::VaultFederationBurstIngress => &["spec"],
             Self::VaultFederationBurstDisposition => &["spec"],
@@ -10919,6 +10960,8 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultCampaignHeld => &["spec"],
+            Self::VaultCampaignApproveOnce => &["spec"],
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
             Self::VaultConnectorsRepliesRetryFailed => &["spec"],
             Self::VaultConsentDeny => &["spec"],
@@ -11589,6 +11632,7 @@ impl AgentVerb {
             Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
+            Self::VaultNotesReadIndexed => &["spec"],
             Self::VaultNotesHistory => &["spec"],
             Self::VaultNotesFork => &["spec"],
             Self::VaultNotesForksRead => &["spec"],
@@ -12832,6 +12876,12 @@ impl AgentVerb {
             Self::VaultSyncQuarantineHeldEdits => {
                 "The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."
             }
+            Self::VaultSyncDocumentsCopyEditReview => {
+                "The owner reviews the edit a retained document copy holds for one source document: why it is held, the masked text the copy submitted, and the revision to settle it under; the revision is a token, not authority."
+            }
+            Self::VaultSyncDocumentsCopyEditSettle => {
+                "The owner settles that held copy edit to an exact replacement text, under the revision they reviewed; a changed or settled edit answers stale. Answers the committed document frame, a local commit, not a delivery."
+            }
             Self::VaultSyncRetainedWorkWaitSet => {
                 "The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait."
             }
@@ -13350,6 +13400,12 @@ impl AgentVerb {
             }
             Self::VaultConsentApproveOnce => {
                 "The owner approves exactly one engine-emitted effect digest; no standing grant is created."
+            }
+            Self::VaultCampaignHeld => {
+                "The owner reviews the last-observed campaign enrollment holds and their queued redrives; a redrive is not a sent or completed call."
+            }
+            Self::VaultCampaignApproveOnce => {
+                "The owner approves exactly one current campaign enrollment hold by its call ref and reviewed digest, queuing the original work without a standing grant or bypassing its ordinary send checks."
             }
             Self::VaultConnectorsCallsApproveOnce => {
                 "The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."
@@ -15298,6 +15354,9 @@ impl AgentVerb {
             }
             Self::VaultNotesRead => {
                 "Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."
+            }
+            Self::VaultNotesReadIndexed => {
+                "Reads the independently indexed NOTE text and stable edit anchors in the same scoped snapshot."
             }
             Self::VaultNotesHistory => {
                 "Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."

@@ -69,6 +69,30 @@ pub(crate) async fn vault_connectors_calls_approve_once(
     .await
 }
 
+/// The owner's last-observed campaign holds and queued redrives.
+pub(crate) async fn vault_campaign_held(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: EmptyRequest,
+) -> Listed<Vec<oneiron::campaign::enrollment::CampaignEnrollmentHeldCall>> {
+    as_owner(server, auth, "vault.campaign.held", move |vault, owner| {
+        sdk::campaign_enrollment_held(vault, owner, input)
+    })
+    .await
+}
+
+/// Approves a reviewed campaign hold once; the ordinary pump owns its redrive.
+pub(crate) async fn vault_campaign_approve_once(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: sdk::CampaignEnrollmentApproveOnceRequest,
+) -> Listed<ConsentActReceipt> {
+    as_owner(server, auth, "vault.campaign.approve_once", move |vault, owner| {
+        sdk::approve_campaign_enrollment_once(vault, owner, input)
+    })
+    .await
+}
+
 pub(crate) async fn vault_consent_deny(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
