@@ -2062,6 +2062,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.federation.status",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
                 "vault.federation.connect.identity",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
                 ),
@@ -7831,6 +7836,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.federation.burst.review.release",
     "vault.federation.burst.review.reject",
     "vault.federation.burst.replay",
+    "vault.federation.status",
     "vault.federation.connect.identity",
     "vault.federation.connect.grants.mint",
     "vault.federation.connect.offer",
@@ -9293,6 +9299,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.federation.burst.replay" => crate::code_run::vault_read::request_schema::<
             crate::sync::federation_burst::FederationBurstReceipt,
         >(),
+        "vault.federation.status" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::FederationStatus>()
+        }
         "vault.federation.connect.identity" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectIdentity>()
         }
@@ -14100,6 +14109,7 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.federation.status" => &[],
         "vault.federation.connect.identity" => &[],
         "vault.federation.connect.grants.mint" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -21028,6 +21038,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         #[cfg(feature = "sync")]
         "vault.federation.burst.replay" => validate_input_vault_federation_burst_replay(value)?,
+        "vault.federation.status" => validate_input_vault_federation_status(value)?,
         "vault.federation.connect.identity" => {
             validate_input_vault_federation_connect_identity(value)?
         }
@@ -24391,6 +24402,11 @@ fn validate_input_vault_federation_burst_review_reject(
 fn validate_input_vault_federation_burst_replay(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::sync::federation_burst::FederationBurstReplayRequest =
         decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_federation_status(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -30120,6 +30136,7 @@ pub fn invoke(
         }
         #[cfg(feature = "sync")]
         "vault.federation.burst.replay" => invoke_vault_federation_burst_replay(memory, value),
+        "vault.federation.status" => invoke_vault_federation_status(memory, value),
         "vault.federation.connect.identity" => {
             invoke_vault_federation_connect_identity(memory, value)
         }
@@ -34160,6 +34177,13 @@ fn invoke_vault_federation_burst_replay(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_federation_burst_replay(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_federation_status(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_federation_status(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_federation_connect_identity(
@@ -44348,6 +44372,12 @@ pub fn vault_federation_burst_replay(
         "vault.federation.burst.replay",
         &input,
     )
+}
+pub fn vault_federation_status(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::FederationStatus> {
+    crate::task_verb::sdk::federation_status(memory)
 }
 pub fn vault_federation_connect_identity(
     memory: &Memory<'_>,

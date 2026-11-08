@@ -399,6 +399,7 @@ both bindings and their export-census tests in one change.
 - `vault.federation.burst.review.release`
 - `vault.federation.burst.review.reject`
 - `vault.federation.burst.replay`
+- `vault.federation.status`
 - `vault.federation.connect.identity`
 - `vault.federation.connect.grants.mint`
 - `vault.federation.connect.offer`
