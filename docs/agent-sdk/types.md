@@ -1053,6 +1053,7 @@ class Oneiron:
     def in_off_record_session(self, session_ref: str) -> "Oneiron": ...
     def with_read_credential(self, credential: str) -> "Oneiron": ...
     def last_receipt_ref(self) -> str | None: ...
+    def last_hook_notice(self) -> str | None: ...
     def native_limit_questions(self) -> list[NativeLimitQuestion] | None:
         """The engine-limit crossings this client's own vault kept; None on a remote, attached, or rebound view."""
     def retry(self, pending: OneironError, verb: str, input: Any) -> Any:
@@ -1310,6 +1311,8 @@ class Oneiron:
         def devices(self) -> "Oneiron._VaultDevicesVerbs": ...
         @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
+        @property
+        def oauth(self) -> "Oneiron._VaultOauthVerbs": ...
         @property
         def repo(self) -> "Oneiron._VaultRepoVerbs": ...
         @property
@@ -3210,6 +3213,8 @@ class Oneiron:
     class _VaultSharesVerbs:
         def create(self, spec: Facade.ShareCreateRequest) -> Facade.ShareCreated:
             """The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."""
+        def issue_view_link(self, spec: Facade.ShareViewLinkRequest) -> Facade.PairingLink:
+            """Issues a holder-bound view-only pairing link for one admitted share's recipient."""
         def revoke(self, spec: Facade.ShareRevokeRequest) -> Facade.ShareRevokeReceipt: ...
         def view(self, spec: Facade.ShareViewRequest) -> Facade.ScopedReadResult[Facade.SharedBriefView | None]: ...
     class _VaultHooksVerbs:
@@ -3421,7 +3426,7 @@ class Oneiron:
         def renew(self, spec: Facade.CodeSymbolsTaskRequest) -> Facade.CodeSymbolLeaseView:
             """Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."""
         def release(self, spec: Facade.CodeSymbolsTaskRequest) -> Facade.CodeSymbolsReleased:
-            """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."""
+            """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver."""
         def definitions(self, spec: Facade.CodeSnapshotDefinitionsRequest) -> Facade.CodeSnapshotDefinitionsView:
             """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
         def neighbors(self, spec: Facade.CodeSnapshotNeighborsRequest) -> Facade.CodeSnapshotNeighborsView:
@@ -3554,6 +3559,8 @@ class Oneiron:
     class _VaultCodeSnapshotsVerbs:
         def ingest(self, spec: Facade.CodeSnapshotIngestRequest) -> Facade.CodeSnapshotView:
             """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership."""
+        def capture(self, spec: Facade.CodeSnapshotCaptureRequest) -> Facade.CodeSnapshotView:
+            """Capture current files of a host folder as a custody-filtered snapshot with no Git commit witness. Owner only. Includes untracked and ignored files; Git metadata and linked or nested repositories stay opaque."""
         def get(self, spec: Facade.CodeSnapshotRequest) -> Facade.CodeSnapshotView | None:
             """Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."""
         def read(self, spec: Facade.CodeSnapshotReadRequest) -> Facade.CodeSnapshotPinnedFile | None:
@@ -3566,7 +3573,7 @@ class Oneiron:
         def observe(self, spec: Facade.MergeQueueObserveRequest) -> Facade.MergeQueueObservation:
             """Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt."""
         def requeue_survivors(self, spec: Facade.MergeQueueBatchRequest) -> Facade.MergeQueueRequeueView:
-            """Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written."""
+            """Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. The two batches are linked once; a retry returns the same batch."""
         def land_reviewed(self, spec: Facade.MergeQueueBatchRequest) -> Facade.MergeQueueBatchView:
             """Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs the review it is held to and exact bytes and base; the owner proof approves nothing."""
         def settle_slow(self, spec: Facade.MergeQueueRepoRequest) -> Facade.MergeQueuePointersView:
@@ -3646,6 +3653,12 @@ class Oneiron:
             """The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept."""
         def get(self, spec: Facade.PlannedSpawnRead) -> Facade.PlannedSpawnObservation:
             """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
+    class _VaultOauthVerbs:
+        @property
+        def authorization(self) -> "Oneiron._VaultOauthAuthorizationVerbs": ...
+    class _VaultOauthAuthorizationVerbs:
+        def answer(self, spec: Facade.OAuthAuthorizationAnswer) -> Facade.OAuthAuthorizationAnswered:
+            """The owner allows, at a tier and optional world, or denies one outside app's pending OAuth sign-in request for this vault's MCP endpoint."""
     class _VaultRepoVerbs:
         @property
         def git_push(self) -> "Oneiron._VaultRepoGitPushVerbs": ...
