@@ -439,6 +439,16 @@ impl<'a> AgentDispatcher<'a> {
                     )?;
                 }
                 let mut status = agent_dispatch_status(status)?;
+                // FIX 4747: the run's portable record and this machine's
+                // executor lease, minted in this write; a dispatch that
+                // dedupes to its existing try mints nothing.
+                super::run_task::mint_agent_run_task_in_txn(
+                    self.vault,
+                    wtxn,
+                    status.attempt.id,
+                    &status.input,
+                    input.now,
+                )?;
                 let index: Vec<_> = status
                     .input
                     .definition
@@ -734,6 +744,32 @@ impl<'a> AgentDispatcher<'a> {
         self.dispatchable_definition_in_txn(&txn, target)
     }
 
+    /// Applies the native lifecycle, approval and enabled checks to an admitted definition.
+    pub(crate) fn ensure_dispatchable_definition(
+        id: EntityId,
+        definition: &AgentDefinition,
+    ) -> Result<()> {
+        if definition.lifecycle_status != ClaimLifecycleStatus::Active {
+            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
+                "agent definition is not active",
+            )));
+        }
+        if !matches!(
+            definition.approval_status,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) {
+            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
+                "agent definition is not approved",
+            )));
+        }
+        if !definition.enabled {
+            return Err(Error::Artifact(ArtifactError::AgentDefinitionDisabled {
+                id,
+            }));
+        }
+        Ok(())
+    }
+
     pub(crate) fn dispatchable_definition_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -757,24 +793,7 @@ impl<'a> AgentDispatcher<'a> {
                 )));
             }
         };
-        if definition.lifecycle_status != ClaimLifecycleStatus::Active {
-            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
-                "agent definition is not active",
-            )));
-        }
-        if !matches!(
-            definition.approval_status,
-            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-        ) {
-            return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
-                "agent definition is not approved",
-            )));
-        }
-        if !definition.enabled {
-            return Err(Error::Artifact(ArtifactError::AgentDefinitionDisabled {
-                id: *id,
-            }));
-        }
+        Self::ensure_dispatchable_definition(*id, &definition)?;
         Ok(definition)
     }
 

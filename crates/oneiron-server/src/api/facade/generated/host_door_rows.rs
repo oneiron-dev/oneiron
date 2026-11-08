@@ -792,6 +792,8 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultSkillsPackReceipt,
     VaultSkillsOutcomesProject,
     VaultSkillsOutcomesGet,
+    VaultSettingsModelsResponsesStoreRead,
+    VaultSettingsModelsResponsesStoreSet,
     VaultModelsManifestRead,
     VaultModelsManifestReplace,
     VaultModelsOneironerBind,
@@ -951,6 +953,9 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCustodyMembersDrainCommit,
     VaultCustodyMembersDrainFolder,
     VaultCustodyMembersReenrol,
+    VaultMailPackInstall,
+    VaultMailReplyApprove,
+    VaultMailSourcesSync,
     VaultFilesSourcesConvert,
 }
 impl HostDoorRow {
@@ -1569,6 +1574,12 @@ impl HostDoorRow {
             "vault.skills.pack_receipt" => Self::VaultSkillsPackReceipt,
             "vault.skills.outcomes.project" => Self::VaultSkillsOutcomesProject,
             "vault.skills.outcomes.get" => Self::VaultSkillsOutcomesGet,
+            "vault.settings.models.responses_store.read" => {
+                Self::VaultSettingsModelsResponsesStoreRead
+            }
+            "vault.settings.models.responses_store.set" => {
+                Self::VaultSettingsModelsResponsesStoreSet
+            }
             "vault.models.manifest.read" => Self::VaultModelsManifestRead,
             "vault.models.manifest.replace" => Self::VaultModelsManifestReplace,
             "vault.models.oneironer.bind" => Self::VaultModelsOneironerBind,
@@ -1732,6 +1743,9 @@ impl HostDoorRow {
             "vault.custody.members.drain.commit" => Self::VaultCustodyMembersDrainCommit,
             "vault.custody.members.drain.folder" => Self::VaultCustodyMembersDrainFolder,
             "vault.custody.members.reenrol" => Self::VaultCustodyMembersReenrol,
+            "vault.mail.pack.install" => Self::VaultMailPackInstall,
+            "vault.mail.reply.approve" => Self::VaultMailReplyApprove,
+            "vault.mail.sources.sync" => Self::VaultMailSourcesSync,
             "vault.files.sources.convert" => Self::VaultFilesSourcesConvert,
             _ => return None,
         })
