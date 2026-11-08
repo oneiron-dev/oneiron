@@ -5,7 +5,7 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use super::{ArtifactView, BlobArtifactBody, BlobVersionProvenance};
+use super::{ArtifactView, BlobArtifactBody, BlobBodyFile, BlobVersionProvenance};
 use crate::edge::EdgeActorClass;
 use crate::memory::Memory;
 use crate::temporal::TimeRange;
@@ -46,6 +46,35 @@ impl Memory<'_> {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(&input.content_base64)
             .map_err(|_| MemoryError::bad_request("content must be base64"))?;
+        self.create_artifact(input, FirstVersion::Bytes(&bytes))
+    }
+
+    /// [`Self::artifacts_create`] of a first version an ingress door decoded
+    /// into `body` before any writer opened (FIX 22074): `input` names the
+    /// artifact and holds no content of its own. A body no longer than the
+    /// asset plane's inline size is read once; a longer one is staged from
+    /// the file inside the version's writer, never held whole.
+    /// # Errors
+    /// [`Self::artifacts_create`]'s errors, an `input` that holds content,
+    /// and the file's read errors.
+    pub fn artifacts_create_file(
+        &self,
+        input: &ArtifactCreateRequest,
+        body: &BlobBodyFile<'_>,
+    ) -> MemoryResult<Option<ArtifactView>> {
+        if !input.content_base64.is_empty() {
+            return Err(MemoryError::bad_request(
+                "content arrives in the body file, not in the request",
+            ));
+        }
+        self.create_artifact(input, FirstVersion::File(body))
+    }
+
+    fn create_artifact(
+        &self,
+        input: &ArtifactCreateRequest,
+        first: FirstVersion<'_>,
+    ) -> MemoryResult<Option<ArtifactView>> {
         let made_by = input
             .made_by
             .clone()
@@ -79,21 +108,26 @@ impl Memory<'_> {
             occurred,
             now,
         )?;
-        match &made_by {
-            Some(made_by) => vault.append_blob_artifact_version_made_by(
+        match (first, &made_by) {
+            (FirstVersion::Bytes(bytes), Some(made_by)) => vault
+                .append_blob_artifact_version_made_by(
+                    &id,
+                    None,
+                    bytes,
+                    &provenance,
+                    made_by,
+                    actor,
+                    occurred,
+                    now,
+                )?,
+            (FirstVersion::Bytes(bytes), None) => {
+                vault.append_blob_artifact_version(&id, bytes, &provenance, actor, occurred, now)?
+            }
+            (FirstVersion::File(body), made_by) => vault.append_blob_artifact_version_file(
                 &id,
-                None,
-                &bytes,
+                body,
                 &provenance,
-                made_by,
-                actor,
-                occurred,
-                now,
-            )?,
-            None => vault.append_blob_artifact_version(
-                &id,
-                &bytes,
-                &provenance,
+                made_by.as_ref(),
                 actor,
                 occurred,
                 now,
@@ -101,4 +135,12 @@ impl Memory<'_> {
         };
         Ok(vault.blob_artifact_view(&id)?)
     }
+}
+
+/// Where a created artifact's first version comes from: decoded bytes, or a
+/// body file an ingress door decoded (FIX 22074).
+#[derive(Clone, Copy)]
+enum FirstVersion<'a> {
+    Bytes(&'a [u8]),
+    File(&'a BlobBodyFile<'a>),
 }

@@ -7,7 +7,7 @@ use super::{
 };
 use crate::Vault;
 use crate::blob_artifact::{
-    BlobArtifactBody, BlobVersionProvenance, read_blob_artifact_head_in_txn,
+    BlobArtifactBody, BlobContent, BlobVersionProvenance, read_blob_artifact_head_in_txn,
 };
 use crate::claim::ScopedRead;
 use crate::edit_roundtrip::OfficeFormat;
@@ -18,8 +18,10 @@ use crate::store::{BodyMint, StagedHold};
 use crate::write_envelope::WriteActor;
 use heed::RwTxn;
 
+/// Checks `output`, whose bytes are `content` (FIX 22074), before it waits.
 pub(super) fn validate_native_output(
     output: &NativeOutput,
+    content: BlobContent<'_>,
     body: &BlobArtifactBody,
     authorize_content_write: bool,
 ) -> Result<String> {
@@ -28,7 +30,7 @@ pub(super) fn validate_native_output(
             "a native output must export the artifact's own media type",
         )));
     }
-    if !authorize_content_write && (output.bytes.is_empty() || output.name.trim().is_empty()) {
+    if !authorize_content_write && (content.is_empty() || output.name.trim().is_empty()) {
         return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "a native output needs a file name and non-empty bytes",
         )));
@@ -49,7 +51,12 @@ pub(super) fn validate_native_output(
         // An organ's office export must at least open as a package before
         // it waits. A direct append keeps the append door's byte acceptance
         // (FIX 8208): its authorized Keep reaches the same core append.
-        crate::edit_roundtrip::read_office_package(&output.bytes)?;
+        match content {
+            BlobContent::Bytes(bytes) => crate::edit_roundtrip::read_office_package(bytes)?,
+            BlobContent::File(file) => {
+                crate::edit_roundtrip::read_office_package_from(&mut file.reader()?)?;
+            }
+        }
     }
     Ok(report)
 }
@@ -117,13 +124,15 @@ impl Vault {
     /// instance from `mint`, which the caller took before its writer opened
     /// and no landed version used; the file's hold comes back beside the
     /// view, for the caller to keep until its writer commits (FIX 20812).
-    /// The proposal keeps `producer_position` for its Keep (FIX 3171).
+    /// Its bytes are `content`: a body file is staged from the file (FIX
+    /// 22074). The proposal keeps `producer_position` for its Keep (FIX 3171).
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn propose_direct_append_output_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         artifact_id: &EntityId,
         output: &NativeOutput,
+        content: BlobContent<'_>,
         mint: Option<&BodyMint>,
         (actor, retained_at): (WriteActor, u64),
         base_override: Option<(u64, [u8; 32])>,
@@ -132,11 +141,11 @@ impl Vault {
         let body = self
             .get_blob_artifact_in_txn(wtxn, artifact_id)?
             .ok_or(Error::EntityNotFound)?;
-        let report = validate_native_output(output, &body, true)?;
+        let report = validate_native_output(output, content, &body, true)?;
         let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
         let base =
             base_override.or_else(|| head.as_ref().map(|head| (head.version, head.content_hash)));
-        let staged = self.stage_pending_output_body(&output.bytes, mint)?;
+        let staged = self.stage_pending_output_body(content, mint)?;
         let row = native_output_pending_row(
             output,
             (
