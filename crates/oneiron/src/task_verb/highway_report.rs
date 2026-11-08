@@ -32,8 +32,8 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 
 use super::ask_effect::AskEffect;
 use super::ask_types::{
-    TaskAskDecision, TaskAskDefault, TaskAskHandle, TaskAskOptionId, TaskAskQuestion, TaskAskSpec,
-    TaskAskStatus,
+    TaskAskDecision, TaskAskDefault, TaskAskHandle, TaskAskOption, TaskAskOptionId,
+    TaskAskQuestion, TaskAskSpec, TaskAskStatus,
 };
 use super::brief::{EscalationTrigger, StoredBrief};
 use super::consts::TASK_EXTERNAL_ATTEMPT_KIND;

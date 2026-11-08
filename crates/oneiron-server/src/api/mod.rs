@@ -62,6 +62,7 @@ pub(crate) mod ai;
 mod anonymous_chat;
 // FIX 8238: an answer's resources kept until the answer is encoded.
 pub(crate) mod answer_hold;
+mod artifact_backend_pairing;
 mod artifacts;
 // OF-469: a kept authority checkpoint and its attestations, for adoption.
 mod authority_checkpoint;
@@ -246,10 +247,10 @@ pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
 pub(crate) use self::openapi::*;
 pub(crate) use self::openapi_registry::ApiDoc;
-pub(crate) use self::params::ViewQuery;
+pub(crate) use self::params::{MemoryTimelineQuery, ViewQuery};
 use self::params::{
     default_limit, has_json_content_type, hex_bytes, json_payload, parse_entity_id_param,
-    parse_optional_entity_id, query_params, unix_seconds_now,
+    parse_optional_entity_id, query_params, read_filter_param, unix_seconds_now,
 };
 pub(crate) use self::reactive::ReactiveChange;
 #[cfg(test)]
