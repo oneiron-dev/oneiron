@@ -412,8 +412,6 @@ fn scrub_retired_canonical_citations(
                 doc
             }
             None if updates.is_empty() => continue,
-            None if head == note => super::document_birth_in_txn(vault, txn, note)?
-                .ok_or_else(|| super::document::invalid("NOTE original document birth missing"))?,
             None => return Err(super::document::invalid("NOTE head document missing")),
         };
         for update in updates {
