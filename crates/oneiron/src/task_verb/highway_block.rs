@@ -30,8 +30,8 @@ use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
 use super::ask_record;
 use super::ask_types::{
-    TaskAskHandle, TaskAskOption, TaskAskOptionId, TaskAskQuestion,
-    TaskAskResult, TaskAskSpec, TaskAskTarget,
+    TaskAskHandle, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSpec,
+    TaskAskTarget,
 };
 use super::brief::StoredBrief;
 use super::consts::{

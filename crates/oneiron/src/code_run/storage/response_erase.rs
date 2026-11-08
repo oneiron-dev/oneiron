@@ -46,7 +46,7 @@ use super::records::REPLAY_RECORDS;
 use super::replay_bodies::{CODE_RUN_OUTPUT_PREVIEW_ERASED, erase_replies};
 use super::replay_capsule::{
     actor_gone_in_txn, actor_hard_erased_in_store, capsule_bodies_in_txn, capsule_runs_in_txn,
-    names_no_actor,
+    names_no_actor, retire_source_step_starts_in_txn,
 };
 use super::response_owners::{
     ReleasedReplyBody, ResponseOwner, mark_response_deleted_in_txn, mark_response_erased_in_txn,
@@ -598,12 +598,16 @@ fn release_held_occurrence_in_txn(
 
 /// Retires only the persisted output occurrences whose frozen input rows
 /// name `source`, in the source erase's accepted writer. The run's other
-/// replies and its response owner are unchanged.
+/// replies and its response owner are unchanged. FIX 20329: each kept step
+/// start `source` owns retires first, whatever the live rows hold, read
+/// before any output here is released. Every hard erase of `source` comes
+/// here, a marker-only one too.
 pub(crate) fn retire_sourced_code_outputs_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     source: &EntityId,
 ) -> Result<()> {
+    retire_source_step_starts_in_txn(store, wtxn, source)?;
     let mut records = Vec::new();
     for row in REPLAY_RECORDS.iter_raw_from(store, wtxn, &[])? {
         let (key, bytes) = row?;
