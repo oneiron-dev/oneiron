@@ -47360,8 +47360,8 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 29,
-      "mod": 208,
+      "crate-vis": 28,
+      "mod": 209,
       "re-export": 105
      }
     },
@@ -50568,7 +50568,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "MailSyncBudget",
@@ -50578,7 +50578,7 @@
      "purpose": "The mail importer (FIX 12559 row 1; MAIL-GOOGLE = A, 2026-10-19): one bounded step of one source at a time…",
      "surface": {
       "crate-vis": 2,
-      "fn": 4,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -50619,7 +50619,7 @@
      "path": "src/mail_pack/local_sync.rs",
      "purpose": "One import step of a mail or calendar source through this host's wire for its provider: Gmail for Google…",
      "surface": {
-      "fn": 4,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -50694,6 +50694,7 @@
      "purpose": "The Mail & Calendar pack, engine half (FIX 12559, 12560; owner MAIL-SHARE, MAIL-DELETE, MAIL-PROVIDERS and…",
      "surface": {
       "crate-vis": 9,
+      "mod": 4,
       "re-export": 24
      }
     },
@@ -50705,7 +50706,6 @@
      "purpose": "The pack's own folder, as the engine ships it, and the one check every source door makes: the pack is…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -50838,16 +50838,18 @@
       "MailProvider",
       "MailProviderDeleteSetting",
       "MailSourceKind",
+      "MailSourceRow",
       "MailSourceStatus",
       "MailSourceView"
      ],
      "path": "src/mail_pack/source.rs",
      "purpose": "One connected mail or calendar source: what it is, whose it is, what it keeps",
      "surface": {
-      "crate-vis": 9,
+      "const": 1,
+      "crate-vis": 7,
       "enum": 6,
       "fn": 5,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -73136,11 +73138,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "Named"
+     ],
      "path": "src/side_table/codec.rs",
      "purpose": "Core half of `side_table::codec`: its store-layer items live in `oneiron_store::side_table::codec` and are…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6,
+      "enum": 1
      }
     },
     {
@@ -73238,11 +73243,16 @@
     {
      "bucket": "L",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SideTable"
+     ],
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 52
+      "crate-vis": 50,
+      "fn": 1,
+      "mod": 1,
+      "struct": 1
      }
     },
     {
@@ -78991,13 +79001,14 @@
       "RawDatabases",
       "Store",
       "StoreCore",
+      "StoreEnv",
       "StoreOwner"
      ],
      "path": "src/store/handle.rs",
      "purpose": "The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]…",
      "surface": {
-      "crate-vis": 30,
-      "struct": 4
+      "crate-vis": 29,
+      "struct": 5
      }
     },
     {
@@ -79848,7 +79859,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
       "crate-vis": 163,
-      "mod": 68,
+      "mod": 69,
       "re-export": 88
      }
     },
@@ -99766,7 +99777,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 239,
+   "over_bar": 238,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7117,
    "test_files": 895
@@ -113714,6 +113725,85 @@
    "purpose": "The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`",
    "source_files": 2,
    "test_files": 1
+  },
+  "oneiron-mail-pack": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "`oneiron-mail-pack`: the lifted half of `oneiron::mail_pack` (core split; plan…",
+     "surface": {
+      "crate-vis": 1,
+      "mod": 2,
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MailPackImporterVaultExt"
+     ],
+     "path": "src/mail_pack/importer.rs",
+     "purpose": "Lifted half of `oneiron::mail_pack::importer` (core split, `oneiron-mail-pack`): the items below moved out…",
+     "surface": {
+      "re-export": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MailPackLocalSyncVaultExt"
+     ],
+     "path": "src/mail_pack/local_sync.rs",
+     "purpose": "Lifted half of `oneiron::mail_pack::local_sync` (core split, `oneiron-mail-pack`): the items below moved out…",
+     "surface": {
+      "re-export": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mail_pack/mod.rs",
+     "purpose": "The Mail & Calendar pack, engine half (FIX 12559, 12560; owner MAIL-SHARE, MAIL-DELETE, MAIL-PROVIDERS and…",
+     "surface": {
+      "mod": 3,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MailPackPackVaultExt"
+     ],
+     "path": "src/mail_pack/pack.rs",
+     "purpose": "Lifted half of `oneiron::mail_pack::pack` (core split, `oneiron-mail-pack`): the items below moved out of…",
+     "surface": {
+      "re-export": 1,
+      "trait": 1
+     }
+    }
+   ],
+   "modules": {
+    "mail_pack": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "The Mail & Calendar pack, engine half (FIX 12559, 12560; owner MAIL-SHARE, MAIL-DELETE, MAIL-PROVIDERS and…"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "`oneiron-mail-pack`: the lifted half of `oneiron::mail_pack` (core split; plan…",
+   "source_files": 5,
+   "test_files": 0
   },
   "oneiron-mesh-transport": {
    "files": [
