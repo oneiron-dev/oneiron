@@ -33,7 +33,7 @@ use oneiron::llm::{
 };
 use oneiron::skill_optimize::union_source_rows;
 
-use super::self_writer::SELF_WRITER_FRAME;
+use super::self_writer::SelfWriterFrame;
 use super::serve::{Dispatch, Served, admission_refused, request_input_tokens};
 use super::{CompactionMeter, LiveAdmission, ServedCompactionBackend, output_tokens};
 use crate::ai_host::CHAT_ROLE;
@@ -57,18 +57,23 @@ pub(super) enum LiveBind {
 /// wait for a call not sent yet. The room and, under `auto`, the warmth are
 /// read for that rung and that prefix now, before the flight is sealed: the
 /// room against that rung's raw configured context, with the prefix, which
-/// holds the rung's prompt, counted once (FIX 4932). A forced fork that a
-/// route refuses, a run with no completed call, or a rung its live route no
-/// longer takes now binds none and says why: no rung is guessed and nothing
-/// falls through to the cheap route. A prefix that leaves the live model no
-/// room for the window is refused, never cut, and so is one read from rows
-/// its host did not witness whole (`prefix_sources` `None`, FIX 9463): its
+/// holds the rung's prompt, counted once (FIX 4932), and `frame`, the one
+/// its calls render, counted too (FIX 4575). A forced fork that a route
+/// refuses, a run with no completed call, or a rung its live route no longer
+/// takes now binds none and says why: no rung is guessed and nothing falls
+/// through to the cheap route. A prefix that leaves the live model no room
+/// for the window is refused, never cut, and so is one read from rows its
+/// host did not witness whole (`prefix_sources` `None`, FIX 9463): its
 /// summary could not derive from each. Under `auto` every such failure, and
 /// a cold prefix, binds none and says nothing: `None`, so the cheap writer
 /// writes the flight as the agent.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one fact the breakpoint binds the fork under"
+)]
 pub(super) fn bind_live_compaction_fork(
     route: &ServedCompactionBackend,
+    frame: &SelfWriterFrame,
     admission: &dyn LiveAdmission,
     writer: EntityId,
     row: &SelfCompactionDefault,
@@ -96,7 +101,8 @@ pub(super) fn bind_live_compaction_fork(
     if rung.offer.locality > row.locality {
         return unbound(SelfCompactionUnavailable::RouteWiderThanPolicy);
     }
-    let Some(mut room) = route.live_compaction_room(&rung, &request, summary_token_budget) else {
+    let Some(mut room) = route.live_compaction_room(&rung, &request, frame, summary_token_budget)
+    else {
         return unbound(SelfCompactionUnavailable::ModelNotServed);
     };
     if let LiveBind::WhileWarm { cold_room } = how {
@@ -122,24 +128,24 @@ pub(super) fn bind_live_compaction_fork(
 impl ServedCompactionBackend {
     /// `live_compaction_room`: what `rung`'s raw configured context leaves
     /// the compaction's own input once the immutable prefix (its rung's
-    /// prompt already first), the instruction and its frame, and the reply's
-    /// reserve are each counted once (FIX 4465 C, FIX 4932). The home takes
-    /// only what the sealed window leaves after that. `None` when no context
-    /// is configured for the rung.
+    /// prompt already first), the instruction and its `frame`, and the
+    /// reply's reserve are each counted once (FIX 4465 C, FIX 4932, FIX
+    /// 4575). The home takes only what the sealed window leaves after that.
+    /// `None` when no context is configured for the rung.
     fn live_compaction_room(
         &self,
         rung: &LiveForkRung,
         prefix: &LlmRequest,
+        frame: &SelfWriterFrame,
         summary_token_budget: u64,
     ) -> Option<u64> {
         let context = self.live_rung_context(rung)?;
-        let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;
         Some(
             context
                 .saturating_sub(request_input_tokens(prefix))
                 .saturating_sub(output_tokens(summary_token_budget))
                 .saturating_sub(self.prompt_tokens)
-                .saturating_sub(frame),
+                .saturating_sub(frame.tokens()),
         )
     }
 
@@ -201,10 +207,11 @@ impl ServedCompactionBackend {
     /// on the live role as exactly its rung's model under that role's clamp,
     /// sent on the captured rung alone, waiting on its own offer but never
     /// falling back to another, held to that rung's raw configured context,
-    /// the one its room was read against (FIX 4932), then dressed in the
-    /// agent's home in what that context leaves. A rung the live route no
-    /// longer admits at the captured offer is stale, and nothing is sent; a
-    /// rung with no configured context is not served. `while_warm`
+    /// the one its room was read against (FIX 4932), then dressed in
+    /// `frame` (FIX 4575) and the agent's home in what that context leaves,
+    /// both in the current suffix, never in the prefix. A rung the live
+    /// route no longer admits at the captured offer is stale, and nothing is
+    /// sent; a rung with no configured context is not served. `while_warm`
     /// is the first call of a flight under a row on `auto` (FIX 6029): it
     /// goes out only while the captured prefix is still warm, and `None`
     /// says it went cold first, or could not be admitted or bound, before
@@ -212,6 +219,7 @@ impl ServedCompactionBackend {
     pub(super) fn serve_live_fork(
         &self,
         fork: &LiveCompactionFork,
+        frame: &SelfWriterFrame,
         home: &CompactionHome,
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
@@ -263,12 +271,11 @@ impl ServedCompactionBackend {
             ]),
             request.summary_token_budget,
             |call, room| {
-                let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;
                 let home = home.render(compaction_home_budget(
                     room.context,
                     room.input,
                     room.output,
-                    frame,
+                    frame.tokens(),
                 ));
                 // The home goes after the prefix, before the span's input, never
                 // into the prefix.
@@ -277,7 +284,7 @@ impl ServedCompactionBackend {
                     suffix.content.insert(
                         at,
                         ContentPart::Text {
-                            text: format!("{SELF_WRITER_FRAME}\n\n{}", home.text),
+                            text: format!("{}\n\n{}", frame.text(), home.text),
                         },
                     );
                 }
