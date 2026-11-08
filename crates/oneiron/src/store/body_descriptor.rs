@@ -84,20 +84,23 @@ pub struct OwnedBody {
 
 impl OwnedBody {
     /// Whether `self` and `other` are the same descriptor for a
-    /// re-publication (FIX 7365): every field but `code_run_output`. The
-    /// owner and the occurrence already fix that origin, so a stored
-    /// descriptor without it, or with it, stays as it is.
+    /// re-publication (FIX 7365): every field but `code_run_output`, the
+    /// occurrence that keeps the marks included. The owner and the
+    /// occurrence already fix that origin, so a stored descriptor without
+    /// it, or with it, stays as it is.
     #[must_use]
     pub(crate) fn eq_ignoring_origin(&self, other: &Self) -> bool {
         let Self {
             owner,
             occurrence,
+            mark_occurrence,
             state,
             result,
             code_run_output: _,
         } = self;
         *owner == other.owner
             && *occurrence == other.occurrence
+            && *mark_occurrence == other.mark_occurrence
             && *state == other.state
             && *result == other.result
     }
