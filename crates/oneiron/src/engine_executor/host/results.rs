@@ -79,6 +79,21 @@ impl RecordingJsHost<'_, '_> {
             .map(|(verbs, read)| [verbs.as_slice(), read, skills.as_slice()].concat())
     }
 
+    /// The records whose words the run's recorded and this step's fold
+    /// answers copy, each once (FIX 18924): known dependencies of what the
+    /// run stores, apart from its input rows.
+    fn fold_sources(&self) -> Vec<EntityId> {
+        let step = crate::code_run::recorded_fold_words(&self.bridge_calls);
+        let mut sources: Vec<EntityId> = step
+            .into_iter()
+            .flat_map(|word| word.sources)
+            .chain(self.recorded_fold_sources.iter().copied())
+            .collect();
+        sources.sort_unstable();
+        sources.dedup();
+        sources
+    }
+
     /// The rows the run's recorded and this step's verb answers were served
     /// from, or none known when one answer kept no set.
     pub(super) fn verb_rows(&self) -> Option<Vec<EntityId>> {
@@ -272,6 +287,8 @@ impl RecordingJsHost<'_, '_> {
             input_rows,
             producing_step_start,
         )?;
+        // FIX 18924: a stored value may copy the run's fold answers.
+        storage.record_code_run_fold_sources(self.run_id, &output, &self.fold_sources())?;
         if !inherit.is_empty() {
             storage.inherit_code_run_result_marks(self.run_id, &output, inherit)?;
         }
@@ -599,11 +616,15 @@ impl RecordingJsHost<'_, '_> {
         };
         // A read its live cutoff cut answers `reader_task_settled`, whatever
         // the cut left; a cut selection is never published (FIX 8233).
-        let reply = read.read(storage, facet, input, sink.as_mut());
+        let reply = read.read_delivered(storage, facet, input, sink.as_mut());
         if self.live_cutoff_reached() {
             return Ok(result_refusal(READER_TASK_SETTLED));
         }
-        Ok(match reply? {
+        let (reply, delivered) = reply?;
+        // Past every check, a scoped child's witness keeps the source bytes
+        // the reply shows before the reply leaves (FIX 7735).
+        self.commit_source_delivery(storage, &read, &delivered)?;
+        Ok(match reply {
             ResultReply::Output(output) => json!({"output": output}),
             ResultReply::Denied(refused) => refused,
             ResultReply::Spilled { count, next } => {

@@ -116,7 +116,7 @@ pub(crate) use person_about::{
 };
 pub use provenance::*;
 pub(crate) use provenance::{
-    decode_verified_citations, decode_verified_locators,
+    VerifiedLocator, decode_verified_citations, decode_verified_locators,
     encode_consolidation_evidence_with_locators, kept_decisions_value,
 };
 pub use request_sources::SourcedBackend;
@@ -127,7 +127,7 @@ pub use resident_dream::{
 };
 pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in_txn};
 pub use resident_for_human::run_free_time_for_human;
-pub use resources::ScopedConsolidationWrite;
+pub use resources::{NightlyLinkGrantRequest, ScopedConsolidationWrite, mint_nightly_link_grant};
 pub use retained_conflict::RetainedAlternative;
 pub(crate) use retained_keep::SettlementApplied;
 pub use retained_keep::{ConflictSettleOutcome, StagedKeep};

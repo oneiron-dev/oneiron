@@ -474,6 +474,7 @@ impl Vault {
                 "proposal requires unanimous independent multi-critic acceptance",
             ));
         }
+        row.require_registered_edit_at_acceptance_in_txn(self, &txn)?;
         row.status = RepoProposalStatus::Approved;
         store(self, &mut txn, &row)?;
         txn.commit()?;
@@ -706,10 +707,7 @@ pub(super) fn validate_conflict(
     let txn = vault.store.env.read_txn()?;
     validate_conflict_in_txn(vault, &txn, proposal)?;
     drop(txn);
-    let branch = super::support::utf8_trimmed(
-        super::git::run_git(root, &["branch".into(), "--show-current".into()])?,
-        "branch must be UTF-8",
-    )?;
+    let branch = super::conflict::current_branch(vault, root)?;
     if branch != *branch_name {
         return Err(invalid(
             "reviewed resolution requires its active conflict and branch",
