@@ -5,7 +5,9 @@
 
 use super::ConsultPayloadRef;
 use super::ask_record;
-use super::{TaskAskAnswer, TaskAskHandle, TaskAskOptionId, TaskAskWord};
+use super::{
+    TaskAskAnswer, TaskAskHandle, TaskAskOption, TaskAskOptionId, TaskAskRec, TaskAskWord,
+};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -114,7 +116,8 @@ pub struct TaskAskOptionLinkView {
     pub intended_recipient: EntityId,
     pub revision: u64,
     pub label: Option<String>,
-    pub options: BTreeMap<TaskAskOptionId, String>,
+    pub options: BTreeMap<TaskAskOptionId, TaskAskOption>,
+    pub rec: Option<TaskAskRec>,
     /// Sources the intended recipient may select as provenance for a tap.
     pub disclosed_sources: BTreeSet<ConsultPayloadRef>,
 }
@@ -322,6 +325,7 @@ impl Vault {
             revision: row.revision,
             label: group.effective.what.label.clone(),
             options: group.effective.what.options,
+            rec: group.effective.rec,
             disclosed_sources: std::iter::once(group.effective.what.reference)
                 .chain(group.effective.what.context_refs)
                 .collect(),
