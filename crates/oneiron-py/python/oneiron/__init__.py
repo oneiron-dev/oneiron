@@ -6524,6 +6524,9 @@ class Oneiron:
         def callables(self, spec=None):
             """Every loadable callable helper skill and its call contract: what it takes and returns."""
             return json.loads(_translate(lambda: self._client.self_skills_callables(json.dumps({} if spec is None else spec))))
+        def graph(self, spec):
+            """Runs a saved graph workflow from this resident-owned skill on the attached leased run; answers stay proposals and partial stages remain visible."""
+            return json.loads(_translate(lambda: self._client.self_skills_graph(json.dumps(spec))))
         def call(self, spec):
             """Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately."""
             return json.loads(_translate(lambda: self._client.self_skills_call(json.dumps(spec))))

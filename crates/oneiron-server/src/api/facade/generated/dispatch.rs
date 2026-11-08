@@ -31521,6 +31521,37 @@ async fn vault_graph_ask(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn self_skills_graph(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
+    facade_outside_room_turn(call, "self.skills.graph")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.skills.graph", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.skills.graph", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::self_skills_graph(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_graph_admit(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -49401,6 +49432,14 @@ fn boxed_vault_graph_ask<'a>(
     Box::pin(vault_graph_ask(server, call, input))
 }
 #[inline(never)]
+fn boxed_self_skills_graph<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_skills_graph(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_graph_admit<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -53743,6 +53782,7 @@ async fn call_verb_row(
         "ai.ask_image" => boxed_ai_ask_image(server, call, input).await,
         "ai.verdict" => boxed_ai_verdict(server, call, input).await,
         "vault.graph.ask" => boxed_vault_graph_ask(server, call, input).await,
+        "self.skills.graph" => boxed_self_skills_graph(server, call, input).await,
         "vault.graph.admit" => boxed_vault_graph_admit(server, call, input).await,
         "vault.questions.create" => boxed_vault_questions_create(server, call, input).await,
         "vault.questions.edit" => boxed_vault_questions_edit(server, call, input).await,
