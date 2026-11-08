@@ -2233,8 +2233,14 @@ impl OneironClient {
                 "vault.code.model_heal_count" => remote_agent_verb_output::<
                     oneiron::memory::code_run_doors::CodeRunModelHealCountView,
                 >(client, verb, &input),
+                "vault.code.session_model_heal_count" => remote_agent_verb_output::<
+                    oneiron::memory::code_run_doors::CodeRunSessionModelHealCountView,
+                >(client, verb, &input),
                 "vault.code.corrections" => remote_agent_verb_output::<
                     oneiron::memory::code_run_doors::CodeRunCorrectionsView,
+                >(client, verb, &input),
+                "vault.code.step_evidence" => remote_agent_verb_output::<
+                    Option<oneiron::memory::code_run_doors::CodeRunStepEvidenceView>,
                 >(client, verb, &input),
                 "vault.code.type_diagnostics" => remote_agent_verb_output::<
                     Option<oneiron::code_run::ProgramStepFeedbackRelease>,
@@ -2489,6 +2495,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.agents.grants.revoke" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AgentGrantRevoked,
+                >(client, verb, &input),
+                "vault.agents.verb_classes.get" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::AgentVerbClassesView,
+                >(client, verb, &input),
+                "vault.agents.verb_classes.configure" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::AgentVerbClassesReceipt,
                 >(client, verb, &input),
                 "vault.oauth.authorization.answer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::OAuthAuthorizationAnswered,
@@ -12925,6 +12937,19 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.code.model_heal_count", value)
     }
+    pub fn vault_code_session_model_heal_count(
+        &self,
+        input: &oneiron::memory::code_run_doors::CodeRunSessionModelHealCountRequest,
+    ) -> Result<oneiron::memory::code_run_doors::CodeRunSessionModelHealCountView, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.session_model_heal_count", value)
+    }
     pub fn vault_code_corrections(
         &self,
         input: &oneiron::memory::code_run_doors::CodeRunCorrectionsRequest,
@@ -12936,6 +12961,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.corrections", value)
+    }
+    pub fn vault_code_step_evidence(
+        &self,
+        input: &oneiron::memory::code_run_doors::CodeRunStepEvidenceRequest,
+    ) -> Result<Option<oneiron::memory::code_run_doors::CodeRunStepEvidenceView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.step_evidence", value)
     }
     pub fn vault_code_type_diagnostics(
         &self,
@@ -13927,6 +13964,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.agents.grants.revoke", value)
+    }
+    pub fn vault_agents_verb_classes_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::policy_manifest_doors::AgentVerbClassesView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.agents.verb_classes.get", value)
+    }
+    pub fn vault_agents_verb_classes_configure(
+        &self,
+        input: &oneiron::policy_manifest_doors::AgentVerbClassesConfigureRequest,
+    ) -> Result<oneiron::policy_manifest_doors::AgentVerbClassesReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.agents.verb_classes.configure", value)
     }
     pub fn vault_oauth_authorization_answer(
         &self,
