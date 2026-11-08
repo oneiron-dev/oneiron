@@ -7,11 +7,12 @@
 //! run's occurrence is released with its own marks, its instance retires,
 //! or is owed to another holder's release, and the capsule marks the body
 //! erased. A request's pieces that no request the run still keeps for the
-//! actor names go too. Nothing is rewritten: no new start, request or
-//! context is written in place of a retired one, so a continuation, a
-//! shadow arm and a fork meet the body as erased (`NoCheckpoint`,
-//! `SourceErased`). The capsule keeps what the step was, its actor, its
-//! route prompt and its other bodies.
+//! actor names go too, and so do a start's pieces that no start the run
+//! still keeps for the actor names (FIX 4192). Nothing is rewritten: no
+//! new start, request or context is written in place of a retired one, so
+//! a continuation, a shadow arm and a fork meet the body as erased
+//! (`NoCheckpoint`, `SourceErased`). The capsule keeps what the step was,
+//! its actor, its route prompt and its other bodies.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -23,6 +24,7 @@ use super::super::fold_answers::words_withdrawn;
 use super::super::response_erase::release_occurrence_in_txn;
 use super::CAPSULES;
 use super::pieces::{PieceScope, manifest_pieces_in_txn, release_retired_pieces_in_txn};
+use super::start_pieces::{release_unnamed_start_pieces_in_txn, start_manifest_pieces_in_txn};
 use crate::code_run::{FoldWordRef, push_fold_word};
 use crate::compaction::output::OutputRef;
 use crate::side_table::SideKey;
@@ -112,8 +114,9 @@ fn release_in_txn(
 /// released as its run's occurrence, marked erased on its capsule and its
 /// instance retired under the run, or owed to another holder's release; a
 /// retired request's pieces no kept request of its run and actor names go
-/// with it. A row that does not decode, and a capsule an actor's erase
-/// already took, are left as they are. Returns every withdrawn fold a
+/// with it, and a retired start's pieces no kept start of its run and actor
+/// names (FIX 4192). A row that does not decode, and a capsule an actor's
+/// erase already took, are left as they are. Returns every withdrawn fold a
 /// reached body named, each once.
 ///
 /// # Errors
@@ -145,6 +148,7 @@ pub(in crate::code_run::storage) fn retire_fold_word_capsules_in_txn(
     }
     let mut held: BTreeMap<EntityId, BTreeSet<[u8; 32]>> = BTreeMap::new();
     let mut pieces: BTreeMap<(EntityId, EntityId), BTreeSet<[u8; 32]>> = BTreeMap::new();
+    let mut start_named: BTreeMap<(EntityId, EntityId), BTreeSet<[u8; 32]>> = BTreeMap::new();
     for (key, mut capsule, bodies) in reached {
         let run = capsule.run;
         let mut digests = Vec::new();
@@ -160,8 +164,11 @@ pub(in crate::code_run::storage) fn retire_fold_word_capsules_in_txn(
             *erased = true;
         }
         if bodies.start
+            && let Some(actor) = capsule.content.actor()
             && let Some(start) = &mut capsule.start
         {
+            let named = start_named.entry((run, actor)).or_default();
+            start_manifest_pieces_in_txn(store, wtxn, start.body, named)?;
             digests.extend(release_in_txn(store, wtxn, run, &start.path, start.body)?);
             start.erased = true;
         }
@@ -183,6 +190,11 @@ pub(in crate::code_run::storage) fn retire_fold_word_capsules_in_txn(
     for ((run, actor), named) in pieces {
         let scope = PieceScope { run, actor };
         let released = release_retired_pieces_in_txn(store, wtxn, scope, &named)?;
+        held.entry(run).or_default().extend(released);
+    }
+    for ((run, actor), named) in start_named {
+        let scope = PieceScope { run, actor };
+        let released = release_unnamed_start_pieces_in_txn(store, wtxn, scope, &named)?;
         held.entry(run).or_default().extend(released);
     }
     for (run, digests) in held {

@@ -12,7 +12,8 @@
 //! capsule keeps the step's start without it when the start admits, so a
 //! continuation still finds its checkpoint (FIX 6254). An admitted request
 //! is published as its pieces: each one its run does not hold yet for the
-//! actor, then the manifest as the capsule's own body (FIX 4192).
+//! actor, then the manifest as the capsule's own body (FIX 4192). The
+//! step's start is published as its pieces the same way.
 
 mod refresh;
 
@@ -20,6 +21,7 @@ pub(crate) use refresh::refresh_staged_request;
 
 use std::borrow::Cow;
 use std::ops::Range;
+use std::sync::{Mutex, PoisonError};
 
 use heed::RwTxn;
 
@@ -32,10 +34,11 @@ use super::super::super::replay_capsule::{
 };
 use super::super::StartCompaction;
 use super::super::fold_answers::words_withdrawn;
-use super::super::records::{REPLAY_RECORDS, finish_output};
+use super::super::records::{FinishedOutput, REPLAY_RECORDS, finish_output};
 use super::super::spawn_erase::fence_spawn_targets_in_txn;
 use super::erase::actor_gone_in_txn;
 use super::pieces::{PieceScope, RequestPieces, unheld_lens};
+use super::start_pieces::StartPieces;
 use super::{
     CAPSULES, FORKS, ForkProvenance, ForkRow, ForkValue, ForkWrite, capsule_key,
     fork_capsule_in_txn, fork_row_name,
@@ -78,11 +81,15 @@ pub(super) fn spilling(bound: u64, lens: &[usize]) -> usize {
 }
 
 /// Where a writer's bodies go: inline within the bound, past it into the
-/// instances minted before the writer opened.
+/// instances minted before the writer opened. FIX 7284: it keeps each body
+/// it published, with the reader pin on its final digest, until it is
+/// dropped after its writer commits or aborts, so the pin lasts through the
+/// commit that names the body.
 pub(super) struct Spill {
     bound: u64,
     mint: BodyMint,
     reserved: usize,
+    published: Mutex<Vec<FinishedOutput>>,
 }
 
 impl Spill {
@@ -95,6 +102,7 @@ impl Spill {
             bound,
             mint: vault.store.body_mint()?.reserve(reserved)?,
             reserved,
+            published: Mutex::new(Vec::new()),
         })
     }
 
@@ -126,7 +134,12 @@ impl Spill {
         })?;
         vault.put_code_run_output_in_txn(wtxn, &finished, &finished.output, Some(owner))?;
         tracing::debug!(bytes = bytes.len(), "a replay capsule body is published");
-        Ok(finished.output.output_ref())
+        let output = finished.output.output_ref();
+        self.published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(finished);
+        Ok(output)
     }
 }
 
@@ -144,6 +157,7 @@ pub(super) fn with_spill<T>(
             bound,
             mint: vault.store.body_mint()?.reserve(reserved)?,
             reserved,
+            published: Mutex::new(Vec::new()),
         };
         match vault.try_with_write_txn_grouped(|wtxn| write(wtxn, &spill)) {
             Ok(written) => return Ok(written),
@@ -227,13 +241,12 @@ fn write_capsule_in_txn(
         }
         Err(refusal) => return Err(refusal.into()),
     };
-    let start_len = start.as_ref().map_or(0, |start| start.bytes.len());
-    // FIX 4192: the request is kept as pieces the run holds once for the
-    // actor, and its manifest is the capsule's own body.
+    // FIX 4192: the request and the start are kept as pieces the run holds
+    // once for the actor, and their manifests are the capsule's own bodies.
     let scope = PieceScope { run, actor };
     let pieces = RequestPieces::of(&request.bytes)?;
     let mut lens = pieces.lens_in_txn(&vault.store, wtxn, scope)?;
-    lens.push(start_len);
+    lens.extend(start_lens_in_txn(vault, wtxn, scope, start.as_ref())?);
     spill.holds(&lens)?;
     let stored = &request.bytes;
     let request_ref = pieces.publish_in_txn(vault, wtxn, spill, scope, &draft.request_path)?;
@@ -296,8 +309,11 @@ fn write_withheld_in_txn(
     reasons: &[&'static str],
 ) -> std::result::Result<Option<StepReplayCapsule>, Unwritten> {
     let capture = draft.capture;
-    let start_len = start.as_ref().map_or(0, |start| start.bytes.len());
-    spill.holds(&[0, start_len])?;
+    let scope = PieceScope {
+        run: capture.run,
+        actor: draft.actor,
+    };
+    spill.holds(&start_lens_in_txn(vault, wtxn, scope, start.as_ref())?)?;
     let fold_words = capsule_fold_words(capture, start.as_ref());
     let start = publish_start_in_txn(vault, wtxn, spill, draft, start)?;
     let capsule = StepReplayCapsule {
@@ -344,7 +360,24 @@ fn request_seed(capture: &StepCapture<'_>) -> Option<u64> {
         .and_then(serde_json::Value::as_u64)
 }
 
-/// The step's start, admitted before, published as a body the run owns.
+/// The length of each body [`publish_start_in_txn`] publishes for `start`
+/// in `txn`: each of its pieces the run does not hold yet for the actor,
+/// then its manifest (FIX 4192). None without a start.
+fn start_lens_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: PieceScope,
+    start: Option<&AdmittedStart>,
+) -> Result<Vec<usize>> {
+    start.map_or_else(
+        || Ok(Vec::new()),
+        |start| start.pieces.lens_in_txn(&vault.store, txn, scope),
+    )
+}
+
+/// The step's start, admitted before, published as pieces the run owns for
+/// the actor, its manifest the capsule's own body (FIX 4192). The capsule
+/// names the digest of the whole start.
 fn publish_start_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
@@ -352,29 +385,36 @@ fn publish_start_in_txn(
     draft: &CapsuleDraft<'_>,
     start: Option<AdmittedStart>,
 ) -> Result<Option<ExecutorStepStart>> {
-    let run = draft.capture.run;
-    Ok(match start {
-        Some(AdmittedStart {
-            bytes,
-            bridge_start,
-            ..
-        }) => Some(ExecutorStepStart {
-            body: spill.publish_in_txn(vault, wtxn, run, &draft.start_path, &bytes)?,
-            path: draft.start_path.clone(),
-            digest: *blake3::hash(&bytes).as_bytes(),
-            bridge_start,
-            erased: false,
-        }),
-        None => None,
-    })
+    let Some(AdmittedStart {
+        bytes,
+        bridge_start,
+        pieces,
+        ..
+    }) = start
+    else {
+        return Ok(None);
+    };
+    let scope = PieceScope {
+        run: draft.capture.run,
+        actor: draft.actor,
+    };
+    Ok(Some(ExecutorStepStart {
+        body: pieces.publish_in_txn(vault, wtxn, spill, scope, &draft.start_path)?,
+        path: draft.start_path.clone(),
+        digest: *blake3::hash(&bytes).as_bytes(),
+        bridge_start,
+        erased: false,
+    }))
 }
 
 /// A step's start as the wall admitted it: its body, the bridge log's
-/// length at it, and the folds whose words its prefix records (FIX 18924).
+/// length at it, the folds whose words its prefix records (FIX 18924), and
+/// the body cut into its pieces (FIX 4192).
 struct AdmittedStart {
     bytes: Vec<u8>,
     bridge_start: u64,
     fold_words: Vec<FoldWordRef>,
+    pieces: StartPieces,
 }
 
 /// A request as the wall admitted it: its canonical bytes as stored, its
@@ -538,8 +578,10 @@ fn admitted_start(
             "the wall changed a step start's admitted prefix",
         ));
     }
+    let bytes = encode_start(&body)?;
     Ok(Some(AdmittedStart {
-        bytes: encode_start(&body)?,
+        pieces: StartPieces::of(&bytes)?,
+        bytes,
         bridge_start: prefix.bridge_calls.len() as u64,
         fold_words,
     }))
