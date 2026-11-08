@@ -23,6 +23,7 @@ use oneiron_retrieval::pipeline::ScoredEntity;
 mod claim_admission;
 mod context_pack_filter;
 mod diagnostic_reads;
+mod edge_claims;
 mod facet_gate;
 mod frozen;
 mod graph_reads;
@@ -149,15 +150,25 @@ pub struct ScopedRead<'a> {
     /// `as_of`, or `None` for now (FIX 12226). See
     /// `ScopedRead::with_judged_at`.
     judged_at: Option<u64>,
+    /// The caller's own retrieval filter this read is bound to (FIX 3977,
+    /// `ScopedRead::with_read_filter`): a request, never authority. Every
+    /// resolution, own-Grant and owner alternative, candidate envelope and
+    /// receipt of this read meets it with the request its door names.
+    read_filter: Option<RetrievalFilter>,
 }
+
+mod owned;
+pub use owned::OwnedScopedRead;
 
 mod admission;
 mod commitment_reminder_wording;
 mod edge_admission;
 pub(crate) use admission::ScopedDiaryCandidates;
 mod profile_sources;
+pub(crate) use profile_sources::CompanionProfileSourceJudgement;
 mod retrieval_loop;
 mod search;
+pub use search::ContextPackPlan;
 pub(crate) use search::SearchPlan;
 mod visibility;
 pub(crate) use visibility::Admitted;

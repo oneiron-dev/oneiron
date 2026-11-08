@@ -169,13 +169,16 @@ pub struct RepoAnchorBindOutput {
 }
 
 /// `vault.repo.anchor.bind` under the owner's proof: binds the served repo
-/// to its CODE anchor in the PROJECT he names. A repeat changes nothing.
+/// to its CODE anchor in the PROJECT he names. The anchor binding is idempotent.
+/// After it commits, a best-effort manifest refresh keeps the repo's portable
+/// identity available without changing this door's answer.
 pub fn bind_repo_anchor_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: RepoAnchorBindInput,
 ) -> MemoryResult<RepoAnchorBindOutput> {
     let bound = vault.bind_served_repo_anchor(owner, &input.repo, input.project)?;
+    vault.ensure_repo_manifest(bound.repo, &input.repo);
     Ok(RepoAnchorBindOutput {
         repo: input.repo,
         anchor: GitPushRepo {

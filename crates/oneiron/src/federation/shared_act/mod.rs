@@ -11,8 +11,10 @@ mod erase_ask;
 mod execute;
 mod export_records;
 mod membership;
+mod owner_add;
 mod removal;
 mod removal_archive;
+mod removal_file;
 mod removal_import;
 
 pub use erase_ask::{
@@ -21,6 +23,10 @@ pub use erase_ask::{
 pub use membership::{
     OwnerRecoveryAuthorization, SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState,
 };
+pub use owner_add::AddOwnerPlan;
+#[cfg(all(unix, feature = "sync"))]
+pub(crate) use removal_file::removal_archive_body_keys_in_txn;
+pub(crate) use removal_file::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};
 pub use removal_import::{ReceivedRemovalArchive, ReceivedRemovalArchiveState};
 
 use super::FederationGrantRole as Role;
@@ -50,8 +56,8 @@ const SHARED_VAULT_DELETION: SideTable<(), SharedVaultDeletion, LegacyJson> =
     SideTable::new(&side_table::SHARED_VAULT_DELETION);
 
 /// Each export-first removal's archive, bound to the removed Owner, with its
-/// records' frozen positions (FIX-LIST 8224). Key: hex32 (removed Owner)
-/// ":" hex32 (receipt id).
+/// records' frozen positions (FIX-LIST 8224) and the file its bytes are
+/// (FIX 3679). Key: hex32 (removed Owner) ":" hex32 (receipt id).
 const REMOVAL_EXPORT: SideTable<String, removal_archive::StoredRemovalExport, Named> =
     SideTable::new(&side_table::SHARED_ACT_REMOVAL_EXPORT);
 
@@ -60,12 +66,36 @@ fn removal_export_key(member: &str, receipt_id: &str) -> String {
     format!("{member}:{receipt_id}")
 }
 
+/// One archive row by its key's two halves: the removed member and the
+/// removal receipt. Its archive file is held under this pair
+/// ([`removal_file::removal_archive_owner`]), never the receipt alone, so
+/// one member's expiry or erase reaches no other member's archive of the
+/// same receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ArchiveRow {
+    pub(crate) member: EntityId,
+    pub(crate) receipt: EntityId,
+}
+
+impl ArchiveRow {
+    /// The row an archive row key names; `None` for a key that does not
+    /// read.
+    fn from_key(row_key: &str) -> Option<Self> {
+        let (member, receipt) = row_key.split_once(':')?;
+        Some(Self {
+            member: EntityId::from_hex(member).ok()?,
+            receipt: EntityId::from_hex(receipt).ok()?,
+        })
+    }
+}
+
 /// The acts the shared preset lists. Their names are the policy row names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SharedActKind {
     DeleteVault,
     Erase,
+    AddOwner,
     TransferOwnership,
     RemoveOwner,
 }
@@ -74,6 +104,7 @@ impl SharedActKind {
         match self {
             Self::DeleteVault => "delete_vault",
             Self::Erase => "erase",
+            Self::AddOwner => "add_owner",
             Self::TransferOwnership => "transfer_ownership",
             Self::RemoveOwner => "remove_owner",
         }
@@ -82,6 +113,7 @@ impl SharedActKind {
         match act {
             "delete_vault" => Some(Self::DeleteVault),
             "erase" => Some(Self::Erase),
+            "add_owner" => Some(Self::AddOwner),
             "transfer_ownership" => Some(Self::TransferOwnership),
             "remove_owner" => Some(Self::RemoveOwner),
             _ => None,
@@ -126,6 +158,9 @@ pub struct RemoveOwnerPlan {
 pub enum SharedVaultChange {
     VaultDeleted {
         backup_retain_until: u64,
+    },
+    OwnerAdded {
+        owner: String,
     },
     OwnershipTransferred {
         from: String,
@@ -291,19 +326,6 @@ pub struct RemovalExportCopy {
     pub delivered_at: u64,
     pub expires_at: u64,
     pub export: crate::memory::MemoryExport,
-}
-
-impl RemovalExportCopy {
-    /// What the delivery tells an Owner: never the archive.
-    fn delivery(&self) -> RemovalExportDelivery {
-        RemovalExportDelivery {
-            receipt_id: self.receipt_id.clone(),
-            recipient: self.member.clone(),
-            digest: self.export.digest.clone(),
-            delivered_at: self.delivered_at,
-            expires_at: self.expires_at,
-        }
-    }
 }
 
 /// One recipient's durable notice that a receipt was written.
@@ -652,7 +674,7 @@ impl Vault {
             .checked_add(REMOVAL_EXPORT_RETAIN_SECS)
             .ok_or_else(invalid)?;
         REMOVAL_EXPORT.put(&self.store, txn, &row_key, &stored)?;
-        Ok(Some(stored.copy.delivery()))
+        Ok(Some(stored.delivery()))
     }
 
     /// Persist the receipt and one notice to each live Owner, the actor and

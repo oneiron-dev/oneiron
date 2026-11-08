@@ -245,11 +245,25 @@ pub(super) fn verdict_rows_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<Vec<HeldOutVerdict>> {
-    VERDICTS
+    verdict_rows_sourced_in_txn(vault, rtxn).map(|(verdicts, _)| verdicts)
+}
+
+/// All native verdict bodies and their consulted row identities. A decoded
+/// displacement marker is an additional body without an identity on its carrier.
+pub(super) fn verdict_rows_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<(Vec<HeldOutVerdict>, Option<Vec<EntityId>>)> {
+    let verdicts = VERDICTS
         .scan(&vault.store, rtxn)?
         .into_iter()
         .map(|(id, raw)| decode_verdict_with_marker(vault, rtxn, id, &raw))
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    let sources = verdicts
+        .iter()
+        .all(|verdict| verdict.displaced_by_revision.is_none())
+        .then(|| verdicts.iter().map(|verdict| verdict.id).collect());
+    Ok((verdicts, sources))
 }
 
 /// Every gate verdict this vault has ruled, in ruling order.
@@ -306,6 +320,31 @@ pub(crate) fn skill_edit_verdict_in_txn(
     Ok(verdict_rows_in_txn(vault, rtxn)?
         .into_iter()
         .rfind(|verdict| verdict.proposal == *proposal))
+}
+
+/// The standing verdict and every verdict row decoded on the same snapshot,
+/// including rows rejected by the proposal filter. These are consulted rows,
+/// not the verdict's held-out inputs or a grant to read them. A stored
+/// displacement marker has no body identity, so it makes the set unknown.
+pub(crate) fn skill_edit_verdict_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    proposal: &EntityId,
+) -> Result<(Option<HeldOutVerdict>, Option<Vec<EntityId>>)> {
+    let (verdicts, sources) = verdict_rows_sourced_in_txn(vault, rtxn)?;
+    let verdict = verdicts
+        .into_iter()
+        .rfind(|verdict| verdict.proposal == *proposal);
+    Ok((verdict, sources))
+}
+
+/// [`skill_edit_verdict_sourced_in_txn`] on its own read snapshot.
+pub(crate) fn skill_edit_verdict_sourced(
+    vault: &Vault,
+    proposal: &EntityId,
+) -> Result<(Option<HeldOutVerdict>, Option<Vec<EntityId>>)> {
+    let rtxn = vault.store.env.read_txn()?;
+    skill_edit_verdict_sourced_in_txn(vault, &rtxn, proposal)
 }
 
 // ---------------------------------------------------------------------------

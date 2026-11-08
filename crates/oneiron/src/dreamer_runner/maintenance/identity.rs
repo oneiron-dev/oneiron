@@ -62,8 +62,8 @@ pub use evidence::{
     IdentityResolutionView,
 };
 pub(crate) use evidence::{clear_mention_resolutions_in_txn, erase_mention_resolutions_in_txn};
-pub(crate) use hints::hinted_mention_in_txn;
 use hints::{hinted_in_txn, put_hint_in_txn};
+pub(crate) use hints::{hinted_mention_in_txn, hinted_mention_scoped_in_txn};
 pub(super) use index::{
     INVERSE_BY_SOURCE, inverse_ids, sync_inverse_membership, sync_inverse_sets,
 };
@@ -308,6 +308,10 @@ pub struct IdentityActNowRequest {
     pub prompt: String,
     /// The choice card's label for someone new, in the person's language.
     pub someone_new: String,
+    /// A provisional candidate's label template: `{name}` takes its name
+    /// and `{day}` the day it was first said. None keeps `{name} · {day}`.
+    #[serde(default)]
+    pub provisional: Option<String>,
 }
 
 /// Where a name an agent must act on stands.
@@ -594,7 +598,7 @@ impl Memory<'_> {
         let copy = IdentityCardCopy {
             prompt: input.prompt.clone(),
             someone_new: input.someone_new.clone(),
-            provisional: None,
+            provisional: input.provisional.clone(),
         };
         let vault = self.vault();
         let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, name.len() as u64);

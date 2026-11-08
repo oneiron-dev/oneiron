@@ -20,7 +20,9 @@
 //! CLAIM scrubs every such standing draft, fail-closed, since no index can
 //! attribute them. The widened pass reads the live cards, so it needs no
 //! backfill and no new index; an erase whose kind no longer reads cannot
-//! rule either out and scrubs too.
+//! rule either out and scrubs too. A card keeps that positive erase witness
+//! across newer asks, so saved copies cannot regain the erased text
+//! (FIX 12456).
 use std::collections::BTreeSet;
 
 use super::ask::AgentHealthCoachAnswer;
@@ -182,7 +184,7 @@ pub(crate) fn erase_sources_in_txn(
         if changed {
             sync_card_membership(store, txn, &key, &old_sources, &card.draft_source_rows())?;
             sync_reviewer_membership(store, txn, &key, &old_reviewers, &card.reviewer_revisions())?;
-            CARDS.put(store, txn, &key, &card)?;
+            super::receipt_index::put_card_in_txn(store, txn, &key, &card)?;
         }
     }
     // FIX 10432: a standing draft that predates `source_rows` names none of
@@ -207,6 +209,7 @@ pub(crate) fn erase_sources_in_txn(
             let old_sources = card.draft_source_rows();
             let old_reviewers = card.reviewer_revisions();
             if card.scrub_coach_draft() {
+                card.legacy_draft_scrubbed = true;
                 sync_card_membership(store, txn, &key, &old_sources, &card.draft_source_rows())?;
                 sync_reviewer_membership(
                     store,
@@ -215,8 +218,20 @@ pub(crate) fn erase_sources_in_txn(
                     &old_reviewers,
                     &card.reviewer_revisions(),
                 )?;
-                CARDS.put(store, txn, &key, &card)?;
+                super::receipt_index::put_card_in_txn(store, txn, &key, &card)?;
             }
+        }
+    }
+    // The numbers' local read-row witness is separate from draft membership.
+    // A remaining subset cannot explain the whole merged observation.
+    for (key, mut card) in CARDS.scan(store, txn)? {
+        if card
+            .source_rows
+            .as_ref()
+            .is_some_and(|rows| rows.contains(id))
+        {
+            card.source_rows = None;
+            CARDS.put(store, txn, &key, &card)?;
         }
     }
     Ok(())
@@ -242,12 +257,13 @@ fn widened_scrub_owed(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -
     ))
 }
 
-/// Whether the live card standing under `card`'s key holds its Coach draft
-/// erased (FIX 10432): a saved Weave copy's serve-time recheck asks it for
-/// a draft that predates `source_rows`, whose sources no tombstone check
-/// can name. `false` when no live card stands there, the row does not parse,
-/// or its draft reads unerased: only a positive erase signal clears the
-/// copy's text (L07-A's FIX 10432 condition).
+/// Whether the live card standing under `card`'s key holds a positive draft
+/// erase witness (FIX 10432, FIX 12456): a saved Weave copy's serve-time
+/// recheck asks it for a draft that predates `source_rows`, whose sources
+/// no tombstone check can name. The widened scrub's witness survives newer
+/// asks. `false` when no live card stands there, the row does not parse,
+/// or neither mark is set: only a positive erase signal clears the copy's
+/// text (L07-A's FIX 10432 condition).
 pub(crate) fn live_coach_draft_erased_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -258,7 +274,7 @@ pub(crate) fn live_coach_draft_erased_in_txn(
         .get(store, txn, &key)
         .ok()
         .flatten()
-        .is_some_and(|live| live.coach_draft_erased()))
+        .is_some_and(|live| live.legacy_draft_scrubbed || live.coach_draft_erased()))
 }
 
 /// The live card table's actor scrub: an actor's erase, and a restored

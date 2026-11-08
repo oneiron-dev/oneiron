@@ -36,17 +36,31 @@ pub(super) async fn facade_invocation_claim(
     // A custody value's body arrives redacted from the outer layer; its claim
     // states the arrival's own digest (FIX 11442).
     let verb = parts.uri.path().trim_start_matches('/').to_owned();
-    let (bytes, redacted) =
-        super::secret_body::read_middleware_body(body, &verb, &mut parts.extensions).await;
-    let digest = match parts
+    let cached_digest = parts
         .extensions
         .get::<super::secret_body::FacadeOriginalDigest>()
-    {
-        Some(stored) => stored.digest().to_owned(),
-        None => match redacted {
-            Some(value) => oneiron::receipt::call_json_digest(&value),
-            None => oneiron::receipt::call_bytes_digest(&bytes),
-        },
+        .map(|stored| stored.digest().to_owned());
+    let (body, digest) = if let Some(digest) = cached_digest {
+        (body, digest)
+    } else {
+        let (bytes, redacted) = super::secret_body::read_middleware_body(
+            body,
+            &verb,
+            &mut parts.extensions,
+            crate::api::request_floor::request_floor(&server),
+        )
+        .await;
+        let digest = match parts
+            .extensions
+            .get::<super::secret_body::FacadeOriginalDigest>()
+        {
+            Some(stored) => stored.digest().to_owned(),
+            None => match redacted {
+                Some(value) => oneiron::receipt::call_json_digest(&value),
+                None => oneiron::receipt::call_bytes_digest(&bytes),
+            },
+        };
+        (Body::from(bytes), digest)
     };
     let header = |name: &str| {
         parts
@@ -68,7 +82,7 @@ pub(super) async fn facade_invocation_claim(
     match claim_door_invocation(&server, invocation, call, auth.principal_entity()).await {
         DoorClaim::Run(claim) => {
             let response = claim
-                .run(next.run(Request::from_parts(parts, Body::from(bytes))))
+                .run(next.run(Request::from_parts(parts, body)))
                 .await;
             finish_door_claim(claim, response).await
         }
@@ -168,20 +182,24 @@ impl ResolvedCaller {
 
 /// The caller the receipt layer resolved for this same request, its path
 /// and headers unchanged, for the route's own `CoreAuth` extractor (FIX
-/// 12323). Only a caller whose standing the server reads again here, a
-/// slip, a token id or an attested owner, is taken, and only while it is
-/// still live ([`CoreAuth::credential_is_live`]). `None` for any other: the
-/// extractor resolves it as before, so a revoked or expired credential is
-/// refused there exactly as before, and an account key meets its own
-/// verifier again.
+/// 12323). A slip, token id or attested owner stands as before. An account
+/// key also stands when its verifier's live verdict lease still names the
+/// exact key, scopes and principal (FIX 12332); a no-jti owner bearer or dev
+/// hatch re-reads its admitting config, and an attested person matches this
+/// request's holder. Every caller must still be live
+/// ([`CoreAuth::credential_is_live`]). `None` for any other or any
+/// uncertainty: the extractor resolves it as before, so a revoked, punched
+/// or expired credential gets today's refusal.
 pub(crate) fn resolved_facade_caller(
     parts: &axum::http::request::Parts,
     server: &SyncServer,
 ) -> Option<CoreAuth> {
     let resolved = parts.extensions.get::<ResolvedCaller>()?;
     let auth = &resolved.auth;
-    let standing =
-        auth.verified_slip().is_some() || auth.jti().is_some() || auth.managed_owner().is_some();
+    let standing = auth.verified_slip().is_some()
+        || auth.jti().is_some()
+        || auth.managed_owner().is_some()
+        || auth.facade_reuse_stands(server, parts);
     (resolved.path == parts.uri.path()
         && resolved.headers == parts.headers
         && standing
