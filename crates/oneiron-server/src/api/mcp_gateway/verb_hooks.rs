@@ -174,7 +174,26 @@ pub(crate) fn mcp_row_paced_reply(
         return Ok(None);
     };
     mcp_hooks_admitted(server, tool, actor, memory)?;
-    reply.map(Some).map_err(mcp_facade_error)
+    let (value, rows) = reply.map_err(mcp_facade_error)?;
+    // The drain read those rows, not this retry: an answer derived from a
+    // row this caller no longer reads, or one erased since, answers only
+    // that the call ran, as a drained hook answer does (FIX 21614). Rows
+    // its door left unknown are not judged here.
+    if let (Some(known), Some(auth)) = (rows.as_deref(), actor.auth.as_ref())
+        && !crate::api::facade::rows_still_admitted(&server.vault, auth, known, false)
+    {
+        let ran =
+            serde_json::to_value(oneiron::task_verb::sdk::ActAnswer::<Value>::details_on_device())
+                .map_err(|_| {
+                    McpGatewayError::new(
+                        -32603,
+                        "engine_error",
+                        "typed agent result cannot be encoded",
+                    )
+                })?;
+        return Ok(Some((ran, Some(Vec::new()))));
+    }
+    Ok(Some((value, rows)))
 }
 
 /// The registration a connector call came in by, saved without a credential
