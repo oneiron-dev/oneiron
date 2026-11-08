@@ -13,7 +13,7 @@ use super::super::payload::{
 use super::super::spawn_replay::replay_request_match;
 use super::super::support::invalid_code_run_replay;
 use super::super::types::{SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect};
-use super::{CodeRunBridgeCall, CodeRunReplayCursor, CodeRunReplayRecord};
+use super::{CodeRunBridgeCall, CodeRunReplayRecord};
 use crate::Result;
 
 impl CodeRunBridgeCall {
