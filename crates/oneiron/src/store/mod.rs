@@ -332,7 +332,8 @@ pub use scan_checks::ScanCheck;
 pub(crate) use scan_checks::{CheckKey, PendingScanChecks};
 pub use scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
 mod group_commit;
-mod handle;
+#[doc(hidden)]
+pub mod handle;
 pub(crate) use oneiron_store::replay_only_commits;
 pub mod world_authority;
 pub(crate) mod world_pad_rows;

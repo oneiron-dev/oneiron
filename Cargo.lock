@@ -8578,6 +8578,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-mail-pack"
+version = "0.1.0"
+dependencies = [
+ "oneiron",
+]
+
+[[package]]
 name = "oneiron-mesh-transport"
 version = "0.1.0"
 dependencies = [
@@ -8839,6 +8846,7 @@ dependencies = [
  "oneiron-llm-openai",
  "oneiron-llm-own-server",
  "oneiron-llm-systemone",
+ "oneiron-mail-pack",
  "oneiron-mesh-transport",
  "oneiron-organ-host",
  "oneiron-organ-protocol",

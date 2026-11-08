@@ -75,7 +75,8 @@ pub(crate) use oneiron_store::session_overlay;
 #[global_allocator]
 static SESSION_OVERLAY_TEST_ALLOCATOR: session_overlay::hygiene_tests::ObservedAllocator =
     session_overlay::hygiene_tests::ObservedAllocator;
-pub(crate) mod side_table;
+#[doc(hidden)]
+pub mod side_table;
 pub mod slim;
 pub mod store;
 pub(crate) mod sweep;

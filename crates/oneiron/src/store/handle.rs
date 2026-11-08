@@ -62,7 +62,7 @@ pub struct RawDatabases {
 /// restore swaps out is sealed under the writer that marks it: from then on
 /// every write transaction refuses, so neither its rows nor the key custody
 /// it shares with its replacement change through any handle on it.
-pub(crate) struct StoreEnv {
+pub struct StoreEnv {
     env: Env,
     sealed: std::sync::atomic::AtomicBool,
 }
@@ -204,7 +204,7 @@ pub struct StoreCore {
     pub(crate) device_only_flag_lock: std::sync::RwLock<()>,
     /// Shared environment handle used to open transactions. The close-on-
     /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
-    pub(crate) env: StoreEnv,
+    pub env: StoreEnv,
     /// Raw handles; runtime access goes through the [`Store`] accessors.
     /// `pub(in crate::store)` so no code outside `crate::store` can bypass the
     /// [`OverlayDb`] seam — open-time machinery and accessor construction both
