@@ -161,6 +161,14 @@ pub enum SweepWork {
         /// files removed.
         removed: u64,
     },
+    ModelPackRetirement {
+        /// Retirement notices sent, one per subject and mark, each to every
+        /// owner.
+        notices: u64,
+        /// Whether the run moved a pin, or recorded the move of the pack the
+        /// vault follows, on a retirement day.
+        migrated: bool,
+    },
     /// The OAuth server's rows past their lifetime (FIX 4902).
     #[serde(rename = "oauth_rows")]
     OAuthRows {
@@ -234,6 +242,7 @@ impl SweepWork {
             } => rebuilt == 0 && failed == 0 && dropped == 0,
             Self::AnnotationBodyAnchors { moved, failed } => moved == 0 && failed == 0,
             Self::DrafterCorpora { removed } => removed == 0,
+            Self::ModelPackRetirement { notices, migrated } => notices == 0 && !migrated,
             Self::OAuthRows {
                 requests,
                 codes,

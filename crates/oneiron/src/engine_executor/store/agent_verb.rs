@@ -36,6 +36,7 @@ pub(crate) fn store_agent_verb_write_answer(
         write_receipt_result_output_path(receipt.run_id),
         sink,
         owner,
+        &[],
         Some((receipt, generation)),
     )? {
         Ok(output) => output,

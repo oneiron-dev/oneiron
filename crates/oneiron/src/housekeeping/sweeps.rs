@@ -22,6 +22,7 @@ use super::{Deadline, HardEraseWork, HousekeepingSweep, SecretLiftWork, SweepWor
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
+use crate::llm::model_pack::AccessSnapshot;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{EntityId, Vault};
 
@@ -76,7 +77,9 @@ impl Run {
 
 /// Runs one sweep from `cursor`, the point an unfinished walk of the same
 /// sweep stopped at. `owner_asked` when the owner asked for this run rather
-/// than its schedule making it due.
+/// than its schedule making it due. `access` is what the host's offers hold,
+/// against which the model pack retirement sweep resolves the active pack's
+/// roles.
 pub(super) fn run(
     vault: &Vault,
     sweep: HousekeepingSweep,
@@ -84,6 +87,7 @@ pub(super) fn run(
     deadline: &Deadline,
     cursor: Option<&[u8]>,
     owner_asked: bool,
+    access: &AccessSnapshot,
 ) -> Result<Run> {
     let work = match sweep {
         HousekeepingSweep::SecretLeaseExpiry => {
@@ -171,6 +175,13 @@ pub(super) fn run(
         HousekeepingSweep::DrafterCorpusSweep => SweepWork::DrafterCorpora {
             removed: vault.sweep_drafter_corpora()?,
         },
+        HousekeepingSweep::ModelPackRetirement => {
+            let report = vault.run_model_pack_retirement(access)?;
+            SweepWork::ModelPackRetirement {
+                notices: u64::from(report.notices),
+                migrated: report.migrated,
+            }
+        }
         HousekeepingSweep::OAuthExpiry => return oauth_rows(vault, now, deadline),
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement

@@ -442,6 +442,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultPolicyOwnerRowChange
         | Row::VaultConsentApproveOnce
         | Row::VaultConnectorsCallsApproveOnce
+        | Row::VaultCampaignHeld
+        | Row::VaultCampaignApproveOnce
         | Row::VaultConnectorsSlatesRedraft
         | Row::VaultConnectorsSlatesScopeOutcome
         | Row::VaultConnectorsSlatesRevisionOffers
@@ -501,6 +503,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultFederationBurstReview
         | Row::VaultFederationBurstReviewRelease
         | Row::VaultFederationBurstReviewReject
+        | Row::VaultFederationStatus
         | Row::VaultFederationConnectIdentity
         | Row::VaultFederationConnectGrantsMint
         | Row::VaultFederationConnectOffer
@@ -674,6 +677,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultSharedPolicyGet
         | Row::VaultSharedPolicyChange
         | Row::VaultSharedPolicyChanges
+        | Row::VaultSharedOwnerChangeWaitGet
         | Row::VaultRootsRequestsCreate
         | Row::VaultRootsRequestsList
         | Row::VaultOwnerWorkGet
@@ -706,13 +710,16 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCustodyMembersReenrol
         | Row::VaultMessageStreamsRefused
         | Row::VaultStepUpPasskeysReset
-        | Row::VaultOutboundCallsRequestErase => owner_proof(auth, server, verb).map(drop),
+        | Row::VaultOutboundCallsRequestErase
+        | Row::VaultOutboundUncertainSendAnswer => owner_proof(auth, server, verb).map(drop),
         Row::VaultClaimsReview | Row::VaultClaimsSettle => {
             crate::api::facade::claim_settle_doors::settler_admits(server, auth, verb)
         }
         Row::VaultSharedProposeDelete
         | Row::VaultSharedProposeTransfer
         | Row::VaultSharedProposeRemoveOwner
+        | Row::VaultSharedProposeAddOwner
+        | Row::VaultSharedOwnerChangeWaitSet
         | Row::VaultSharedExecute
         | Row::VaultSharedReceipt
         | Row::VaultSharedOutcomes
