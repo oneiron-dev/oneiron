@@ -239,6 +239,7 @@ pub use oneiron_authority::authority::{
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
 mod federation_status;
+pub(crate) mod tables;
 pub use federation_status::{
     FederationPactInactiveReason, FederationPactStatusRow, FederationStatus,
 };

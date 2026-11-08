@@ -965,5 +965,6 @@ const fn end_reason_word(reason: SessionEndReason) -> &'static str {
     }
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

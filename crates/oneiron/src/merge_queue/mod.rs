@@ -37,6 +37,7 @@ mod source_types;
 mod staging;
 mod storage;
 mod survivors;
+pub(crate) mod tables;
 mod tested;
 mod tested_export;
 mod tested_received;

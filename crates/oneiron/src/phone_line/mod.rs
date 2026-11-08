@@ -1,6 +1,7 @@
 //! Owner-enabled phone-line metadata and call-bound reads. This does not answer calls or accept audio.
 
 mod answer;
+pub(crate) mod tables;
 pub(crate) use answer::PhoneLineReadCeiling;
 
 use crate::Vault;

@@ -205,5 +205,6 @@ use wire_keys::{
 #[cfg(test)]
 pub(crate) use wire_keys::IDENTITY_TOPOLOGY_LOCAL_SEQ_HEADROOM;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

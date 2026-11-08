@@ -229,6 +229,7 @@ pub(crate) use ledgers::attempt_pack_receipt_page;
 pub(crate) use ledgers::attempt_pack_receipt_in_txn;
 
 mod archive_source;
+pub(crate) mod tables;
 pub(crate) use archive_source::{
     archived_receipt_carriers_in_txn, is_receipt_archive_source, receipt_archive_custody_exists,
     receipt_archives_for_holder, remove_receipt_archive_custody,

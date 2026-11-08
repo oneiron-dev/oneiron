@@ -40,6 +40,7 @@ pub mod tool_call;
 mod tool_schema;
 mod zeroizing_wire;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

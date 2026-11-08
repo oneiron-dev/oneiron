@@ -24,6 +24,7 @@ pub use self::types::{
     DreamerTournamentWeaveArtifact, DreamerTournamentWinner,
 };
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

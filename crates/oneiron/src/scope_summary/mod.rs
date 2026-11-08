@@ -58,5 +58,6 @@ pub(crate) use self_model::SelfModelRead;
 pub(crate) use session::{enqueue_session_summary_in_txn, session_summary_excluded};
 pub(crate) use word_sources::{WordSources, word_sources_in, word_sources_through_in};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

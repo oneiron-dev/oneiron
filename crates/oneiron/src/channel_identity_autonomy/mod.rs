@@ -58,6 +58,7 @@ use rmpv::Value;
 
 mod posting_dispatch;
 mod space_posting;
+pub(crate) mod tables;
 pub use space_posting::{
     GroupPostingPreset, SpacePostingMode, SpacePostingPlan, SpacePostingReceipt,
 };

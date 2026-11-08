@@ -32,6 +32,7 @@ mod scoped_touch;
 mod stop_hold;
 mod thread_membership;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

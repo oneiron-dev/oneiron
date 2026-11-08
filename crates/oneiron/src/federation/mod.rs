@@ -248,4 +248,5 @@ pub use oneiron_authority::federation::{
 };
 
 mod org_admin;
+pub(crate) mod tables;
 pub use org_admin::{OrgAdminError, OrgAdminPolicy, OrgAdminPower};

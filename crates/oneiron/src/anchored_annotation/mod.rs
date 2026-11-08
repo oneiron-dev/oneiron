@@ -86,6 +86,7 @@ pub use self::model::{
 };
 pub use self::reanchor::replay_locator;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

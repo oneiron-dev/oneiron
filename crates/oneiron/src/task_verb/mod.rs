@@ -440,6 +440,7 @@ pub mod verb_hook_boundary;
 mod ask_outcome_tests;
 #[cfg(test)]
 mod ask_tests;
+pub(crate) mod tables;
 
 pub(crate) use ask_facade::settle_waiting_asks;
 pub use ask_forward::{

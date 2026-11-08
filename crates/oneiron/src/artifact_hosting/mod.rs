@@ -423,5 +423,6 @@ mod publish;
 use self::publish::publish_artifact_pointer_in_txn;
 pub(crate) use self::publish::{artifact_publish_gate_refs_in_txn, artifact_publish_receipts};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

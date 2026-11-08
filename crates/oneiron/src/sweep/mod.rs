@@ -134,6 +134,7 @@ pub(crate) use self::carrier_facts::stage_carrier_scrub_facts_in_txn;
 pub(crate) use self::compact::compact_window_for_test;
 pub(crate) use self::run::{run_hard_erase_sweep, run_scheduled_hard_erase_sweep};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

@@ -226,4 +226,5 @@ use rmpv::Value;
 #[cfg(test)]
 use std::collections::BTreeSet;
 
+pub(crate) mod tables;
 mod value_projection;

@@ -68,6 +68,7 @@ pub(crate) use self::types::{
     COUNTERPARTY_CONTACT_FIELDS_STANDARD,
 };
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

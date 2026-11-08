@@ -49,6 +49,7 @@ mod records;
 mod resources;
 mod revision_window;
 mod support;
+pub(crate) mod tables;
 mod verbs;
 mod xlsx;
 
