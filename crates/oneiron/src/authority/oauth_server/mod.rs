@@ -22,7 +22,8 @@
 //! a write reads it, and the engine's housekeeping sweep `oauth_expiry` drops the rest (`sweep`).
 //! A sign-in that lapses or fails before its client holds a token takes back the owner agent grant
 //! its allow minted, in the write that drops it or revokes its new token family (`authorization`,
-//! FIX 22142, 22193).
+//! FIX 22142, 22193). When the write that revokes the family fails, the sweep's next pass ends the
+//! sign-in instead (FIX 22226).
 //!
 //! The two open doors a stranger can make write, `/oauth/register` and `/oauth/authorize`, are
 //! capped per client address and per vault by the server, under the limits named here.
