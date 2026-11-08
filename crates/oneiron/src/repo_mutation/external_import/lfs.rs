@@ -7,25 +7,28 @@
 //! An object that does not arrive is left to the door, which refuses a tip
 //! naming an absent object as it refuses any push; nothing here holds.
 //!
-//! The credential broker carries no Git-LFS exchange yet (OSH-3), so this
-//! vault's own process makes these requests, with the binding's header when
-//! the import names one. Before the first of them goes out, the import
-//! records that as a labelled daemon residual (FIX 19084), which its receipt
-//! shows; a residual that cannot be recorded sends nothing.
-use super::source::{ImportOutcome, ImportStep};
+//! The call's host sends every batch call and object action through its
+//! credential broker (OSH-3, FIX 19876), which alone installs the binding's
+//! credential when the import names one; an unbound import's go with none.
+//! Before the first LFS request goes out, the import records that route;
+//! once the requests ended, what the broker did (its isolation and how many
+//! credential echoes it rewrote). The receipt shows both. A route that
+//! cannot be recorded sends nothing.
+use super::ImportCall;
+use super::source::{ImportOutcome, ImportStep, LfsTransferRecord, ObservationRecord};
 use super::types::{ExternalImportRequest, NormalizedSource};
-use super::{EXTERNAL_IMPORT_FETCH_EFFECTOR, ImportCall};
 use crate::Vault;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::git_wire::FetchedExternalGit;
-use crate::origin::lfs::{DirectLfsRemote, LfsBatchCredential, LfsOid, download_lfs_objects};
+use crate::origin::lfs::LfsOid;
 
 impl Vault {
     /// Installs the Git-LFS objects `fetched`'s history names that this
     /// vault lacks. A transfer that fails is logged and left to the door.
     ///
     /// # Errors
-    /// A store or object store failure reading what the history names.
+    /// A store or object store failure reading what the history names, or
+    /// one recording the transfer's route or end.
     pub(super) fn install_external_import_lfs(
         &self,
         call: &ImportCall<'_>,
@@ -57,47 +60,21 @@ impl Vault {
             tracing::warn!("an outside import's repository is off its host; no LFS fetch");
             return Ok(());
         }
-        let remote = DirectLfsRemote::of(&source.repository)?;
         self.observe(
             call,
             ImportStep::Lfs,
-            ImportOutcome::DaemonResidual,
-            "git_lfs_daemon_residual",
+            ImportOutcome::Brokered,
+            "git_lfs_broker",
         )?;
         let now = self.now_recorded_at();
-        let missing = match request.source_binding.as_deref() {
-            None => download_lfs_objects(
-                self,
-                &remote.transport(None),
-                LfsBatchCredential::Anonymous,
-                &absent,
-                now,
-            ),
-            Some(binding) => {
-                let mut answer = Err(Error::InvariantViolation("an import LFS fetch never ran"));
-                let door = self.inject_secret_at_door(
-                    binding,
-                    EXTERNAL_IMPORT_FETCH_EFFECTOR,
-                    &mut |value: &[u8]| {
-                        let Ok(text) = std::str::from_utf8(value) else {
-                            answer = Err(Error::Refused("binding_not_a_header".to_owned()));
-                            return Ok(());
-                        };
-                        let header = zeroize::Zeroizing::new(text.trim().to_owned());
-                        answer = download_lfs_objects(
-                            self,
-                            &remote.transport(Some(header.as_str())),
-                            LfsBatchCredential::Remote,
-                            &absent,
-                            now,
-                        );
-                        Ok(())
-                    },
-                );
-                door.and(answer)
-            }
-        };
-        match missing {
+        let report = call.host.fetch_lfs_objects(
+            self,
+            source,
+            request.source_binding.as_deref(),
+            &absent,
+            now,
+        );
+        match &report.missing {
             Ok(missing) if missing.is_empty() => {}
             Ok(missing) => tracing::warn!(
                 missing = missing.len(),
@@ -108,6 +85,18 @@ impl Vault {
                 "an outside import's LFS fetch failed; the door judges its pointers"
             ),
         }
-        Ok(())
+        let ended = ObservationRecord::new(
+            call.import,
+            call.attempt,
+            ImportStep::Lfs,
+            ImportOutcome::Brokered,
+            self.now_recorded_at(),
+        )
+        .because("git_lfs_broker_ended")
+        .with_lfs_transfer(LfsTransferRecord {
+            broker_isolation: report.broker_isolation,
+            credential_rewrites: report.credential_rewrites,
+        });
+        self.put_external_import_observation(call.import, &ended)
     }
 }

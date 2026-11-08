@@ -64,9 +64,6 @@ pub struct HybridSearchHit {
 impl HybridSearchRequest {
     pub fn validate(&self) -> MemoryResult<()> {
         caps::check_limit_nonzero(self.limit)?;
-        if let Some(query) = &self.query {
-            caps::check_query(query)?;
-        }
         if let Some(vector) = &self.query_vector {
             caps::check_dimensions(vector.len())?;
             if vector.iter().any(|value| !value.is_finite()) {
@@ -74,7 +71,6 @@ impl HybridSearchRequest {
             }
         }
         for code in &self.phonetic_codes {
-            caps::check_query(code)?;
             if code.trim().is_empty() {
                 return Err(MemoryError::bad_request("phonetic codes must not be empty"));
             }

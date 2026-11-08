@@ -1138,6 +1138,9 @@ impl OneironClient {
                 "vault.members.accept" => remote_agent_verb_output::<
                     oneiron::federation::SharedActExecutionReceipt,
                 >(client, verb, &input),
+                "vault.members.accept_with_credential" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SharedInvitationAcceptedWithCredential,
+                >(client, verb, &input),
                 "vault.members.decline" => remote_agent_verb_output::<
                     oneiron::federation::SharedActExecutionReceipt,
                 >(client, verb, &input),
@@ -3343,6 +3346,9 @@ impl OneironClient {
                 "vault.neighbors" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Vec<oneiron::memory::NeighborHit>>,
                 >(client, verb, &input),
+                "vault.edges.provenance" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Vec<oneiron::memory::EdgeProvenanceView>>,
+                >(client, verb, &input),
                 "vault.structural.put" => remote_agent_verb_output::<
                     oneiron::memory::EntityRefReceipt,
                 >(client, verb, &input),
@@ -3919,6 +3925,9 @@ impl OneironClient {
                         oneiron::task_verb::sdk::RepoManifestConflictDiscardView,
                     >(client, verb, &input)
                 }
+                "vault.dreamer.follower.keyframe" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::DreamerFollowerKeyframeResult,
+                >(client, verb, &input),
                 "connector.answer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorCallReply,
                 >(client, verb, &input),
@@ -5511,7 +5520,6 @@ impl OneironClient {
             reader_agent_ref: reader_agent_ref.map(str::to_owned),
             ..Default::default()
         };
-        oneiron::memory::caps::check_query(&input.query)?;
         oneiron::memory::caps::check_limit_nonzero(
             input
                 .limit
@@ -8545,6 +8553,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.members.accept", value)
+    }
+    pub fn vault_members_accept_with_credential(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest,
+    ) -> Result<oneiron::task_verb::sdk::SharedInvitationAcceptedWithCredential, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.accept_with_credential", value)
     }
     pub fn vault_members_decline(
         &self,
@@ -17256,7 +17276,6 @@ impl OneironClient {
         &self,
         input: &oneiron::task_verb::sdk::QueryBm25Request,
     ) -> Result<oneiron::task_verb::sdk::Bm25Search, MemoryError> {
-        oneiron::memory::caps::check_query(&input.query)?;
         oneiron::memory::caps::check_limit_nonzero(input.limit)?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
@@ -17279,6 +17298,21 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.neighbors", value)
+    }
+    pub fn vault_edges_provenance(
+        &self,
+        input: &oneiron::memory::EdgeProvenanceRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Vec<oneiron::memory::EdgeProvenanceView>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.edges.provenance", value)
     }
     pub fn vault_structural_put(
         &self,
@@ -19563,6 +19597,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.sync.repo_manifests.conflict.discard", value)
+    }
+    pub fn vault_dreamer_follower_keyframe(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::task_verb::sdk::DreamerFollowerKeyframeResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.dreamer.follower.keyframe", value)
     }
     pub fn connector_answer(
         &self,
