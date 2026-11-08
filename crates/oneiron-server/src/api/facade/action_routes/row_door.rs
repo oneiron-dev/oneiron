@@ -246,7 +246,9 @@ impl FacadeRowDoor {
     /// Posts the row to its facade route. The step's invocation rides as
     /// `x-oneiron-invocation`, so the route's verb hooks fire once for it.
     /// Its writes are witnessed for the leased run `origin` seals (FIX
-    /// 10748), and its receipt names the action's hold (FIX 10938).
+    /// 10748), and its receipt names the action's hold (FIX 10938). A row
+    /// the credential's own call runs meets the route's destination release
+    /// before the run reads it (`released_value`, FIX 21054).
     fn post_row(
         &self,
         call: &SelfAgentVerbCall,
@@ -288,8 +290,15 @@ impl FacadeRowDoor {
                     (request_digest, inputs, attempt),
                     &answer,
                 );
+                // The run reads what the row's route would send: its answer
+                // judged for this caller's destination, beside its rows
+                // (FIX 21054).
                 let answer = answer
-                    .map(|answer| AgentVerbAnswer::new(answer.value, answer.rows))
+                    .map(|output| {
+                        let rows = output.rows.clone();
+                        let (_, sent) = super::super::released_value(&server, &auth, verb, output);
+                        AgentVerbAnswer::new(sent, rows)
+                    })
                     .map_err(|error| RowRefusal {
                         words: AgentVerbRefusalWords {
                             code: error.body.error.code,

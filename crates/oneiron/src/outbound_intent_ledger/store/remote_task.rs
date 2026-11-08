@@ -35,7 +35,12 @@ pub(crate) fn defer_record(
     )? {
         Transitioned::Moved(record) => record,
         Transitioned::Replayed(mut record) => {
-            open_payload_in_txn(vault, &wtxn, &mut record)?;
+            drop(wtxn);
+            // No state write to keep: the replay only re-reads, so the open
+            // runs on a snapshot past the dropped writer (FIX 12497), as in
+            // `record_possible_delivery`'s no-op arm.
+            let rtxn = vault.store.custody_snapshot()?;
+            open_payload_in_txn(vault, &rtxn, &mut record)?;
             return Ok(record);
         }
     };
@@ -44,10 +49,14 @@ pub(crate) fn defer_record(
         vault, &mut wtxn, &id, &handle, now_ms,
     )?;
     keep_remote_task_in_txn(vault, &mut wtxn, &id, handle)?;
-    open_payload_in_txn(vault, &wtxn, &mut record)?;
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);
     vault.wake_owner_shed();
+    // Open only after the state write is durable (FIX 12497), as in
+    // `record_possible_delivery`: a sealed row whose key will not open must
+    // not lose the deferral.
+    let rtxn = vault.store.custody_snapshot()?;
+    open_payload_in_txn(vault, &rtxn, &mut record)?;
     synced?;
     Ok(record)
 }

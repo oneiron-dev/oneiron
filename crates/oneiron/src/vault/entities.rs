@@ -556,6 +556,20 @@ impl Vault {
             .collect()
     }
 
+    /// [`Self::entities_by_type_page`] in a caller-owned read snapshot.
+    pub(crate) fn entities_by_type_page_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity_type: u8,
+        after: Option<&EntityId>,
+        limit: usize,
+    ) -> Result<Vec<EntityId>> {
+        self.store
+            .port_entity_ids_by_type(txn, entity_type, after.copied())?
+            .take(limit.min(MAX_TYPE_QUERY_RESULTS))
+            .collect()
+    }
+
     /// Returns up to `limit` latest entity bodies of a given type.
     ///
     /// Scans at most `scan_limit` rows from the `temporal_learned` index in
