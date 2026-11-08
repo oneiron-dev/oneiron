@@ -889,7 +889,7 @@ export interface FacadeInputs {
   "vault.artifacts.keep": Facade.ProposalSettleRequest;
   "vault.artifacts.discard": Facade.ProposalSettleRequest;
   "vault.artifacts.undo": Facade.ProposalSettleRequest;
-  "can": Facade.TaskCanAskRequest;
+  "can": Facade.CanRequest;
   "peek": Facade.TaskAskHandle;
   "ask": Facade.TaskAskRequest;
   "wait": Facade.TaskWaitRequest;
@@ -2243,7 +2243,7 @@ export interface FacadeResults {
   "vault.artifacts.keep": Facade.KeptProposal;
   "vault.artifacts.discard": Facade.DiscardedProposal;
   "vault.artifacts.undo": Facade.UndoneKeep;
-  "can": Facade.TaskAskPreflight;
+  "can": Facade.CanAnswer;
   "peek": Facade.TaskAskPersonEvidence[];
   "ask": Facade.TaskAskReceipt;
   "wait": Facade.TaskAskWait;
@@ -3613,7 +3613,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.artifacts.keep": { description: "Settles one waiting artifact proposal into a version.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.discard": { description: "Drops one waiting artifact proposal, once.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.undo": { description: "Undoes one Keep by appending a new version.", scope: "Write", proposes: false, hostDoor: false, section: false },
-  "can": { description: "Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "can": { description: "Read-only preflight: of an ask, its recipients, faces and channels, without minting a TASK; of a scheduled send or connector call ({effect}), a dated allow, deny, would-ask or named hold, judged as the act would be, rechecked when it runs.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "peek": { description: "An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "ask": { description: "Asks people or an authority a typed question and returns at admission with the ask's handle.", scope: "Write", proposes: false, hostDoor: false, section: true },
   "wait": { description: "Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode.", scope: "Write", proposes: false, hostDoor: false, section: true },
@@ -7625,8 +7625,8 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
     },
     /** Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal. */
     execute_code: (input: Facade.ForeignCodeRunRequest, options?: O): FacadeReturns<"execute_code">[K] => invoke("execute_code", input, options, newInvocation()),
-    /** Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything. */
-    can: (input: Facade.TaskCanAskRequest, options?: O): FacadeReturns<"can">[K] => invoke("can", input, options, newInvocation()),
+    /** Read-only preflight: of an ask, its recipients, faces and channels, without minting a TASK; of a scheduled send or connector call ({effect}), a dated allow, deny, would-ask or named hold, judged as the act would be, rechecked when it runs. */
+    can: (input: Facade.CanRequest, options?: O): FacadeReturns<"can">[K] => invoke("can", input, options, newInvocation()),
     /** An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask. */
     peek: (input: Facade.TaskAskHandle, options?: O): FacadeReturns<"peek">[K] => invoke("peek", input, options, newInvocation()),
     /** Asks people or an authority a typed question and returns at admission with the ask's handle. */
