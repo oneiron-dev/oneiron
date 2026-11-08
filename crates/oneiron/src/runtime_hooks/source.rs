@@ -331,6 +331,8 @@ pub(super) struct SourceBatch {
 
 pub use crate::consent::settlement_fact::{SettledFact, SettledOutcome, SettlementKind};
 
+use settlement::settlements_after_in_txn;
+
 /// Up to `max_entries` facts after `after` (exclusive) in `source`.
 pub(super) fn read_after(
     vault: &Vault,
