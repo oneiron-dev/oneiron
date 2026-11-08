@@ -315,6 +315,7 @@ pub(crate) fn erase_spawn_call(call: &mut CodeRunBridgeCall) -> Result<bool> {
         return Ok(false);
     }
     let before = call.clone();
+    let answered = decode_self_dispatch_outcome(&call.outcome);
     let cause = spawn_erasure(&call.outcome);
     // Only the ask that ran is erased's (FIX 1442): the original never
     // reached the erased target, so it stays as working evidence -- unless
