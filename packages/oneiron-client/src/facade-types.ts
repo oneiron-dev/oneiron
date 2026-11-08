@@ -8575,7 +8575,7 @@ export type ChannelIdentityState = "requested" | "pending_fulfillment" | "active
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityView` */
 export type ChannelIdentityView = { identity_ref: EntityId; channel: string; address_or_handle: string; shape: ChannelIdentityShape; binding: ChannelIdentityBinding; custody: ChannelIdentityCustody; state: ChannelIdentityState; pending_fulfillment?: string | null; state_changed_at: number; quarantine_until?: number | null; outbound_eligible: boolean; occupies_assignment_key: boolean }
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityLifecycleReceipt` */
-export type ChannelIdentityLifecycleReceipt = { identity_ref: EntityId; receipt_ref: string; gate_receipt_ref?: string | null; outcome: string; reason_codes: string[]; owner_visible_state: string; identity?: ChannelIdentityView | null; outbound_closed: boolean; identity_retiring: boolean; approval_digest?: string | null; request_ref?: EntityId | null }
+export type ChannelIdentityLifecycleReceipt = { identity_ref: EntityId; receipt_ref: string; gate_receipt_ref?: string | null; outcome: string; reason_codes: string[]; owner_visible_state: string; identity?: ChannelIdentityView | null; outbound_closed: boolean; identity_retiring: boolean; approval_digest?: string | null; request_ref?: EntityId | null; paced_until?: number | null }
 /** `oneiron::channel_identity::custody::DelegatedGrantScope` */
 export type DelegatedGrantScope = "mail.read" | "mail.metadata" | "mail.send"
 /** `oneiron::channel_identity::custody::DelegatedGrant` */
