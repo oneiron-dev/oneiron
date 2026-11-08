@@ -64,8 +64,9 @@ pub(super) fn fence_overlay_replay_in_txn<'r>(
     let owner = response_owner_in_txn(dbs, txn, &record.run_id)?;
     let live = record.live_run.as_ref().map(|live| live.actor);
     let read: &heed::RoTxn<'_> = txn;
-    let erased = owner.is_some_and(ResponseOwner::erased)
+    let erased = owner.as_ref().is_some_and(ResponseOwner::erased)
         || owner
+            .as_ref()
             .and_then(ResponseOwner::actor)
             .into_iter()
             .chain(stamped.map(|(_, actor)| actor))
@@ -74,7 +75,7 @@ pub(super) fn fence_overlay_replay_in_txn<'r>(
     if !erased {
         return Ok(record);
     }
-    let run = owner.map_or_else(
+    let run = owner.as_ref().map_or_else(
         || stamped.map_or(record.run_id, |(run, _)| run),
         |owner| owner.run,
     );
@@ -182,10 +183,11 @@ fn erase_record_in_txn(
         return Ok(());
     };
     let owner = response_owner_in_txn(dbs, wtxn, &record_id)?;
-    if owner.is_some_and(ResponseOwner::erased) {
+    if owner.as_ref().is_some_and(ResponseOwner::erased) {
         return Ok(());
     }
     let named = owner
+        .as_ref()
         .and_then(ResponseOwner::actor)
         .into_iter()
         .chain(record.live_run.as_ref().map(|live| live.actor))
@@ -193,7 +195,7 @@ fn erase_record_in_txn(
     if !named {
         return Ok(());
     }
-    let run = owner.map_or(record.run_id, |owner| owner.run);
+    let run = owner.as_ref().map_or(record.run_id, |owner| owner.run);
     REPLAY_RECORDS.put_erased(dbs, wtxn, &record_id, Erased::of(record)?)?;
     mark_response_erased_in_txn(dbs, wtxn, record_id, run)
 }
