@@ -6,6 +6,7 @@ mod effect_grants;
 mod effect_paced;
 mod effect_pair;
 mod evaluate;
+mod evaluate_recipients;
 mod preflight;
 mod record;
 
@@ -121,7 +122,8 @@ pub(crate) struct ExternalEffectJudgment {
     matched_grant: Option<StandingOutboundGrant>,
     /// Fix list row 17645: the standing grants that released the other
     /// recipients of one message to several, each once and none of them
-    /// `matched_grant`; recorded as used when the message is admitted.
+    /// `matched_grant`; carried into governance and recorded as used when the
+    /// message is admitted.
     recipient_grants: Vec<StandingOutboundGrant>,
     /// OF-374: the sender row's envelope slot covering this send, spent only
     /// when the decision is recorded as an admitting Allow.

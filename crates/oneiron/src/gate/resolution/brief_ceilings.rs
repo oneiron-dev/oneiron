@@ -3,8 +3,9 @@
 //! description of its configured row, beside the actor's live definition
 //! ceiling. Beside them, in the same snapshot, the per-class verdicts (FIX
 //! 20734, Engine ruling 11:16): one line for each class the actor's standing
-//! outbound grants, its effector policy rows and its act-policy rows name,
-//! and DEC-0006 invariant 1's default lines, each word classed as
+//! outbound and consent grants, its effector policy rows, governing connector
+//! keys and act-policy rows name, and DEC-0006 invariant 1's default lines,
+//! each word classed as
 //! `can(effect)` classes it, from the checks the actor meets for any target.
 //! It evaluates no Gate and judges no one act.
 //!
@@ -18,10 +19,12 @@
 use std::collections::BTreeSet;
 
 use crate::Vault;
+use crate::connector_key::{ConnectorKeyStatus, SlateCapability, SlateDisposition};
+use crate::consent::BoundEnvelope;
 use crate::context_board::{
-    BriefActPosture, BriefCeiling, BriefCeilingPosture, BriefCeilingTarget, BriefClassPrecedence,
-    BriefClassReads, BriefClassSource, BriefClassVerdict, BriefClassVerdicts, BriefDefaultRule,
-    BriefOutboundScope, BriefPerActCheck,
+    BriefActPosture, BriefActionEnvelope, BriefCeiling, BriefCeilingPosture, BriefCeilingTarget,
+    BriefClassPrecedence, BriefClassReads, BriefClassSource, BriefClassVerdict, BriefClassVerdicts,
+    BriefDefaultRule, BriefOutboundScope, BriefPerActCheck,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -204,12 +207,18 @@ impl PolicyManifestResolution {
     ///
     /// 1. each standing outbound grant whose principal is the actor and that
     ///    is active under this policy: the class its scope dial covers;
-    /// 2. each scoped policy grant row whose own actor binding admits the
+    /// 2. each active standing consent grant whose actor subject contains the
+    ///    actor and whose envelope is an action envelope;
+    /// 3. each scoped policy grant row whose own actor binding admits the
     ///    actor, that has no budget row and whose Scope admits an external
     ///    effect: the effector it covers;
-    /// 3. each act-policy pairing a vault row or the actor's own holder row
+    /// 4. the actor's governing connector keys: non-Active status, charter
+    ///    drift or compiled never-list entries, and each non-Auto slate tool;
+    /// 5. each act-policy pairing a vault row or the actor's own holder row
     ///    names, whose posture resolves to deny for the actor;
-    /// 4. each default rule of DEC-0006 invariant 1.
+    /// 6. each default rule of DEC-0006 invariant 1.
+    ///
+    /// The consent grants and connector census are read on that same `txn`.
     ///
     /// Inside its bound, a grant line or an effector line gets the words of
     /// the checks the actor meets for any target, classed as `can(effect)`
@@ -227,8 +236,9 @@ impl PolicyManifestResolution {
     /// # Errors
     /// [`Error::InvalidConfig`] when a loaded manifest holds the policy
     /// fail-closed, so its rows do not govern; a frontier hash that does not
-    /// compute; a grant read that fails or does not decode; a selector value
-    /// that does not encode.
+    /// compute; an outbound, consent or connector read that fails or does not
+    /// decode; an invalid actor bound or charter policy; a selector value that
+    /// does not encode.
     pub(crate) fn brief_class_verdicts(
         &self,
         store: &Store,
@@ -316,6 +326,165 @@ impl PolicyManifestResolution {
                 Some(beyond_bound(&target_free_codes)),
                 SEND_CHECKS.to_vec(),
             ));
+        }
+        let candidate =
+            crate::consent::ActorBound::new(actor_ref.clone())?.with_actor_class(actor_class)?;
+        for row in crate::consent::active_standing_grant_rows_in_txn(store, txn)? {
+            let bound = row.grant.bound();
+            if !bound
+                .actor()
+                .is_some_and(|subject| subject.contains(&candidate))
+            {
+                continue;
+            }
+            let BoundEnvelope::Action(envelope) = bound.envelope() else {
+                continue;
+            };
+            verdicts.push(worded_line(
+                bound.class().as_str().to_owned(),
+                BriefClassSource::ConsentGrant {
+                    grant: row.grant_ref(),
+                    envelope: BriefActionEnvelope {
+                        selectors: envelope.selectors().to_vec(),
+                        target: envelope.target().map(str::to_owned),
+                        budget: envelope.budget(),
+                        receipt_required: envelope.receipt_required(),
+                    },
+                    external_effects: bound
+                        .actor()
+                        .is_some_and(|subject| subject.actor_class().is_none()),
+                },
+                &target_free_codes,
+                Some(beyond_bound(&target_free_codes)),
+                vec![
+                    BriefPerActCheck::BoundContainment,
+                    BriefPerActCheck::ExternalAuthority,
+                ],
+            ));
+        }
+        for (key_id, key) in
+            crate::connector_key::governing_keys_for_actor_in_txn(store, txn, &actor.entity_ref())?
+        {
+            let Some(server) = crate::connector_key::brief_server_name(&key) else {
+                continue;
+            };
+            if key.status != ConnectorKeyStatus::Active {
+                let class = format!("mcp:{server}/*");
+                let source = BriefClassSource::ConnectorKey {
+                    key: key_id,
+                    server,
+                    status: key.status.as_str().to_owned(),
+                };
+                let verdict = match key.status {
+                    ConnectorKeyStatus::Suspended | ConnectorKeyStatus::Pending => {
+                        // The connector driver stops these statuses before the
+                        // Gate; its administrative hold is not a Gate denial.
+                        let hold = if key.status == ConnectorKeyStatus::Suspended {
+                            "connector_key_suspended"
+                        } else {
+                            "connector_key_pending"
+                        };
+                        BriefClassVerdict {
+                            class,
+                            source,
+                            inside: CanEffectVerdict::Held,
+                            reasons: vec![hold.to_owned()],
+                            holds: vec![hold.to_owned()],
+                            outside: None,
+                            per_act: vec![],
+                        }
+                    }
+                    ConnectorKeyStatus::Revoked => worded_line(
+                        class,
+                        source,
+                        &[GateReasonCode::DenyConnectorKeySuspended],
+                        None,
+                        vec![],
+                    ),
+                    ConnectorKeyStatus::Active => unreachable!("guarded above"),
+                };
+                verdicts.push(verdict);
+                continue;
+            }
+            let catalog_charter = crate::connector_key::catalog_charter_in_txn(store, txn, &key)?;
+            for (block, is_catalog_charter) in [
+                (key.charter.as_ref(), false),
+                (catalog_charter.as_ref(), true),
+            ] {
+                let Some(block) = block else {
+                    continue;
+                };
+                if crate::connector_key::charter_block_drifted(block)? {
+                    verdicts.push(worded_line(
+                        format!("mcp:{server}/*"),
+                        BriefClassSource::CharterDrift {
+                            key: key_id,
+                            server: server.clone(),
+                            catalog_charter: is_catalog_charter,
+                        },
+                        &[GateReasonCode::PendingCharterDrift],
+                        None,
+                        vec![],
+                    ));
+                    continue;
+                }
+                for entry in &block.compiled.never_list {
+                    verdicts.push(worded_line(
+                        entry.clone(),
+                        BriefClassSource::NeverListEntry {
+                            key: key_id,
+                            server: server.clone(),
+                            entry: entry.clone(),
+                            catalog_charter: is_catalog_charter,
+                        },
+                        &[GateReasonCode::DenyCharterNeverList],
+                        None,
+                        vec![],
+                    ));
+                }
+            }
+            if let Some((_, slate)) =
+                crate::connector_key::governing_slate_in_txn(store, txn, &key)?
+            {
+                for row in slate.rows() {
+                    let SlateCapability::Tool(tool) = row.draft.capability() else {
+                        continue;
+                    };
+                    let setting = crate::connector_key::connector_tool_setting_in_txn(
+                        store, txn, &key_id, &key, tool,
+                    )?;
+                    let mut codes = scoped_mcp_codes.clone();
+                    let per_act = match setting {
+                        SlateDisposition::NeverAllow => {
+                            codes.push(GateReasonCode::DenyCharterNeverList);
+                            vec![]
+                        }
+                        SlateDisposition::AlwaysAsk => {
+                            codes.push(GateReasonCode::PendingConsentIrreversibleEffect);
+                            vec![]
+                        }
+                        SlateDisposition::AlwaysAllow => vec![
+                            BriefPerActCheck::ExternalAuthority,
+                            BriefPerActCheck::DataClassAndEndpoint,
+                            BriefPerActCheck::ManifestBinding,
+                            BriefPerActCheck::Budget,
+                        ],
+                        SlateDisposition::Auto => continue,
+                    };
+                    verdicts.push(worded_line(
+                        format!("mcp:{server}/{tool}"),
+                        BriefClassSource::SlateTool {
+                            key: key_id,
+                            server: server.clone(),
+                            tool: tool.to_owned(),
+                            setting,
+                        },
+                        &codes,
+                        None,
+                        per_act,
+                    ));
+                }
+            }
         }
         let pairings: BTreeSet<(&str, &str)> = self
             .act_policy
@@ -544,9 +713,14 @@ fn worded_line(
 fn source_rank(source: &BriefClassSource) -> u8 {
     match source {
         BriefClassSource::OutboundGrant { .. } => 0,
-        BriefClassSource::Effector { .. } => 1,
-        BriefClassSource::Act { .. } => 2,
-        BriefClassSource::Default { .. } => 3,
+        BriefClassSource::ConsentGrant { .. } => 1,
+        BriefClassSource::ConnectorKey { .. } => 2,
+        BriefClassSource::CharterDrift { .. } => 3,
+        BriefClassSource::NeverListEntry { .. } => 4,
+        BriefClassSource::SlateTool { .. } => 5,
+        BriefClassSource::Effector { .. } => 6,
+        BriefClassSource::Act { .. } => 7,
+        BriefClassSource::Default { .. } => 8,
     }
 }
 
@@ -554,7 +728,14 @@ fn source_rank(source: &BriefClassSource) -> u8 {
 fn source_grant(source: &BriefClassSource) -> Option<EntityId> {
     match source {
         BriefClassSource::OutboundGrant { grant, .. } => Some(*grant),
-        _ => None,
+        BriefClassSource::ConsentGrant { .. }
+        | BriefClassSource::ConnectorKey { .. }
+        | BriefClassSource::CharterDrift { .. }
+        | BriefClassSource::NeverListEntry { .. }
+        | BriefClassSource::SlateTool { .. }
+        | BriefClassSource::Effector { .. }
+        | BriefClassSource::Act { .. }
+        | BriefClassSource::Default { .. } => None,
     }
 }
 
