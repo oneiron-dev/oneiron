@@ -11,7 +11,7 @@ use crate::{
     skill_hub::{
         HubPin, HubSyncPolicy, MODEL_PACK_NAME, MODEL_PACK_SUBTREE, default_skill_hub_id,
         pack_catalog::{PackInstallReceipt, PackInstallStatus},
-        skill_scan_verdicts_for_content_hash_in_store,
+        skill_scan_verdict_stands_in_store,
     },
 };
 use heed::RoTxn;
@@ -125,9 +125,7 @@ impl CatalogSeed {
         // Knowledge-only bytes enter the same hash-bound scan ledger as skills
         // at the hub fetch door. Verdicts stay signals on the install ask; only
         // bytes that never reached that ledger are refused here.
-        if skill_scan_verdicts_for_content_hash_in_store(&vault.store, txn, source.content_hash())?
-            .is_empty()
-        {
+        if !skill_scan_verdict_stands_in_store(&vault.store, txn, source.content_hash())? {
             return Err(invalid("installed model catalog has no scan evidence"));
         }
         // Further source facets beside the catalog data install too (FIX
