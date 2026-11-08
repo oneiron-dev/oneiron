@@ -314,6 +314,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::HOOKS_SURFACE_INBOUND, CONTENT),
     (&t::HOOKS_SURFACE_INBOUND_NEXT, CONTENT),
     (&t::HOOKS_TASK_DUE, CONTENT),
+    (&t::HOOKS_TASK_DUE_REVERSE, CONTENT),
     (&t::HOOKS_TICK, CONTENT),
     (&t::HOOKS_TICK_NEXT, CONTENT),
     (&t::HOOKS_VERB_ASK, LIVE),
