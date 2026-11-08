@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use similar::{Algorithm, DiffOp, capture_diff_slices};
 
+mod cells;
 mod projection;
 mod stories;
 pub use projection::{DocxGroupEvents, DocxProjection};
@@ -148,7 +149,22 @@ pub fn runs_text(runs: &[DocxRun]) -> String {
 pub struct DocxCell {
     pub row: usize,
     pub col: usize,
+    /// Flat current-redline read; not a whole-cell replacement target.
     pub text: String,
+    /// Direct child paragraphs in native order. Nested tables and opaque
+    /// sibling blocks stay in the source package.
+    pub paragraphs: Vec<DocxCellParagraph>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DocxCellParagraph {
+    pub id: String,
+    pub guard: String,
+    /// Accepted inline text (without deleted tombstones), the native cell
+    /// materializer's replacement base. Inline marks are not modeled here.
+    pub text: String,
+    pub locked: Option<DocxLock>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -176,11 +192,21 @@ pub fn read_docx_blocks(
     crate::within(limits, || {
         preflight_with_limits(bytes, limits)?;
         let document = Document::parse(bytes)?;
-        Ok(document.read().blocks.iter().map(block).collect())
+        let snapshot = document.snapshot();
+        document
+            .read()
+            .blocks
+            .iter()
+            .map(|view| block(view, &snapshot.canonical.blocks, false))
+            .collect()
     })
 }
 
-fn block(view: &BlockView) -> DocxBlock {
+fn block(
+    view: &BlockView,
+    source: &[stemma::domain::TrackedBlock],
+    comment: bool,
+) -> Result<DocxBlock, DoceditError> {
     let kind = match view.role {
         BlockRole::Paragraph => DocxBlockKind::Paragraph,
         BlockRole::Heading { level } => DocxBlockKind::Heading(level),
@@ -218,23 +244,15 @@ fn block(view: &BlockView) -> DocxBlock {
         }
         _ => Vec::new(),
     };
-    DocxBlock {
+    Ok(DocxBlock {
         id: view.id.to_string(),
         kind,
         role: view.role_token.clone(),
         text,
         runs,
-        cells: view
-            .cells
-            .iter()
-            .map(|cell| DocxCell {
-                row: cell.row,
-                col: cell.col,
-                text: cell.text.clone(),
-            })
-            .collect(),
+        cells: cells::read(view, source, comment)?,
         locked,
-    }
+    })
 }
 
 /// A paragraph's text segments as canonical runs.
@@ -312,23 +330,42 @@ pub enum DocxChange {
         block: String,
     },
     /// Replace one story paragraph's plain text: an authored header/footer
-    /// paragraph via its native tracked edit, or a footnote/endnote body via
-    /// its native note edit. `scope` names the story and `block` its local id.
-    /// Comment stories have no native text verb and refuse.
+    /// paragraph via its native tracked edit, a footnote/endnote body via its
+    /// native note edit, or one paragraph within a comment story via its native
+    /// Normal annotation edit. `scope` names the story and `block` its local id.
+    /// Comment text lands as Normal annotation text in both outer modes.
     SetStoryText {
         scope: DocxStoryScope,
         block: String,
         text: String,
     },
     /// Replace one story paragraph's text and inline marks as one
-    /// whole-paragraph tracked redline, not the body's granular formatting
-    /// pass: an authored header/footer paragraph, or one paragraph within a
-    /// footnote/endnote story by its story-local id. Comments refuse instead
-    /// of dropping marks.
+    /// whole-paragraph edit, not the body's granular formatting pass: an
+    /// authored header/footer paragraph or one paragraph within a
+    /// footnote/endnote story as a tracked redline, or one paragraph within a
+    /// comment story as Normal annotation text with exactly the requested six
+    /// marks, by its story-local id.
     SetStoryRuns {
         scope: DocxStoryScope,
         block: String,
         runs: Vec<DocxRun>,
+    },
+    /// Replace one story table cell paragraph's text: an authored
+    /// header/footer table, a footnote/endnote table, or a comment table cell,
+    /// by its story-local table id. `scope` names the story (story `tbl_n`
+    /// ids collide with body `tbl_n` and cross-story, so the scope is
+    /// load-bearing). `paragraph` selects an exact paragraph inside that cell;
+    /// absent means its first paragraph, as on body `SetCell`. Other cell
+    /// paragraphs are untouched. Header/footer and note cells land tracked; comment cells
+    /// land as Normal annotation text in both outer modes.
+    SetStoryCell {
+        scope: DocxStoryScope,
+        block: String,
+        row: usize,
+        col: usize,
+        /// Exact paragraph id within this cell; absent edits the first.
+        paragraph: Option<String>,
+        text: String,
     },
 }
 
