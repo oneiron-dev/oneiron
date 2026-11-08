@@ -31,6 +31,30 @@ mod validation;
 use self::replay::{ReplayIter, ReplayOps};
 use self::validation::mark_unapplied_preflight_decisions;
 
+/// Birth selection for the local agent-setup adapter after its real earlier
+/// Puts. Its batches use no mask, replay or ASSET_TEXT source binding.
+pub(crate) fn setup_birth_stamp_target(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    entity_type: u8,
+    data: &[u8],
+    mut preceding: impl Iterator<Item = EntityId>,
+) -> Result<Option<EntityId>> {
+    if preceding.any(|prior| prior == id) {
+        return Ok(None);
+    }
+    validation::birth_stamp_target(
+        store,
+        txn,
+        id,
+        entity_type,
+        false,
+        (None, None, false),
+        data,
+    )
+}
+
 /// Check the decode point while this replay op still owns its buffers. On
 /// pre-match errors no match arm takes ownership, so scrub here before return.
 fn prepare_replay_op(
@@ -463,7 +487,7 @@ pub(super) fn apply_ops_with_authority_beside(
                     analyzer,
                     &mut *wtxn,
                     &mut state,
-                    &gate_mode,
+                    &mut gate_mode,
                     id,
                     entity_type,
                     occurred,

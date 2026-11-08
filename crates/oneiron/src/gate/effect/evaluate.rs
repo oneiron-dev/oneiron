@@ -1,11 +1,28 @@
 //! The whole external-effect governance evaluation; `effect` re-exports it.
 
+use super::evaluate_recipients::mail_once_in_txn;
 use super::*;
 
 /// Evaluates consent and connector governance without charging or recording.
 /// The caller must either finalize the returned decision or abort its txn.
 /// It stamps the recording time, runs [`judge_external_effect_in_txn`] on the
 /// writer's snapshot, then allocates the decision id.
+///
+/// Fix list row 17645: one mail message to several recipients
+/// (`provenance.mail_recipients`) is one effect, judged for every recipient
+/// in this same writer before its one approval is spent: each recipient's
+/// contact, STOP, scope and standing-grant judgment is its own, with the
+/// recipient as the counterparty. Every recipient is judged against the
+/// same operation, the message's: when any recipient's send takes mail's
+/// one-send operation (a cold or member-mailbox send), every recipient's
+/// does, so the owner's one press on the message is one authorization,
+/// found the same whichever recipient is first. The message's governance
+/// is its first recipient's, the one its budget is charged on; its decision
+/// is the most restrictive any recipient met, so one recipient's hold or
+/// denial holds or denies the whole message, and no recipient's grant
+/// releases another. Its press, envelope slot and standing grants are every
+/// recipient's (`ExternalEffectJudgment::fold_recipient`): the press is
+/// spent and kept once, only when every recipient allows.
 pub(crate) fn evaluate_external_effect_policy(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -36,7 +53,8 @@ pub(crate) fn evaluate_external_effect_policy(
 /// read-only. It writes nothing and allocates no decision id. `recorded_at` dates
 /// the judgment and every window it compares; `override_now` dates a
 /// counterparty's send-override expiry (`None` samples the store clock there, as a
-/// writer's judgment does).
+/// writer's judgment does). Every recipient of one mail message is judged on this
+/// same snapshot and folded before the writer allocates its one decision id.
 pub(crate) fn judge_external_effect_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -47,6 +65,77 @@ pub(crate) fn judge_external_effect_in_txn(
     approval_context: ApprovalContext,
     recorded_at: u64,
     override_now: Option<u64>,
+) -> Result<ExternalEffectJudgment> {
+    let addressed = effect
+        .provenance
+        .mail_recipients
+        .iter()
+        .filter(|recipient| effect.counterparty.as_deref() != Some(recipient.address.as_str()))
+        .map(|recipient| {
+            let mut addressed = effect.clone();
+            addressed.counterparty = Some(recipient.address.clone());
+            addressed
+        })
+        .collect::<Vec<_>>();
+    // A send to one is judged as before, on its own operation.
+    let mut message_once = false;
+    if !addressed.is_empty() {
+        for judged in std::iter::once(effect).chain(&addressed) {
+            if mail_once_in_txn(store, txn, judged, policy, override_now)? {
+                message_once = true;
+                break;
+            }
+        }
+    }
+    let mut judgment = judge_counterparty_policy(
+        store,
+        txn,
+        effect,
+        policy,
+        required_grant_id,
+        prepared,
+        approval_context,
+        recorded_at,
+        override_now,
+        message_once,
+    )?;
+    for recipient in &addressed {
+        let judged = judge_counterparty_policy(
+            store,
+            txn,
+            recipient,
+            policy,
+            required_grant_id,
+            prepared,
+            approval_context,
+            recorded_at,
+            override_now,
+            message_once,
+        )?;
+        judgment.fold_recipient(judged)?;
+    }
+    Ok(judgment)
+}
+
+/// [`judge_external_effect_in_txn`] for `effect`'s one counterparty.
+/// `message_once`: the message it is one recipient of takes mail's one-send
+/// operation, so this recipient is judged against it too (fix list row
+/// 17645); `false` for a send to one, judged on its own.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one recipient's read-only judgment under its message's operation and approval context"
+)]
+fn judge_counterparty_policy(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+    required_grant_id: Option<EntityId>,
+    prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
+    approval_context: ApprovalContext,
+    recorded_at: u64,
+    override_now: Option<u64>,
+    message_once: bool,
 ) -> Result<ExternalEffectJudgment> {
     let mutation_recorded_at = recorded_at;
     let (mut hydrated_effect, counterparty_send_override, counterparty_contact_revoked) =
@@ -141,7 +230,14 @@ pub(crate) fn judge_external_effect_in_txn(
         txn,
         &hydrated_effect,
     )?;
-    let mail_once = mail_cold || member_mail;
+    // Fix list row 17645: a recipient of a message whose send takes it
+    // (another recipient's cold send) is judged against that one operation.
+    let mail_once = mail_cold || member_mail || message_once;
+    // Fix list rows 17872, 17643: a drafted mail-pack reply sent as its
+    // mailbox's own account names no sender identity; the owner's one press
+    // for exactly that send releases it, as a member-mail press does.
+    let source_reply =
+        crate::mail_pack::approved_source_reply_in_txn(store, txn, &hydrated_effect)?;
     let mail_graduated = crate::channel_identity_provider::native_mail::mail_graduated_in_txn(
         store,
         txn,
@@ -340,7 +436,8 @@ pub(crate) fn judge_external_effect_in_txn(
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
         effect.mail_graduated = mail_graduated;
-        effect.mail_approve_once = mail_retry_authorized || (mail_once && approve_once.is_some());
+        effect.mail_approve_once =
+            mail_retry_authorized || ((mail_once || source_reply) && approve_once.is_some());
         // Only a still-available marker looked up by the engine-computed,
         // exact publish digest can release this one proposed public effect.
         effect.artifact_publish_approve_once = approve_once.is_some() && publish_press_target;
@@ -658,6 +755,7 @@ pub(crate) fn judge_external_effect_in_txn(
         approval_context,
         ask_consent,
         matched_grant,
+        recipient_grants: Vec::new(),
         envelope_reservation,
         envelope_wait,
         budget_target,
