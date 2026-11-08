@@ -36,6 +36,8 @@ pub(super) const FORMAT_XLSX: &str = "xlsx";
 
 pub(super) const FORMAT_DOCX: &str = "docx";
 
+pub(super) const FORMAT_DOCX_STORY: &str = "docx_story";
+
 pub(super) const FORMAT_PPTX: &str = "pptx";
 
 pub(super) const FORMAT_HTML: &str = "html";
@@ -135,6 +137,13 @@ pub enum Locator {
         /// Exclusive character-span end.
         char_end: u64,
     },
+    /// A top-level paragraph in one native DOCX story, never the body.
+    DocxStory {
+        scope: oneiron_docedit::docx_body::DocxStoryScope,
+        para_path: String,
+        char_start: u64,
+        char_end: u64,
+    },
     /// pptx `{slide, shape_id}` in slide or shape text.
     Pptx {
         /// 1-based slide index.
@@ -202,6 +211,28 @@ impl Locator {
             )));
         }
         Ok(Self::Docx {
+            para_path,
+            char_start,
+            char_end,
+        })
+    }
+
+    /// A paragraph local to exactly one native story. No body fallback.
+    pub fn docx_story(
+        scope: oneiron_docedit::docx_body::DocxStoryScope,
+        para_path: impl Into<String>,
+        char_start: u64,
+        char_end: u64,
+    ) -> Result<Self> {
+        let para_path = para_path.into();
+        validate_locator_text(&para_path, "docx locator para_path")?;
+        if char_start > char_end {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "docx locator char span is inverted",
+            )));
+        }
+        Ok(Self::DocxStory {
+            scope,
             para_path,
             char_start,
             char_end,
@@ -290,6 +321,7 @@ impl Locator {
         match self {
             Self::Xlsx { .. } => FORMAT_XLSX,
             Self::Docx { .. } => FORMAT_DOCX,
+            Self::DocxStory { .. } => FORMAT_DOCX_STORY,
             Self::Pptx { .. } => FORMAT_PPTX,
             Self::Html { .. } => FORMAT_HTML,
             Self::Text { .. } => FORMAT_TEXT,
