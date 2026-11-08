@@ -218,9 +218,10 @@ async function effortCorpus(engine: EngineFixture) {
  * the observed production-reconciliation background corpus below. Unknown input
  * fails the flow; no default vector, prompt echo or engine-derived answer.
  */
-// G8 source-mapped background corpus (FIX21902 closure, Engine 12:03; FIX21914 adds observed agent-health-review). 29
-// pinned literals from production-reconciliation batches (R22 32-input batch
-// before first test write, 8-input batches after; egress.allowAll on a fresh
+// G8 source-mapped background corpus (FIX21902 closure, Engine 12:03; FIX21914 adds observed agent-health-review;
+// FIX22118 adds the observed weave-lens text). 30 pinned literals from production-reconciliation batches
+// (R22 32-input batch before first test write, 8-input batches after; R41 supplied the weave-lens text;
+// egress.allowAll on a fresh
 // vault legitimately seeds bootstrap data): 1 startup literal 'model', 7
 // opaque 32-hex rows (exact producing rows UNKNOWN per rootcause, pinned as
 // literals, never a live any-32hex pattern which would silently accept
@@ -233,7 +234,7 @@ async function effortCorpus(engine: EngineFixture) {
 // backgroundScanVerdict below; producer skill_hub/verdict.rs:254-287 with
 // {contentHash, provider oneiron.static.v1, scannedAt, verdict unknown,
 // riskLevel none, completeness complete, governance recommended,
-// staticInputHash hex64}), and 2 skill-description rows (goal-intake + agent-health-review prose).
+// staticInputHash hex64}), and 3 prose rows (goal-intake, agent-health-review, and the reader weave lens).
 // Fresh-run legitimacy is observed in-test via provider.seen (see R06 check)
 // plus 10s awaitPublic server-provided lists (/api/search/vector per-row
 // probes, vault.claims.list), not assumed from R22 snapshots. No fixture
@@ -268,6 +269,7 @@ const BACKGROUND_LITERALS: readonly string[] = [
   '{"contentHash": "c3e4241a880307b1003b9c962eded7e7bfd9a2433a417dd17e90efef3b52616c", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:15ab715ae6fc567ee6217ddd3232b4e6513a2b180fcca469d6bfdaac7e8efd9d", "pin": {"type": "content_hash", "value": "c3e4241a880307b1003b9c962eded7e7bfd9a2433a417dd17e90efef3b52616c"}}}',
   'Interview a human for a typed project goal record and commit it via authenticated intake.',
   'Judge agent health from receipts with closed-form detectors and seeded dials.',
+  "Render one reader's weave report as a short, readable lens over the items their own read admitted.",
 ];
 // contentHashes of the 14 observed skill rows (5 bootstrap + 9 pack).
 const BACKGROUND_SKILL_HASHES: ReadonlySet<string> = new Set([
@@ -306,35 +308,29 @@ function backgroundScanVerdict(text: string): boolean {
     && row.completeness === "complete" && row.governance === "recommended"
     && typeof row.staticInputHash === "string" && HEX64.test(row.staticInputHash);
 }
-function startVectorTable(fixture: EvidenceFixture, extraVectors: readonly (readonly [string, number[]])[] = []) {
+function startVectorTable(fixture: EvidenceFixture, extraVectors: readonly (readonly [string, number[]])[] = [],
+  backgroundVector?: number[]) {
   const vectors = new Map<string, number[]>([
     [fixture.embedder.probeText, fixture.embedder.probeVector],
     ...fixture.claims.map(row => [row.value, row.vector] as [string, number[]]),
     ...extraVectors,
   ]);
-  // Authored background vector: the all-ones diagonal, dimension-generic.
-  // Geometry non-contamination proof (4-dim; R06/R01/R12 all use 4): cosine
-  // to any axis probe is 1/sqrt(4)=0.5, to self 1.0. R06 weak probe [1,0,0,0]
-  // vs weak-observation [0.125,1,0,0] cosine ~0.124, vs background 0.5, vs
-  // self 1.0 for per-row top-1 (limit 1) so fixture rows still win; strong
-  // probe [0,0,1,0] vs strong-a 1.0, strong-b ~0.9999, background 0.5, weak
-  // 0.0, so required strong ids rank first. R01 query [1,0,0,0] vs
-  // all-evidence 1.0, background 0.5, unrelated [0,0,0,1] 0.0, so
-  // all-evidence before unrelated holds; containment checks only gain
-  // unrelated rows. R12 ordinary query [1,0,1,0] vs right-tail 1.0,
-  // background 0.707, wrong-tail 0.0, so right before wrong holds; voice
-  // presence-only checks unaffected. Background rows carry their own entity
-  // ids, so they can neither satisfy an expected-id probe (per-row probes
-  // require exact fixture ids via 10s awaitPublic server lists) nor hide a
-  // missing fixture record (a missing row's probe would return background,
-  // failing the id match loudly). No 32hex fallback; unknown inputs still
-  // refuse with recorded rejectedInputs.
-  const backgroundVector = Array.from({ length: fixture.embedder.dimensions }, () => 1);
+  // Default authored background vector: the all-ones diagonal, dimension-generic.
+  // R01 query [1,0,0,0] vs all-evidence 1.0, background 0.5, unrelated
+  // [0,0,0,1] 0.0, so all-evidence before unrelated holds. R12 ordinary query
+  // [1,0,1,0] vs right-tail 1.0, background 0.707, wrong-tail 0.0, so right
+  // before wrong holds; voice presence-only checks are unaffected. R06 passes
+  // a fourth-axis background below, orthogonal to its weak and strong probes.
+  // Background rows carry their own entity ids, so they cannot satisfy an
+  // expected-id probe or hide a missing fixture record: per-row probes require
+  // exact fixture ids via 10s awaitPublic server lists. No 32hex fallback;
+  // unknown inputs still refuse with recorded rejectedInputs.
+  const background = backgroundVector ?? Array.from({ length: fixture.embedder.dimensions }, () => 1);
   for (const text of BACKGROUND_LITERALS) {
-    if (!vectors.has(text)) vectors.set(text, backgroundVector);
+    if (!vectors.has(text)) vectors.set(text, background);
   }
   const vectorFor = (text: string): number[] | undefined =>
-    vectors.get(text) ?? (backgroundScanVerdict(text) ? backgroundVector : undefined);
+    vectors.get(text) ?? (backgroundScanVerdict(text) ? background : undefined);
   const seen = new Set<string>();
   const violations: string[] = [];
   let closed = false;
@@ -791,7 +787,9 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
 suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should work", async () => {
   const catalog = await loadFixtures();
   const fixture = await catalog.readJson<EvidenceFixture>("retrieval-evidence");
-  const provider = startVectorTable(fixture);
+  // Keep background off the weak first-axis and strong third-axis probes;
+  // exact per-row positive id probes and all evidence vectors stay unchanged.
+  const provider = startVectorTable(fixture, [], [0, 0, 0, 1]);
   const engine = await EngineFixture.start({ id: "RETRIEVAL-06", profile,
     initArgs: endpointInitArgs(provider.endpoint),
     // Explicit reconciler cadence: an empty pass sleeps 500 ms, not the
@@ -1250,7 +1248,13 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
         expected_body_hash: current.body_hash, weights,
       });
       await engine.awaitReceipt(receipt.receipt_ref);
-      expect((await engine.client.call("vault.retrieval.weights.get", {})).weights).toEqual(weights);
+      const configured = (await engine.client.call("vault.retrieval.weights.get", {})).weights;
+      expect(Object.keys(configured).sort()).toEqual(Object.keys(weights).sort());
+      // Every coordinate is f32-backed; preserve the numeric setting across
+      // the wire round trip without requiring the original decimal spelling.
+      for (const key of Object.keys(weights) as (keyof Facade.RetrievalWeights)[]) {
+        expect(configured[key]).toBeCloseTo(weights[key], 7);
+      }
     }
     const baseline = await read();
     const rowOrder = (snapshot: Awaited<ReturnType<typeof read>>) => snapshot.pack.items
