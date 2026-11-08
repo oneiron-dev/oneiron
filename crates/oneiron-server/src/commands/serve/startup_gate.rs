@@ -40,7 +40,6 @@ use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, watch};
 use tokio::task::JoinHandle;
-use tower::ServiceExt;
 
 use crate::error::{ApiError, ApiErrorDetails};
 use crate::http_listener::ConnectionLimits;
@@ -175,7 +174,8 @@ async fn answer(
 }
 
 /// `request` once startup ends: run on the real router as its own accept loop
-/// would run it, with its peer and connection id, or a 503 when startup failed.
+/// would run it, with its peer, connection id, body-idle limit and explicit
+/// credential revocation, or a 503 when startup failed.
 async fn held(
     request: hyper::Request<Incoming>,
     peer: SocketAddr,
@@ -189,17 +189,14 @@ async fn held(
     };
     let (mut parts, body) = request.into_parts();
     parts.extensions.insert(ConnectInfo(peer));
-    let request =
-        hyper::Request::from_parts(parts, crate::http_listener::idle_body(body, body_idle));
-    let routed = crate::api::call_receipt::on_connection(
+    let request = hyper::Request::from_parts(parts, body);
+    // The real loop's dispatch: body-idle limit and the request's explicit
+    // credential revocation, checked before each body frame.
+    crate::api::call_receipt::on_connection(
         crate::api::call_receipt::mint_connection_id(),
-        router.oneshot(request),
+        crate::http_listener::route_revocable(router, request, body_idle),
     )
-    .await;
-    match routed {
-        Ok(response) => response,
-        Err(never) => match never {},
-    }
+    .await
 }
 
 /// The router startup installed, or `None` once it failed.
