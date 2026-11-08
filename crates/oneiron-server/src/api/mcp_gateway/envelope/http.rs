@@ -140,6 +140,14 @@ impl<'a> Arrival<'a> {
         }
     }
 
+    /// A body the endpoint read as a spool, by its digest as it arrived.
+    pub(super) const fn spooled(digest: &'a str) -> Self {
+        Self {
+            bytes: &[],
+            digest: Some(digest),
+        }
+    }
+
     /// The digest of the body as it arrived.
     fn digest(self) -> String {
         self.digest.map_or_else(

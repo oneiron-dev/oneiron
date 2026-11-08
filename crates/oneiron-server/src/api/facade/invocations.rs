@@ -457,7 +457,7 @@ pub(crate) fn invocation_body_with_reader(
 ) -> std::io::Result<[u8; 32]> {
     let mut hasher = invocation_hasher(auth, locality, parts);
     hasher.update(&len.to_le_bytes());
-    let read = std::io::copy(&mut reader.take(len), &mut hasher)?;
+    let read = std::io::copy(&mut std::io::Read::take(reader, len), &mut hasher)?;
     if read != len {
         return Err(std::io::ErrorKind::UnexpectedEof.into());
     }
