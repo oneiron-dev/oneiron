@@ -27,6 +27,17 @@ use crate::tokenizer::count_context_pack_tokens;
 use crate::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
 
 impl EngineNativeExecutor<'_> {
+    /// Keeps an unlanded pass's `host.compact` pre-chain records in its room
+    /// (REVIEW-4357 P1-2): a backend refusal or a pre-swap-gate rejection
+    /// ends the pass without landing, so its hooks never reach a post chain.
+    /// No post hooks run here. A canonical pass keeps its own.
+    fn keep_unlanded_compact_hooks(&self, hooks: CompactHooks) {
+        let crate::code_run::ExecutorStorage::Session(binding) = &self.storage else {
+            return;
+        };
+        crate::compaction::keep_compact_hooks_in_room(&binding.session, &binding.route, hooks);
+    }
+
     /// Lands a finished background flight: an accepted summary swaps in as
     /// this run's next epoch, and anything else holds for the turn and leaves
     /// the window whole; its fold batch lands at once, in one ledger write.
@@ -58,9 +69,13 @@ impl EngineNativeExecutor<'_> {
         let hooks = finished.hooks;
         let epoch_execution = finished.epoch_execution;
         let landed = match finished.epoch {
-            None => Ok(()),
+            None => {
+                self.keep_unlanded_compact_hooks(hooks);
+                Ok(())
+            }
             Some(Err(suppression)) => {
                 seat.hold(suppression);
+                self.keep_unlanded_compact_hooks(hooks);
                 Ok(())
             }
             Some(Ok(gated)) => {
@@ -84,10 +99,23 @@ impl EngineNativeExecutor<'_> {
                         ) {
                             Ok(plan) => {
                                 seat.swapped(plan.epoch, first, last);
-                                if let crate::code_run::ExecutorStorage::Canonical(vault) =
-                                    &self.storage
-                                {
-                                    vault.post_compact_hooks(hooks, &plan, first, last);
+                                // The post chain runs where its pre chain
+                                // did: the vault, or the run's room (FIX
+                                // 1594).
+                                match &self.storage {
+                                    crate::code_run::ExecutorStorage::Canonical(vault) => {
+                                        vault.post_compact_hooks(hooks, &plan, first, last);
+                                    }
+                                    crate::code_run::ExecutorStorage::Session(binding) => {
+                                        crate::compaction::post_compact_hooks_in_room(
+                                            &binding.session,
+                                            &binding.route,
+                                            hooks,
+                                            &plan,
+                                            first,
+                                            last,
+                                        );
+                                    }
                                 }
                                 Ok(())
                             }
@@ -100,6 +128,7 @@ impl EngineNativeExecutor<'_> {
                                 seat.hold(crate::compaction::CompactionSuppression::TurnScoped {
                                     check: None,
                                 });
+                                self.keep_unlanded_compact_hooks(hooks);
                                 Ok(())
                             }
                         }

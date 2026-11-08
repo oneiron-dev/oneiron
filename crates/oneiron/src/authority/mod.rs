@@ -444,7 +444,7 @@ pub(crate) use log_budget::with_authority_doors_open_for_test;
 pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };
-pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn};
+pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 pub(crate) use past_grant_standing::preserved_topology_act_in_txn;
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
@@ -465,6 +465,8 @@ use readonly_fold::authority_log_rows_in_txn;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;
+#[cfg(feature = "sync")]
+pub(crate) use readonly_fold::is_history_incomplete;
 pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
@@ -481,7 +483,8 @@ use machine_profile::{
     merge_machine_maps,
 };
 pub(crate) use machine_write::{
-    evidence_without_machine_signature, machine_claim_needs_history, machine_claim_read_admitted,
+    evidence_without_machine_signature, machine_claim_needs_history,
+    machine_claim_needs_history_observing, machine_claim_read_admitted,
     machine_history_authority_descends, machine_history_authority_descends_with_image,
     machine_history_host_context, resign_machine_claim_after_mask_in_txn,
     verify_machine_claim_in_txn,

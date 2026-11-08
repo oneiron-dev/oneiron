@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::codec::{RECORD, settlement_key_parts};
+use super::pending::LINK;
 use super::records::{SettleConsent, SettleOutcomeKind};
 use crate::Vault;
 use crate::anchored_annotation::ReanchorSummary;
@@ -169,6 +170,17 @@ impl Vault {
                 at: learned_at,
             };
             UNDO.put(&self.store, wtxn, &key, &undo)?;
+            if let Some(stamp) = LINK.get(&self.store, wtxn, &key)? {
+                crate::edit_distance::routing::put_routing_outcome_in_txn(
+                    self,
+                    wtxn,
+                    &stamp,
+                    crate::edit_distance::routing::OUTCOME_UNDONE,
+                    learned_at,
+                    actor,
+                )?;
+                LINK.delete(&self.store, wtxn, &key)?;
+            }
             Ok(KeepUndoOutcome {
                 undo,
                 version,

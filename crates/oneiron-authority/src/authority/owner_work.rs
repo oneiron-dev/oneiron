@@ -303,7 +303,8 @@ pub enum OwnerWorkBody {
     /// is the revision of the roots and of the target's standing the change
     /// is for ([`ROOT_WORK_REVISION_CONTEXT`]). `basis` names those heads as
     /// the recorder folded them, its witness (FIX 5551): its revision is the
-    /// act's `seen`.
+    /// act's `seen`. Beside them it carries the bound anchor and the anchor
+    /// heads' parents, outside the revision (FIX 6556).
     Root {
         change: RootChange,
         basis: RootRevisionBasis,
@@ -464,9 +465,12 @@ impl OwnerWorkRequest {
             return Err(invalid_authority());
         }
         // A root change is done on the install it changes, and only there,
-        // and its basis is the revision its act saw (FIX 5551).
-        if let OwnerWorkBody::Root { basis, .. } = &self.work
-            && (self.act.target != self.executor || basis.revision() != self.act.seen)
+        // and its basis is the revision its act saw (FIX 5551). Only a
+        // change that binds a root has a bound anchor (FIX 6556).
+        if let OwnerWorkBody::Root { change, basis } = &self.work
+            && (self.act.target != self.executor
+                || basis.revision() != self.act.seen
+                || (change.root().is_none() && basis.bound.is_some()))
         {
             return Err(invalid_authority());
         }

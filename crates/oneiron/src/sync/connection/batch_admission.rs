@@ -342,7 +342,10 @@ impl SyncConnection {
                         return Err(LoopExit::Disconnected(format!("Send failed: {e}")));
                     }
                 }
+                // A peer's acknowledgments retire no queue row: the rows stay
+                // for the home (FIX 4748).
                 if client.config.residence_mode == SyncResidenceMode::Opened
+                    && client.peer_session.is_none()
                     && !client.residence_acks.is_empty()
                     && let Err(e) = self.clear_residence_acks(client)
                 {
