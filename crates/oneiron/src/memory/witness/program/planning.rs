@@ -194,9 +194,9 @@ impl Memory<'_> {
                 )?);
                 continue;
             }
-            // The Coach's own question about a pending training offer may
-            // carry its scoped reach to the System-author floor (OF-577);
-            // every other message carries none.
+            // The Coach's reserved questions may carry their scoped reach
+            // to the witness message floor (OF-577); every other message
+            // carries none.
             let permit = coach_offer_question_permit_in_txn(
                 self.vault,
                 wtxn,

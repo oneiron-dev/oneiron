@@ -57,6 +57,11 @@ pub(crate) struct CoreHydrateRequest {
     /// Session receiving this body. Defaults to the caller's current board session.
     #[serde(default)]
     session_id: Option<String>,
+    /// The caller's retrieval filter (FIX 3977, `#t-filter`): it only
+    /// narrows the vault's floor for this read.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>)]
+    filter: Option<oneiron::memory::ReadFilterInput>,
 }
 
 /// Short-id hydrate status.
@@ -184,6 +189,11 @@ pub(crate) struct CoreBatchShortIdHydrateRequest {
     /// Session receiving this body. Defaults to the caller's current board session.
     #[serde(default)]
     session_id: Option<String>,
+    /// The caller's retrieval filter (FIX 3977, `#t-filter`): it only
+    /// narrows the vault's floor for this read.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>)]
+    filter: Option<oneiron::memory::ReadFilterInput>,
 }
 
 /// Batch short-id hydrate response.
@@ -261,6 +271,12 @@ struct BatchItems<'a, 'p> {
     served: &'a mut Vec<oneiron::receipt::ServedForm>,
     /// Each observed body, by its item's index.
     observed: &'a mut Vec<(usize, Observed)>,
+    /// The rows the projected items were derived from (FIX 1435).
+    producers: &'a mut Vec<oneiron::EntityId>,
+    /// Set when a slot answers from a row `producers` cannot name: a ref a
+    /// legal order keeps from use answers that order's refusal, which tells
+    /// of its row, and the named read keeps no id for it (FIX 1435).
+    unlisted: &'a mut bool,
 }
 
 /// A batch's items projected in order under one body budget; a single
@@ -281,6 +297,8 @@ fn project_short_id_batch(
         response,
         served,
         observed,
+        producers,
+        unlisted,
     } = items;
     let mut bodies =
         projection::BodyBudget::new(&server.vault, server.config.limits.projection_body_bytes);
@@ -294,6 +312,7 @@ fn project_short_id_batch(
                 let row = match values.next().unwrap_or(Ok(None)) {
                     Ok(row) => row,
                     Err(refusal) => {
+                        *unlisted = true;
                         results.push(use_restricted::item(reference, &refusal));
                         continue;
                     }
@@ -311,6 +330,7 @@ fn project_short_id_batch(
                         start: narrowing.clone(),
                         response: &mut *response,
                         served: &mut *served,
+                        producers: &mut *producers,
                     },
                     Some(&mut bodies),
                 )? {
@@ -426,10 +446,11 @@ impl Observed {
 /// One short ref hydrated for `reader`, an image picked by `pick`. A form it
 /// serves in place of an image's body joins `served`, for the caller to
 /// record before it answers; the body it decoded comes back for the caller to
-/// observe into its session.
+/// observe into its session. The rows its answer was derived from join
+/// `producers` (FIX 1435).
 #[expect(
     clippy::too_many_arguments,
-    reason = "one short ref: its view, reader, mode, image pick and served forms"
+    reason = "one short ref: its view, reader, mode, image pick, served forms and producer rows"
 )]
 pub(crate) fn hydrate_short_id_response_with_mode(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
@@ -440,6 +461,7 @@ pub(crate) fn hydrate_short_id_response_with_mode(
     mode: oneiron::memory::ReadMode,
     pick: Option<&oneiron::memory::ImagePick<'_>>,
     served: &mut Vec<oneiron::receipt::ServedForm>,
+    producers: &mut Vec<oneiron::EntityId>,
 ) -> Result<
     (
         oneiron::claim::ScopedReadResult<Option<CoreHydrateResponse>>,
@@ -471,6 +493,7 @@ pub(crate) fn hydrate_short_id_response_with_mode(
             start: receipt.clone(),
             response: &mut receipt,
             served,
+            producers,
         },
         None,
     )?
@@ -481,10 +504,13 @@ pub(crate) fn hydrate_short_id_response_with_mode(
 /// The receipt one hydrated item starts from, the response receipt that
 /// also takes the item's image read, and the forms the response serves in
 /// place of an image's body, which its door records before it answers.
+/// `producers` takes the rows the item's answer was derived from (FIX
+/// 1435): its own row, and the ASSET_TEXT an image's served form names.
 pub(crate) struct ItemReceipts<'a> {
     pub(crate) start: oneiron::claim::ScopedReadReceipt,
     pub(crate) response: &'a mut oneiron::claim::ScopedReadReceipt,
     pub(crate) served: &'a mut Vec<oneiron::receipt::ServedForm>,
+    pub(crate) producers: &'a mut Vec<oneiron::EntityId>,
 }
 
 #[expect(
@@ -507,6 +533,7 @@ pub(crate) fn project_hydrated_short_id(
         start: mut narrowing,
         response,
         served: served_forms,
+        producers,
     } = receipts;
     let content_hash_hex = format!("{content_hash:02x}");
     let Some(oneiron::claim::ReadRow {
@@ -520,6 +547,9 @@ pub(crate) fn project_hydrated_short_id(
     else {
         return Ok(None);
     };
+    // The admitted row is the answer's source, its deleted shell's metadata
+    // and a Summary or omitted body included (FIX 1435).
+    producers.push(id);
     let Some(body) = body else {
         return Ok(Some((
             CoreHydrateResponse {
@@ -564,6 +594,14 @@ pub(crate) fn project_hydrated_short_id(
     } else {
         oneiron::memory::HydratedAsset::Stored
     };
+    // A served form's body names its ASSET_TEXT, and the item is projected
+    // from that body (FIX 1435).
+    if let oneiron::memory::HydratedAsset::Served {
+        text: Some(text), ..
+    } = &served
+    {
+        producers.push(*text);
+    }
     let decoded = decoded && !matches!(served, oneiron::memory::HydratedAsset::Omitted { .. });
     let item = match bodies {
         Some(bodies) if !decoded => bodies.omitted(&id, entity_type, learned_at, &body, view, mode),

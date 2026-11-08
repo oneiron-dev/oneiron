@@ -70,9 +70,19 @@ pub const PROJECT_HOME_ROOM: &[u8] = b"project.home_room.v1/";
 /// conflict key.
 pub const COMM_PROJECTED_CLAIM: &[u8] = b"oneiron.comm.projected_claim.v1\0";
 
+/// An explicitly born touch's source event (`comm::born_touch`). Parts: original
+/// id, admitted origin digest, frozen position, and normalized touch tuple.
+/// These identify data only, including for a canonical base-world touch.
+pub const COMM_BORN_TOUCH_EVENT: &[u8] = b"oneiron.comm.born_touch_event.v1\0";
+
 /// The MACHINE assignee of one connector class (`outbound::connector_actor_id`).
 /// Parts: normalized connector class.
 pub const CONNECTOR_ACTOR: &[u8] = b"oneiron.connector_actor.v0\0";
+
+/// The synced TASK that carries one agent run across machines
+/// (`agent_dispatch::agent_run_task_id`, FIX 4747). Parts: the run's attempt
+/// id (16 bytes).
+pub const AGENT_RUN_TASK: &[u8] = b"oneiron.agent_run_task.v0\0";
 
 /// The embedded default owner actor (`vault::embedded_owner_actor_id`, ONE-1441
 /// WIRE-P1). No parts. It must stay the same text as the domain behind

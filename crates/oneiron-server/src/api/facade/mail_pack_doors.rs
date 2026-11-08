@@ -70,19 +70,22 @@ pub(crate) async fn vault_mail_sources_search(
     .map_err(|_| internal("vault.mail.sources.search"))?
 }
 
-/// `vault.mail.reply.approve` (FIX 15420): the owner approves one reviewed
-/// revision of a drafted reply from their own mailbox, under the proof
-/// `/v1/owner` takes from the request; its send runs on the blocking pool,
-/// as the Gmail send wire is blocking HTTP.
+/// `vault.mail.reply.approve` (FIX 15420): a mailbox's own person approves
+/// one reviewed revision of a drafted reply from that mailbox, on their own
+/// proof: the owner as `/v1/owner` admits them, or a member on their own
+/// verified human slip (fix list row 17644 follow-up), which lends no owner
+/// authority. Its send runs on the blocking pool, as the send wires are
+/// blocking HTTP.
 pub(crate) async fn vault_mail_reply_approve(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: MailReplyApproveRequest,
 ) -> MemoryResult<MailReplyDraftView> {
-    let owner = owner_proof(auth, server, "vault.mail.reply.approve")?;
+    let person =
+        super::agent_definition_doors::member_proof(server, auth, "vault.mail.reply.approve")?;
     let server = Arc::clone(server);
     super::clock_ingress::run_blocking(move || -> MemoryResult<MailReplyDraftView> {
-        server.vault().approve_mail_reply(&owner, &input)
+        server.vault().approve_mail_reply(&person, &input)
     })
     .await
     .map_err(|_| internal("vault.mail.reply.approve"))?
