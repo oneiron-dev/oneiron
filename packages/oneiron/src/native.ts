@@ -96,6 +96,7 @@ selfGrantsAsk(input: unknown): unknown
 selfGrantsAsked(input: unknown): unknown
 vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
 selfGrantsAnswer(input: unknown): unknown
+vaultProactivityDigestGet(input: unknown): unknown
 vaultPersonasPreview(input: unknown): unknown
 vaultPersonasExport(input: unknown): unknown
 vaultPersonasEdit(input: unknown): unknown
@@ -701,7 +702,11 @@ vaultHooksChecks(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultHooksRegenDue(input: unknown): unknown
 vaultHooksRegenGet(input: unknown): unknown
+vaultHooksRegenHistory(input: unknown): unknown
+vaultHooksRegenRevert(input: unknown): unknown
+vaultHooksRegenRun(input: unknown): unknown
 vaultHooksRegenAdopt(input: unknown): unknown
+vaultHooksRegenCancel(input: unknown): unknown
 vaultArtifactsPublishApproval(input: unknown): unknown
 vaultArtifactsPublish(input: unknown): unknown
 vaultArtifactsRepoint(input: unknown): unknown
@@ -1291,6 +1296,8 @@ vaultTasksLinearProvenance(input: unknown): unknown
 selfRunAttach(input: unknown): unknown
 selfFoldsDescribe(input: unknown): unknown
 selfHistory(input: unknown): unknown
+selfHooksRegenAdopt(input: unknown): unknown
+selfHooksRegenGet(input: unknown): unknown
 vaultRunsReview(input: unknown): unknown
 vaultRunsSettle(input: unknown): unknown
 vaultRunsSettlement(input: unknown): unknown

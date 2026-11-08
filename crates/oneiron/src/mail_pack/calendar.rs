@@ -69,6 +69,53 @@ pub(super) fn landed_uid(vault: &Vault, source: EntityId, href: &str) -> Result<
         .map(|resource| resource.uid))
 }
 
+/// Forgets the resource row of the provider's resource `href` of the
+/// calendar source `source`, its UID untouched: how a wire retires the old
+/// place of an event its provider moved to another resource.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn forget_resource_href(vault: &Vault, source: EntityId, href: &str) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        CALENDAR_RESOURCES
+            .delete(&vault.store, txn, &resource_key(source, href))
+            .map(drop)
+    })
+}
+
+/// Which of `uids` the calendar source `source` landed under a provider's
+/// resource other than those in `leaving`: the UIDs a moved event still
+/// carries at its new place, which a wire must not delete when it reads the
+/// old place gone.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn uids_held_outside(
+    vault: &Vault,
+    source: EntityId,
+    uids: &std::collections::BTreeSet<String>,
+    leaving: &std::collections::BTreeSet<&str>,
+) -> Result<std::collections::BTreeSet<String>> {
+    let mut held = std::collections::BTreeSet::new();
+    if uids.is_empty() {
+        return Ok(held);
+    }
+    let leaving: std::collections::BTreeSet<[u8; 32]> = leaving
+        .iter()
+        .map(|href| resource_key(source, href).1)
+        .collect();
+    let txn = vault.store.env.read_txn()?;
+    for row in CALENDAR_RESOURCES.iter_from(&vault.store, &txn, source.as_bytes())? {
+        let ((_, href), resource) = row?;
+        if !leaving.contains(&href) && uids.contains(&resource.uid) {
+            held.insert(resource.uid);
+        }
+    }
+    Ok(held)
+}
+
 /// Where one calendar source's pull stands.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 struct MailCalendarSyncState {
@@ -99,6 +146,14 @@ pub struct MailCalendarPull {
     /// calendar. A resource landed before whose span meets it, omitted by
     /// the finished listing, is marked absent.
     pub covers: Option<TimeRange>,
+    /// Each resource, by the provider's id, that holds no longer the UID
+    /// landed for it, with no tombstone from the provider (it holds another
+    /// UID now, or no event), and that UID, which no resource holds now.
+    /// Before the page's changes land, each such UID is marked absent, as a
+    /// finished listing marks one it omitted, and the resource's row goes:
+    /// a later page that reads the UID under another resource lands it live
+    /// again, where a delete would leave it cancelled.
+    pub vacated: Vec<(String, String)>,
 }
 
 /// One whole calendar a feed wire read (an ICS file or subscription).
@@ -409,6 +464,20 @@ impl Vault {
                 }
             };
             let at = crate::unix_seconds_now();
+            if !pull.vacated.is_empty() {
+                let uids: Vec<String> = pull
+                    .vacated
+                    .iter()
+                    .map(|(_, uid)| uid.clone())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                crate::calendar::ingest::apply_calendar_source_omissions(self, system, &uids, at)
+                    .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+                self.forget_vacated_resources(source.source_ref, &pull.vacated)?;
+                report.kept_deleted += uids.len() as u64;
+                state.deleted_at_provider += uids.len() as u64;
+            }
             for change in &pull.changes {
                 let applied =
                     crate::calendar::ingest::apply_calendar_source_change(self, system, change, at);
@@ -433,13 +502,14 @@ impl Vault {
                 }
             }
             if listing && pull.complete {
-                let omitted =
+                let (omitted, stale) =
                     self.calendar_listing_omissions(source.source_ref, state.listing, pull.covers)?;
                 crate::calendar::ingest::apply_calendar_source_omissions(
                     self, system, &omitted, at,
                 )
                 .map_err(|error| MemoryError::bad_request(error.to_string()))?;
                 self.forget_calendar_resources(source.source_ref, &omitted)?;
+                self.forget_calendar_resource_keys(&stale)?;
                 report.kept_deleted += omitted.len() as u64;
                 state.deleted_at_provider += omitted.len() as u64;
             }
@@ -492,27 +562,80 @@ impl Vault {
     }
 
     /// The UIDs the source landed that its finished listing `listing` did
-    /// not see, among those whose span meets `covers` (all, when `None`).
+    /// not see, among those whose span meets `covers` (all, when `None`),
+    /// and the keys of the resources it did not see whose UID it saw under
+    /// another resource (one its provider moved): those rows go, the UID
+    /// stays.
     fn calendar_listing_omissions(
         &self,
         source: EntityId,
         listing: u64,
         covers: Option<TimeRange>,
-    ) -> MemoryResult<Vec<String>> {
+    ) -> MemoryResult<(Vec<String>, Vec<(EntityId, [u8; 32])>)> {
         let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
-        let mut omitted = std::collections::BTreeSet::new();
+        let mut unseen = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
         for row in CALENDAR_RESOURCES.iter_from(&self.store, &txn, source.as_bytes())? {
-            let (_, resource) = row?;
+            let (key, resource) = row?;
+            if resource.listing >= listing {
+                seen.insert(resource.uid);
+                continue;
+            }
             let covered = covers.is_none_or(|covered| {
                 resource
                     .span
                     .is_some_and(|(start, end)| start <= covered.end && end >= covered.start)
             });
-            if resource.listing < listing && covered {
-                omitted.insert(resource.uid);
+            if covered {
+                unseen.push((key, resource.uid));
             }
         }
-        Ok(omitted.into_iter().collect())
+        let mut omitted = std::collections::BTreeSet::new();
+        let mut stale = Vec::new();
+        for (key, uid) in unseen {
+            if seen.contains(&uid) {
+                stale.push(key);
+            } else {
+                omitted.insert(uid);
+            }
+        }
+        Ok((omitted.into_iter().collect(), stale))
+    }
+
+    /// Forgets the resource rows `keys`, their UIDs untouched.
+    fn forget_calendar_resource_keys(&self, keys: &[(EntityId, [u8; 32])]) -> MemoryResult<()> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        self.with_write_txn_grouped(|txn| {
+            for key in keys {
+                CALENDAR_RESOURCES.delete(&self.store, txn, key)?;
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    /// Forgets the resource row of each of `vacated`, by the provider's id,
+    /// while it still carries the UID named beside it.
+    fn forget_vacated_resources(
+        &self,
+        source: EntityId,
+        vacated: &[(String, String)],
+    ) -> MemoryResult<()> {
+        self.with_write_txn_grouped(|txn| {
+            for (href, uid) in vacated {
+                let key = resource_key(source, href);
+                if CALENDAR_RESOURCES
+                    .get(&self.store, txn, &key)?
+                    .is_some_and(|resource| resource.uid == *uid)
+                {
+                    CALENDAR_RESOURCES.delete(&self.store, txn, &key)?;
+                }
+            }
+            Ok(())
+        })?;
+        Ok(())
     }
 
     /// Forgets the source's resources carrying the UIDs `uids`.
