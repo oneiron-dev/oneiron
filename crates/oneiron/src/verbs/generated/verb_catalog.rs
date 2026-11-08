@@ -722,7 +722,9 @@ pub enum AgentVerb {
     VaultCodeSecretsPropose,
     ExecuteCode,
     VaultCodeModelHealCount,
+    VaultCodeSessionModelHealCount,
     VaultCodeCorrections,
+    VaultCodeStepEvidence,
     VaultCodeTypeDiagnostics,
     VaultCodeWaitsResolve,
     VaultCodeWaitsReceipt,
@@ -805,6 +807,8 @@ pub enum AgentVerb {
     VaultAgentsDreamingSet,
     VaultAgentsGrantsMint,
     VaultAgentsGrantsRevoke,
+    VaultAgentsVerbClassesGet,
+    VaultAgentsVerbClassesConfigure,
     VaultOauthAuthorizationAnswer,
     VaultRepoGitPushMint,
     VaultRepoGitPushRevoke,
@@ -2070,7 +2074,9 @@ impl AgentVerb {
         Self::VaultCodeSecretsPropose,
         Self::ExecuteCode,
         Self::VaultCodeModelHealCount,
+        Self::VaultCodeSessionModelHealCount,
         Self::VaultCodeCorrections,
+        Self::VaultCodeStepEvidence,
         Self::VaultCodeTypeDiagnostics,
         Self::VaultCodeWaitsResolve,
         Self::VaultCodeWaitsReceipt,
@@ -2153,6 +2159,8 @@ impl AgentVerb {
         Self::VaultAgentsDreamingSet,
         Self::VaultAgentsGrantsMint,
         Self::VaultAgentsGrantsRevoke,
+        Self::VaultAgentsVerbClassesGet,
+        Self::VaultAgentsVerbClassesConfigure,
         Self::VaultOauthAuthorizationAnswer,
         Self::VaultRepoGitPushMint,
         Self::VaultRepoGitPushRevoke,
@@ -3445,7 +3453,9 @@ impl AgentVerb {
             Self::VaultCodeSecretsPropose => "vault.code.secrets.propose",
             Self::ExecuteCode => "execute_code",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
+            Self::VaultCodeSessionModelHealCount => "vault.code.session_model_heal_count",
             Self::VaultCodeCorrections => "vault.code.corrections",
+            Self::VaultCodeStepEvidence => "vault.code.step_evidence",
             Self::VaultCodeTypeDiagnostics => "vault.code.type_diagnostics",
             Self::VaultCodeWaitsResolve => "vault.code.waits.resolve",
             Self::VaultCodeWaitsReceipt => "vault.code.waits.receipt",
@@ -3528,6 +3538,8 @@ impl AgentVerb {
             Self::VaultAgentsDreamingSet => "vault.agents.dreaming.set",
             Self::VaultAgentsGrantsMint => "vault.agents.grants.mint",
             Self::VaultAgentsGrantsRevoke => "vault.agents.grants.revoke",
+            Self::VaultAgentsVerbClassesGet => "vault.agents.verb_classes.get",
+            Self::VaultAgentsVerbClassesConfigure => "vault.agents.verb_classes.configure",
             Self::VaultOauthAuthorizationAnswer => "vault.oauth.authorization.answer",
             Self::VaultRepoGitPushMint => "vault.repo.git_push.mint",
             Self::VaultRepoGitPushRevoke => "vault.repo.git_push.revoke",
@@ -4809,7 +4821,9 @@ impl AgentVerb {
                 | Self::VaultCodeSecretsPropose
                 | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeSessionModelHealCount
                 | Self::VaultCodeCorrections
+                | Self::VaultCodeStepEvidence
                 | Self::VaultCodeTypeDiagnostics
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
@@ -4892,6 +4906,8 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultAgentsVerbClassesGet
+                | Self::VaultAgentsVerbClassesConfigure
                 | Self::VaultOauthAuthorizationAnswer
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
@@ -6186,7 +6202,9 @@ impl AgentVerb {
                 | Self::VaultCodeSecretsPropose
                 | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeSessionModelHealCount
                 | Self::VaultCodeCorrections
+                | Self::VaultCodeStepEvidence
                 | Self::VaultCodeTypeDiagnostics
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
@@ -6269,6 +6287,8 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultAgentsVerbClassesGet
+                | Self::VaultAgentsVerbClassesConfigure
                 | Self::VaultOauthAuthorizationAnswer
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
@@ -7708,7 +7728,9 @@ impl AgentVerb {
                 | Self::VaultCodeSecretsGet
                 | Self::VaultCodeSecretsPropose
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeSessionModelHealCount
                 | Self::VaultCodeCorrections
+                | Self::VaultCodeStepEvidence
                 | Self::VaultCodeTypeDiagnostics
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
@@ -7786,6 +7808,8 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultAgentsVerbClassesGet
+                | Self::VaultAgentsVerbClassesConfigure
                 | Self::VaultOauthAuthorizationAnswer
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
@@ -8748,6 +8772,7 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultAgentsVerbClassesConfigure
                 | Self::VaultOauthAuthorizationAnswer
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
@@ -9835,7 +9860,9 @@ impl AgentVerb {
             Self::VaultCodeSecretsPropose => &["spec"],
             Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeSessionModelHealCount => &["spec"],
             Self::VaultCodeCorrections => &["spec"],
+            Self::VaultCodeStepEvidence => &["spec"],
             Self::VaultCodeTypeDiagnostics => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
             Self::VaultCodeWaitsReceipt => &["spec"],
@@ -9918,6 +9945,8 @@ impl AgentVerb {
             Self::VaultAgentsDreamingSet => &["spec"],
             Self::VaultAgentsGrantsMint => &["spec"],
             Self::VaultAgentsGrantsRevoke => &["spec"],
+            Self::VaultAgentsVerbClassesGet => &["spec"],
+            Self::VaultAgentsVerbClassesConfigure => &["spec"],
             Self::VaultOauthAuthorizationAnswer => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
@@ -11184,7 +11213,9 @@ impl AgentVerb {
             Self::VaultCodeSecretsPropose => &["spec"],
             Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeSessionModelHealCount => &["spec"],
             Self::VaultCodeCorrections => &["spec"],
+            Self::VaultCodeStepEvidence => &["spec"],
             Self::VaultCodeTypeDiagnostics => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
             Self::VaultCodeWaitsReceipt => &["spec"],
@@ -11267,6 +11298,8 @@ impl AgentVerb {
             Self::VaultAgentsDreamingSet => &["spec"],
             Self::VaultAgentsGrantsMint => &["spec"],
             Self::VaultAgentsGrantsRevoke => &["spec"],
+            Self::VaultAgentsVerbClassesGet => &["spec"],
+            Self::VaultAgentsVerbClassesConfigure => &["spec"],
             Self::VaultOauthAuthorizationAnswer => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
@@ -12045,7 +12078,7 @@ impl AgentVerb {
                 "Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only."
             }
             Self::VaultBudgetsLeaseOpen => {
-                "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit."
+                "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit, optionally funded by his agent grant that names a wallet its whole tree draws on."
             }
             Self::VaultBudgetsLease => {
                 "The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."
@@ -13940,8 +13973,14 @@ impl AgentVerb {
             Self::VaultCodeModelHealCount => {
                 "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."
             }
+            Self::VaultCodeSessionModelHealCount => {
+                "Read one model's healed-turn tally as one live off-record session the owner is in reads it: the canonical tally, that session's own delta and their sum. Owner only. A closed or unknown session is refused."
+            }
             Self::VaultCodeCorrections => {
                 "Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only."
+            }
+            Self::VaultCodeStepEvidence => {
+                "Read one canonical code run's steps as the owner, paged by step: each step's normalized program, executed JavaScript, committed observation and finished console as stored, bounded or withheld, with its correction records."
             }
             Self::VaultCodeTypeDiagnostics => {
                 "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."
@@ -14184,10 +14223,16 @@ impl AgentVerb {
                 "The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."
             }
             Self::VaultAgentsGrantsMint => {
-                "The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door."
+                "The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it."
             }
             Self::VaultAgentsGrantsRevoke => {
                 "The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."
+            }
+            Self::VaultAgentsVerbClassesGet => {
+                "The owner reads his verb-class rows, each a class name and the exact verbs an agent grant naming it admits, with the trusted manifest hash."
+            }
+            Self::VaultAgentsVerbClassesConfigure => {
+                "The owner replaces his whole verb-class table against the current manifest hash; each row names a class and its exact verbs, never git_push or another class, and grants naming the class admit them at once."
             }
             Self::VaultOauthAuthorizationAnswer => {
                 "The owner allows, at a tier and optional world, or denies one outside app's pending OAuth sign-in request for this vault's MCP endpoint."
