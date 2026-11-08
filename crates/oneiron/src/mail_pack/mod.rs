@@ -39,10 +39,12 @@
 //! the engine's own MIME reader ([`mime`]).
 
 mod attachments;
+mod caldav_calendar;
 mod calendar;
 pub(crate) mod claim_recheck;
 mod compliance;
 mod credential;
+mod dav_xml;
 mod doors;
 mod gmail;
 mod google_calendar;
@@ -67,6 +69,7 @@ mod reply_mime;
 mod reply_recipients;
 mod reply_send;
 mod rest;
+mod search;
 mod share;
 mod smtp_client;
 mod source;
@@ -82,6 +85,7 @@ pub(crate) use calendar::{
     bind_calendar_source_row_in_txn, calendar_source_occupancy, calendar_source_of_system_in,
     merge_busy,
 };
+pub use caldav_calendar::{CALDAV_CALENDAR_CONNECTOR_EFFECTOR, HttpCalDavCalendarWire};
 pub(crate) use claim_recheck::{claim_recheck_current_in, erase_claim_recheck_ids_in_txn};
 pub(crate) use compliance::erase_compliance_actor_in_txn;
 pub use compliance::{
@@ -102,6 +106,7 @@ pub use inbox::{
     MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView,
 };
 pub use local_sync::MailSourceSyncRequest;
+pub use search::{MailSearchReport, MailSourceSearchRequest};
 pub use mbox_import::{MailMboxImportReport, MailMboxImportRequest};
 pub use microsoft365::{HttpGraphMailWire, MICROSOFT365_CONNECTOR_EFFECTOR};
 pub use microsoft365_calendar::{HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR};
