@@ -734,6 +734,8 @@ both bindings and their export-census tests in one change.
 - `vault.code.corrections`
 - `vault.code.step_evidence`
 - `vault.code.type_diagnostics`
+- `vault.code.waits.rebind_prepare`
+- `vault.code.waits.rebind`
 - `vault.code.waits.resolve`
 - `vault.code.waits.receipt`
 - `vault.results.status`
@@ -894,6 +896,7 @@ both bindings and their export-census tests in one change.
 - `tasks.answer.forward`
 - `tasks.answer.forward.status`
 - `tasks.outcomes`
+- `tasks.outcomes.route_calibration`
 - `vault.rooms.list`
 - `vault.rooms.messages`
 - `vault.rooms.participants`
@@ -1135,6 +1138,7 @@ both bindings and their export-census tests in one change.
 - `vault.esign.signing.pdf`
 - `vault.esign.signing.image`
 - `vault.esign.signing.signature`
+- `vault.esign.signing.preview`
 - `vault.esign.seal.get`
 - `vault.conversations.create`
 - `vault.conversations.turns.create`
