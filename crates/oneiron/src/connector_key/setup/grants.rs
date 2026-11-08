@@ -325,9 +325,6 @@ impl Vault {
     /// session over the installed source holds a check that still matches
     /// its grants, custody and key.
     pub fn require_pack_connection_verified(&self, pack: &str, connection: &str) -> Result<()> {
-        // A carrier's body file stays on disk while this snapshot reads it
-        // (FIX 22091).
-        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let (declared, sessions) = {
             let (setup, sessions) = self.installed_pack_setup_in_txn(&txn, pack)?;
@@ -394,9 +391,6 @@ impl Vault {
         content_hash: &str,
         connection: &str,
     ) -> Result<PackSetupCheckRecord> {
-        // A carrier's body file stays on disk while this snapshot reads it
-        // (FIX 22091).
-        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let receipt = self.pack_setup_receipt_in_txn(&txn, pack, Some(content_hash))?;
         let source = self
@@ -437,9 +431,6 @@ impl Vault {
         connection: &str,
     ) -> Result<PackSetupSecret> {
         self.require_pack_connection_verified(pack, connection)?;
-        // A carrier's body file stays on disk while this snapshot reads it
-        // (FIX 22091).
-        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let (setup, _) = self.installed_pack_setup_in_txn(&txn, pack)?;
         declared_connection(&setup.connections, connection)?
@@ -459,9 +450,6 @@ impl Vault {
         name: &str,
     ) -> Result<PackSetupSecret> {
         self.require_pack_connection_verified(pack, connection)?;
-        // A carrier's body file stays on disk while this snapshot reads it
-        // (FIX 22091).
-        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let (setup, _) = self.installed_pack_setup_in_txn(&txn, pack)?;
         declared_connection(&setup.connections, connection)?
@@ -478,9 +466,6 @@ impl Vault {
     /// what its setup's owner allowed. A pack without setup, and a grant no
     /// connection serves, ask nothing more.
     pub(crate) fn require_pack_grants_verified(&self, pack: &str, grants: &[&str]) -> Result<()> {
-        // A carrier's body file stays on disk while this snapshot reads it
-        // (FIX 22091).
-        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let Some(receipt) = self.installed_pack_in_txn(&txn, pack)? else {
             return Ok(());

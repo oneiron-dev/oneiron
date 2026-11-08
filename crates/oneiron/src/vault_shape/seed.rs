@@ -92,9 +92,6 @@ impl Vault {
     ///
     /// A read failure, or a seed row that no longer decodes.
     pub fn shape_seed(&self) -> Result<Option<StoredShapeSeed>> {
-        // A carrier's body file stays on disk while this snapshot reads it
-        // (FIX 22091).
-        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         self.shape_seed_in_txn(&txn)
     }
