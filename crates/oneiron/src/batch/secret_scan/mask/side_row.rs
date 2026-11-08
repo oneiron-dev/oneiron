@@ -455,24 +455,28 @@ pub(crate) fn admit_seeded_parts(
 }
 
 /// [`admit_seeded_parts`] as its plan alone (FIX 21363), for a replay that
-/// proves what an earlier admission stored: `vault`'s switch, kept values
-/// and known values plan the parts as that admission's did, and its custody
-/// door is not opened, so nothing is minted and nothing is written, not even
-/// the clock and id floors a mint stamps. A value custody already holds
-/// takes its handle; a secret that needs a new record refuses with the
-/// door's reason.
+/// proves what an earlier admission stored: `vault`'s switch and kept values
+/// and the caller's `known` matcher plan the parts, and its custody door is
+/// not opened, so nothing is minted and nothing is written, not even the
+/// clock and id floors a mint stamps. A value `known` holds takes its
+/// handle; a secret it does not hold refuses with the door's reason.
 pub(super) fn plan_seeded_parts(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
     origins: &[(EntityId, &str)],
     parts: &mut [SidePart],
+    known: Arc<KnownValues>,
 ) -> Result<bool> {
     let scope = Scope {
         mode: secret_scan_mode_in_txn(vault, &*wtxn)?,
         decides: Some(&vault.store),
         door: None,
     };
-    let (mut seed, pass) = (Lifted::default(), Pass::default());
+    let pass = Pass {
+        known: Some(known),
+        ..Pass::default()
+    };
+    let mut seed = Lifted::default();
     Ok(admitted(scope, wtxn, origins, parts, &mut seed, |_| true, pass)?.is_some())
 }
 
