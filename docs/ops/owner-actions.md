@@ -376,6 +376,7 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 | `ppr_cache_eviction` | day | cached graph walks older than the longest serve window (168 h) |
 | `drafter_corpus_sweep` | day, and at start | drafter training examples past the newest `DRAFTER_EXAMPLES_KEPT` (their keys retire), sealed drafter corpora no prepared, training or returned drafter version names, and stray files in a kept one |
 | `model_pack_retirement` | minute | a model pack's retirement: its notices 60, 30 and 7 days before (none while your model manifest outranks the pack), and on the day the move to its successor, with the change notice and its revert. `serve` sends them for your vault and for each shared vault it keeps open, and counts the models your other machines offer over the mesh, also when `[models]` is empty. `oneiron maintain` sends them too, for the same models: those your `[models]` roles name, those on the workers `serve` launches, and the mesh models `serve` last found with its mesh on (a `serve` with the mesh off marks them stale at its start) |
+| `oauth_expiry` | hour | an app's OAuth sign-in rows past their lifetime: sign-in requests (their inbox ask offers no tap any more), codes, access and refresh tokens, token families past their last refresh token, and stale copies of an app's client metadata document that no sign-in uses |
 
 The signing sweeps and the cache eviction walk their records a page at a time and go on from
 where they stopped on the next pass. A sweep that fails, or that could not finish some of its
