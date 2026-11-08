@@ -2555,12 +2555,22 @@ class Oneiron:
         @property
         def quarantine(self) -> "Oneiron._VaultSyncQuarantineVerbs": ...
         @property
+        def documents(self) -> "Oneiron._VaultSyncDocumentsVerbs": ...
+        @property
         def retained_work(self) -> "Oneiron._VaultSyncRetainedWorkVerbs": ...
         @property
         def repo_manifests(self) -> "Oneiron._VaultSyncRepoManifestsVerbs": ...
     class _VaultSyncQuarantineVerbs:
         def held_edits(self, spec: Facade.EmptyRequest) -> list[tuple[int, Facade.SyncHeldEditEvidence]]:
             """The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."""
+    class _VaultSyncDocumentsVerbs:
+        @property
+        def copy_edit(self) -> "Oneiron._VaultSyncDocumentsCopyEditVerbs": ...
+    class _VaultSyncDocumentsCopyEditVerbs:
+        def review(self, spec: Facade.RepoCopyEditReviewRequest) -> Facade.RepoCopyEditReviewView | None:
+            """The owner reviews the edit a retained document copy holds for one source document: why it is held, the masked text the copy submitted, and the revision to settle it under; the revision is a token, not authority."""
+        def settle(self, spec: Facade.RepoCopyEditSettleRequest) -> Facade.RepoCopyEditSettleView:
+            """The owner settles that held copy edit to an exact replacement text, under the revision they reviewed; a changed or settled edit answers stale. Answers the committed document frame, a local commit, not a delivery."""
     class _VaultSyncRetainedWorkVerbs:
         @property
         def wait(self) -> "Oneiron._VaultSyncRetainedWorkWaitVerbs": ...

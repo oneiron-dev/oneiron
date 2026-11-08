@@ -137,6 +137,10 @@ pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+// The owner's retained document-copy edit doors (FIX 13274).
+pub(crate) use super::repo_copy_edit_doors::{
+    vault_sync_documents_copy_edit_review, vault_sync_documents_copy_edit_settle,
+};
 // The owner's reset of a person's step-up passkeys (FIX 17553).
 pub(crate) use super::step_up_doors::{vault_step_up_passkeys_reset, vault_step_up_totp_reset};
 // The weave Admin's served rows, on the passkey step-up (FIX 11694).

@@ -12094,6 +12094,76 @@ async fn vault_sync_quarantine_held_edits(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_sync_documents_copy_edit_review(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.sync.documents.copy_edit.review")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.sync.documents.copy_edit.review", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.sync.documents.copy_edit.review", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_sync_documents_copy_edit_review(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_sync_documents_copy_edit_settle(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.sync.documents.copy_edit.settle")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.sync.documents.copy_edit.settle", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.sync.documents.copy_edit.settle", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_sync_documents_copy_edit_settle(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_sync_retained_work_wait_set(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -44465,6 +44535,22 @@ fn boxed_vault_sync_quarantine_held_edits<'a>(
     Box::pin(vault_sync_quarantine_held_edits(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_sync_documents_copy_edit_review<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sync_documents_copy_edit_review(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sync_documents_copy_edit_settle<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sync_documents_copy_edit_settle(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_sync_retained_work_wait_set<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -52573,6 +52659,12 @@ async fn call_verb_row(
         }
         "vault.sync.quarantine.held_edits" => {
             boxed_vault_sync_quarantine_held_edits(server, call, input).await
+        }
+        "vault.sync.documents.copy_edit.review" => {
+            boxed_vault_sync_documents_copy_edit_review(server, call, input).await
+        }
+        "vault.sync.documents.copy_edit.settle" => {
+            boxed_vault_sync_documents_copy_edit_settle(server, call, input).await
         }
         "vault.sync.retained_work.wait.set" => {
             boxed_vault_sync_retained_work_wait_set(server, call, input).await

@@ -1209,6 +1209,12 @@ impl OneironClient {
                 "vault.sync.quarantine.held_edits" => remote_agent_verb_output::<
                     Vec<(u64, oneiron::task_verb::sdk::SyncHeldEditEvidence)>,
                 >(client, verb, &input),
+                "vault.sync.documents.copy_edit.review" => remote_agent_verb_output::<
+                    Option<oneiron::task_verb::sdk::RepoCopyEditReviewView>,
+                >(client, verb, &input),
+                "vault.sync.documents.copy_edit.settle" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RepoCopyEditSettleView,
+                >(client, verb, &input),
                 "vault.sync.retained_work.wait.set" => {
                     remote_agent_verb_output::<u64>(client, verb, &input)
                 }
@@ -8842,6 +8848,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.sync.quarantine.held_edits", value)
+    }
+    pub fn vault_sync_documents_copy_edit_review(
+        &self,
+        input: &oneiron::task_verb::sdk::RepoCopyEditReviewRequest,
+    ) -> Result<Option<oneiron::task_verb::sdk::RepoCopyEditReviewView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sync.documents.copy_edit.review", value)
+    }
+    pub fn vault_sync_documents_copy_edit_settle(
+        &self,
+        input: &oneiron::task_verb::sdk::RepoCopyEditSettleRequest,
+    ) -> Result<oneiron::task_verb::sdk::RepoCopyEditSettleView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sync.documents.copy_edit.settle", value)
     }
     pub fn vault_sync_retained_work_wait_set(
         &self,
