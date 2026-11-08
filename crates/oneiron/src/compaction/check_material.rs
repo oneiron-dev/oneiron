@@ -227,6 +227,7 @@ fn bound_body(summary: EntityId, reference: &CompactionCheckMaterialRef) -> Owne
     OwnedBody {
         owner: summary,
         occurrence: reference.occurrence,
+        mark_occurrence: reference.occurrence,
         state: BodyState::Complete {
             body: reference.body.clone(),
         },
