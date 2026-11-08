@@ -182,20 +182,24 @@ impl ResolvedCaller {
 
 /// The caller the receipt layer resolved for this same request, its path
 /// and headers unchanged, for the route's own `CoreAuth` extractor (FIX
-/// 12323). Only a caller whose standing the server reads again here, a
-/// slip, a token id or an attested owner, is taken, and only while it is
-/// still live ([`CoreAuth::credential_is_live`]). `None` for any other: the
-/// extractor resolves it as before, so a revoked or expired credential is
-/// refused there exactly as before, and an account key meets its own
-/// verifier again.
+/// 12323). A slip, token id or attested owner stands as before. An account
+/// key also stands when its verifier's live verdict lease still names the
+/// exact key, scopes and principal (FIX 12332); a no-jti owner bearer or dev
+/// hatch re-reads its admitting config, and an attested person matches this
+/// request's holder. Every caller must still be live
+/// ([`CoreAuth::credential_is_live`]). `None` for any other or any
+/// uncertainty: the extractor resolves it as before, so a revoked, punched
+/// or expired credential gets today's refusal.
 pub(crate) fn resolved_facade_caller(
     parts: &axum::http::request::Parts,
     server: &SyncServer,
 ) -> Option<CoreAuth> {
     let resolved = parts.extensions.get::<ResolvedCaller>()?;
     let auth = &resolved.auth;
-    let standing =
-        auth.verified_slip().is_some() || auth.jti().is_some() || auth.managed_owner().is_some();
+    let standing = auth.verified_slip().is_some()
+        || auth.jti().is_some()
+        || auth.managed_owner().is_some()
+        || auth.facade_reuse_stands(server, parts);
     (resolved.path == parts.uri.path()
         && resolved.headers == parts.headers
         && standing

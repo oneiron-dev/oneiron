@@ -662,9 +662,11 @@ impl TaskIntentPresence {
     ) -> TaskIntentPresence {
         let status = match task.outcome {
             Some(ConnectorSendTaskOutcome::Delivered) => TaskBoardStatus::Done,
-            Some(ConnectorSendTaskOutcome::Failed | ConnectorSendTaskOutcome::Ambiguous) => {
-                TaskBoardStatus::Failed
-            }
+            Some(
+                ConnectorSendTaskOutcome::Failed
+                | ConnectorSendTaskOutcome::Ambiguous
+                | ConnectorSendTaskOutcome::OwnerDeclinedResend,
+            ) => TaskBoardStatus::Failed,
             None => status,
         };
         let mut presence = Self::new(
