@@ -162,7 +162,8 @@ pub(crate) use slate_scope_signal::{
     ConnectorScopeEvidence, ScopeExceedCall, connector_scope_evidence, keep_connector_scope_signal,
 };
 pub(crate) use slate_setting::{
-    connector_tool_setting_in_txn, effect_slate_always_allows, governing_slate_in_txn,
+    connector_elicitation_setting_in_txn, connector_tool_setting_in_txn,
+    effect_slate_always_allows, governing_slate_in_txn,
 };
 
 pub use manifest_drift::{

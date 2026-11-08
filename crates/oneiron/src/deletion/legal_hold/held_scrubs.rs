@@ -36,7 +36,12 @@ impl Vault {
             txn,
         )?;
         crate::task_verb::settle_held_ask_forward_rows_in_txn(self, txn)?;
-        self.settle_owed_byoa_exhaust_erases_in_txn(txn)
+        let cancelled = self.settle_owed_byoa_exhaust_erases_in_txn(txn)?;
+        crate::channel_identity_provider::settle_line_chat_archive_releases_in_txn(
+            &crate::secret_custody::CustodyWrite::of(self),
+            txn,
+        )?;
+        Ok(cancelled)
     }
 }
 
@@ -66,6 +71,13 @@ pub(in crate::deletion) fn held_scrubs_owed_in_txn(
         return Ok(true);
     }
     if vault.byoa_exhaust_erases_owed_in_txn(txn, &sources)? {
+        return Ok(true);
+    }
+    if crate::channel_identity_provider::line_chat_archive_releases_owed_in_txn(
+        &vault.store,
+        txn,
+        &sources,
+    )? {
         return Ok(true);
     }
     if super::super::erase::held_ask_forward_intents_owed_in_txn(vault, txn, &sources)? {
