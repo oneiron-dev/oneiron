@@ -5,6 +5,7 @@
 //! Documents are loaded lazily, snapshot before ordered pending updates.
 
 #[cfg(feature = "sync")]
+mod adoption;
 mod carried;
 pub(crate) mod checkpoint;
 mod citation_floor;
@@ -41,7 +42,7 @@ pub(crate) use summary::{
 pub mod review_explainer;
 use oneiron_store::entity_doc::side_keys;
 mod storage;
-mod succession;
+pub(crate) mod succession;
 #[cfg(feature = "sync")]
 mod sweep;
 mod token_uses;
@@ -101,7 +102,7 @@ pub(crate) use sweep::{compact_entity_doc_for_sweep, entity_doc_slots_in};
 #[cfg(feature = "sync")]
 pub(crate) use sync::{
     SyncEdit, edit_sync_text_in_txn, join_sync_update_in_txn, replace_sync_text_in_txn,
-    sync_text_in,
+    sync_text_in, take_sync_successor_in_txn,
 };
 pub use verbs::{AnchoredEdit, EditVerb, TextAnchor, TextUpdateOutcome, TextUpdateRequest};
 

@@ -20,10 +20,10 @@ use axum::Json;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::http::HeaderMap;
-use oneiron::federation::RemovalExportCopy;
+use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
-use super::left_proof;
+use super::{archive_stream, left_proof};
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
 
@@ -32,16 +32,14 @@ use crate::server::SyncServer;
 /// channel, each one proof and one spent nonce.
 const REMOVAL_DELIVERY_HOLD: Duration = Duration::from_secs(50);
 
-/// One archive a session sends, with the delivery version its ack names.
+/// A session's answer with no archive owed. One with archives owed is
+/// `{"deliveries":[{"version":…,"copy":…},…],"woken":false}`, each copy
+/// streamed from its spool file (FIX 21529,
+/// [`archive_stream::deliveries_answer`]).
 #[derive(Debug, Serialize)]
-struct Delivery {
-    version: u64,
-    copy: RemovalExportCopy,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct Deliveries {
-    deliveries: Vec<Delivery>,
+struct NoDeliveries {
+    /// Always empty.
+    deliveries: [u8; 0],
     /// A wake for this person ended the session: ask again at once.
     woken: bool,
 }
@@ -49,8 +47,9 @@ pub(super) struct Deliveries {
 pub(super) async fn removal_delivery(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-) -> Result<Json<Deliveries>, EnvelopedApiError> {
+) -> Result<Response, EnvelopedApiError> {
     let (slip, proof, signature) = left_proof(&headers)?;
+    let idle = server.transfers.idle;
     // Taken before the read, so a wake while it reads is not missed.
     let since = server.removal_deliveries.mark();
     let reading = Arc::clone(&server);
@@ -67,23 +66,17 @@ pub(super) async fn removal_delivery(
     .map_err(|_| ApiError::unauthorized())?
     .map_err(|_| ApiError::unauthorized())?;
     if !owed.is_empty() {
-        let deliveries = owed
-            .into_iter()
-            .map(|(version, copy)| Delivery { version, copy })
-            .collect();
-        return Ok(Json(Deliveries {
-            deliveries,
-            woken: false,
-        }));
+        return Ok(archive_stream::deliveries_answer(owed, idle));
     }
     let woken = server
         .removal_deliveries
         .hold(person, since, REMOVAL_DELIVERY_HOLD)
         .await;
-    Ok(Json(Deliveries {
-        deliveries: Vec::new(),
+    Ok(Json(NoDeliveries {
+        deliveries: [],
         woken,
-    }))
+    })
+    .into_response())
 }
 
 /// The version of one archive the holder now stores.
