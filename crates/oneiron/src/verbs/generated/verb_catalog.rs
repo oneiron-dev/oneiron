@@ -1309,6 +1309,7 @@ pub enum AgentVerb {
     VaultMailComplianceSet,
     VaultMailComplianceLog,
     VaultMailSourcesSyncStatus,
+    VaultMailSourcesSync,
     VaultMailInbox,
     VaultMailThreadsRead,
     VaultMailComplianceSearch,
@@ -2662,6 +2663,7 @@ impl AgentVerb {
         Self::VaultMailComplianceSet,
         Self::VaultMailComplianceLog,
         Self::VaultMailSourcesSyncStatus,
+        Self::VaultMailSourcesSync,
         Self::VaultMailInbox,
         Self::VaultMailThreadsRead,
         Self::VaultMailComplianceSearch,
@@ -4056,6 +4058,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSet => "vault.mail.compliance.set",
             Self::VaultMailComplianceLog => "vault.mail.compliance.log",
             Self::VaultMailSourcesSyncStatus => "vault.mail.sources.sync_status",
+            Self::VaultMailSourcesSync => "vault.mail.sources.sync",
             Self::VaultMailInbox => "vault.mail.inbox",
             Self::VaultMailThreadsRead => "vault.mail.threads.read",
             Self::VaultMailComplianceSearch => "vault.mail.compliance.search",
@@ -5393,6 +5396,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
@@ -6775,6 +6779,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
@@ -8254,6 +8259,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
@@ -9062,6 +9068,7 @@ impl AgentVerb {
                 | Self::VaultMailThreadsShare
                 | Self::VaultMailThreadsUnshare
                 | Self::VaultMailComplianceSet
+                | Self::VaultMailSourcesSync
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictDiscard
@@ -10458,6 +10465,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
             Self::VaultMailSourcesSyncStatus => &["spec"],
+            Self::VaultMailSourcesSync => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
@@ -11812,6 +11820,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
             Self::VaultMailSourcesSyncStatus => &["spec"],
+            Self::VaultMailSourcesSync => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
@@ -15688,6 +15697,9 @@ impl AgentVerb {
             }
             Self::VaultMailSourcesSyncStatus => {
                 "Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."
+            }
+            Self::VaultMailSourcesSync => {
+                "The vault's owner runs one bounded import step of a Google or Microsoft 365 mailbox source on this device: changes since its anchor, the next newest-first pages under its copy setting, then waiting bodies."
             }
             Self::VaultMailInbox => {
                 "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."

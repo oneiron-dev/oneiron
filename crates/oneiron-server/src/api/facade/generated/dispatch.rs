@@ -40323,6 +40323,28 @@ async fn vault_mail_sources_sync_status(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_mail_sources_sync(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.mail.sources.sync",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_mail_inbox(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -52395,6 +52417,14 @@ fn boxed_vault_mail_sources_sync_status<'a>(
     Box::pin(vault_mail_sources_sync_status(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_mail_sources_sync<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_sources_sync(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_mail_inbox<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -55139,6 +55169,7 @@ async fn call_verb_row(
         "vault.mail.sources.sync_status" => {
             boxed_vault_mail_sources_sync_status(server, call, input).await
         }
+        "vault.mail.sources.sync" => boxed_vault_mail_sources_sync(server, call, input).await,
         "vault.mail.inbox" => boxed_vault_mail_inbox(server, call, input).await,
         "vault.mail.threads.read" => boxed_vault_mail_threads_read(server, call, input).await,
         "vault.mail.compliance.search" => {

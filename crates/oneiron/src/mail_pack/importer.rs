@@ -23,7 +23,9 @@ use super::landing::{LandOutcome, Landing};
 use super::pack::require_pack_active_in;
 use super::provider_delete::{ProviderDeleteOutcome, apply_provider_delete, update_labels};
 use super::source::{MailCopySetting, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
-use super::state::{MailSyncState, OCCURRENCES, SYNC, bodies_waiting_in, occurrence_key};
+use super::state::{
+    MailPresence, MailSyncState, OCCURRENCES, SYNC, bodies_waiting_in, occurrence_key,
+};
 use super::wire::{
     MailHeaders, MailHistoryChange, MailHistoryRead, MailListQuery, MailProviderWire,
     MailSyncSource,
@@ -176,6 +178,47 @@ impl Step<'_> {
         Ok(())
     }
 
+    /// A folder or label the provider no longer has: each message copied
+    /// under it is looked up again. Gone, or now in trash or spam, it is
+    /// deleted at the provider; else it carries its labels now.
+    fn label_gone(&mut self, label: &str) -> MemoryResult<()> {
+        let under = {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
+            let mut under = Vec::new();
+            for occurrence in
+                OCCURRENCES.iter_from(&self.vault.store, &txn, self.source.as_bytes())?
+            {
+                let (_, occurrence) = occurrence?;
+                if matches!(occurrence.presence, MailPresence::Present)
+                    && occurrence.labels.iter().any(|held| held == label)
+                {
+                    under.push(occurrence.provider_id);
+                }
+            }
+            under
+        };
+        for provider_id in under {
+            match self.wire.headers(&self.wire_source, &provider_id)? {
+                Some(headers) if !headers.trash_or_spam => {
+                    update_labels(
+                        self.vault,
+                        self.source,
+                        &provider_id,
+                        &headers.labels,
+                        self.at,
+                    )?;
+                }
+                _ => self.delete(&provider_id)?,
+            }
+        }
+        Ok(())
+    }
+
     /// The change feed since the anchor, `pages` pages at most. A read the
     /// budget cut short keeps its anchor: the next step reads it again, and
     /// what landed already lands as the same.
@@ -225,6 +268,7 @@ impl Step<'_> {
                             update_labels(self.vault, self.source, &provider_id, &labels, self.at)?;
                         }
                     }
+                    MailHistoryChange::LabelGone { label } => self.label_gone(&label)?,
                 }
             }
             match read.next_page {
@@ -258,6 +302,12 @@ impl Step<'_> {
     /// changed setting (search only included) or an expired anchor starts
     /// it over with a fresh cutoff.
     fn backfill(&mut self, pages: u32) -> MemoryResult<()> {
+        // A change-feed round mid-way may not yet have begun a folder the
+        // copy would reach (a Microsoft 365 folder's first round): what the
+        // copy lands there could be deleted before that round sees it.
+        if self.state()?.history_page.is_some() {
+            return Ok(());
+        }
         let copy = self.row.copy;
         if self.state()?.backfill_copy != Some(copy) {
             let cutoff = self.newer_than;
@@ -392,7 +442,10 @@ impl Vault {
         let mut step = Step {
             vault: self,
             source: source_ref,
-            wire_source: MailSyncSource::of(source_ref, &row),
+            wire_source: MailSyncSource {
+                newer_than,
+                ..MailSyncSource::of(source_ref, &row)
+            },
             row,
             wire,
             landing: Landing::new(self, owner, source_ref, at)?,
