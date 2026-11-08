@@ -59,6 +59,8 @@ pub use label_read::{
 pub use logprobs::{TokenScore, first_token_alternatives};
 mod model_id;
 mod protocol;
+mod provider_usage;
+pub use provider_usage::ProviderTokenMeasurement;
 mod reply_assertions;
 mod safeguard;
 mod scheduling;

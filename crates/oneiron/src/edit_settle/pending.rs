@@ -20,15 +20,9 @@ use serde::{Deserialize, Serialize};
 
 use super::codec::{RECORD, settlement_key_parts};
 use super::receipts::{already_settled, settlement_receipt_record};
-use super::records::{
-    SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleSelectOutcome, SettledReview,
-};
+use super::records::{SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleSelectOutcome};
 use crate::Vault;
-use crate::anchored_annotation::ReanchorSummary;
-use crate::blob_artifact::{
-    BLOB_ARTIFACT_RUN_REF_MAX_BYTES, BlobVersionProvenance, CalcEngineStamp, VersionReconciliation,
-    read_blob_artifact_head_in_txn,
-};
+use crate::blob_artifact::{BLOB_ARTIFACT_RUN_REF_MAX_BYTES, CalcEngineStamp};
 use crate::edit_roundtrip::{
     EditManifest, EditProposal, OfficeFormat, RecalcStatus, SheetAnswerBundle, StructureSummary,
     ValidationCheck, ValidationReport,
@@ -41,6 +35,8 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 mod admission;
+// The native output's Keep.
+mod keep_output;
 mod output_retention;
 mod output_settle;
 mod view;
@@ -133,6 +129,13 @@ enum PendingBody {
         name: String,
         media_type: String,
         report: String,
+        /// The world and facet its producing run's host bound, frozen as it
+        /// is retained (FIX 3171): Keep births the version's claim there,
+        /// never at the keeper's. Absent for an unbound producer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        producer_world: Option<EntityId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        producer_facet: Option<EntityId>,
     },
 }
 
@@ -491,6 +494,8 @@ impl Vault {
             deck.map(|(_, hold)| hold),
             report,
             delta_receipt,
+            // An organ's output binds no producing host position (FIX 3171).
+            crate::federation::record_scope::BirthPosition::default(),
         );
         row.read_rows.extend_from_slice(read_rows);
         row.read_rows.sort_unstable();
@@ -658,98 +663,6 @@ impl Vault {
         };
         self.drop_pending(artifact_id, proposal_ref)?;
         Ok(outcome)
-    }
-
-    fn keep_native_output(
-        &self,
-        artifact_id: &EntityId,
-        row: &PendingRow,
-        consent: &SettleConsent,
-        actor: WriteActor,
-        occurred: TimeRange,
-        learned_at: u64,
-    ) -> Result<SettleSelectOutcome> {
-        self.authorize_settle(consent, actor)?;
-        let key = settlement_key_parts(artifact_id, &row.proposal_ref);
-        let provenance = BlobVersionProvenance::AgentRun {
-            run_ref: row.proposal_ref.clone(),
-        };
-        let (version, record, reconciliation) = self.with_write_txn_grouped(|wtxn| {
-            let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
-            if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
-                return Err(already_settled(&existing));
-            }
-            let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
-            // The output forks from the version it was made against; a later
-            // head keeps both, as a person may keep a machine version beside
-            // their own. Made against nothing, it lands on whatever head is.
-            // A deck export was made against the version its deck projected
-            // over, whatever head it found then (FIX 2700). An explicit fork
-            // lands a fork version even against the current head; anything
-            // else forks only from an older head (blind review of #4387).
-            let fork_parent = row.base_version.filter(|base| {
-                row.explicit_fork || head.as_ref().is_some_and(|head| head.version != *base)
-            });
-            let version = match &row.made_by {
-                Some(made_by) => self.append_blob_artifact_version_kept_in_txn(
-                    wtxn,
-                    artifact_id,
-                    fork_parent,
-                    &row.new_bytes,
-                    &provenance,
-                    made_by,
-                    actor,
-                    occurred,
-                    learned_at,
-                )?,
-                None => self.append_blob_artifact_version_with_engine_and_parent_in_txn(
-                    wtxn,
-                    artifact_id,
-                    &row.new_bytes,
-                    &provenance,
-                    None,
-                    actor,
-                    occurred,
-                    learned_at,
-                    fork_parent,
-                    None,
-                )?,
-            };
-            if let Some(hold) = &row.deck {
-                self.keep_deck_export_in_txn(
-                    wtxn,
-                    artifact_id,
-                    hold,
-                    (row.base_version, row.base_content_hash),
-                    &version,
-                    (actor, row.made_by.as_ref(), learned_at),
-                )?;
-            }
-            // The head it replaced is the version an Undo restores.
-            let replaced = row.base_version.and(head.as_ref().map(|head| head.version));
-            let record = output_record(
-                row,
-                SettleOutcomeKind::Selected,
-                (consent, actor),
-                learned_at,
-                (Some(&version), replaced),
-                grant_ref,
-            );
-            RECORD.put(&self.store, wtxn, &key, &record)?;
-            if let Some(stamp) = row.delta_receipt.as_deref() {
-                LINK.put(&self.store, wtxn, &key, &stamp.to_owned())?;
-            }
-            let reconciliation = VersionReconciliation::of(fork_parent, head.as_ref());
-            Ok((version, record, reconciliation))
-        })?;
-        Ok(SettleSelectOutcome {
-            stranded_proposal: None,
-            version,
-            reanchor: ReanchorSummary::default(),
-            receipt: settlement_receipt_record(*artifact_id, &record)?,
-            reconciliation,
-            review: SettledReview::of(record),
-        })
     }
 
     fn put_pending(
