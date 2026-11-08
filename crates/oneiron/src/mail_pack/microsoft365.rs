@@ -978,7 +978,7 @@ fn require_graph_id(id: &str) -> Result<()> {
 }
 
 /// `text` percent-escaped as one URL path segment.
-fn path_segment(text: &str) -> String {
+pub(super) fn path_segment(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
