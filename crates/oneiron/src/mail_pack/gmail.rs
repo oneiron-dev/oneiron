@@ -253,6 +253,22 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         Ok(Some(super::mime::raw_address_headers(&bytes)))
     }
 
+    fn own_addresses(&self, source: &MailSyncSource) -> Result<Option<Vec<String>>> {
+        // The mailbox's primary address and each alias Gmail verified it
+        // owns (fix list row 20400); a pending alias never counts.
+        let Some(listed) = self.get(source, &format!("{GMAIL_USER_URL}/settings/sendAs"), &[])?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(
+            array(&listed, "sendAs")
+                .iter()
+                .filter(|alias| proven_send_as(alias))
+                .filter_map(|alias| text_of(alias.get("sendAsEmail")))
+                .collect(),
+        ))
+    }
+
     fn history(
         &self,
         source: &MailSyncSource,
@@ -498,6 +514,13 @@ fn reads_mailbox(profile: &Value, source: &MailSyncSource) -> Result<()> {
     } else {
         Err(refused("gmail_mail_credential_reads_another_mailbox"))
     }
+}
+
+/// Whether a Gmail `sendAs` entry is an address the mailbox owns: its
+/// primary address, or an alias whose verification Gmail accepted.
+fn proven_send_as(alias: &Value) -> bool {
+    alias.get("isPrimary").and_then(Value::as_bool) == Some(true)
+        || alias.get("verificationStatus").and_then(Value::as_str) == Some("accepted")
 }
 
 /// What a message's MIME parts hold.

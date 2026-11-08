@@ -80,7 +80,17 @@ pub(super) struct MailSyncState {
     /// provider meanwhile (fix list row 17937).
     #[serde(default)]
     pub(super) relist: Option<MailRelist>,
+    /// When the provider last answered for the mailbox's own addresses
+    /// (fix list row 20400); they are read again
+    /// [`OWN_ADDRESSES_REFRESH_SECS`] after it.
+    #[serde(default)]
+    pub(super) own_addresses_read_at: Option<u64>,
 }
+
+/// How long a provider's answer for a mailbox's own addresses stands before
+/// a sync step reads them again: an alias changes rarely, and a step runs
+/// often.
+pub(super) const OWN_ADDRESSES_REFRESH_SECS: u64 = 6 * 60 * 60;
 
 /// A listing that settles the copies an expired anchor lost track of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
