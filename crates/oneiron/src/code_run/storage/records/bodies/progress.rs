@@ -30,6 +30,7 @@ impl Vault {
                 &OwnedBody {
                     owner,
                     occurrence,
+                    mark_occurrence: occurrence,
                     state: BodyState::Incomplete { retained: None },
                     result: None,
                     code_run_output: Some(CodeRunOutputOrigin {
