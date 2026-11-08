@@ -124,6 +124,18 @@ impl MeshRoutes {
     }
 }
 
+/// The offer of each model the vault's discovery rows hold now, as
+/// [`MeshRoutes::publish`] binds it, read from the rows alone: no transport
+/// is built and nothing is sent. What `oneiron maintain` counts for the
+/// models the owner's other nodes offer (FIX 22189).
+pub(super) fn discovered_offers(vault: &Vault) -> oneiron::Result<Vec<OfferBinding>> {
+    Ok(vault
+        .model_registry_rows()?
+        .iter()
+        .filter_map(|row| mesh_offer(mesh_peer(row)?, &row.catalog))
+        .collect())
+}
+
 /// The node a row names, when the row is discovery's own: an own-server
 /// route a mesh catalog refresh wrote for a model that node offers. A row a
 /// withdrawn offer left stale routes nowhere (FIX 4546).
