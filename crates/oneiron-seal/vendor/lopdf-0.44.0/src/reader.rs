@@ -936,7 +936,7 @@ impl Reader<'_> {
                 XrefEntry::Normal { offset, .. } => match self.extract_raw_object(offset as usize) {
                     Ok((obj_id, raw_bytes)) => {
                         if let Some(admission) = self.decode_admission.as_deref() {
-                            admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Vec<u8>>())?;
+                            admission.admit_estimate(decode_admission::btree_entry_bytes::<ObjectId, Vec<u8>>(), 0)?;
                         }
                         self.raw_objects.insert(obj_id, raw_bytes);
                     }
@@ -986,7 +986,7 @@ impl Reader<'_> {
                     Ok((id, mut obj)) => {
                         let _ = encryption::decrypt_object(state, *obj_id, &mut obj);
                         if let Some(admission) = self.decode_admission.as_deref() {
-                            admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+                            admission.admit_estimate(decode_admission::btree_entry_bytes::<ObjectId, Object>(), 0)?;
                         }
                         self.document.objects.insert(id, obj);
                     }
@@ -1018,7 +1018,7 @@ impl Reader<'_> {
                                 let obj_id = (obj_num, 0);
                                 if let Some(obj) = object_stream.objects.remove(&obj_id) {
                                     if let Some(admission) = self.decode_admission.as_deref() {
-                                        admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+                                        admission.admit_estimate(decode_admission::btree_entry_bytes::<ObjectId, Object>(), 0)?;
                                     }
                                     self.document.objects.insert(obj_id, obj);
                                 }
@@ -1369,14 +1369,14 @@ impl Reader<'_> {
                 let offset = self.get_offset(encrypt_ref)?;
                 let (_, encrypt_obj) = self.read_object(offset as usize, Some(encrypt_ref), &mut HashSet::new())?;
                 if let Some(admission) = self.decode_admission.as_deref() {
-                    admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+                    admission.admit_estimate(decode_admission::btree_entry_bytes::<ObjectId, Object>(), 0)?;
                 }
                 self.document.objects.insert(encrypt_ref, encrypt_obj);
             } else if let Some(raw_bytes) = self.raw_objects.get(&encrypt_ref) {
                 match self.parse_raw_object(raw_bytes) {
                     Ok((_, obj)) => {
                         if let Some(admission) = self.decode_admission.as_deref() {
-                            admission.admit(decode_admission::btree_entry_bytes::<ObjectId, Object>())?;
+                            admission.admit_estimate(decode_admission::btree_entry_bytes::<ObjectId, Object>(), 0)?;
                         }
                         self.document.objects.insert(encrypt_ref, obj);
                     }

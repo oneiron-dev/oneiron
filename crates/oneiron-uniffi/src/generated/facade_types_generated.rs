@@ -49788,6 +49788,8 @@ pub struct BornFromView {
 /// `oneiron::edit_settle::pending::view::PendingProposalKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum PendingProposalKind {
+    #[serde(rename = "needs_staging")]
+    NeedsStaging,
     #[serde(rename = "edit")]
     Edit,
     #[serde(rename = "output")]
@@ -50566,6 +50568,12 @@ pub struct UnitRefusal {
 pub struct ArtifactAskOutcome {
     #[serde(rename = "proposed", default, skip_serializing_if = "Option::is_none")]
     pub proposed: Option<PendingProposalView>,
+    #[serde(
+        rename = "needs_staging",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub needs_staging: Option<PendingProposalView>,
     #[serde(rename = "abstained")]
     pub abstained: Vec<UnitAbstention>,
     #[serde(rename = "refused")]

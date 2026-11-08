@@ -58,6 +58,16 @@
 //!    open/verify plus a passthrough diff. A failed check yields
 //!    [`EditOutcome::Rejected`] and never reaches the proposal stage.
 //!
+//! # Paid sheet answers
+//!
+//! [`ArtifactAskRun::sheet_answers`] is paid work before byte staging, not a
+//! validated proposal. Its caller retains the bundle and its read rows first,
+//! then stages under the original whole-ask deadline. A later intake floor
+//! travels as [`ArtifactAskRun::deferred_floor`]: callers retain paid answers
+//! and the next-row cursor before returning the typed refusal, without staging.
+//! Fresh, standing and wake asks do this before their byte attempt. See `docs/ops/artifact-ask-staging.md`
+//! for native caller order, retry and the existing Keep action.
+//!
 //! # External-binary seam
 //!
 //! openpyxl and LibreOffice are NOT available in CI and are NOT repo
@@ -113,7 +123,9 @@ pub use self::docx::run_docx_revision;
 pub(crate) use self::docx::{docx_parts_match_replay, validate_docx_passthrough};
 pub use self::folder_review::{FolderAsk, FolderItem};
 pub use self::inspect::{CrossSheetDep, SheetSummary, StructureSummary};
-pub use self::judgment::{SheetAnswerBundle, SheetCellAnswer, SheetRowReads, SheetRowsAsk};
+pub use self::judgment::{
+    SheetAnswerBundle, SheetAnswerWork, SheetCellAnswer, SheetRowReads, SheetRowsAsk,
+};
 pub use self::manifest::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditWarning, MutationMode, WarningCode,
 };
@@ -136,7 +148,6 @@ pub use oneiron_xlsx_formula::RecalcClock;
 pub(crate) fn read_office_package(bytes: &[u8]) -> crate::error::Result<()> {
     opc::read(bytes).map(|_| ())
 }
-
 #[cfg(test)]
 mod docx_tests;
 #[cfg(test)]
