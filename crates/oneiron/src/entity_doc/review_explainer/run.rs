@@ -237,7 +237,10 @@ async fn generate(
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: payload, signature: None }],
+                content: vec![ContentPart::Text {
+                    text: payload,
+                    signature: None,
+                }],
             },
         ],
         tools: Vec::new(),

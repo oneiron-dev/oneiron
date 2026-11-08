@@ -441,7 +441,10 @@ pub(in crate::server) fn launch_request(
     let descriptor = serde_json::json!({
         "response_format": {"type": "json_schema", "schema": schema},
     });
-    let part = |text: String| ContentPart::Text { text, signature: None };
+    let part = |text: String| ContentPart::Text {
+        text,
+        signature: None,
+    };
     let purpose = CallPurpose::Other {
         name: LAUNCH_PURPOSE.to_owned(),
     };

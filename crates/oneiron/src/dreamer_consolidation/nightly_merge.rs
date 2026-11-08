@@ -334,7 +334,10 @@ impl ConsolidationExecutor<'_> {
                     },
                     LlmMessage {
                         role: LlmMessageRole::User,
-                        content: vec![ContentPart::Text { text, signature: None }],
+                        content: vec![ContentPart::Text {
+                            text,
+                            signature: None,
+                        }],
                     },
                 ],
                 tools: Vec::new(),

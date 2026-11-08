@@ -341,13 +341,19 @@ impl EngineNativeExecutor<'_> {
             console_slot = None;
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: brief, signature: None }],
+                content: vec![ContentPart::Text {
+                    text: brief,
+                    signature: None,
+                }],
             });
         }
         if let Some(note) = memory_note {
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: note, signature: None }],
+                content: vec![ContentPart::Text {
+                    text: note,
+                    signature: None,
+                }],
             });
         }
         // An approved continuation's note, its own message (FIX 3694).
@@ -469,7 +475,10 @@ impl EngineNativeExecutor<'_> {
         };
         Ok(LlmMessage {
             role: LlmMessageRole::User,
-            content: vec![ContentPart::Text { text, signature: None }],
+            content: vec![ContentPart::Text {
+                text,
+                signature: None,
+            }],
         })
     }
 }

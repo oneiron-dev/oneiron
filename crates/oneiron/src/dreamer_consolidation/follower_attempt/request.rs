@@ -129,14 +129,16 @@ pub(super) fn ask_request(
     let mut content: Vec<ContentPart> = work
         .prefix
         .iter()
-        .map(|text| ContentPart::Text { text: text.clone(), signature: None })
+        .map(|text| ContentPart::Text {
+            text: text.clone(),
+            signature: None,
+        })
         .collect();
     let retained = content.len();
-    content.extend(
-        work.fresh
-            .iter()
-            .map(|text| ContentPart::Text { text: text.clone(), signature: None }),
-    );
+    content.extend(work.fresh.iter().map(|text| ContentPart::Text {
+        text: text.clone(),
+        signature: None,
+    }));
     content.push(ContentPart::Text {
         text: work.question.clone(),
         signature: None,
@@ -175,7 +177,10 @@ pub(super) fn fold_request(
 ) -> LlmRequest {
     let content = group
         .iter()
-        .map(|text| ContentPart::Text { text: text.clone(), signature: None })
+        .map(|text| ContentPart::Text {
+            text: text.clone(),
+            signature: None,
+        })
         .collect();
     request(
         model,
@@ -227,7 +232,10 @@ fn request(
         messages: vec![
             LlmMessage {
                 role: LlmMessageRole::System,
-                content: vec![ContentPart::Text { text: system, signature: None }],
+                content: vec![ContentPart::Text {
+                    text: system,
+                    signature: None,
+                }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,

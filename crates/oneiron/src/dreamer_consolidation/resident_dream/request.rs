@@ -69,7 +69,10 @@ pub(super) fn dream_request(
     if let Some(text) = craft {
         messages.push(LlmMessage {
             role: LlmMessageRole::System,
-            content: vec![ContentPart::Text { text, signature: None }],
+            content: vec![ContentPart::Text {
+                text,
+                signature: None,
+            }],
         });
     }
     let mut asking = format!("{}\n\n{CRAFT_ASK}", cut.text());
@@ -79,7 +82,10 @@ pub(super) fn dream_request(
     }
     messages.push(LlmMessage {
         role: LlmMessageRole::User,
-        content: vec![ContentPart::Text { text: asking, signature: None }],
+        content: vec![ContentPart::Text {
+            text: asking,
+            signature: None,
+        }],
     });
     let request = LlmRequest {
         model: model.model.clone(),

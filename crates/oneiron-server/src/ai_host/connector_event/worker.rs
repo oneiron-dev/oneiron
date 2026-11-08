@@ -471,6 +471,9 @@ fn briefing(origin: &SurfaceConnectorPayload, event_id: &str, text: &str) -> Str
 fn message(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text, signature: None }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     }
 }
