@@ -40,12 +40,15 @@ use crate::server::SyncServer;
 const MCP_BOOKING_HOLDER_STREAM_CONTEXT: &str =
     "oneiron-server 2026-10 mcp stale-owner booking stream";
 
-/// The caller of one `tools/call`: for a booking tool called with no
-/// credential by an attested holder the vault no longer records as its live
-/// owner, that holder as a booking caller ([`booking_context`]); for a
-/// member door called with no credential by a member his supervisor signed
-/// it for, that member (FIX 1302, `person_call`); for every other call, the
-/// caller `owner_call::resolve_mcp_caller` resolves.
+/// The caller of one `tools/call`: for a stock client's OAuth access token,
+/// which the binding door swapped for the slip the server holds for it, that
+/// slip's registered connector and nothing else (FIX 4902, `oauth_call`);
+/// for a booking tool called with no credential by an attested holder the
+/// vault no longer records as its live owner, that holder as a booking caller
+/// ([`booking_context`]); for a member door called with no credential by a
+/// member his supervisor signed it for, that member (FIX 1302,
+/// `person_call`); for every other call, the caller
+/// `owner_call::resolve_mcp_caller` resolves.
 pub(super) async fn resolve_tool_caller(
     mode: McpSurfaceMode,
     request_id: &str,
@@ -55,6 +58,11 @@ pub(super) async fn resolve_tool_caller(
     server: &Arc<SyncServer>,
     params: Option<&Value>,
 ) -> Result<McpCallContext, McpGatewayError> {
+    if let Some(oauth) =
+        super::oauth_call::caller(mode, request_id, headers, connection, locality, server).await
+    {
+        return oauth;
+    }
     if let Some(person) =
         super::person_call::tool_caller(mode, request_id, headers, connection, server, params)
     {
@@ -69,7 +77,9 @@ pub(super) async fn resolve_tool_caller(
 
 /// The caller of an MCP handshake (FIX 5934, Engine ruling 10-20 08:4x):
 /// `initialize`, `notifications/initialized`, `tools/list` and
-/// `oneiron/wakes`. An attested holder with no credential the vault no
+/// `oneiron/wakes`. A stock client's swapped OAuth access token is its
+/// slip's registered connector and nothing else (FIX 4902, `oauth_call`).
+/// An attested holder with no credential the vault no
 /// longer records as its live owner is his booking caller, as for a booking
 /// tool call ([`booking_context`]), so a client that initializes first
 /// reaches the booking tools; a member his supervisor signed it for, that
@@ -83,6 +93,11 @@ pub(super) async fn resolve_handshake_caller(
     locality: oneiron::claim::CallerLocality,
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
+    if let Some(oauth) =
+        super::oauth_call::caller(mode, request_id, headers, connection, locality, server).await
+    {
+        return oauth;
+    }
     if let Some(person) =
         super::person_call::handshake_caller(mode, request_id, headers, connection, server)
     {
@@ -158,7 +173,9 @@ async fn resolve_holder_or_caller(
         .await
 }
 
-/// The owner a claimed `tools/call` invocation is keyed by: for a booking
+/// The owner a claimed `tools/call` invocation is keyed by: for a stock
+/// client's swapped OAuth access token, none, as for every connector's call
+/// (FIX 4902, `oauth_call`); for a booking
 /// tool called with no credential by an attested holder, that holder, live
 /// owner or not, whose call books as `resolve_tool_caller` resolves it; for
 /// a member door called with no credential by a member his supervisor
@@ -171,6 +188,9 @@ pub(super) fn invocation_owner(
     server: &SyncServer,
     params: Option<&Value>,
 ) -> Result<String, McpGatewayError> {
+    if super::oauth_call::swapped(connection) {
+        return Ok(String::new());
+    }
     if let Some(holder) = super::person_call::tool_holder(mode, headers, connection, server, params)
     {
         return Ok(holder.to_hex());

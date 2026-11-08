@@ -291,6 +291,7 @@ impl Chain<'_> {
             history_erased: false,
             input_hash: blake3::hash(run.input.as_bytes()).to_hex().to_string(),
             dependencies: run.dependencies.clone(),
+            named_rows: store::rows_named_by_call(&run.input, run.landing_original.as_deref()),
             unattributed: run.unattributed,
             grant: run.grant.clone(),
             preparation: run.preparation.clone(),

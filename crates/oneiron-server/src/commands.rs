@@ -431,33 +431,26 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
 }
 
 /// ARCH-0028's tiers as stored authority: the verbs the slip carries and the
-/// agent's ceiling. Propose-only writes with `core:propose`, which only doors
-/// that hold a write for review honour: `/v1/core/propose`, and the MCP verbs
-/// whose write lands at the agent's `proposed` ceiling (`AgentVerb::proposes`).
-/// `core:write`, which every unbound write door and every MCP write that takes
-/// effect at once requires, is full-access's alone. Nothing else —
-/// `core:auth`, an organization power, a companion scope — is ever an agent's.
+/// agent's ceiling, as the engine's [`oneiron::authority::AgentTier`] maps
+/// them for every door that admits an agent, the vault's OAuth sign-in too
+/// (FIX 4902).
 fn agent_tier_authority(
     tier: AgentTier,
 ) -> (
     std::collections::BTreeSet<String>,
     oneiron::agent_def::AgentCeiling,
 ) {
-    use oneiron::agent_def::AgentCeiling;
-    let (verbs, ceiling): (&[CoreScope], _) = match tier {
-        AgentTier::ReadOnly => (&[CoreScope::Read], AgentCeiling::Proposed),
-        AgentTier::ProposeOnly => (
-            &[CoreScope::Read, CoreScope::Propose],
-            AgentCeiling::Proposed,
-        ),
-        AgentTier::FullAccess => (
-            &[CoreScope::Read, CoreScope::Propose, CoreScope::Write],
-            AgentCeiling::Auto,
-        ),
+    let tier = match tier {
+        AgentTier::ReadOnly => oneiron::authority::AgentTier::ReadOnly,
+        AgentTier::ProposeOnly => oneiron::authority::AgentTier::ProposeOnly,
+        AgentTier::FullAccess => oneiron::authority::AgentTier::FullAccess,
     };
     (
-        verbs.iter().map(|verb| verb.as_str().to_owned()).collect(),
-        ceiling,
+        tier.core_scopes()
+            .iter()
+            .map(|scope| (*scope).to_owned())
+            .collect(),
+        tier.ceiling(),
     )
 }
 
