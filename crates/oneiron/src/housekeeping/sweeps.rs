@@ -373,7 +373,9 @@ fn found_key_notices(vault: &Vault, deadline: &Deadline) -> Result<Run> {
 
 /// Drops the OAuth server's rows past their lifetime (FIX 4902) a page at a
 /// time, each page its own short write, until none is left or the deadline
-/// passes. The lapsed rows are the queue, so the schedule keeps no cursor.
+/// passes, with the owner agent grant of each sign-in that lapsed before its
+/// client held a token (FIX 22142). The lapsed rows are the queue, so the
+/// schedule keeps no cursor.
 fn oauth_rows(vault: &Vault, now: u64, deadline: &Deadline) -> Result<Run> {
     let (swept, complete) = vault.sweep_lapsed_oauth_rows(now, || deadline.passed())?;
     Ok(Run {
@@ -383,6 +385,7 @@ fn oauth_rows(vault: &Vault, now: u64, deadline: &Deadline) -> Result<Run> {
             tokens: swept.tokens,
             families: swept.families,
             clients: swept.clients,
+            grants: swept.grants,
         },
         complete,
         cursor: None,

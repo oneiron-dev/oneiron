@@ -376,15 +376,56 @@ impl Vault {
                     acknowledged_topology,
                 },
             )?;
-            // The withdrawal stays known here and reaches its peers, in this
-            // writer (FIX-LIST 5107, 10772).
-            crate::authority::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;
-            self.apply_agent_grant_op_in_txn(txn, BatchOp::Delete { id: grant_ref })?;
+            self.delete_agent_grant_row_in_txn(txn, grant_ref)?;
             Ok(AgentGrantRevokeOutcome {
                 agent: Some(grant.member_ref),
                 act: Some(act),
             })
         })
+    }
+
+    /// The row half of the owner's revoke, with no act of his: deletes
+    /// `grant_ref`, a live agent grant naming `agent`, in the caller's
+    /// writer `txn`, for a caller that takes back a grant no work ever stood
+    /// on and records its own reason beside it (an OAuth sign-in that lapsed
+    /// before its client held a token, FIX 22142). `false`, with nothing
+    /// written, for an id that names no live agent grant of `agent`: one the
+    /// owner revoked already among them.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub(crate) fn withdraw_agent_grant_without_act_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        grant_ref: EntityId,
+        agent: EntityId,
+    ) -> Result<bool> {
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = live_entity_row_in_txn(&self.store, txn, &grant_ref)?
+        else {
+            return Ok(false);
+        };
+        if !decode_federation_grant_body(&body)
+            .is_ok_and(|grant| grant.owner_agent && grant.member_ref == agent)
+        {
+            return Ok(false);
+        }
+        self.delete_agent_grant_row_in_txn(txn, grant_ref)?;
+        Ok(true)
+    }
+
+    /// Deletes the agent grant row `grant_ref` in the caller's writer. The
+    /// withdrawal stays known here and reaches its peers, in this writer
+    /// (FIX-LIST 5107, 10772).
+    fn delete_agent_grant_row_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        grant_ref: EntityId,
+    ) -> Result<()> {
+        crate::authority::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;
+        self.apply_agent_grant_op_in_txn(txn, BatchOp::Delete { id: grant_ref })
     }
 
     /// The agent grants the owner revoked: the grant each GrantRevoke act

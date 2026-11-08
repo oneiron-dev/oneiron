@@ -72,7 +72,9 @@ pub enum HousekeepingSweep {
     ModelPackRetirement,
     /// Drops the OAuth server's rows past their lifetime (FIX 4902):
     /// authorization requests, codes, tokens, token families past their last
-    /// refresh token, and stale metadata-document clients no sign-in uses.
+    /// refresh token, and stale metadata-document clients no sign-in uses;
+    /// and the owner agent grant of a sign-in that lapsed before its client
+    /// held a token (FIX 22142).
     #[serde(rename = "oauth_expiry")]
     OAuthExpiry,
     /// Due signing reminders.
