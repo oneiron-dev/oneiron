@@ -709,7 +709,7 @@ impl<'v> ScopedRead<'v> {
                 return Ok(false);
             };
             let Some(scope) =
-                self.live_world_scope_in(rtxn, id, header.entity_type, scope, policy, grant)
+                self.live_world_scope_in(rtxn, id, header.entity_type, scope, policy, grant)?
             else {
                 return Ok(false);
             };
