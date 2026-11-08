@@ -8,13 +8,15 @@ use std::collections::VecDeque;
 use serde_json::json;
 
 use crate::code_run::{
-    AgentVerbAnswer, CodeRunBridgeCall, ProgramResumeCall, ProgramRowAnswer, SelfCall,
-    SelfDispatchOutcome,
+    AgentVerbAnswer, CodeRunBridgeCall, ProgramResumeCall, ProgramResumeKind, ProgramRowAnswer,
+    SelfCall, SelfDispatchOutcome,
 };
 
 const DIVERGED: &str = "the pinned source made another call where an earlier entry settled one";
-const NESTED_CALLABLE: &str = "a callable the pinned entry calls cannot resume inside it";
+const NESTED_CALLABLE: &str = "a callable the pinned entry calls reached its wait or published outputs: it cannot resume inside it";
 const UNREADABLE: &str = "a settled call's row does not decode";
+const HOOK_VIEW: &str =
+    "a settled call's guest read a verb hook's view, which its row does not keep";
 const UNCONSUMED: &str = "the pinned source ended before every call an earlier entry settled";
 
 /// The calls one pinned entry answers instead of issuing them, in the order
@@ -37,6 +39,18 @@ pub(super) struct SettledCall {
     pub(super) reply: Option<serde_json::Value>,
 }
 
+/// One callable a pinned entry's calls ran inside its pinned call (FIX
+/// 5878): its row, where its own calls end in the entry's rows (exclusive),
+/// and whether a later entry cannot answer it from its row alone: its body
+/// reached the entry's wait (whether or not it then returned), the bridge
+/// halted inside it, or its own calls published outputs.
+#[derive(Debug, Clone, Copy)]
+pub(in crate::engine_executor) struct ProgramCallableSpan {
+    pub(in crate::engine_executor) seq: u64,
+    pub(in crate::engine_executor) end: u64,
+    pub(in crate::engine_executor) open: bool,
+}
+
 /// What the bridge does with one call of a pinned entry.
 pub(in crate::engine_executor) enum InjectedAnswer {
     /// Issue it.
@@ -53,9 +67,13 @@ pub(in crate::engine_executor) enum InjectedAnswer {
 
 impl ProgramInjection {
     /// The answer for `call`, the next call the pinned source makes. A call
-    /// that is not the settled one in its place, a settled row that does not
-    /// decode, or a callable called inside the entry holds the entry. A spawn
-    /// that misses its row (FIX 7447) runs live, as every call after it.
+    /// that is not the settled one in its place, or a settled row that does
+    /// not decode, holds the entry, as does a settled call whose guest read
+    /// a post hook's view. A callable whose body ended answers from
+    /// its row, whole, and its own calls are not replayed (FIX 5878); one
+    /// whose body was still running, or that parked before its body ran,
+    /// holds. A spawn that misses its row (FIX 7447) runs live, as every call
+    /// after it.
     pub(in crate::engine_executor) fn answer(&mut self, call: &SelfCall) -> InjectedAnswer {
         if !self.entered {
             self.entered = true;
@@ -67,10 +85,19 @@ impl ProgramInjection {
         let Some(settled) = self.calls.pop_front() else {
             return InjectedAnswer::Live;
         };
-        if matches!(call, SelfCall::SkillsCall(_)) {
+        if matches!(call, SelfCall::SkillsCall(_))
+            && (settled.listed.kind == ProgramResumeKind::OpenCallable || settled.reply.is_some())
+        {
             return self.hold(NESTED_CALLABLE);
         }
         let outcome = match settled.row.program_answer_for(call) {
+            // Its guest read a post hook's view in place of the result the
+            // row keeps (a callable's included): the row cannot answer it as
+            // the guest read it, so the entry holds, as a resumed pending
+            // step does.
+            Ok(ProgramRowAnswer::Settled(_)) if settled.row.hook_view_served => {
+                return self.hold(HOOK_VIEW);
+            }
             Ok(ProgramRowAnswer::Settled(outcome)) => outcome,
             // The same spawn asked for another project or other objectives
             // (FIX 7447): no row answers it, so it runs live through its
