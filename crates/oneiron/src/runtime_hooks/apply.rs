@@ -314,8 +314,9 @@ fn land(
 
 /// Enqueue task: the tasks.create door. `due_at` rides in the spec as the
 /// hook's original input payload AND as the typed `TaskCreateSpec::due_at`
-/// annotation (FIX685): a due/deadline stamp only, never TTL expiry and
-/// never a not-before wait.
+/// annotation (FIX685): a due/deadline stamp, never TTL expiry and never a
+/// not-before wait. The standard TASK it lands then ticks once on
+/// `schedule.tick` after that time (FIX 4749).
 fn enqueue_task(
     vault: &Vault,
     memory: &Memory<'_>,
