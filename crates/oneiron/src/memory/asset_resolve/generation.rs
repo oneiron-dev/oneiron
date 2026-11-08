@@ -216,6 +216,19 @@ impl Memory<'_> {
             self.vault
                 .batch_in()
                 .put(&asset, ENTITY_TYPE_ASSET, occurred, occurred_at, body);
+        // A narrowed writer's ASSET is born in its writer's world and facet,
+        // as its TASKs are (FIX 22223; ARCH-0067 §5): an `InWorld` edge, its
+        // live world, and a `FacetOf` edge, its birth facet. Its caption then
+        // sits in the same world, its one source's. Base reality and a
+        // writer bound to no facet take no edge.
+        if let Some(world) = self.birth_position.claim_world() {
+            let kind = EdgeKind::InWorld;
+            batch = batch.edge(&asset, kind, &world, kind.default_weight().unwrap_or(1.0));
+        }
+        if let Some(facet) = self.birth_position.facet {
+            let kind = EdgeKind::FacetOf;
+            batch = batch.edge(&asset, kind, &facet, kind.default_weight().unwrap_or(1.0));
+        }
         if let (Some(text), Some(description)) = (text, description) {
             batch = batch
                 .asset_text_birth(
