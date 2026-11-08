@@ -1,4 +1,4 @@
-//! Handshake: run loop, open_sync_session, overflow check, resync markers.
+//! Handshake: run loop, open_sync_session, overflow check.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -9,16 +9,16 @@ use tokio::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::sync::client::{SyncClient, SyncEvent, SyncStatus, next_backoff};
-use crate::sync::types::{WindowKey, parse_window_key_str};
-use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
+use crate::sync::types::WindowKey;
 
 use super::peer_session::HomeReach;
 use super::server_close::ServerClose;
-use super::session::{FullResyncMarker, SessionFault};
+use super::session::SessionFault;
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
 mod acks;
 mod replay;
+mod resync_markers;
 mod upgrade;
 
 pub(super) use self::upgrade::upgrade_request;
@@ -305,6 +305,8 @@ impl SyncConnection {
                     let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
                 }
             }
+            // An incomplete root image ends with its socket, before any backoff.
+            client.reset_root_parts();
             // A peer session's receipt takes its end (FIX 4748).
             if let Some(receipt) = client.peer_receipt.take() {
                 receipt.close(self.manager.vault());
@@ -348,6 +350,7 @@ impl SyncConnection {
         if let Some(receipt) = client.peer_receipt.take() {
             receipt.close(self.manager.vault());
         }
+        client.reset_root_parts();
         // Detach before draining: the sink serializes sends with detach, so
         // this receiver's backlog is finite and no update can arrive later.
         self.manager.outbound().detach(attachment);
@@ -399,6 +402,7 @@ impl SyncConnection {
         client.kept_out_peer_copies.clear();
         client.residence_acks.clear();
         client.reset_window_pads();
+        client.reset_root_parts();
         let (ws_stream, response, binding) = self.open_socket(client, event_tx).await?;
         self.sync_socket(client, event_tx, ws_stream, &response, binding.as_ref())
             .await
@@ -481,7 +485,9 @@ impl SyncConnection {
         let mut init_messages_received = 0;
         let max_init_messages = 100;
 
-        'initial_sync: while init_messages_received < max_init_messages {
+        'initial_sync: while init_messages_received < max_init_messages
+            || client.root_update_pending()
+        {
             let msg = tokio::time::timeout(Duration::from_secs(30), read.next())
                 .await
                 .map_err(|_| SessionFault::remote("Initial sync timeout"))?;
@@ -505,7 +511,7 @@ impl SyncConnection {
                                 SessionFault::remote(super::document_response::response_error(exit))
                             })?;
                     }
-                    init_messages_received += 1;
+                    init_messages_received += client.logical_openings(&data);
 
                     // Drain the rest of the server's initial burst until the
                     // stream is quiet for 200ms, then consider initial sync
@@ -517,7 +523,9 @@ impl SyncConnection {
                     // of messages (the last one is consumed here and the
                     // outer read then waits on a quiet stream).
                     loop {
-                        if init_messages_received >= max_init_messages {
+                        if init_messages_received >= max_init_messages
+                            && !client.root_update_pending()
+                        {
                             break 'initial_sync;
                         }
                         let quiet_check =
@@ -545,7 +553,7 @@ impl SyncConnection {
                                             )
                                         })?;
                                 }
-                                init_messages_received += 1;
+                                init_messages_received += client.logical_openings(&data);
                             }
                             Ok(Some(Ok(Message::Close(frame)))) => {
                                 // Read the close code — a 4xxx code here is how a
@@ -574,7 +582,9 @@ impl SyncConnection {
                                     "WS stream ended during initial sync",
                                 ));
                             }
-                            // Timeout means initial sync is done
+                            // A root image must finish before the write-only queue replay.
+                            // A quiet gap returns to the original initial read timeout.
+                            Err(_) if client.root_update_pending() => continue 'initial_sync,
                             Err(_) => break 'initial_sync,
                         };
                     }
@@ -740,67 +750,5 @@ impl SyncConnection {
         }
 
         Ok(ws_stream)
-    }
-
-    fn full_resync_markers(&self) -> Result<Vec<FullResyncMarker>, SessionFault> {
-        let vault = self.manager.vault();
-        let rtxn =
-            vault.store.env.read_txn().map_err(|e| {
-                SessionFault::Local(format!("Read full-resync markers failed: {e}"))
-            })?;
-        let keys = WINDOW_FULL_RESYNC_MARKER
-            .scan_keys(&vault.store, &rtxn, &[])
-            .map_err(|e| SessionFault::Local(format!("Read full-resync markers failed: {e}")))?;
-        let mut markers = Vec::with_capacity(keys.len());
-        for window_key in keys {
-            if parse_window_key_str(&window_key).is_none() {
-                return Err(SessionFault::Local(format!(
-                    "Invalid full-resync marker key: fr:w:{window_key}"
-                )));
-            }
-            markers.push(FullResyncMarker { window_key });
-        }
-        Ok(markers)
-    }
-
-    pub(super) fn set_full_resync_markers(
-        &self,
-        markers: &[FullResyncMarker],
-    ) -> Result<(), SessionFault> {
-        if markers.is_empty() {
-            return Ok(());
-        }
-        let vault = self.manager.vault();
-        vault
-            .with_write_txn_grouped(|wtxn| {
-                for marker in markers {
-                    WINDOW_FULL_RESYNC_MARKER.put(
-                        &vault.store,
-                        wtxn,
-                        &marker.window_key,
-                        &[1u8],
-                    )?;
-                }
-                Ok(())
-            })
-            .map_err(|e| SessionFault::Local(format!("Set full-resync markers failed: {e}")))
-    }
-
-    pub(super) fn clear_full_resync_markers(
-        &self,
-        markers: &[FullResyncMarker],
-    ) -> Result<(), SessionFault> {
-        if markers.is_empty() {
-            return Ok(());
-        }
-        let vault = self.manager.vault();
-        vault
-            .with_write_txn_grouped(|wtxn| {
-                for marker in markers {
-                    WINDOW_FULL_RESYNC_MARKER.delete(&vault.store, wtxn, &marker.window_key)?;
-                }
-                Ok(())
-            })
-            .map_err(|e| SessionFault::Local(format!("Clear full-resync markers failed: {e}")))
     }
 }

@@ -249,7 +249,7 @@ pub(in crate::compaction) fn mint_epoch_summary_admitted_writer(
         // Rule A: the pass's intent NOTE is the prompt the summary is born
         // from, and the run that sealed it, while its record stands here,
         // the trigger.
-        let intent = crate::compaction::epoch_intent::intent_note_body(
+        let (intent, intent_text) = crate::compaction::epoch_intent::intent_note_body(
             request,
             byline.entity_ref(),
             summary_id,
@@ -262,6 +262,7 @@ pub(in crate::compaction) fn mint_epoch_summary_admitted_writer(
             summary_id,
             at,
             &intent,
+            &intent_text,
             &live,
         );
         let trigger = crate::compaction::epoch_intent::run_trigger_in(&vault.store, wtxn, request)?;
@@ -503,7 +504,7 @@ pub(in crate::compaction) fn mint_epoch_summary_in_overlay(
         }
         // Rule A, as the base mint names it: the pass's intent NOTE is the
         // summary's prompt, and the run its trigger while its record stands.
-        let intent = crate::compaction::epoch_intent::intent_note_body(
+        let (intent, intent_text) = crate::compaction::epoch_intent::intent_note_body(
             request,
             byline.entity_ref(),
             summary_id,
@@ -519,6 +520,9 @@ pub(in crate::compaction) fn mint_epoch_summary_in_overlay(
         ) {
             apply(wtxn, entry(JournalRole::TurnOwnedArtifact, op))?;
         }
+        // The intent NOTE's document is born beside its core, as the room's
+        // bookkeeping (FIX 4280, 7783).
+        session.stage_note_document(&session.read_view()?, wtxn, intent_id, &intent_text)?;
         let trigger = crate::compaction::epoch_intent::run_trigger_in(&view, wtxn, request)?;
         if let Some(birth) =
             crate::compaction::epoch_intent::epoch_birth(request, byline, at, intent_id, trigger)

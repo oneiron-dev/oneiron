@@ -4,9 +4,10 @@
 //! gold claim through the gated claim writer.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::claim::{CallerLocality, ScopedRead, ScopedReadActorKey};
+use oneiron::claim::{CallerLocality, ScopedRead};
 use oneiron::llm::decision::questions::{
     AnswerRecord, CalibrationPair, GraphQuestionInput, GraphQuestionRef, GraphUnitContext,
     QuestionDefinitionInput, QuestionRecord, RouteCalibrationReport, admit_standing_answer,
@@ -35,7 +36,9 @@ const GOLD_CONFIDENCE: f32 = 1.0;
 
 /// The run's fresh vault and its embedded owner.
 pub(super) struct BenchVault {
-    vault: Vault,
+    /// Shared with the Big rung, which routes and admits each of its calls
+    /// against the vault's live model policy.
+    vault: Arc<Vault>,
     owner: EntityId,
     path: PathBuf,
 }
@@ -52,7 +55,7 @@ impl BenchVault {
     /// directory, and binds its embedded owner.
     pub(super) fn create(path: &Path) -> EvalResult<Self> {
         refuse_occupied(path)?;
-        let vault = Vault::open_owned(path, VaultConfig::device())?;
+        let vault = Arc::new(Vault::open_owned(path, VaultConfig::device())?);
         let owner = vault.ensure_embedded_owner_actor().map_err(failure_from)?;
         Ok(Self {
             vault,
@@ -61,7 +64,7 @@ impl BenchVault {
         })
     }
 
-    pub(super) fn vault(&self) -> &Vault {
+    pub(super) fn vault(&self) -> &Arc<Vault> {
         &self.vault
     }
 
@@ -77,14 +80,15 @@ impl BenchVault {
         WriteActor::new(self.owner, EdgeActorClass::Human)
     }
 
-    /// The owner's own read lane on this device, as the served question doors
-    /// build it for a local owner.
+    /// The owner's own read lane on this device: the key the owner's memory
+    /// handle reads under, its actor and owner binding checked. A bare actor
+    /// key holds no read grant, so every prepare would read no unit.
     fn lane(&self) -> EvalResult<ScopedRead<'_>> {
-        let key = ScopedReadActorKey::with_actor_class(
-            self.owner.to_hex(),
-            EdgeActorClass::Human.gate_actor_class(),
-        )
-        .ok_or_else(|| failure("the vault owner has no canonical read key".to_owned()))?;
+        let key = self
+            .vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .read_key()
+            .map_err(failure_from)?;
         Ok(self.vault.scoped_read(key))
     }
 

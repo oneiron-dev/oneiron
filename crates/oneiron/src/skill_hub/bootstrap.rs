@@ -317,8 +317,15 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
             name,
             HubPin::ContentHash(content_hash.to_hex()),
         )?;
-        let id = vault
-            .import_skill_from_hub_in_txn(&mut wtxn, &hub_ref, &package, seed_id, occurred, 0)?;
+        let id = vault.import_skill_from_hub_in_txn(
+            &mut wtxn,
+            &hub_ref,
+            &package,
+            seed_id,
+            occurred,
+            0,
+            &mut super::SkillImportRows::default(),
+        )?;
         if id != seed_id {
             // A different holder cannot appear while this write transaction owns
             // the preflight and import; roll back rather than mutate it.

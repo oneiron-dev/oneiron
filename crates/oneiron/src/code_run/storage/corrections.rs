@@ -11,9 +11,10 @@
 //! asks again never share a key.
 //!
 //! A clean or normalized response's row commits with its step's checkpoint
-//! and heal tally (`reader_folds`). A rejected response's row commits alone,
-//! before the executor returns its error
-//! ([`ExecutorStorage::put_rejected_code_run_correction`]).
+//! and heal tally (`reader_folds`). A response whose step commits nothing,
+//! a rejected one or one whose program failed before its first host bridge
+//! call, has its row committed alone before the executor returns its error
+//! ([`ExecutorStorage::put_uncommitted_code_run_correction`]).
 
 use std::ops::Bound;
 
@@ -130,23 +131,20 @@ impl Vault {
 }
 
 impl ExecutorStorage<'_> {
-    /// Writes a rejected response's record on the run's route, in its own
-    /// transaction (FIX 4412). No checkpoint, step count or heal tally
-    /// moves.
+    /// Writes the record of a response whose step commits no checkpoint, on
+    /// the run's route, in its own transaction: a rejected response (FIX
+    /// 4412), or an accepted one whose program failed before its first host
+    /// bridge call (FIX 14992). No checkpoint, step count or heal tally
+    /// moves. A response whose step commits records with that commit
+    /// instead, never here.
     ///
     /// # Errors
     ///
-    /// Storage errors, a stale route, a run no longer in its room, and a
-    /// draft the normalization accepted, whose record commits with its step.
-    pub(crate) fn put_rejected_code_run_correction(
+    /// Storage errors, a stale route, and a run no longer in its room.
+    pub(crate) fn put_uncommitted_code_run_correction(
         &self,
         draft: &CodeRunCorrectionDraft<'_>,
     ) -> Result<()> {
-        if !draft.is_rejected() {
-            return Err(Error::InvariantViolation(
-                "an accepted model response records with its step's commit",
-            ));
-        }
         match self {
             Self::Canonical(vault) => {
                 let mut wtxn = vault.store.env.write_txn()?;

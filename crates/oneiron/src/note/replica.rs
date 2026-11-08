@@ -103,7 +103,17 @@ pub(crate) fn import_note_from_authority(
         if !SYNC_DS_E.contains(&vault.store, txn, &HexId(id))? {
             return Err(invalid("unsolicited NOTE authority state"));
         }
-        let previous = load(vault, txn, id)?;
+        // A replica holds a NOTE's core before its authority's first STATE
+        // brings the NOTE's document (FIX 7783): until then it has none.
+        let held =
+            crate::ports::DocumentSlot::of(super::documents::head_in(&vault.store, txn, id)?.0);
+        let previous =
+            if crate::ports::DocumentRowStore::port_document_present(&vault.store, txn, held)? {
+                Some(load(vault, txn, id)?)
+            } else {
+                super::verbs::note_core(vault, txn, id)?;
+                None
+            };
         if vault.local_hard_delete_marker_exists_in_txn(txn, &id)? {
             return Err(invalid("NOTE was erased"));
         }
@@ -120,11 +130,12 @@ pub(crate) fn import_note_from_authority(
             }
             _ => return Err(invalid("stale NOTE head")),
         };
-        let staged = match kind {
-            document_sub_tags::STATE => loro::LoroDoc::new(),
-            document_sub_tags::UPDATE => {
+        let staged = match (kind, &previous) {
+            (document_sub_tags::STATE, _) => loro::LoroDoc::new(),
+            (document_sub_tags::UPDATE, Some(previous)) => {
                 crate::store::loro_document::doc_from_snapshot(&previous.snapshot()?)?
             }
+            (document_sub_tags::UPDATE, None) => return Err(invalid("stale NOTE head")),
             _ => return Err(invalid("invalid NOTE authority frame")),
         };
         crate::sync::documents::storage::import_complete(&staged, bytes)?;
@@ -173,13 +184,16 @@ pub(crate) fn import_note_from_authority(
         let floor_key = HexId(id);
         let authority_floor =
             super::citation_erase::NOTE_ERASE_AUTHORITY_FLOOR.get(&vault.store, txn, &floor_key)?;
-        let required = match &authority_floor {
-            Some(bytes) => crate::sync::documents::storage::decode_vv(bytes)?,
-            None => previous.doc.oplog_vv(),
+        let required = match (&authority_floor, &previous) {
+            (Some(bytes), _) => crate::sync::documents::storage::decode_vv(bytes)?,
+            (None, Some(previous)) => previous.doc.oplog_vv(),
+            (None, None) => loro::VersionVector::new(),
         };
         if authority_floor.is_some()
             && kind == document_sub_tags::UPDATE
-            && previous.doc.oplog_vv() != required
+            && previous
+                .as_ref()
+                .is_some_and(|previous| previous.doc.oplog_vv() != required)
         {
             // Local erasure operations are not authority operations. A STATE
             // rebase must retire them before normal authority deltas resume.
@@ -211,31 +225,35 @@ pub(crate) fn import_note_from_authority(
         } else {
             next
         };
-        let old = previous.view()?;
         let new = next.view()?;
-        // An erased twin keeps its record (ErasedWins); a live actor never
-        // stands in for an erased one.
-        if old.pins.iter().any(|pin| !new.pins.contains(pin))
-            || old
-                .authorship
-                .iter()
-                .any(|record| !new.authorship.iter().any(|kept| record.kept_by(kept)))
-        {
-            return Err(invalid("NOTE authority state would discard provenance"));
-        }
-        let guards = super::operations::cited_by(vault, txn, id)?;
-        for pin in old
-            .pins
-            .iter()
-            .chain(&guards)
-            .filter(|pin| pin.document == id)
-        {
-            if matches!(previous.resolve(pin)?, NoteSpanResolution::Mapped { .. })
-                && !matches!(next.resolve(pin)?, NoteSpanResolution::Mapped { .. })
+        // A replica that held no document has no provenance or citation of
+        // its own to keep.
+        if let Some(previous) = &previous {
+            let old = previous.view()?;
+            // An erased twin keeps its record (ErasedWins); a live actor never
+            // stands in for an erased one.
+            if old.pins.iter().any(|pin| !new.pins.contains(pin))
+                || old
+                    .authorship
+                    .iter()
+                    .any(|record| !new.authorship.iter().any(|kept| record.kept_by(kept)))
             {
-                return Err(invalid(
-                    "NOTE authority state conflicts with a local citation",
-                ));
+                return Err(invalid("NOTE authority state would discard provenance"));
+            }
+            let guards = super::operations::cited_by(vault, txn, id)?;
+            for pin in old
+                .pins
+                .iter()
+                .chain(&guards)
+                .filter(|pin| pin.document == id)
+            {
+                if matches!(previous.resolve(pin)?, NoteSpanResolution::Mapped { .. })
+                    && !matches!(next.resolve(pin)?, NoteSpanResolution::Mapped { .. })
+                {
+                    return Err(invalid(
+                        "NOTE authority state conflicts with a local citation",
+                    ));
+                }
             }
         }
         // Pins are admitted metadata from the authority, not an upstream peer
