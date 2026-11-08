@@ -2,9 +2,9 @@
 //! per settled proposal, appended in the transaction of the door that
 //! settles it. The sequence is drawn there, so feed order is commit order.
 //! A settlement no fact binding reads appends nothing (FIX 22154). The
-//! runner prunes the rows every hook binding has passed, and an erase leaves
-//! a row that names the erased proposal or settler at its sequence with
-//! nothing in it (FIX 22141).
+//! runner and each housekeeping pass prune the rows every hook binding has
+//! passed (FIX 22180), and an erase leaves a row that names the erased
+//! proposal or settler at its sequence with nothing in it (FIX 22141).
 
 use std::ops::Bound;
 

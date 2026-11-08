@@ -58,6 +58,7 @@ pub use replay::{
     HookReplayCase, HookReplayCompare, HookReplayCursor, HookReplayEntry, HookReplayEntryPage,
     HookReplayResult,
 };
+pub(crate) use runner::prune_hook_feeds;
 pub use runner::{
     FactHookRunner, HOOK_PASS_ENTRIES, HOOK_RUNNER_TICK, HookPassAdmission, HookPassReport,
 };
