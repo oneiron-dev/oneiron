@@ -167,24 +167,62 @@ impl ActionBlobInput {
     /// identity. Host fields only; a caller's JSON never makes this shape.
     #[must_use]
     pub(crate) fn request_value(&self) -> rmpv::Value {
-        let identity = blake3::Hash::from_hex(&self.0.receipt_digest)
-            .map_or_else(|_| Vec::new(), |hash| hash.as_bytes().to_vec());
-        rmpv::Value::Map(vec![
-            (
-                rmpv::Value::from("verb"),
-                rmpv::Value::from(self.0.verb.as_str()),
-            ),
-            (rmpv::Value::from("input"), rmpv::Value::from("")),
-            (
-                rmpv::Value::from("input_digest"),
-                rmpv::Value::Binary(self.0.original_digest.to_vec()),
-            ),
-            (
-                rmpv::Value::from("input_identity"),
-                rmpv::Value::Binary(identity),
-            ),
-        ])
+        digest_request(
+            self.0.verb.as_str(),
+            &self.0.original_digest,
+            &self.0.receipt_digest,
+        )
     }
+}
+
+/// The digest-only request a replay record keeps for a held input's call.
+fn digest_request(verb: &str, original_digest: &[u8; 32], receipt_digest: &str) -> rmpv::Value {
+    let identity = blake3::Hash::from_hex(receipt_digest)
+        .map_or_else(|_| Vec::new(), |hash| hash.as_bytes().to_vec());
+    rmpv::Value::Map(vec![
+        (rmpv::Value::from("verb"), rmpv::Value::from(verb)),
+        (rmpv::Value::from("input"), rmpv::Value::from("")),
+        (
+            rmpv::Value::from("input_digest"),
+            rmpv::Value::Binary(original_digest.to_vec()),
+        ),
+        (
+            rmpv::Value::from("input_identity"),
+            rmpv::Value::Binary(identity),
+        ),
+    ])
+}
+
+/// A recorded or offered request of a verb that takes a held input, in the
+/// digest-only shape: itself when it is one, else the digests of the whole
+/// input text it carries (FIX 22096). The same call meets its row whether
+/// its host held the input as a file or sent it whole. `None` for any other
+/// request.
+#[must_use]
+pub(crate) fn held_request_form(request: &rmpv::Value) -> Option<rmpv::Value> {
+    let rmpv::Value::Map(fields) = request else {
+        return None;
+    };
+    let field = |name: &str| {
+        fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value)
+    };
+    let verb = field("verb")?.as_str()?;
+    if verb != AgentVerb::VaultArtifactsCreate.as_str() {
+        return None;
+    }
+    let input = field("input")?.as_str()?;
+    if input.is_empty() {
+        return field("input_digest").is_some().then(|| request.clone());
+    }
+    let value: Value = serde_json::from_str(input).ok()?;
+    Some(digest_request(
+        verb,
+        blake3::hash(input.as_bytes()).as_bytes(),
+        &crate::receipt::call_json_digest(&value),
+    ))
 }
 
 impl Held {

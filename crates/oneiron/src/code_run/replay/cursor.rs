@@ -67,7 +67,16 @@ impl CodeRunBridgeCall {
         // nothing, so a spawn's miss (FIX 7447) is a mismatch here.
         // A re-offered call meets its row by the guest's original request;
         // hooks never run on replay (FIX 1442 H4: match stays on original).
-        if !replay_request_match(self.effect, &self.request, &request)?.is_hit() {
+        // A call whose host held its input as a file meets the row of the
+        // same call sent whole, and the reverse, by the whole input's
+        // digests (FIX 22096).
+        let held_hit = || {
+            self.effect == SelfEffect::AgentVerb
+                && crate::code_run::actions::held_request_form(&self.request).is_some_and(
+                    |stored| Some(stored) == crate::code_run::actions::held_request_form(&request),
+                )
+        };
+        if !replay_request_match(self.effect, &self.request, &request)?.is_hit() && !held_hit() {
             return Err(invalid_code_run_replay("code-run replay request mismatch"));
         }
         // A row can come from an in-memory record that never passed the
