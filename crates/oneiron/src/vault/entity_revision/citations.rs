@@ -300,7 +300,7 @@ pub(crate) fn resolve_room_pinned_alias_in_txn(
         return Ok(None);
     };
     // The hash a room's read names this revision by (`AdmittedRevision`).
-    let pinned = crate::store::short_content_hash_in_txn(&vault.store, txn, &id, &raw)?;
+    let pinned = crate::store::revision_content_hash_in_txn(&vault.store, txn, &id, &raw)?;
     Ok((pinned == hash).then_some(id))
 }
 

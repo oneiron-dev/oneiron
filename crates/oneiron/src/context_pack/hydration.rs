@@ -191,8 +191,8 @@ pub(super) fn hydrate_entity(
     // Whether the read revision is another than the live row, judged on the
     // stored bytes before a file-plane ASSET's body replaces its manifest.
     let other_revision = raw != live_raw;
-    // A file-plane ASSET's live row hydrates its body, not its manifest;
-    // an older revision keeps the manifest it was stored as.
+    // A file-plane ASSET's live row hydrates its body, not its manifest,
+    // as does an older revision whose file its revisions keep (FIX 22091).
     let raw = vault.materialized_revision_in_txn(rtxn, &id, raw)?;
     // A history pin cannot restore a claim inadmissible at the current door,
     // its live support included, as the scoped read lane admits a pin.
