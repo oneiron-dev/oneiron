@@ -39,11 +39,11 @@ side_tables! {
     CAMPAIGN_COMPLIANCE_PENDING: VaultMeta b"campaign:compliance:pending:v1" Named;
     /// Caller-bound compliance amendment, owner decision or verification receipt. Key: id16.
     CAMPAIGN_COMPLIANCE_RECEIPT: VaultMeta b"campaign:compliance:receipt:v1:" Named;
-    /// One campaign enrollment outbound call's prepared request, retained before its first ask
-    /// (FIX 6424 part 2a): its target's ids and epoch, its body's digest, its sender and the event
-    /// row it was first asked under; ids and digests only. Key: id16(consequence) + u64be(call
+    /// One campaign enrollment outbound call's retained request and optional current hold:
+    /// original ids/digests, actual attempt provenance and frozen-envelope digest, and its
+    /// owner-ask/redrive refs; no address or message body. Key: id16(consequence) + u64be(call
     /// seq) + the request's 32-byte digest.
-    CAMPAIGN_ENROLLMENT_ASK: VaultMeta b"campaign:enrollment_ask:v1:" Raw
+    CAMPAIGN_ENROLLMENT_ASK: VaultMeta b"campaign:enrollment_ask:v1:" Named
         => crate::campaign::enrollment::erase_enrollment_ask_actor_in_txn;
     /// Per-saved-query baseline (definition version + scope digest) a campaign enrollment detection
     /// re-derives against. Key: id16.
@@ -392,6 +392,10 @@ side_tables! {
     /// in (tag 1 + id16(world): the bridge positions it was served at). Ids and positions only.
     /// Key: id16(run) + u8 tag [+ id16(world)].
     CODE_RUN_READ_WORLD: VaultMeta b"code_run:read_world:v1:" Named Engine;
+    /// The last actual parent entry's full destination, route, actor and loaded install
+    /// machine (JSON), qualified again on recovery. Key: id16(parent run).
+    CODE_RUN_READER_CALLER: VaultMeta b"code_run:reader_caller:v1:" Raw Engine
+        => crate::code_run::erase_reader_caller_actor_in_txn;
     /// A code run's fold receipt (ARCH-0079 #reader-forks): the source and range a fold read,
     /// the jobs it named, the ranges read, unread and read short, its cutoff, recipe, summary
     /// tree and taint dependencies (JSON). Key: id16(owner run) + id16(folded occurrence).
