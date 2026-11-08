@@ -74,3 +74,10 @@ pub(super) fn witnessed(receipt: &WitnessReceipt) -> Option<Vec<EntityId>> {
         .map(|message| EntityId::from_hex(&message.id).ok())
         .collect()
 }
+
+/// The TURN a turn's witness wrote, from its own receipt (FIX 5033). `None`
+/// for an off-record witness, which writes no vault row, and for a TURN
+/// whose id does not read.
+pub(super) fn witnessed_turn(receipt: &WitnessReceipt) -> Option<EntityId> {
+    EntityId::from_hex(&receipt.turn.as_ref()?.id).ok()
+}
