@@ -833,6 +833,9 @@ class Oneiron:
         def results(self) -> "Oneiron._VaultResultsVerbs":
             return Oneiron._VaultResultsVerbs(self._client)
         @property
+        def devices(self) -> "Oneiron._VaultDevicesVerbs":
+            return Oneiron._VaultDevicesVerbs(self._client)
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
         @property
@@ -1394,10 +1397,10 @@ class Oneiron:
             """Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."""
             return json.loads(_translate(lambda: self._client.vault_claims_upsert(json.dumps(spec))))
         def review(self, spec):
-            """The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content."""
+            """The owner or explicitly granted holder reviews one readable proposed claim: its content-bound review_id, opener and tray row. A native claim-review Grant grants no read access."""
             return json.loads(_translate(lambda: self._client.vault_claims_review(json.dumps(spec))))
         def settle(self, spec):
-            """The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused."""
+            """The owner or explicitly granted holder approves or rejects exactly a reviewed proposed claim through the gate. Its Settlement names the actual person or Grant; owner-critical obligations still require owner proof."""
             return json.loads(_translate(lambda: self._client.vault_claims_settle(json.dumps(spec))))
         def retract(self, input: dict[str, Any]) -> Any:
             """Retracts one active claim: a deliberate withdrawal that preserves the record."""
@@ -4258,6 +4261,9 @@ class Oneiron:
         def proposal_submit(self, spec):
             """Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed."""
             return json.loads(_translate(lambda: self._client.vault_code_proposal_submit(json.dumps(spec))))
+        def proposal_rereview(self, spec):
+            """Submit a fresh Proposed review of verified redacted bytes from an approved file proposal. Owner only. The change supplies fresh attribution and policy; the engine fills content. The original stays unchanged; nothing lands."""
+            return json.loads(_translate(lambda: self._client.vault_code_proposal_rereview(json.dumps(spec))))
         def conflict_record(self, spec):
             """Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves."""
             return json.loads(_translate(lambda: self._client.vault_code_conflict_record(json.dumps(spec))))
@@ -4267,6 +4273,9 @@ class Oneiron:
         def proposal_resolve(self, spec):
             """Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands."""
             return json.loads(_translate(lambda: self._client.vault_code_proposal_resolve(json.dumps(spec))))
+        def proposal_resolve_rereview(self, spec):
+            """Submit a fresh Proposed review of verified redacted bytes from an approved conflict resolution. Owner only. Current conflict checks and fresh attribution stay; the engine fills content. The original stays unchanged; nothing lands."""
+            return json.loads(_translate(lambda: self._client.vault_code_proposal_resolve_rereview(json.dumps(spec))))
         def proposal_review(self, spec):
             """Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt."""
             return json.loads(_translate(lambda: self._client.vault_code_proposal_review(json.dumps(spec))))
@@ -4648,6 +4657,18 @@ class Oneiron:
         def slice(self, spec):
             """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
             return json.loads(_translate(lambda: self._client.vault_results_slice(json.dumps(spec))))
+    class _VaultDevicesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def predecessor(self) -> "Oneiron._VaultDevicesPredecessorVerbs":
+            return Oneiron._VaultDevicesPredecessorVerbs(self._client)
+    class _VaultDevicesPredecessorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def name(self, spec):
+            """Name a predecessor device key for this install under the owner's proof; pending predecessor sweeps run separately."""
+            return json.loads(_translate(lambda: self._client.vault_devices_predecessor_name(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
