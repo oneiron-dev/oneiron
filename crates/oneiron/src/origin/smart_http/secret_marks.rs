@@ -33,7 +33,7 @@ use crate::Vault;
 use crate::batch::secret_scan::{RetainedRepoBlobPlan, plan_retained_repo_blob};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::GitOid;
+use crate::git_wire::{GitOid, git_path_string};
 use crate::receive_scan::{PushedBlob, ReceiveBlobKind, ReceiveScanHit};
 use crate::store::known_value_index::KnownSource;
 
@@ -294,11 +294,13 @@ impl<'a> ReceiveSecretMarksBuilder<'a> {
     }
 }
 
-/// A TIP record's exact path, when the native path bytes are UTF-8.
-/// History labels and non-UTF-8 paths supply no exact String path.
+/// A TIP record's exact path as a Git path's text (FIX 21326): a path
+/// outside UTF-8 keeps its exact bytes in the text the snapshot and tree
+/// walks give it, so a mark places on the file a remediation reads. History
+/// labels, and decoded bytes no Git path holds (a NUL), supply none.
 fn exact_tip_path(label: &str) -> Result<Option<String>> {
     let path = super::door_window::decode_tip_path(label)?;
-    Ok(String::from_utf8(path).ok())
+    Ok(git_path_string(path).ok())
 }
 
 /// The place `reason` takes among `reasons`, added once.
