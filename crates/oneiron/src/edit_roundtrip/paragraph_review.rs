@@ -228,6 +228,8 @@ impl Vault {
         if judgments.is_empty() {
             return Ok(ArtifactAskRun {
                 proposal: None,
+                sheet_answers: None,
+                deferred_floor: None,
                 abstained,
                 refused,
                 read_rows,
@@ -258,6 +260,8 @@ impl Vault {
         verify_paragraph_judgments(&proposal)?;
         Ok(ArtifactAskRun {
             proposal: Some(proposal),
+            sheet_answers: None,
+            deferred_floor: None,
             abstained,
             refused,
             read_rows,

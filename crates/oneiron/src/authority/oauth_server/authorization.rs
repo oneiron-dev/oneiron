@@ -7,6 +7,23 @@
 //! the optional world bound (`mint_agent_grant`), which `vault.consent.registry` lists with its
 //! one-tap revoke. The code is minted only when the page that holds the request's poll secret
 //! collects it, so no row ever holds a code that can still be redeemed.
+//!
+//! The grant is minted before any token stands on it, so a sign-in that ends first takes it back
+//! (FIX 22142): an allowed request no page collected, a code no exchange redeemed, a code whose
+//! exchange found its grant no longer standing (FIX 22188), or a redeemed code whose new token
+//! family's first access slip did not stand (FIX 22193). The write that drops the row or revokes
+//! the family, a read's, the token endpoint's or the `oauth_expiry` sweep's, deletes the grant as
+//! the owner's revoke deletes it (`withdraw_agent_grant_without_act_in_txn`): the delete marks the
+//! grant withdrawn here and reaches peers with the row's erasure (FIX-LIST 5107, 10772). Beside
+//! the owner's signed mint, that marker is what the registry lists as revoked, what his later
+//! revoke answers unchanged for (FIX 22188), and what the authority audit pairs the mint with
+//! (FIX 22193); no owner is at hand to sign a revoke, and nothing is signed as his. When the
+//! install holds the vault's live host issuer, the host also signs the withdrawal
+//! (`SlipGrantRevoke`), as a membership change does for an owner's grant it withdraws (FIX 7135),
+//! which the audit lists as the mint's revoke. A code whose family's first slip landed keeps its
+//! grant: its family's tokens stand on it, and only the owner's revoke ends it. The client's
+//! agent principal and its ceiling stay, as the owner's revoke leaves them: every sign-in of the
+//! client shares them, and no token resolves for the agent without a standing grant.
 
 use std::collections::BTreeSet;
 
@@ -19,7 +36,8 @@ use super::{
     mint_secret, oauth_agent_principal_name, random_hex32, secret_hash, secret_key_matches,
     secret_row_key,
 };
-use crate::authority::{ActSurface, AgentTier, HostSlipIssuer};
+use crate::authority::slip_vault::require_host;
+use crate::authority::{ActSurface, AgentTier, AuthorityOp, HostSlipIssuer};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::federation::{Scope, ScopeAxis, ScopeId};
@@ -105,7 +123,8 @@ fn not_pending() -> MemoryError {
 impl Vault {
     /// Records `start` as a request waiting for the owner, with a fresh poll secret and match
     /// code, and sends the vault owner one inbox ask for it, whose taps answer it. `None` while
-    /// [`OAUTH_PENDING_REQUESTS_MAX`] requests already wait. Lapsed requests are dropped here.
+    /// [`OAUTH_PENDING_REQUESTS_MAX`] requests already wait. Lapsed requests are dropped here,
+    /// each allowed one with its grant.
     ///
     /// # Errors
     /// A store failure.
@@ -162,6 +181,9 @@ impl Vault {
             let mut waiting_now = 0;
             for (key, row) in REQUESTS.scan(&self.store, txn)? {
                 if now >= row.expires_at {
+                    if let Some(grant) = row.uncollected_grant() {
+                        self.withdraw_lapsed_oauth_grant_in_txn(txn, Some(issuer), &grant)?;
+                    }
                     REQUESTS.delete(&self.store, txn, &key)?;
                 } else if row.decision == AuthorizationDecision::Pending {
                     waiting_now += 1;
@@ -188,7 +210,7 @@ impl Vault {
     /// The page's poll: where the request its `page_token` proves stands at `now`. A settled
     /// request is collected once: an allow mints its code (bound to the client, the redirect
     /// URI, the challenge, the resource and the grant) and drops the request; a deny or a lapse
-    /// drops it too.
+    /// drops it too, and a lapsed allow takes its grant back.
     ///
     /// # Errors
     /// A store failure.
@@ -216,6 +238,9 @@ impl Vault {
                 return Ok(OAuthAuthorizationStatus::Unknown);
             }
             if now >= request.expires_at {
+                if let Some(grant) = request.uncollected_grant() {
+                    self.withdraw_lapsed_oauth_grant_in_txn(txn, Some(issuer), &grant)?;
+                }
                 REQUESTS.delete(&self.store, txn, &key)?;
                 return Ok(OAuthAuthorizationStatus::Expired);
             }
@@ -393,5 +418,42 @@ impl Vault {
                 Err(not_pending())
             }
         }
+    }
+
+    /// Takes back `grant`, the owner agent grant of a sign-in that ended before its client held
+    /// a token, in the caller's writer `txn`, the one that drops the request or code or revokes
+    /// the token family: its row goes as the owner's revoke deletes it, marked withdrawn here, and
+    /// the host's signed withdrawal lands beside it when `issuer` is this vault's live host. With
+    /// no such issuer the marker alone keeps the withdrawal on the record (FIX 22188). `false`,
+    /// with nothing written, for a grant no longer live: the owner revoked it already.
+    ///
+    /// # Errors
+    /// A store or fold failure, or a host withdrawal the fold did not count.
+    pub(super) fn withdraw_lapsed_oauth_grant_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: Option<&HostSlipIssuer>,
+        grant: &AuthorizedGrant,
+    ) -> Result<bool> {
+        if !self.withdraw_agent_grant_without_act_in_txn(txn, grant.grant_ref, grant.agent)? {
+            return Ok(false);
+        }
+        let Some(issuer) = issuer else {
+            return Ok(true);
+        };
+        // An issuer that is no live host of this vault signs nothing and refuses nothing, as a
+        // membership change's withdrawal does.
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if require_host(&fold, issuer).is_ok() {
+            self.append_slip_op_in_txn(
+                txn,
+                issuer,
+                AuthorityOp::SlipGrantRevoke {
+                    grant_ref: grant.grant_ref,
+                    membership_receipt: None,
+                },
+            )?;
+        }
+        Ok(true)
     }
 }

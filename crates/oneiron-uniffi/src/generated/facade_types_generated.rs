@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1352 facade rows, 4862 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1304.
+// UniFFI census: 1353 facade rows, 4865 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1305.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), DetachRemainderReason.WithdrawalFailed.kind (an enum with more than 256 variants (ErrorKind)), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -26285,6 +26285,8 @@ pub enum ContentPart {
     Text {
         #[serde(rename = "text")]
         text: String,
+        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     #[serde(rename = "reasoning")]
     Reasoning {
@@ -27519,6 +27521,43 @@ pub struct UncertainSendAnswered {
     pub resend: bool,
     #[serde(rename = "outcome")]
     pub outcome: UncertainSendAnswerOutcome,
+}
+
+/// `oneiron::verbs::agent_run_effect::AgentRunEffectAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRunEffectAnswer {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "intent_ref")]
+    pub intent_ref: String,
+    #[serde(rename = "resend")]
+    pub resend: bool,
+}
+
+/// `oneiron::agent_dispatch::run_effects::AgentRunEffectAnswerOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AgentRunEffectAnswerOutcome {
+    #[serde(rename = "resend_released")]
+    ResendReleased,
+    #[serde(rename = "left")]
+    Left,
+    #[serde(rename = "already_settled")]
+    AlreadySettled,
+}
+
+/// `oneiron::verbs::agent_run_effect::AgentRunEffectAnswered`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRunEffectAnswered {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "intent_ref")]
+    pub intent_ref: String,
+    #[serde(rename = "resend")]
+    pub resend: bool,
+    #[serde(rename = "outcome")]
+    pub outcome: AgentRunEffectAnswerOutcome,
 }
 
 /// `oneiron::verbs::research::ResearchChildWire`.
@@ -49788,6 +49827,8 @@ pub struct BornFromView {
 /// `oneiron::edit_settle::pending::view::PendingProposalKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum PendingProposalKind {
+    #[serde(rename = "needs_staging")]
+    NeedsStaging,
     #[serde(rename = "edit")]
     Edit,
     #[serde(rename = "output")]
@@ -50566,6 +50607,12 @@ pub struct UnitRefusal {
 pub struct ArtifactAskOutcome {
     #[serde(rename = "proposed", default, skip_serializing_if = "Option::is_none")]
     pub proposed: Option<PendingProposalView>,
+    #[serde(
+        rename = "needs_staging",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub needs_staging: Option<PendingProposalView>,
     #[serde(rename = "abstained")]
     pub abstained: Vec<UnitAbstention>,
     #[serde(rename = "refused")]
@@ -57452,6 +57499,8 @@ pub enum LlmStreamEvent {
     TextEnd {
         #[serde(rename = "part_id")]
         part_id: String,
+        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     #[serde(rename = "reasoning_start")]
     ReasoningStart {

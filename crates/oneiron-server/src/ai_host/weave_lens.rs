@@ -385,7 +385,7 @@ async fn render_listing(
                 .content
                 .iter()
                 .filter_map(|part| match part {
-                    ContentPart::Text { text } => Some(text.as_str()),
+                    ContentPart::Text { text, .. } => Some(text.as_str()),
                     _ => None,
                 })
                 .collect();
@@ -399,6 +399,7 @@ async fn render_listing(
                         role: LlmMessageRole::User,
                         content: vec![ContentPart::Text {
                             text: live.repair_text(&reason),
+                            signature: None,
                         }],
                     });
                 }

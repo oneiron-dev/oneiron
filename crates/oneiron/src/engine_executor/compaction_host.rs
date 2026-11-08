@@ -535,7 +535,7 @@ impl EngineNativeExecutor<'_> {
         let completed = completed_step_count(record)?;
         let text = |text: String| LlmMessage {
             role: LlmMessageRole::User,
-            content: vec![ContentPart::Text { text }],
+            content: vec![ContentPart::Text { text, signature: None }],
         };
         let mut messages = Vec::new();
         if !frames.hides(record.run_id, seq) {

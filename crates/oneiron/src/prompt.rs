@@ -259,7 +259,7 @@ pub fn place_turn_context<S: AsRef<str>>(
         at,
         LlmMessage {
             role: LlmMessageRole::User,
-            content: vec![ContentPart::Text { text }],
+            content: vec![ContentPart::Text { text, signature: None }],
         },
     );
     Some(at)
@@ -287,6 +287,7 @@ fn assemble_session(
         role: LlmMessageRole::System,
         content: vec![ContentPart::Text {
             text: system_prompt.clone(),
+            signature: None,
         }],
     });
     messages.extend(parts.history);

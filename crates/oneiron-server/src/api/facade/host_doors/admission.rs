@@ -725,7 +725,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultMessageStreamsRefused
         | Row::VaultStepUpPasskeysReset
         | Row::VaultOutboundCallsRequestErase
-        | Row::VaultOutboundUncertainSendAnswer => owner_proof(auth, server, verb).map(drop),
+        | Row::VaultOutboundUncertainSendAnswer
+        | Row::VaultAgentRunEffectAnswer => owner_proof(auth, server, verb).map(drop),
         Row::VaultClaimsReview | Row::VaultClaimsSettle => {
             crate::api::facade::claim_settle_doors::settler_admits(server, auth, verb)
         }

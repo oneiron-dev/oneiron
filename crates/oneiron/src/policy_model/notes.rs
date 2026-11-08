@@ -55,6 +55,7 @@ pub(super) async fn rationale_notes(
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text {
             text: json!({"question": wording, "answer": decided.unwrap_or(CLEAN)}).to_string(),
+            signature: None,
         }],
     });
     let admitted = match safeguard {

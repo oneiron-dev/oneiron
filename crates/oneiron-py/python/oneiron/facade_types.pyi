@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1352 facade rows, 4867 declarations.
-Inputs: 1279 of 1352 fully typed, 73 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1180 of 1352 fully typed, 172 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1353 facade rows, 4870 declarations.
+Inputs: 1280 of 1353 fully typed, 73 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1181 of 1353 fully typed, 172 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 122; unread shapes: 0.
 """
 
@@ -3006,6 +3006,7 @@ ImageContent = ImageContentBase64 | ImageContentUrl
 class ContentPartText(TypedDict):
     kind: Literal["text"]
     text: str
+    signature: NotRequired[str | None]
 class ContentPartReasoning(TypedDict):
     kind: Literal["reasoning"]
     text: str
@@ -8850,6 +8851,16 @@ class UncertainSendAnswered(TypedDict):
     task_ref: EntityId
     resend: bool
     outcome: UncertainSendAnswerOutcome
+class AgentRunEffectAnswer(TypedDict):
+    task_ref: EntityId
+    intent_ref: str
+    resend: bool
+AgentRunEffectAnswerOutcome = Literal["resend_released", "left", "already_settled"]
+class AgentRunEffectAnswered(TypedDict):
+    task_ref: EntityId
+    intent_ref: str
+    resend: bool
+    outcome: AgentRunEffectAnswerOutcome
 class ResearchChildWire(TypedDict):
     root: EntityId
     parent: EntityId
@@ -15689,7 +15700,7 @@ class BornFromView(TypedDict):
     born: list[EntityId]
     born_records: list[RecordRef]
     versions: list[BornFromArtifact]
-PendingProposalKind = Literal["edit", "output"]
+PendingProposalKind = Literal["needs_staging", "edit", "output"]
 class PendingProposalView(TypedDict):
     artifact_id: EntityId
     artifact: RecordRef
@@ -15937,6 +15948,7 @@ class UnitRefusal(TypedDict):
     judged_live: NotRequired[LivePin | None]
 class ArtifactAskOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
+    needs_staging: NotRequired[PendingProposalView | None]
     abstained: list[UnitAbstention]
     refused: list[UnitRefusal]
     next_sheet_row: NotRequired[int | None]
@@ -18216,6 +18228,7 @@ class LlmStreamEventTextDelta(TypedDict):
 class LlmStreamEventTextEnd(TypedDict):
     event: Literal["text_end"]
     part_id: str
+    signature: NotRequired[str | None]
 class LlmStreamEventReasoningStart(TypedDict):
     event: Literal["reasoning_start"]
     part_id: str

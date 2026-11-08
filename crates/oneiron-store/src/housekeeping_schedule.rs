@@ -70,6 +70,13 @@ pub enum HousekeepingSweep {
     /// mesh discovery rows (FIX 22059, 22189). A stopped vault is woken on
     /// the first day to come on which the pass owes work.
     ModelPackRetirement,
+    /// Drops the OAuth server's rows past their lifetime (FIX 4902):
+    /// authorization requests, codes, tokens, token families past their last
+    /// refresh token, and stale metadata-document clients no sign-in uses;
+    /// and the owner agent grant of a sign-in that lapsed before its client
+    /// held a token (FIX 22142).
+    #[serde(rename = "oauth_expiry")]
+    OAuthExpiry,
     /// Due signing reminders.
     EsignReminders,
     /// Consult deadlines and their expiry digests.
@@ -125,7 +132,7 @@ pub const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -144,6 +151,7 @@ impl HousekeepingSweep {
         Self::AnnotationBodyAnchors,
         Self::DrafterCorpusSweep,
         Self::ModelPackRetirement,
+        Self::OAuthExpiry,
         Self::EsignReminders,
         Self::ConsultSettlement,
         Self::PolicyHoldPrune,
@@ -173,6 +181,7 @@ impl HousekeepingSweep {
             Self::AnnotationBodyAnchors => "annotation_body_anchors",
             Self::DrafterCorpusSweep => "drafter_corpus_sweep",
             Self::ModelPackRetirement => "model_pack_retirement",
+            Self::OAuthExpiry => "oauth_expiry",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
             Self::PolicyHoldPrune => "policy_hold_prune",
@@ -205,7 +214,10 @@ impl HousekeepingSweep {
     /// bytes past the next start or day. The model pack retirement pass runs
     /// every minute, the lifecycle tick a serving host ran it on before it
     /// joined the pass (FIX 20193), so a retirement day's move is recorded
-    /// within a minute of the day's start.
+    /// within a minute of the day's start. The OAuth server's lapsed rows go
+    /// hourly, as the lease, confirm and print expiries go besides their
+    /// noted deadlines; a read drops each it finds lapsed, so nothing waits
+    /// on them and they note no deadline.
     pub const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
             Runner::Engine {
@@ -214,9 +226,10 @@ impl HousekeepingSweep {
             }
         }
         match self {
-            Self::SecretLeaseExpiry | Self::CriticalConfirmExpiry | Self::VoicePrintRetention => {
-                engine(HOUR)
-            }
+            Self::SecretLeaseExpiry
+            | Self::CriticalConfirmExpiry
+            | Self::VoicePrintRetention
+            | Self::OAuthExpiry => engine(HOUR),
             Self::SymbolLeaseExpiry => engine(5 * MINUTE),
             Self::EsignExpiry
             | Self::EsignSealBackstop

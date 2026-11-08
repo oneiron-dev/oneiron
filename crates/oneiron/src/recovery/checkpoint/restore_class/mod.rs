@@ -152,8 +152,10 @@ fn own_device_grant_row(value: &[u8]) -> bool {
 /// An owner's grant to a named agent (FIX 5628) is his standing will,
 /// durable until he revokes it, not vault content: it stays as the live
 /// vault holds it, so a grant he made after a checkpoint never blocks
-/// restoring that checkpoint, and one he revoked since stays revoked: its
-/// bodyless shell is Live too, by his revoke act (FIX 5732).
+/// restoring that checkpoint, and one withdrawn since stays withdrawn: its
+/// bodyless shell is Live too, by his revoke act (FIX 5732) or any other
+/// withdrawal on the record, a lapsed OAuth sign-in's among them (FIX 22193).
+/// So is the shell of his GitPush grant withdrawn on the record (FIX 22226).
 const OWNER_AGENT_GRANTS: Class = LIVE;
 
 /// Whether the entity row `value` is a bodyless shell: a deleted entity's
@@ -509,10 +511,11 @@ pub(super) struct Classes {
     /// The live vault's own serving machine ([`SERVING_MACHINE`]), read in
     /// one snapshot of `current` (`Vault::serving_machine_in_txn`).
     serving_machine: Option<crate::EntityId>,
-    /// The agent grants the live vault's owner revoked, by key: each one a
-    /// GrantRevoke act in its authority log names (FIX 5732). A read that
-    /// fails keeps none, so those shells refuse as before.
-    revoked_agent_grants: BTreeSet<Vec<u8>>,
+    /// The agent and GitPush grants withdrawn on the live vault's record, by
+    /// key: each one a GrantRevoke act in its authority log names (FIX 5732),
+    /// and each one otherwise withdrawn on the record (FIX 22193, 22226). A
+    /// read that fails keeps none, so those shells refuse as before.
+    withdrawn_owner_grants: BTreeSet<Vec<u8>>,
     /// The rows valid owner handovers name (FIX 5765). A read that fails
     /// names none, so those rows keep their class.
     handover: handover::HandoverRows,
@@ -568,9 +571,9 @@ impl Classes {
         }
         let txn = current.store.env.read_txn()?;
         let serving_machine = current.serving_machine_in_txn(&txn)?;
-        let revoked_agent_grants: BTreeSet<Vec<u8>> = current
-            .revoked_agent_grants_in_txn(&txn)
-            .map(|revoked| revoked.iter().map(|id| id.as_bytes().to_vec()).collect())
+        let withdrawn_owner_grants: BTreeSet<Vec<u8>> = current
+            .withdrawn_owner_grants_in_txn(&txn)
+            .map(|withdrawn| withdrawn.iter().map(|id| id.as_bytes().to_vec()).collect())
             .unwrap_or_default();
         let handover = handover::HandoverRows::read(current, &txn);
         drop(txn);
@@ -606,7 +609,7 @@ impl Classes {
             erased_authority: crate::origin::residence::erased_writer_rows(current)
                 .unwrap_or_default(),
             serving_machine,
-            revoked_agent_grants,
+            withdrawn_owner_grants,
             handover,
             home_managed,
             home_unreadable,
@@ -653,11 +656,13 @@ impl Classes {
                         {
                             return Some(OWNER_AGENT_GRANTS);
                         }
-                        // A revoked agent grant's shell holds no mark; his
-                        // revoke act names it (FIX 5732).
+                        // A withdrawn agent or GitPush grant's shell holds
+                        // no body to read a kind from; his revoke act or
+                        // another withdrawal on the record names it (FIX
+                        // 5732, 22193, 22226).
                         if header.entity_type == ENTITY_TYPE_FEDERATION_GRANT
                             && bodyless_row(value)
-                            && self.revoked_agent_grants.contains(key)
+                            && self.withdrawn_owner_grants.contains(key)
                         {
                             return Some(OWNER_AGENT_GRANTS);
                         }

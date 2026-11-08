@@ -213,7 +213,7 @@ impl Vault {
                 &proposal.run_ref,
                 head.version,
                 head.content_hash,
-                None,
+                crate::office_body::document_resources(),
             )?
         } else {
             None

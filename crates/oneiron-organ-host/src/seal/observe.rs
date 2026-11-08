@@ -76,7 +76,7 @@ pub(super) fn sized_region_call_until(
     read_sized_call(vault, called, measure)
 }
 
-fn read_sized_call(
+pub(super) fn read_sized_call(
     vault: &Vault,
     called: Result<OrganOutcome, crate::error::HostError>,
     measure: &CallMeasure,

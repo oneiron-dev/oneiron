@@ -6,9 +6,13 @@
 //! owner gets one inbox ask, and the browser gets a page that shows the client, the tier asked
 //! and a match code the ask shows too. The page polls with its token in a header; once the owner
 //! answers, the poll hands it the redirect: the code on an allow, `access_denied` on a deny.
+//!
+//! The page is open to anyone, so its flood cap is asked before its client is read or fetched
+//! ([`super::OAuthFloodCaps`]); the poll is not capped.
 
 use std::sync::Arc;
 
+use axum::Extension;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -24,7 +28,8 @@ use sha2::{Digest, Sha256};
 
 use super::client_document::resolve_client;
 use super::html::escape_html;
-use super::{OAuthIdentity, not_found, now};
+use super::{OAuthFloodCaps, OAuthIdentity, not_found, now};
+use crate::auth::ClientAddress;
 use crate::server::SyncServer;
 
 /// The header the page sends its token in; `authorize.js` names the same one.
@@ -97,14 +102,19 @@ fn client_redirect_url(
 }
 
 /// `GET /oauth/authorize`: validates the request, records it with the owner's ask, and shows
-/// the page that waits for his answer.
+/// the page that waits for his answer; past the flood cap, the cap's 429 before anything else.
 pub(super) async fn page(
     State(server): State<Arc<SyncServer>>,
+    Extension(caps): Extension<Arc<OAuthFloodCaps>>,
+    ClientAddress(source): ClientAddress,
     query: Result<Query<AuthorizeQuery>, QueryRejection>,
 ) -> Response {
     let Some(identity) = OAuthIdentity::of(&server) else {
         return not_found();
     };
+    if let Some(shed) = caps.shed_authorization(source) {
+        return shed;
+    }
     let Ok(Query(query)) = query else {
         return error_page(UNREADABLE);
     };

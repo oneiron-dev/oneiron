@@ -64,12 +64,14 @@ impl ServedCompactionBackend {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: self.prompt.clone(),
+                        signature: None,
                     }],
                 },
                 LlmMessage {
                     role: LlmMessageRole::User,
                     content: vec![ContentPart::Text {
                         text: compaction_request_input(request, retry).to_string(),
+                        signature: None,
                     }],
                 },
             ],
@@ -536,7 +538,7 @@ pub(super) fn product_of(response: &LlmResponse, latency: Duration) -> Compactio
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect(),
@@ -552,7 +554,7 @@ pub(super) fn request_input_tokens(request: &LlmRequest) -> u64 {
         .iter()
         .flat_map(|message| &message.content)
         .map(|part| match part {
-            ContentPart::Text { text } => oneiron::count_context_pack_tokens(text) as u64,
+            ContentPart::Text { text, .. } => oneiron::count_context_pack_tokens(text) as u64,
             _ => 0,
         })
         .sum()
