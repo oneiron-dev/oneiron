@@ -3,29 +3,112 @@
 //! Each is an act the writer performed, so the three stay distinct in
 //! storage, reads, consolidation identity and signed transcripts.
 
-use std::collections::BTreeSet;
-
 use rmpv::Value;
 
 use super::scope_stamp;
 use oneiron_contracts::entity_id::{ENTITY_ID_LEN, EntityId};
 use oneiron_contracts::error::{Error, Result};
 
+/// A finite relationship scope in canonical EntityId order.
+///
+/// Every constructor and deserializer sorts and de-duplicates the private
+/// backing storage. Read-only access cannot change canonical identity.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RelationshipSet {
+    ids: Vec<EntityId>,
+}
+
+impl RelationshipSet {
+    fn canonicalize(mut ids: Vec<EntityId>) -> Self {
+        ids.sort_unstable();
+        ids.dedup();
+        Self { ids }
+    }
+
+    pub fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, EntityId> {
+        self.ids.iter()
+    }
+
+    pub fn contains(&self, id: &EntityId) -> bool {
+        self.ids.binary_search(id).is_ok()
+    }
+
+    pub fn intersection<'a>(&'a self, other: &'a Self) -> impl Iterator<Item = &'a EntityId> {
+        self.iter().filter(move |id| other.contains(id))
+    }
+}
+
+impl FromIterator<EntityId> for RelationshipSet {
+    fn from_iter<T: IntoIterator<Item = EntityId>>(iter: T) -> Self {
+        Self::canonicalize(iter.into_iter().collect())
+    }
+}
+
+impl<const N: usize> From<[EntityId; N]> for RelationshipSet {
+    fn from(ids: [EntityId; N]) -> Self {
+        Self::canonicalize(Vec::from(ids))
+    }
+}
+
+impl IntoIterator for RelationshipSet {
+    type Item = EntityId;
+    type IntoIter = std::vec::IntoIter<EntityId>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.ids.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a RelationshipSet {
+    type Item = &'a EntityId;
+    type IntoIter = std::slice::Iter<'a, EntityId>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl serde::Serialize for RelationshipSet {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serde::Serialize::serialize(&self.ids, serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for RelationshipSet {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let ids = <Vec<EntityId> as serde::Deserialize>::deserialize(deserializer)?;
+        Ok(Self::canonicalize(ids))
+    }
+}
+
 /// A claim's relationship key. `None` is the stamped `all`; `Some(empty)` is
 /// the explicit empty set; `Some(ids)` is the ordered, de-duplicated set.
-pub type RelationshipScope = Option<BTreeSet<EntityId>>;
+pub type RelationshipScope = Option<RelationshipSet>;
 
 /// The singleton scope for one relationship id; `None` stays `all`.
 #[must_use]
 pub fn relationship_scope_of(id: Option<EntityId>) -> RelationshipScope {
-    id.map(|id| BTreeSet::from([id]))
+    id.map(|id| RelationshipSet::from([id]))
 }
 
 /// Whether a claim keyed to `rel` is in scope for the active relationship:
 /// the key is `all`, or the set holds the relationship. The empty set holds
 /// no relationship.
 #[must_use]
-pub fn relationship_scope_includes(rel: Option<&BTreeSet<EntityId>>, active: EntityId) -> bool {
+pub fn relationship_scope_includes(rel: Option<&RelationshipSet>, active: EntityId) -> bool {
     rel.is_none_or(|ids| ids.contains(&active))
 }
 
@@ -33,8 +116,8 @@ pub fn relationship_scope_includes(rel: Option<&BTreeSet<EntityId>>, active: Ent
 /// intersect, so the result never reaches a relationship either side lacks.
 #[must_use]
 pub fn meet_relationship_scopes(
-    left: Option<&BTreeSet<EntityId>>,
-    right: Option<&BTreeSet<EntityId>>,
+    left: Option<&RelationshipSet>,
+    right: Option<&RelationshipSet>,
 ) -> RelationshipScope {
     match (left, right) {
         (None, None) => None,
@@ -47,7 +130,7 @@ pub fn meet_relationship_scopes(
 /// `all`, or tag `1`, the member count as a big-endian u64, then each id's 16
 /// raw bytes in set order. The count is a structural length, not a cap.
 #[must_use]
-pub fn relationship_scope_transcript(rel: Option<&BTreeSet<EntityId>>) -> Vec<u8> {
+pub fn relationship_scope_transcript(rel: Option<&RelationshipSet>) -> Vec<u8> {
     let Some(ids) = rel else {
         return vec![0];
     };
@@ -62,7 +145,7 @@ pub fn relationship_scope_transcript(rel: Option<&BTreeSet<EntityId>>) -> Vec<u8
 
 /// The on-disk `scopeRelationshipId` value: `all`, or an array of every id
 /// in set order (`[]` for the empty set).
-pub fn encode_relationship_scope(rel: Option<&BTreeSet<EntityId>>) -> Value {
+pub fn encode_relationship_scope(rel: Option<&RelationshipSet>) -> Value {
     rel.map_or_else(
         || Value::from("all"),
         |ids| Value::Array(ids.iter().map(|id| scope_stamp::id_value(*id)).collect()),
@@ -80,6 +163,6 @@ pub fn decode_relationship_scope(value: &Value) -> Result<RelationshipScope> {
     };
     ids.iter()
         .map(scope_stamp::scope_id)
-        .collect::<Result<BTreeSet<_>>>()
+        .collect::<Result<RelationshipSet>>()
         .map(Some)
 }
