@@ -3,9 +3,9 @@
 //! run key, and commits the run's memo, its run index row, local outcomes,
 //! receipt, intents and cursor in one write. Delivery is at least once, in
 //! commit order, per hook and per source. Due watcher TASKs tick on the
-//! runner's own wake: a pass on the vault's home releases them into the tick
-//! feed, and the [`HOOK_RUNNER_TICK`] re-read bounds how late a tick runs
-//! (FIX 4749).
+//! runner's own wake: each pass on the vault's home releases them into the
+//! tick feed, hooks on or off, with a binding to take a tick or none, and the
+//! [`HOOK_RUNNER_TICK`] re-read bounds how late a tick runs (FIX 4749, 22180).
 
 mod body;
 mod evaluation;
@@ -76,7 +76,7 @@ impl std::fmt::Debug for FactHookRunner {
 /// What one pass did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HookPassReport {
-    /// `hooks.enabled` is off; the pass read nothing.
+    /// `hooks.enabled` is off; the pass released due ticks and read nothing.
     pub disabled: bool,
     pub entries_read: usize,
     pub runs: usize,
@@ -89,7 +89,7 @@ pub struct HookPassReport {
     pub intents_refused: usize,
     /// Owner checks raised for cycles and deep chains.
     pub checks: usize,
-    /// A source held more entries than this pass read.
+    /// A source held more entries than this pass read, or due ticks remain.
     pub more: bool,
 }
 
@@ -133,7 +133,7 @@ impl FactHookRunner {
 
     /// One pass over every source for every enabled fact binding, in
     /// priority order (higher first, ties by body hash). With no binding it
-    /// reads nothing.
+    /// reads nothing; it releases the due watcher ticks all the same.
     pub fn run_pass(
         &self,
         vault: &Vault,
@@ -164,6 +164,16 @@ impl FactHookRunner {
         retained: Option<RetainedPass<'_>>,
     ) -> Result<HookPassReport> {
         let mut report = HookPassReport::default();
+        // Due watcher TASKs tick first, hooks on or off and with or without a
+        // binding to take a tick, as a watch TASK settles with it (FIX 22180).
+        // A binding whose cursor this node first places below is bound after
+        // these ticks: it runs an open TASK's (`open_tick_start_in_txn`), and
+        // never a watch TASK's they settled (`enabled_before_tick_in_txn`).
+        let now = vault.store.clock.now_recorded_at();
+        match source::release_due_ticks(vault, now) {
+            Ok(more) => report.more = more,
+            Err(error) => tracing::warn!(%error, "due watcher ticks wait for the next pass"),
+        }
         if !vault.hooks_enabled()? {
             report.disabled = true;
             return Ok(report);
@@ -409,17 +419,6 @@ impl Pass<'_, '_> {
         let mut cursors = Vec::with_capacity(bindings.len());
         for (id, _) in bindings {
             cursors.push(self.cursor_for(*id, source)?);
-        }
-        // Due watcher TASKs tick here, once a binding here can take a tick,
-        // and after every cursor above is placed: a binding met for the
-        // first time starts before the ticks this pass releases (FIX 4749).
-        if source == FactSource::Schedule
-            && bindings.iter().any(|(_, binding)| {
-                filter::verbs_admit_kind(&binding.selector.verbs, FactKind::ScheduleTick)
-            })
-        {
-            let now = self.vault.store.clock.now_recorded_at();
-            self.report.more |= source::release_due_ticks(self.vault, now)?;
         }
         let lowest = cursors.iter().copied().min().flatten();
         let batch = source::read_after(self.vault, source, lowest, max_entries)?;

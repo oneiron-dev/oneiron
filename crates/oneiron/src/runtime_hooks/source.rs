@@ -18,8 +18,8 @@ use crate::side_table::{self, Named, SideTable};
 use crate::vault::RevisionRef;
 use crate::{EntityId, Error, Result, Vault};
 
-pub(crate) use schedule::index_task_due_in_txn;
-pub(super) use schedule::{TickDetails, release_due_ticks};
+pub(super) use schedule::TickDetails;
+pub(crate) use schedule::{index_task_due_in_txn, next_tick_release_at, release_due_ticks};
 pub(super) use surface_inbound::SurfaceInboundRow;
 pub(crate) use surface_inbound::record_surface_inbound_in_txn;
 
