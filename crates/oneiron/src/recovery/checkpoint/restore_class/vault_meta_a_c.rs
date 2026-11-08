@@ -8,6 +8,7 @@ use crate::side_table::{self as t, SideTableDecl};
 
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ACCESS_REQUEST, CONTENT),
+    (&t::ACTOR_SELF_MODEL_SUMMARY, CONTENT),
     (&t::ACTOR_CLAIMS_DISTILL_PENDING_JOB, CONTENT),
     (&t::ACTOR_CLAIMS_DISTILL_RUNNER_CURSOR, CONTENT),
     (&t::ADMISSION_INTENT, LIVE),

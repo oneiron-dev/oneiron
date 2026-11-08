@@ -672,7 +672,11 @@ pub(crate) fn source_has_dependents_in_txn(
 }
 /// Every row written from some version of `id`, by its dependency rows:
 /// those the epoch walk, a fold's words and an output occurrence record.
-fn dependents_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
+pub(super) fn dependents_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<EntityId>> {
     scan_dependents(store, txn, &[DEP, id.as_bytes()].concat())
 }
 /// An entity delete erases every source version; one document-prefix scan

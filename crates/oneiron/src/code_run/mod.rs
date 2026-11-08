@@ -81,6 +81,9 @@ pub use self::compaction_home::{
     bind_compaction_caller, compaction_home_budget, load_compaction_home,
     resolve_compaction_identity,
 };
+pub(crate) use self::compaction_home::{
+    bound_self_model_in, erase_self_model_binding_actor_in_txn,
+};
 pub use self::consent_wait::{
     AdmittedBrowserAct, CodeConsentAnswerInput, CodeConsentBrowserAction,
     CodeConsentBrowserOutcome, CodeConsentChoice, CodeConsentEffectHost,
@@ -179,8 +182,8 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
-    SessionInstanceBind, executor_compaction_session_id, executor_speech_message_id_in_run,
-    executor_speech_turn_id_for_run,
+    SessionInstanceBind, epoch_execution_in, executor_compaction_session_id,
+    executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
 };
 pub use self::storage::{
     CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,
