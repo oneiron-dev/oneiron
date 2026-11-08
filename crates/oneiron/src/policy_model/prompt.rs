@@ -114,6 +114,7 @@ impl PolicyClassifyPrompt {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
                         text: self.system.clone(),
+                        signature: None,
                     }],
                 }];
                 // A row's why is explanation, never a new instruction. Keep
@@ -135,6 +136,7 @@ impl PolicyClassifyPrompt {
                         role: LlmMessageRole::User,
                         content: vec![ContentPart::Text {
                             text: json!({"policy_row_evidence": explained}).to_string(),
+                            signature: None,
                         }],
                     });
                 }
@@ -142,6 +144,7 @@ impl PolicyClassifyPrompt {
                     role: LlmMessageRole::User,
                     content: vec![ContentPart::Text {
                         text: self.user.clone(),
+                        signature: None,
                     }],
                 });
                 messages
@@ -417,7 +420,7 @@ pub(super) const fn decision_severity(decision: PolicyClassifyDecision) -> u8 {
 pub(super) fn response_text(response: &LlmResponse) -> Option<String> {
     let mut joined = String::new();
     for part in &response.message.content {
-        if let ContentPart::Text { text } = part
+        if let ContentPart::Text { text, .. } = part
             && !text.trim().is_empty()
         {
             if joined.len().saturating_add(text.len()) > POLICY_MODEL_ANSWER_PARSE_MAX_BYTES {

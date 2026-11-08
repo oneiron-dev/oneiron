@@ -547,12 +547,14 @@ impl<E> PersonAboutExecutor<'_, E> {
                         role: LlmMessageRole::System,
                         content: vec![ContentPart::Text {
                             text: self.instruction.to_owned(),
+                            signature: None,
                         }],
                     },
                     LlmMessage {
                         role: LlmMessageRole::User,
                         content: vec![ContentPart::Text {
                             text: prompt_lines(&admitted),
+                            signature: None,
                         }],
                     },
                 ],

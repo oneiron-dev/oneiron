@@ -58,7 +58,7 @@ pub(super) fn heal_executor_reply(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             ContentPart::Reasoning { .. }
             | ContentPart::ToolCall { .. }
             | ContentPart::ToolResult { .. }

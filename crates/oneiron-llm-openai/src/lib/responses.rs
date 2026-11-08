@@ -125,7 +125,7 @@ fn responses_items(message: &LlmMessage, wire: Option<&str>) -> Vec<JsonValue> {
     };
     for part in &message.content {
         match part {
-            ContentPart::Text { text } => {
+            ContentPart::Text { text, .. } => {
                 content.push(json!({ "type": text_type, "text": text }));
             }
             // Its summary stays out: the encrypted content is the reasoning,

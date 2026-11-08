@@ -78,7 +78,7 @@ impl FallbackRegistry {
             })?;
         if message.content.is_empty()
             || message.content.iter().all(|p| match p {
-                ContentPart::Text { text } => text.trim().is_empty(),
+                ContentPart::Text { text, signature } => text.trim().is_empty() && signature.is_none(),
                 ContentPart::Reasoning {
                     text,
                     signature,
@@ -205,6 +205,7 @@ fn json_message(value: serde_json::Value) -> LlmMessage {
         role: LlmMessageRole::Assistant,
         content: vec![ContentPart::Text {
             text: value.to_string(),
+            signature: None,
         }],
     }
 }

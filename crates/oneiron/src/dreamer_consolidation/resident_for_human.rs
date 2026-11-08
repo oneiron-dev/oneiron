@@ -448,12 +448,14 @@ pub async fn run_free_time_for_human(
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: model.instruction.to_owned(),
+                    signature: None,
                 }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {
                     text: format!("{context_text}{asks_text}{records}\n{FOR_HUMAN_ASK}"),
+                    signature: None,
                 }],
             },
         ],
@@ -535,7 +537,7 @@ pub async fn run_free_time_for_human(
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();
