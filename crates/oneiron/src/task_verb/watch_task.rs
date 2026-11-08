@@ -73,8 +73,9 @@ pub(super) fn decode_due_at(
 /// The due time `task_ref` was open at, for a hook offered its tick: an
 /// open TASK's due time, and a watch TASK's once it settled at or after
 /// that time, as the release of its tick settles it. `None` when the row is
-/// gone, settled otherwise, or carries no due time; a body no reader can
-/// decode reads as none, as [`super::open_task_due_at_in_txn`] reads it.
+/// gone, settled otherwise, cancelled (review #6784) or carries no due time;
+/// a body no reader can decode reads as none, as
+/// [`super::open_task_due_at_in_txn`] reads it.
 pub(crate) fn tick_due_at_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -85,12 +86,16 @@ pub(crate) fn tick_due_at_in_txn(
         Err(Error::Record(_)) => return Ok(None),
         Err(error) => return Err(error),
     };
-    Ok(body.and_then(|body| match body.terminal() {
+    let due_at = body.and_then(|body| match body.terminal() {
         None => body.due_at,
         Some(terminal) => body
             .watch_due_at()
             .filter(|due_at| terminal.finished_at >= *due_at),
-    }))
+    });
+    if due_at.is_some() && vault.task_authority_facts_in(txn, task_ref)?.cancelled {
+        return Ok(None);
+    }
+    Ok(due_at)
 }
 
 /// Settles a watch TASK Done in the write that releases its tick, at `now`
@@ -108,7 +113,11 @@ pub(crate) fn settle_watch_task_in_txn(
     let Some(mut body) = task_verb_body_in(vault, &*txn, task_ref)? else {
         return Ok(());
     };
-    if !body.watch || body.terminal().is_some() || body.settled_ladder_disposition().is_some() {
+    if !body.watch
+        || body.terminal().is_some()
+        || body.settled_ladder_disposition().is_some()
+        || vault.task_authority_facts_in(&*txn, task_ref)?.cancelled
+    {
         return Ok(());
     }
     body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
