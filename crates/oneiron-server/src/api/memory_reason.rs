@@ -59,6 +59,7 @@ mod answer_admission;
 mod deep_admission;
 mod evidence;
 mod host;
+mod read_rows;
 mod render;
 pub(crate) use answer_admission::MemoryReasonCompositionRefusal;
 pub(crate) use deep_admission::{DeepAdmission, DeepRetrievalHost, admit_deep_retrieval};
