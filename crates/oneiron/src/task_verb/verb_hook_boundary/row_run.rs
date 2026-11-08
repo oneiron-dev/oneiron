@@ -181,6 +181,23 @@ pub fn row(
     args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
 ) -> MemoryResult<Value> {
+    row_with_saved(memory, verb, args, run, false).0
+}
+
+/// [`row`] with the content-free notice bit from the actual pre chain,
+/// captured before the post chain consumes it or read beside a drained
+/// call's saved result. `None` means its source supplied no notice metadata.
+/// The result itself and every hook, admission and abort stay the same.
+///
+/// # Errors
+///
+/// As [`row`].
+pub fn row_with_notice(
+    memory: &Memory<'_>,
+    verb: &str,
+    args: Value,
+    run: impl FnOnce(Value) -> MemoryResult<Value>,
+) -> (MemoryResult<Value>, Option<bool>) {
     row_with_saved(memory, verb, args, run, false)
 }
 
@@ -198,7 +215,7 @@ pub fn row_retained(
     args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
 ) -> MemoryResult<Value> {
-    row_with_saved(memory, verb, args, run, true)
+    row_with_saved(memory, verb, args, run, true).0
 }
 
 fn row_with_saved(
@@ -207,64 +224,76 @@ fn row_with_saved(
     mut args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
     require_saved: bool,
-) -> MemoryResult<Value> {
+) -> (MemoryResult<Value>, Option<bool>) {
     // A call a budget window paced answers from its held row until its turn
     // ran (FIX 8753), before any hook runs on it again.
     if !require_saved
         && let Some(reply) = crate::runtime_hooks::verb::paced_verb_reply(memory, verb)
     {
-        return reply;
+        return (reply, None);
     }
-    let secret = CustodySecret::lift(verb, &mut args);
-    // Bound on every call: a retry of a call an ask parked meets its saved
-    // reference whether or not a hook takes the verb now. A credential
-    // caller's reference comes first; else a handle the drain can rebuild is
-    // its plain target; else only the caller's retry resumes it.
-    let (credential, resume) = if require_saved {
-        // Workflow task-host calls are caller-only; never rebind a drain target.
-        (None, None)
-    } else {
-        let credential = memory.verb_ask_credential();
-        let resume = memory
-            .plain_resume()
-            .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
-            .map(VerbResume::Row);
-        (credential, resume)
-    };
-    let pre_restriction = restriction_clock_for_call(memory, verb, &args);
-    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
-    let pre = match row_pre_with_saved(
-        memory,
-        verb,
-        args,
-        resume,
-        credential,
-        validate_input,
-        session.as_ref(),
-        require_saved,
-    )? {
-        Ok(pre) => pre,
-        Err(stop) => return completed(verb, stop, session.as_ref()),
-    };
-    drop(pre_restriction);
-    // A restrictive call (an erase, a revoke) lands over a damaged clock floor (FIX 10106).
-    let restriction = pre
-        .landing
-        .is_some()
-        .then(crate::authority::restriction_only_clock);
-    let ran = run(CustodySecret::restored(secret.as_ref(), pre.args.clone()));
-    drop(restriction);
-    let result = match ran {
-        Ok(result) => result,
-        Err(error) => {
-            if crate::runtime_hooks::verb::run_failed_transient(&error) {
-                memory.vault().reopen_resumed_ask(&pre);
+    let mut notice = None;
+    let result = (|| -> MemoryResult<Value> {
+        let secret = CustodySecret::lift(verb, &mut args);
+        // Bound on every call: a retry of a call an ask parked meets its saved
+        // reference whether or not a hook takes the verb now. A credential
+        // caller's reference comes first; else a handle the drain can rebuild is
+        // its plain target; else only the caller's retry resumes it.
+        let (credential, resume) = if require_saved {
+            // Workflow task-host calls are caller-only; never rebind a drain target.
+            (None, None)
+        } else {
+            let credential = memory.verb_ask_credential();
+            let resume = memory
+                .plain_resume()
+                .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
+                .map(VerbResume::Row);
+            (credential, resume)
+        };
+        let pre_restriction = restriction_clock_for_call(memory, verb, &args);
+        let session = hook_session_for_call(Some(memory), verb, &args, None)?;
+        let pre = match row_pre_with_saved(
+            memory,
+            verb,
+            args,
+            resume,
+            credential,
+            validate_input,
+            session.as_ref(),
+            require_saved,
+        )? {
+            Ok(pre) => pre,
+            Err(stop) => {
+                notice = match &stop {
+                    VerbHookStop::Completed { hook_notice, .. }
+                    | VerbHookStop::CompletedWithError { hook_notice, .. } => *hook_notice,
+                    _ => None,
+                };
+                return completed(verb, stop, session.as_ref());
             }
-            abort(memory.vault(), pre);
-            return Err(error);
-        }
-    };
-    row_post(memory.vault(), pre, result)
+        };
+        drop(pre_restriction);
+        // A restrictive call (an erase, a revoke) lands over a damaged clock floor (FIX 10106).
+        let restriction = pre
+            .landing
+            .is_some()
+            .then(crate::authority::restriction_only_clock);
+        let ran = run(CustodySecret::restored(secret.as_ref(), pre.args.clone()));
+        drop(restriction);
+        notice = Some(revoke_lands::caller_notice(&pre).is_some());
+        let result = match ran {
+            Ok(result) => result,
+            Err(error) => {
+                if crate::runtime_hooks::verb::run_failed_transient(&error) {
+                    memory.vault().reopen_resumed_ask(&pre);
+                }
+                abort(memory.vault(), pre);
+                return Err(error);
+            }
+        };
+        row_post(memory.vault(), pre, result)
+    })();
+    (result, notice)
 }
 
 /// [`row`] for a caller that must observe the committed engine result before

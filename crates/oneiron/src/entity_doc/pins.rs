@@ -46,6 +46,26 @@ impl CitationPin {
             && loro::cursor::Cursor::decode(&anchor.end).is_ok();
         whole.then_some((entity, citation))
     }
+
+    /// Whether this pin quotes a version of the history `version` names:
+    /// every operation its frontier names is one `version` holds (FIX
+    /// 3464).
+    pub(crate) fn within(&self, version: &loro::VersionVector) -> bool {
+        decode_frontier(&self.anchor.frontier).is_ok_and(|frontier| {
+            !frontier.is_empty() && frontier.iter().all(|id| version.includes_id(id))
+        })
+    }
+
+    /// Whether `other` is this pin bound in another history: the same
+    /// citation of the same quote in the same document (FIX 3464).
+    #[cfg(feature = "sync")]
+    pub(crate) fn twin_of(&self, other: &Self) -> bool {
+        self.citation == other.citation
+            && self.entity == other.entity
+            && self.document == other.document
+            && self.anchor.quote == other.anchor.quote
+            && self.anchor.hash == other.anchor.hash
+    }
 }
 
 /// What merging one pin a window carried did (FIX 853).
@@ -179,7 +199,7 @@ impl Vault {
     ) -> Result<CitationPin> {
         self.with_write_txn_grouped(|txn| {
             super::forks::authorize(self, txn, authorization, entity, actor)?;
-            let h = storage::head(&self.store, txn, entity)?;
+            let h = storage::head_by_owner_kind(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &h)?;
             let origin = doc.fork(&anchor.frontier)?;
             let (start, end) = super::verbs::resolve(&origin, *entity, anchor)?;
@@ -215,7 +235,7 @@ impl Vault {
     /// pins have no scalar oldest; callers use `entity_text_pin_floor` instead.
     pub fn oldest_entity_text_pin(&self, entity: &EntityId) -> Result<Option<CitationPin>> {
         let txn = self.store.env.read_txn()?;
-        let h = storage::head(&self.store, &txn, entity)?;
+        let h = storage::head_by_owner_kind(&self.store, &txn, entity)?;
         let doc = storage::load(&self.store, &txn, &h)?;
         let all = pins(self, &txn, entity)?;
         for candidate in &all {
@@ -248,7 +268,7 @@ impl Vault {
     /// were numeric revisions.
     pub fn entity_text_pin_floor(&self, entity: &EntityId) -> Result<Vec<u8>> {
         let txn = self.store.env.read_txn()?;
-        let h = storage::head(&self.store, &txn, entity)?;
+        let h = storage::head_by_owner_kind(&self.store, &txn, entity)?;
         let doc = storage::load(&self.store, &txn, &h)?;
         floor(self, &txn, entity, &h.incarnation, &doc, &doc.frontier())
     }
@@ -257,7 +277,7 @@ impl Vault {
     /// safe: Loro keeps that frontier's complete state, dropping only predecessors.
     pub fn check_entity_text_purge(&self, entity: &EntityId, requested: &[u8]) -> Result<()> {
         let txn = self.store.env.read_txn()?;
-        let h = storage::head(&self.store, &txn, entity)?;
+        let h = storage::head_by_owner_kind(&self.store, &txn, entity)?;
         let doc = storage::load(&self.store, &txn, &h)?;
         let allowed = floor(self, &txn, entity, &h.incarnation, &doc, requested)?;
         if decode_frontier(&allowed)? != decode_frontier(requested)? {
@@ -347,7 +367,7 @@ impl Vault {
                 act,
                 &receipt_id,
             )?;
-            let mut h = storage::head(&self.store, txn, entity)?;
+            let mut h = storage::head_by_owner_kind(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &h)?;
             let applied = floor(self, txn, entity, &h.incarnation, &doc, requested)?;
             let old_state = doc.text();
@@ -378,8 +398,11 @@ impl Vault {
                 .roll_checkpoint_payload_for_purge_in_txn(txn, entity)?;
             // A purge changes no text, so only this takes the new floor to
             // the live window that carries a MESSAGE's document (FIX 3552).
+            // A proposal artifact has no row for a window to carry.
             #[cfg(feature = "sync")]
-            crate::batch::queue_committed_rows(self, txn, std::iter::once(*entity).collect());
+            if h.owner_kind == storage::DocumentOwnerKind::Entity {
+                crate::batch::queue_committed_rows(self, txn, std::iter::once(*entity).collect());
+            }
             Ok(receipt)
         })?;
         registry.remove(entity);
@@ -444,7 +467,7 @@ impl Vault {
         }
         let through = match through {
             Some(bytes) => bytes.to_vec(),
-            None => self.read_entity_doc(entity, EntityDoc::frontier)?,
+            None => live_frontier_by_owner_kind(self, entity)?,
         };
         Ok(self.purge_entity_text_history(
             entity,
@@ -541,6 +564,19 @@ impl Vault {
         pins(self, txn, message)
     }
 
+    /// The version MESSAGE `message`'s document here replaces, when a
+    /// canonical restore rebuilt it or it came here as one's successor (FIX
+    /// 3464): the window's copies of its pins of that history are their
+    /// twins' on the successor.
+    #[cfg(feature = "sync")]
+    pub(crate) fn replaced_message_version_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        message: &EntityId,
+    ) -> Result<Option<loro::VersionVector>> {
+        super::succession::replaced_version_in(&self.store, txn, message)
+    }
+
     /// Installs `pin`, which a window brought from another of the owner's
     /// machines, in the caller's write transaction (FIX 853). A pin is
     /// written once: an equal one is held, and a different one for the same
@@ -573,7 +609,7 @@ impl Vault {
             let mut held = prior.clone();
             held.actor = held.actor.erased_here(self, txn)?;
             let Some(stands) = held.erased_wins(pin) else {
-                return Ok(PinMerge::Conflict);
+                return superseded_twin_in_txn(self, txn, &message, &key, &prior, pin);
             };
             if *stands == prior {
                 return Ok(PinMerge::Held);
@@ -598,6 +634,82 @@ impl Vault {
     }
 }
 
+/// What a pin that differs from `prior`, the one held here, does where the
+/// two are twins and one is of the history a canonical restore's successor
+/// replaced here (FIX 3464): a copy of the replaced history is held, as its
+/// twin on the successor is here; the successor's twin, which quotes this
+/// vault's document, takes the replaced one's place, keeping an erase the
+/// replaced one carried; and two bindings in the successor that read the
+/// same span of the same version text are one pin, the one held here
+/// standing. An erase a held copy or twin carries reaches the pin held
+/// here. Any other stands as a conflict.
+#[cfg(feature = "sync")]
+fn superseded_twin_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    message: &EntityId,
+    key: &HexPair,
+    prior: &CitationPin,
+    pin: &CitationPin,
+) -> Result<PinMerge> {
+    let Some(replaced) = super::succession::replaced_version_in(&vault.store, txn, message)? else {
+        return Ok(PinMerge::Conflict);
+    };
+    if !prior.twin_of(pin) {
+        return Ok(PinMerge::Conflict);
+    }
+    let held = match (prior.within(&replaced), pin.within(&replaced)) {
+        (false, true) => true,
+        (false, false) => {
+            let bound = bound_in(vault, txn, message, prior);
+            bound.is_some() && bound == bound_in(vault, txn, message, pin)
+        }
+        _ => false,
+    };
+    if held {
+        if pin.actor == DocActor::Erased && prior.actor != DocActor::Erased {
+            let mut erased = prior.clone();
+            erased.actor = DocActor::Erased;
+            ENTITY_DOC_PIN.put(&vault.store, txn, key, &erased)?;
+            return Ok(PinMerge::Written);
+        }
+        return Ok(PinMerge::Held);
+    }
+    match (prior.within(&replaced), pin.within(&replaced)) {
+        (true, false) if quotes_document(vault, txn, message, pin) => {
+            let mut twin = pin.clone();
+            if prior.actor == DocActor::Erased {
+                twin.actor = DocActor::Erased;
+            }
+            ENTITY_DOC_PIN.put(&vault.store, txn, key, &twin)?;
+            Ok(PinMerge::Written)
+        }
+        _ => Ok(PinMerge::Conflict),
+    }
+}
+
+/// The span `pin` reads in `entity`'s document as this vault holds it and the
+/// text of the version it quotes, where that span reads its quote (FIX
+/// 3464); `None` where it does not resolve.
+#[cfg(feature = "sync")]
+fn bound_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    pin: &CitationPin,
+) -> Option<(usize, usize, String)> {
+    let bound = || -> Result<Option<(usize, usize, String)>> {
+        let h = storage::head(&vault.store, txn, entity)?;
+        let doc = storage::load(&vault.store, txn, &h)?;
+        let origin = doc.fork(&pin.anchor.frontier)?;
+        let (start, end) = super::verbs::resolve(&origin, *entity, &pin.anchor)?;
+        let text = origin.text();
+        let quote: String = text.chars().skip(start).take(end - start).collect();
+        Ok((quote == pin.anchor.quote).then_some((start, end, text)))
+    };
+    bound().ok().flatten()
+}
+
 /// Whether `pin` quotes `entity`'s document as this vault holds it: the
 /// document retains its version, and its span there reads its quote.
 #[cfg(feature = "sync")]
@@ -616,6 +728,15 @@ fn quotes_document(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId, pin: &Cita
         Ok(quote == pin.anchor.quote)
     };
     proven().unwrap_or(false)
+}
+
+/// The live frontier of `owner`'s document, its head read by the owner kind
+/// it names ([`storage::head_by_owner_kind`]): what an owner's history erase
+/// runs through when it names no frontier.
+pub(super) fn live_frontier_by_owner_kind(vault: &Vault, owner: &EntityId) -> Result<Vec<u8>> {
+    let txn = vault.store.env.read_txn()?;
+    let h = storage::head_by_owner_kind(&vault.store, &txn, owner)?;
+    Ok(storage::load(&vault.store, &txn, &h)?.frontier())
 }
 
 pub(super) fn entity_type(vault: &Vault, entity: &EntityId) -> Result<Option<u8>> {
@@ -669,6 +790,14 @@ pub(super) fn floor(
     )? {
         protected.push(receipt.applied);
     }
+    // A proposal artifact's history keeps every version its record names,
+    // so its measured window reads as it did (FIX 11535).
+    protected.extend(crate::edit_distance::artifact_window_refs_in_txn(
+        &vault.store,
+        txn,
+        entity,
+        incarnation,
+    )?);
     for pin in protected {
         let f = decode_frontier(&pin)?;
         let vv = doc

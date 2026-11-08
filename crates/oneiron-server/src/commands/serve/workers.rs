@@ -258,6 +258,8 @@ pub(crate) async fn start_desktop_workers(
     workers.push(sync_server.spawn_connector_send_worker(admitted()));
     // A Dreamer pass hands agent replies off; this worker runs them (FIX 2405).
     workers.push(sync_server.spawn_connector_reply_worker(admitted()));
+    // The calendar safeguard's pattern head, unless the host installed its own (FIX 12099).
+    crate::calendar_host::install_calendar_label_head(crate::calendar_host::PatternLabelHead);
     // Installed ICS feeds and queued CalDAV syncs poll on their own cadence.
     workers.push(crate::calendar_host::spawn_calendar_polls(
         Arc::clone(&sync_server),
@@ -275,6 +277,11 @@ pub(crate) async fn start_desktop_workers(
     ));
     // Checked built-in channels and their provider webhooks (OF-519).
     workers.push(crate::builtin_host::spawn(&sync_server, admitted()));
+    // Mail & Calendar pack sources sync as the local owner (FIX 12559).
+    workers.push(crate::mail_host::spawn_mail_source_syncs(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
     // Past the vault's deletion these two run on, to let its backups go at
     // their deadline (FIX 11979): every pass admitted, as today.
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));

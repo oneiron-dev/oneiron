@@ -80,6 +80,11 @@ pub(super) fn spawn_run<A: AppHost + 'static>(
     // The artifact origin's channel, served beside the API's for this run.
     let (artifacts, artifact_streams) = mpsc::channel(ENGINE_CONNECTION_BACKLOG);
     let (wake, stop) = (host.wake_handle(), host.stop_handle());
+    // FIX 4747 (review #6574): the vault stayed open across the stop that
+    // released this machine's executor leases, its sends' and its agent
+    // runs'; the stopped run has joined, so this run takes and reaps them
+    // again.
+    vault.resume_executor_leases();
     let done = super::super::runtime::spawn_serving(serve_workers, move || {
         super::super::serve_prepared(host, vault, config, Some(artifact_streams), owner_host)
     })?;

@@ -3,10 +3,12 @@
 //! GATE-001 added stable decision inputs. GATE-002 routes local write doors
 //! through the evaluator while keeping replicated replay trust-blind.
 
+mod agent_definition_setup;
 mod ask_policy;
 mod auto_signals;
 mod bundle;
 mod ceiling;
+pub(crate) use ceiling::NativeAutoChecker;
 pub(crate) mod class_policy;
 pub(crate) mod consult_fanout_values;
 pub(crate) mod curator_proposal;
@@ -106,6 +108,7 @@ pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use self::agent_definition_setup::record_agent_definition_setup_in_txn;
 pub(crate) use self::ask_policy::{AskOperationalPolicy, AskPolicySurface};
 pub(crate) use self::bundle::append_reviewed_run_decision_in_txn;
 pub use self::bundle::{
@@ -199,7 +202,7 @@ pub(crate) use self::effect::{
     ApprovalContext, ApprovalTarget, BrowserSendTarget, CampaignLegFacts,
     ChannelIdentityLifecycleFacts, ExternalEffectGovernance, LinearMirrorFacts, OutboundSendFacts,
     PairAdmission, ScopedMcpCallFacts, check_external_effect_policy,
-    check_external_effect_policy_pair, code_wait_approval_digest,
+    check_external_effect_policy_pair, code_wait_approval_digest, code_wait_standing_bound,
     counterparty_send_override_in_txn, evaluate_external_effect_policy,
     external_effect_approval_digest, hydrate_external_effect_contact,
     native_mail_cold_approval_digest, record_external_effect_policy,

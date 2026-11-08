@@ -16,8 +16,11 @@ mod door;
 mod landing;
 mod pending;
 
-use landing::ingest_parsed_transcript_in_txn;
 pub use door::TranscriptFileDropInput;
+use landing::ingest_parsed_transcript_in_txn;
+pub(crate) use landing::{
+    ingest_meeting_transcript_in_txn, ingest_prepared_meeting_transcript_in_txn,
+};
 pub use pending::{
     PendingTranscriptPass, TRANSCRIPT_OPEN_SESSION_WAIT_SECS, TRANSCRIPT_PENDING_ATTEMPT_KIND,
     run_pending_transcript_ingests,
@@ -217,6 +220,31 @@ fn persist_turns(
     arrived_at_ms: u64,
     source_version: Option<&crate::blob_artifact::BlobArtifactVersion>,
 ) -> crate::Result<Vec<crate::EntityId>> {
+    persist_turns_with_source(
+        vault,
+        wtxn,
+        source_blob_ref,
+        session_ref,
+        turns,
+        arrived_at_ms,
+        source_version,
+        None,
+    )
+}
+
+fn persist_turns_with_source(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    source_blob_ref: crate::EntityId,
+    session_ref: crate::EntityId,
+    turns: &[ParsedTranscriptTurn],
+    arrived_at_ms: u64,
+    source_version: Option<&crate::blob_artifact::BlobArtifactVersion>,
+    meeting_source: Option<&crate::ingest::meeting_audio::MeetingImportProvenance>,
+) -> crate::Result<Vec<crate::EntityId>> {
+    let conversation_body = meeting_source
+        .map(|source| source.conversation_body())
+        .transpose()?;
     let conversation_ref = vault.store.clock.entity_id()?;
     vault
         .batch_in()
@@ -228,11 +256,11 @@ fn persist_turns(
                 end: arrived_at_ms / 1000,
             },
             arrived_at_ms / 1000,
-            &[],
+            conversation_body.as_deref().unwrap_or(&[]),
         )
         .apply(wtxn)?;
     let mut ids = Vec::with_capacity(turns.len());
-    for turn in turns {
+    for (ordinal, turn) in turns.iter().enumerate() {
         let id = vault.store.clock.entity_id()?;
         // GATE-10 keys carry the ROLE, never the display name: the shared
         // turn-body decoder is first-wins across the `speaker|spkr` alias set,
@@ -265,6 +293,9 @@ fn persist_turns(
                     ),
                 );
             }
+        }
+        if let Some(source) = meeting_source {
+            source.stamp_turn(&mut body_value, ordinal)?;
         }
         let body = rmp_serde::to_vec_named(&body_value)
             .map_err(|_| crate::Error::InvariantViolation("transcript TURN encode"))?;

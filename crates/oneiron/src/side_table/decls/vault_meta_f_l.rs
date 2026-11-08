@@ -24,6 +24,11 @@ side_tables! {
     FAILURE_SIGNALS_TIER1_COUNTS: VaultMeta b"failure_signals:tier1_counts:v1:" Raw;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
+    /// A Connect guest's proposal in its pact's review inbox (FIX 3684): the proposer, the world
+    /// and record it names, the text update as sent until the owner decides, then the decision.
+    /// Never a vault write. Key: id16(grant) + id16(proposal).
+    FEDERATION_CONNECT_PROPOSAL: VaultMeta b"federation:connect_proposal:v1:" Named
+        => crate::federation::erase_connect_proposer_in_txn;
     /// An ask guest's FEDERATION_GRANT the owner withdrew: the guest it conferred on and when, so
     /// a repeat revoke reports the first (OF-232). Key: id16 (grant).
     FEDERATION_GUEST_REVOKE: VaultMeta b"federation:guest_revoke:v1:" Named;
@@ -282,14 +287,40 @@ side_tables! {
     /// A hook's regen record: the contract its last good body passed under, its intent, and a
     /// regen decision waiting to be enacted. Key: id16 (binding).
     HOOKS_REGEN: VaultMeta b"hooks:regen:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_regen_accepts_masked];
+    /// One step in a hook's regen history (FIX 4691): a regen decision with its golden manifest,
+    /// or an adoption, cancel or revert of one; body hashes only, never a body. Key: hash32
+    /// (blake3 of the hook's pack, a zero byte and its name) + u64be (sequence within the hook).
+    HOOKS_REGEN_RECEIPT: VaultMeta b"hooks:regen_receipt:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_regen_receipt_accepts_masked];
     /// Each hook binding's runs in commit order, each naming its saved row: a fact run's memo or
     /// a verb run's saved copy. Key: id16 (binding) + u64be (commit time, Unix ms) + hash32 (run
     /// key).
     HOOKS_RUN_INDEX: VaultMeta b"hooks:run_index:v1:" Named;
-    /// The settlement feed fact hooks follow: one row per settled proposal. Key: u64be (sequence).
+    /// The settlement feed fact hooks follow: one row per settled proposal while a fact binding
+    /// reads the feed; an erase leaves a row naming the erased proposal or settler as an empty
+    /// erased row, and the runner prunes the rows every binding passed, every row while no fact
+    /// binding is enabled. Key: u64be (sequence).
     HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
     /// The last settlement sequence handed out. Key: ().
     HOOKS_SETTLED_NEXT: VaultMeta b"hooks:settled_next:v1" Named;
+    /// The inbound surface-event feed fact hooks follow (FIX 4749): one row per admitted
+    /// connector SurfaceEvent while a fact binding reads the feed, its ids and tokens only; an
+    /// erase leaves a row naming the erased entity as an empty erased row, and the runner prunes
+    /// the rows every binding passed. Key: u64be (sequence).
+    HOOKS_SURFACE_INBOUND: VaultMeta b"hooks:surface_inbound:v1:" Named;
+    /// The last inbound surface-event sequence handed out. Key: ().
+    HOOKS_SURFACE_INBOUND_NEXT: VaultMeta b"hooks:surface_inbound_next:v1" Named;
+    /// Each TASK with a due time not yet ticked (FIX 4749). Key: u64be (due time, Unix seconds)
+    /// + id16 (TASK).
+    HOOKS_TASK_DUE: VaultMeta b"hooks:task_due:v1:" Named;
+    /// Each TASK the due index holds (FIX 4749): the due time it holds, and the tick sequence
+    /// its release committed, if it has ticked. Key: id16 (TASK).
+    HOOKS_TASK_DUE_REVERSE: VaultMeta b"hooks:task_due_reverse:v1:" Named;
+    /// The tick feed fact hooks follow (FIX 4749): one row per due TASK released; an erase
+    /// leaves an erased TASK's row as an empty erased row, and the runner prunes the rows every
+    /// binding passed, but an open TASK's own tick. Key: u64be (sequence).
+    HOOKS_TICK: VaultMeta b"hooks:tick:v1:" Named;
+    /// The last tick sequence handed out. Key: ().
+    HOOKS_TICK_NEXT: VaultMeta b"hooks:tick_next:v1" Named;
     /// A call a verb hook's ask stopped: the call, its re-validated args, the hook's place in the
     /// chain and the ask handle, Open until a retry resumes it once. Key: id16 (invocation).
     HOOKS_VERB_ASK: VaultMeta b"hooks:verb_ask:v1:" Named;
@@ -466,6 +497,10 @@ side_tables! {
     /// Key: string (pack name "\0" skill id hex).
     LENS_SLOT: VaultMeta b"lens/slot/v1\0" Named
         => crate::lens::erase_slot_actor_in_txn;
+    /// Native provider archive version captured by a LINE observation. Key: id16(claim).
+    LINE_CHAT_ARCHIVE_PIN: VaultMeta b"line:chat_archive_pin:v1:" Named Engine;
+    /// Exact native join-version release still owed after capture teardown. Key: id16(claim).
+    LINE_CHAT_ARCHIVE_RELEASE: VaultMeta b"line:chat_archive_release:v1:" Named Engine;
     /// Tracker issue id to task id. Key: string.
     LINEAR_ISSUE_REVERSE: VaultMeta b"linear.issue.v1/" Raw;
     /// One TASK's mirror control (OF-427 C6): whether it is opted out, its mapping revision and
@@ -533,6 +568,12 @@ side_tables! {
     /// The owner's model pack preference: follow the latest pack, pin a season or pin one pack
     /// (FIX 5367, FIX 5369). Key: ().
     LLM_MODEL_PACK_PREFERENCE: VaultMeta b"llm:model_pack_preference:v1" Named;
+    /// Each model pack's version a same-name update replaced, as its install receipt named it:
+    /// the version the update's change notice names as `previous`, which the one-tap revert
+    /// installs again once its bytes pass an install's checks (FIX 20192). One per pack name;
+    /// the next same-name update replaces it and the pack's removal removes it. Key:
+    /// string(pack name).
+    LLM_MODEL_PACK_REPLACED: VaultMeta b"llm:model_pack_replaced:v1:" Named Admitted;
     /// Each model pack retirement notice sent to the vault's owners, and when, so a restart or a
     /// second pass sends none twice (FIX 5368). Key: u64be(retirement epoch day) + u64be(mark,
     /// days before it) + string(`pack:<pack id>` or `model:<model id>`).

@@ -152,6 +152,7 @@ fn injected_meter(
         move |meter: BudgetGuard,
               payer: Option<PayerPerson>,
               _lease: Option<LiveLeaseState>,
+              _caller: Option<(EntityId, Option<String>)>,
               _listed: Vec<AgentModel>,
               _observer: Option<crate::mcp::ReaderRequestObserver>| {
             Arc::new(InjectedRuns::funded(
@@ -515,17 +516,19 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         &self,
         meter: BudgetGuard,
         payer: Option<PayerPerson>,
+        caller: Option<(EntityId, Option<String>)>,
         listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         self.reader_meter
             .as_ref()
-            .map(|build| build(meter, payer, None, listed, None))
+            .map(|build| build(meter, payer, None, caller, listed, None))
     }
     fn reader_backend_with_lease(
         &self,
         meter: BudgetGuard,
         payer: Option<PayerPerson>,
         lease: Option<LiveLeaseState>,
+        caller: Option<(EntityId, Option<String>)>,
         listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         if self.injected.is_some() {
@@ -533,7 +536,7 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         }
         self.reader_meter
             .as_ref()
-            .map(|build| build(meter, payer, lease, listed, None))
+            .map(|build| build(meter, payer, lease, caller, listed, None))
     }
     fn reader_backend_observed(
         &self,
@@ -548,7 +551,7 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         }
         self.reader_meter
             .as_ref()
-            .map(|build| build(meter, payer, lease, listed, Some(observer)))
+            .map(|build| build(meter, payer, lease, None, listed, Some(observer)))
     }
     fn host_meter(&self) -> Option<BudgetGuard> {
         self.host_meter.clone()

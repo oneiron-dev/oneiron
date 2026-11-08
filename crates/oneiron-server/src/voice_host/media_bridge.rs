@@ -609,11 +609,27 @@ impl MediaWorker {
             vault,
             deliver,
         } = self;
-        worker
-            .run(door.as_ref(), &vault, move |output| {
-                deliver.send(output).ok();
-            })
-            .await;
+        let deliver = move |output| {
+            deliver.send(output).ok();
+        };
+        if let Some(phone) = door.phone_read() {
+            let release = |generation| {
+                if phone.accepts_output(generation) {
+                    Ok(())
+                } else {
+                    Err(oneiron::RetryableLlmError::not_sent(
+                        "media_release",
+                        "phone output is no longer current",
+                    )
+                    .into())
+                }
+            };
+            worker
+                .run_released(door.as_ref(), &vault, deliver, Some(&release))
+                .await;
+        } else {
+            worker.run(door.as_ref(), &vault, deliver).await;
+        }
     }
 }
 

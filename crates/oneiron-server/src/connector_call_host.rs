@@ -80,15 +80,17 @@ mod remote_task_poll;
 mod reply_read;
 mod resume;
 mod sent;
+mod served_calls;
 mod stream_pump;
 use json_wire::{KeptWire, post_json};
 use live_exchange::{Continuation, LiveSession, hand_over};
-use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
+use presenting::{Intake, KeptRound, KeyAliases, clear_event, clear_questions};
 pub(crate) use remote_task_poll::poll_remote_tasks;
 use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
 pub(crate) use resume::resume_exchanges;
 use sent::Sent;
+pub(crate) use served_calls::ServerConnectorCalls;
 
 /// Connecting to a connector's endpoint.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -124,6 +126,12 @@ mod wire {
     pub(super) const REQUEST_STATE: &str = "requestState";
     /// The key the one question of a stream request takes.
     pub(super) const STREAM_KEY: &str = "0";
+    /// A message's metadata member.
+    pub(super) const META: &str = "_meta";
+    /// The metadata key that ties a message to its task (MCP 2025-11-25
+    /// tasks), an object whose `taskId` names the task.
+    pub(super) const RELATED_TASK: &str = "io.modelcontextprotocol/related-task";
+    pub(super) const TASK_ID: &str = "taskId";
 }
 
 /// The generic connector call's send on this host.
@@ -259,47 +267,6 @@ impl ServedConnectorCallHost {
         let row = key_ref.as_ref().map(|key_ref| (key_ref, view.tool()));
         // A grant the send refuses answers as its typed refusal, not TransportNotStarted (FIX 6673).
         presenting.send(&self.vault, &exchange, row, presented)
-    }
-
-    /// The elicitation this send declares, or `None`: a call the engine
-    /// bound no caller to, a revision with no elicitation shape, an
-    /// unreadable key ref or setting, and a key set to `never allow` all
-    /// declare none. A call that names a custody record declares it too: its
-    /// door clears the presented value from each question and every later
-    /// reply (FIX 3843).
-    fn declared<'a>(
-        &'a self,
-        call: &'a FrozenOutboundCall,
-        view: &FrozenToolCallView,
-    ) -> Option<Declared<'a>> {
-        let caller = self.caller.as_ref()?;
-        let revision = view.protocol_revision()?;
-        let capability = elicitation_capability(revision)?;
-        let intake = Intake::of(revision)?;
-        let key_ref = EntityId::from_hex(view.key_ref()?).ok()?;
-        let principal = EntityId::from_hex(&caller.principal_ref).ok()?;
-        match self.vault.connector_elicitation_setting(&key_ref) {
-            Ok(setting) if setting != SlateDisposition::NeverAllow => {}
-            _ => return None,
-        }
-        Some(Declared {
-            capability,
-            intake,
-            call,
-            vault: &self.vault,
-            registry: &self.elicitations,
-            binding: QuestionBinding {
-                principal,
-                grant_id: caller.grant_id,
-                key_ref,
-                parent_intent: call.intent_id().copied(),
-                name: caller.name.clone(),
-                server: view.server().to_owned(),
-                tool: view.tool().to_owned(),
-                endpoint: view.endpoint().to_owned(),
-                revision: revision.to_owned(),
-            },
-        })
     }
 }
 
@@ -444,23 +411,14 @@ fn elicitation_capability(revision: &str) -> Option<Value> {
     }
 }
 
-/// How a revision carries a connector's questions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Intake {
-    /// `elicitation/create` requests on the reply stream.
-    Stream,
-    /// A `tools/call` result that asks for input, answered by the same call
-    /// again.
-    Retry,
-}
-
-impl Intake {
-    fn of(revision: &str) -> Option<Self> {
-        match revision {
-            "2025-06-18" | "2025-11-25" => Some(Self::Stream),
-            "2026-07-28" => Some(Self::Retry),
-            _ => None,
-        }
+/// The client capabilities an `initialize` declares: elicitation alone,
+/// as `elicitation` (from [`elicitation_capability`]) names it, or none. A
+/// send and the renewal of its task's session both declare through here
+/// (FIX 16029), so a renewed session declares what the send's did.
+fn client_capabilities(elicitation: Option<&Value>) -> Value {
+    match elicitation {
+        Some(capability) => json!({ "elicitation": capability }),
+        None => json!({}),
     }
 }
 
@@ -618,10 +576,11 @@ impl<'a> Exchange<'a> {
     /// The client capabilities `initialize` declares: elicitation alone,
     /// when this send declares it.
     fn capabilities(&self) -> Value {
-        match &self.elicitation {
-            Some(declared) => json!({ "elicitation": declared.capability }),
-            None => json!({}),
-        }
+        client_capabilities(
+            self.elicitation
+                .as_ref()
+                .map(|declared| &declared.capability),
+        )
     }
 
     /// Rechecks the issuer before a session sends with its kept credential.
@@ -879,6 +838,11 @@ impl<'a> Exchange<'a> {
                         .map(str::to_owned),
                     protocol: open.protocol.to_str().unwrap_or_default().to_owned(),
                     credential: RemoteTaskCredential::Route,
+                    // FIX 16029: every capability a send declares names
+                    // form mode, so a send that declared one declared form
+                    // elicitation; the task's renewed sessions declare it
+                    // again, and its form questions are parked for the owner.
+                    form_elicitation: self.elicitation.is_some(),
                 });
             }
             return Sent::deferred(handle, body);

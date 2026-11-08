@@ -25,6 +25,7 @@ use oneiron::engine_executor::{
 use oneiron::llm::BudgetDenied;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::PayerPerson;
+use oneiron::off_record::OffRecordMode;
 use oneiron::{
     BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture,
     LlmRequest, LlmStreamResult, ModelId, ModelLocality, ModelTierRef, Vault,
@@ -36,7 +37,7 @@ use oneiron_code_check::{
 
 use super::CHAT_ROLE;
 use super::browser_planner::{self, BrowserPlannerRuns};
-use super::compaction::{CodeModeCompaction, LiveAdmission};
+use super::compaction::{AnsweringRungSlot, AnsweringRungSlots, CodeModeCompaction, LiveAdmission};
 use super::live_lease::{LiveLease, LiveLeaseState};
 use super::status::StatusCell;
 use crate::config::models::{BROWSER_PLANNER_ROLE, CodeCheckSettings, ModelsConfig};
@@ -44,7 +45,7 @@ use crate::mcp::{
     McpQuickJsProvider, ModelCallBackend, ModelListBackend, PlannedMeter, PlannedModel,
     PlannedRoute, RunCompactionSeat, RunProfiledCompactionSeat,
 };
-use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
+use crate::models::{AnsweringRung, ModelRuntime, RoleCall, RoleRefusal};
 use crate::server::{SharedModelSlots, SyncServer};
 
 /// Binds `execute_code` on `server` when `models` asks for it and the
@@ -113,6 +114,9 @@ pub(super) async fn bind(
     // through the provider, and every backend and live admission below
     // routes the run's step calls by it.
     let browser = Arc::new(BrowserPlannerRuns::default());
+    // FIX 4933: each run's answering rungs, kept for its live fork: every
+    // backend below fills its run's slot, and every live admission reads it.
+    let answering = Arc::new(AnsweringRungSlots::default());
     let backend = Arc::new(CodeModeBackend {
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
@@ -121,6 +125,7 @@ pub(super) async fn bind(
         planned: None,
         lease: None,
         browser: Arc::clone(&browser),
+        answering: Arc::clone(&answering),
         caller: None,
         listed: Vec::new(),
         request_observer: None,
@@ -129,7 +134,11 @@ pub(super) async fn bind(
         let backend = Arc::clone(&backend);
         Arc::new(move |principal, session| {
             Arc::new(CodeModeBackend {
-                caller: Some(CodeModeCaller { principal, session }),
+                caller: Some(CodeModeCaller {
+                    principal,
+                    session,
+                    session_bound: false,
+                }),
                 ..backend.as_ref().clone()
             }) as Arc<dyn LlmBackend>
         })
@@ -143,13 +152,15 @@ pub(super) async fn bind(
             }) as Arc<dyn LlmBackend>
         })
     };
-    // Each run's compaction seat reads the rung its step's call is admitted
-    // on, at the breakpoint, through this same admission (FIX 4465 C).
+    // Each run's compaction seat admits its step's call at the breakpoint
+    // through this same admission (FIX 4465 C), and reads there the rung
+    // that answered the run's latest completed call (FIX 4933).
     let live_admission = Arc::new(LiveStepAdmission {
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
         pinned: false,
         browser: Arc::clone(&browser),
+        answering: Arc::clone(&answering),
     });
     // A reader child's calls take the same admission: on its own child
     // scope's guard when its run spends under a scope, else on code mode's
@@ -159,10 +170,12 @@ pub(super) async fn bind(
         let vault = Arc::clone(server.vault());
         let models = Arc::clone(runtime);
         let browser = Arc::clone(&browser);
+        let answering = Arc::clone(&answering);
         Arc::new(
             move |guard: BudgetGuard,
                   payer: Option<PayerPerson>,
                   lease: Option<LiveLeaseState>,
+                  caller: Option<(EntityId, Option<String>)>,
                   listed: Vec<AgentModel>,
                   request_observer: Option<crate::mcp::ReaderRequestObserver>| {
                 Arc::new(CodeModeBackend {
@@ -173,7 +186,12 @@ pub(super) async fn bind(
                     planned: None,
                     lease,
                     browser: Arc::clone(&browser),
-                    caller: None,
+                    answering: Arc::clone(&answering),
+                    caller: caller.map(|(principal, session)| CodeModeCaller {
+                        principal,
+                        session_bound: session.is_some(),
+                        session,
+                    }),
                     listed,
                     request_observer,
                 }) as Arc<dyn LlmBackend>
@@ -192,6 +210,7 @@ pub(super) async fn bind(
         let vault = Arc::clone(server.vault());
         let models = Arc::clone(runtime);
         let browser = Arc::clone(&browser);
+        let answering = Arc::clone(&answering);
         Arc::new(
             move |guard: BudgetGuard,
                   payer: Option<PayerPerson>,
@@ -206,6 +225,7 @@ pub(super) async fn bind(
                     planned: Some(planned.clone()),
                     lease,
                     browser: Arc::clone(&browser),
+                    answering: Arc::clone(&answering),
                     caller: None,
                     listed,
                     request_observer: None,
@@ -286,6 +306,7 @@ pub(super) async fn bind(
         models: Arc::clone(runtime),
         pinned: true,
         browser,
+        answering,
     });
     let provider = provider
         .with_pinned_compaction(pinned_compaction(&compaction, Arc::clone(&slots), pinned))
@@ -456,6 +477,9 @@ struct CodeModeBackend {
     planned: Option<PlannedModel>,
     /// The runs' browser planner states each call is routed by (CUA E5).
     browser: Arc<BrowserPlannerRuns>,
+    /// The runs' answering rung slots each step's call that answers fills
+    /// (FIX 4933).
+    answering: Arc<AnsweringRungSlots>,
     caller: Option<CodeModeCaller>,
     /// The bound run's actual frozen list. Other backend paths retain
     /// their existing unconstrained routing until they carry one too.
@@ -467,6 +491,26 @@ struct CodeModeBackend {
 struct CodeModeCaller {
     principal: EntityId,
     session: Option<String>,
+    /// Only the reader runner supplies a session its dispatcher already bound.
+    session_bound: bool,
+}
+
+impl CodeModeCaller {
+    fn keeps_no_record(&self, vault: &Vault) -> bool {
+        if self.session_bound {
+            let Some(session_ref) = self.session.as_deref() else {
+                return true;
+            };
+            return !matches!(
+                vault
+                    .off_record_session_vault()
+                    .bind(session_ref)
+                    .and_then(|session| session.mode()),
+                Ok(OffRecordMode::OnRecord)
+            );
+        }
+        vault.model_call_keeps_no_record_for(self.session.as_deref(), Some(self.principal))
+    }
 }
 
 /// The run each code-mode call is admitted under, one run per call so the
@@ -526,9 +570,11 @@ fn pinned_call(models: &ModelRuntime, vault: &Vault, request: &LlmRequest) -> Op
 /// The live admission a run's compaction seat reads at a breakpoint (FIX
 /// 4465 C): the step's request admitted exactly as [`CodeModeBackend`]
 /// admits it, on the same role and with the same browser evidence, before
-/// the call is sent. It sends nothing, spends nothing, counts nothing and
-/// keeps no request: the seat's capture holds the one copy, on its flight,
-/// under the run's own actor and meter.
+/// the call is sent. It sends nothing, spends nothing and counts nothing.
+/// The rung that answered the run's latest completed call, with that call,
+/// is in the run's answering rung slot, which the run's writer holds (FIX
+/// 4933); the seat's capture holds its flight's one copy, under the run's
+/// own actor and meter.
 struct LiveStepAdmission {
     vault: Arc<Vault>,
     models: Arc<ModelRuntime>,
@@ -536,6 +582,8 @@ struct LiveStepAdmission {
     pinned: bool,
     /// The runs' browser planner states, read as the backend reads them.
     browser: Arc<BrowserPlannerRuns>,
+    /// The runs' answering rung slots the backend fills (FIX 4933).
+    answering: Arc<AnsweringRungSlots>,
 }
 
 impl LiveAdmission for LiveStepAdmission {
@@ -543,6 +591,14 @@ impl LiveAdmission for LiveStepAdmission {
         let (role, request, _) = self.browser.route(request, self.pinned);
         admit_code_mode_call(&self.models, &self.vault, request, self.pinned, role)
             .map(|(call, _, _)| call)
+    }
+
+    fn hold_answering_rungs(&self, live: &LlmRequest) -> Option<Arc<AnsweringRungSlot>> {
+        browser_planner::step_run(live).map(|run| self.answering.hold(run))
+    }
+
+    fn answering_rung(&self, live: &LlmRequest) -> Option<AnsweringRung> {
+        self.answering.latest(browser_planner::step_run(live)?)
     }
 }
 
@@ -558,6 +614,9 @@ impl CodeModeBackend {
             // staged: routing below only adds host data after them, and
             // admission leaves them as they are.
             let staged_len = request.messages.len();
+            // The run this step's call belongs to: #6061's refresh re-keys its
+            // capture, and (FIX 4933) the call fills that run's answering rung
+            // slot once it answers.
             let capture_run = browser_planner::step_run(&request);
             // CUA E5: the role the run's browser planner state picks, and
             // the evidence it holds, handed on once this call answers.
@@ -595,12 +654,10 @@ impl CodeModeBackend {
                     staged_len,
                 );
             }
-            let no_record_at_arrival = self.caller.as_ref().is_some_and(|caller| {
-                self.vault.model_call_keeps_no_record_for(
-                    caller.session.as_deref(),
-                    Some(caller.principal),
-                )
-            });
+            let no_record_at_arrival = self
+                .caller
+                .as_ref()
+                .is_some_and(|caller| caller.keeps_no_record(&self.vault));
             let record_request = self.caller.as_ref().map(|_| call.request.clone());
             let run = self
                 .models
@@ -629,14 +686,14 @@ impl CodeModeBackend {
                         .await
                 } else {
                     call.ladder
-                        .generate_exact_recorded_while(&run, call.request, None, &may_send)
+                        .generate_exact_recorded_streamed_while(&run, call.request, None, &may_send)
                         .await
                 }
             } else if let Some(planned) = &self.planned {
                 // FIX 2310: the model that answered, marked when it is not
                 // the child's pick.
                 call.ladder
-                    .generate_recorded_while(&run, call.request, None, &may_send)
+                    .generate_recorded_streamed_while(&run, call.request, None, &may_send)
                     .await
                     .map(|(response, binding)| {
                         planned.answered(&run, binding.rung.model.clone());
@@ -644,7 +701,7 @@ impl CodeModeBackend {
                     })
             } else {
                 call.ladder
-                    .generate_recorded_while(&run, call.request, None, &may_send)
+                    .generate_recorded_streamed_while(&run, call.request, None, &may_send)
                     .await
             };
             if let Some(live) = &live {
@@ -653,13 +710,13 @@ impl CodeModeBackend {
             if answered.is_ok() {
                 handoff.answered();
             }
+            // FIX 4933: only a call that answered fills its run's slot.
+            if let (Ok((_, binding)), Some(run_id)) = (&answered, capture_run) {
+                self.answering.answered(run_id, binding);
+            }
             answered.map(|(response, binding)| {
                 if let (Some(caller), Some(request)) = (&self.caller, &record_request) {
-                    let no_record = no_record_at_arrival
-                        || self.vault.model_call_keeps_no_record_for(
-                            caller.session.as_deref(),
-                            Some(caller.principal),
-                        );
+                    let no_record = no_record_at_arrival || caller.keeps_no_record(&self.vault);
                     let evidence_run = run.clone().initiated_by(Some(caller.principal));
                     crate::api::record_raw_response(
                         &self.vault,
