@@ -288,7 +288,9 @@ pub(super) async fn handle_window_sync(
             // broadcast. Broadcasting with the requester's conn_id would cause
             // echo suppression to drop the response for the requester.
             if let Some(response) = export_frame(server, conn_state, &key, &doc, payload)? {
-                let _ = direct_tx.send(response);
+                direct_tx.send(response).map_err(|_| {
+                    ProtocolError::Persistence("window catch-up channel closed".into())
+                })?;
             }
             // Reverse SyncStep1: send our VV so the client pushes its local
             // diff back — this is what makes the exchange bidirectional. A
@@ -321,7 +323,9 @@ pub(super) async fn handle_window_sync(
             )
             .into_result()
             .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
-            let _ = direct_tx.send(vv_response);
+            direct_tx
+                .send(vv_response)
+                .map_err(|_| ProtocolError::Persistence("window vector channel closed".into()))?;
             // Subscribe only after a valid VV and a complete direct catch-up.
             let bound = server.config.max_windows_per_connection;
             if let Some(held) = conn_state.subscribe_window(&key, bound) {
@@ -534,7 +538,9 @@ pub(super) async fn handle_window_sync(
             // Client's VV answering our VV_REQUEST — export and send only our
             // local diff. Same fail-closed VV decoding as VV_REQUEST.
             if let Some(response) = export_frame(server, conn_state, &key, &doc, payload)? {
-                let _ = direct_tx.send(response);
+                direct_tx.send(response).map_err(|_| {
+                    ProtocolError::Persistence("window catch-up channel closed".into())
+                })?;
             }
         }
         window_sub_tags::REPLACEMENT_REQUEST => {

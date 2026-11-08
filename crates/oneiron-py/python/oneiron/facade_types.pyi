@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1322 facade rows, 4766 declarations.
-Inputs: 1251 of 1322 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1151 of 1322 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1328 facade rows, 4787 declarations.
+Inputs: 1257 of 1328 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1157 of 1328 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
@@ -596,8 +596,6 @@ class HealthReviewReceipt(TypedDict):
     measured: int
     exact_dial: NotRequired[float | None]
     exact_measured: NotRequired[float | None]
-    diagnostics: list[EntityId]
-    evidence: list[EntityId]
     observed_brief: NotRequired[HealthBriefPin | None]
     label: NotRequired[bool | None]
     projected: bool
@@ -1649,7 +1647,11 @@ class TaskRouteOutcomeHumanFollowupBody(TypedDict):
     actor_ref: EntityId
 class TaskRouteOutcomeHumanFollowup(TypedDict):
     HumanFollowup: TaskRouteOutcomeHumanFollowupBody
-TaskRouteOutcome = TaskRouteOutcomeDreamerAttempt | TaskRouteOutcomeAgentDispatch | TaskRouteOutcomePeerSyncedOnly | TaskRouteOutcomeChildAddressed | TaskRouteOutcomeHumanFollowup
+class TaskRouteOutcomeWatchTickBody(TypedDict):
+    due_at: int
+class TaskRouteOutcomeWatchTick(TypedDict):
+    WatchTick: TaskRouteOutcomeWatchTickBody
+TaskRouteOutcome = TaskRouteOutcomeDreamerAttempt | TaskRouteOutcomeAgentDispatch | TaskRouteOutcomePeerSyncedOnly | TaskRouteOutcomeChildAddressed | TaskRouteOutcomeHumanFollowup | TaskRouteOutcomeWatchTick
 class TaskAskHandle(TypedDict):
     group_ref: EntityId
 class TaskPhaseProposed(TypedDict):
@@ -2186,6 +2188,7 @@ class TaskCreateRequest(TypedDict):
     ttl: NotRequired[TaskTtl | None]
     parent_ref: NotRequired[str | None]
     due_at: NotRequired[int | None]
+    watch: NotRequired[bool]
 class TaskCreateReceipt(TypedDict):
     task_ref: NotRequired[EntityId | None]
     proposal_ref: NotRequired[EntityId | None]
@@ -2283,6 +2286,13 @@ class SpendPayer(TypedDict):
     party: EntityId
     granted_by: NotRequired[EntityId | None]
     at_ms: int
+class WalletRef(TypedDict):
+    issuer: str
+    id: str
+class GrantSpendBinding(TypedDict):
+    grant_ref: EntityId
+    mint_act: str
+    wallet_ref: WalletRef
 class SpendScope(TypedDict):
     scope: SpendScopeId
     parent: NotRequired[SpendScopeId | None]
@@ -2300,6 +2310,7 @@ class SpendScope(TypedDict):
     calibration_sample: NotRequired[SpendCalibrationSample | None]
     exploration_attempt: NotRequired[AttemptId | None]
     payer: NotRequired[SpendPayer | None]
+    funding: NotRequired[GrantSpendBinding | None]
 class SpendSignalWrapUp(TypedDict):
     signal: Literal["wrap_up"]
     available_units: int
@@ -2458,6 +2469,7 @@ class OpenSpendLeaseRequest(TypedDict):
     cap_units: int
     unit: str
     shown_at_ms: int
+    funding_grant_ref: NotRequired[EntityId | None]
 class SpendScopeRequest(TypedDict):
     scope: str
 class TopUpSpendLeaseRequest(TypedDict):
@@ -11166,6 +11178,8 @@ class ConsentRegistryAgentGrant(TypedDict):
     delegated_by: EntityId
     expires_at: NotRequired[int | None]
     repo_bounds: NotRequired[RepoAccessBounds | None]
+    verb_classes: NotRequired[list[str]]
+    wallet_ref: NotRequired[WalletRef | None]
     confers: bool
 ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "regrant_action": NotRequired[ConsentRegrantAction | None], "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
 class ConsentRegistry(TypedDict):
@@ -13175,6 +13189,15 @@ class CodeRunModelHealCountRequest(TypedDict):
 class CodeRunModelHealCountView(TypedDict):
     model_id: str
     healed_turns: int
+class CodeRunSessionModelHealCountRequest(TypedDict):
+    session_ref: str
+    model_id: str
+class CodeRunSessionModelHealCountView(TypedDict):
+    session_ref: str
+    model_id: str
+    canonical_healed_turns: int
+    session_healed_turns: int
+    healed_turns: int
 class CodeRunCorrectionsRequest(TypedDict):
     run_ref: str
     after_step: NotRequired[int | None]
@@ -13215,6 +13238,30 @@ class CodeRunCorrectionsView(TypedDict):
     run_ref: str
     policy: CodeRunCorrectionPolicy
     records: list[CodeRunCorrection]
+    next_after_step: NotRequired[int | None]
+class CodeRunStepEvidenceRequest(TypedDict):
+    run_ref: str
+    after_step: NotRequired[int | None]
+    limit: NotRequired[int | None]
+class CodeRunStepBody(TypedDict):
+    handle: str
+    bytes: int
+    complete: bool
+    withheld: bool
+    text: str
+class CodeRunStepEvidence(TypedDict):
+    step: int
+    state_hash: NotRequired[str | None]
+    source: NotRequired[CodeRunStepBody | None]
+    executed_js: NotRequired[CodeRunStepBody | None]
+    observation: NotRequired[CodeRunStepBody | None]
+    console: NotRequired[CodeRunStepBody | None]
+    corrections: list[CodeRunCorrection]
+class CodeRunStepEvidenceView(TypedDict):
+    run_ref: str
+    completed_steps: int
+    policy: CodeRunCorrectionPolicy
+    steps: list[CodeRunStepEvidence]
     next_after_step: NotRequired[int | None]
 class CodeRunTypeDiagnosticsRequest(TypedDict):
     check_ref: str
@@ -14242,6 +14289,7 @@ class CodeRepoPointer(TypedDict):
 class CodeSnapshotIngestRequest(TypedDict):
     project_id: str
     pointer: CodeRepoPointer
+    repository: NotRequired[EntityId | None]
 class CodeSnapshotView(TypedDict):
     repo: EntityId
     repo_ref: str
@@ -14250,6 +14298,7 @@ class CodeSnapshotView(TypedDict):
     snapshot: str
     scope_key: str
     files: list[CodeSnapshotFile]
+    repository: NotRequired[EntityId | None]
     capture_receipt: NotRequired[str | None]
 class CodeSnapshotRequest(TypedDict):
     repo: EntityId
@@ -14574,6 +14623,8 @@ class AgentGrantMintRequest(TypedDict):
     authority_scope: Scope
     expires_at: NotRequired[int | None]
     repo_bounds: NotRequired[RepoAccessBounds | None]
+    verb_classes: NotRequired[list[str]]
+    wallet_ref: NotRequired[WalletRef | None]
 class AgentGrantView(TypedDict):
     grant_ref: EntityId
     agent: EntityId
@@ -14581,6 +14632,8 @@ class AgentGrantView(TypedDict):
     delegated_by: EntityId
     expires_at: NotRequired[int | None]
     repo_bounds: NotRequired[RepoAccessBounds | None]
+    verb_classes: NotRequired[list[str]]
+    wallet_ref: NotRequired[WalletRef | None]
     confers: bool
     revoke_command: str
 class AgentGrantMinted(TypedDict):
@@ -14594,6 +14647,19 @@ class AgentGrantRevoked(TypedDict):
     changed: bool
     agent: NotRequired[EntityId | None]
     act_ref: NotRequired[str | None]
+class AgentVerbClassRow(TypedDict):
+    name: str
+    verbs: list[str]
+class AgentVerbClassesView(TypedDict):
+    manifest_ref: str
+    body_hash: str
+    classes: list[AgentVerbClassRow]
+class AgentVerbClassesConfigureRequest(TypedDict):
+    expected_body_hash: str
+    classes: list[AgentVerbClassRow]
+class AgentVerbClassesReceipt(TypedDict):
+    configuration: AgentVerbClassesView
+    receipt_ref: str
 class GitPushRepo(TypedDict):
     repo: EntityId
     project: EntityId
@@ -14640,11 +14706,19 @@ class ConnectorWitnessReadGrantRevoked(TypedDict):
     reason: str
     revoked_at: int
 class RepoAnchorBindInput(TypedDict):
-    repo: str
+    repo: NotRequired[str | None]
+    local_folder: NotRequired[str | None]
     project: EntityId
+    anchor: NotRequired[EntityId | None]
+    editable: NotRequired[list[str] | None]
+class RepoRegistrationView(TypedDict):
+    source: str
+    editable: list[str]
 class RepoAnchorBindOutput(TypedDict):
-    repo: str
+    repo: NotRequired[str | None]
     anchor: GitPushRepo
+    portable: str
+    registration: NotRequired[RepoRegistrationView | None]
     changed: bool
 RepoPortableId = str
 class RepoSnapshotsGetInput(TypedDict):
@@ -17195,6 +17269,8 @@ class SkillPackOutcomeProjection(TypedDict):
     persisted: bool
 class SkillPackCreditRequest(TypedDict):
     receipt_id: str
+class ModelResponsesStoreSettings(TypedDict):
+    responses_store: bool
 SeatPrecedence = Literal["narrow_only", "seat_override"]
 DescriptionSource = Literal["owner", "measured", "benchmarks", "vendor"]
 class SeatPolicy(TypedDict):
@@ -18137,6 +18213,7 @@ class ConnectorCallReplyAwaitingInput(TypedDict):
     questions: list[ConnectorQuestion]
     live_until_ms: int
     reasons: NotRequired[list[str]]
+    budget_steering: NotRequired[list[str]]
 ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery | ConnectorCallReplyAwaitingInput
 LiveVoiceToolCallReply = NarrowedQuestions | ConnectorCallReply
 class LiveVoiceToolReply(TypedDict):
@@ -20493,8 +20570,48 @@ class DocxBlockView(TypedDict):
     text: str
     runs: list[DocxRun]
     cells: list[DocxCellView]
+DocxHeaderFooterBand = Literal["default", "first", "even"]
+class DocxStoryScopeHeader(TypedDict):
+    kind: Literal["header"]
+    part_name: str
+    band: DocxHeaderFooterBand
+class DocxStoryScopeFooter(TypedDict):
+    kind: Literal["footer"]
+    part_name: str
+    band: DocxHeaderFooterBand
+class DocxStoryScopeFootnote(TypedDict):
+    kind: Literal["footnote"]
+    id: str
+class DocxStoryScopeEndnote(TypedDict):
+    kind: Literal["endnote"]
+    id: str
+class DocxStoryScopeComment(TypedDict):
+    kind: Literal["comment"]
+    id: str
+DocxStoryScope = DocxStoryScopeHeader | DocxStoryScopeFooter | DocxStoryScopeFootnote | DocxStoryScopeEndnote | DocxStoryScopeComment
+class DocxStoryParagraphView(TypedDict):
+    id: str
+    locked: bool
+    text: str
+    runs: list[DocxRun]
+class DocxStoryCellParagraphView(TypedDict):
+    id: str
+    locked: bool
+    text: str
+class DocxStoryCellView(TypedDict):
+    row: int
+    col: int
+    paragraphs: list[DocxStoryCellParagraphView]
+class DocxStoryTableView(TypedDict):
+    id: str
+    cells: list[DocxStoryCellView]
+class DocxStoryView(TypedDict):
+    scope: DocxStoryScope
+    paragraphs: list[DocxStoryParagraphView]
+    tables: list[DocxStoryTableView]
 class DocxBodyView(TypedDict):
     blocks: list[DocxBlockView]
+    stories: list[DocxStoryView]
 class XlsxValueNumber(TypedDict):
     number: float
 class XlsxValueText(TypedDict):
@@ -20907,7 +21024,45 @@ class DocxBodyOpMark(TypedDict):
     len: int
     mark: DocxMark
     on: bool
-DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove | DocxBodyOpMark
+class DocxBodyOpSetStoryCellParagraph(TypedDict):
+    op: Literal["set_story_cell_paragraph"]
+    scope: DocxStoryScope
+    block: str
+    row: int
+    col: int
+    paragraph: str
+    text: str
+class DocxBodyOpSpliceStoryCellParagraph(TypedDict):
+    op: Literal["splice_story_cell_paragraph"]
+    scope: DocxStoryScope
+    block: str
+    row: int
+    col: int
+    paragraph: str
+    at: int
+    delete: int
+    insert: str
+class DocxBodyOpSetStoryText(TypedDict):
+    op: Literal["set_story_text"]
+    scope: DocxStoryScope
+    block: str
+    text: str
+class DocxBodyOpSpliceStory(TypedDict):
+    op: Literal["splice_story"]
+    scope: DocxStoryScope
+    block: str
+    at: int
+    delete: int
+    insert: str
+class DocxBodyOpMarkStory(TypedDict):
+    op: Literal["mark_story"]
+    scope: DocxStoryScope
+    block: str
+    at: int
+    len: int
+    mark: DocxMark
+    on: bool
+DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove | DocxBodyOpMark | DocxBodyOpSetStoryCellParagraph | DocxBodyOpSpliceStoryCellParagraph | DocxBodyOpSetStoryText | DocxBodyOpSpliceStory | DocxBodyOpMarkStory
 class XlsxBodyOpSetValue(TypedDict):
     op: Literal["set_value"]
     sheet: str
@@ -21276,10 +21431,12 @@ ChangeKind = Literal["added", "deleted", "moved", "text", "cells"]
 class BlockChange(TypedDict):
     block: str
     kind: ChangeKind
+    scope: NotRequired[DocxStoryScope | None]
 ConflictKind = Literal["delete_edit", "competing_move", "both_edited", "both_set"]
 class BodyConflict(TypedDict):
     block: str
     kind: ConflictKind
+    scope: NotRequired[DocxStoryScope | None]
 class OfficeBodyDiff(TypedDict):
     base: list[int]
     head: list[int]

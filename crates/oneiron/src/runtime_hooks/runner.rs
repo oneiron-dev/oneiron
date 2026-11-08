@@ -3,8 +3,9 @@
 //! run key, and commits the run's memo, its run index row, local outcomes,
 //! receipt, intents and cursor in one write. Delivery is at least once, in
 //! commit order, per hook and per source. Due watcher TASKs tick on the
-//! runner's own wake: a pass releases them into the tick feed, and the
-//! [`HOOK_RUNNER_TICK`] re-read bounds how late a tick runs (FIX 4749).
+//! runner's own wake: a pass on the vault's home releases them into the tick
+//! feed, and the [`HOOK_RUNNER_TICK`] re-read bounds how late a tick runs
+//! (FIX 4749).
 
 mod body;
 mod commit;
@@ -469,24 +470,19 @@ impl Pass<'_, '_> {
         Ok(())
     }
 
-    /// A binding's cursor in `source`. A new binding starts where its binding
-    /// claim was last written, a re-enabled one where it was re-enabled. The
-    /// settlement, tick and inbound feeds hold no such mark, so there both
-    /// start at the feed's head.
+    /// A binding's cursor in `source`, or where it starts when it holds none
+    /// or was re-enabled ([`source::enable_start_in_txn`]); one that holds no
+    /// row at all is fresh to the source.
     fn cursor_for(&self, binding: EntityId, source: FactSource) -> Result<Option<FactPosition>> {
-        if let Some(row) = store::cursor(self.vault, binding, source)?
+        let held = store::cursor(self.vault, binding, source)?;
+        if let Some(row) = held
             && !row.paused
         {
             return Ok(row.position());
         }
-        let start = match source {
-            FactSource::ClaimChangelog => match source::binding_written_at(self.vault, &binding)? {
-                Some(position) => Some(position),
-                None => source::head(self.vault, source)?,
-            },
-            FactSource::Settlement | FactSource::Schedule | FactSource::SurfaceInbound => {
-                source::head(self.vault, source)?
-            }
+        let start = {
+            let rtxn = self.vault.store.env.read_txn()?;
+            source::enable_start_in_txn(self.vault, &rtxn, &binding, source, held.is_none())?
         };
         let row = CursorRow::new(start, self.vault.store.clock.now_recorded_at());
         self.vault.with_write_txn_grouped(|txn| {
@@ -503,7 +499,7 @@ impl Pass<'_, '_> {
         binding: &PackHookBinding,
         entry: &FactEntry,
     ) -> Result<bool> {
-        if !filter::verbs_admit_kind(&binding.selector.verbs, entry.kind) {
+        if !filter::admits_entry(self.vault, &binding.selector.verbs, entry)? {
             self.report.skipped += 1;
             return Ok(false);
         }
