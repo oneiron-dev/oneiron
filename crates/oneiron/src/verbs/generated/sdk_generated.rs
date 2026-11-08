@@ -4976,6 +4976,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAskHandle>(),
             ),
             (
+                "tasks.outcomes.route_calibration",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAskHandle>(),
+            ),
+            (
                 "vault.rooms.list",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -17787,6 +17791,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "tasks.outcomes.route_calibration" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.rooms.list" => &[],
         "vault.rooms.messages" => {
             properties.insert(
@@ -22225,6 +22236,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.answer.forward" => validate_input_tasks_answer_forward(value)?,
         "tasks.answer.forward.status" => validate_input_tasks_answer_forward_status(value)?,
         "tasks.outcomes" => validate_input_tasks_outcomes(value)?,
+        "tasks.outcomes.route_calibration" => {
+            validate_input_tasks_outcomes_route_calibration(value)?
+        }
         "vault.rooms.list" => validate_input_vault_rooms_list(value)?,
         "vault.rooms.messages" => validate_input_vault_rooms_messages(value)?,
         "vault.rooms.participants" => validate_input_vault_rooms_participants(value)?,
@@ -27650,6 +27664,11 @@ fn validate_input_tasks_outcomes(value: &serde_json::Value) -> MemoryResult<()> 
     Ok(())
 }
 #[inline(never)]
+fn validate_input_tasks_outcomes_route_calibration(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::TaskAskHandle = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_rooms_list(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: EmptyRequest = decode(value.clone())?;
     Ok(())
@@ -31562,6 +31581,9 @@ pub fn invoke_with_notice(
         "tasks.answer.forward" => invoke_tasks_answer_forward(memory, value),
         "tasks.answer.forward.status" => invoke_tasks_answer_forward_status(memory, value),
         "tasks.outcomes" => invoke_tasks_outcomes(memory, value),
+        "tasks.outcomes.route_calibration" => {
+            invoke_tasks_outcomes_route_calibration(memory, value)
+        }
         "vault.rooms.list" => invoke_vault_rooms_list(memory, value),
         "vault.rooms.messages" => invoke_vault_rooms_messages(memory, value),
         "vault.rooms.participants" => invoke_vault_rooms_participants(memory, value),
@@ -38522,6 +38544,13 @@ fn invoke_tasks_outcomes(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(tasks_outcomes(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_tasks_outcomes_route_calibration(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(tasks_outcomes_route_calibration(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_rooms_list(
@@ -49498,6 +49527,12 @@ pub fn tasks_outcomes(
     input: crate::task_verb::TaskAskHandle,
 ) -> MemoryResult<Vec<crate::llm::decision::questions::CalibrationPair>> {
     memory.tasks_ask_outcomes(&input)
+}
+pub fn tasks_outcomes_route_calibration(
+    memory: &Memory<'_>,
+    input: crate::task_verb::TaskAskHandle,
+) -> MemoryResult<crate::llm::decision::questions::RouteCalibrationReport> {
+    memory.tasks_ask_route_calibration(&input)
 }
 pub fn vault_rooms_list(
     memory: &Memory<'_>,

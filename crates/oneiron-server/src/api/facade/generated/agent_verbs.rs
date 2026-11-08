@@ -983,6 +983,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/tasks.answer.forward", post(facade_route))
         .route("/tasks.answer.forward.status", post(facade_route))
         .route("/tasks.outcomes", post(facade_route))
+        .route("/tasks.outcomes.route_calibration", post(facade_route))
         .route("/vault.rooms.list", post(facade_route))
         .route("/vault.rooms.messages", post(facade_route))
         .route("/vault.rooms.participants", post(facade_route))

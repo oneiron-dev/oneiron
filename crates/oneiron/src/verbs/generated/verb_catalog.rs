@@ -892,6 +892,7 @@ pub enum AgentVerb {
     TasksAnswerForward,
     TasksAnswerForwardStatus,
     TasksOutcomes,
+    TasksOutcomesRouteCalibration,
     VaultRoomsList,
     VaultRoomsMessages,
     VaultRoomsParticipants,
@@ -2263,6 +2264,7 @@ impl AgentVerb {
         Self::TasksAnswerForward,
         Self::TasksAnswerForwardStatus,
         Self::TasksOutcomes,
+        Self::TasksOutcomesRouteCalibration,
         Self::VaultRoomsList,
         Self::VaultRoomsMessages,
         Self::VaultRoomsParticipants,
@@ -3661,6 +3663,7 @@ impl AgentVerb {
             Self::TasksAnswerForward => "tasks.answer.forward",
             Self::TasksAnswerForwardStatus => "tasks.answer.forward.status",
             Self::TasksOutcomes => "tasks.outcomes",
+            Self::TasksOutcomesRouteCalibration => "tasks.outcomes.route_calibration",
             Self::VaultRoomsList => "vault.rooms.list",
             Self::VaultRoomsMessages => "vault.rooms.messages",
             Self::VaultRoomsParticipants => "vault.rooms.participants",
@@ -5052,6 +5055,7 @@ impl AgentVerb {
                 | Self::TasksAnswerForward
                 | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
+                | Self::TasksOutcomesRouteCalibration
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
                 | Self::VaultRoomsParticipants
@@ -6452,6 +6456,7 @@ impl AgentVerb {
                 | Self::TasksAnswerForward
                 | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
+                | Self::TasksOutcomesRouteCalibration
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
                 | Self::VaultRoomsParticipants
@@ -6925,6 +6930,7 @@ impl AgentVerb {
                 | Self::Wait
                 | Self::TasksAnswer
                 | Self::TasksOutcomes
+                | Self::TasksOutcomesRouteCalibration
         )
     }
     pub const fn continuable(self) -> bool {
@@ -7976,6 +7982,7 @@ impl AgentVerb {
                 | Self::TasksAnswerForward
                 | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
+                | Self::TasksOutcomesRouteCalibration
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
                 | Self::VaultRoomsParticipants
@@ -10164,6 +10171,7 @@ impl AgentVerb {
             Self::TasksAnswerForward => &["spec"],
             Self::TasksAnswerForwardStatus => &["spec"],
             Self::TasksOutcomes => &["spec"],
+            Self::TasksOutcomesRouteCalibration => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref", "turn_ref", "thread_ref"],
             Self::VaultRoomsParticipants => &["spec", "room_ref"],
@@ -11536,6 +11544,7 @@ impl AgentVerb {
             Self::TasksAnswerForward => &["spec"],
             Self::TasksAnswerForwardStatus => &["spec"],
             Self::TasksOutcomes => &["spec"],
+            Self::TasksOutcomesRouteCalibration => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref"],
             Self::VaultRoomsParticipants => &["spec", "room_ref"],
@@ -14640,6 +14649,9 @@ impl AgentVerb {
             }
             Self::TasksOutcomes => {
                 "Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."
+            }
+            Self::TasksOutcomesRouteCalibration => {
+                "Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only."
             }
             Self::VaultRoomsList => {
                 "The caller's rooms its own grants admit; inside a room turn, only that room."

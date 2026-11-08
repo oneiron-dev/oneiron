@@ -7989,6 +7989,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn tasks_outcomes_route_calibration(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.outcomes.route_calibration", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_rooms_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.list", js_json(input))
