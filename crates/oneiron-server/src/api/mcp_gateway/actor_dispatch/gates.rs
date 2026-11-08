@@ -7,9 +7,9 @@
 use super::*;
 
 /// Whether `auth`, the exact instrument a connector call verified, may act
-/// through the registration `actor` resolved: its holder and class, Read and
-/// no organization, and a registered world/facet Scope that narrows the
-/// proof's. A call settlement runs again meets it under its credential as it
+/// through the registration `actor` resolved: its holder and class, Read or
+/// its live two-renderer share, no organization, and a registered world/facet
+/// Scope that narrows the proof's. A call settlement meets it under its credential as it
 /// verified again then (ARCH-0080 §3 Ask).
 pub(in crate::api::mcp_gateway) fn mcp_proof_admits(
     server: &Arc<SyncServer>,
@@ -33,7 +33,14 @@ pub(in crate::api::mcp_gateway) fn mcp_proof_admits(
     {
         return Err(mcp_proof_error());
     }
-    if auth.org_ref().is_some() || !auth.has_scope(crate::auth::CoreScope::Read) {
+    let share_view =
+        mcp_share_view_holder_admits(server, auth, actor.gate_actor_class, &actor.gate_actor_ref)
+            && actor.bound_verbs.as_ref().is_some_and(|verbs| {
+                verbs.len() == 2
+                    && verbs.contains("vault.shares.view")
+                    && verbs.contains("vault.notes.follow_citation")
+            });
+    if auth.org_ref().is_some() || (!auth.has_scope(crate::auth::CoreScope::Read) && !share_view) {
         return Err(mcp_proof_error());
     }
     // The registry holds all or one world, and all or a set of facets: as a
@@ -69,6 +76,52 @@ pub(in crate::api::mcp_gateway) fn mcp_proof_admits(
         return Err(mcp_proof_error());
     }
     Ok(())
+}
+
+/// A share recipient needs no general write-ceiling row merely to reach
+/// the two renderers. Only the live proof's own holder and class qualify.
+pub(super) fn mcp_share_view_holder_admits(
+    server: &SyncServer,
+    auth: &crate::auth::CoreAuth,
+    class: &str,
+    actor_ref: &str,
+) -> bool {
+    auth.principal_ref() == Some(actor_ref)
+        && auth.actor_class() == Some(class)
+        && auth.org_ref().is_none()
+        && ["vault.shares.view", "vault.notes.follow_citation"]
+            .into_iter()
+            .any(|verb| auth.allows_share_view_verb(verb))
+        && auth.credential_is_live(server.vault())
+}
+
+/// Resolves the ordinary actor ceiling, or the live share recipient's own
+/// registration. The registry's two-tool bound and proof gate still apply.
+pub(in crate::api::mcp_gateway) fn mcp_actor_ceiling_admits(
+    server: &SyncServer,
+    auth: &crate::auth::CoreAuth,
+    class: &str,
+    actor_ref: &str,
+) -> bool {
+    server
+        .vault()
+        .gate_actor_ceiling_exists(class, actor_ref)
+        .unwrap_or(false)
+        || mcp_share_view_holder_admits(server, auth, class, actor_ref)
+}
+
+/// The same request, with Read only for its actual share-rendering verb.
+pub(in crate::api::mcp_gateway) fn mcp_share_view_context(
+    actor: &McpCallContext,
+    verb: &str,
+) -> Option<McpCallContext> {
+    let auth = actor.auth.as_ref()?;
+    if !auth.allows_share_view_verb(verb) {
+        return None;
+    }
+    let mut context = actor.clone();
+    context.actor.auth = Some(auth.clone().at_share_view_door(verb));
+    Some(context)
 }
 
 /// A write whose session names a facet the connector does not read, or a

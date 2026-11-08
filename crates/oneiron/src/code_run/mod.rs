@@ -88,7 +88,7 @@ pub use self::consent_wait::{
     AdmittedBrowserAct, CodeConsentAnswerInput, CodeConsentBrowserAction,
     CodeConsentBrowserOutcome, CodeConsentChoice, CodeConsentEffectHost, CodeConsentParkedRun,
     CodeConsentRunEndpoint, CodeConsentRunOrigin, CodeConsentRunPeer, CodeConsentSavedCredential,
-    CodeConsentSettleOutcome, CodeConsentWaitState, CodeConsentWaitView,
+    CodeConsentSettleOutcome, CodeConsentStandingOffer, CodeConsentWaitState, CodeConsentWaitView,
 };
 pub(crate) use self::consent_wait::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, CodeConsentCallSite, CodeConsentConnectorCall,

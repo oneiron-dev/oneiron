@@ -260,12 +260,13 @@ impl SyncClient {
 /// Maps a delta-export error onto the transport taxonomy.
 ///
 /// Malformed inbound VV bytes (`CrdtDecodeError`) get the dedicated
-/// fail-closed variant; anything else is an export-side failure.
+/// fail-closed variant; anything else is an export-side failure, this
+/// vault's own fault as [`TransportError::Storage`] (FIX 22153).
 fn map_delta_export_err(e: crate::error::Error) -> TransportError {
     match e {
         crate::error::Error::Sync(crate::error::SyncError::CrdtDecodeError { .. }) => {
             TransportError::VersionVectorDecode
         }
-        _ => TransportError::InvalidPayload("delta export failed"),
+        e => TransportError::from_applied(&e, "delta export failed"),
     }
 }

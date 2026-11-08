@@ -42,6 +42,19 @@ The credential is stored through the owner secrets form under a custody name.
 Pass only that name to the connect call. Never ask for a password or a token
 in chat, and never repeat one back.
 
+The Owner stores every credential, and says whom it is for in the scopes of
+its bindings (each `connector:` binding the pack reads through):
+
+- The Owner's own mailbox or calendar: `read` only.
+- A member's: `read` and `actor:` with the member's PERSON id, for example
+  `actor:0123456789abcdef0123456789abcdef`. Only that member's sources take it,
+  whoever connects them.
+- A group address: `read` and `group-address`.
+
+All the bindings of one credential name the same holder. A source refuses a
+credential stored for someone else, and stops reading if the Owner rebinds it
+to someone else later.
+
 ## An IMAP mailbox
 
 For a mailbox that is not Google or Microsoft 365 (Fastmail, iCloud, a
