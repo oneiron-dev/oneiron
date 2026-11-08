@@ -205,12 +205,40 @@ pub(super) async fn facade_hooks_pre(
 
 /// [`facade_hooks_pre`], beside each hook `ai.verdict` decision the chain
 /// answered (FIX 10425), for a row whose answer counts its hooks' decisions
-/// among its own ([`facade_hooks_post_counted`]).
+/// among its own ([`facade_hooks_post_counted`]). A retry's `Completed`
+/// stop carries the result settlement's drain saved for it. That result is
+/// released for the caller now, by the rows it was saved beside, before the
+/// stop reaches the row's door or the wire ([`released_saved_result`], FIX
+/// 21054).
 pub(super) async fn facade_hooks_pre_counted(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
     verb: &str,
     value: serde_json::Value,
+) -> Result<(VerbHookPre, Vec<serde_json::Value>), FacadeApiError> {
+    let check = facade_rewrite_admit(server, call.auth(), &value);
+    facade_hooks_pre_admitting(server, call, verb, value, check, true)
+        .await
+        .map_err(|stopped| {
+            released_hook_stop(server, stopped, |rows, saved| {
+                released_saved_result(server.vault(), call.auth(), verb, rows, saved)
+            })
+        })
+}
+
+/// [`facade_hooks_pre_counted`], with `check` as the admission a rewrite
+/// meets after the row's own input check. A direct native HTTP read admits
+/// a rewrite of its native request through its own route, which the
+/// generated rows' check does not carry (FIX 1435). A call that is not
+/// `durable` saves no credential: the args its ask saves do not hold all
+/// its request, so only its caller's retry runs it once the ask settles.
+pub(crate) async fn facade_hooks_pre_admitting(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    verb: &str,
+    value: serde_json::Value,
+    check: RewriteAdmit,
+    durable: bool,
 ) -> Result<(VerbHookPre, Vec<serde_json::Value>), FacadeApiError> {
     let auth = call.auth();
     // A hosted operator's root acts as nobody (FIX 2222): no hook runs for
@@ -229,9 +257,9 @@ pub(super) async fn facade_hooks_pre_counted(
     let invocation = call.invocation()?;
     // A credential caller's own call can run again through this door once
     // its hook's ask settles, on the drain's permit when it does. A context
-    // the row refuses saves none.
+    // the row refuses saves none, nor does a call that is not durable.
     let credential = match bound {
-        Some(_) => facade_invocation(
+        Some(_) if durable => facade_invocation(
             credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()),
             call,
         )
@@ -273,7 +301,7 @@ pub(super) async fn facade_hooks_pre_counted(
             ),
         },
     };
-    let check = Some(facade_rewrite_admit(server, auth, &value));
+    let check = Some(check);
     // A host-door row holds no task-work turn before its pre chain.
     Ok(row_hooks_pre_decided(
         server, reader, check, actor, class, invocation, verb, value, resume, None,
