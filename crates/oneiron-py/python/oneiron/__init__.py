@@ -558,6 +558,9 @@ class Oneiron:
         def companions(self) -> "Oneiron._VaultCompanionsVerbs":
             return Oneiron._VaultCompanionsVerbs(self._client)
         @property
+        def proactivity(self) -> "Oneiron._VaultProactivityVerbs":
+            return Oneiron._VaultProactivityVerbs(self._client)
+        @property
         def personas(self) -> "Oneiron._VaultPersonasVerbs":
             return Oneiron._VaultPersonasVerbs(self._client)
         @property
@@ -684,9 +687,6 @@ class Oneiron:
         @property
         def inbox(self) -> "Oneiron._VaultInboxVerbs":
             return Oneiron._VaultInboxVerbs(self._client)
-        @property
-        def proactivity(self) -> "Oneiron._VaultProactivityVerbs":
-            return Oneiron._VaultProactivityVerbs(self._client)
         @property
         def skills(self) -> "Oneiron._VaultSkillsVerbs":
             return Oneiron._VaultSkillsVerbs(self._client)
@@ -1260,6 +1260,21 @@ class Oneiron:
         def set(self, spec):
             """The owner's standing yes to one frozen clearance offer for a companion's contact."""
             return json.loads(_translate(lambda: self._client.vault_companions_sharing_set(json.dumps(spec))))
+    class _VaultProactivityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def digest(self) -> "Oneiron._VaultProactivityDigestVerbs":
+            return Oneiron._VaultProactivityDigestVerbs(self._client)
+    class _VaultProactivityDigestVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator."""
+            return json.loads(_translate(lambda: self._client.vault_proactivity_digest(json.dumps(spec))))
+        def get(self, spec):
+            """Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant."""
+            return json.loads(_translate(lambda: self._client.vault_proactivity_digest_get(json.dumps(spec))))
     class _VaultPersonasVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2040,12 +2055,6 @@ class Oneiron:
         def resolve(self, spec):
             """The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items."""
             return json.loads(_translate(lambda: self._client.vault_inbox_groups_resolve(json.dumps(spec))))
-    class _VaultProactivityVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def digest(self, spec):
-            """Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator."""
-            return json.loads(_translate(lambda: self._client.vault_proactivity_digest(json.dumps(spec))))
     class _VaultSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
