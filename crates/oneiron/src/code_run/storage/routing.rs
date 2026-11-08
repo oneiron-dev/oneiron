@@ -245,7 +245,13 @@ impl SessionBinding<'_> {
             self.session.read_composed(|view, txn| {
                 if let Some(owner) = owner {
                     let owned = super::response_owners::response_owner_in_txn(view, txn, &owner)?;
-                    if owned.is_some_and(|o| o.erased()) {
+                    // FIX 7366: a room's owner row the vault's erase did not
+                    // reach (a sealed overlay takes no sweep) reads erased
+                    // once the actor it names is gone in the vault.
+                    let gone = owned.as_ref().and_then(|o| o.actor()).is_some_and(|actor| {
+                        super::replay_capsule::actor_gone_in_store(view.read().base(), txn, &actor)
+                    });
+                    if owned.as_ref().is_some_and(|o| o.erased()) || gone {
                         return Ok((
                             ArtifactTaintState::TaintedLive,
                             Some(super::replay_bodies::RESPONSE_ERASED.to_owned()),
