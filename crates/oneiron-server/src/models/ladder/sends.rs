@@ -15,6 +15,7 @@ impl OfferLadder {
         index: usize,
         may_send: &(dyn Fn() -> bool + Sync),
         sources: Option<&dyn SourceAdmission>,
+        prefer_stream: bool,
         prompt: RungPrompt<'_>,
         walk: &mut Walk,
     ) -> LlmResult<Sent> {
@@ -50,8 +51,10 @@ impl OfferLadder {
             if call.deadline.expired() {
                 return Err(CallDeadline::expiry());
             }
+            let stream_reply =
+                prefer_stream && super::streamed_generation::can_stream(&rung, call.request);
             let (bound, permit) =
-                self.admit(&rung_run, &rung, call.request, call.selector, false)?;
+                self.admit(&rung_run, &rung, call.request, call.selector, stream_reply)?;
             if !may_send() {
                 settle_failed(permit);
                 return Ok(Sent::Stopped);
@@ -77,7 +80,13 @@ impl OfferLadder {
             };
             let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
             let warmth = cache_warmth::Sending::of(&self.rests, &rung, &bound);
-            let sent = gate.generate(bound, permit.lease());
+            let sent = async {
+                if stream_reply {
+                    super::streamed_generation::response(gate.stream(bound, permit.lease())?).await
+                } else {
+                    gate.generate(bound, permit.lease()).await
+                }
+            };
             let Some(answered) = call
                 .deadline
                 .bound(super::http::holding_chat_replies(
