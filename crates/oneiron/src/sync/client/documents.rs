@@ -48,7 +48,7 @@ impl SyncClient {
             }
             document_sub_tags::ARTIFACT_RECEIPT => {
                 self.accept_artifact_receipt(frame.entity, frame.payload)
-                    .map_err(storage)?;
+                    .map_err(|error| refused_frame(&error, "invalid artifact receipt"))?;
                 return Ok(Vec::new());
             }
             document_sub_tags::ARTIFACT_PUBLICATION => {
@@ -75,7 +75,7 @@ impl SyncClient {
         let federated = self.config.federation_peer.as_ref();
         let refused = |error: crate::Error| match federated {
             Some(_) => super::federated::map_federated_admission_err(error),
-            None => storage(error),
+            None => refused_frame(&error, "document frame refused"),
         };
         let doc = self
             .manager
@@ -101,7 +101,7 @@ impl SyncClient {
                         frame.kind,
                         frame.payload,
                     )
-                    .map_err(storage)?;
+                    .map_err(|error| refused_frame(&error, "invalid NOTE authority frame"))?;
                     self.report_note_document(frame.entity).map_err(storage)?;
                     let mut out = vec![
                         transport::encode_document(
@@ -109,7 +109,7 @@ impl SyncClient {
                             document_sub_tags::ACK,
                             &doc.version_vector().map_err(storage)?,
                         )
-                        .into_result()?,
+                        .into_own_frame()?,
                     ];
                     let pending = self
                         .manager
@@ -128,7 +128,7 @@ impl SyncClient {
                     self.manager
                         .documents()
                         .accept_note_receipt(frame.entity, &receipt)
-                        .map_err(storage)?;
+                        .map_err(|error| refused_frame(&error, "invalid NOTE receipt"))?;
                     return Ok(Vec::new());
                 }
                 document_sub_tags::NOTE_FORK_RECEIPT => {
@@ -137,7 +137,7 @@ impl SyncClient {
                     self.manager
                         .documents()
                         .accept_note_fork_receipt(frame.entity, &receipt)
-                        .map_err(storage)?;
+                        .map_err(|error| refused_frame(&error, "invalid NOTE fork receipt"))?;
                     return Ok(Vec::new());
                 }
                 // The authority's pending forks (FIX 12789). A fork this
@@ -177,12 +177,15 @@ impl SyncClient {
                 }
             }
         }
+        // FIX 2458: on the owner lane a typed body goes back to the home too.
+        let owner_lane = federated.is_none() && self.config.note_session.is_some();
         match frame.kind {
             // A peer's acknowledgment clears no journal row: the rows stay
             // until the home covers them (FIX 4748).
             document_sub_tags::ACK if self.peer_session.is_some() => Ok(Vec::new()),
             document_sub_tags::ACK => {
-                doc.acknowledge(frame.payload).map_err(storage)?;
+                doc.acknowledge(frame.payload)
+                    .map_err(|error| refused_frame(&error, "invalid document ack"))?;
                 let settled = (|| -> Result<bool, TransportError> {
                     if !self
                         .document_retries
@@ -233,8 +236,16 @@ impl SyncClient {
                         document_sub_tags::ACK,
                         &doc.version_vector().map_err(storage)?,
                     )
-                    .into_result()?,
+                    .into_own_frame()?,
                 ];
+                // The operations the home's typed body head lacks follow.
+                if owner_lane {
+                    out.extend(
+                        doc.owner_body_reply(frame.payload, self.home_peer)
+                            .map_err(storage)?
+                            .filter(|frame| !self.frame_withheld(frame)),
+                    );
+                }
                 // Text a device-only world keeps here, or a federation peer may
                 // not read now, stays journaled; each reply loop asks again
                 // right before its send.
@@ -250,6 +261,19 @@ impl SyncClient {
                         .filter(|frame| !self.frame_withheld(frame)),
                 );
                 Ok(out)
+            }
+            // A home that holds no typed body yet asks for this device's.
+            document_sub_tags::REQUEST if owner_lane => {
+                let remote_vv = frame
+                    .payload
+                    .strip_prefix(&[0_u8; 4])
+                    .ok_or(TransportError::InvalidPayload("invalid owner request"))?;
+                Ok(doc
+                    .owner_body_frame(remote_vv, self.home_peer)
+                    .map_err(storage)?
+                    .into_iter()
+                    .filter(|frame| !self.frame_withheld(frame))
+                    .collect())
             }
             _ => Err(TransportError::InvalidPayload(
                 "server sent document request",
@@ -272,7 +296,7 @@ impl SyncClient {
         let reply = match frame.kind {
             document_sub_tags::ACK => documents
                 .copy_acknowledge(stream, frame.payload)
-                .map_err(storage)?,
+                .map_err(|error| refused_frame(&error, "invalid document ack"))?,
             document_sub_tags::STATE | document_sub_tags::UPDATE => {
                 let federated = self.config.federation_peer.as_ref();
                 documents
@@ -287,7 +311,7 @@ impl SyncClient {
                     })
                     .map_err(|error| match federated {
                         Some(_) => super::federated::map_federated_admission_err(error),
-                        None => storage(error),
+                        None => refused_frame(&error, "document frame refused"),
                     })?
             }
             _ => {
@@ -309,13 +333,13 @@ impl SyncClient {
         if let Some(ack) = reply.ack {
             out.push(
                 transport::encode_document(stream.wire, document_sub_tags::ACK, &ack)
-                    .into_result()?,
+                    .into_own_frame()?,
             );
         }
         if let Some(update) = reply.update {
             let update =
                 transport::encode_document(stream.wire, document_sub_tags::UPDATE, &update)
-                    .into_result()?;
+                    .into_own_frame()?;
             if !self.frame_withheld(&update) {
                 out.push(update);
             }
@@ -429,9 +453,9 @@ impl SyncClient {
     }
 
     /// An own device's NOTE client subscribes every NOTE row it holds on the
-    /// owner lane: at connect, then each row born here or materialized from
-    /// a window. A peer session subscribes none: the NOTE lane is the home's
-    /// (FIX 4748).
+    /// owner lane, and every typed body and office artifact (FIX 2458): at
+    /// connect, then each row born here or materialized from a window. A peer
+    /// session subscribes none: the NOTE lane is the home's (FIX 4748).
     pub(super) fn owner_note_requests(&self) -> Result<Vec<Vec<u8>>, TransportError> {
         if self.config.federation_peer.is_some()
             || self.config.note_session.is_none()
@@ -439,10 +463,10 @@ impl SyncClient {
         {
             return Ok(Vec::new());
         }
-        self.manager
-            .documents()
-            .subscribe_owner_notes()
-            .map_err(storage)
+        let documents = self.manager.documents();
+        let mut requests = documents.subscribe_owner_notes().map_err(storage)?;
+        requests.extend(documents.subscribe_owner_typed_bodies().map_err(storage)?);
+        Ok(requests)
     }
 
     /// Whether `frame` is a document frame of a NOTE row; one whose row type
@@ -464,4 +488,16 @@ impl SyncClient {
 
 fn storage(error: crate::Error) -> TransportError {
     TransportError::Storage(error.to_string())
+}
+
+/// The transport error of the home's document frame that failed to apply
+/// with `error` (FIX 22153): a fault of this vault's own as
+/// [`TransportError::Storage`], any other as the home's frame refused,
+/// `refusal`, the cause logged.
+fn refused_frame(error: &crate::Error, refusal: &'static str) -> TransportError {
+    let refused = TransportError::from_applied(error, refusal);
+    if !matches!(refused, TransportError::Storage(_)) {
+        tracing::warn!(%error, refusal, "a document frame from the home did not apply");
+    }
+    refused
 }

@@ -140,6 +140,7 @@ pub(crate) struct CodeConsentDraft {
         Option<crate::consent::code_settlement::FrozenCodeConsentSettlement>,
     pub(crate) hold_reasons: Vec<String>,
     pub(crate) remember_offer: Option<CodeConsentRememberOffer>,
+    pub(crate) standing_offer: Option<super::CodeConsentStandingOffer>,
 }
 
 /// Mints the provisional binding of a consent-only hold in the caller's
@@ -215,6 +216,7 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         pending: draft.pending,
         hold_reasons: draft.hold_reasons,
         remember_offer: draft.remember_offer,
+        standing_offer: draft.standing_offer,
         question,
         policy_frontier,
         created_at_ms: super::settle::now_ms(),
@@ -233,6 +235,8 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         settlement: None,
         consumption: None,
         revision: 0,
+        rebind_proposal: None,
+        rebinds: Vec::new(),
     };
     put_code_consent_wait_in_txn(vault, txn, &mut row)?;
     Ok(Some(wait_id))
@@ -388,6 +392,17 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> Result<[u8; 32]> {
     field(&[u8::from(binding.remember_offer.is_some())]);
     if let Some(offer) = &binding.remember_offer {
         field(offer.settings_act.as_bytes());
+    }
+    field(&[u8::from(binding.standing_offer.is_some())]);
+    if let Some(offer) = &binding.standing_offer {
+        field(offer.actor_ref.as_bytes());
+        field(offer.verb_class.as_bytes());
+        field(&(offer.selectors.len() as u64).to_le_bytes());
+        for selector in &offer.selectors {
+            field(selector.as_bytes());
+        }
+        field(&[u8::from(offer.target.is_some())]);
+        field(offer.target.as_deref().unwrap_or_default().as_bytes());
     }
     Ok(*hasher.finalize().as_bytes())
 }

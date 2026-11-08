@@ -1,4 +1,4 @@
-//! RepoRef identity: local-folder and GitHub-at-commit references with parsing and commit-hash normalization.
+//! Repository references: committed local/GitHub trees and current local captures.
 
 use crate::code_snapshot::snapshot::CODEBASE_FILE_PATH_MAX_BYTES;
 use crate::code_snapshot::snapshot::validate_bounded_text;
@@ -15,6 +15,10 @@ pub enum RepoRef {
     LocalFolder {
         path: String,
         commit: String,
+    },
+    /// Current local folder bytes, without a Git commit witness.
+    LocalCapture {
+        path: String,
     },
     GitHubAtCommit {
         owner: String,
@@ -36,6 +40,21 @@ impl RepoRef {
             )));
         }
 
+        if let Some(path) = input.strip_prefix("capture:") {
+            validate_bounded_text(
+                path,
+                CODEBASE_FILE_PATH_MAX_BYTES,
+                "capture repo_ref path must be non-empty and at most 4096 bytes",
+            )?;
+            if path.trim() != path {
+                return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                    "capture repo_ref path must not have leading or trailing whitespace",
+                )));
+            }
+            return Ok(Self::LocalCapture {
+                path: path.to_owned(),
+            });
+        }
         if let Some(path) = input.strip_prefix("local:") {
             return parse_local_repo_ref(path);
         }
@@ -76,6 +95,7 @@ impl RepoRef {
     pub fn canonical(&self) -> String {
         match self {
             Self::LocalFolder { path, commit } => format!("local:{path}#{commit}"),
+            Self::LocalCapture { path } => format!("capture:{path}"),
             Self::GitHubAtCommit {
                 owner,
                 repo,
@@ -90,14 +110,30 @@ impl RepoRef {
     pub fn commit_hash(&self) -> Option<&str> {
         match self {
             Self::LocalFolder { commit, .. } => Some(commit.as_str()),
+            Self::LocalCapture { .. } => None,
             Self::GitHubAtCommit { commit, .. } => Some(commit.as_str()),
+        }
+    }
+
+    /// The repository this ref names, without its revision (FIX 4299):
+    /// `local:<folder>` or `github:<owner>/<repo>`. A current-folder capture
+    /// names its folder's locator, as [`Self::same_repository`] matches it.
+    /// A scope and a registration compare this, never the commit.
+    #[must_use]
+    pub fn locator(&self) -> String {
+        match self {
+            Self::LocalFolder { path, .. } | Self::LocalCapture { path } => format!("local:{path}"),
+            Self::GitHubAtCommit { owner, repo, .. } => format!("github:{owner}/{repo}"),
         }
     }
 
     /// Stable repository identity, without the revision carried by `RepoRef`.
     pub fn same_repository(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::LocalFolder { path: a, .. }, Self::LocalFolder { path: b, .. }) => a == b,
+            (
+                Self::LocalFolder { path: a, .. } | Self::LocalCapture { path: a },
+                Self::LocalFolder { path: b, .. } | Self::LocalCapture { path: b },
+            ) => a == b,
             (
                 Self::GitHubAtCommit {
                     owner: a_owner,

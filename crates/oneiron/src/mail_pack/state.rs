@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::source::MailCopySetting;
+use super::wire::MailAttachmentRef;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
@@ -28,6 +29,12 @@ pub(super) const BODY_QUEUE: SideTable<(EntityId, u64, [u8; 32]), String, Named>
 /// MESSAGE's delete returns.
 pub(super) const HEADER_RETIREMENTS: SideTable<(EntityId, [u8; 32], EntityId), u64, Named> =
     SideTable::new(&side_table::MAIL_PACK_HEADER_RETIREMENT);
+/// How many times each thread's CONVERSATION was forgotten whole, by the
+/// source and the BLAKE3 of the thread key ([`thread_hash`]): a message
+/// landing in the thread afterwards opens a new CONVERSATION, never the one
+/// forgotten (fix list row 18084).
+pub(super) const THREAD_EPOCHS: SideTable<(EntityId, [u8; 32]), u64, Named> =
+    SideTable::new(&side_table::MAIL_PACK_THREAD_EPOCH);
 /// The rows each provider message landed as, so an erase of any of them
 /// reaches the message: by the row (its CONVERSATION, TURN or a MESSAGE
 /// revision), the source and the BLAKE3 of the provider's id. The value is
@@ -68,6 +75,30 @@ pub(super) struct MailSyncState {
     pub(super) last_step_at: Option<u64>,
     /// The last step's failure, in words, for the source's owner.
     pub(super) last_error: Option<String>,
+    /// The listing begun after an expired anchor: once it completes, a live
+    /// copy it never named, landed before it began, was deleted at the
+    /// provider meanwhile (fix list row 17937).
+    #[serde(default)]
+    pub(super) relist: Option<MailRelist>,
+    /// When the provider last answered for the mailbox's own addresses
+    /// (fix list row 20400); they are read again
+    /// [`OWN_ADDRESSES_REFRESH_SECS`] after it.
+    #[serde(default)]
+    pub(super) own_addresses_read_at: Option<u64>,
+}
+
+/// How long a provider's answer for a mailbox's own addresses stands before
+/// a sync step reads them again: an alias changes rarely, and a step runs
+/// often.
+pub(super) const OWN_ADDRESSES_REFRESH_SECS: u64 = 6 * 60 * 60;
+
+/// A listing that settles the copies an expired anchor lost track of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct MailRelist {
+    /// The listing's generation ([`MailSyncState::generation`]).
+    pub(super) generation: u64,
+    /// When it began: a copy landed since came through it or the feed.
+    pub(super) since: u64,
 }
 
 /// How much of a message has landed.
@@ -121,6 +152,24 @@ pub(super) struct MailOccurrence {
     pub(super) received_at: u64,
     /// Whether a search fetched it: kept whatever the copy setting.
     pub(super) searched: bool,
+    /// Its attachments, as its whole message described them; empty until
+    /// its body lands.
+    #[serde(default)]
+    pub(super) attachments: Vec<MailAttachmentRef>,
+    /// The headers a reply to it is built from, whole (FIX 15420); `None`
+    /// for a message landed before replies were drafted, or forgotten.
+    #[serde(default)]
+    pub(super) reply: Option<MailReplyHeaders>,
+    /// The generation of the last listing that named it (fix list row
+    /// 17937); `None` before a listing after an expired anchor did.
+    #[serde(default)]
+    pub(super) listed_in: Option<u64>,
+    /// The BLAKE3 of its whole message, each line ended by CRLF, from the
+    /// first time it landed whole (the live body stage or an mbox import);
+    /// `None` until then. An IMAP copy proposing this id is this message
+    /// only when its own digest is the same (fix list row 19145).
+    #[serde(default)]
+    pub(super) content_digest: Option<[u8; 32]>,
     pub(super) landed_at: u64,
     pub(super) updated_at: u64,
 }
@@ -128,6 +177,11 @@ pub(super) struct MailOccurrence {
 /// The key of the provider message `provider_id` of `source`.
 pub(super) fn occurrence_key(source: EntityId, provider_id: &str) -> (EntityId, [u8; 32]) {
     (source, *blake3::hash(provider_id.as_bytes()).as_bytes())
+}
+
+/// The key a thread's epoch is kept under.
+pub(super) fn thread_hash(thread_key: &str) -> [u8; 32] {
+    *blake3::hash(thread_key.as_bytes()).as_bytes()
 }
 
 /// The body queue key of a message received at `received_at`.
@@ -143,10 +197,58 @@ pub(super) fn body_queue_key(
     )
 }
 
+/// The headers of one message a reply to it needs, as its provider gave
+/// them, never cut to a label's length: a reply carries them exactly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct MailReplyHeaders {
+    /// The provider's thread id (Gmail `threadId`).
+    pub(super) thread_id: Option<String>,
+    pub(super) rfc_message_id: Option<String>,
+    pub(super) references: Vec<String>,
+    pub(super) from: Option<String>,
+    pub(super) reply_to: Vec<String>,
+    /// Its whole `To` and `Cc` lists, a reply to all answers (fix list row
+    /// 17645); `None` for a message landed before they were kept, which
+    /// lands them again when its mailbox syncs it.
+    #[serde(default)]
+    pub(super) recipients: Option<MailReplyRecipients>,
+    pub(super) subject: Option<String>,
+    /// Whether this mailbox sent it: a reply answers someone else's.
+    pub(super) sent_by_mailbox: bool,
+}
+
+/// One message's `To` and `Cc` lists, each entry one mailbox as its header
+/// named it, in order, never cut (fix list row 17645).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct MailReplyRecipients {
+    pub(super) to: Vec<String>,
+    pub(super) cc: Vec<String>,
+}
+
+impl MailReplyHeaders {
+    pub(super) fn of(headers: &super::wire::MailHeaders) -> Self {
+        Self {
+            thread_id: headers.thread_id.clone(),
+            rfc_message_id: headers.rfc_message_id.clone(),
+            references: headers.references.clone(),
+            from: headers.from.clone(),
+            reply_to: headers.reply_to.clone(),
+            recipients: Some(MailReplyRecipients {
+                to: headers.to.clone(),
+                cc: headers.cc.clone(),
+            }),
+            subject: headers.subject.clone(),
+            sent_by_mailbox: headers.sent_by_mailbox,
+        }
+    }
+}
+
 impl MailOccurrence {
     /// Forgets what the message said: its sender, subject, labels, thread
     /// key, ids and content hashes go, and only the provider id stays, as a
-    /// fence a later listing does not land again.
+    /// fence a later listing does not land again. The digest of its whole
+    /// message stays with the provider id: it proves a copy found later to
+    /// be the message forgotten, so the fence holds when the message moves.
     pub(super) fn scrub(&mut self, at: u64) {
         self.presence = MailPresence::Forgotten { at };
         self.thread_key.clear();
@@ -155,6 +257,8 @@ impl MailOccurrence {
         self.rfc_message_id = None;
         self.from = None;
         self.subject = None;
+        self.attachments.clear();
+        self.reply = None;
         self.updated_at = at;
     }
 }
@@ -222,6 +326,12 @@ pub(crate) fn erase_occurrence_rows_in_txn(
         }
         occurrence.scrub(at);
         OCCURRENCES.put(store, txn, &key, &occurrence)?;
+        super::attachments::forget_message_attachments_in_txn(
+            store,
+            txn,
+            source,
+            &occurrence.provider_id,
+        )?;
     }
     Ok(())
 }

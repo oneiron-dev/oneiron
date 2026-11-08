@@ -9,11 +9,13 @@ use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::code_wait_doors::{
-    CodeWaitReceiptRequest, CodeWaitReceiptView, CodeWaitResolveRequest,
+    CodeWaitRebindReceipt, CodeWaitRebindRequest, CodeWaitReceiptRequest, CodeWaitReceiptView,
+    CodeWaitResolveRequest,
 };
 use oneiron::memory::{Memory, MemoryError, MemoryResult};
 
 use super::FacadeApiError;
+use super::host_doors::support::owner_listing::as_owner;
 use super::host_doors::support::{Listed, credential_listing, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -43,6 +45,21 @@ pub(crate) async fn vault_code_waits_receipt(
     as_person(server, auth, RECEIPT_VERB, move |memory, owner| {
         memory.code_wait_receipt_as(owner, input)
     })
+    .await
+}
+
+/// The separate owner act, never a substitute for the holder's prepared witness.
+pub(crate) async fn vault_code_waits_rebind(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeWaitRebindRequest,
+) -> Listed<CodeWaitRebindReceipt> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.waits.rebind",
+        move |memory, owner| memory.code_wait_rebind_as(owner, input),
+    )
     .await
 }
 

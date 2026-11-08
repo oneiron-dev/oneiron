@@ -24,8 +24,8 @@ use serde_json::Value;
 use crate::error::OffRecordError;
 use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::task_verb::{
-    ConsultPayloadRef, TaskAskDefault, TaskAskHandle, TaskAskOptionId, TaskAskQuestion,
-    TaskAskSettlementReason, TaskAskSpec, TaskAskStatus,
+    ConsultPayloadRef, TaskAskDefault, TaskAskHandle, TaskAskOption, TaskAskOptionId,
+    TaskAskQuestion, TaskAskSettlementReason, TaskAskSpec, TaskAskStatus,
 };
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, MemoryError, Result, Vault};
@@ -120,6 +120,7 @@ pub(in crate::runtime_hooks::verb) fn retry(
                           invocation"
                     .to_owned(),
                 receipt_ref: None,
+                hook_notice: None,
             }));
         }
         if !keep.unuse_ask(key, invocation, row.ask) {
@@ -216,7 +217,7 @@ pub(in crate::runtime_hooks::verb) fn open(
     ] {
         let option = TaskAskOptionId::new(option)
             .map_err(|_| Error::InvariantViolation("verb hook ask option"))?;
-        what.options.insert(option, text);
+        what.options.insert(option, TaskAskOption::new(text));
     }
     let mut spec = TaskAskSpec::shorthand(None, what, None, TaskAskDefault::Hold);
     let hidden = InvocationId(keep.hidden_invocation(key, call.invocation.0));

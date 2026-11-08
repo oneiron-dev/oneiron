@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::record_scope::note_world::{NoteWorlds, note_worlds_in};
+use crate::federation::record_scope::note_world::{NoteWorlds, live_worlds_in, takes_live_worlds};
 use crate::federation::record_scope::record_world_in;
 use crate::ports::EntityStoreRead;
 use crate::store::Store;
@@ -90,8 +90,9 @@ impl ContentWorld {
     }
 }
 
-/// The witness of the stored row `id` in `txn`: a NOTE by every world its
-/// live `InWorld` edges name (none is base reality), any other row where
+/// The witness of the stored row `id` in `txn`: a NOTE or an ASSET by every
+/// world its live `InWorld` edges name (none is base reality), a caption by
+/// its sources' shared worlds (FIX 22223), any other row where
 /// [`record_world_in`] places it. A row that is not stored, does not parse
 /// or proves no world is unknown.
 pub(crate) fn content_world_in(
@@ -106,8 +107,8 @@ pub(crate) fn content_world_in(
         return Ok(ContentWorld::Unknown);
     };
     let base = crate::claim::base_world_id();
-    if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-        return Ok(match note_worlds_in(store, txn, id) {
+    if takes_live_worlds(header.entity_type) {
+        return Ok(match live_worlds_in(store, txn, id, header.entity_type) {
             NoteWorlds::In(worlds) => match worlds.first() {
                 Some(world) if worlds.len() == 1 && world.0 == base => ContentWorld::Base,
                 Some(world) if worlds.len() == 1 => ContentWorld::Exclusive(world.0),

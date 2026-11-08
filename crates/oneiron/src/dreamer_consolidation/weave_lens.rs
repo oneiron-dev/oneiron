@@ -63,7 +63,7 @@ fn invalid(reason: &str) -> Error {
 fn owed_nothing() -> Result<DreamerAttemptExecution> {
     Ok(DreamerAttemptExecution::Completed {
         completed_units: 0,
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     })
 }
 
@@ -96,12 +96,15 @@ async fn lens_step(
     Ok(
         match call_as_step(step_ctx, backend, model.guard, request).await {
             Ok(StepOutcome::Finished {
-                response, memoized, ..
+                response,
+                memoized,
+                binding,
+                ..
             }) => {
                 if let Err(error) = charges.record_terminal(
                     step_ctx.vault,
-                    step_ctx.attempt_id,
-                    step_hash,
+                    binding.attempt_id,
+                    binding.step_hash,
                     &response.usage,
                 ) {
                     if !memoized {
@@ -393,7 +396,7 @@ pub async fn run_weave_lens(
                 }
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
-                    step_hashes: charges.step_hashes.clone(),
+                    step_bindings: charges.step_bindings.clone(),
                 });
             }
             // The refused answer and why go back to the model; the repair
@@ -435,6 +438,6 @@ pub async fn run_weave_lens(
     }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
-        step_hashes: charges.step_hashes.clone(),
+        step_bindings: charges.step_bindings.clone(),
     })
 }
