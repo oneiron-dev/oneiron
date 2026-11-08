@@ -130,6 +130,31 @@ pub(super) fn aged_admission_ceiling(
     Ok(None)
 }
 
+/// Whether the sibling route `sibling` still holds its send: its call 0 is
+/// admitted and not stopped definitely unsent. A pending call may go on a
+/// later attempt, and a remote task that failed after its provider accepted
+/// it may have done its work; only one route of a send is ever admitted
+/// while the other can still go.
+fn sibling_route_holds_send_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    sibling: crate::attempt_queue::AttemptId,
+) -> Result<bool, IntentLedgerError> {
+    use crate::outbound_intent_ledger::{
+        IntentEscalationReason, IntentResolution, UnconfirmedDelivery,
+    };
+    let Some(record) = read_intent_for_attempt_in_txn(vault, txn, sibling, 0)? else {
+        return Ok(false);
+    };
+    Ok(!matches!(
+        IntentResolution::from_record(&record)?,
+        IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::DefiniteNonDelivery,
+            reason,
+        } if reason != IntentEscalationReason::RemoteTaskFailed
+    ))
+}
+
 pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
@@ -153,9 +178,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         });
     }
     let mut wtxn = vault.store.env.write_txn()?;
+    // The owner the proof names, revalidated under this writer: the Pending
+    // row keeps it, and every later send of the row rechecks it (FIX 11591).
+    let mut authorizing_owner = None;
     if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command {
         if let Some(owner) = &prepared.owner_proof {
-            owner.revalidate_in_txn(vault, &wtxn)?;
+            authorizing_owner = Some(owner.revalidate_in_txn(vault, &wtxn)?);
         }
         if let Some((actor, actor_class)) = prepared.verified_actor {
             if vault.port_tombstone_is_deleted(&wtxn, &actor)? {
@@ -216,6 +244,17 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         drop(wtxn);
         return Ok(result);
     }
+    // FIX 11029: a send is not admitted, nor parked, while its sibling
+    // route (an interrupt and its ambient alternative) holds the send, under
+    // this writer: at most one route of a send is ever live.
+    if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command
+        && let Some(sibling) = prepared.exclusive_route
+        && sibling_route_holds_send_in_txn(vault, &wtxn, sibling)?
+    {
+        return Err(IntentLedgerError::InvalidInput(
+            "a sibling route of this send holds it",
+        ));
+    }
     // FIX 6404: the transport's own target judges the new call again under
     // this writer; a refusal records no decision.
     transport.admit_in(&wtxn)?;
@@ -232,12 +271,14 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             let effect =
                 vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
             let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-            let (decision_id, decision, _) = gate::check_external_effect_policy(
+            // A parked send admits nothing, so its decision stays evidence
+            // only: its one-shot approval, standing grant and envelope slot
+            // are kept for the send that is admitted later (FIX 8754).
+            let (decision_id, decision) = gate::record_held_external_effect_policy(
                 &vault.store,
                 &mut wtxn,
                 &effect,
                 &policy,
-                false,
             )?;
             wtxn.commit().map_err(Error::from)?;
             vault.store.notify_attempt_observers();
@@ -634,6 +675,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     );
     request.authorization_binding = authorization_binding;
     request.resolved_endpoint = prepared.resolved_endpoint;
+    request = request.with_authorizing_owner(authorizing_owner);
     if let Some(capability) = capability_provenance {
         request = request.with_capability_provenance(capability);
     }

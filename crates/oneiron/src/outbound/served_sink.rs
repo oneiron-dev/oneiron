@@ -33,6 +33,7 @@ use super::dispatch_types::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
 use super::intent::OutboundIntentSource;
+use super::send_lookup::{EngineSendId, SentLookup, SentLookupTarget};
 use crate::channel_identity_autonomy::FrozenSpacePosting;
 use crate::channel_identity_provider::{
     DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, EMAIL_CHANNEL, LINE_CHANNEL, SLACK_CHANNEL,
@@ -451,9 +452,13 @@ impl<'a> ServedChannelSink<'a> {
             return OutboundExecutionOutcome::failed("line_target_unrecognized");
         };
         self.line_count_push(token);
+        // FIX 4747: a connector-send TASK's push carries the retry key its
+        // engine send id derives, the same from every machine.
         let retry_key = line_retry_key(
             request
-                .idempotency_key
+                .engine_send_id
+                .map(EngineSendId::as_str)
+                .or(request.idempotency_key)
                 .or(request.intent.idempotency_key.as_deref())
                 .unwrap_or(request.intent_ref),
         );
@@ -710,6 +715,33 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
         }
     }
 
+    /// FIX 4747: native mail looks the send's submission up by its
+    /// Message-ID. A LINE push carries the retry key the engine send id
+    /// derives, and LINE drops a resend under a key it already accepted, so
+    /// while LINE still keeps that key its resend is safe and stands as not
+    /// sent; once the send's approval is older than LINE's retry-key window
+    /// ([`line_push_resend_is_deduplicated`]) it cannot tell (review #4747
+    /// slices 2+3). A LINE reply carries no key, and Slack and Telegram keep
+    /// no id of ours: they cannot tell. Engine call (CALLS, FIX 4747).
+    fn lookup_sent(
+        &mut self,
+        engine_send_id: &EngineSendId,
+        target: &SentLookupTarget<'_>,
+    ) -> SentLookup {
+        match (target.intent.channel.as_str(), target.intent.verb.as_str()) {
+            (LINE_CHANNEL, "push")
+                if line_push_resend_is_deduplicated(
+                    target.send_approved_at,
+                    crate::unix_seconds_now(),
+                ) =>
+            {
+                SentLookup::DedupedResend
+            }
+            (EMAIL_CHANNEL, "send") => self.email_lookup_sent(engine_send_id, target),
+            _ => SentLookup::CannotTell,
+        }
+    }
+
     /// Only an email send reads back (FIX 8814 follow-up): the host's mail
     /// server keeps the draft its send key names. Every other channel
     /// answers `Unknown`.
@@ -725,6 +757,20 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
             _ => crate::outbound_intent_ledger::DeliveryReadBack::Unknown,
         }
     }
+}
+
+/// How long after a send's approval its LINE retry key still deduplicates a
+/// resend: LINE keeps a retry key for 24 hours from the first request, and
+/// the approval is the earliest that request could have been, so an hour of
+/// margin is left. Engine call (CALLS, FIX 4747).
+const LINE_RETRY_KEY_DEDUPE_SECS: u64 = 23 * 60 * 60;
+
+/// Whether a LINE push approved at `approved_at` is still inside LINE's
+/// retry-key window at `now`, so a resend under the same key cannot reach
+/// its audience twice. Unknown approval: not.
+fn line_push_resend_is_deduplicated(approved_at: Option<u64>, now: u64) -> bool {
+    approved_at
+        .is_some_and(|approved_at| now.saturating_sub(approved_at) < LINE_RETRY_KEY_DEDUPE_SECS)
 }
 
 /// The served sink a host keeps past one borrow of its vault: a connector
@@ -763,6 +809,28 @@ impl OutboundExecutionSink for OwnedServedChannelSink {
         .unwrap_or_else(|_| {
             OutboundExecutionOutcome::failed("served_send_panicked").with_possible_delivery()
         })
+    }
+
+    /// The served sink's lookup (FIX 4747), on a thread of its own as a
+    /// send is; a lookup that panicked cannot tell.
+    fn lookup_sent(
+        &mut self,
+        engine_send_id: &EngineSendId,
+        target: &SentLookupTarget<'_>,
+    ) -> SentLookup {
+        let vault = self.vault.as_ref();
+        let allowance = self.line_push_allowance;
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| match ServedChannelSink::new(vault) {
+                    Ok(sink) => sink
+                        .with_line_push_allowance(allowance)
+                        .lookup_sent(engine_send_id, target),
+                    Err(_) => SentLookup::CannotTell,
+                })
+                .join()
+        })
+        .unwrap_or(SentLookup::CannotTell)
     }
 
     /// The served sink's read-back, on a thread of its own as a send runs.
