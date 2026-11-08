@@ -91,7 +91,8 @@
 //! the comment is retained, never orphaned.
 //!
 //! v1 scope (fail loud beyond it, per CLAUDE.md "start narrow"):
-//! - `CommentCreate` targets top-level body paragraphs only;
+//! - `CommentCreate` targets a top-level paragraph or direct cell paragraph in
+//!   the named native story; body targets keep the original top-level lookup;
 //! - the body must be non-empty (an empty comment is refused, not defaulted);
 //! - `CommentDelete` deletes the whole discussion rooted at the target: the
 //!   comment PLUS every reply that threads under it, transitively. For each
@@ -177,6 +178,7 @@ fn fresh_para_id(doc: &CanonDoc, comment_id: &str) -> String {
 pub(crate) fn apply_create(
     doc: &mut CanonDoc,
     block_id: &NodeId,
+    story: Option<&super::story_cells::StoryCellAddress>,
     expect: &str,
     occurrence: Option<usize>,
     semantic_hash: Option<&str>,
@@ -190,17 +192,16 @@ pub(crate) fn apply_create(
         return Err(EditError::CommentEmptyBody { step_index });
     }
 
-    // v1: top-level body paragraphs only. A nested paragraph surfaces as
-    // BlockNotFound here, matching the other anchor-splice verbs.
-    let idx = find_block_index(&doc.blocks, block_id).ok_or_else(|| EditError::BlockNotFound {
-        block_id: block_id.clone(),
-        step_index,
-    })?;
+    // Identity stays document-global, even when the anchor is in a note.
+    let comment_id = fresh_comment_id(doc);
+    let para_id = fresh_para_id(doc, &comment_id);
+    let (blocks, content_hash) = comment_blocks_mut(doc, story, step_index)?;
+    let (block, status) = comment_target_mut(blocks, block_id, story.is_some(), step_index)?;
 
     // Block-level tracked status still refuses (a whole inserted/deleted block's
     // existence is contested), but tracked SEGMENTS do NOT — a comment legally
     // anchors on a redlined clause. The refusal names the escape hatch.
-    let block_status = match &doc.blocks[idx].status {
+    let block_status = match status {
         TrackingStatus::Normal => None,
         TrackingStatus::Inserted(_) => Some("inserted"),
         TrackingStatus::Deleted(_) => Some("deleted"),
@@ -214,7 +215,7 @@ pub(crate) fn apply_create(
         });
     }
 
-    match &doc.blocks[idx].block {
+    match &*block {
         BlockNode::Paragraph(_) => {}
         BlockNode::Table(_) => {
             return Err(EditError::NotAParagraph {
@@ -233,7 +234,7 @@ pub(crate) fn apply_create(
     }
 
     if let Some(expected) = semantic_hash
-        && let Err(actual) = check_block_guard(&doc.blocks[idx].block, expected)
+        && let Err(actual) = check_block_guard(block, expected)
     {
         return Err(EditError::BlockSemanticHashMismatch {
             block_id: block_id.clone(),
@@ -243,11 +244,7 @@ pub(crate) fn apply_create(
         });
     }
 
-    // Allocate identity before borrowing the paragraph mutably.
-    let comment_id = fresh_comment_id(doc);
-    let para_id = fresh_para_id(doc, &comment_id);
-
-    let BlockNode::Paragraph(para) = &mut doc.blocks[idx].block else {
+    let BlockNode::Paragraph(para) = block else {
         unreachable!("checked paragraph above");
     };
 
@@ -326,6 +323,10 @@ pub(crate) fn apply_create(
     }
     para.block_text_hash = None;
     para.rendered_text = None;
+    if let Some(content_hash) = content_hash {
+        let nodes: Vec<_> = blocks.iter().map(|block| block.block.clone()).collect();
+        *content_hash = crate::import::compute_story_content_hash(&nodes);
+    }
 
     // Build the comment story body. Its first paragraph carries the w14:paraId
     // that commentsExtended references (and resolve/reply key on).
@@ -354,6 +355,144 @@ pub(crate) fn apply_create(
         copies: copies.count,
         anchored,
     }))
+}
+
+/// Keep the body's original top-level lookup; named stories also address
+/// cell paragraphs by their imported native paragraph id.
+fn comment_target_mut<'a>(
+    blocks: &'a mut [TrackedBlock],
+    block_id: &NodeId,
+    cells: bool,
+    step_index: usize,
+) -> Result<(&'a mut BlockNode, &'a TrackingStatus), EditError> {
+    if let Some(index) = find_block_index(blocks, block_id) {
+        let tracked = &mut blocks[index];
+        return Ok((&mut tracked.block, &tracked.status));
+    }
+    if cells {
+        // Existing direct matches take priority over newly addressable descendants.
+        let has_direct_target = blocks.iter().any(|tracked| {
+            let BlockNode::Table(table) = &tracked.block else {
+                return false;
+            };
+            table
+                .rows
+                .iter()
+                .flat_map(|row| &row.cells)
+                .filter(|cell| cell.v_merge != crate::domain::VerticalMerge::Continue)
+                .flat_map(|cell| &cell.blocks)
+                .any(|block| super::super::block_id_of(block) == block_id)
+        });
+        for tracked in blocks {
+            let BlockNode::Table(table) = &mut tracked.block else {
+                continue;
+            };
+            if let Some(target) =
+                comment_table_target_mut(table, block_id, &tracked.status, !has_direct_target)
+            {
+                return Ok(target);
+            }
+        }
+    }
+    Err(EditError::BlockNotFound {
+        block_id: block_id.clone(),
+        step_index,
+    })
+}
+
+fn comment_table_target_mut<'a>(
+    table: &'a mut crate::domain::TableNode,
+    block_id: &NodeId,
+    inherited: &'a TrackingStatus,
+    descend: bool,
+) -> Option<(&'a mut BlockNode, &'a TrackingStatus)> {
+    for row in &mut table.rows {
+        for cell in &mut row.cells {
+            if cell.v_merge == crate::domain::VerticalMerge::Continue {
+                continue;
+            }
+            let status = [
+                inherited,
+                row.tracking_status.as_ref().unwrap_or(inherited),
+                cell.tracking_status.as_ref().unwrap_or(inherited),
+            ]
+            .into_iter()
+            .find(|status| !matches!(status, TrackingStatus::Normal))
+            .unwrap_or(inherited);
+            for block in &mut cell.blocks {
+                if super::super::block_id_of(block) == block_id {
+                    return Some((block, status));
+                }
+                if descend {
+                    if let BlockNode::Table(nested) = block {
+                        if let Some(target) =
+                            comment_table_target_mut(nested, block_id, status, true)
+                        {
+                            return Some(target);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Resolve only the addressed native story. A local paragraph id never falls
+/// back to the body or another story with the same id.
+fn comment_blocks_mut<'a>(
+    doc: &'a mut CanonDoc,
+    story: Option<&super::story_cells::StoryCellAddress>,
+    step_index: usize,
+) -> Result<(&'a mut Vec<TrackedBlock>, Option<&'a mut String>), EditError> {
+    use super::super::story_addr::StoryRef;
+    use super::footnotes::NoteKind;
+    use super::story_cells::StoryCellAddress;
+
+    match story {
+        None => Ok((&mut doc.blocks, None)),
+        Some(StoryCellAddress::HeaderFooter { story, band }) => {
+            let blocks = match story {
+                StoryRef::Header(part) => doc.headers.iter_mut().find_map(|header| {
+                    (&header.part_name == part && &header.kind == band && !header.synthesized)
+                        .then_some(&mut header.blocks)
+                }),
+                StoryRef::Footer(part) => doc.footers.iter_mut().find_map(|footer| {
+                    (&footer.part_name == part && &footer.kind == band && !footer.synthesized)
+                        .then_some(&mut footer.blocks)
+                }),
+                StoryRef::Body => None,
+            };
+            blocks
+                .map(|blocks| (blocks, None))
+                .ok_or_else(|| EditError::StoryNotFound {
+                    story: story.clone(),
+                    step_index,
+                })
+        }
+        Some(StoryCellAddress::Note { kind, id }) => {
+            let blocks = match kind {
+                NoteKind::Footnote => doc.footnotes.iter_mut().find_map(|note| {
+                    (note.id == *id).then_some((&mut note.blocks, Some(&mut note.content_hash)))
+                }),
+                NoteKind::Endnote => doc.endnotes.iter_mut().find_map(|note| {
+                    (note.id == *id).then_some((&mut note.blocks, Some(&mut note.content_hash)))
+                }),
+            };
+            blocks.ok_or_else(|| EditError::NoteNotFound {
+                note_id: id.clone(),
+                note_kind: match kind {
+                    NoteKind::Footnote => "footnote",
+                    NoteKind::Endnote => "endnote",
+                },
+                step_index,
+            })
+        }
+        Some(StoryCellAddress::Comment { id }) => Err(EditError::CommentAnchorInCommentStory {
+            comment_id: id.clone(),
+            step_index,
+        }),
+    }
 }
 
 pub(crate) fn apply_reply(

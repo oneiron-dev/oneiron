@@ -93,15 +93,24 @@ impl ServerVerbAskCredentialCheck {
                 // The rows the row listed are saved with its answer, so the
                 // caller's retry is released by them (FIX 21054). A row
                 // that lists none saves its answer with its rows unknown.
+                // Either keeps the actual notice metadata its door supplied
+                // beside the result or the error (FIX 12517).
                 Ok(match ran {
-                    Ok(output) => match output.rows {
-                        Some(producers) => VerbAskResumed::RanWithProducers {
-                            result: Ok(output.value),
-                            producers,
-                        },
-                        None => VerbAskResumed::Ran(Ok(output.value)),
-                    },
-                    Err(refused) => VerbAskResumed::Ran(Err(refused.into_memory_error())),
+                    Ok(output) => {
+                        let hook_notice = output.hook_notice.then_some(true);
+                        match output.rows {
+                            Some(producers) => VerbAskResumed::RanWithProducers {
+                                result: Ok(output.value),
+                                producers,
+                                hook_notice,
+                            },
+                            None => VerbAskResumed::Ran((Ok(output.value), hook_notice)),
+                        }
+                    }
+                    Err(refused) => {
+                        let (error, hook_notice) = refused.into_memory_error_with_notice();
+                        VerbAskResumed::Ran((Err(error), hook_notice))
+                    }
                 })
             }
             VerbAskDoor::Mcp {
@@ -179,7 +188,7 @@ impl VerbAskCredentialCheck for ServerVerbAskCredentialCheck {
         match self.resumed(call, drain) {
             Ok(resumed) => resumed,
             Err(CallerRefusal::Credential(refusal)) => VerbAskResumed::Refused(refusal),
-            Err(CallerRefusal::HostAction(error)) => VerbAskResumed::Ran(Err(error)),
+            Err(CallerRefusal::HostAction(error)) => VerbAskResumed::Ran((Err(error), None)),
         }
     }
 }

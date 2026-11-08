@@ -150,7 +150,8 @@ fn cue_of(op: &str) -> &'static str {
         "comment_create" => {
             "Create an anchored comment; comments are annotations, not revisions. \
              When expect repeats, occurrence (1-based) picks the copy; without it \
-             the first copy is anchored."
+             the first copy is anchored. Optional scope names the exact native story; \
+             omission targets the body, never a different story."
         }
         "comment_reply" => "Reply to an existing comment thread by its parent comment id.",
         "comment_resolve" => "Mark a comment thread resolved or unresolved (w15:done).",

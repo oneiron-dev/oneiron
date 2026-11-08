@@ -236,7 +236,7 @@ pub async fn drain_custody_residence_member_as(
         blocking(move || begun.begin_custody_member_drain_as(&begin_owner, &begin_target)).await?;
     let budgets = residence_budgets(vault)?;
     let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
-        return Err(TransportError::Storage("home node offline".into()));
+        return Err(TransportError::home_offline());
     };
     let PeerMachine::Proven { machine: home, .. } = rpc.home else {
         return Err(refused());
