@@ -2046,6 +2046,9 @@ impl OneironClient {
                 "vault.shares.create" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ShareCreated,
                 >(client, verb, &input),
+                "vault.shares.issue_view_link" => remote_agent_verb_output::<
+                    oneiron::authority::PairingLink,
+                >(client, verb, &input),
                 "vault.shares.revoke" => remote_agent_verb_output::<
                     oneiron::receipt::ShareRevokeReceipt,
                 >(client, verb, &input),
@@ -2410,6 +2413,9 @@ impl OneironClient {
                     oneiron::memory::code_view_doors::CodeCacheOutcome,
                 >(client, verb, &input),
                 "vault.code.snapshots.ingest" => remote_agent_verb_output::<
+                    oneiron::memory::codebase_doors::CodeSnapshotView,
+                >(client, verb, &input),
+                "vault.code.snapshots.capture" => remote_agent_verb_output::<
                     oneiron::memory::codebase_doors::CodeSnapshotView,
                 >(client, verb, &input),
                 "vault.code.snapshots.get" => remote_agent_verb_output::<
@@ -12232,6 +12238,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.shares.create", value)
     }
+    pub fn vault_shares_issue_view_link(
+        &self,
+        input: &oneiron::task_verb::sdk::ShareViewLinkRequest,
+    ) -> Result<oneiron::authority::PairingLink, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shares.issue_view_link", value)
+    }
     pub fn vault_shares_revoke(
         &self,
         input: &oneiron::task_verb::sdk::ShareRevokeRequest,
@@ -13687,6 +13705,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.snapshots.ingest", value)
+    }
+    pub fn vault_code_snapshots_capture(
+        &self,
+        input: &oneiron::memory::codebase_doors::CodeSnapshotCaptureRequest,
+    ) -> Result<oneiron::memory::codebase_doors::CodeSnapshotView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.snapshots.capture", value)
     }
     pub fn vault_code_snapshots_get(
         &self,

@@ -347,6 +347,15 @@ class Oneiron:
         """
         return self._client.last_receipt_ref()
 
+    def last_hook_notice(self) -> str | None:
+        """Content-free hook notice beside the last facade call's reply.
+
+        Typed results keep their shape. The next facade call clears this
+        before sending; a cloned or vault-direct handle has none. Session-only
+        calls may carry a notice without keeping a durable receipt.
+        """
+        return self._client.last_hook_notice()
+
     def native_limit_questions(self) -> list[dict[str, Any]] | None:
         """The engine ``[limits]`` rows this client's own vault crossed, latest per row.
 
@@ -4070,6 +4079,9 @@ class Oneiron:
         def create(self, spec):
             """The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."""
             return json.loads(_translate(lambda: self._client.vault_shares_create(json.dumps(spec))))
+        def issue_view_link(self, spec):
+            """Issues a holder-bound view-only pairing link for one admitted share's recipient."""
+            return json.loads(_translate(lambda: self._client.vault_shares_issue_view_link(json.dumps(spec))))
         def revoke(self, spec):
             return json.loads(_translate(lambda: self._client.vault_shares_revoke(json.dumps(spec))))
         def view(self, spec):
@@ -4459,7 +4471,7 @@ class Oneiron:
             """Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."""
             return json.loads(_translate(lambda: self._client.vault_code_symbols_renew(json.dumps(spec))))
         def release(self, spec):
-            """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."""
+            """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver."""
             return json.loads(_translate(lambda: self._client.vault_code_symbols_release(json.dumps(spec))))
         def definitions(self, spec):
             """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
@@ -4686,6 +4698,9 @@ class Oneiron:
         def ingest(self, spec):
             """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership."""
             return json.loads(_translate(lambda: self._client.vault_code_snapshots_ingest(json.dumps(spec))))
+        def capture(self, spec):
+            """Capture current files of a host folder as a custody-filtered snapshot with no Git commit witness. Owner only. Includes untracked and ignored files; Git metadata and linked or nested repositories stay opaque."""
+            return json.loads(_translate(lambda: self._client.vault_code_snapshots_capture(json.dumps(spec))))
         def get(self, spec):
             """Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."""
             return json.loads(_translate(lambda: self._client.vault_code_snapshots_get(json.dumps(spec))))
@@ -4705,7 +4720,7 @@ class Oneiron:
             """Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_observe(json.dumps(spec))))
         def requeue_survivors(self, spec):
-            """Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written."""
+            """Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. The two batches are linked once; a retry returns the same batch."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_requeue_survivors(json.dumps(spec))))
         def land_reviewed(self, spec):
             """Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs the review it is held to and exact bytes and base; the owner proof approves nothing."""

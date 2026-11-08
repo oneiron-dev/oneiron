@@ -203,6 +203,7 @@ pub(super) fn meets(receipt: &CodeRunReplayRecord, made: &CodeRunBridgeCall) -> 
 /// or its media admission trapped ([`MEDIA_STEP_TRAPPED`]).
 pub(super) fn never_ran_mark(why: &str) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Denied(SelfDeniedResult {
+        hook_notice: None,
         effect: SelfEffect::AgentVerb,
         outcome: why.to_owned(),
         reason_codes: vec![why.to_owned()],

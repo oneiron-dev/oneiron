@@ -70,6 +70,7 @@
 //! - `self.secrets.renew`
 //! - `self.secrets.teardown`
 //! - `self.secrets.use`
+//! - `vault.shares.issue_view_link`
 //! - `vault.shares.revoke`
 //! - `vault.shares.view`
 //! - `vault.artifacts.live_preview.read`
@@ -81,6 +82,7 @@
 //! - `vault.code.checkout.publish`
 //! - `vault.code.checkout.settle`
 //! - `vault.code.checkout.teardown`
+//! - `vault.code.snapshots.capture`
 //! - `vault.code.symbols.neighbors`
 //! - `vault.connectors.read_grants.grant`
 //! - `vault.connectors.read_grants.revoke`
@@ -1829,6 +1831,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "self.secrets.renew"
                 | "self.secrets.teardown"
                 | "self.secrets.use"
+                | "vault.shares.issue_view_link"
                 | "vault.shares.revoke"
                 | "vault.shares.view"
                 | "vault.artifacts.live_preview.read"
@@ -1840,6 +1843,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.code.checkout.publish"
                 | "vault.code.checkout.settle"
                 | "vault.code.checkout.teardown"
+                | "vault.code.snapshots.capture"
                 | "vault.code.symbols.neighbors"
                 | "vault.connectors.read_grants.grant"
                 | "vault.connectors.read_grants.revoke"
