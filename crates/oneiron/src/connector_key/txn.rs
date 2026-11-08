@@ -249,16 +249,47 @@ pub(crate) fn governing_connector_key(
 
 /// Every key that governs one of `actor`'s connectors, resolved as a call
 /// resolves it: the actor's own tuple before an actor-agnostic one, non-Active
-/// winners kept. Each winning key id appears once, at its first connector.
+/// winners kept. A derived per-grant token enters only through the actor's own
+/// live scoped grant; ordinary connector tokens remain actor-agnostic. Each
+/// winning key id appears once, at its first connector.
 pub(crate) fn governing_keys_for_actor_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     actor: &EntityId,
 ) -> Result<Vec<(EntityId, ConnectorKeyRecord)>> {
+    let principal_ref = actor.to_hex();
+    let frontier = crate::gate::resolve_policy_manifest(store, txn)?.read_frontier_hash()?;
+    let mut live_scoped_tokens = BTreeSet::new();
+    for grant_id in crate::outbound_grant::standing_outbound_grant_ids_for_principal(
+        store,
+        txn,
+        &principal_ref,
+    )? {
+        let Some(grant) =
+            crate::outbound_grant::standing_outbound_grant_in_txn(store, txn, &grant_id)?
+        else {
+            continue;
+        };
+        if grant.principal_ref != principal_ref || !grant.is_active_under_policy(&frontier) {
+            continue;
+        }
+        let Some(scope) = grant.scope.scoped_mcp_grant() else {
+            continue;
+        };
+        if let Some(capability) =
+            super::record::ScopedCapabilityProvenance::mint(scope.server, &grant_id)
+        {
+            live_scoped_tokens.insert(capability.connector().to_owned());
+        }
+    }
     let tokens = CONNECTOR_INDEX
         .scan(store, txn)?
         .into_iter()
         .map(|(key, ())| key.connector)
+        .filter(|token| {
+            super::record::ScopedCapabilityProvenance::parse_owner_capability_key(token)
+                .is_none_or(|_| live_scoped_tokens.contains(token))
+        })
         .collect::<BTreeSet<String>>();
     let mut seen = BTreeSet::new();
     let mut winners = Vec::new();
