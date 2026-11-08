@@ -4,9 +4,9 @@
 //! commit CRDT operations; only indexed projections may materialize the text.
 //! Documents are loaded lazily, snapshot before ordered pending updates.
 
-mod artifact;
 #[cfg(feature = "sync")]
 mod adoption;
+mod artifact;
 mod carried;
 pub(crate) mod checkpoint;
 mod citation_floor;

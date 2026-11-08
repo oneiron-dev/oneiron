@@ -416,7 +416,10 @@ pub(super) async fn redeem(
         crate::device_sync::home_bind::MeshBindReceipt::read(read, redeemed.mesh.as_ref())
     });
     if let Some(receipt) = mesh_bind.as_ref().filter(|receipt| !receipt.bound()) {
-        tracing::warn!(?receipt, "pairing: the enrolled machine's mesh endpoint was not bound");
+        tracing::warn!(
+            ?receipt,
+            "pairing: the enrolled machine's mesh endpoint was not bound"
+        );
     }
     let mesh = mesh_bind
         .as_ref()
