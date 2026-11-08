@@ -552,11 +552,8 @@ impl Vault {
             },
         };
         for member in &merged.members {
-            let joined = consent::MEMBERSHIP.get(
-                &self.store,
-                wtxn,
-                &(member.artifact, member.fork),
-            )?;
+            let joined =
+                consent::MEMBERSHIP.get(&self.store, wtxn, &(member.artifact, member.fork))?;
             if joined.is_some_and(|joined| joined != proposal) {
                 tracing::warn!(
                     artifact = %member.artifact.to_hex(),
