@@ -37,6 +37,7 @@ mod erase;
 mod hold_index;
 mod index;
 mod lease;
+mod project;
 mod read;
 mod rebind;
 mod release;
@@ -58,13 +59,14 @@ pub(crate) use self::arm::{
 };
 pub(crate) use self::authority::{
     TurnProgramAuthority, TurnProgramBinding, TurnProgramBound, apply_program_started_in_txn,
-    program_attempt_receipt_in_txn, program_milestone_envelope, require_program_actor_in_txn,
-    stamp_program_attempt,
+    program_actor_for_attempt_in_txn, program_attempt_receipt_in_txn, program_milestone_envelope,
+    require_program_actor_in_txn, stamp_program_attempt,
 };
 pub(crate) use self::bodies::{
     program_run_actor_in_txn, program_step_carriage, program_step_owners,
 };
 pub(crate) use self::hold_index::{index_program_hold_in_txn, unindex_program_hold_in_txn};
+pub(crate) use self::project::program_run_project_in_txn;
 pub use self::read::{
     OwedWakeHoldView, ProgramAdmissionOutcomeView, ProgramCheckpointCallView,
     ProgramCheckpointConsentView, ProgramCheckpointHeadView, ProgramCheckpointRequest,

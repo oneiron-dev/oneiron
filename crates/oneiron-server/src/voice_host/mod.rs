@@ -21,6 +21,7 @@ mod entry_barrier;
 mod extraction;
 mod hello_refusal;
 mod media_bridge;
+mod phone;
 // Spoken audio gated per chunk on its way to the wire (FIX 9542).
 mod playout_queue;
 mod public;
@@ -37,7 +38,8 @@ pub(crate) use boot::VoiceBoot;
 pub use brain::{ChatBrain, ChatBrainBindings};
 pub(crate) use entry_barrier::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
-pub(crate) use public::{LiveVoiceSessions, start_public};
+pub use phone::PhoneCallRead;
+pub(crate) use public::{LiveVoiceSessions, PublicSession, start_public};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 pub use speech::{PlayoutFrame, TurnSources, VoiceBrainOut, VoicePlayout};
 pub use wire::VoiceWireBindings;
@@ -49,7 +51,7 @@ use oneiron::memory::RecallScope;
 use oneiron::policy_model::PolicyModelConfig;
 use oneiron::speculative::{SpeculativeSessionConfig, SpeculativeThreads};
 use oneiron::voice_cascade::{
-    AsrEvent, AsrEventKind, AsrUpdate, OutputStop, PreparedAsr, UtteranceHandle,
+    AsrEvent, AsrEventKind, AsrUpdate, FloorWords, OutputStop, PreparedAsr, UtteranceHandle,
     VoiceCascadeSession, VoiceSessionConfig,
 };
 
@@ -80,6 +82,8 @@ pub struct VoiceHostBindings {
     /// The actual owner credential admitted for a live call. An unbound
     /// trusted pass attachment supplies None, never a fabricated credential.
     pub speculative_auth: Option<CoreAuth>,
+    /// The receiving agent's call-bound reader, never a bridge credential.
+    pub phone: Option<Arc<PhoneCallRead>>,
     /// The host's owner-plane policy config each sentence's safeguard
     /// enforces under (FIX 5043): its notice wording and dial.
     pub owner_policy: PolicyModelConfig,
@@ -119,6 +123,7 @@ pub struct VoiceHost {
     /// of a live call runs under it (ARCH-0061 §6 #recall-in-call).
     call_deadline: std::time::Duration,
     speculative_auth: Option<CoreAuth>,
+    phone: Option<Arc<phone::PhoneCallRead>>,
     /// The container the session is bound to, whose attendees' entries
     /// stop the call's output (OF-365 P5); `None` for no room's call.
     container: Option<(Arc<oneiron::Vault>, oneiron::EntityId)>,
@@ -135,6 +140,9 @@ pub struct VoiceHost {
     /// The vault the host serves, kept for its body directory: inbound
     /// wire frames spill there past the inline bound (FIX 3728).
     vault: Arc<oneiron::Vault>,
+    /// The session's correlation ref, which each generation's heard record
+    /// carries (FIX 4899).
+    session_ref: String,
 }
 
 /// Optional process-local configuration. The factory supplies the backend and
@@ -198,9 +206,11 @@ impl VoiceHost {
             .as_ref()
             .map(|bound| (Arc::clone(&vault), bound.container));
         let roster = speaker_match::CallRoster::of(&vault, &bindings.session);
+        let session_ref = bindings.session.session_ref.clone();
         Ok(Self {
             call_deadline,
             speculative_auth: bindings.speculative_auth,
+            phone: bindings.phone,
             container,
             roster,
             speculative: SpeculativeThreads::default(),
@@ -213,6 +223,7 @@ impl VoiceHost {
             shutdown: bindings.shutdown,
             owner_policy: Arc::new(bindings.owner_policy),
             vault: host_vault,
+            session_ref,
         })
     }
 
@@ -261,64 +272,74 @@ impl VoiceHost {
             deadline: Some(self.call_deadline),
             threads: Some(self.speculative.clone()),
         };
-        let handle = match &self.speculative_auth {
-            Some(auth) if auth.host_root().is_some() || auth.is_local_dev_hatch() => {
-                let action = crate::api::host_action::host_action_of(&self.vault, auth)
-                    .ok_or(HostError::InvalidRequest)??;
-                let actor = action.actor();
-                let memory = crate::api::credential_memory(
-                    &self.vault,
-                    Some(auth),
-                    actor.entity_ref(),
-                    actor.actor_class(),
-                )
-                .with_host_action_authority(&action)?
-                .at(auth.locality());
-                state.core.open_scoped_utterance(
-                    utterance_id,
-                    config,
-                    &memory,
-                    &RecallScope::default(),
-                )?
+        let handle = if let Some(phone) = &self.phone {
+            let memory = phone.memory()?;
+            state.core.open_scoped_utterance(
+                utterance_id,
+                config,
+                &memory,
+                &RecallScope::default(),
+            )?
+        } else {
+            match &self.speculative_auth {
+                Some(auth) if auth.host_root().is_some() || auth.is_local_dev_hatch() => {
+                    let action = crate::api::host_action::host_action_of(&self.vault, auth)
+                        .ok_or(HostError::InvalidRequest)??;
+                    let actor = action.actor();
+                    let memory = crate::api::credential_memory(
+                        &self.vault,
+                        Some(auth),
+                        actor.entity_ref(),
+                        actor.actor_class(),
+                    )
+                    .with_host_action_authority(&action)?
+                    .at(auth.locality());
+                    state.core.open_scoped_utterance(
+                        utterance_id,
+                        config,
+                        &memory,
+                        &RecallScope::default(),
+                    )?
+                }
+                Some(auth)
+                    if (auth.managed_owner().is_none()
+                        && !auth.is_host_holder()
+                        && auth.verified_slip().is_some()
+                        && auth.actor_class() == Some("human"))
+                        || (auth.is_owner_grade()
+                            && auth.verified_slip().is_none()
+                            && auth.invocation_slip().is_none()
+                            && auth.actor_class() == Some("human")
+                            && auth.managed_owner().is_some_and(|holder| {
+                                auth.principal_ref().and_then(|principal| {
+                                    oneiron::EntityId::from_hex(principal).ok()
+                                }) == Some(holder)
+                            })) =>
+                {
+                    // The owner door proved this ordinary slip or managed
+                    // attestation's same Human principal, not the payer's class.
+                    let actor = auth
+                        .principal_ref()
+                        .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
+                        .ok_or(HostError::InvalidRequest)?;
+                    let memory = crate::api::credential_memory(
+                        &self.vault,
+                        Some(auth),
+                        actor,
+                        oneiron::EdgeActorClass::Human,
+                    )
+                    .at(auth.locality());
+                    state.core.open_scoped_utterance(
+                        utterance_id,
+                        config,
+                        &memory,
+                        &RecallScope::default(),
+                    )?
+                }
+                // Other admitted credential forms and unbound attachments retain
+                // the existing trusted path, not an auth-error fallback.
+                Some(_) | None => state.core.open_utterance(utterance_id, config)?,
             }
-            Some(auth)
-                if (auth.managed_owner().is_none()
-                    && !auth.is_host_holder()
-                    && auth.verified_slip().is_some()
-                    && auth.actor_class() == Some("human"))
-                    || (auth.is_owner_grade()
-                        && auth.verified_slip().is_none()
-                        && auth.invocation_slip().is_none()
-                        && auth.actor_class() == Some("human")
-                        && auth.managed_owner().is_some_and(|holder| {
-                            auth.principal_ref()
-                                .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
-                                == Some(holder)
-                        })) =>
-            {
-                // The owner door proved this ordinary slip or managed
-                // attestation's same Human principal, not the payer's class.
-                let actor = auth
-                    .principal_ref()
-                    .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
-                    .ok_or(HostError::InvalidRequest)?;
-                let memory = crate::api::credential_memory(
-                    &self.vault,
-                    Some(auth),
-                    actor,
-                    oneiron::EdgeActorClass::Human,
-                )
-                .at(auth.locality());
-                state.core.open_scoped_utterance(
-                    utterance_id,
-                    config,
-                    &memory,
-                    &RecallScope::default(),
-                )?
-            }
-            // Other admitted credential forms and unbound attachments retain
-            // the existing trusted path, not an auth-error fallback.
-            Some(_) | None => state.core.open_utterance(utterance_id, config)?,
         };
         // Connection-local, monotonically unique correlation. Not authentication.
         let token = serial.to_string();
@@ -349,18 +370,7 @@ impl VoiceHost {
         }
         let mut state = self.lock()?;
         let handle = state.handle(token)?;
-        let event = AsrEvent {
-            kind: if final_text {
-                AsrEventKind::Final
-            } else {
-                AsrEventKind::Partial
-            },
-            text,
-            tokens: Vec::new(),
-            provider_latency_ms: None,
-            endpoint_delay_ms: None,
-            error: None,
-        };
+        let event = asr_observation(text, final_text);
         // The admitted owner supplies speech, not a context-taint assertion.
         // The brain marks retrieved/external context at its own boundary.
         let prepared = state
@@ -373,6 +383,45 @@ impl VoiceHost {
         })
     }
 
+    /// Heard words, through the agent's floor before they are prepared (FIX
+    /// 4899). Their revision and input are validated first, as
+    /// [`Self::prepare`] validates them: a stale or mismatched event is
+    /// refused the same way and changes nothing. Words that took the floor
+    /// leave the stop in `stops`, for the caller to dispatch before another
+    /// playback dequeue, and go on to be prepared. A backchannel final while
+    /// the agent holds the floor closes the utterance and prepares nothing:
+    /// `Ok(None)`.
+    pub(super) fn prepare_words(
+        &self,
+        token: &str,
+        revision: u64,
+        text: String,
+        final_text: bool,
+        stops: &mut Vec<OutputStop>,
+    ) -> Result<Option<EnrichmentWork<'_>>, HostError> {
+        self.require_running()?;
+        if text.trim().is_empty() {
+            return Err(HostError::InvalidRequest);
+        }
+        let (words, text) = {
+            let mut state = self.lock()?;
+            let handle = state.handle(token)?;
+            let event = asr_observation(text, final_text);
+            state.core.validate_asr(&handle, revision, &event, false)?;
+            let words = state.core.observe_words(&handle, event.kind, &event.text);
+            if matches!(words, FloorWords::Backchannel) {
+                state.open = None;
+            }
+            (words, event.text)
+        };
+        match words {
+            FloorWords::Backchannel => return Ok(None),
+            FloorWords::Interrupt(stop) => stops.push(stop),
+            FloorWords::Prepare => {}
+        }
+        self.prepare(token, revision, text, final_text).map(Some)
+    }
+
     fn end(&self) -> Result<OutputStop, HostError> {
         let mut state = self.lock()?;
         state.open = None;
@@ -382,6 +431,23 @@ impl VoiceHost {
     /// Whether no speculative pass of the call still runs past its deadline.
     fn speculative_at_rest(&self) -> bool {
         self.speculative.at_rest()
+    }
+}
+
+/// The owner's words as an ASR observation: a final or a partial,
+/// with no tokens, timing or error.
+fn asr_observation(text: String, final_text: bool) -> AsrEvent {
+    AsrEvent {
+        kind: if final_text {
+            AsrEventKind::Final
+        } else {
+            AsrEventKind::Partial
+        },
+        text,
+        tokens: Vec::new(),
+        provider_latency_ms: None,
+        endpoint_delay_ms: None,
+        error: None,
     }
 }
 

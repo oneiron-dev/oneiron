@@ -44,13 +44,13 @@ impl Vault {
                 // The vault's DOCX row as this writer's, not the shipped
                 // default (FIX 8763), read in the host's memory (FIX 8570).
                 let limits = self.office_docx_limits(Some(actor.entity_ref()))?;
-                let blocks = crate::office_body::document_resources()
-                    .docx(|| read_docx_blocks(&bytes, limits))
+                let read = crate::office_body::document_resources()
+                    .docx(|| read_docx_body(&bytes, limits))
                     .map_err(|error| docx_error(&error, "the DOCX package could not be read"))?;
                 self.with_write_txn_grouped(|wtxn| {
                     claim_source(&self.store, wtxn, artifact, &source)?;
                     birth_typed_body_in_txn(self, wtxn, artifact, writer, |doc| {
-                        docx::import(doc, &blocks)
+                        docx::import(doc, &read.blocks, &read.stories)
                     })
                     .map(drop)
                 })?;
@@ -89,6 +89,8 @@ impl Vault {
                 })?;
             }
         }
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*artifact);
         self.office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)
     }
@@ -262,7 +264,7 @@ impl Vault {
         // standing `entity.office.edit` grant's; without either the verb
         // raises the owner ask. Decks keep today's behavior.
         let gated = kind != OfficeBodyKind::Pptx;
-        self.with_write_txn_grouped(|wtxn| {
+        let edited = self.with_write_txn_grouped(|wtxn| {
             if gated {
                 admit_live_edit_in_txn(self, wtxn, artifact, &actor.entity_ref())?;
             }
@@ -287,7 +289,10 @@ impl Vault {
                 receipt: commit.receipt,
                 effects: Vec::new(),
             })
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*artifact);
+        Ok(edited)
     }
 
     /// Open a fork of the live body at its head for `actor`'s machine work in
@@ -464,7 +469,7 @@ impl Vault {
         (expected_head, expected_fork): (&[u8], &[u8]),
         actor: WriteActor,
     ) -> Result<std::result::Result<OfficeBodyDiff, EntityId>> {
-        self.with_write_txn_grouped(|wtxn| {
+        let merged = self.with_write_txn_grouped(|wtxn| {
             loro_kind(&self.store, wtxn, artifact)?;
             let proposal = consent::proposal_of(&self.store, wtxn, artifact, fork)?;
             let reviewed = [ReviewedFork {
@@ -485,7 +490,12 @@ impl Vault {
                 .next()
                 .map(|(_, diff)| diff)
                 .ok_or(proposal))
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        if merged.is_ok() {
+            self.notify_typed_body_document(*artifact);
+        }
+        Ok(merged)
     }
 
     /// Abandon an open fork's unlanded work.
@@ -535,7 +545,7 @@ impl Vault {
         if head.kind == OfficeBodyKind::Docx && request.author.is_none() {
             return self.export_docx_sequential(artifact, request, &head, &author, at);
         }
-        let Some((bytes, changes, recalc, effects)) =
+        let Some((bytes, changes, recalc, recalc_failure, effects)) =
             self.project_body(artifact, &head, &author.landed, at, request.zone)?
         else {
             return Ok(OfficeBodyExport {
@@ -575,6 +585,7 @@ impl Vault {
                 version: version.version,
                 frontier: head.frontier.clone(),
                 rebind_frontier: None,
+                held_ids: None,
                 source_version: head.source_version,
                 actor: BodyActor::Actor(request.actor.entity_ref()),
                 author: author.shown.clone(),
@@ -584,6 +595,7 @@ impl Vault {
                 recalc: recalc
                     .as_ref()
                     .map(|stamp| recalc_label(stamp, request.zone)),
+                recalc_failure,
                 recalc_zone: Some(request.zone.clone()),
                 effects,
             };
@@ -616,18 +628,44 @@ impl Vault {
         }
         let at = self.now_recorded_at();
         let limits = self.docedit_package_limits()?;
-        let (bytes, recalc) = match self.project_body(artifact, &head, "preview", at, zone)? {
-            Some((bytes, _, recalc, _)) => (bytes, recalc),
-            None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?,
-        };
-        let book = read_xlsx_cells(&bytes, limits, &crate::office_body::document_resources())
+        let (bytes, recalc, recalc_failure) =
+            match self.project_body(artifact, &head, "preview", at, zone)? {
+                Some((bytes, _, recalc, recalc_failure, _)) => (bytes, recalc, recalc_failure),
+                None => recalc_xlsx(
+                    &self.body_source(artifact, &head)?,
+                    limits,
+                    at,
+                    zone,
+                    self.xlsx_precision_recalc().as_deref(),
+                )?,
+            };
+        let mut book = read_xlsx_cells(&bytes, limits, &crate::office_body::document_resources())
             .map_err(|error| {
-                super::document_error(error.resource(), "the projected workbook could not be read")
-            })?;
+            super::document_error(error.resource(), "the projected workbook could not be read")
+        })?;
+        if recalc_failure.is_some() {
+            for sheet in &mut book.sheets {
+                for cell in &mut sheet.cells {
+                    if cell.formula.is_some()
+                        || matches!(
+                            cell.locked,
+                            Some(
+                                XlsxLock::SharedFormula
+                                    | XlsxLock::ArrayFormula
+                                    | XlsxLock::DataTable
+                            )
+                        )
+                    {
+                        cell.recalc = Some(XlsxCellRecalc::CachedAfterFailure);
+                    }
+                }
+            }
+        }
         Ok(XlsxPreview {
             frontier: head.frontier,
             book,
             recalc: recalc.as_ref().map(|stamp| recalc_label(stamp, zone)),
+            recalc_failure,
         })
     }
 
@@ -642,9 +680,9 @@ impl Vault {
     }
 
     /// The body at `head` projected onto its imported package: the bytes, the
-    /// change count, the engine that recalculated a workbook and what the
-    /// projection adapted. `None` when the body equals its import, so a no-op
-    /// keeps the original package.
+    /// change count, the engine that recalculated a workbook (or why it did
+    /// not) and what the projection adapted. `None` when the body equals its
+    /// import, so a no-op keeps the original package.
     pub(super) fn project_body(
         &self,
         artifact: &EntityId,
@@ -652,7 +690,15 @@ impl Vault {
         author: &str,
         at: u64,
         zone: &OfficeRecalcZone,
-    ) -> Result<Option<(Vec<u8>, usize, Option<CalcEngineStamp>, Vec<String>)>> {
+    ) -> Result<
+        Option<(
+            Vec<u8>,
+            usize,
+            Option<CalcEngineStamp>,
+            Option<OfficeRecalcFailure>,
+            Vec<String>,
+        )>,
+    > {
         if head.kind == OfficeBodyKind::Pptx {
             return Err(invalid(
                 "a deck exports through vault.artifacts.body.deck.export, which lands only once its export gate opens",
@@ -696,7 +742,7 @@ impl Vault {
                 .map_err(|error| {
                     docx_error(&error, "the body could not be projected onto its package")
                 })?;
-            return Ok(Some((bytes, changes.len(), None, Vec::new())));
+            return Ok(Some((bytes, changes.len(), None, None, Vec::new())));
         }
         self.project_xlsx_body(
             artifact,

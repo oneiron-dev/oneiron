@@ -1,10 +1,13 @@
 //! Repo-scoped queue/batch rows; every transition is under the repo single writer.
+//! Each save keeps the batch's admission and completion receipts in the
+//! transaction that stores it (FIX 4338).
 use super::batch_index::put_batch_index;
 use super::types::QueueRecord;
 use super::{BatchState, MergeBatch, MergeQueue, MergeQueuePointers, RepoQueueOrder};
 use crate::{
     error::{Error, Result},
     git_wire::lock_repository,
+    repo_mutation::proposal::ContractReviewEvidence,
     side_table::{self, Named, SideTable},
     store::contract_oracle::{ContractOracle, WorkspaceGraph, invalid},
 };
@@ -133,12 +136,23 @@ impl MergeQueue<'_> {
         Ok(record)
     }
     pub(super) fn save(&self, state: &QueueRecord, batches: &[&MergeBatch]) -> Result<()> {
+        self.save_with_review(state, batches, None)
+    }
+    /// [`Self::save`] that also routes `review`, the removed-name person
+    /// review a saved verdict slot holds, in the same writer (FIX 4365).
+    pub(super) fn save_with_review(
+        &self,
+        state: &QueueRecord,
+        batches: &[&MergeBatch],
+        review: Option<&ContractReviewEvidence>,
+    ) -> Result<()> {
         check_row_size(&QUEUE_STATE.encode_value(state)?)?;
         let mut txn = self.vault.store.env.write_txn()?;
         QUEUE_STATE.put(&self.vault.store, &mut txn, &self.queue_key(), state)?;
         let repo_hex = self.repo.identity().as_hex();
         for batch in batches {
             check_row_size(&BATCHES.encode_value(batch)?)?;
+            self.record_batch_receipts_in_txn(&mut txn, batch)?;
             BATCHES.put(
                 &self.vault.store,
                 &mut txn,
@@ -146,6 +160,10 @@ impl MergeQueue<'_> {
                 batch,
             )?;
             put_batch_index(&self.vault.store, &mut txn, &repo_hex, batch)?;
+        }
+        if let Some(evidence) = review {
+            self.vault
+                .route_contract_review_in_txn(&mut txn, evidence)?;
         }
         txn.commit()?;
         // The queue driver wakes on a committed queue write (FIX 6868), on
@@ -156,7 +174,8 @@ impl MergeQueue<'_> {
     /// [`Self::save`] of one new batch whose writer's first act is `admit`
     /// (FIX 6867): it answers the run order the batch keeps, stamped with
     /// the queue sequence that accepted it, or a refusal, which writes
-    /// nothing. A run's admission is judged in this writer, not before it.
+    /// nothing. A run's admission is judged in this writer, not before it,
+    /// and only an accepted batch gets its admission receipt (FIX 4338).
     pub(super) fn save_checked<R>(
         &self,
         state: &QueueRecord,
@@ -173,6 +192,7 @@ impl MergeQueue<'_> {
             Err(refused) => return Ok(Err(refused)),
         };
         check_row_size(&BATCHES.encode_value(batch)?)?;
+        self.record_batch_receipts_in_txn(&mut txn, batch)?;
         QUEUE_STATE.put(&self.vault.store, &mut txn, &self.queue_key(), state)?;
         BATCHES.put(
             &self.vault.store,

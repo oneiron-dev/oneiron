@@ -40,9 +40,15 @@ impl LadderDecider {
                     origin,
                     run_id: self.run_id,
                 };
-                self.runtime.spawn(HELD_IMAGE.scope(held, async move {
-                    let _ = sender.send(execute_step_verdict(&server, &actor, input, run).await);
-                }));
+                // The verdict's waits show on the serving call's admission
+                // receipt (FIX 4735).
+                self.runtime
+                    .spawn(crate::api::facade::carrying_admission_observer(
+                        HELD_IMAGE.scope(held, async move {
+                            let _ = sender
+                                .send(execute_step_verdict(&server, &actor, input, run).await);
+                        }),
+                    ));
             }
             VerdictAsker::Credential(auth, _) => {
                 // The verdict is the run's (FIX 10748), as the connector's
@@ -57,10 +63,15 @@ impl LadderDecider {
                             .map_err(|error| super::mcp_facade_error(error.into_memory_error()));
                     let _ = sender.send(answer);
                 };
-                self.runtime.spawn(HELD_IMAGE.scope(
-                    held,
-                    crate::api::facade::host_doors::support::with_calling_origin(origin, asked),
-                ));
+                self.runtime
+                    .spawn(crate::api::facade::carrying_admission_observer(
+                        HELD_IMAGE.scope(
+                            held,
+                            crate::api::facade::host_doors::support::with_calling_origin(
+                                origin, asked,
+                            ),
+                        ),
+                    ));
             }
             VerdictAsker::Agent(actor, line) => {
                 self.runtime.spawn_blocking(move || {

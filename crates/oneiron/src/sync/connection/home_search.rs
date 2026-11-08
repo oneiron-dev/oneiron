@@ -18,6 +18,7 @@ pub struct HomeSearch {
     vault: Arc<Vault>,
     config: SyncClientConfig,
     mode: watch::Receiver<SyncResidenceMode>,
+    claim_vector_cursor: std::sync::Mutex<Option<Vec<u8>>>,
 }
 
 /// The vault's hold on its own sync connection's home search: the live
@@ -58,6 +59,7 @@ impl HomeSearch {
             vault: Arc::clone(vault),
             config,
             mode,
+            claim_vector_cursor: std::sync::Mutex::new(None),
         });
         let mut slot = vault
             .home_search
@@ -71,13 +73,16 @@ impl HomeSearch {
 
     /// The home's hits when it is reachable, else this device's opened items
     /// alone, marked local-only and incomplete. More hits than the home
-    /// answers at once come a page at a time (FIX 8865).
+    /// answers at once come a page at a time (FIX 8865). `filter`, the
+    /// caller's own retrieval filter, rides the request to the home's reader
+    /// (FIX 3977); a filtered search takes no offline fallback.
     pub async fn search(
         &self,
         query: &str,
         limit: usize,
+        filter: Option<&crate::memory::ReadFilterInput>,
     ) -> Result<ResidenceSearch, TransportError> {
-        self.ask(query, limit, None, None, None).await
+        self.ask(query, limit, None, None, filter, None).await
     }
 
     /// [`Self::search`] for a caller narrower than this device's owner
@@ -92,8 +97,9 @@ impl HomeSearch {
         limit: usize,
         caller: &crate::authority::ForwardedCallerProof,
         locality: crate::claim::CallerLocality,
+        filter: Option<&crate::memory::ReadFilterInput>,
     ) -> Result<ResidenceSearch, TransportError> {
-        self.ask(query, limit, None, None, Some((caller, locality)))
+        self.ask(query, limit, None, None, filter, Some((caller, locality)))
             .await
     }
 
@@ -110,12 +116,14 @@ impl HomeSearch {
         limit: usize,
         scope: &crate::sync::residence::ResolvedRecallSelection,
         as_of: Option<u64>,
+        filter: Option<&crate::memory::ReadFilterInput>,
         caller: Option<(
             &crate::authority::ForwardedCallerProof,
             crate::claim::CallerLocality,
         )>,
     ) -> Result<ResidenceSearch, TransportError> {
-        self.ask(query, limit, Some(scope), as_of, caller).await
+        self.ask(query, limit, Some(scope), as_of, filter, caller)
+            .await
     }
 
     pub(crate) async fn media_vectors_for(
@@ -134,6 +142,7 @@ impl HomeSearch {
         limit: usize,
         scope: Option<&crate::sync::residence::ResolvedRecallSelection>,
         as_of: Option<u64>,
+        filter: Option<&crate::memory::ReadFilterInput>,
         caller: Option<(
             &crate::authority::ForwardedCallerProof,
             crate::claim::CallerLocality,
@@ -148,6 +157,7 @@ impl HomeSearch {
             limit,
             scope,
             as_of,
+            filter,
             caller,
         )
         .await
@@ -172,6 +182,21 @@ impl Vault {
             .unwrap_or_else(PoisonError::into_inner)
             .search
             .upgrade()
+    }
+}
+
+impl HomeSearch {
+    pub(crate) fn next_claim_vector_job(
+        &self,
+    ) -> crate::Result<Option<crate::sync::queue::EmbedQueueRow>> {
+        let mut cursor = self
+            .claim_vector_cursor
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let queue = crate::sync::queue::SyncQueue::new(Arc::clone(&self.vault))?;
+        let row = queue.next_embed_job(cursor.as_deref())?;
+        *cursor = row.as_ref().map(|row| row.key.clone());
+        Ok(row)
     }
 }
 

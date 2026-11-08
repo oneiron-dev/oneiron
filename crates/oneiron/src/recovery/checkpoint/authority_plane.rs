@@ -14,8 +14,10 @@
 //!   send is made twice;
 //! - **refused** families hold authority entangled with content (grants,
 //!   policy manifests, room roles and membership, e-sign ceremonies). A
-//!   restore that would change one is refused before anything is created,
-//!   rather than half-applied. A refused row's deletion fence is part of it:
+//!   restore that would change one is refused before publication, rather
+//!   than half-applied. Whole families are checked before a destination is
+//!   created; image-entity floors wait for the target's compartments to land.
+//!   A refused row's deletion fence is part of it:
 //!   a delete accepted but not yet applied leaves the row's bytes unchanged.
 //!
 //! Membership is checked on the result: a restore may not make anyone an
@@ -39,7 +41,6 @@ use crate::gate::dispatch_compliance::observations::{
 };
 use crate::llm::{ModelId, ModelTierRef};
 use crate::note::{NoteActor, NoteKind};
-use crate::outbound_grant::StandingOutboundGrant;
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_PERSON};
 use crate::skill::{SkillDependency, SkillGovernanceTier, SkillLifecycle};
 use crate::skill_hub::ScanRiskLevel;
@@ -61,19 +62,25 @@ fn fenced_id(key: &[u8]) -> Option<Vec<u8>> {
         .map(<[u8]>::to_vec)
 }
 
-/// Rewrites `databases` so every live row is `current`'s, or refuses when a
-/// refused family moved since the checkpoint. Returns the notes for the home
-/// tables that came from the image (FIX 5661 C2b), and `current`'s pad
-/// objects captured in the read its live rows came from (PAD-1), with the
-/// bundles of the generations the image does not keep (FIX 11824).
-pub(super) fn carry_current_authority(
+/// Rewrites `databases` so every live row, by `classes` (FIX 6994), is
+/// `current`'s, or refuses when a refused family moved since the checkpoint.
+/// Returns the notes for the home tables that came from the image (FIX 5661
+/// C2b), and `current`'s pad objects captured in the read of its live rows
+/// (PAD-1), with the bundles of the generations the image does not keep
+/// (FIX 11824). Scoped floors are checked on the restored target, once its
+/// compartments land.
+pub(super) fn carry_current_authority<'a>(
     databases: &mut BTreeMap<String, CanonicalRows>,
     current: &Vault,
-) -> Result<(Vec<super::HomeTableNote>, crate::store::PadObjectsCapture)> {
-    let classes = Classes::new(current, databases)?;
+    classes: &'a Classes,
+) -> Result<(
+    Vec<super::HomeTableNote>,
+    crate::store::PadObjectsCapture,
+    ImageEntityFloors<'a>,
+)> {
     // The copy keeps the generations the image keeps (FIX 11824).
     let copy = crate::store::CopyGenerations::of_rows(&databases["sync_state"]);
-    let live = current_rows(current, &classes, &copy)?;
+    let live = current_rows(current, classes, &copy)?;
     let claim_row_floor = super::claim_order::floor(&databases["vault_meta"])?
         .max(super::claim_order::floor(&live.rows["vault_meta"])?);
     // A store's random id, minted at its first open, names the vault even
@@ -116,7 +123,7 @@ pub(super) fn carry_current_authority(
         .filter_map(|(key, _)| fenced_id(key))
         .collect();
     let mut moved = authority_moved(
-        &classes,
+        classes,
         &databases["entities"],
         &image_entities,
         &image_fences,
@@ -124,7 +131,11 @@ pub(super) fn carry_current_authority(
         databases.get("edges_in").map_or(&[][..], Vec::as_slice),
     );
     for (database, live_rows) in &live.rows {
-        let scoped = |rows, fenced| refused(&classes, database, rows, &image_entities, fenced);
+        let scoped = |rows, fenced| {
+            refused(classes, database, rows, &image_entities, fenced, |scope| {
+                matches!(scope, Scope::Family)
+            })
+        };
         let image = scoped(&databases[*database], &image_fences);
         let current = scoped(live_rows, &live.fences);
         for what in image.keys().chain(current.keys()) {
@@ -133,12 +144,7 @@ pub(super) fn carry_current_authority(
             }
         }
     }
-    if !moved.is_empty() {
-        return Err(Error::InvalidConfig(format!(
-            "restoring this checkpoint would roll back {} changed since it was taken; restore it beside the vault instead",
-            moved.into_iter().collect::<Vec<_>>().join(", ")
-        )));
-    }
+    refuse_moved(moved)?;
     for (database, live_rows) in &live.rows {
         let is_live =
             |(key, value): &(Vec<u8>, Vec<u8>)| classes.row(database, key, value).0 == Class::Live;
@@ -166,7 +172,115 @@ pub(super) fn carry_current_authority(
             .ok_or_else(super::codec_error)?,
         claim_row_floor,
     );
-    Ok((classes.home_notes(), live.pad_objects))
+    let home_notes = classes.home_notes();
+    let floors = ImageEntityFloors {
+        rows: live
+            .rows
+            .into_iter()
+            .map(|(database, rows)| {
+                let rows = rows
+                    .into_iter()
+                    .filter(|(key, value)| {
+                        matches!(
+                            classes.row(database, key, value).0,
+                            Class::Refuse {
+                                scope: Scope::ImageEntities,
+                                ..
+                            }
+                        )
+                    })
+                    .collect();
+                (database, rows)
+            })
+            .collect(),
+        classes,
+        fences: live.fences,
+    };
+    Ok((home_notes, live.pad_objects, floors))
+}
+
+/// Image-scoped floors from the same live read as the carried authority.
+/// The bare image omits compartmented entities and their side rows, so it
+/// cannot name the target of this comparison.
+pub(super) struct ImageEntityFloors<'a> {
+    classes: &'a Classes,
+    rows: BTreeMap<&'static str, CanonicalRows>,
+    fences: BTreeSet<Vec<u8>>,
+}
+
+impl ImageEntityFloors<'_> {
+    /// Compares against the rows the native restore actually kept, including
+    /// opened compartments but not rows whose owners were unavailable.
+    pub(super) fn refuse_changes(self, restored: &Vault) -> Result<()> {
+        let txn = restored.store.env.read_txn()?;
+        let open = |database| {
+            restored
+                .store
+                .env
+                .open_database::<Bytes, Bytes>(&txn, Some(database))?
+                .ok_or_else(super::codec_error)
+        };
+        let entities = open("entities")?;
+        let entity_keys: BTreeSet<Vec<u8>> = entities
+            .iter(&txn)?
+            .map(|row| row.map(|(key, _)| key.to_vec()))
+            .collect::<std::result::Result<_, _>>()?;
+        let image_entities = entity_keys.iter().map(Vec::as_slice).collect();
+        let sync = open("sync_state")?;
+        let mut image_fences = BTreeSet::new();
+        for row in sync.iter(&txn)? {
+            let (key, _) = row?;
+            if let Some(id) = fenced_id(key) {
+                image_fences.insert(id);
+            }
+        }
+        let mut moved = BTreeSet::new();
+        for (database, live_rows) in &self.rows {
+            let mut target_rows = Vec::new();
+            let db = open(database)?;
+            for row in db.iter(&txn)? {
+                let (key, value) = row?;
+                if matches!(
+                    self.classes.row(database, key, value).0,
+                    Class::Refuse {
+                        scope: Scope::ImageEntities,
+                        ..
+                    }
+                ) {
+                    target_rows.push((key.to_vec(), value.to_vec()));
+                }
+            }
+            let scoped = |rows, fences| {
+                refused(
+                    self.classes,
+                    database,
+                    rows,
+                    &image_entities,
+                    fences,
+                    |scope| matches!(scope, Scope::ImageEntities),
+                )
+            };
+            let image = scoped(&target_rows, &image_fences);
+            let current = scoped(live_rows, &self.fences);
+            for what in image.keys().chain(current.keys()) {
+                if image.get(what) != current.get(what) {
+                    moved.insert(*what);
+                }
+            }
+        }
+        refuse_moved(moved)
+    }
+}
+
+fn refuse_moved(moved: BTreeSet<&'static str>) -> Result<()> {
+    if moved.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfig(format!(
+            "restoring this checkpoint would roll back {} changed since it was taken; restore it beside the vault instead",
+            moved.into_iter().collect::<Vec<_>>().join(", ")
+        )))
+    }
 }
 
 /// The live vault's rows that are not content.
@@ -656,8 +770,6 @@ enum Compared {
         budget: Option<String>,
         budget_share: Option<ProjectBudgetShare>,
     },
-    /// A grant as it authorizes, without its last use.
-    OutboundGrant(Box<StandingOutboundGrant>),
     /// An authority fact about a task.
     TaskFact(Box<TaskAuthorityFact>),
     /// Who owns a task, whom it is assigned to, and its ask class.
@@ -870,17 +982,9 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
             Err(_) => crate::task_verb::task_binding(body)
                 .map_or(Compared::TaskUnbound, Compared::TaskBinding),
         },
-        Projection::OutboundGrant => {
-            crate::outbound_grant::decode_standing_outbound_grant_body(body).map_or_else(
-                |_| whole(),
-                |grant| {
-                    Compared::OutboundGrant(Box::new(StandingOutboundGrant {
-                        last_used_at: None,
-                        ..grant
-                    }))
-                },
-            )
-        }
+        // A standing outbound grant is a standing consent Grant row, compared
+        // with the standing grants; an entity of this kind is compared whole.
+        Projection::OutboundGrant => whole(),
     })
 }
 
@@ -931,12 +1035,16 @@ fn refused<'a>(
     rows: &'a CanonicalRows,
     image_entities: &BTreeSet<&[u8]>,
     fenced: &BTreeSet<Vec<u8>>,
+    includes: impl Fn(Scope) -> bool,
 ) -> BTreeMap<&'static str, Family<'a>> {
     let mut families: BTreeMap<_, Vec<_>> = BTreeMap::new();
     for (key, value) in rows {
         let (Class::Refuse { what, scope }, prefix) = classes.row(database, key, value) else {
             continue;
         };
+        if !includes(scope) {
+            continue;
+        }
         match scope {
             Scope::Family => {}
             Scope::ImageEntities => {

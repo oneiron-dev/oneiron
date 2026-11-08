@@ -39,6 +39,9 @@ pub(super) async fn handle_sync_message(
                 .await
                 .map(ControlFlow::Continue)
         }
+        // The leaf-key relay is the home's: a peer's socket carries none
+        // (FIX 4748).
+        SyncMessage::LeafKey { .. } if conn_state.peer_served => Ok(ControlFlow::Continue(())),
         SyncMessage::LeafKey { tag, payload } => {
             super::leaf_keys::handle(server, conn_id, conn_state, tag, &payload, direct_tx)
                 .map(ControlFlow::Continue)
@@ -145,8 +148,8 @@ pub(super) async fn handle_sync_message(
             // (rule 5, row 19).
             let mut presence = server.presence.lock();
             presence.expire(&server.ephemeral_store);
-            let states = validate_ephemeral_payload(server, &payload)?;
-            if !presence.fit(ephemeral_hub_candidate(server, &payload, &states)?) {
+            let states = validate_ephemeral_payload(&payload)?;
+            if !presence.fit(ephemeral_hub_candidate(server, &payload)?) {
                 tracing::warn!(
                     conn_id,
                     kind = "memory_floor",
@@ -162,6 +165,15 @@ pub(super) async fn handle_sync_message(
             for encoded in canonical_ephemeral_frames(server, &states)? {
                 let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, encoded);
             }
+            Ok(ControlFlow::Continue(()))
+        }
+        // The lease registrar writes the root, which is the home's: a peer
+        // answers no lease request (FIX 4748).
+        SyncMessage::LeaseRequest { .. } if conn_state.peer_served => {
+            tracing::debug!(
+                conn_id,
+                "lease request left to the home: this socket is a peer's"
+            );
             Ok(ControlFlow::Continue(()))
         }
         SyncMessage::LeaseRequest {
@@ -295,6 +307,7 @@ pub(super) enum VerbCall {
         conn: u32,
     },
     Residence(crate::livequery::ResidenceWorkCall),
+    AskOptionLink(crate::livequery::ask_option_link::AskOptionLinkCall),
 }
 
 impl VerbCall {
@@ -311,6 +324,7 @@ impl VerbCall {
                 conn,
             } => (auth, request, context, conn),
             Self::Residence(call) => return call.answer(server, direct_tx).await,
+            Self::AskOptionLink(call) => return call.answer(server, direct_tx).await,
         };
         let reply = crate::livequery::rpc_reply(&server, &auth, request, context).await?;
         for frame in reply.queued(conn) {
@@ -404,6 +418,24 @@ fn answer_app_message(
                 ProtocolError::InvalidPayload("invalid RPC request")
             }
         })?;
+        // FIX 4748: a peer serves state only. The residence lane (owed
+        // machine history, authority log ranges and checkpoints, sealed
+        // bundles, home handoffs) is the home's; each call is refused.
+        if state.peer_served && request.method.starts_with("residence.") {
+            let conn = connection
+                .as_deref()
+                .map_or(0, crate::livequery::connection::Connection::conn_id);
+            for frame in crate::livequery::peer_refused_rpc(server, request)?.queued(conn) {
+                direct_tx
+                    .send(frame)
+                    .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+            }
+            return Ok(None);
+        }
+        // A socket served as a peer binds its actor too (FIX 4748): its
+        // promotion and document admissions judge that principal as a home's
+        // socket does. It takes no NOTE authority action from the bind
+        // (`peer_serve::refuse_note_authority`).
         if request.method == "auth.bind" {
             let binding = (|| {
                 // A bind is the connection's, and carries no call context.
@@ -453,6 +485,31 @@ fn answer_app_message(
                     .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
             }
             return Ok(None);
+        }
+        // This bearer lane is independent of any bound actor. The proof
+        // names its carrying machine; the original link methods admit it.
+        if request.method == "residence.ask.option_link" {
+            if context.is_some() {
+                return Err(ProtocolError::InvalidPayload(
+                    "a call context rides only a facade verb RPC",
+                ));
+            }
+            let peer = state.peer_machine(&server.vault);
+            let actor = match &peer {
+                oneiron::authority::PeerMachine::Proven { machine, .. } => machine.to_hex(),
+                oneiron::authority::PeerMachine::Unknown => "unauthenticated".to_owned(),
+            };
+            let _ = server.wire_telemetry.record(
+                &request.method,
+                &actor,
+                oneiron_vault_contract::now_ts(),
+            );
+            let conn = connection
+                .as_deref()
+                .map_or(0, crate::livequery::connection::Connection::conn_id);
+            return Ok(Some(VerbCall::AskOptionLink(
+                crate::livequery::ask_option_link::AskOptionLinkCall::new(peer, request, conn),
+            )));
         }
         // Home handoff and exact pad calls can run without a bound actor,
         // under the owner-grade upgrade and the machine it proves now.

@@ -25,7 +25,6 @@ use axum::{
 };
 use base64::Engine as _;
 use oneiron::EntityId;
-use oneiron::anchored_annotation::Locator;
 use oneiron::blob_artifact::{
     ArtifactCreateRequest, ArtifactVersionView, BlobArtifactAppendOutcome, BlobArtifactVersion,
     BlobVersionProvenance, BornFromSource, DeckProposeRejection, DeckTransaction,
@@ -45,7 +44,10 @@ use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
 use crate::server::SyncServer;
 
+mod place;
 mod read_admission;
+
+use place::{PlaceInput, place_json, place_locator};
 use read_admission::{admitted_born_from, caveat_lane};
 
 /// The largest JSON body these routes take: a file travels base64 inside it.
@@ -137,6 +139,9 @@ pub(super) struct ProposeDeck {
     /// The envelope Keep gives the version, with the task or ask it answers.
     #[serde(default)]
     made_by: Option<MadeBy>,
+    /// The delta receipt id this rework answers (FIX 11967).
+    #[serde(default)]
+    delta_receipt: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -150,6 +155,9 @@ pub(super) struct ProposeOutput {
     report: Value,
     #[serde(default)]
     made_by: Option<MadeBy>,
+    /// The delta receipt id this rework answers (FIX 11967).
+    #[serde(default)]
+    delta_receipt: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -159,25 +167,6 @@ pub(super) struct Settle {
     brief_ref: Option<String>,
     #[serde(default)]
     reason: Option<String>,
-}
-
-/// A format-typed place in a version, as the offers name it.
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum PlaceInput {
-    Xlsx {
-        sheet: String,
-        range: String,
-    },
-    Docx {
-        para_path: String,
-        char_start: u64,
-        char_end: u64,
-    },
-    Pptx {
-        slide: u64,
-        shape_id: String,
-    },
 }
 
 #[derive(Deserialize)]
@@ -862,6 +851,7 @@ pub(super) async fn propose_deck(
                         reader,
                         (actor, now),
                         &read_rows,
+                        request.delta_receipt.as_deref(),
                     )
                     .map(|pending| Ok(json!(pending)))
                     .map_err(failed)
@@ -915,11 +905,19 @@ pub(super) async fn propose_output(
         report: request.report.to_string(),
         made_by: request.made_by,
     };
+    let delta_receipt = request.delta_receipt;
     let pending = blocking_read(move || {
         let vault = server.vault();
         let reader = made_by_reader(vault, &auth, output.made_by.as_ref())?;
         vault
-            .propose_native_output(&id, &output, reader, actor, vault.now_recorded_at())
+            .propose_native_output(
+                &id,
+                &output,
+                reader,
+                actor,
+                vault.now_recorded_at(),
+                delta_receipt.as_deref(),
+            )
             .map_err(|error| core_engine_error("native output proposal failed", error))
     })
     .await?;
@@ -1072,40 +1070,6 @@ pub(super) async fn undo(
     })))
 }
 
-fn place_json(locator: &Locator) -> Value {
-    match locator {
-        Locator::Xlsx { sheet, range } => {
-            json!({ "xlsx": { "sheet": sheet, "range": range.to_a1() } })
-        }
-        Locator::Docx {
-            para_path,
-            char_start,
-            char_end,
-        } => json!({ "docx": {
-            "para_path": para_path,
-            "char_start": char_start,
-            "char_end": char_end,
-        } }),
-        Locator::Pptx { slide, shape_id } => {
-            json!({ "pptx": { "slide": slide, "shape_id": shape_id } })
-        }
-        _ => Value::Null,
-    }
-}
-
-fn place_locator(place: PlaceInput) -> Result<Locator, ApiError> {
-    match place {
-        PlaceInput::Xlsx { sheet, range } => Locator::xlsx(sheet, &range),
-        PlaceInput::Docx {
-            para_path,
-            char_start,
-            char_end,
-        } => Locator::docx(para_path, char_start, char_end),
-        PlaceInput::Pptx { slide, shape_id } => Locator::pptx(slide, shape_id),
-    }
-    .map_err(|_| ApiError::bad_request("place is not a valid locator", Some("place")))
-}
-
 /// Restore an earlier version as the new head (owner consent); its comments reattach by exact stored identity.
 #[utoipa::path(
     post,
@@ -1169,6 +1133,9 @@ pub(super) async fn unattached(
     let threads = blocking_read(move || {
         let vault = server.vault();
         let threads = match caveat_lane(vault, &auth)? {
+            None if sight == oneiron::secret_custody::SecretSight::Masked => {
+                vault.unattached_annotation_threads_file_sighted(&id, sight)
+            }
             None => vault.unattached_annotation_threads(&id),
             // A credential with record caveats sees a thread only from rows
             // its lane admits, its words read through its sight (FIX 8063).
@@ -1223,6 +1190,9 @@ pub(super) async fn reattach_offers(
     let offers = blocking_read(move || {
         let vault = server.vault();
         let offers = match caveat_lane(vault, &auth)? {
+            None if sight == oneiron::secret_custody::SecretSight::Masked => {
+                vault.annotation_reattach_offers_file_sighted(&id, sight)
+            }
             None => vault.annotation_reattach_offers(&id),
             // Offers start from the threads the lane is served, and read the
             // head through its sight once its rows are admitted (FIX 8063).
@@ -1277,6 +1247,7 @@ pub(super) async fn reattach(
     let thread = parse_entity_id_param(&thread, "thread")?;
     let request = json_payload(payload)?;
     let locator = place_locator(request.place)?;
+    let sight = reader_sight(&auth);
     let reattached = blocking("reattach failed", move || {
         let (occurred, now) = moment(&server);
         server.vault().reattach_annotation_thread(
@@ -1284,6 +1255,7 @@ pub(super) async fn reattach(
             &thread,
             request.version,
             &locator,
+            sight,
             actor,
             occurred,
             now,

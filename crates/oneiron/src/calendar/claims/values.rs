@@ -225,6 +225,21 @@ impl CalendarPassportPresence {
     }
 }
 
+/// The immutable archived ICS version a passport's imported content came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CalendarPassportSource {
+    /// The source BLOB_ARTIFACT, not a locator parsed from import metadata.
+    pub artifact: EntityId,
+    /// The exact version returned by the archive write or authorized read.
+    pub version: u64,
+}
+
+impl CalendarPassportSource {
+    pub(crate) fn blob_ref(self) -> String {
+        format!("{}#v{}", self.artifact.to_hex(), self.version)
+    }
+}
+
 /// Value of a `calendar.passport` claim.
 ///
 /// One live passport per (system x UID) via `supersede_claim`; CAL-02 owns the
@@ -240,6 +255,10 @@ pub struct CalendarPassportValue {
     pub last_sequence: u32,
     /// Content hash of the last observed representation.
     pub content_hash: [u8; CONTENT_HASH_LEN],
+    /// Exact archived source of the applied content; absent for authored content
+    /// or admissions that have no archived bytes. This is provenance, not authority.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<CalendarPassportSource>,
     /// Sync direction for this source.
     pub direction: CalendarPassportDirection,
     /// When this source was last observed.
@@ -251,9 +270,12 @@ pub struct CalendarPassportValue {
 /// Value of a `calendar.series_master` claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CalendarSeriesMasterValue {
-    /// Verbatim RFC 5545 recurrence text.
+    /// RFC 5545 recurrence text: verbatim, or for an all-day or floating
+    /// series as it steps on the UTC carrier (`calendar.rrule` keeps the
+    /// source text; FIX 16568).
     pub rrule: String,
-    /// Series start instant.
+    /// Series start instant, or an all-day or floating series' civil start
+    /// on the UTC carrier (its civil fields read as UTC).
     pub dtstart_utc: u64,
     /// IANA zone the recurrence expands in.
     pub tz: String,

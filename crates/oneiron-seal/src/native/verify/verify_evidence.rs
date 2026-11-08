@@ -2,7 +2,10 @@
 use super::super::pdf::RevisionBoundary;
 use super::timestamp_evidence::TimestampResult;
 use super::verify_dss_core::EmbeddedCert;
-use crate::api::{ByteRangeEvidence, Coverage, SignatureKind, SignedRangeDigest, VerifyCheck};
+use crate::api::{
+    ByteRangeEvidence, Coverage, RevisionCoverage, SignatureKind, SignedRangeDigest,
+    UncoveredByteRange, VerifyCheck,
+};
 use crate::memory::{Held, SealMemoryRefusal};
 
 /// A timestamp already passed token integrity, trusted TSA path, and clock
@@ -47,6 +50,7 @@ pub(super) struct EnvelopeEvidence {
     pub kind: SignatureKind,
     pub byte_range: ByteRangeEvidence,
     pub coverage: Coverage,
+    pub revision_coverage: Option<RevisionCoverage>,
     pub digest: Option<SignedRangeDigest>,
     pub revision: Option<RevisionBoundary>,
     pub checks: Vec<VerifyCheck>,
@@ -70,22 +74,43 @@ pub(super) fn evaluate_envelope(
     is_last: bool,
 ) -> Result<EnvelopeEvidence, SealMemoryRefusal> {
     use super::super::pdf;
-    use super::verify_sig_pipeline::{Checks, check_byte_range, verify_cades_sig, verify_doc_ts};
-    use crate::api::{DigestAlgorithm, SignedRangeDigest};
+    use super::verify_sig_pipeline::{
+        Checks, SigHandler, check_byte_range, verify_cades_sig, verify_doc_ts,
+    };
+    use crate::api::{DigestAlgorithm, SignedRangeDigest, VerifyCheckKind, VerifyFindingCode};
     let memory = ctx.limits.memory.ledger()?;
     let br_ok = check_byte_range(bytes, entry);
     let end = entry.byte_range[2].checked_add(entry.byte_range[3]);
     let covers_to = end.filter(|_| br_ok);
     let revision = covers_to.and_then(|end| pdf::bind_range(bytes, ends, end));
-    let kind = if entry.is_doc_ts {
-        SignatureKind::DocumentTimestamp
+    let revision_coverage = if let Some(revision) = revision {
+        Some(RevisionCoverage::WholeRevision {
+            revision: revision.index,
+            byte_end: revision.eof_end as u64,
+        })
     } else {
-        SignatureKind::Signature
+        covers_to.and_then(|end| {
+            ends?.iter().enumerate().find_map(|(revision, eof_end)| {
+                let byte_end = *eof_end as u64;
+                (end < byte_end).then_some(RevisionCoverage::Partial {
+                    revision,
+                    byte_end,
+                    uncovered: [UncoveredByteRange {
+                        start: end,
+                        end: byte_end,
+                    }],
+                })
+            })
+        })
+    };
+    let kind = match entry.handler {
+        SigHandler::DocTs => SignatureKind::DocumentTimestamp,
+        SigHandler::Cades | SigHandler::UnsupportedAdbe => SignatureKind::Signature,
     };
     let mut checks = Checks::new(ctx.limits);
     let mut covered = Vec::new();
-    let (signer_chain, token) = if entry.is_doc_ts {
-        (
+    let (signer_chain, token) = match entry.handler {
+        SigHandler::DocTs => (
             None,
             verify_doc_ts(
                 bytes,
@@ -97,22 +122,49 @@ pub(super) fn evaluate_envelope(
                 ctx.clock_ms,
                 &memory,
             )?,
-        )
-    } else {
-        let cades = verify_cades_sig(
-            bytes,
-            entry,
-            ctx,
-            anchors,
-            &mut checks,
-            &mut covered,
-            &memory,
-        )?;
-        (cades.signer_chain, cades.timestamp)
+        ),
+        SigHandler::Cades => {
+            let cades = verify_cades_sig(
+                bytes,
+                entry,
+                ctx,
+                anchors,
+                &mut checks,
+                &mut covered,
+                &memory,
+            )?;
+            (cades.signer_chain, cades.timestamp)
+        }
+        SigHandler::UnsupportedAdbe => {
+            checks.record(
+                VerifyCheckKind::ByteRange,
+                br_ok,
+                VerifyFindingCode::InvalidByteRange,
+            )?;
+            checks.record(
+                VerifyCheckKind::UnsignedGap,
+                br_ok,
+                VerifyFindingCode::InvalidUnsignedGap,
+            )?;
+            for kind in [
+                VerifyCheckKind::CmsEnvelope,
+                VerifyCheckKind::SignedAttributes,
+                VerifyCheckKind::ContentDigest,
+                VerifyCheckKind::SignatureValue,
+                VerifyCheckKind::SigningCertificateBinding,
+                VerifyCheckKind::CertificatePath,
+            ] {
+                checks.not_run_with_reason(
+                    kind,
+                    Some(VerifyFindingCode::UnsupportedSignatureHandler),
+                )?;
+            }
+            (None, TimestampResult::none())
+        }
     };
     let untrusted_time = token.untrusted_time.filter(|_| revision.is_some());
     let time_proof = token.trusted.and_then(|token| {
-        let source = if entry.is_doc_ts {
+        let source = if entry.handler == SigHandler::DocTs {
             TimeSource::DocumentTimestamp {
                 envelope: index,
                 revision: revision?,
@@ -163,6 +215,7 @@ pub(super) fn evaluate_envelope(
             file_len: bytes.len() as u64,
         },
         coverage,
+        revision_coverage,
         digest,
         revision,
         checks: checks.list,

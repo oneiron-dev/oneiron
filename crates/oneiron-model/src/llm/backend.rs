@@ -21,6 +21,9 @@ pub type LlmResult<T> = std::result::Result<T, LlmError>;
 /// A per-call admission check shared with every backend and transport attempt.
 pub type DispatchRelease<'a> = &'a (dyn Fn() -> LlmResult<()> + Sync);
 
+/// The same pre-send condition retained by queued model calls and their retries.
+pub type OwnedDispatchRelease = Arc<dyn Fn() -> LlmResult<()> + Send + Sync + 'static>;
+
 pub type LlmGenerateFuture<'a> = Pin<Box<dyn Future<Output = LlmResult<LlmResponse>> + Send + 'a>>;
 
 pub type LlmStreamResult<'a> = LlmResult<LlmStream<'a>>;
@@ -175,8 +178,19 @@ pub trait SingleRouteBackend: LlmBackend {
 }
 
 /// How a credential broker is kept apart from the daemon (ARCH-0069
-/// `#broker-isolation`). A call's dispatch receipt names it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+/// `#broker-isolation`). A call's dispatch receipt names it, and so does an
+/// exact publish request whose push a broker carried (FIX 19083).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum BrokerIsolation {
     /// The broker runs as its own OS user.
@@ -207,6 +221,8 @@ pub struct BudgetLease {
     work_context: Arc<Mutex<Option<WorkContext>>>,
     /// Physical backend attempts begun for this call, not inferred from receipts.
     physical_attempts: Arc<AtomicUsize>,
+    /// Independent pre-send conditions, conjoined across clones, not lease authority.
+    dispatch_releases: Arc<Mutex<Vec<OwnedDispatchRelease>>>,
 }
 
 impl fmt::Debug for BudgetLease {
@@ -243,6 +259,7 @@ impl BudgetLease {
             observations: Arc::default(),
             work_context: Arc::default(),
             physical_attempts: Arc::default(),
+            dispatch_releases: Arc::default(),
         }
     }
 
@@ -284,6 +301,41 @@ impl BudgetLease {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// Adds a native pre-send condition. Earlier conditions cannot be replaced;
+    /// the lease's id, guard and accounting remain independent of these checks.
+    pub fn conjoin_dispatch_release(&self, release: OwnedDispatchRelease) {
+        let mut releases = self
+            .dispatch_releases
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !releases.iter().any(|prior| Arc::ptr_eq(prior, &release)) {
+            releases.push(release);
+        }
+    }
+
+    #[must_use]
+    pub fn has_dispatch_release(&self) -> bool {
+        !self
+            .dispatch_releases
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty()
+    }
+
+    /// Checks every condition without holding the cell's lock while a check
+    /// reads its own authority or source snapshot.
+    pub fn check_dispatch_release(&self) -> LlmResult<()> {
+        let releases = self
+            .dispatch_releases
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        for release in releases {
+            release()?;
+        }
+        Ok(())
     }
 
     /// Marks one physical backend attempt begun. Unlike inference observations,

@@ -3,10 +3,31 @@
 
 use super::{EngineLimit, memory_share};
 
+macro_rules! engine_limit_rows {
+    ($($row:expr),+ $(,)?) => {
+        /// Every engine row.
+        pub const ALL: [Self; [$(stringify!($row)),+].len()] = [$($row),+];
+    };
+}
+
 impl EngineLimit {
-    /// Every engine row.
-    pub const ALL: [Self; 145] = [
+    engine_limit_rows![
         Self::KeyedFilterJsonBytes,
+        Self::KeyedNamespaceSegments,
+        Self::KeyedNamespaceBytes,
+        Self::KeyedKeyBytes,
+        Self::BookingEmailBytes,
+        Self::BookingIntakeAnswers,
+        Self::BookingIntakeValueBytes,
+        Self::BookingLocalTimeWindows,
+        Self::ClaimInputJsonBytes,
+        Self::CoreBatchEntities,
+        Self::LegacyBatchEntities,
+        Self::BlobContentBytes,
+        Self::BookingAvailabilityCallsPerMinute,
+        Self::BookingHoldCallsPerMinute,
+        Self::BookingWriteCallsPerMinute,
+        Self::BookingQuarantineCallsPerMinute,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
         Self::CodeResultScanBytes,
@@ -27,6 +48,8 @@ impl EngineLimit {
         Self::ImportFolderNotes,
         Self::ImportDecodedMessages,
         Self::ImportDecodedBytes,
+        Self::WitnessMetadataNodes,
+        Self::WitnessMetadataBytes,
         Self::SignatureDecodeBytes,
         Self::PptxCommentPatches,
         Self::ImportXlsxLiveCells,
@@ -66,9 +89,13 @@ impl EngineLimit {
         Self::EsignSweepDocuments,
         Self::EsignSigningPrincipals,
         Self::EsignSignatureInputBytes,
+        Self::EsignSignatureImageDimensionPx,
         Self::EsignSignaturePngBytes,
         Self::EsignSignatureDocumentBytes,
         Self::EsignSignatureRecipientImages,
+        Self::EsignRejectReasonBytes,
+        Self::EsignEmailFieldBytes,
+        Self::EsignNameFieldBytes,
         Self::EsignBodyBytes,
         Self::EsignGeometryBodyBytes,
         Self::SealOutputBytes,
@@ -143,11 +170,16 @@ impl EngineLimit {
         Self::CommunityCacheBytes,
         Self::ConnectorManifestEntries,
         Self::SharedMergeEvidenceRows,
+        Self::ContextThirdParties,
+        Self::MemoryPinnedRefs,
         Self::CodebaseManifestFiles,
+        Self::RecallQueryBytes,
         Self::RequestedResultRows,
+        Self::TournamentLineageRows,
         Self::EmbeddingDimensions,
         Self::MemoryReasonEvidenceRows,
         Self::MemoryReasonTokens,
+        Self::DecisionQuestionsPerCall,
         Self::ContextEdgeHops,
         Self::ContextNeighbors,
         Self::ContextSelectedEdges,
@@ -157,6 +189,23 @@ impl EngineLimit {
     pub const fn key(self) -> &'static str {
         match self {
             Self::KeyedFilterJsonBytes => "limits.keyed_filter_json_bytes",
+            Self::KeyedNamespaceSegments => "limits.keyed_namespace_segments",
+            Self::KeyedNamespaceBytes => "limits.keyed_namespace_bytes",
+            Self::KeyedKeyBytes => "limits.keyed_key_bytes",
+            Self::BookingEmailBytes => "limits.booking_email_bytes",
+            Self::BookingIntakeAnswers => "limits.booking_intake_answers",
+            Self::BookingIntakeValueBytes => "limits.booking_intake_value_bytes",
+            Self::BookingLocalTimeWindows => "limits.booking_local_time_windows",
+            Self::ClaimInputJsonBytes => "limits.claim_input_json_bytes",
+            Self::CoreBatchEntities => "limits.core_batch_entities",
+            Self::LegacyBatchEntities => "limits.legacy_batch_entities",
+            Self::BlobContentBytes => "limits.blob_content_bytes",
+            Self::BookingAvailabilityCallsPerMinute => {
+                "limits.booking_availability_calls_per_minute"
+            }
+            Self::BookingHoldCallsPerMinute => "limits.booking_hold_calls_per_minute",
+            Self::BookingWriteCallsPerMinute => "limits.booking_write_calls_per_minute",
+            Self::BookingQuarantineCallsPerMinute => "limits.booking_quarantine_calls_per_minute",
             Self::CodeResultInlineBytes => "limits.code_result_inline_bytes",
             Self::CodeResultDiskFloorBytes => "limits.code_result_disk_floor_bytes",
             Self::CodeResultScanBytes => "limits.code_result_scan_bytes",
@@ -177,6 +226,8 @@ impl EngineLimit {
             Self::ImportFolderNotes => "limits.import_folder_notes",
             Self::ImportDecodedMessages => "limits.import_decoded_messages",
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
+            Self::WitnessMetadataNodes => "limits.witness_metadata_nodes",
+            Self::WitnessMetadataBytes => "limits.witness_metadata_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
             Self::PptxCommentPatches => "limits.pptx_comment_patches",
             Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
@@ -216,9 +267,13 @@ impl EngineLimit {
             Self::EsignSweepDocuments => "limits.esign_sweep_documents",
             Self::EsignSigningPrincipals => "limits.esign_signing_principals",
             Self::EsignSignatureInputBytes => "limits.esign_signature_input_bytes",
+            Self::EsignSignatureImageDimensionPx => "limits.signature_image_dimension_px",
             Self::EsignSignaturePngBytes => "limits.esign_signature_png_bytes",
             Self::EsignSignatureDocumentBytes => "limits.esign_signature_document_bytes",
             Self::EsignSignatureRecipientImages => "limits.esign_signature_recipient_images",
+            Self::EsignRejectReasonBytes => "limits.sign_reject_reason_bytes",
+            Self::EsignEmailFieldBytes => "limits.sign_email_field_bytes",
+            Self::EsignNameFieldBytes => "limits.sign_name_field_bytes",
             Self::EsignBodyBytes => "limits.esign_body_bytes",
             Self::EsignGeometryBodyBytes => "limits.esign_geometry_body_bytes",
             Self::SealOutputBytes => "limits.seal_output_bytes",
@@ -293,11 +348,16 @@ impl EngineLimit {
             Self::CommunityCacheBytes => "limits.community_cache_bytes",
             Self::ConnectorManifestEntries => "limits.connector_manifest_entries",
             Self::SharedMergeEvidenceRows => "limits.shared_merge_evidence_rows",
+            Self::ContextThirdParties => "limits.context_third_parties",
+            Self::MemoryPinnedRefs => "limits.memory_pinned_refs",
             Self::CodebaseManifestFiles => "limits.codebase_manifest_files",
+            Self::RecallQueryBytes => "limits.recall_query_bytes",
             Self::RequestedResultRows => "limits.requested_result_rows",
+            Self::TournamentLineageRows => "limits.tournament_lineage_rows",
             Self::EmbeddingDimensions => "limits.embedding_dimensions",
             Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
             Self::MemoryReasonTokens => "limits.memory_reason_tokens",
+            Self::DecisionQuestionsPerCall => "limits.decision_questions_per_call",
             Self::ContextEdgeHops => "limits.context_edge_hops",
             Self::ContextNeighbors => "limits.context_neighbors",
             Self::ContextSelectedEdges => "limits.context_selected_edges",
@@ -308,6 +368,21 @@ impl EngineLimit {
     pub fn default_bound(self) -> u64 {
         match self {
             Self::KeyedFilterJsonBytes => 64 << 20,
+            Self::KeyedNamespaceSegments => 65_536,
+            Self::KeyedNamespaceBytes => 1_048_576,
+            Self::KeyedKeyBytes => 1_048_576,
+            Self::BookingEmailBytes => 1_048_576,
+            Self::BookingIntakeAnswers => 65_536,
+            Self::BookingIntakeValueBytes => 67_108_864,
+            Self::BookingLocalTimeWindows => 65_536,
+            Self::ClaimInputJsonBytes => 67_108_864,
+            Self::CoreBatchEntities => 1_048_576,
+            Self::LegacyBatchEntities => 1_048_576,
+            Self::BlobContentBytes => memory_share(16),
+            Self::BookingAvailabilityCallsPerMinute => 1_000_000,
+            Self::BookingHoldCallsPerMinute => 1_000_000,
+            Self::BookingWriteCallsPerMinute => 1_000_000,
+            Self::BookingQuarantineCallsPerMinute => 1_000_000,
             Self::CodeResultInlineBytes => 1 << 20,
             Self::CodeResultDiskFloorBytes => 1 << 30,
             Self::CodeResultScanBytes => 256 << 20,
@@ -329,6 +404,8 @@ impl EngineLimit {
             Self::ImportFolderNotes => 100_000,
             Self::ImportDecodedMessages => 1_000_000,
             Self::ImportDecodedBytes => 1 << 30,
+            Self::WitnessMetadataNodes => 1_048_576,
+            Self::WitnessMetadataBytes => 67_108_864,
             Self::SignatureDecodeBytes => 1 << 30,
             Self::PptxCommentPatches => 10_000,
             Self::ImportXlsxLiveCells => 200_000,
@@ -389,10 +466,14 @@ impl EngineLimit {
             Self::EsignSigningPrincipals => 256,
             // The owner's signature-image byte ask points (ABC 57, 60, 61).
             Self::EsignSignatureInputBytes => 256 << 20,
+            Self::EsignSignatureImageDimensionPx => 16_384,
             Self::EsignSignaturePngBytes => 256 << 20,
             Self::EsignSignatureDocumentBytes => 4 << 30,
             // The former recipient-image count ceiling is only an ask point.
             Self::EsignSignatureRecipientImages => 16,
+            Self::EsignRejectReasonBytes
+            | Self::EsignEmailFieldBytes
+            | Self::EsignNameFieldBytes => 1 << 20,
             // The 3 MiB the public signing doors refused a body past before
             // token-first ingress (FIX 3808).
             Self::EsignBodyBytes => 3 << 20,
@@ -511,12 +592,17 @@ impl EngineLimit {
             Self::ConnectorManifestEntries => 4_096,
             // The shared-merge reserve's old fixed refusal.
             Self::SharedMergeEvidenceRows => 4_096,
+            // Physical65/68's owner-ruled submitted-count bounds.
+            Self::ContextThirdParties | Self::MemoryPinnedRefs => 65_536,
             // The legacy codebase snapshot manifest's threshold (FIX 74).
             Self::CodebaseManifestFiles => 10_000_000,
+            Self::RecallQueryBytes => 8_388_608,
             // Two to the twentieth: far above any page a door serves in
             // ordinary use. Past it the row asks, and the whole requested
             // count is served.
             Self::RequestedResultRows => 1_048_576,
+            // The per-call hop budget the tournament walk defers past (FIX 9581).
+            Self::TournamentLineageRows => 4_096,
             // Two to the twentieth: far above any width a vault opens with
             // in ordinary use. Past it the row asks, and the vault serves
             // as opened.
@@ -529,6 +615,7 @@ impl EngineLimit {
             // question served in ordinary use. Past it the row asks, and the
             // whole question is served.
             Self::MemoryReasonTokens => 16_777_216,
+            Self::DecisionQuestionsPerCall => super::DEFAULT_DECISION_QUESTIONS_PER_CALL as u64,
             // Owner-ruled ABC row 11 (FIX 62).
             Self::ContextEdgeHops => 1_024,
             // Owner-ruled ABC row 12 (FIX 63).

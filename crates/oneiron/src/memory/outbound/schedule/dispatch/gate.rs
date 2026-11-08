@@ -120,6 +120,11 @@ impl Memory<'_> {
                     .send_autonomy(selection.counterparty_class.as_deref()),
             );
         }
+        // FIX 4747 slice 5: an agent run's schedule carries the fence its
+        // claim took, so no transport call of a stale executor goes.
+        request.agent_run_fence = self
+            .task_host()
+            .and_then(|host| self.vault.agent_run_fence(host.parent()));
         // FIX 6424: the ask names the logical send the executor will run
         // this TASK under, so a press on it pins the send that spends it.
         request.approval_identity_ref = Some(crate::outbound::connector_logical_send_ref(

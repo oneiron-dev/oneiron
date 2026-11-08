@@ -23,7 +23,9 @@
 mod inspect;
 mod native;
 
-pub use inspect::{PdfInspectionError, inspect_pdf_region_until};
+pub use inspect::{
+    PdfInspectionError, inspect_first_party_pdf_region_until, inspect_pdf_region_until,
+};
 
 use std::collections::BTreeMap;
 

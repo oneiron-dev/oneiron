@@ -821,6 +821,14 @@ pub(crate) fn body_covers_through_in(
         }
         return Ok(Some(word_sources(&summary).copied().collect()));
     }
+    if entity_type == crate::registry::ENTITY_TYPE_COMM_RECORD {
+        use crate::federation::record_scope::{ScopedCommRead, read_scoped_comm_in_txn};
+        return match read_scoped_comm_in_txn(dbs, txn, *record, bytes)? {
+            ScopedCommRead::Ordinary => Ok(None),
+            ScopedCommRead::Unavailable => Ok(Some(Vec::new())),
+            ScopedCommRead::Claim { original, .. } => Ok(Some(vec![original])),
+        };
+    }
     Ok(None)
 }
 
@@ -931,24 +939,30 @@ impl Vault {
     /// Lists live retained sub-sessions, proving each reverse index entry.
     pub fn sub_sessions(&self, turn: &EntityId) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
-        conversation_of(&self.store, &txn, turn)?;
+        self.sub_sessions_in_txn(&txn, turn)
+    }
+
+    /// [`Self::sub_sessions`] in `txn`, so a door that admits the turn lists
+    /// its sub-sessions in the same snapshot (FIX 10782).
+    pub fn sub_sessions_in_txn(&self, txn: &RoTxn<'_>, turn: &EntityId) -> Result<Vec<EntityId>> {
+        conversation_of(&self.store, txn, turn)?;
         let sessions = crate::conversation_dag::counted_edge_ids(
             &self.store,
-            &txn,
+            txn,
             turn,
             EdgeKind::SpawnedBy,
             true,
         )?;
         let mut result = Vec::new();
         for id in sessions {
-            match crate::vault::live_entity_row_in_txn(&self.store, &txn, &id)? {
+            match crate::vault::live_entity_row_in_txn(&self.store, txn, &id)? {
                 crate::vault::LiveEntityRow::Absent | crate::vault::LiveEntityRow::DeletedShell => {
                     continue;
                 }
                 _ => {}
             }
-            require_type(&self.store, &txn, &id, ENTITY_TYPE_SESSION)?;
-            if edge_ids(&self.store, &txn, &id, EdgeKind::SpawnedBy, false, 2)? != [*turn] {
+            require_type(&self.store, txn, &id, ENTITY_TYPE_SESSION)?;
+            if edge_ids(&self.store, txn, &id, EdgeKind::SpawnedBy, false, 2)? != [*turn] {
                 return Err(invalid("session has inconsistent SpawnedBy edges"));
             }
             result.push(id);

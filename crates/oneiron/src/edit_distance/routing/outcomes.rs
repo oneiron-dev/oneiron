@@ -20,19 +20,27 @@
 
 use std::collections::BTreeMap;
 
+use super::keys::{
+    AGGREGATE, MEMBER, OUTCOME, ROW_VERSION, StoredHead, StoredOutcome, aggregate_key,
+};
+use super::write::{fold_of, head_of};
 use crate::Vault;
-use crate::edit_distance::attribution::AmendmentJudgment;
+use crate::edit_distance::attribution::{AmendmentJudgment, amendment_judgment_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::task_verb::settlement_anchor::{
     SETTLEMENT_ANCHOR_ASK, SETTLEMENT_ANCHOR_KIND_FIELD, SETTLEMENT_ANCHOR_REF_FIELD,
     SETTLEMENT_ANCHOR_REVIEW, SETTLEMENT_ANCHOR_WORLD_PROOF,
 };
+use crate::write_envelope::WriteActor;
 
 /// The settled disposition of the TASK the run behind `judgment` worked, read
 /// in `txn`; `None` when the judgment names no attempt, the attempt's receipt
 /// names no TASK, no write has settled it yet, or no owner stands behind its
 /// settlement, as its reporter or its anchor (FIX 12195).
+///
+/// An owner-anchored rework outcome (FIX 11706) wins over the settled
+/// disposition: the later lifecycle event is what the run cost.
 ///
 /// # Errors
 ///
@@ -42,6 +50,9 @@ pub(super) fn run_outcome_in_txn(
     txn: &heed::RoTxn<'_>,
     judgment: &AmendmentJudgment,
 ) -> Result<Option<String>> {
+    if let Some(outcome) = OUTCOME.get(&vault.store, txn, &judgment.receipt_id)? {
+        return Ok(Some(outcome.outcome));
+    }
     let Some(task) = task_of_run_in_txn(vault, txn, judgment)? else {
         return Ok(None);
     };
@@ -98,4 +109,140 @@ pub(super) fn task_of_run_in_txn(
         .trigger_ref
         .as_deref()
         .and_then(|hex| EntityId::from_hex(hex).ok()))
+}
+
+/// A Keep later undone: the rework outcome the undo door anchors (FIX 11706).
+pub(crate) const OUTCOME_UNDONE: &str = "undone";
+
+/// A fork later merged: the rework outcome the merge door anchors (FIX 11706).
+pub(crate) const OUTCOME_MERGED: &str = "merged";
+
+/// Anchors `outcome` to the judged amendment behind `receipt_id` (FIX 11706):
+/// first writer wins, a second put for the same stamp is a no-op, and the
+/// receipt's count is refolded in the same transaction. Returns whether a
+/// row was written. Only a live owner anchors; a non-owner writes nothing
+/// and reads `Ok(false)`. No actor bytes are stored.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn put_routing_outcome_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipt_id: &str,
+    outcome: &str,
+    at: u64,
+    actor: WriteActor,
+) -> Result<bool> {
+    let entity_ref = actor.entity_ref();
+    if !crate::policy_model::is_live_vault_owner_in_txn(vault, wtxn, &entity_ref)? {
+        return Ok(false);
+    }
+    let key = receipt_id.to_owned();
+    if OUTCOME.contains(&vault.store, &*wtxn, &key)? {
+        return Ok(false);
+    }
+    OUTCOME.put(
+        &vault.store,
+        wtxn,
+        &key,
+        &StoredOutcome {
+            v: ROW_VERSION,
+            outcome: outcome.to_owned(),
+            at,
+        },
+    )?;
+    refold_receipt_outcome_in_txn(vault, wtxn, receipt_id)?;
+    Ok(true)
+}
+
+/// Refolds one receipt's count after its rework outcome lands (FIX 11706):
+/// the receipt-keyed twin of the task-wide refold, recomputed through the
+/// outcome choke so the just-written token counts. A receipt with no
+/// judgment yet, or not yet folded, is a no-op: its later fold reads the
+/// outcome row through the choke. Idempotent: the same outcome on the
+/// same head short-circuits, as before.
+///
+/// # Errors
+///
+/// Storage errors.
+fn refold_receipt_outcome_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipt_id: &str,
+) -> Result<()> {
+    let Some(judgment) = amendment_judgment_in_txn(vault, &*wtxn, receipt_id)? else {
+        return Ok(());
+    };
+    let key = receipt_id.to_owned();
+    let Some(mut member) = MEMBER.get(&vault.store, &*wtxn, &key)? else {
+        return Ok(());
+    };
+    let outcome = run_outcome_in_txn(vault, &*wtxn, &judgment)?;
+    let counted = if fold_of(&judgment, None)?.is_some() {
+        outcome
+    } else {
+        None
+    };
+    // Nothing counted yet and still nothing stands counted: with no head
+    // to compare, the now-named head is not even derived. Outcome and
+    // head are stamped together wherever a fold counted, so outcome
+    // `Some` implies head `Some` — `counted == outcome` on a `None`-head
+    // row means both are `None`, never two equal `Some`s (FIX 11916).
+    if counted == member.outcome && member.head.is_none() {
+        return Ok(());
+    }
+    let agg_key = aggregate_key(&head_of(&judgment))?;
+    let now = StoredHead::from(&agg_key);
+    // Same outcome on the same head: nothing moved, as before (ruling 4).
+    // Same outcome on another head: the count moves heads below (ruling 1).
+    if counted == member.outcome && member.head.as_ref() == Some(&now) {
+        return Ok(());
+    }
+    // No aggregate is ever created here: a now-named head with no row
+    // skips the receipt entirely, as before (ruling 3).
+    let Some(mut aggregate) = AGGREGATE.get(&vault.store, &*wtxn, &agg_key)? else {
+        return Ok(());
+    };
+    // One decrement path off the stored head only (FIX 11916): a `None`
+    // head has no decrement — its outcome is `None` by the invariant.
+    if let Some(old_head) = member.head.as_ref()
+        && let Some(old) = member.outcome.as_ref()
+    {
+        if old_head == &now {
+            // The same head the fold counted on: the already-loaded
+            // aggregate takes the decrement, no second get/put.
+            if let Some(count) = aggregate.outcomes.get_mut(old) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    aggregate.outcomes.remove(old);
+                }
+            }
+        } else {
+            // Re-judged onto another head: the old head's token moves to
+            // the new head. An old head with no row is a no-op decrement
+            // (ruling 3); the new-head increment below still lands.
+            let old_key = old_head.key();
+            if let Some(mut old_aggregate) = AGGREGATE.get(&vault.store, &*wtxn, &old_key)?
+                && let Some(count) = old_aggregate.outcomes.get_mut(old)
+            {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    old_aggregate.outcomes.remove(old);
+                }
+                AGGREGATE.put(&vault.store, wtxn, &old_key, &old_aggregate)?;
+            }
+        }
+    }
+    if let Some(new) = &counted {
+        *aggregate.outcomes.entry(new.clone()).or_insert(0) += 1;
+    }
+    AGGREGATE.put(&vault.store, wtxn, &agg_key, &aggregate)?;
+    member.outcome = counted;
+    // A row counting for the first time stamps the now-named head; a
+    // moved count re-anchors. A same-head row writes back the head it
+    // already named.
+    member.head = Some(now);
+    MEMBER.put(&vault.store, wtxn, &key, &member)?;
+    Ok(())
 }
