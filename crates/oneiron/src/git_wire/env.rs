@@ -23,9 +23,12 @@ pub struct GitWireProcessEnv {
     pub(super) timeout: Duration,
     pub(super) max_output_bytes: usize,
     pub(super) hub_root: Option<PathBuf>,
+    /// The hub child runs the local-only profile of a local folder hub
+    /// (FIX 21922). Process state for one child, never stored.
+    pub(super) hub_local_only: bool,
     pub(super) mirror_egress: Option<super::mirror_push::MirrorEgress>,
     pub(super) import_profile: Option<super::import_fetch::ImportProcessProfile>,
-    /// An exact publish's relay leg on a served host (FIX 19083).
+    /// An origin mirror's relay leg on a served host (FIX 19083).
     pub(super) origin_relay: Option<super::origin_relay::OriginRelayEgress>,
     #[cfg(test)]
     pub(super) after_attribute_snapshot: Option<(PathBuf, Vec<u8>)>,
@@ -55,6 +58,7 @@ impl GitWireProcessEnv {
             timeout: GIT_WIRE_DEFAULT_TIMEOUT,
             max_output_bytes: GIT_WIRE_DEFAULT_MAX_OUTPUT_BYTES,
             hub_root: None,
+            hub_local_only: false,
             mirror_egress: None,
             import_profile: None,
             origin_relay: None,

@@ -501,7 +501,7 @@ pub(super) fn history_required(request: &AuthorityHistoryRequest) -> Error {
 
 /// Whether `error` is a fold's refusal for history this vault does not hold,
 /// which an import of that history may close, rather than a fault.
-pub(super) fn is_history_incomplete(error: &Error) -> bool {
+pub(crate) fn is_history_incomplete(error: &Error) -> bool {
     matches!(
         error,
         Error::Record(RecordError::AuthorityHistoryRequired { .. })

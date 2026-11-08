@@ -36,6 +36,8 @@
 //! settlement or its cancellation, and the worker runs one inference at a
 //! time.
 mod bundle;
+mod controller;
+pub(crate) use controller::start_worker_controller;
 mod drafter_binding;
 // FIX 14975: the drafter evaluator's incarnations of the vault's own row.
 #[cfg(unix)]
@@ -48,6 +50,7 @@ mod media_worker;
 mod probe;
 #[cfg(unix)]
 mod process;
+mod replacement;
 mod reporting;
 mod routes;
 mod session;
@@ -113,6 +116,7 @@ struct WorkerHost {
     /// Whether this process may launch managed workers.
     launch_permitted: AtomicBool,
     workers: Mutex<BTreeMap<String, Hosted>>,
+    pending_replacements: Mutex<Vec<Arc<replacement::Replacement>>>,
     stores: Arc<Stores>,
     ledgers: Mutex<BTreeMap<String, Arc<DeviceLedger>>>,
     admissions: Mutex<BTreeMap<String, Arc<DeviceAdmission>>>,
@@ -381,6 +385,7 @@ pub(crate) fn permit_worker_launch() {
     for worker in managed {
         worker.start();
     }
+    host.replace_workers(Vec::new());
 }
 
 /// Attaches this process's snapshot port to `vault` (V2-R3): its lock
@@ -425,26 +430,6 @@ fn stop_device_admission_if_unused(host: &WorkerHost, device: &str) {
     if let Some(admission) = admission {
         admission.stop();
     }
-}
-
-/// The device ledger of the device managed worker `worker_id` launches on,
-/// when its launch names one: what a snapshot transfer may take there.
-#[cfg(unix)]
-fn device_ledger(worker_id: &str) -> Option<Arc<DeviceLedger>> {
-    let host = HOST.get()?;
-    let device = host
-        .lock()
-        .get(worker_id)?
-        .row
-        .launch
-        .as_ref()?
-        .device
-        .clone()?;
-    host.ledgers
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&device)
-        .cloned()
 }
 
 /// The device ledger of the actual managed worker `worker` names
@@ -554,6 +539,9 @@ pub(super) fn configure(
     providers: &BTreeMap<String, ProviderConfig>,
 ) -> Vec<WorkerStatus> {
     if rows.is_empty() {
+        if let Some(host) = HOST.get() {
+            host.replace_workers(Vec::new());
+        }
         return Vec::new();
     }
     let host = HOST.get_or_init(WorkerHost::default);
@@ -608,17 +596,7 @@ pub(super) fn configure(
     for worker in started {
         host.begin(&worker);
     }
-    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-        for (old, new, old_device) in replaced {
-            runtime.spawn(async move {
-                old.retire().await;
-                if let Some(device) = old_device {
-                    stop_device_admission_if_unused(host, &device);
-                }
-                host.begin(&new);
-            });
-        }
-    }
+    host.replace_workers(replaced);
     if moved {
         super::drafter_serving::workers_configured();
     }

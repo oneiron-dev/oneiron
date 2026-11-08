@@ -271,6 +271,8 @@ pub(super) fn bare_job_row(job: &JobPresence) -> TaskRow {
         counter_task_ref: None,
         cancel_pathology: job.cancel_pathology.clone(),
         widening: None,
+        // FIX685: a bare job row is no intent, so it carries no due stamp.
+        due_at: None,
         fits: Vec::new(),
     }
 }
