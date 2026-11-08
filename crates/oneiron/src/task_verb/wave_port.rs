@@ -491,6 +491,8 @@ impl VaultWaveTaskPort<'_> {
                     assignee,
                     consult: None,
                     ttl: None,
+                    // FIX685: engine-internal minters carry no due annotation.
+                    due_at: None,
                     spec,
                     type_ref: crate::task_type::TaskTypeRef::seeded_root(),
                 };
