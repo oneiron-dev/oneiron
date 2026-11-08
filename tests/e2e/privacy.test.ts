@@ -725,16 +725,41 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
       { inputTokens: 128, outputTokens: 48 }),
   }, ...backgroundExtraction("privacy-extract", ["follower_instruction"])] });
   let engine: EngineFixture | undefined;
+  let extractionTicket: FacadeResult<"vault.memory.signal_extraction"> | undefined;
+  const extractionStatusTransitions: { observedAt: number; jobRef: string;
+    status: FacadeResult<"vault.consolidation.status"> }[] = [];
+  const extractionResults: NonNullable<FacadeResult<"vault.memory.signal_extraction.result">>[] = [];
+  let summaryQueued: FacadeResult<"vault.summaries.create"> | undefined;
+  const summaryStatusHistory: { observedAt: number; value: FacadeResult<"vault.summaries.status"> }[] = [];
   let primaryFailed: boolean = false;
   let primary: unknown;
   try {
     engine = await EngineFixture.start({ id: "PRIVACY-02", profile,
-      initArgs: ["--dimensions", String(spec.vectorTable.dimensions)], serverConfig: dreamerConfig(providers, true) });
+      initArgs: ["--dimensions", String(spec.vectorTable.dimensions)], serverConfig: dreamerConfig(providers, true),
+      serverLog: "info,oneiron::e2e_dreamer_queue=debug,oneiron::dreamer_runner=debug,oneiron::dreamer_consolidation=debug" });
     await grantExtraction(engine);
     const source = await ownerRoom(engine, spec.sourceText, spec.phoneticName);
     const witnessed = await engine.client.call("vault.witness", turn(source.id, spec.sourceText));
     const sourceTurn = turnId(witnessed);
-    const extracted = await extract(engine, sourceTurn, providers);
+    // Preserve the public extraction ticket and every status observation;
+    // the original completion conditions and provider barrier are unchanged.
+    extractionTicket = await engine.client.call("vault.memory.signal_extraction", { turn_refs: [sourceTurn] });
+    expect(extractionTicket.job_refs.length).toBeGreaterThan(0);
+    providers.releaseBarrier("extract");
+    for (const jobRef of extractionTicket.job_refs) {
+      const result = await awaitPublic(async () => {
+        const [value, status] = await Promise.all([
+          engine!.client.call("vault.memory.signal_extraction.result", { job_ref: jobRef }),
+          engine!.client.call("vault.consolidation.status", { job_ref: jobRef }),
+        ]);
+        extractionStatusTransitions.push({ observedAt: Date.now(), jobRef, status });
+        return value;
+      }, value => value?.job.state === "completed", { label: "production signal extraction" });
+      if (!result) throw new Error("Completed extraction has no typed result");
+      expect(result.job.last_error ?? null).toBeNull();
+      extractionResults.push(result);
+    }
+    const extracted = extractionResults.flatMap(result => result.claims);
     const dependent = extracted.filter(row => row.claim.predicate === "privacy.location"
       && row.claim.value === spec.claimText);
     expect(dependent).toHaveLength(1);
@@ -752,8 +777,13 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     const queued = await engine.client.call("vault.summaries.create", {
       scope: { conversation_ref: source.id, path: "canonical" },
     });
+    summaryQueued = queued;
     const completed = await awaitPublic(
-      () => engine!.client.call("vault.summaries.status", { attempt: queued.attempt }),
+      async () => {
+        const value = await engine!.client.call("vault.summaries.status", { attempt: queued.attempt });
+        summaryStatusHistory.push({ observedAt: Date.now(), value });
+        return value;
+      },
       value => value.state === "completed", { label: "source-linked SUMMARY" },
     );
     if (!completed.result) throw new Error("Completed summary has no result");
@@ -900,6 +930,37 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     primary = error;
   } finally {
     const cleanups: string[] = [];
+    // Read the public Dreamer lineage, wake, committed-step and prefilter
+    // records before closing the engine. No queue or provider state is changed.
+    try {
+      const currentEngine = engine;
+      if (currentEngine) {
+        const captureJob = async (jobRef: string, decisions: boolean) => {
+          const [status, lineage, wake] = await Promise.all([
+            currentEngine.client.call("vault.consolidation.status", { job_ref: jobRef }),
+            currentEngine.client.call("vault.consolidation.lineage", { job_ref: jobRef, limit: 100 }),
+            currentEngine.client.call("vault.consolidation.wake.status", { job_ref: jobRef }),
+          ]);
+          const wakeDetail = wake
+            ? await currentEngine.client.call("vault.consolidation.wake.status", { wake_ref: wake.wake_ref }) : null;
+          const settledSteps = lineage ? await Promise.all(lineage.steps.map(step =>
+            currentEngine.client.call("vault.runs.step", { job_ref: jobRef, step_hash: step.step_hash }))) : [];
+          const candidateDecisions = decisions
+            ? await currentEngine.client.call("vault.consolidation.candidate_decisions", { job_ref: jobRef }) : null;
+          return { status, lineage, wake, wakeDetail, settledSteps, candidateDecisions };
+        };
+        const jobs: Record<string, unknown> = {};
+        for (const jobRef of extractionTicket?.job_refs ?? []) jobs[jobRef] = await captureJob(jobRef, true);
+        const summaryJobRefs = new Set<string>(summaryQueued ? [summaryQueued.attempt] : []);
+        for (const row of summaryStatusHistory) summaryJobRefs.add(row.value.current_attempt);
+        for (const jobRef of summaryJobRefs) jobs[jobRef] = await captureJob(jobRef, false);
+        const prefilterReceipts = await currentEngine.client.call("vault.receipts", { kinds: ["extraction"], limit: 1000 });
+        await currentEngine.artifacts.json("diagnostic-privacy-02-dreamer.json", {
+          sourceTurn, extractionTicket, extractionStatusTransitions, extractionResults,
+          summaryQueued, summaryStatusHistory, jobs, prefilterReceipts, providerCalls: providers.seenFixtureCalls,
+        });
+      }
+    } catch (error) { cleanups.push(errorText(error)); }
     // Capture the real summary wire body before provider cleanup. The standing
     // matcher stays strict; this artifact makes any mismatching field visible.
     try { await engine?.artifacts.json("diagnostic-privacy-02-provider-calls.json", { seen: providers.seenFixtureCalls }); }

@@ -688,7 +688,17 @@ impl<'a> DreamerRunnerStore<'a> {
             // Its next run lists afresh.
             crate::dreamer_consolidation::unpin_neighbourhood_in_txn(self.vault, txn, source.id)?;
             Ok(())
-        })
+        })?;
+        // Diagnostic-only observation after the requeue commits; no queue input changes.
+        tracing::debug!(
+            target: "oneiron::e2e_dreamer_queue",
+            attempt = %crate::entity_id::bytes_to_hex_lower(source.id.as_bytes()),
+            reason,
+            retry_at,
+            attempt_count = source.attempt_count,
+            "deferred Dreamer attempt requeued"
+        );
+        Ok(())
     }
 
     /// Marks a leased Dreamer attempt complete through the generic queue.

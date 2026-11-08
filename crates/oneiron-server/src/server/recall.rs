@@ -666,11 +666,29 @@ fn reader<'a>(
 /// The last pack a recall published for its door to answer with when the
 /// deadline comes due; a later pack replaces an earlier one.
 #[derive(Clone, Default)]
-struct CutSlot(Arc<Mutex<Option<MemoryPack>>>);
+struct CutSlot(Arc<Mutex<(Option<MemoryPack>, u64)>>);
 
 impl CutSlot {
     fn put(&self, pack: MemoryPack) {
-        if let Ok(mut slot) = self.0.lock() {
+        if let Ok(mut guard) = self.0.lock() {
+            let (slot, sequence) = &mut *guard;
+            *sequence += 1;
+            // Diagnostic-only observation: ids and run identity, never pack text.
+            let item_refs = pack
+                .items
+                .iter()
+                .map(|item| item.short_id.as_str())
+                .collect::<Vec<_>>();
+            tracing::debug!(
+                target: "oneiron_server::e2e_recall_cut",
+                sequence = *sequence,
+                item_count = pack.items.len(),
+                ?item_refs,
+                run_id = ?pack.retrieval_run_id,
+                partial = pack.retrieval_meta.partial,
+                census_capped = pack.scope_honesty.census_capped,
+                "recall cut pack published"
+            );
             *slot = Some(pack);
         }
     }
@@ -681,7 +699,10 @@ impl CutSlot {
         self.0
             .lock()
             .ok()
-            .and_then(|mut slot| slot.take())
+            .and_then(|mut guard| {
+                let (slot, _) = &mut *guard;
+                slot.take()
+            })
             .ok_or_else(|| {
                 MemoryError::new(
                     MEMORY_CODE_INTERNAL,

@@ -682,7 +682,9 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
   const providers = await ScriptedProviders.start({ id: "retrieval-effort",
     steps: [rerankStep("high"), rerankStep("xhigh"), rerankStep("max"), rerankStep("deadline-base")] });
   const engine = await EngineFixture.start({ id: "RETRIEVAL-05", profile,
-    initArgs: ["--dimensions", "4"], serverConfig: rerankConfig(providers.urls.reranker!) });
+    initArgs: ["--dimensions", "4"],
+    serverConfig: rerankConfig(providers.urls.reranker!) + "\n[recall]\nretrieval_telemetry_capture = true\n",
+    serverLog: "info,oneiron_server::e2e_recall_cut=debug" });
   let primaryFailed: boolean = false;
   let primary: unknown;
   try {
@@ -720,6 +722,7 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
     const request: FacadeInput<"vault.recall"> = {
       query: "retrievaleffortlantern", effort: "high", scope: { kinds: ["CLAIM"] },
       limit: 10, deadline_ms: fixture.deadlineMs,
+      telemetry: { capture_trace: true },
     };
     const delivery = engine.client.request<FacadeResult<"vault.recall">>(
       "POST", "/v1/core/facade/vault.recall", request);
@@ -735,6 +738,16 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
     if (held.input.stage !== "expansion") throw new Error("Expected expansion work");
     expect(held.input.request.query).toBe(request.query);
     const reply = await delivery;
+    // Diagnostic-only capture: preserve the actual reply and any finalized
+    // serving runs before the original item-set assertion can end the case.
+    const runs = await engine.client.call("vault.retrieval.runs", { limit: 10 });
+    const servingRun = reply.body.retrieval_run_id
+      ? await engine.client.call("vault.retrieval.run", { run_id: reply.body.retrieval_run_id }) : null;
+    const replay = runs.length
+      ? await engine.client.call("vault.retrieval.replay", { run_ids: runs.map(row => row.run.run_id) }) : null;
+    await engine.artifacts.json("diagnostic-retrieval-05-deadline.json", {
+      request, response: { status: reply.status, raw: reply.raw, body: reply.body }, held, runs, servingRun, replay,
+    });
     readReceipt(reply.body.narrowing);
     expect(reply.body.retrieval_meta.partial).toBe(true);
     expect(sorted(reply.body.items.map(item => item.short_id))).toEqual(sorted(rows.map(row => row.ref)));
