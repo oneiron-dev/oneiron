@@ -110,6 +110,7 @@ impl LinkedInConnectorCallTransport {
     ) -> std::result::Result<Value, String> {
         let request = ConnectorCallRequest {
             name: self.catalog_name.clone(),
+            source: None,
             tool: tool.to_owned(),
             arguments,
             mutation,

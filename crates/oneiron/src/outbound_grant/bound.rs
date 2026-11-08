@@ -5,7 +5,7 @@ use super::spelling;
 use super::verb_class::{classes_of, verb_in_class};
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, BoundClass, BoundEnvelope, ConsentGrantRow,
-    GrantBound, MAX_ENVELOPE_SELECTORS, StandingConsentGrant,
+    GrantBound, StandingConsentGrant,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -226,26 +226,13 @@ impl StandingOutboundGrantScope {
             && target.as_deref().is_none_or(spelling::ref_fits)
             && dial_selectors
                 .iter()
-                .all(|selector| spelling::selector_fits(selector))
-            && dial_selectors.len() + extra.len() <= MAX_ENVELOPE_SELECTORS;
+                .all(|selector| spelling::selector_fits(selector));
         let mut envelope_selectors: Vec<String> = dial_selectors
             .iter()
             .map(|selector| spelling::spell_selector(selector))
             .collect();
         if !plain {
             let record = spelling::record_selectors(principal_ref, self);
-            // Endpoints past the selector cap collapse into one selector:
-            // no effect's candidate names a scoped grant's endpoints, and
-            // the record carries them.
-            if let Self::ScopedMcp {
-                endpoint_allowlist, ..
-            } = self
-                && envelope_selectors.len() + extra.len() + record.len() > MAX_ENVELOPE_SELECTORS
-            {
-                let endpoint_prefix = format!("{SELECTOR_ENDPOINT}:");
-                envelope_selectors.retain(|selector| !selector.starts_with(&endpoint_prefix));
-                envelope_selectors.push(spelling::endpoint_set_selector(endpoint_allowlist));
-            }
             envelope_selectors.extend(record);
         }
         envelope_selectors.extend(extra);
