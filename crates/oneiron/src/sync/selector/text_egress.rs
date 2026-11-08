@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::federation::record_scope::note_world;
 use crate::federation::{FederationDirectionScope, Scope};
 use crate::registry::ENTITY_TYPE_ASSET_TEXT;
 
@@ -44,9 +45,10 @@ pub(super) fn text_backed(
 }
 
 /// Whether the stored source `source`, with header and body `raw`, is read
-/// under `authority` by a selector at `position`: causally admitted, at a
-/// record position the grant reads and the selector selects, in a selected
-/// facet, and past every per-row selector rule.
+/// under `authority` by a selector at `position`: causally admitted, held at
+/// the worlds the grant and the selector read, at a record position the grant
+/// reads and the selector selects, in a selected facet, and past every
+/// per-row selector rule.
 pub(super) fn source_selected(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -59,8 +61,12 @@ pub(super) fn source_selected(
     if !crate::authority::row_causal_admitted(vault, rtxn, source, raw)? {
         return Ok(false);
     }
-    let Some(record) =
-        crate::federation::record_scope::scope_for_blob(&vault.store, rtxn, *source, raw)?
+    // A source sits at one world it is in that the grant and the selector
+    // both hold, as the text it backs does: an ASSET in two worlds backs a
+    // text in either (FIX 22223).
+    let selected = note_world::selector_world_axis(selector.world);
+    let held = [&authority.worlds, &selected];
+    let Some(record) = note_world::blob_scope_held_at(&vault.store, rtxn, *source, raw, &held)?
     else {
         return Ok(false);
     };
