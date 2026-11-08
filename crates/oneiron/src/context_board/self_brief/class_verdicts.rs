@@ -1,8 +1,9 @@
 //! The per-class verdicts a brief shows (FIX 20734, Engine ruling 11:16):
-//! one line for each class the actor's standing outbound grants, its
-//! effector policy rows and its act-policy rows name, and one for each of
-//! DEC-0006 invariant 1's default rules. Each line gives the word an act
-//! inside its bound gets (allow, deny or would-ask) with that bound shown,
+//! one line for each class the actor's standing outbound and consent grants,
+//! its effector policy rows, governing connector keys and act-policy rows
+//! name, and one for each of DEC-0006 invariant 1's default rules. Each line
+//! gives the word an act inside its bound gets (allow, deny or would-ask)
+//! with that bound shown,
 //! and names each administrative hold as a hold, never as one of those three
 //! words (C2:207, B67:148).
 //!
@@ -71,6 +72,18 @@ pub struct BriefClassVerdict {
     pub per_act: Vec<BriefPerActCheck>,
 }
 
+/// A consent grant's action envelope as its bound states it. An act's
+/// selectors must all be among `selectors`; its target must be `target` when
+/// one is set; its draw must stay within `budget`. `receipt_required` is an
+/// obligation, never an authorization.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct BriefActionEnvelope {
+    pub selectors: Vec<String>,
+    pub target: Option<String>,
+    pub budget: Option<u64>,
+    pub receipt_required: bool,
+}
+
 /// Where a class line comes from, with the bound its source states.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -80,6 +93,45 @@ pub enum BriefClassSource {
     OutboundGrant {
         grant: EntityId,
         scope: BriefOutboundScope,
+    },
+    /// An active standing consent grant whose actor subject contains this
+    /// actor: its reference and action envelope. `external_effects` is false
+    /// when the subject pins an actor class: an external effect's consent
+    /// requirement names no actor class, so such a grant never covers it.
+    ConsentGrant {
+        grant: String,
+        envelope: BriefActionEnvelope,
+        external_effects: bool,
+    },
+    /// The governing key the actor's calls to `server` run under, when it is
+    /// not Active. `status` is `ConnectorKeyStatus::as_str()`.
+    ConnectorKey {
+        key: EntityId,
+        server: String,
+        status: String,
+    },
+    /// A stamped charter whose text or compiled policy no longer matches its
+    /// stamp. `catalog_charter` is true for a derived key's catalog charter,
+    /// false for the key's own.
+    CharterDrift {
+        key: EntityId,
+        server: String,
+        catalog_charter: bool,
+    },
+    /// One compiled never-list entry, exactly as stored. `catalog_charter`
+    /// distinguishes the derived key's catalog charter from its own.
+    NeverListEntry {
+        key: EntityId,
+        server: String,
+        entry: String,
+        catalog_charter: bool,
+    },
+    /// The governing connector slate's setting for one tool.
+    SlateTool {
+        key: EntityId,
+        server: String,
+        tool: String,
+        setting: crate::connector_key::SlateDisposition,
     },
     /// A scoped policy grant row that admits the actor and an external
     /// effect, with no budget row: the effector it covers as the row names

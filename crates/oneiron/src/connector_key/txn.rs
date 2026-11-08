@@ -4,6 +4,7 @@
 
 use crate::ports::EntityStoreRead;
 use sha2::Digest;
+use std::collections::BTreeSet;
 use std::io::Cursor;
 
 use rmpv::Value;
@@ -244,6 +245,31 @@ pub(crate) fn governing_connector_key(
         return Ok(Some(hit));
     }
     Ok(pick(agnostic))
+}
+
+/// Every key that governs one of `actor`'s connectors, resolved as a call
+/// resolves it: the actor's own tuple before an actor-agnostic one, non-Active
+/// winners kept. Each winning key id appears once, at its first connector.
+pub(crate) fn governing_keys_for_actor_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<Vec<(EntityId, ConnectorKeyRecord)>> {
+    let tokens = CONNECTOR_INDEX
+        .scan(store, txn)?
+        .into_iter()
+        .map(|(key, ())| key.connector)
+        .collect::<BTreeSet<String>>();
+    let mut seen = BTreeSet::new();
+    let mut winners = Vec::new();
+    for token in tokens {
+        if let Some((key_id, key)) = governing_connector_key(store, txn, &token, Some(actor))?
+            && seen.insert(key_id)
+        {
+            winners.push((key_id, key));
+        }
+    }
+    Ok(winners)
 }
 
 // --- In-txn rewrites -----------------------------------------------------------
