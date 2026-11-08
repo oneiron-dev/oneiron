@@ -602,7 +602,13 @@ impl Vault {
                 )));
             };
             let words = if code_artifact {
-                code::code_reattach_words_in_txn(self, wtxn, artifact_id, locator)?
+                code::code_reattach_words_in_txn(
+                    self,
+                    wtxn,
+                    artifact_id,
+                    &thread.anchor.locator,
+                    locator,
+                )?
             } else {
                 let bytes = self
                     .read_blob_artifact_version_in_txn(wtxn, artifact_id, version)?
