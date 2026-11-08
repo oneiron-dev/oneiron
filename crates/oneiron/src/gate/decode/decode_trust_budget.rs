@@ -65,9 +65,17 @@ pub(super) fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
             let mut receipted = false;
             let mut warned = false;
             let mut actor_ref = None;
+            let mut seen: Vec<&str> = Vec::with_capacity(entries.len());
 
             for (key, value) in entries {
-                match key.as_str()? {
+                let key = key.as_str()?;
+                // A repeated field makes the row malformed: a later copy must
+                // never replace an earlier, narrower value (FIX 8749).
+                if seen.contains(&key) {
+                    return None;
+                }
+                seen.push(key);
+                match key {
                     SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY => {
                         max_auto_sensitivity = Some(sensitivity_band_from_value(value)?);
                     }
@@ -88,7 +96,10 @@ pub(super) fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
                     ACTOR_REF_KEY => {
                         actor_ref = Some(EntityId::from_hex(value.as_str()?).ok()?);
                     }
-                    _ => {}
+                    // An unknown field is malformed too, never skipped: the
+                    // whole ceiling then fails closed until the owner repairs
+                    // the manifest.
+                    _ => return None,
                 }
             }
 

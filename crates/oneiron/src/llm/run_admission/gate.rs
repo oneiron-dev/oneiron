@@ -9,7 +9,8 @@ use futures_core::Stream;
 use super::super::{
     BrokerIsolation, BudgetLease, DispatchBinding, FatalLlmError, LlmBackend, LlmCapability,
     LlmError, LlmGenerateFuture, LlmRequest, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult,
-    LlmUsage, ModelId, RetryableLlmError, SingleRouteBackend, TransportFaultKind, WorkContext,
+    LlmUsage, ModelId, OwnedDispatchRelease, RetryableLlmError, SingleRouteBackend,
+    TransportFaultKind, WorkContext,
 };
 use super::admission::{RunDenied, RunInner};
 
@@ -36,6 +37,7 @@ pub struct GatedBackend {
     offer: DispatchBinding,
     /// One gate is one work tree; clones of this context share its cancel Arc.
     work_context: WorkContext,
+    text_dispatch_releases: Vec<OwnedDispatchRelease>,
 }
 
 impl GatedBackend {
@@ -44,12 +46,14 @@ impl GatedBackend {
         inner: Arc<dyn SingleRouteBackend>,
         offer: DispatchBinding,
         work_context: WorkContext,
+        text_dispatch_releases: Vec<OwnedDispatchRelease>,
     ) -> Self {
         Self {
             run,
             inner,
             offer,
             work_context,
+            text_dispatch_releases,
         }
     }
 
@@ -95,6 +99,9 @@ impl GatedBackend {
             ..self.offer.clone()
         };
         self.run.begin_dispatch(lease, &call)?;
+        for release in &self.text_dispatch_releases {
+            lease.conjoin_dispatch_release(Arc::clone(release));
+        }
         Ok(digest)
     }
 

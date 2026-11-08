@@ -1,13 +1,14 @@
 //! Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome.
 
-pub(super) const DREAMER_STEP_STATE_SCHEMA_VERSION: u64 = 1;
+pub(super) const DREAMER_STEP_STATE_SCHEMA_VERSION: u64 = 2;
 
-pub(super) const DREAMER_STEP_STATE_KEYS: [&str; 9] = [
+pub(super) const DREAMER_STEP_STATE_KEYS: [&str; 10] = [
     "schema_version",
     "progression",
     "started_at",
     "updated_at",
     "response",
+    "source",
     "actor",
     "subject",
     "claim",
@@ -77,6 +78,8 @@ pub(super) const KEY_STATE_CLAIM: &str = "claim";
 
 /// A step-state row whose response its owner's erase took (KS-2B1).
 pub(super) const KEY_STATE_ERASED: &str = "erased";
+
+pub(super) const KEY_STEP_SOURCE: &str = "source";
 
 // Runtime write-envelope provenance keys stamped by `dreamer_runtime_envelope`
 // onto every step/trap record. The memo-index admission gate (ONE-1344) reads
