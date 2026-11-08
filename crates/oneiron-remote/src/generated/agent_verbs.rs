@@ -1209,6 +1209,12 @@ impl OneironClient {
                 "vault.sync.quarantine.held_edits" => remote_agent_verb_output::<
                     Vec<(u64, oneiron::task_verb::sdk::SyncHeldEditEvidence)>,
                 >(client, verb, &input),
+                "vault.sync.documents.copy_edit.review" => remote_agent_verb_output::<
+                    Option<oneiron::task_verb::sdk::RepoCopyEditReviewView>,
+                >(client, verb, &input),
+                "vault.sync.documents.copy_edit.settle" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RepoCopyEditSettleView,
+                >(client, verb, &input),
                 "vault.sync.retained_work.wait.set" => {
                     remote_agent_verb_output::<u64>(client, verb, &input)
                 }
@@ -1752,6 +1758,12 @@ impl OneironClient {
                     oneiron::policy_model::doors::HostedRelayDecision,
                 >(client, verb, &input),
                 "vault.consent.approve_once" => remote_agent_verb_output::<
+                    oneiron::consent::lifecycle::ConsentActReceipt,
+                >(client, verb, &input),
+                "vault.campaign.held" => remote_agent_verb_output::<
+                    Vec<oneiron::campaign::enrollment::CampaignEnrollmentHeldCall>,
+                >(client, verb, &input),
+                "vault.campaign.approve_once" => remote_agent_verb_output::<
                     oneiron::consent::lifecycle::ConsentActReceipt,
                 >(client, verb, &input),
                 "vault.connectors.calls.approve_once" => remote_agent_verb_output::<
@@ -3756,6 +3768,9 @@ impl OneironClient {
                     oneiron::memory::EntityRefReceipt,
                 >(client, verb, &input),
                 "vault.notes.read" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteReadView>>,
+                >(client, verb, &input),
+                "vault.notes.read_indexed" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteReadView>>,
                 >(client, verb, &input),
                 "vault.notes.history" => remote_agent_verb_output::<
@@ -8861,6 +8876,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.sync.quarantine.held_edits", value)
     }
+    pub fn vault_sync_documents_copy_edit_review(
+        &self,
+        input: &oneiron::task_verb::sdk::RepoCopyEditReviewRequest,
+    ) -> Result<Option<oneiron::task_verb::sdk::RepoCopyEditReviewView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sync.documents.copy_edit.review", value)
+    }
+    pub fn vault_sync_documents_copy_edit_settle(
+        &self,
+        input: &oneiron::task_verb::sdk::RepoCopyEditSettleRequest,
+    ) -> Result<oneiron::task_verb::sdk::RepoCopyEditSettleView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sync.documents.copy_edit.settle", value)
+    }
     pub fn vault_sync_retained_work_wait_set(
         &self,
         input: &oneiron::task_verb::sdk::RetainedWorkWaitSetRequest,
@@ -10989,6 +11028,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consent.approve_once", value)
+    }
+    pub fn vault_campaign_held(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::campaign::enrollment::CampaignEnrollmentHeldCall>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.held", value)
+    }
+    pub fn vault_campaign_approve_once(
+        &self,
+        input: &oneiron::task_verb::sdk::CampaignEnrollmentApproveOnceRequest,
+    ) -> Result<oneiron::consent::lifecycle::ConsentActReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.approve_once", value)
     }
     pub fn vault_connectors_calls_approve_once(
         &self,
@@ -18980,6 +19043,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.notes.read", value)
+    }
+    pub fn vault_notes_read_indexed(
+        &self,
+        input: &oneiron::note::NoteIndexedReadRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteReadView>>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.read_indexed", value)
     }
     pub fn vault_notes_history(
         &self,

@@ -3753,6 +3753,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_sync_documents_copy_edit_review(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sync.documents.copy_edit.review")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.sync.documents.copy_edit.review", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sync_documents_copy_edit_settle(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sync.documents.copy_edit.settle")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.sync.documents.copy_edit.settle", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_sync_retained_work_wait_set(
         &self,
         py: Python<'_>,
@@ -5467,6 +5495,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.consent.approve_once")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.consent.approve_once", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_campaign_held(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.held")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.campaign.held", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_campaign_approve_once(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.approve_once")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.campaign.approve_once", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -11086,6 +11128,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.notes.read")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.notes.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_read_indexed(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.read_indexed")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.read_indexed", input))
             .map_err(raise)?;
         encode(&output)
     }

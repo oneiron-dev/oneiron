@@ -74,11 +74,20 @@ impl Memory<'_> {
         &self,
         room: &RoomNote<'_>,
         input: &NoteAccessRequest,
+        indexed: bool,
         project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument, super::NoteActor) -> MemoryResult<T>,
     ) -> MemoryResult<ScopedReadResult<Option<T>>> {
         let key = self.read_key()?;
         let view = room.session.read_view()?;
-        self.project_note_read_in_room(&room.session, &view, key, room.note, input, project)
+        self.project_note_read_in_room_at(
+            &room.session,
+            &view,
+            key,
+            room.note,
+            input,
+            indexed,
+            project,
+        )
     }
 
     /// A NOTE read of `note`, a row `session`'s room holds, through `view`,
@@ -95,6 +104,19 @@ impl Memory<'_> {
         input: &NoteAccessRequest,
         project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument, super::NoteActor) -> MemoryResult<T>,
     ) -> MemoryResult<ScopedReadResult<Option<T>>> {
+        self.project_note_read_in_room_at(session, view, key, note, input, false, project)
+    }
+
+    fn project_note_read_in_room_at<T: Serialize + serde::de::DeserializeOwned>(
+        &self,
+        session: &OffRecordSession<'_>,
+        view: &SessionStoreView<'_>,
+        key: ScopedReadActorKey,
+        note: EntityId,
+        input: &NoteAccessRequest,
+        indexed: bool,
+        project: impl FnOnce(&heed::RoTxn<'_>, NoteDocument, super::NoteActor) -> MemoryResult<T>,
+    ) -> MemoryResult<ScopedReadResult<Option<T>>> {
         let lane = self
             .vault()
             .scoped_read_in_session(key, view)
@@ -104,6 +126,7 @@ impl Memory<'_> {
             note,
             store: &store,
             pending: session.pending_scan_checks(),
+            indexed,
         };
         let result = lane.read_projected(&[PointRead::id(note)], None, |txn, rows| {
             self.project_admitted_note(txn, rows, &at, input, project)

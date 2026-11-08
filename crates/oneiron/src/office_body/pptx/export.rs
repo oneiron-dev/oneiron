@@ -11,7 +11,8 @@
 //! head moved, and no bytes merge.
 
 use super::super::{
-    EXPORTS, OfficeBodyExportRecord, OfficeBodyKind, SOURCES, invalid, version_key, writer,
+    EXPORTS, HeldDeckId, OfficeBodyExportRecord, OfficeBodyKind, SOURCES, invalid, version_key,
+    writer,
 };
 use super::{PptxExport, doc, export_gate, live};
 use crate::Vault;
@@ -159,6 +160,7 @@ impl Vault {
             let record = export_record(
                 (artifact, version.version, export.frontier.clone()),
                 Some(rebind_frontier(&rebind.receipt)),
+                None,
                 export.base_version,
                 actor,
                 at,
@@ -293,9 +295,20 @@ impl Vault {
             })?;
             rebound = Some(rebind_frontier(&rebind.receipt));
         }
+        let held_ids = rebound.is_none().then(|| {
+            hold.bindings
+                .iter()
+                .map(|(node, binding)| HeldDeckId {
+                    node: node.0,
+                    native_id: binding.native_id,
+                    creation_id: binding.creation_id.clone(),
+                })
+                .collect()
+        });
         let record = export_record(
             (artifact, version.version, hold.frontier.clone()),
             rebound,
+            held_ids,
             base_version.unwrap_or(source.source_version),
             actor,
             at,
@@ -348,6 +361,7 @@ fn rebind_frontier(receipt: &TextCommitReceipt) -> Vec<u8> {
 fn export_record(
     (artifact, version, frontier): (&EntityId, u64, Vec<u8>),
     rebind_frontier: Option<Vec<u8>>,
+    held_ids: Option<Vec<HeldDeckId>>,
     source_version: u64,
     actor: WriteActor,
     at: u64,
@@ -358,6 +372,7 @@ fn export_record(
         version,
         frontier,
         rebind_frontier,
+        held_ids,
         source_version,
         actor: BodyActor::Actor(actor.entity_ref()),
         author: actor.entity_ref().to_hex(),
