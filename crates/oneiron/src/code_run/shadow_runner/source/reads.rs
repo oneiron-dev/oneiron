@@ -22,6 +22,7 @@ use crate::code_run::{
     RetainedReadVerdict,
 };
 use crate::engine_executor::JsResultRef;
+use crate::store::result_memory::ResultShare;
 use crate::{EntityId, Result, Vault};
 
 /// A body of another run that the step's read context names, frozen for the
@@ -49,6 +50,7 @@ pub(crate) struct ForeignRead<'s> {
 pub(super) fn freeze_reader_bodies(
     vault: &Vault,
     context: &ArmContext,
+    share: &ResultShare,
     admits: Admits<'_>,
 ) -> Result<Outcome<Vec<ForeignBody>>> {
     let ArmContext::Captured { context, .. } = context else {
@@ -100,12 +102,12 @@ pub(super) fn freeze_reader_bodies(
         let Some(output) = output else {
             return Ok(Err(unavailable(Reason::SourceMissing, "reader_body")));
         };
-        let body = match freeze_body(vault, owner, output, admits, "reader_body")? {
+        let body = match freeze_body(vault, owner, output, share, admits, "reader_body")? {
             Ok(body) => body,
             Err(unavailable) => return Ok(Err(unavailable)),
         };
-        if let Some(bytes) = &body.bytes {
-            frozen_bytes = frozen_bytes.saturating_add(bytes.len() as u64);
+        if body.bytes.is_some() {
+            frozen_bytes = frozen_bytes.saturating_add(body.output.raw_len);
         }
         foreign.push(ForeignBody { owner, body });
     }
