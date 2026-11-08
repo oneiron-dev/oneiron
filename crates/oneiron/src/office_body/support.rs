@@ -281,17 +281,21 @@ pub(super) fn land_moved_xlsx(
 /// Recalculate a projected workbook in process at `at`, read in `zone`'s
 /// local time, seeded by the projected package, so the result is
 /// deterministic in all three and no vault frontier reaches the file
-/// (OF-491). A workbook the engine refuses goes to the host's `precision`
-/// fallback when it installed one ([`takes_precision_fallback`]), whose
-/// calculator the result then names; with none, or when it fails, the
-/// workbook is marked to recalculate when it is opened instead.
+/// (OF-491). A workbook the native engine refuses goes to the host's
+/// `precision` fallback when it installed one ([`takes_precision_fallback`]);
+/// with none, or when both engines fail, it is marked to recalculate when
+/// opened and carries the native engine's typed reason beside the marked bytes.
 pub(super) fn recalc_xlsx(
     bytes: &[u8],
     limits: Limits,
     at: u64,
     zone: &OfficeRecalcZone,
     precision: Option<&XlsxPrecisionRecalc>,
-) -> Result<(Vec<u8>, Option<CalcEngineStamp>)> {
+) -> Result<(
+    Vec<u8>,
+    Option<CalcEngineStamp>,
+    Option<OfficeRecalcFailure>,
+)> {
     let mut seed = [0u8; 8];
     seed.copy_from_slice(&blake3::hash(bytes).as_bytes()[..8]);
     let seed = u64::from_le_bytes(seed);
@@ -311,13 +315,18 @@ pub(super) fn recalc_xlsx(
                     report.engine.engine,
                     report.engine.version,
                 )?),
+                None,
             ));
         }
         Err(refusal) => refusal,
     };
+    let failure = OfficeRecalcFailure {
+        code: refusal.code().to_owned(),
+        detail: refusal.to_string(),
+    };
     if let Some(port) = precision.filter(|_| takes_precision_fallback(&refusal)) {
         match precision_recalc(port, bytes, limits, (at, zone), seed) {
-            Ok((bytes, stamp)) => return Ok((bytes, Some(stamp))),
+            Ok((bytes, stamp)) => return Ok((bytes, Some(stamp), None)),
             Err(reason) => tracing::warn!(
                 native = %refusal,
                 %reason,
@@ -329,6 +338,7 @@ pub(super) fn recalc_xlsx(
         mark_full_calc(bytes, limits, &crate::office_body::document_resources())
             .map_err(|_| invalid("the projected workbook could not be marked to recalculate"))?,
         None,
+        Some(failure),
     ))
 }
 
