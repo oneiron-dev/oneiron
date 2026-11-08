@@ -33,7 +33,7 @@ pub use change::{
     MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER, MODEL_PACK_REVERT_VERB, ModelPackChangeCause,
     ModelPackRevert, ModelPackRevertBlock, ModelPackRevertRequest, model_pack_revert_preference,
 };
-pub use retirement::{MODEL_PACK_RETIREMENT_NOTIFICATION_PRODUCER, ModelPackRetirementReport};
+pub use retirement::MODEL_PACK_RETIREMENT_NOTIFICATION_PRODUCER;
 
 /// The owner's model pack preference: follow the latest pack, pin a season
 /// or pin one pack. Key: (). Absent follows the latest pack.
@@ -139,11 +139,20 @@ pub fn model_pack_access_for(offer: &OfferBinding) -> Option<ModelPackAccess> {
     }
 }
 
+/// The key a pack fills the compaction model under (#agent-models: "An agent
+/// or a model pack may change it"): the cheap writer of an agent's
+/// compaction summaries, which an agent's own compaction model outranks and
+/// which comes before its host's default
+/// ([`crate::agent_def::resolve_compaction_model`], FIX 20042). An engine
+/// call (CALLS, FIX 20042): no engine role is the compaction model, so its
+/// key is named here, beside the role keys.
+pub const MODEL_PACK_COMPACTION_KEY: &str = "compaction";
+
 /// The key a pack fills `role` under. An engine call (CALLS, FIX 5365): a
 /// pack's role keys are the engine's role names (`generative_reasoner`,
-/// `dreamer_current`, `retrieval_embedder`, `extraction_encoder`, ...). A
-/// key no role reads (`coding`, `compaction`) is kept with the pack and
-/// binds nothing yet.
+/// `dreamer_current`, `retrieval_embedder`, `extraction_encoder`, ...).
+/// [`MODEL_PACK_COMPACTION_KEY`] names the compaction model (FIX 20042). A
+/// key nothing reads (`coding`) is kept with the pack and binds nothing yet.
 #[must_use]
 pub fn model_pack_role_key(role: ModelRole) -> String {
     serde_json::to_value(role)
@@ -207,7 +216,7 @@ pub fn pack_is_pinnable(
         .any(|installed| installed.pack.id == *pack && installed.pack.is_served_on(as_of_epoch_day))
 }
 
-/// A role's model from the active pack.
+/// A role's model, or the compaction model, from the active pack.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPackRoleChoice {
     pub pack: ModelPackId,
@@ -405,6 +414,29 @@ impl Vault {
         role: ModelRole,
         access: &AccessSnapshot,
     ) -> Result<Option<ModelPackRoleChoice>> {
+        self.model_pack_choice(&model_pack_role_key(role), access)
+    }
+
+    /// The active pack's compaction model on the access the host holds
+    /// (FIX 20042): the pack's pick under [`MODEL_PACK_COMPACTION_KEY`], by
+    /// the rule a role's pick follows ([`Self::model_pack_role_choice`]).
+    /// `None` when the owner's manifest outranks the pack, no model pack is
+    /// installed, the pack fills no compaction model, or none of its
+    /// variants runs here; then the host's default writes the summaries.
+    pub fn model_pack_compaction_choice(
+        &self,
+        access: &AccessSnapshot,
+    ) -> Result<Option<ModelPackRoleChoice>> {
+        self.model_pack_choice(MODEL_PACK_COMPACTION_KEY, access)
+    }
+
+    /// The active pack's pick under `key` on `access`, unless the owner's
+    /// manifest outranks the pack.
+    fn model_pack_choice(
+        &self,
+        key: &str,
+        access: &AccessSnapshot,
+    ) -> Result<Option<ModelPackRoleChoice>> {
         let txn = self.store.env.read_txn()?;
         let manifest = super::manifest::read_manifest(&self.store, &txn)?;
         if manifest_outranks_model_pack(manifest.as_ref()) {
@@ -413,8 +445,7 @@ impl Vault {
         let Some(active) = self.active_model_pack_in_txn(&txn)? else {
             return Ok(None);
         };
-        let key = model_pack_role_key(role);
-        let choice = resolve_model_pack_role(&active.pack, &key, access, self.model_pack_today())
+        let choice = resolve_model_pack_role(&active.pack, key, access, self.model_pack_today())
             .map(|variant| ModelPackRoleChoice {
                 pack: active.pack.id.clone(),
                 season: active.pack.season.clone(),

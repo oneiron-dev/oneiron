@@ -11,7 +11,13 @@
 //! Its second adapter (OSH-3, [`GitCallHeader`]) sends one exchange of git's
 //! smart HTTP to one repository with the credential it installs alone: the
 //! body spooled and checked before the credential comes, the reply relayed
-//! byte for byte and cut if it echoes the credential.
+//! byte for byte and cut if it echoes the credential. Its third
+//! ([`LfsCallHeader`]) sends one Git LFS batch call or basic-transfer
+//! action by the same steps: the repository credential on a batch,
+//! installed by the broker, and an action's own headers on that action
+//! alone; where a batch reply hands the credential back in an action's
+//! header, the daemon sees a placeholder, and the broker installs the
+//! credential again only on that action at the repository's own origin.
 //!
 //! It runs no model and no generated code, and it does not link the engine.
 //! The daemon side ([`BrokerClient`]) and the broker side ([`serve`]) share the
@@ -27,6 +33,7 @@ mod error;
 mod form;
 mod frame;
 mod git_http;
+mod lfs_http;
 mod responses;
 mod route_keys;
 mod send;
@@ -40,6 +47,8 @@ mod child;
 #[cfg(unix)]
 mod client;
 #[cfg(unix)]
+mod exchange;
+#[cfg(unix)]
 mod peer;
 #[cfg(unix)]
 mod serve;
@@ -50,6 +59,7 @@ pub use deadline::FRAME_DEADLINE;
 pub use digest::{is_auth_header, request_digest};
 pub use error::{BrokerError, Failure, Refusal};
 pub use form::FormData;
+pub use frame::dispatch::DispatchError;
 pub use frame::{MAX_BODY, MAX_SECRET, MAX_STREAM, PROTOCOL_VERSION};
 pub use git_http::{
     GitCallHeader, GitExchange, GitRepository, GitRequestDigest, GitService, GitTarget,
@@ -57,6 +67,12 @@ pub use git_http::{
 };
 #[cfg(unix)]
 pub use git_http::{GitReply, PreparedGitCall};
+pub use lfs_http::{
+    LFS_CREDENTIAL_PLACEHOLDER, LfsActionTarget, LfsBatchTarget, LfsCallHeader, LfsOperation,
+    LfsRequestDigest, LfsTarget, check_lfs_headers, lfs_request_digest,
+};
+#[cfg(unix)]
+pub use lfs_http::{LfsReply, PreparedLfsCall};
 pub use send::SendPolicy;
 pub use shape::{Shape, json_member};
 pub use strip::{MARKER, strip};

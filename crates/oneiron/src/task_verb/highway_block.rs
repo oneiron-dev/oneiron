@@ -30,8 +30,8 @@ use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
 use super::ask_record;
 use super::ask_types::{
-    TaskAskDecision, TaskAskEvidenceReason, TaskAskHandle, TaskAskOptionId, TaskAskQuestion,
-    TaskAskResult, TaskAskSpec, TaskAskTarget,
+    TaskAskHandle, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSpec,
+    TaskAskTarget,
 };
 use super::brief::StoredBrief;
 use super::consts::{
@@ -94,18 +94,7 @@ pub(super) struct BlockContinuation {
 /// The option a settled ask chose: the chosen word's option under a first
 /// decision, or the decided option. Anything else chose nothing.
 pub(super) fn selected_task_ask_option(result: &TaskAskResult) -> Option<&TaskAskOptionId> {
-    match &result.decision {
-        TaskAskDecision::Answer(option) => Some(option),
-        TaskAskDecision::First(answer) => result
-            .evidence
-            .iter()
-            .find(|entry| entry.answer == *answer && entry.reason == TaskAskEvidenceReason::Counted)
-            .and_then(|entry| entry.word.option.as_ref()),
-        TaskAskDecision::Collected
-        | TaskAskDecision::No
-        | TaskAskDecision::Conflict
-        | TaskAskDecision::Unknown => None,
-    }
+    result.decision.picked_option(&result.evidence)
 }
 
 /// How an ask a TASK blocks on stands to the Done it would answer (FIX
@@ -363,9 +352,10 @@ impl Memory<'_> {
             ],
         };
         for (option, text) in options {
-            question
-                .options
-                .insert(TaskAskOptionId::new(option)?, text.to_owned());
+            question.options.insert(
+                TaskAskOptionId::new(option)?,
+                TaskAskOption::new(text.to_owned()),
+            );
         }
         if matches!(continuation.purpose, BlockPurpose::Done { .. }) {
             question.outcome_binding = brief.brief.success.outcome_binding.clone();

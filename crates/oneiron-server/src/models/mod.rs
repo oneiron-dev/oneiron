@@ -64,6 +64,7 @@ mod ladder;
 pub(crate) mod launch_price;
 mod llama_identity;
 mod media;
+pub(crate) mod native_call_capture;
 #[cfg(unix)]
 mod native_exl3;
 mod offer;
@@ -110,8 +111,9 @@ pub(crate) use discovered::MeshRoutes;
 pub(crate) use host_budgets::ModelHostBudgets;
 pub use hosted_speech::{HostedCloner, VendorVoice};
 pub(crate) use http::{codec_token, encode_request_body, is_cloud_node, mark_cloud_node};
-pub(crate) use ladder::ModelCallBinding;
+pub(crate) use ladder::{AnsweringRung, ModelCallBinding};
 pub use ladder::{CallDeadline, OfferLadder};
+pub(crate) use media::AgentMediaCall;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};

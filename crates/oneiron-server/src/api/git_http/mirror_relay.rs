@@ -40,6 +40,18 @@
 //!   under its own policy. The broker's isolation goes on the request, or on
 //!   the batch.
 //!
+//! A mirror run's Git-LFS upload goes through the same broker with no relay
+//! (FIX 19876): the engine's LFS orchestration runs here over the broker's
+//! LFS transport (`lfs_broker`), each batch call and object action judged
+//! again against the destination the run read, its spool keeping the disk
+//! reserve, and the mirror's credential released at the same custody door
+//! only after the broker acknowledged the exchange's body: for each batch
+//! call, and for an action the batch reply handed it back for, which the
+//! broker installs again only at the mirror's own origin. Object actions
+//! carry the headers the batch reply named, as given, never the mirror's
+//! credential. The broker's isolation and its rewrite count go on the run,
+//! apart from the git pushes'.
+//!
 //! No pack size or call time is bounded here: each step waits at most the
 //! host's transfer idle limit without progress, a write at the disk reserve
 //! is refused, and Git's exit ends the relay. No host allowlist applies: a
@@ -67,6 +79,7 @@ use oneiron::origin::git_transport::{
     OriginGitPlanPush, OriginGitPlanPushReport, OriginGitPublishPush, OriginGitPushReport,
     OriginGitTransport,
 };
+use oneiron::origin::lfs::{LfsOid, LfsTransferReport, upload_lfs_objects};
 use oneiron::origin::publish::OriginPublishDestination;
 use oneiron::{EntityId, Vault};
 use oneiron_broker::{
@@ -77,10 +90,11 @@ use tokio::sync::oneshot;
 use zeroize::Zeroizing;
 
 use super::broker_relay::{
-    RelayNotes, answer, broker_code, digest_body, serve_loopback, spool_request,
+    RelayNotes, answer, broker_code, broker_isolation, digest_body, serve_loopback, spool_request,
 };
 use super::gate::{advertised_service, header_value, text_response};
 use super::import_source_relay::{carries_relay_ticket, mint_relay_ticket};
+use super::lfs_broker::{BrokeredLfsTransport, LfsCustody};
 use super::routes::GitService;
 use crate::machine::DiskFloor;
 use crate::models::{BrokerContext, WeakBrokerContext};
@@ -90,6 +104,9 @@ const MIRROR_REPO_SEGMENT: &str = "mirror.git";
 
 /// The prefix of every refusal code a mirror relay notes.
 const MIRROR_CODE_PREFIX: &str = "mirror";
+
+/// The prefix of every refusal code a mirror's Git-LFS upload meets.
+const MIRROR_LFS_CODE_PREFIX: &str = "mirror_lfs";
 
 /// Installs on `vault` the transport its origin mirror git goes through:
 /// `broker`, each step waiting at most the transfer idle limit
@@ -264,6 +281,112 @@ impl OriginGitTransport for BrokeredOriginGitTransport {
             broker_isolation: end.isolation,
         }
     }
+
+    fn push_lfs_objects(
+        &self,
+        repo_id: EntityId,
+        destination: &OriginPublishDestination,
+        objects: &[(LfsOid, u64)],
+    ) -> LfsTransferReport {
+        let unsent = |code: String| LfsTransferReport {
+            missing: Err(oneiron::Error::Refused(format!(
+                "{code}: the mirror's Git-LFS objects were not sent through the credential broker"
+            ))),
+            broker_isolation: None,
+            credential_rewrites: 0,
+        };
+        let (Some(vault), Some(broker)) = (self.vault.upgrade(), self.broker.upgrade()) else {
+            return unsent(format!("{MIRROR_LFS_CODE_PREFIX}_broker_unavailable"));
+        };
+        let Ok(repository) = GitRepository::parse(&destination.url) else {
+            return unsent(format!("{MIRROR_LFS_CODE_PREFIX}_url_malformed"));
+        };
+        let custody = MirrorLfsCustody {
+            vault: &vault,
+            repo_id,
+            destination,
+        };
+        let transport = BrokeredLfsTransport::new(
+            &broker,
+            &custody,
+            repository,
+            self.idle,
+            &self.disk,
+            MIRROR_LFS_CODE_PREFIX,
+        );
+        let missing = upload_lfs_objects(&vault, &transport, objects);
+        transport.report(missing)
+    }
+}
+
+/// A mirror's custody for its Git-LFS upload: the destination the run read,
+/// judged again before each exchange as a push's is, and the mirror's
+/// credential.
+struct MirrorLfsCustody<'a> {
+    vault: &'a Vault,
+    repo_id: EntityId,
+    destination: &'a OriginPublishDestination,
+}
+
+impl LfsCustody for MirrorLfsCustody<'_> {
+    fn admitted(&self) -> Result<(), String> {
+        mirror_destination_admitted(self.vault, self.repo_id, self.destination)
+    }
+
+    fn credential(&self) -> Result<Zeroizing<Vec<u8>>, String> {
+        mirror_credential(self.vault, self.destination)
+    }
+}
+
+/// Whether the mirror of the repository `repo_id` is still `destination`,
+/// judged again now; otherwise the refusal's code.
+fn mirror_destination_admitted(
+    vault: &Vault,
+    repo_id: EntityId,
+    destination: &OriginPublishDestination,
+) -> Result<(), String> {
+    vault
+        .check_origin_publish_destination(repo_id, destination)
+        .map_err(|error| match error {
+            oneiron::Error::Refused(reason) => reason
+                .split(':')
+                .next()
+                .unwrap_or("destination_changed")
+                .to_owned(),
+            _ => "destination_unreadable".to_owned(),
+        })
+}
+
+/// The mirror's basic-auth value for `destination`, released at the custody
+/// door and copied once into a buffer wiped on drop.
+fn mirror_credential(
+    vault: &Vault,
+    destination: &OriginPublishDestination,
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    let mut secret = Zeroizing::new(Vec::new());
+    let mut oversized = false;
+    vault
+        .with_publish_credential(destination, &mut |header: &str| {
+            if header.len() > MAX_SECRET {
+                oversized = true;
+                return;
+            }
+            // Sized once, so no reallocation leaves a copy behind.
+            secret.reserve_exact(header.len());
+            secret.extend_from_slice(header.as_bytes());
+        })
+        .map_err(|error| match error {
+            oneiron::Error::Refused(reason) => reason
+                .split(':')
+                .next()
+                .unwrap_or("credential_refused")
+                .to_owned(),
+            _ => format!("{MIRROR_CODE_PREFIX}_credential_refused_at_door"),
+        })?;
+    if oversized || secret.is_empty() {
+        return Err(format!("{MIRROR_CODE_PREFIX}_credential_not_a_header"));
+    }
+    Ok(secret)
 }
 
 /// A read's failure through the relay, naming its refusal code.
@@ -332,14 +455,6 @@ fn unpushed_plan_report(refs: usize, failure: String) -> GitPlanPushReport {
     }
 }
 
-/// The receipt spelling of the broker's isolation.
-const fn broker_isolation(isolation: Isolation) -> BrokerIsolation {
-    match isolation {
-        Isolation::SeparateUser => BrokerIsolation::SeparateUser,
-        Isolation::SameUser => BrokerIsolation::SameUser,
-    }
-}
-
 /// One call's broker leg: what each exchange is judged and sent under, the
 /// first refusal any exchange met, and what reached the broker.
 struct MirrorLeg {
@@ -377,45 +492,13 @@ impl MirrorLeg {
         let Some(repo_id) = self.push_of else {
             return Ok(());
         };
-        self.vault
-            .check_origin_publish_destination(repo_id, &self.destination)
-            .map_err(|error| match error {
-                oneiron::Error::Refused(reason) => reason
-                    .split(':')
-                    .next()
-                    .unwrap_or("destination_changed")
-                    .to_owned(),
-                _ => "destination_unreadable".to_owned(),
-            })
+        mirror_destination_admitted(&self.vault, repo_id, &self.destination)
     }
 
     /// The mirror's basic-auth value, released at the custody door for the
     /// recorded destination and copied once into a buffer wiped on drop.
     fn credential(&self) -> Result<Zeroizing<Vec<u8>>, String> {
-        let mut secret = Zeroizing::new(Vec::new());
-        let mut oversized = false;
-        self.vault
-            .with_publish_credential(&self.destination, &mut |header: &str| {
-                if header.len() > MAX_SECRET {
-                    oversized = true;
-                    return;
-                }
-                // Sized once, so no reallocation leaves a copy behind.
-                secret.reserve_exact(header.len());
-                secret.extend_from_slice(header.as_bytes());
-            })
-            .map_err(|error| match error {
-                oneiron::Error::Refused(reason) => reason
-                    .split(':')
-                    .next()
-                    .unwrap_or("credential_refused")
-                    .to_owned(),
-                _ => format!("{MIRROR_CODE_PREFIX}_credential_refused_at_door"),
-            })?;
-        if oversized || secret.is_empty() {
-            return Err(format!("{MIRROR_CODE_PREFIX}_credential_not_a_header"));
-        }
-        Ok(secret)
+        mirror_credential(&self.vault, &self.destination)
     }
 
     /// Sends one exchange of this leg's service with `repository` through
