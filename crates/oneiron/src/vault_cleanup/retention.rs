@@ -84,7 +84,7 @@ pub(super) fn note_retention_in_txn(
     else {
         return Ok(None);
     };
-    let Ok(note) = crate::note::decode_note_body_in_txn(&vault.store, txn, &row.body) else {
+    let Ok(note) = crate::note::decode_note_core_in_txn(&vault.store, txn, &row.body) else {
         return Ok(None);
     };
     let kind =
