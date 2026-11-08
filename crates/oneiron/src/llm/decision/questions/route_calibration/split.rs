@@ -1,8 +1,10 @@
-//! The fit and check halves of a question's pairs, by source case. Pairs that share a row they
-//! were derived from (other than the question itself) are one case: the answer, its unit, the
-//! outcome fact and the fact's subject and sources. A case's side is a deterministic hash of
-//! the question and the case's least row, so the variants of one case, in every route group,
-//! fall on one side.
+//! The fit and check halves of a question's pairs, by source case. Pairs that share an answer
+//! or an outcome fact are one case: a person's change of an answer and the answer's own pair,
+//! or two answers of the question judged by one fact. A shared subject or source does not join
+//! cases, since one subject (the owner) or one source may stand behind a question's every
+//! fact and would put every pair on one side. A case's side is a deterministic hash of the
+//! question and the case's least row, so the variants of one case, in every route group, fall
+//! on one side.
 
 use std::collections::BTreeMap;
 
@@ -43,12 +45,10 @@ pub(super) fn fit_sides(question: EntityId, pairs: &[CalibrationPair]) -> Vec<bo
         .collect()
 }
 
-/// The rows that make `pair` one case with another: its answer and outcome fact, and every
-/// row it was derived from but the question.
-fn case_rows(question: EntityId, pair: &CalibrationPair) -> impl Iterator<Item = EntityId> + '_ {
+/// The rows that make `pair` one case with another: its answer and its outcome fact.
+fn case_rows(question: EntityId, pair: &CalibrationPair) -> impl Iterator<Item = EntityId> {
     [pair.outcome.answer, pair.outcome.fact]
         .into_iter()
-        .chain(pair.derived_from.iter().copied())
         .filter(move |row| *row != question)
 }
 
