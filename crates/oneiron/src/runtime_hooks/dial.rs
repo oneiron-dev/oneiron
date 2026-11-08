@@ -31,6 +31,11 @@ impl Vault {
     /// Whether hooks run on this vault.
     pub fn hooks_enabled(&self) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(ENABLED.get(&self.store, &rtxn, &())?.unwrap_or(true))
+        self.hooks_enabled_in_txn(&rtxn)
+    }
+
+    /// [`Self::hooks_enabled`], in the caller's snapshot.
+    pub(super) fn hooks_enabled_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        Ok(ENABLED.get(&self.store, txn, &())?.unwrap_or(true))
     }
 }

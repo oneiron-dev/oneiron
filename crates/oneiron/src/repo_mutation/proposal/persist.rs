@@ -1,6 +1,8 @@
 //! One proposal's persistence (moved from `submit.rs`, G4 PR2): its
 //! journal claims, built before the writer, and the claims, base snapshot
-//! and row it writes in its caller's writer. Every proposer shares it.
+//! and row it writes in its caller's writer. Every proposer shares it, so
+//! every stored proposal has its submission admission receipt (FIX 4338),
+//! and a replacement its repair link (FIX 4364), in that same writer.
 
 use super::*;
 
@@ -12,6 +14,9 @@ pub(crate) struct PreparedRepoProposal {
     body: ClaimBody,
     session_claim_id: EntityId,
     session_claim: ClaimBody,
+    /// The failed proposal this one replaces, read again in its writer
+    /// (FIX 4364); `None` for an ordinary proposal.
+    repair: Option<super::repair::RepairSource>,
 }
 
 impl PreparedRepoProposal {
@@ -111,20 +116,39 @@ impl PreparedRepoProposal {
             body,
             session_claim_id,
             session_claim,
+            repair: None,
         })
     }
 
-    /// Writes the claims, the base snapshot and the row in `txn`, after
-    /// validating the provenance and conflict bindings in it.
+    /// This proposal as the replacement of the failed proposal `repair`
+    /// names (FIX 4364); its row names the same source.
+    #[must_use]
+    pub(in crate::repo_mutation) fn with_repair(
+        mut self,
+        repair: Option<super::repair::RepairSource>,
+    ) -> Self {
+        self.repair = repair;
+        self
+    }
+
+    /// Writes the claims, the submission admission receipt, the base
+    /// snapshot and the row in `txn`, after validating the provenance and
+    /// conflict bindings in it, then a replacement's repair link.
     ///
     /// # Errors
-    /// A binding that does not hold, an absent actor, or a store failure.
+    /// A binding that does not hold, an absent actor, a repair source that
+    /// does not qualify, or a store failure.
     pub(in crate::repo_mutation) fn persist_in_txn(
         &self,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
     ) -> Result<()> {
         let row = &self.row;
+        if row.repair_of != self.repair.as_ref().map(|repair| repair.source) {
+            return Err(invalid(
+                "a replacement proposal is written with its repair source",
+            ));
+        }
         let actor = row.actor.live()?;
         crate::repo_mutation::trailer::validate_repo_provenance_request_in_txn(
             vault,
@@ -150,6 +174,7 @@ impl PreparedRepoProposal {
             return Err(Error::EntityNotFound);
         }
         put_journal_claim(vault, txn, row.id, Some(actor), &self.body, row.created_at)?;
+        let admission = super::receipts::record_admission_in_txn(vault, txn, row, &self.body)?;
         let snapshot_row = SNAPSHOT.decode_value(&self.snapshot)?;
         SNAPSHOT.put(
             &vault.store,
@@ -157,6 +182,12 @@ impl PreparedRepoProposal {
             &repo_mutation_snapshot_key(row.pre_action_fork_hash),
             &snapshot_row,
         )?;
-        store(vault, txn, row)
+        store(vault, txn, row)?;
+        match &self.repair {
+            Some(repair) => {
+                super::repair::record_replacement_in_txn(vault, txn, row, repair, admission)
+            }
+            None => Ok(()),
+        }
     }
 }
