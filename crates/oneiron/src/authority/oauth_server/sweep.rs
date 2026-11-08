@@ -8,8 +8,9 @@
 //!   allowed one no page collected takes back the owner agent grant its allow minted (FIX
 //!   22142, `withdraw_lapsed_oauth_grant_in_txn`);
 //! - an authorization code past its lifetime, redeemed or not, as the token endpoint drops one.
-//!   One no exchange redeemed takes its grant back too; a redeemed one's grant stays, since its
-//!   family's tokens stand on it;
+//!   One no exchange redeemed takes its grant back too; a redeemed one's grant stays: its
+//!   family's tokens stand on it, or its exchange took the grant back when the family's first
+//!   slip did not stand (FIX 22193);
 //! - an access or refresh token past its lifetime, and with an access token's row the slip it
 //!   held, as a refresh or a revocation drops one. A standing family's live access token stays,
 //!   so the refresh that retires it still revokes its slip (`take_live_access_in_txn`);

@@ -14,8 +14,11 @@
 //! for this slip and a fresh holder proof per request, and the request is that connector's.
 //!
 //! A family holds one live slip: a refresh retires the family's previous access token with its
-//! slip, and a revoked family (RFC 7009, a code redeemed twice, a refresh token spent twice, or an
-//! owner agent grant that no longer stands) has its slip revoked once its writer commits.
+//! slip, and a revoked family (RFC 7009, a code redeemed twice, a refresh token spent twice, an
+//! owner agent grant that no longer stands, or a slip that did not land) has its slip revoked once
+//! its writer commits. A new family whose first slip does not stand ends its sign-in before the
+//! client held a token: the writer that revokes the family takes the sign-in's grant back too, as a
+//! lapse takes it back (FIX 22193).
 
 use std::collections::BTreeSet;
 
@@ -56,12 +59,29 @@ pub(super) fn take_live_access_in_txn(
     Ok(slip)
 }
 
+/// Whether a token family other than `family` names `grant`: its tokens may stand on the grant,
+/// so a sign-in that ends with `family` leaves the grant to the owner's revoke.
+fn grant_held_by_other_family_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    family: EntityId,
+    grant: &AuthorizedGrant,
+) -> Result<bool> {
+    Ok(FAMILIES
+        .scan(&vault.store, txn)?
+        .iter()
+        .any(|(key, row)| key.0 != family && row.grant.grant_ref == grant.grant_ref))
+}
+
 impl Vault {
     /// Mints the native slip of `grant`'s agent for the access token of `family` whose row key
     /// is `access_key`, and keeps it on that row as the family's live access token. `true` once
-    /// it stands; `false` when the family was revoked while the slip was minted, which revokes
-    /// the slip again. A mint or a landing that fails revokes the family, so its tokens, never
-    /// handed out, stand for nothing.
+    /// it stands; `false` when the family was revoked, or its access token's row went, while the
+    /// slip was minted, which revokes the slip again. A mint or a landing that fails revokes the
+    /// family, so its tokens, never handed out, stand for nothing. When the slip is the first of a
+    /// family a code's exchange just opened (`opens_family`), every outcome but `true` ends the
+    /// sign-in with no token handed out: the family is revoked, and its writer takes `grant` back
+    /// (FIX 22193).
     ///
     /// # Errors
     /// The slip's mint or its landing failed.
@@ -71,12 +91,14 @@ impl Vault {
         family: EntityId,
         access_key: &str,
         grant: &AuthorizedGrant,
+        opens_family: bool,
     ) -> Result<bool> {
+        let ended = opens_family.then_some(grant);
         let holder_key = access_holder_key(issuer, family, access_key);
         let slip = match self.mint_access_slip(issuer, grant, &holder_key) {
             Ok(slip) => slip,
             Err(error) => {
-                self.revoke_family_after_failure(issuer, family);
+                self.revoke_family_after_failure(issuer, family, ended);
                 return Err(error);
             }
         };
@@ -111,11 +133,14 @@ impl Vault {
             }
             Ok(None) => {
                 self.retire_access_slip(issuer, family, slip_id);
+                if ended.is_some() {
+                    self.revoke_family_after_failure(issuer, family, ended);
+                }
                 Ok(false)
             }
             Err(error) => {
                 self.retire_access_slip(issuer, family, slip_id);
-                self.revoke_family_after_failure(issuer, family);
+                self.revoke_family_after_failure(issuer, family, ended);
                 Err(error)
             }
         }
@@ -180,16 +205,28 @@ impl Vault {
 
     /// Revokes `family` and then the slip its live access token held, each in its own writer:
     /// for a family whose owner agent grant the `/mcp` ingress found no longer standing, or
-    /// whose new access token's slip did not land.
+    /// whose new access token's slip did not land. With `ended`, the grant of a sign-in whose
+    /// family's first slip did not stand, the family's writer also takes that grant back
+    /// ([`Self::withdraw_lapsed_oauth_grant_in_txn`], signed by `issuer` when it is the vault's
+    /// live host), unless another family names it: no client held a token on it (FIX 22193).
     ///
     /// # Errors
-    /// A store failure revoking the family.
+    /// A store failure revoking the family, or a store or fold failure taking the grant back.
     pub(super) fn revoke_oauth_family(
         &self,
         issuer: &HostSlipIssuer,
         family: EntityId,
+        ended: Option<&AuthorizedGrant>,
     ) -> Result<()> {
-        let retired = self.with_write_txn_grouped(|txn| revoke_family_in_txn(self, txn, family))?;
+        let retired = self.with_write_txn_grouped(|txn| {
+            let slip = revoke_family_in_txn(self, txn, family)?;
+            if let Some(grant) = ended
+                && !grant_held_by_other_family_in_txn(self, txn, family, grant)?
+            {
+                self.withdraw_lapsed_oauth_grant_in_txn(txn, Some(issuer), grant)?;
+            }
+            Ok(slip)
+        })?;
         if let Some(slip) = retired {
             self.retire_access_slip(issuer, family, slip);
         }
@@ -198,8 +235,13 @@ impl Vault {
 
     /// [`Self::revoke_oauth_family`] after a slip that could not land, where the failure that
     /// caused it is the answer: a second failure is logged.
-    fn revoke_family_after_failure(&self, issuer: &HostSlipIssuer, family: EntityId) {
-        if let Err(error) = self.revoke_oauth_family(issuer, family) {
+    fn revoke_family_after_failure(
+        &self,
+        issuer: &HostSlipIssuer,
+        family: EntityId,
+        ended: Option<&AuthorizedGrant>,
+    ) {
+        if let Err(error) = self.revoke_oauth_family(issuer, family, ended) {
             tracing::warn!(
                 %error,
                 family = %family.to_hex(),
