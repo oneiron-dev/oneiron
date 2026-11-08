@@ -2313,6 +2313,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ArtifactBackendPairing"
+     ],
+     "path": "src/artifact_hosting/backend_principal.rs",
+     "purpose": "A published app's own pairing identity, without engine-action grants",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/artifact_hosting/checkpoint.rs",
      "purpose": "The checkpoint getter of artifact hosting rows (FIX 10436): each blob artifact's channel pointers, publish…",
@@ -2346,7 +2359,7 @@
       "crate-vis": 5,
       "fn": 10,
       "mod": 1,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -94538,7 +94551,7 @@
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…"
     },
     "artifact_hosting": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -96080,7 +96093,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6805,
+   "source_files": 6806,
    "test_files": 895
   },
   "oneiron-android": {
@@ -116267,6 +116280,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/artifact_backend_pairing.rs",
+     "purpose": "Owner bootstrap for a published app's own zero-action credential",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -134877,7 +134900,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 727,
+     "files": 728,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -135411,7 +135434,7 @@
    },
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1747,
+   "source_files": 1748,
    "test_files": 182
   },
   "oneiron-skill-attribution": {

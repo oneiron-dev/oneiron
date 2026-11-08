@@ -203,9 +203,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/anchored_annotation/verbs.rs` | src | m | 8 fn | — | Credential-bound adapters over the engine's anchored annotation lifecycle |
 | `src/anchored_annotation/wire.rs` | src | m | 14 struct · 4 enum | AnnotationAnchorView, AnnotationAssignRequest, AnnotationBodyAnchorView, AnnotationBriefView, AnnotationCommentRequest, AnnotationCommentView, AnnotationDriftView, AnnotationLocator +10 | Typed wire shapes for artifact units and anchored comment threads |
 | `src/artifact_hosting/access.rs` | src | m | 1 struct · 1 enum · 3 fn | ArtifactLinkCapability, ArtifactServeTier | Serve-time authority for live artifact pointers |
+| `src/artifact_hosting/backend_principal.rs` | src | s | 1 struct · 1 fn | ArtifactBackendPairing | A published app's own pairing identity, without engine-action grants |
 | `src/artifact_hosting/checkpoint.rs` | src | s | 4 crate-vis | — | The checkpoint getter of artifact hosting rows (FIX 10436): each blob artifact's channel pointers, publish… |
 | `src/artifact_hosting/door_types.rs` | src | s | 4 struct · 1 re-export | ArtifactLinkToken, ArtifactPointerRequest, ArtifactPublishRequest, ArtifactPublishView | Core half of `artifact_hosting::door_types`: its store-layer items live in… |
-| `src/artifact_hosting/mod.rs` | src | m | 10 fn · 1 mod · 4 re-export · 5 crate-vis | — | Local artifact hosting over pinned code snapshots and blob exports |
+| `src/artifact_hosting/mod.rs` | src | m | 10 fn · 1 mod · 5 re-export · 5 crate-vis | — | Local artifact hosting over pinned code snapshots and blob exports |
 | `src/artifact_hosting/pointer_rows.rs` | src | s | 7 crate-vis | — | — |
 | `src/artifact_hosting/publication_sync.rs` | src | m | 1 enum · 3 fn · 2 crate-vis | ArtifactPublicationOutcome | Publication sync: a pinned channel pointer, with the rows that make its export servable, reaches the sync… |
 | `src/artifact_hosting/publication_sync/parts.rs` | src | m | 1 fn · 10 crate-vis | — | Bounded publication parts (FIX 9575) |
