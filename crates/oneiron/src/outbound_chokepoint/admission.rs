@@ -825,9 +825,8 @@ fn agent_run_effect_call(prepared: &PreparedEffect) -> Option<AgentRunEffectCall
     })
 }
 
-/// An agent run's effect that did not go at its admission, for `stop` (FIX
-/// 4747 slice 7): no decision was recorded, nothing was charged, written to
-/// the ledger or sent.
+/// An agent run's effect that did not go at its admission, for `stop` (FIX 4747 slice 7):
+/// nothing was decided, charged, settled, written to the ledger or sent.
 fn agent_run_effect_stopped(
     intent_id: crate::outbound_intent_ledger::IntentId,
     stop: AgentRunEffectStop,
@@ -847,6 +846,7 @@ fn agent_run_effect_stopped(
         gate_reason_codes: Vec::new(),
         gate_receipt_reasons: Vec::new(),
         budget_charge: None,
+        budget_settlement_events: Vec::new(),
         dedupe_suppressed: false,
         suppression_receipt: None,
         ceiling_count: None,
