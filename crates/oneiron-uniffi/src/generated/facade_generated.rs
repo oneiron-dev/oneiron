@@ -1921,6 +1921,16 @@ export_facade! {
     let output = client.vault_sync_quarantine_held_edits(&input)?;
     crate::codec::lift_record("vault.sync.quarantine.held_edits", &output)
 };
+"vault.sync.documents.copy_edit.review" => fn vault_sync_documents_copy_edit_review(&self, input: RepoCopyEditReviewRequest) -> Option<RepoCopyEditReviewView> = |client| {
+    let input: oneiron::task_verb::sdk::RepoCopyEditReviewRequest = crate::codec::lower_record("vault.sync.documents.copy_edit.review", input)?;
+    let output = client.vault_sync_documents_copy_edit_review(&input)?;
+    crate::codec::lift_record("vault.sync.documents.copy_edit.review", &output)
+};
+"vault.sync.documents.copy_edit.settle" => fn vault_sync_documents_copy_edit_settle(&self, input: RepoCopyEditSettleRequest) -> RepoCopyEditSettleView = |client| {
+    let input: oneiron::task_verb::sdk::RepoCopyEditSettleRequest = crate::codec::lower_record("vault.sync.documents.copy_edit.settle", input)?;
+    let output = client.vault_sync_documents_copy_edit_settle(&input)?;
+    crate::codec::lift_record("vault.sync.documents.copy_edit.settle", &output)
+};
 "vault.sync.retained_work.wait.set" => fn vault_sync_retained_work_wait_set(&self, input: RetainedWorkWaitSetRequest) -> u64 = |client| {
     let input: oneiron::task_verb::sdk::RetainedWorkWaitSetRequest = crate::codec::lower_record("vault.sync.retained_work.wait.set", input)?;
     let output = client.vault_sync_retained_work_wait_set(&input)?;
@@ -2806,6 +2816,16 @@ export_facade! {
     let output = client.vault_consent_approve_once(&input)?;
     crate::codec::lift_record("vault.consent.approve_once", &output)
 };
+"vault.campaign.held" => fn vault_campaign_held(&self) -> Vec<CampaignEnrollmentHeldCall> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.campaign.held")?;
+    let output = client.vault_campaign_held(&input)?;
+    crate::codec::lift_record("vault.campaign.held", &output)
+};
+"vault.campaign.approve_once" => fn vault_campaign_approve_once(&self, input: CampaignEnrollmentApproveOnceRequest) -> ConsentActReceipt = |client| {
+    let input: oneiron::task_verb::sdk::CampaignEnrollmentApproveOnceRequest = crate::codec::lower_record("vault.campaign.approve_once", input)?;
+    let output = client.vault_campaign_approve_once(&input)?;
+    crate::codec::lift_record("vault.campaign.approve_once", &output)
+};
 "vault.connectors.calls.approve_once" => fn vault_connectors_calls_approve_once(&self, input: ConnectorCallApproveOnceRequest) -> ConsentActReceipt = |client| {
     let input: oneiron::task_verb::sdk::ConnectorCallApproveOnceRequest = crate::codec::lower_record("vault.connectors.calls.approve_once", input)?;
     let output = client.vault_connectors_calls_approve_once(&input)?;
@@ -2830,6 +2850,11 @@ export_facade! {
     let input: oneiron::consent::lifecycle::AutoWeaveGrantRequest = crate::codec::lower_record("vault.consent.create_auto_weave_grant", input)?;
     let output = client.vault_consent_create_auto_weave_grant(&input)?;
     crate::codec::lift_record("vault.consent.create_auto_weave_grant", &output)
+};
+"vault.consent.create_nightly_link_grant" => fn vault_consent_create_nightly_link_grant(&self) -> ConsentActReceipt = |client| {
+    let input: oneiron::dreamer_consolidation::NightlyLinkGrantRequest = crate::codec::lower_empty("vault.consent.create_nightly_link_grant")?;
+    let output = client.vault_consent_create_nightly_link_grant(&input)?;
+    crate::codec::lift_record("vault.consent.create_nightly_link_grant", &output)
 };
 "vault.consent.registry" => fn vault_consent_registry(&self, input: ConsentRegistryQuery) -> ConsentRegistry = |client| {
     let input: oneiron::consent::ConsentRegistryQuery = crate::codec::lower_record("vault.consent.registry", input)?;
@@ -3466,6 +3491,11 @@ export_facade! {
     let output = client.vault_code_proposal_submit(&input)?;
     crate::codec::lift_record("vault.code.proposal_submit", &output)
 };
+"vault.code.proposal_rereview" => fn vault_code_proposal_rereview(&self, input: CodeProposalRereviewRequest) -> CodeProposalSubmitted = |client| {
+    let input: oneiron::memory::code_doors::CodeProposalRereviewRequest = crate::codec::lower_record("vault.code.proposal_rereview", input)?;
+    let output = client.vault_code_proposal_rereview(&input)?;
+    crate::codec::lift_record("vault.code.proposal_rereview", &output)
+};
 "vault.code.conflict_record" => fn vault_code_conflict_record(&self, input: CodeConflictRecordRequest) -> CodeConflictView = |client| {
     let input: oneiron::memory::code_doors::CodeConflictRecordRequest = crate::codec::lower_record("vault.code.conflict_record", input)?;
     let output = client.vault_code_conflict_record(&input)?;
@@ -3480,6 +3510,11 @@ export_facade! {
     let input: oneiron::memory::code_doors::CodeProposalResolveRequest = crate::codec::lower_record("vault.code.proposal_resolve", input)?;
     let output = client.vault_code_proposal_resolve(&input)?;
     crate::codec::lift_record("vault.code.proposal_resolve", &output)
+};
+"vault.code.proposal_resolve_rereview" => fn vault_code_proposal_resolve_rereview(&self, input: CodeProposalResolveRereviewRequest) -> CodeProposalSubmitted = |client| {
+    let input: oneiron::memory::code_doors::CodeProposalResolveRereviewRequest = crate::codec::lower_record("vault.code.proposal_resolve_rereview", input)?;
+    let output = client.vault_code_proposal_resolve_rereview(&input)?;
+    crate::codec::lift_record("vault.code.proposal_resolve_rereview", &output)
 };
 "vault.code.proposal_review" => fn vault_code_proposal_review(&self, input: CodeProposalReviewRequest) -> CodeProposalSettlementView = |client| {
     let input: oneiron::memory::code_doors::CodeProposalReviewRequest = crate::codec::lower_record("vault.code.proposal_review", input)?;
@@ -3675,6 +3710,11 @@ export_facade! {
     let input: oneiron::origin::publish::OriginPublishIdRequest = crate::codec::lower_record("vault.code.origin.publish.cancel", input)?;
     let output = client.vault_code_origin_publish_cancel(&input)?;
     crate::codec::lift_record("vault.code.origin.publish.cancel", &output)
+};
+"vault.devices.predecessor.name" => fn vault_devices_predecessor_name(&self, input: DevicePredecessor) -> DevicePredecessor = |client| {
+    let input: oneiron::memory::device_succession::DevicePredecessor = crate::codec::lower_record("vault.devices.predecessor.name", input)?;
+    let output = client.vault_devices_predecessor_name(&input)?;
+    crate::codec::lift_record("vault.devices.predecessor.name", &output)
 };
 "vault.code.origin.authority.get" => fn vault_code_origin_authority_get(&self, input: OriginRepoRequest) -> OriginAuthorityView = |client| {
     let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.authority.get", input)?;
@@ -6015,6 +6055,11 @@ export_facade! {
     let input: oneiron::note::NoteReadRequest = crate::codec::lower_record("vault.notes.read", input)?;
     let output = client.vault_notes_read(&input)?;
     crate::codec::lift_record("vault.notes.read", &output)
+};
+"vault.notes.read_indexed" => fn vault_notes_read_indexed(&self, input: NoteIndexedReadRequest) -> ScopedReadResultOptionalNoteReadView = |client| {
+    let input: oneiron::note::NoteIndexedReadRequest = crate::codec::lower_record("vault.notes.read_indexed", input)?;
+    let output = client.vault_notes_read_indexed(&input)?;
+    crate::codec::lift_record("vault.notes.read_indexed", &output)
 };
 "vault.notes.history" => fn vault_notes_history(&self, input: NoteAccessRequest) -> ScopedReadResultOptionalNoteHistoryView = |client| {
     let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.history", input)?;
