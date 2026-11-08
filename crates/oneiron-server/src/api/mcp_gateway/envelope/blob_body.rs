@@ -31,8 +31,8 @@ use axum::http::StatusCode;
 use axum::http::request::Parts;
 
 use crate::api::body_spool::{
-    self, Base64FileSink, BodySpool, BulkMember, HeadFail, SinkRefusal, SpoolPolicy, SpooledField,
-    TextFileSink, Unspooled,
+    self, Base64FileSink, BodySpool, BulkMember, HeadFail, SinkRefusal, SpoolFailed, SpoolPolicy,
+    SpooledField, TextFileSink, Unspooled,
 };
 use crate::mcp::{McpHeldContent, McpVerbToolArgs};
 
@@ -172,10 +172,18 @@ pub(crate) async fn read_tool_first(
         move |spool| read_spool(&vault, spool),
     )
     .await;
-    match read.and_then(|read| read) {
-        Ok(arrived) if !over.load(Ordering::Relaxed) => Ok(arrived),
-        Ok(_) | Err(Unspooled::Failed) => Err(not_buffered()),
-        Err(unspooled) => Err(spool_refused(server, &parts.headers, unspooled)),
+    match read {
+        Ok(_) if over.load(Ordering::Relaxed) => Err(not_buffered()),
+        Ok(Ok(arrived)) => Ok(arrived),
+        // The whole body arrived; its spool did not read.
+        Ok(Err(failed)) => Err(spool_refused(
+            server,
+            &parts.headers,
+            failed.unspooled,
+            failed.body_digest.as_deref(),
+        )),
+        Err(Unspooled::Failed) => Err(not_buffered()),
+        Err(unspooled) => Err(spool_refused(server, &parts.headers, unspooled, None)),
     }
 }
 
@@ -221,28 +229,89 @@ fn not_buffered() -> Response {
     (StatusCode::BAD_REQUEST, "Failed to buffer the request body").into_response()
 }
 
-/// A body the vault had no room or memory to spool, as the endpoint's
-/// connection refusal: no call ran.
-fn spool_refused(server: &SyncServer, headers: &HeaderMap, unspooled: Unspooled) -> Response {
-    let kind = match unspooled {
-        Unspooled::NoRoom => crate::owner::backup::write_budget::CAPACITY_STATE,
-        _ => "engine_error",
+/// A body the vault had no room or memory to spool, or whose spool did not
+/// read, as the endpoint's connection refusal: no call ran. A body that
+/// arrived whole states its digest (`body_digest`); one that did not, none.
+fn spool_refused(
+    server: &SyncServer,
+    headers: &HeaderMap,
+    unspooled: Unspooled,
+    body_digest: Option<&str>,
+) -> Response {
+    let (kind, message) = match unspooled {
+        Unspooled::NoRoom => (
+            crate::owner::backup::write_budget::CAPACITY_STATE,
+            unspooled.refusal().message().to_owned(),
+        ),
+        Unspooled::Failed => (
+            "engine_error",
+            "the request body's spool did not read".to_owned(),
+        ),
+        unspooled => ("engine_error", unspooled.refusal().message().to_owned()),
     };
-    let message = unspooled.refusal().message().to_owned();
+    let arrival = match body_digest {
+        Some(digest) => super::http::Arrival::spooled(digest),
+        None => super::http::Arrival::of(&[]),
+    };
     super::http::mcp_connection_refusal(
         server,
         headers,
         "mcp",
-        super::http::Arrival::of(&[]),
+        arrival,
         Value::Null,
         McpGatewayError::new(-32603, kind, message),
     )
 }
 
+/// What [`read_spool_in`] read of the spool.
+enum Scanned {
+    /// The body whole.
+    Whole(Bytes),
+    /// The rest of the body, its content empty, and what the held content
+    /// keeps but the spool itself.
+    Held {
+        projected: Vec<u8>,
+        params_digest: String,
+        arguments: (u64, u64),
+        tool: String,
+        content: SpooledField,
+    },
+}
+
+/// Reads the spool ([`read_spool_in`]), keeping it for the identities of a
+/// held body; a failure names the body's digest.
+fn read_spool(vault: &oneiron::Vault, mut spool: BodySpool) -> Result<McpArrived, SpoolFailed> {
+    let scanned = read_spool_in(vault, &mut spool).map_err(|unspooled| spool.failed(unspooled))?;
+    let (projected, params_digest, arguments, tool, content) = match scanned {
+        Scanned::Whole(bytes) => return Ok(McpArrived::whole(bytes)),
+        Scanned::Held {
+            projected,
+            params_digest,
+            arguments,
+            tool,
+            content,
+        } => (projected, params_digest, arguments, tool, content),
+    };
+    let body_digest = spool
+        .digest()
+        .map_err(|_| spool.failed(Unspooled::Failed))?;
+    Ok(McpArrived {
+        bytes: Bytes::from(projected),
+        held: Some(McpHeld {
+            body_digest,
+            params_digest,
+            spool: spool.into_file(),
+            arguments,
+            tool,
+            content,
+        }),
+    })
+}
+
 /// Reads the spool: the content to its file and the rest of the body as
 /// JSON, when the body is one tool-first call of an artifact write with one
 /// base64 content string longer than an entity ref; else the body whole.
-fn read_spool(vault: &oneiron::Vault, mut spool: BodySpool) -> Result<McpArrived, Unspooled> {
+fn read_spool_in(vault: &oneiron::Vault, spool: &mut BodySpool) -> Result<Scanned, Unspooled> {
     let file = vault
         .archive_spool_file()
         .map_err(body_spool::create_failed)?;
@@ -270,11 +339,11 @@ fn read_spool(vault: &oneiron::Vault, mut spool: BodySpool) -> Result<McpArrived
         }
         (Ok(_), Err(SinkRefusal::NoRoom)) => return Err(Unspooled::NoRoom),
         (Ok(spans), Ok(content)) if content.file().1 > ENTITY_REF_DECODED_BYTES => (spans, content),
-        _ => return read_whole(&mut spool),
+        _ => return read_whole(spool),
     };
     let projected = read_field(&head?).map_err(|_| Unspooled::Failed)?;
     let Ok(request) = serde_json::from_slice::<Value>(&projected) else {
-        return read_whole(&mut spool);
+        return read_whole(spool);
     };
     let tool = request
         .pointer("/params/name")
@@ -283,7 +352,7 @@ fn read_spool(vault: &oneiron::Vault, mut spool: BodySpool) -> Result<McpArrived
         .filter(|tool| oneiron::task_verb::sdk::takes_blob_input(tool));
     let (Some(tool), Some(params), Some(&arguments)) = (tool, request.get("params"), spans.get(1))
     else {
-        return read_whole(&mut spool);
+        return read_whole(spool);
     };
     let params_digest = oneiron::receipt::call_json_digest_with_member_path(
         params,
@@ -292,18 +361,12 @@ fn read_spool(vault: &oneiron::Vault, mut spool: BodySpool) -> Result<McpArrived
     )
     .map_err(|_| Unspooled::Failed)?;
     let tool = tool.to_owned();
-    let spool = spool.into_file();
-    let body_digest = file_digest(&spool).map_err(|_| Unspooled::Failed)?;
-    Ok(McpArrived {
-        bytes: Bytes::from(projected),
-        held: Some(McpHeld {
-            body_digest,
-            params_digest,
-            spool,
-            arguments,
-            tool,
-            content,
-        }),
+    Ok(Scanned::Held {
+        projected,
+        params_digest,
+        arguments,
+        tool,
+        content,
     })
 }
 
@@ -316,16 +379,8 @@ fn read_field(field: &SpooledField) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// BLAKE3 of a file from its start, as `call_bytes_digest` digests its bytes.
-fn file_digest(mut file: &File) -> io::Result<String> {
-    file.seek(SeekFrom::Start(0))?;
-    let mut hasher = blake3::Hasher::new();
-    io::copy(&mut file, &mut hasher)?;
-    Ok(hasher.finalize().to_hex().to_string())
-}
-
 /// The spooled body whole, as the endpoint read every body before.
-fn read_whole(spool: &mut BodySpool) -> Result<McpArrived, Unspooled> {
+fn read_whole(spool: &mut BodySpool) -> Result<Scanned, Unspooled> {
     let len = spool.byte_len().map_err(|_| Unspooled::Failed)?;
     let mut memory = spool.admit_reader().map_err(Unspooled::MemoryRefused)?;
     let bytes = spool
@@ -336,5 +391,5 @@ fn read_whole(spool: &mut BodySpool) -> Result<McpArrived, Unspooled> {
             Ok(bytes)
         })
         .map_err(|_| Unspooled::Failed)?;
-    Ok(McpArrived::whole(Bytes::from(bytes)))
+    Ok(Scanned::Whole(Bytes::from(bytes)))
 }
