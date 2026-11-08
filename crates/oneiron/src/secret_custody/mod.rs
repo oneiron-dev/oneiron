@@ -237,6 +237,7 @@ pub(crate) use self::use_handle::{
 // 5334), which `CustodyManifestCheck::Judged` and the owner work receipt carry.
 pub use oneiron_authority::authority::{CustodyRegisterCheck, CustodyUncheckedReason};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

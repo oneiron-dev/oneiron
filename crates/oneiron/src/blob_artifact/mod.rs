@@ -150,3 +150,4 @@ use crate::write_envelope::WriteActor;
 use rmpv::Value;
 
 pub mod esign;
+pub(crate) mod tables;

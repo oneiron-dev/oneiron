@@ -310,6 +310,7 @@ pub(crate) fn erase_row_provenance_without_attempt_payloads_in_txn(
     Ok(())
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

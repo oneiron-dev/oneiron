@@ -242,6 +242,7 @@ pub use resident::{
 
 #[cfg(test)]
 mod resident_tests;
+pub(crate) mod tables;
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.

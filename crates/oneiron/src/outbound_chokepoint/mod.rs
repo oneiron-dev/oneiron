@@ -34,6 +34,7 @@ pub(crate) use self::types::{
     UncertainSendStep, frozen_call_hygiene_headers,
 };
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

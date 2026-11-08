@@ -701,5 +701,6 @@ impl crate::Vault {
     }
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

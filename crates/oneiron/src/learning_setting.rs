@@ -32,6 +32,7 @@ mod resolution;
 mod scope_erase;
 mod sourced;
 mod subject;
+pub(crate) mod tables;
 mod witness;
 pub(crate) use actor_erase::{erase_setting_actor_in_txn, names_no_actor};
 pub use fit::{SettingCheck, global_setting_subject, record_setting_check};

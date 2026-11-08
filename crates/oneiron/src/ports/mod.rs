@@ -83,6 +83,7 @@ pub use safe_read::{safe_read_asset_text, safe_read_text};
 mod memory;
 #[cfg(test)]
 pub(crate) mod row_copies;
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 pub use contracts::*;

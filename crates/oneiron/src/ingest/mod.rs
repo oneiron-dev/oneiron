@@ -128,6 +128,7 @@ pub mod history;
 mod parsed;
 pub use parsed::{ParsedImport, ParsedMessage};
 mod pdf;
+pub(crate) mod tables;
 pub use pdf::{PdfText, PdfTextError, pdf_text};
 
 // The lift sweep's typed acceptance for this module's authored side

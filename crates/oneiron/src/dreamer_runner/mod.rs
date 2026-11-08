@@ -127,6 +127,7 @@ pub mod authority;
 
 pub mod connector_event;
 pub mod maintenance;
+pub(crate) mod tables;
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.

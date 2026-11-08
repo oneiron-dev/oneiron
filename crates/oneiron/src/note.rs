@@ -451,3 +451,4 @@ mod shared_membership_tests;
 
 #[cfg(test)]
 mod adapter_tests;
+pub(crate) mod tables;

@@ -892,5 +892,6 @@ fn share_claim_facets(
     Ok(Some(facets))
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 pub(crate) mod tests;

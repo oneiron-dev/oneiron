@@ -185,6 +185,7 @@ pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,
     run_task_attribution_sweep, run_task_attribution_sweep_with_decisions,
 };
+pub(crate) mod tables;
 mod trace;
 pub use trace::{
     LoadedSkillRevision, ReceiptTrace, receipt_attribution_trace, receipt_attribution_trace_sourced,

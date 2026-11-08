@@ -1,7 +1,8 @@
 //! The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`,
-//! one entry each. The entries sit in nine included files (by database, then leading byte) so
-//! no file outgrows the size bar. The crate's build script reads every `side_tables!` row and
-//! writes [`CATALOGUE`], all of them sorted by database and prefix (core split slice 1).
+//! one entry each. A module declares its own tables in its `tables.rs`, with [`side_tables!`]
+//! (core split slice 1); the few rows no single module owns stay in the files included here. The
+//! crate's build script reads every row and writes [`CATALOGUE`], all of them sorted by database
+//! and prefix, and a `use` of each module's rows, so `side_table::NAME` names every table.
 //! `assert_disjoint` pins at compile time that no entry is a byte prefix of another in the same
 //! database, so two tables never read each other's rows.
 //!
@@ -21,43 +22,48 @@
 //! An entry whose rows record an actor ends with `=> scrub`, the [`ActorScrub`] an actor's erase
 //! runs over its rows (FIX 3520); the erase walks every entry that names one.
 //!
-//! An `Authored` entry may name `[accepts: path]`, its owner's [`MaskedAccepts`]
-//! (FIX 2680): the typed check the historical lift sweep runs over a masked copy
-//! of a row, in place of its shape check.
+//! An `Authored` entry may name `[accepts: path]`, its owner's
+//! [`MaskedAccepts`](super::MaskedAccepts) (FIX 2680): the typed check the historical lift sweep
+//! runs over a masked copy of a row, in place of its shape check.
 
 use super::RefStep::{Field, Json};
-use super::{ActorScrub, CodecName, MaskedAccepts, RefPath, SideDb, SidePayload, SideTableDecl};
+use super::{ActorScrub, CodecName, RefPath, SideDb, SidePayload, SideTableDecl};
 
+// The catalogue before the rows moved (slice 1), pinned below until the move settles.
+mod snapshot;
+
+/// Declares side tables: each row becomes a `pub(crate) static` [`SideTableDecl`] in the module
+/// that invokes it. Only the crate's build script lists them, in [`CATALOGUE`], so a row lives in
+/// its owner module's `tables.rs` (or in a file included here) and nowhere else.
 macro_rules! side_tables {
-    ($list:ident; $($(#[$doc:meta])* $name:ident: $db:ident $prefix:literal $codec:ident $($payload:ident)? $([refs: $refs:expr])? $([accepts: $accepts:path])? $(=> $scrub:path)?;)+) => {
+    ($($(#[$doc:meta])* $name:ident: $db:ident $prefix:literal $codec:ident $($payload:ident)? $([refs: $refs:expr])? $([accepts: $accepts:path])? $(=> $scrub:path)?;)+) => {
         $(
             $(#[$doc])*
-            pub(crate) static $name: SideTableDecl = SideTableDecl {
+            pub(crate) static $name: $crate::side_table::SideTableDecl = $crate::side_table::SideTableDecl {
                 name: stringify!($name),
-                db: SideDb::$db,
+                db: $crate::side_table::SideDb::$db,
                 prefix: $prefix,
-                codec: CodecName::$codec,
-                payload: side_payload!($($payload)?),
-                references: side_references!($($refs)?),
-                actor: side_actor!($($scrub)?),
-                accepts: side_accepts!($($accepts)?),
+                codec: $crate::side_table::CodecName::$codec,
+                payload: $crate::side_table::side_payload!($($payload)?),
+                references: $crate::side_table::side_references!($($refs)?),
+                actor: $crate::side_table::side_actor!($($scrub)?),
+                accepts: $crate::side_table::side_accepts!($($accepts)?),
             };
         )+
-
-        /// One file's declarations, in prefix order.
-        static $list: &[&SideTableDecl] = &[$(&$name),+];
     };
 }
+pub(crate) use side_tables;
 
 /// An entry's class: [`SidePayload::Unclassed`] when it names none.
 macro_rules! side_payload {
     () => {
-        SidePayload::Unclassed
+        $crate::side_table::SidePayload::Unclassed
     };
     ($payload:ident) => {
-        SidePayload::$payload
+        $crate::side_table::SidePayload::$payload
     };
 }
+pub(crate) use side_payload;
 
 /// An entry's actor scrub: `None` when it names none.
 macro_rules! side_actor {
@@ -68,16 +74,18 @@ macro_rules! side_actor {
         Some($scrub)
     };
 }
+pub(crate) use side_actor;
 
 /// An entry's masked-copy acceptance: `None` when it names none.
 macro_rules! side_accepts {
     () => {
-        None::<MaskedAccepts>
+        None::<$crate::side_table::MaskedAccepts>
     };
     ($accepts:path) => {
-        Some($accepts as MaskedAccepts)
+        Some($accepts as $crate::side_table::MaskedAccepts)
     };
 }
+pub(crate) use side_accepts;
 
 /// An entry's structural references: none when it names none.
 macro_rules! side_references {
@@ -88,13 +96,13 @@ macro_rules! side_references {
         $refs
     };
 }
+pub(crate) use side_references;
 
 include!("sync_state.rs");
 include!("vault_meta_a_b.rs");
 include!("vault_meta_c.rs");
 include!("vault_meta_d_e.rs");
 include!("vault_meta_f_l.rs");
-include!("vault_meta_m.rs");
 include!("vault_meta_n_r.rs");
 include!("vault_meta_s.rs");
 include!("vault_meta_t_z.rs");
@@ -250,27 +258,12 @@ pub(crate) fn declared_overlaps(db: SideDb, prefix: &[u8]) -> bool {
     })
 }
 
-/// The files in byte order of their prefixes: `sync_state`, then `vault_meta` by leading byte.
-/// This was the catalogue's order before the build script wrote it; it is kept for one change, to
-/// pin that the written order is the same.
-static PARTS: [&[&SideTableDecl]; 9] = [
-    SYNC_STATE,
-    VAULT_META_A_B,
-    VAULT_META_C,
-    VAULT_META_D_E,
-    VAULT_META_F_L,
-    VAULT_META_M,
-    VAULT_META_N_R,
-    VAULT_META_S,
-    VAULT_META_T_Z,
-];
-
 // A declaration list with an overlap does not compile.
 const _: () = assert_disjoint(&CATALOGUE);
 
-// The written catalogue is the included files' list, entry for entry: a build script that drops,
-// adds or reorders a row does not compile.
-const _: () = assert_same_entries(&PARTS, &CATALOGUE);
+// The written catalogue is the one before the rows moved into their owner modules, entry for entry:
+// a lost, added, reordered or changed row does not compile.
+const _: () = assert_snapshot(&snapshot::SNAPSHOT, &CATALOGUE);
 
 // The session overlay keeps these tables' rows outside a room's byte budget by
 // the prefixes in `oneiron_store::overlay_bookkeeping`. A lower prefix that
@@ -323,33 +316,29 @@ const fn assert_disjoint(catalogue: &[&SideTableDecl]) {
     }
 }
 
-/// `parts`, flattened, names the same tables as `catalogue`, in the same order.
-const fn assert_same_entries(parts: &[&[&SideTableDecl]], catalogue: &[&SideTableDecl]) {
-    let mut at = 0;
-    let mut part = 0;
-    while part < parts.len() {
-        let mut index = 0;
-        while index < parts[part].len() {
-            assert!(
-                at < catalogue.len(),
-                "the catalogue has fewer tables than the declaration files"
-            );
-            let (listed, written) = (parts[part][index], catalogue[at]);
-            assert!(
-                same_bytes(listed.name.as_bytes(), written.name.as_bytes())
-                    && same_bytes(listed.prefix, written.prefix)
-                    && listed.db as u8 == written.db as u8,
-                "the catalogue's order differs from the declaration files'"
-            );
-            at += 1;
-            index += 1;
-        }
-        part += 1;
-    }
+/// `catalogue` is `snapshot`, entry for entry: name, database, prefix, codec and payload.
+const fn assert_snapshot(
+    snapshot: &[(&str, SideDb, &[u8], CodecName, SidePayload)],
+    catalogue: &[&SideTableDecl],
+) {
     assert!(
-        at == catalogue.len(),
-        "the catalogue has more tables than the declaration files"
+        snapshot.len() == catalogue.len(),
+        "the catalogue's table count differs from the snapshot's"
     );
+    let mut index = 0;
+    while index < snapshot.len() {
+        let (name, db, prefix, codec, payload) = snapshot[index];
+        let decl = catalogue[index];
+        assert!(
+            same_bytes(name.as_bytes(), decl.name.as_bytes())
+                && db as u8 == decl.db as u8
+                && same_bytes(prefix, decl.prefix)
+                && codec as u8 == decl.codec as u8
+                && payload as u8 == decl.payload as u8,
+            "the catalogue differs from the snapshot taken before the rows moved"
+        );
+        index += 1;
+    }
 }
 
 const fn starts_with(bytes: &[u8], prefix: &[u8]) -> bool {

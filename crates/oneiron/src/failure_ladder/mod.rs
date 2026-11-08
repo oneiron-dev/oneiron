@@ -55,6 +55,7 @@ pub use self::lineage::{
 pub use self::scope::{FailureEscalationMode, FailureScope, FailureScopePolicy};
 pub(crate) use self::transitions::{dispatched_target_ref, verified_blocked_reports};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

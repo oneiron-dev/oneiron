@@ -69,6 +69,7 @@ mod support;
 mod sweep;
 mod value_fingerprint;
 
+pub(crate) mod tables;
 /// Private-encoding unit tests: memo-key canonicalization, malformed-row
 /// rejection, and the pure predicates the evaluator composes. Public
 /// behavior lives in `tests/saved_query_oracle.rs`.

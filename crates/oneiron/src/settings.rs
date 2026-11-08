@@ -614,6 +614,7 @@ fn validate_label(field: &'static str, value: &str) -> Result<()> {
     Ok(())
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

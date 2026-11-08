@@ -38,6 +38,7 @@ pub(crate) fn outbound_verb_in_class(class: &str, verb: &str) -> bool {
     verb_class::verb_in_class(class, verb)
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

@@ -38,6 +38,7 @@ pub(crate) mod carried;
 pub(crate) mod checkpoint;
 mod obligation;
 mod replica;
+pub(crate) mod tables;
 mod wake;
 mod walk;
 

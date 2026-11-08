@@ -987,5 +987,6 @@ fn unix_millis_now() -> u64 {
         .map_or(0, |d| d.as_millis().min(u128::from(u64::MAX)) as u64)
 }
 
+pub(crate) mod tables;
 #[cfg(all(test, feature = "sync"))]
 mod tests;

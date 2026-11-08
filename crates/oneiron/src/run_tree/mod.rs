@@ -34,6 +34,7 @@ pub use self::types::{
 };
 pub use self::wire::RunTreeWireError;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

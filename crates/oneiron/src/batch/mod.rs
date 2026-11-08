@@ -48,6 +48,7 @@ mod types;
 mod vad_postcommit;
 mod vector_apply;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 
