@@ -1,6 +1,9 @@
 //! Atomic send-receipt retry and terminal settlement.
 
-use super::connector_task::{ConnectorSendTaskOutcome, project_connector_send_task_outcome_in_txn};
+use super::connector_task::{
+    ConnectorSendTaskOutcome, project_connector_send_task_outcome_in_txn,
+    renew_send_executor_lease_in_txn,
+};
 use super::executor::CONNECTOR_TASK_EXECUTOR_LEASE_OWNER;
 use crate::Vault;
 use crate::attempt_queue::{AttemptQueue, CompleteAttempt, FailAttempt, RetryAttempt};
@@ -35,6 +38,8 @@ pub(super) fn persist_failed_send_receipt_and_retry(
 }
 
 /// Same atomic retry contract for a possibly-delivered, idempotent send.
+/// The writer that re-arms also renews this machine's send executor lease
+/// through `retry_at` (FIX 4747 slice 4), so a park keeps its lease.
 #[expect(clippy::too_many_arguments)]
 pub(super) fn persist_send_receipt_and_retry(
     vault: &Vault,
@@ -84,6 +89,7 @@ pub(super) fn persist_send_receipt_and_retry(
                 now,
             },
         )?;
+        renew_send_executor_lease_in_txn(vault, wtxn, task_ref, retry_at, now)?;
         Ok(true)
     })
 }

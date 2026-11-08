@@ -45,8 +45,9 @@ impl Vault {
     }
 
     /// [`Self::live_entity_in_txn`] with file-plane and plain inline ASSET
-    /// body bytes admitted before their output allocation. Record-head and
-    /// NOTE projections keep their read path without invoking `admit`.
+    /// body bytes admitted before their output allocation. A UTF-8 ASSET
+    /// record head admits its final text conversion, not native document
+    /// loading. Other projections keep their read path without invoking `admit`.
     /// The guard rides with the row through the caller's remaining checks.
     pub(crate) fn live_entity_in_txn_with_body_admission<G, E>(
         &self,
@@ -95,10 +96,20 @@ impl Vault {
             if header.entity_type == ENTITY_TYPE_NOTE {
                 crate::note::ensure_citations_ready(&self.store, txn, *id)?;
             }
-            (
-                crate::entity_doc::resolve_record_body(&self.store, txn, id, body)?,
-                None,
-            )
+            if header.entity_type == ENTITY_TYPE_ASSET {
+                crate::entity_doc::resolve_record_body_with_utf8_admission(
+                    &self.store,
+                    txn,
+                    id,
+                    body,
+                    admit,
+                )?
+            } else {
+                (
+                    crate::entity_doc::resolve_record_body(&self.store, txn, id, body)?,
+                    None,
+                )
+            }
         } else {
             let projected =
                 crate::note::live_body_in_txn(&self.store, txn, id, header.entity_type, body)?;
