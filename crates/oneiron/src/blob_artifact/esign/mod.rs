@@ -79,7 +79,7 @@ pub use rate::{EsignRateCheck, EsignRateReceipt};
 
 pub mod render;
 mod seal;
-pub(in crate::blob_artifact) use seal::SealJobWrite;
+pub(in crate::blob_artifact) use seal::{SealJobAutoPermit, SealJobWrite};
 pub use seal::{EsignSealError, SealedDocument, SealedItem};
 mod seal_run;
 pub use seal_run::EsignSealRun;
