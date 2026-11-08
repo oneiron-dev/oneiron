@@ -125,8 +125,8 @@ fn admit_memory_timeline(
 }
 
 /// The timeline of `id`, read on `scoped_read` narrowed by the caller's
-/// `filter` and projected in `view`. The answer goes beside the rows the
-/// final response lists it was derived from
+/// `filter` and projected in `view`. The answer goes beside the rows the final
+/// response lists it was derived from
 /// ([`CoreMemoryTimelineResponse::producer_rows`], FIX 1435).
 async fn read_memory_timeline(
     server: &SyncServer,
