@@ -1298,6 +1298,8 @@ class Oneiron:
         @property
         def results(self) -> "Oneiron._VaultResultsVerbs": ...
         @property
+        def devices(self) -> "Oneiron._VaultDevicesVerbs": ...
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
         @property
         def repo(self) -> "Oneiron._VaultRepoVerbs": ...
@@ -1638,9 +1640,9 @@ class Oneiron:
         def upsert(self, spec: Facade.ScopedClaimInput) -> Facade.CommitReceipt:
             """Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."""
         def review(self, spec: Facade.ClaimProposalReviewRequest) -> Facade.ClaimProposalReview:
-            """The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content."""
+            """The owner or explicitly granted holder reviews one readable proposed claim: its content-bound review_id, opener and tray row. A native claim-review Grant grants no read access."""
         def settle(self, spec: Facade.ClaimSettleRequest) -> Facade.ClaimSettlement:
-            """The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused."""
+            """The owner or explicitly granted holder approves or rejects exactly a reviewed proposed claim through the gate. Its Settlement names the actual person or Grant; owner-critical obligations still require owner proof."""
         def retract(self, input: Facade.ClaimRefRequest) -> Facade.CommitReceipt:
             """Retracts one active claim: a deliberate withdrawal that preserves the record."""
         def list(self, input: Facade.ClaimListFilter) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
@@ -2950,6 +2952,8 @@ class Oneiron:
             """The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."""
         def create_auto_weave_grant(self, spec: Facade.AutoWeaveGrantRequest) -> Facade.ConsentActReceipt:
             """The owner grants a writer auto-weave in one project, research campaign or governed skill: a standing research.auto_weave grant the claim door records past Proposed."""
+        def create_nightly_link_grant(self, spec: Facade.NightlyLinkGrantRequest) -> Facade.ConsentActReceipt:
+            """The owner lets this vault's Dreamer apply the SameAs links its nightly continuations propose; nothing is granted by default."""
         def registry(self, spec: Facade.ConsentRegistryQuery) -> Facade.ConsentRegistry:
             """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
         def failure_signals_held(self, spec: Facade.EmptyRequest | None = None) -> Facade.HeldFailureSignalBatchView | None:
@@ -3290,12 +3294,16 @@ class Oneiron:
         def symbols(self) -> "Oneiron._VaultCodeSymbolsVerbs": ...
         def proposal_submit(self, spec: Facade.CodeProposalSubmitRequest) -> Facade.CodeProposalSubmitted:
             """Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed."""
+        def proposal_rereview(self, spec: Facade.CodeProposalRereviewRequest) -> Facade.CodeProposalSubmitted:
+            """Submit a fresh Proposed review of verified redacted bytes from an approved file proposal. Owner only. The change supplies fresh attribution and policy; the engine fills content. The original stays unchanged; nothing lands."""
         def conflict_record(self, spec: Facade.CodeConflictRecordRequest) -> Facade.CodeConflictView:
             """Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves."""
         def conflict_view(self, spec: Facade.CodeConflictViewRequest) -> Facade.CodeConflictHistory:
             """Read open repository conflicts and their durable resolution claims, including each reconciliation task. Owner only."""
         def proposal_resolve(self, spec: Facade.CodeProposalResolveRequest) -> Facade.CodeProposalSubmitted:
             """Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands."""
+        def proposal_resolve_rereview(self, spec: Facade.CodeProposalResolveRereviewRequest) -> Facade.CodeProposalSubmitted:
+            """Submit a fresh Proposed review of verified redacted bytes from an approved conflict resolution. Owner only. Current conflict checks and fresh attribution stay; the engine fills content. The original stays unchanged; nothing lands."""
         def proposal_review(self, spec: Facade.CodeProposalReviewRequest) -> Facade.CodeProposalSettlementView:
             """Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt."""
         def proposal_settle(self, spec: Facade.CodeProposalSettleRequest) -> Facade.CodeProposalSettlementView:
@@ -3526,6 +3534,12 @@ class Oneiron:
             """The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone."""
         def slice(self, spec: Facade.ResultSliceRequest) -> Facade.ResultSliceView:
             """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
+    class _VaultDevicesVerbs:
+        @property
+        def predecessor(self) -> "Oneiron._VaultDevicesPredecessorVerbs": ...
+    class _VaultDevicesPredecessorVerbs:
+        def name(self, spec: Facade.DevicePredecessor) -> Facade.DevicePredecessor:
+            """Name a predecessor device key for this install under the owner's proof; pending predecessor sweeps run separately."""
     class _VaultAgentsVerbs:
         def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
             """The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""

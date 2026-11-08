@@ -11,9 +11,9 @@ use crate::error::{Error, GateError, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::task_verb::{
-    ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOptionId,
-    TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource, TaskAskSpec,
-    TaskAskStatus, TaskAskTarget, TaskAskWord,
+    ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption,
+    TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
+    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
 };
 
 use super::super::consent::{
@@ -117,7 +117,10 @@ impl Memory<'_> {
         question.revision = revision;
         let mut options = BTreeMap::new();
         for (id, _, label) in LIVE_EDIT_OPTIONS {
-            options.insert(TaskAskOptionId::new(id)?, label.to_owned());
+            options.insert(
+                TaskAskOptionId::new(id)?,
+                TaskAskOption::new(label.to_owned()),
+            );
         }
         question.options = options;
         question.label = Some(format!(

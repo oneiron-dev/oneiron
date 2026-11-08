@@ -11,6 +11,7 @@ mod program_resume;
 mod read_worlds;
 mod reader_folds;
 mod reader_jobs;
+pub(crate) use reader_jobs::erase_reader_caller_actor_in_txn;
 mod records;
 mod replay_bodies;
 mod replay_capsule;
@@ -43,7 +44,9 @@ pub(crate) use self::fold_answers::{
 };
 pub use self::read_worlds::ReadWorldUnknown;
 pub(crate) use self::read_worlds::{
-    ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
+    ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn,
+    closed_read_world_capture_in_txn, invalidate_imported_read_world_capture_in_txn,
+    read_world_snapshot_in_txn,
 };
 pub(crate) use self::reader_folds::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
