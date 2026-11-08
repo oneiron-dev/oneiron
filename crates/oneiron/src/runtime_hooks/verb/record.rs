@@ -64,6 +64,12 @@ pub(in crate::runtime_hooks) struct HookVerbRunRecord {
     /// while the hook's current grant still shows each of them.
     #[serde(default, with = "crate::serialize::entity_ref::sequence")]
     pub(in crate::runtime_hooks) dependencies: Vec<EntityId>,
+    /// The rows the caller's own args and result named, and the args its
+    /// landing was judged on (FIX 22191), read from the whole input before
+    /// the pin bound drops any of it: a permanent erase of one retires the
+    /// run's payload even when its input was past the bound (review #6817).
+    #[serde(default, with = "crate::serialize::entity_ref::sequence")]
+    pub(in crate::runtime_hooks) named_rows: Vec<EntityId>,
     /// The input also showed content whose rows no host names: a replay runs
     /// it again only under the grant it was built under ([`Self::grant`]).
     #[serde(default)]

@@ -71,6 +71,10 @@ pub fn slip_mint_value(action: &SlipMintAction) -> Value {
                 .as_deref()
                 .map_or(Value::Nil, Value::from),
         ),
+        (
+            Value::from(SLIP_KEY_SHARE_REF),
+            claims.share_ref.as_deref().map_or(Value::Nil, Value::from),
+        ),
     ];
     // OF-606: only a support slip carries the key, so every other mint's
     // bytes stay as they were.
@@ -363,6 +367,10 @@ pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
         },
         invitation_ref: {
             let value = required(entries, SLIP_KEY_INVITATION_REF)?;
+            decode_optional_string(value)?
+        },
+        share_ref: {
+            let value = required(entries, SLIP_KEY_SHARE_REF)?;
             decode_optional_string(value)?
         },
         delegation: delegations
