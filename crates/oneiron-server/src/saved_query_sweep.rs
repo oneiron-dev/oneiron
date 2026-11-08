@@ -467,6 +467,7 @@ fn with_evaluator<T>(
         response_format: ResponseFormat::Text,
         locality,
         host_keyless: false,
+        host_paid: false,
     };
     let decisions = server.decision_host().membership_decisions()?;
     let evaluator = SavedQueryEvaluator {

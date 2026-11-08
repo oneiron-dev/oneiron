@@ -6,12 +6,15 @@ use super::*;
 
 /// The dispatch request one claimed attempt of `task` replays: its actor,
 /// audit and ledger identities, frozen delivery-window facts, session,
-/// counterparty and committed calendar invite. `drain_clock` is the vault
-/// clock reading taken with the drain's `now` (FIX 8817).
+/// counterparty, committed calendar invite, and the send executor `lease`
+/// the attempt took, which the transport's fence re-checks (FIX 4747).
+/// `drain_clock` is the vault clock reading taken with the drain's `now`
+/// (FIX 8817).
 pub(super) fn connector_dispatch_request(
     task_ref: EntityId,
     task: &ConnectorSendTask,
     attempt: &crate::attempt_queue::AttemptRecord,
+    lease: SendExecutorLease,
     now: u64,
     drain_clock: u64,
 ) -> OutboundDispatchRequest {
@@ -45,6 +48,9 @@ pub(super) fn connector_dispatch_request(
     // Ledger identity is the logical-send id (derived from the task
     // idempotency key) so fresh retry attempts stay the same paid intent.
     request.ledger_identity_ref = Some(logical_send_intent_ref.clone());
+    // FIX 4747: the transport sends only while the TASK still holds this
+    // exact lease.
+    request.send_executor_fence = Some(SendExecutorFence { task_ref, lease });
     // Local wall-clock time is seeded from the FROZEN offset at THIS
     // attempt's `now`, never from schedule time. No offset ⇒ no local
     // minute ⇒ the door fails closed instead of guessing midnight. The door
@@ -204,8 +210,36 @@ pub(super) fn settle_failed_connector_task(
                 ..
             })
         );
+    // FIX 4747: a send that came back ambiguous and that no provider key
+    // makes safe to resend stays Pending and uncertain: it is looked up
+    // before any resend, on the attempt after this one.
+    let lookup_due = ambiguous
+        && matches!(
+            result.resolution,
+            Some(IntentResolution::Pending {
+                delivery: UnconfirmedDelivery::Unresolved,
+                retry: RetryDisposition::NoAutomaticRetry | RetryDisposition::DefiniteOnly,
+            })
+        );
     let past_deadline = |retry_at: u64| task.deadline_at.filter(|deadline| retry_at > *deadline);
-    if retryable {
+    if lookup_due {
+        let retry_at = now.saturating_add(UNCERTAIN_SEND_LOOKUP_DELAY_SECS);
+        result.receipt.fields.insert(
+            "dispatch_outcome".to_owned(),
+            result.outcome.as_str().to_owned(),
+        );
+        persist_send_receipt_and_retry(
+            vault,
+            attempt,
+            task_ref,
+            result.receipt,
+            UNCERTAIN_SEND_LOOKUP_DUE_REASON,
+            retry_at,
+            now,
+            SendReceiptOutcome::Ambiguous,
+            transport_dispatched,
+        )?;
+    } else if retryable {
         // A provider that stated its own cool-down (a rate-limit
         // `retry_after`) is obeyed exactly; without one the
         // generic transport curve still applies. The instant is
@@ -307,6 +341,44 @@ pub(super) fn settle_failed_connector_task(
             },
         )?;
     }
+    Ok(())
+}
+
+/// Parks a send that may have gone out and that no provider lookup could
+/// settle (FIX 4747): its TASK holds for the owner's word, the first time
+/// with one inbox ask to each live owner, and the attempt's audit receipt
+/// and its re-arm at the answer poll commit together. Nothing was sent.
+pub(super) fn park_uncertain_send(
+    vault: &Vault,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task_ref: EntityId,
+    task: &ConnectorSendTask,
+    mut result: OutboundDispatchResult,
+) -> Result<(), ConnectorTaskExecutorError> {
+    // FIX 10955: the transport already ran inside dispatch; read the clock
+    // again for this settlement.
+    let now = vault.now_recorded_at();
+    super::super::uncertain_send::hold_uncertain_send(vault, task, now)?;
+    let transport_dispatched = result
+        .receipt
+        .fields
+        .get("delivery_may_have_occurred")
+        .is_some_and(|value| value == "true");
+    result.receipt.fields.insert(
+        "dispatch_outcome".to_owned(),
+        result.outcome.as_str().to_owned(),
+    );
+    persist_send_receipt_and_retry(
+        vault,
+        attempt,
+        task_ref,
+        result.receipt,
+        UNCERTAIN_SEND_AWAITS_OWNER_REASON,
+        now.saturating_add(UNCERTAIN_SEND_ANSWER_POLL_SECS),
+        now,
+        SendReceiptOutcome::Ambiguous,
+        transport_dispatched,
+    )?;
     Ok(())
 }
 

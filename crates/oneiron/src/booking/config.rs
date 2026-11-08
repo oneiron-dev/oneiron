@@ -65,9 +65,6 @@ pub(crate) const MINUTES_PER_DAY: u16 = 1_440;
 /// Weekday axis width. Rows are `0 = Monday ..= 6 = Sunday`.
 pub(super) const DAYS_PER_WEEK: u8 = 7;
 
-/// Bound on an [`EventTypeKey`], matching the seam's timezone-identifier bound.
-const MAX_EVENT_TYPE_KEY_BYTES: usize = 64;
-
 /// How a multi-host event type turns per-host availability into offered slots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -179,8 +176,9 @@ impl EventTypeConfig {
     /// can run, by construction.
     fn defect(&self) -> Option<&'static str> {
         let key = self.key.0.as_str();
-        if key.trim().is_empty() || key.len() > MAX_EVENT_TYPE_KEY_BYTES {
-            return Some("booking.event_type key must be 1..=64 non-blank bytes");
+        // A key of any length (ABC row 67): only a blank one is refused.
+        if key.trim().is_empty() {
+            return Some("booking.event_type key must be non-blank");
         }
         if self.duration_min == 0 {
             return Some("booking.event_type duration_min must be positive");

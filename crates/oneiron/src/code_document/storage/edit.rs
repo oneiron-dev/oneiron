@@ -31,6 +31,11 @@ impl Vault {
         actor: WriteActor,
     ) -> Result<CodeEditReceipt> {
         let (provenance, before, text) = Self::validate_code_file_edit(session, edit, metadata)?;
+        // A replacement that writes a secret the door can place lands its
+        // handle (FIX 2372; OF-067): the operation, its stamp and its ingress
+        // receipt then hold the edit as admitted, never the value.
+        let admitted = self.admit_code_edit_in_txn(wtxn, &session.document_id, edit)?;
+        let edit = admitted.as_ref().unwrap_or(edit);
         let candidate = doc_from_snapshot(
             &session
                 .doc
@@ -81,9 +86,10 @@ impl Vault {
         }
         // The edited file, read whole by the write door under the owner's
         // switch before any snapshot or receipt is written (OF-067). Its
-        // receipt binds the edit's bytes, so a replay can prove it the same
-        // edit: no handle can stand in a secret, and a hit refuses, unless
-        // the file read the same way before the edit.
+        // receipt binds the admitted edit's bytes, and a replay must offer
+        // exactly those (see `apply_code_file_edit_once_with`): a secret the replacement's admission did not
+        // place (one split across the file and the edit) refuses, unless the
+        // file read the same way before the edit.
         let mut stood = false;
         crate::batch::secret_scan::scan_document_in_txn(
             &self.store,
@@ -152,6 +158,42 @@ impl Vault {
     /// The edit checked against its session before any write: its paths,
     /// provenance, span, metadata and rename; the provenance, the frontier
     /// before it and the text it edits, as they stood.
+    /// `edit` with its replacement admitted as the batch door admits a text
+    /// field (FIX 2372): each secret the door's text rules place goes to
+    /// custody, under the document's carrier origin (the one its lifted keys
+    /// name), and leaves its handle; a value custody already holds keeps its
+    /// handle. `None` when the replacement is unchanged: the switch is off, it
+    /// holds no hit, or a hit it holds is one no span places, which the
+    /// whole-file read still judges as before.
+    pub(super) fn admit_code_edit_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        document: &[u8; 32],
+        edit: &CodeFileEdit,
+    ) -> Result<Option<CodeFileEdit>> {
+        use crate::batch::secret_scan::{
+            Lifted, Part, SecretScanMode, admit_parts_in_txn, carrier_origin, predict_masked_text,
+            scan_write_payload, secret_scan_mode_in_txn,
+        };
+        if edit.replacement.is_empty()
+            || secret_scan_mode_in_txn(&self.store, wtxn)? == SecretScanMode::Off
+            || scan_write_payload(edit.replacement.as_bytes()).is_ok()
+            || predict_masked_text(&edit.replacement).is_err()
+        {
+            return Ok(None);
+        }
+        let (origin, place) = carrier_origin(&crate::side_table::CODE_DOCUMENT_HEAD, document)?;
+        let mut admitted = edit.clone();
+        let changed = admit_parts_in_txn(
+            self,
+            wtxn,
+            origin,
+            &mut [(place.as_str(), Part::Text(&mut admitted.replacement))],
+            &mut Lifted::default(),
+        )?;
+        Ok(changed.then_some(admitted))
+    }
+
     fn validate_code_file_edit(
         session: &CodeDocumentSession,
         edit: &CodeFileEdit,

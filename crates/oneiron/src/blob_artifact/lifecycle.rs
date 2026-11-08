@@ -80,6 +80,47 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     Ok(cleanup)
 }
 
+/// The owner's discard of a world copy (FIX 14534, Engine 11-06 08:34 call
+/// 4 = A): `id`'s version chain and head, which carry its export names,
+/// media types and provenance, its claimed-hash pairs and its `asset_ref`
+/// holds on their bytes go. Local only: no deletion fence, no deindex of a
+/// byte carrier, no pointer, publication or serving change. A carrier ASSET
+/// is a member of its own: the tear takes it with its world's rows, and one
+/// another holder needs keeps its row. Its version numbering (`highwater`)
+/// and born-from rows stay as identifier-only history; a born-from listing
+/// joins live versions only.
+pub(crate) fn discard_local_copy_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, id)?;
+    let hashes = artifact_hashes(store, wtxn, id)?;
+    forget_claimed_hashes(store, wtxn, id)?;
+    HEAD.delete(store, wtxn, id)?;
+    for key in VERSIONS.scan_keys(store, wtxn, id.as_bytes())? {
+        VERSIONS.delete(store, wtxn, &key)?;
+    }
+    for content_hash in hashes {
+        ASSET_REF.delete(store, wtxn, &(content_hash, *id))?;
+    }
+    Ok(())
+}
+
+/// The owner's discard of a world copy takes the hold the reference ASSET
+/// `reference` has on the bytes under `content_hash` (FIX 14534): its
+/// `asset_ref` row goes, and nothing else. The bytes' carrier is a member of
+/// its own.
+pub(crate) fn discard_asset_reference_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    reference: &EntityId,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+) -> Result<()> {
+    ASSET_REF.delete(store, wtxn, &(*content_hash, *reference))?;
+    Ok(())
+}
+
 /// Releases the bytes under `content_hash` once `artifact` lets go of them, unless an
 /// `asset_ref` row or another live artifact's version claim still holds them: their ASSET is
 /// fenced, and deindexed when its row is stored here. Never the id being deleted, and never a

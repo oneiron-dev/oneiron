@@ -680,6 +680,7 @@ fn park_held_edits_in_txn(
         status: ForkStatus::Pending,
         read_refs: Vec::new(),
         keep: None,
+        delta_receipt: None,
     };
     ENTITY_DOC_FORK.put(&vault.store, txn, &record.fork, &record)?;
     ENTITY_DOC_FORK_SNAPSHOT.put(
