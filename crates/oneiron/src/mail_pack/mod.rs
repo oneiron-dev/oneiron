@@ -83,8 +83,7 @@ pub use attachments::{MailAttachmentOpenRequest, MailAttachmentState, MailAttach
 pub use caldav_calendar::{CALDAV_CALENDAR_CONNECTOR_EFFECTOR, HttpCalDavCalendarWire};
 pub use calendar::{MailCalendarFeed, MailCalendarPull, MailCalendarRead, MailCalendarWire};
 pub(crate) use calendar::{
-    bind_calendar_source_row_in_txn, calendar_source_occupancy, calendar_source_of_system_in,
-    merge_busy,
+    calendar_source_landing_in, calendar_source_occupancy, calendar_source_of_system_in, merge_busy,
 };
 pub(crate) use claim_recheck::{claim_recheck_current_in, erase_claim_recheck_ids_in_txn};
 pub(crate) use compliance::erase_compliance_actor_in_txn;
