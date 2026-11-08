@@ -8,6 +8,8 @@
 //! A reply whose shape streams arrives in chunks ([`BrokerStream`]); the
 //! daemon keeps them only once the broker says the body ended clean.
 
+mod released;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -166,6 +168,8 @@ pub struct BrokerStream {
     whole: Option<Zeroizing<Vec<u8>>>,
     /// How the body ended, once it has: clean (`None`) or cut.
     ended: Option<Option<Failure>>,
+    /// Present only when this call requires daemon release checks.
+    dispatch: Option<crate::frame::dispatch::DispatchState>,
 }
 
 /// One step of a reply's body.
@@ -266,7 +270,14 @@ impl BrokerConnection {
         let written = if let Some(whole) = whole {
             tokio::time::timeout_at(
                 deadline,
-                crate::frame::write_call_with_whole(&mut self.stream, call, body, whole, &secret),
+                crate::frame::write_call_with_whole(
+                    &mut self.stream,
+                    call,
+                    body,
+                    whole,
+                    &secret,
+                    false,
+                ),
             )
             .await
         } else {
@@ -302,6 +313,7 @@ impl BrokerConnection {
             deadline,
             whole,
             ended: None,
+            dispatch: None,
         })
     }
 }
