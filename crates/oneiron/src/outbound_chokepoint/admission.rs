@@ -16,6 +16,7 @@ use super::types::{
     PreparedAuthorization, PreparedEffect,
 };
 use crate::Vault;
+use crate::agent_dispatch::{AgentRunEffectAdmission, AgentRunEffectCall, AgentRunEffectStop};
 use crate::attempt_queue::AttemptId;
 use crate::connector_key;
 use crate::error::Error;
@@ -381,6 +382,34 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     // FIX 6404: the transport's own target judges the new call again under
     // this writer; a refusal records no decision.
     transport.admit_in(&wtxn)?;
+    // FIX 4747 slice 7: an agent run's new effect meets its run TASK's
+    // marks under this writer, before any decision is recorded or budget
+    // charged: it goes only while this machine holds the run, and one an
+    // earlier executor of the run marked goes as its mark and the owner's
+    // answer rule. The Pending insert below marks it in this same writer.
+    let run_effect = match &command {
+        OutboundEffectCommand::New(prepared) => match agent_run_effect_call(prepared) {
+            Some(call) => match crate::agent_dispatch::admit_agent_run_effect_in_txn(
+                vault,
+                &mut wtxn,
+                call,
+                &intent_id,
+                &prepared.server,
+                &prepared.tool,
+            )? {
+                AgentRunEffectAdmission::Unmarked => None,
+                AgentRunEffectAdmission::Marked(holding) => Some(holding),
+                AgentRunEffectAdmission::Stopped { stop, commit } => {
+                    if commit {
+                        wtxn.commit().map_err(Error::from)?;
+                    }
+                    return Ok(agent_run_effect_stopped(intent_id, stop));
+                }
+            },
+            None => None,
+        },
+        OutboundEffectCommand::Park(_) | OutboundEffectCommand::Resume(_) => None,
+    };
 
     let invite_admission = match &command {
         OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) => {
@@ -819,6 +848,17 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         pending.payload(),
         counterparty,
     )?;
+    // FIX 4747 slice 7: an agent run's effect is marked on its run TASK by
+    // its intent id in the writer that commits its Pending row, at the
+    // generation the admission read, before its transport can start.
+    if let Some(holding) = run_effect {
+        crate::agent_dispatch::record_agent_run_effect_mark_in_txn(
+            vault,
+            &mut wtxn,
+            holding,
+            &pending.id,
+        )?;
+    }
     reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved, spend_basis)?;
     if let Some(charge) = budget_charge.as_mut() {
         charge.refresh_read_in_txn(&vault.store, &wtxn, vault.store.clock.now_recorded_at())?;
@@ -871,6 +911,58 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     result.budget_charge = budget_charge;
     Ok(result)
+}
+
+/// The agent run call a new effect is, when its scoped preparation names the
+/// run try whose step makes it (FIX 4747 slice 7): its read-only class and
+/// whether its frozen idempotency key reaches the provider. `None` for every
+/// other effect, which no run's marks govern.
+fn agent_run_effect_call(prepared: &PreparedEffect) -> Option<AgentRunEffectCall> {
+    let PreparedAuthorization::ScopedMcp {
+        prepared: tool_call,
+        ..
+    } = &prepared.authorization
+    else {
+        return None;
+    };
+    Some(AgentRunEffectCall {
+        run: tool_call.agent_run()?,
+        read_only: tool_call.is_read_only(),
+        idempotent: prepared.idempotency_supported,
+    })
+}
+
+/// An agent run's effect that did not go at its admission, for `stop` (FIX 4747 slice 7):
+/// nothing was decided, charged, settled, written to the ledger or sent.
+fn agent_run_effect_stopped(
+    intent_id: crate::outbound_intent_ledger::IntentId,
+    stop: AgentRunEffectStop,
+) -> OutboundEffectResult {
+    OutboundEffectResult {
+        resolution: None,
+        dispatch: crate::outbound_intent_ledger::IntentDispatchResult {
+            class: crate::outbound_intent_ledger::OutboundCallClass::Effectful,
+            intent_id: Some(intent_id),
+            state: None,
+            send_outcome: None,
+            replayed: false,
+            escalation: None,
+        },
+        gate_decision_id: None,
+        gate_outcome: None,
+        gate_reason_codes: Vec::new(),
+        gate_receipt_reasons: Vec::new(),
+        budget_charge: None,
+        budget_settlement_events: Vec::new(),
+        dedupe_suppressed: false,
+        suppression_receipt: None,
+        ceiling_count: None,
+        approval_digest: None,
+        ask_consent: None,
+        approval_actor: None,
+        paced_until: None,
+        agent_run_effect: Some(stop),
+    }
 }
 
 /// Reads all calendar state under the same writer that publishes Pending.

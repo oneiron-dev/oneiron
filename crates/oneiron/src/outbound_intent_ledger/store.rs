@@ -733,6 +733,9 @@ fn update_pending_recorded_outcome(
     if block == BudgetBlock::Open {
         record.updated_ms = now_ms.max(record.created_ms);
         LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
+        // FIX 4747 slice 7: an agent run's effect mark settles, or opens
+        // again for a retry, in this writer.
+        crate::agent_dispatch::settle_agent_run_effect_mark_in_txn(vault, &mut wtxn, &record);
     } else {
         record.recorded_outcome = expected;
     }

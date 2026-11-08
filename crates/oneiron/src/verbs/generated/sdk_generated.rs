@@ -2496,6 +2496,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.agent.run_effect.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AgentRunEffectAnswer,
+                >(),
+            ),
+            (
                 "vault.research.create_child",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResearchChildWire,
@@ -8115,6 +8121,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.records.erase_sweep",
     "vault.outbound_calls.request.erase",
     "vault.outbound.uncertain_send.answer",
+    "vault.agent.run_effect.answer",
     "vault.research.create_child",
     "vault.research.archive",
     "vault.research.archive.install",
@@ -9735,6 +9742,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.outbound.uncertain_send.answer" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::UncertainSendAnswered,
+        >(),
+        "vault.agent.run_effect.answer" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AgentRunEffectAnswered,
         >(),
         "vault.research.create_child" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ResearchChildReceipt,
@@ -14932,6 +14942,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.outbound.uncertain_send.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agent.run_effect.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21725,6 +21742,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.outbound.uncertain_send.answer" => {
             validate_input_vault_outbound_uncertain_send_answer(value)?
         }
+        "vault.agent.run_effect.answer" => validate_input_vault_agent_run_effect_answer(value)?,
         "vault.research.create_child" => validate_input_vault_research_create_child(value)?,
         "vault.research.archive" => validate_input_vault_research_archive(value)?,
         "vault.research.archive.install" => validate_input_vault_research_archive_install(value)?,
@@ -25441,6 +25459,11 @@ fn validate_input_vault_outbound_uncertain_send_answer(
     value: &serde_json::Value,
 ) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::UncertainSendAnswer = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_agent_run_effect_answer(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::AgentRunEffectAnswer = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -31095,6 +31118,7 @@ pub fn invoke_with_notice(
         "vault.outbound.uncertain_send.answer" => {
             invoke_vault_outbound_uncertain_send_answer(memory, value)
         }
+        "vault.agent.run_effect.answer" => invoke_vault_agent_run_effect_answer(memory, value),
         "vault.research.create_child" => invoke_vault_research_create_child(memory, value),
         "vault.research.archive" => invoke_vault_research_archive(memory, value),
         "vault.research.archive.install" => invoke_vault_research_archive_install(memory, value),
@@ -35628,6 +35652,13 @@ fn invoke_vault_outbound_uncertain_send_answer(
         memory,
         decode(value)?,
     )?)
+}
+#[inline(never)]
+fn invoke_vault_agent_run_effect_answer(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_agent_run_effect_answer(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_research_create_child(
@@ -46077,6 +46108,16 @@ pub fn vault_outbound_uncertain_send_answer(
     crate::task_verb::sdk::answer_uncertain_send_as(
         memory.vault(),
         &memory.embedded_owner("vault.outbound.uncertain_send.answer")?,
+        input,
+    )
+}
+pub fn vault_agent_run_effect_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AgentRunEffectAnswer,
+) -> MemoryResult<crate::task_verb::sdk::AgentRunEffectAnswered> {
+    crate::task_verb::sdk::answer_agent_run_effect_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agent.run_effect.answer")?,
         input,
     )
 }

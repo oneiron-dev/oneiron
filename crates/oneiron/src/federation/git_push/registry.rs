@@ -4,7 +4,8 @@
 //! deleted row is joined back from the authority log (FIX 7136): its signed
 //! mint carries what the row held, and its revoke record, the owner's signed
 //! revoke act or the host's signed withdrawal a membership change logged
-//! (FIX 7135), says it no longer stands. The registry adds no table.
+//! (FIX 7135), or this vault's mark of its withdrawal (FIX 22193), says it no
+//! longer stands. The registry adds no table.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -92,8 +93,10 @@ impl Vault {
     /// whose grant a counted revoke names, the owner's own revoke act, the
     /// host's signed withdrawal (`SlipGrantRevoke`) a membership change
     /// logged, or the carrier-signed record of a membership change no host
-    /// issuer signed (FIX 12335). An entry whose body this vault no longer holds (an adopted
-    /// checkpoint covers it) names none.
+    /// issuer signed (FIX 12335), or that this vault marks withdrawn with no
+    /// counted revoke yet: the rule the GitPush revoke door answers unchanged
+    /// by (FIX 22193). An entry whose body this vault no longer holds (an
+    /// adopted checkpoint covers it) names none.
     fn revoked_git_push_grants_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -165,10 +168,13 @@ impl Vault {
                 }
             }
         }
-        Ok(mints
-            .into_values()
-            .filter(|mint| revoked.contains(&mint.id))
-            .collect())
+        let mut withdrawn = Vec::new();
+        for mint in mints.into_values() {
+            if revoked.contains(&mint.id) || self.grant_withdrawal_marked_in_txn(txn, mint.id)? {
+                withdrawn.push(mint);
+            }
+        }
+        Ok(withdrawn)
     }
 }
 
