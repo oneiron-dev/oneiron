@@ -742,6 +742,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.publish.approve`
 - `vault.code.origin.publish.execute`
 - `vault.code.origin.publish.cancel`
+- `vault.devices.predecessor.name`
 - `vault.code.origin.authority.get`
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`

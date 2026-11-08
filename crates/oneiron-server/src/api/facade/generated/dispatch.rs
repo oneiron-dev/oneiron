@@ -23605,6 +23605,40 @@ async fn vault_code_origin_publish_cancel(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_devices_predecessor_name(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.devices.predecessor.name")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.devices.predecessor.name", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.devices.predecessor.name", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_devices_predecessor_name(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_origin_authority_get(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -53156,6 +53190,9 @@ async fn call_verb_row(
         }
         "vault.code.origin.publish.cancel" => {
             boxed_vault_code_origin_publish_cancel(server, call, input).await
+        }
+        "vault.devices.predecessor.name" => {
+            Box::pin(vault_devices_predecessor_name(server, call, input)).await
         }
         "vault.code.origin.authority.get" => {
             boxed_vault_code_origin_authority_get(server, call, input).await
