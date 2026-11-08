@@ -13,6 +13,7 @@
 //! pin before any seed, narrowest scope first, and a call's pin is never
 //! displaced. The planner keeps learning under every choice from the
 //! receipts it already reads.
+pub(crate) mod tables;
 
 use serde::{Deserialize, Serialize};
 

@@ -81,6 +81,7 @@ pub use selection::{
     LensSelection, LensSelectionRange, LensSelectionResolveRequest, LensSelectionResolved,
 };
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

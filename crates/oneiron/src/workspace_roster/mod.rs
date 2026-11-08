@@ -275,6 +275,7 @@ mod join_door;
 mod join_history;
 mod join_receipt;
 mod room_leave;
+pub(crate) mod tables;
 mod workplace_join;
 pub(crate) use join_consent::person_of_actor_in_txn;
 pub use join_consent::{

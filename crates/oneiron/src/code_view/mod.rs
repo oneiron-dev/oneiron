@@ -409,6 +409,7 @@ pub(crate) fn relative(path: &str) -> Result<()> {
 pub(crate) fn view_path_on_disk(root: &Path, path: &str) -> Result<PathBuf> {
     Ok(root.join(&*git_path_os_str(path)?))
 }
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

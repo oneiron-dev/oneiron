@@ -39,6 +39,7 @@ pub mod read;
 pub mod retest;
 mod scope_carriers;
 mod scope_erase;
+pub(crate) mod tables;
 
 pub use cell::{LearningCell, LearningPredicate, ROOT_TYPE_NODE, TypeRef};
 pub use coordination::{

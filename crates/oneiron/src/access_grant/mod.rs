@@ -45,6 +45,7 @@ pub use self::record::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow,
 };
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

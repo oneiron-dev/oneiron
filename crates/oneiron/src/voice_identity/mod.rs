@@ -72,6 +72,7 @@ pub use self::types::{
 #[cfg(test)]
 pub(crate) use self::vault::{put_raw_voice_roster_for_test, put_voice_roster_for_test};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

@@ -161,6 +161,7 @@ pub(crate) fn read_office_package_from(
 mod docx_tests;
 #[cfg(test)]
 mod native_recalc_tests;
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

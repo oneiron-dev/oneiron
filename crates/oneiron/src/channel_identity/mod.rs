@@ -111,6 +111,7 @@ pub(crate) use self::transition::{
     resolve_quarantine_window_in_txn, step_channel_identity_in_txn,
 };
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

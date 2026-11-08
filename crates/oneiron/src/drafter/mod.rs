@@ -73,6 +73,7 @@ mod nightly;
 mod policy;
 mod report;
 mod serving;
+pub(crate) mod tables;
 mod traffic;
 mod training;
 mod types;

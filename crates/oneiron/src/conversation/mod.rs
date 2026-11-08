@@ -96,4 +96,5 @@ mod tests;
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::chat_breakpoint::chat_breakpoint_accepts_masked;
 
+pub(crate) mod tables;
 pub mod voice_roster;

@@ -543,5 +543,6 @@ mod text;
 
 pub use self::text::{InboxTextSource, ResolvedInboxMessage, ResolvedInboxText};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

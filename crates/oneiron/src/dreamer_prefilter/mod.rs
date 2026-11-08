@@ -59,6 +59,7 @@ use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

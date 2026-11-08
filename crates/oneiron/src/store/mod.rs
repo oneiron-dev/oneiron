@@ -644,6 +644,7 @@ pub(crate) use oneiron_store::record_links;
 pub(crate) use oneiron_store::record_references;
 pub(crate) mod scan_count;
 pub(crate) mod skill_resident;
+pub(crate) mod tables;
 
 pub(crate) use oneiron_store::host_issuer_seed;
 pub(crate) use oneiron_store::principal_record;

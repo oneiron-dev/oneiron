@@ -72,6 +72,7 @@ pub use self::wake_proposal::{
     CommitmentWakeProposalSkip, commitment_wake_proposal_claim_id,
 };
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

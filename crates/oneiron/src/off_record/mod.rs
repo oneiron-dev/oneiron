@@ -31,6 +31,7 @@ pub mod anonymous_chat;
 mod lifecycle;
 mod promote;
 mod run_view;
+pub(crate) mod tables;
 
 pub use lifecycle::{
     ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordCreator,

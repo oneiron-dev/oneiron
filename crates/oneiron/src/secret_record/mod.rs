@@ -19,4 +19,5 @@ pub(crate) mod admission;
 pub(crate) mod carrier_marks;
 pub(crate) mod codec;
 pub(crate) mod floor;
+pub(crate) mod tables;
 mod write_records;

@@ -91,6 +91,7 @@ pub(crate) use self::types::CallAccounting;
 #[cfg(test)]
 pub(crate) use self::types::OutboundSender;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

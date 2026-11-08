@@ -29,6 +29,7 @@ pub mod sandbox;
 mod scope;
 mod source;
 mod store;
+pub(crate) mod tables;
 pub mod verb;
 
 pub use block::{HookBlock, HookBlockLifetime, HookTurnTarget};

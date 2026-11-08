@@ -315,4 +315,5 @@ use rmpv::Value;
 #[cfg(test)]
 use std::io::Cursor;
 
+pub(crate) mod tables;
 pub(crate) mod voice_ref_limits;

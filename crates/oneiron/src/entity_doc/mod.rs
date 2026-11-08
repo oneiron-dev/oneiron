@@ -216,5 +216,6 @@ pub(crate) fn lose_head_for_test(
     })
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

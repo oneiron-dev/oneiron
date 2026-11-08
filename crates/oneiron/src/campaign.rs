@@ -236,5 +236,6 @@ fn slot_matches(
         && existing.family == Some(family)
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

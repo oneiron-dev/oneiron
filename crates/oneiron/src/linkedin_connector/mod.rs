@@ -17,6 +17,7 @@ mod page_text;
 mod sandbox_host;
 mod seat_policy;
 mod served_inbox_sync;
+pub(crate) mod tables;
 mod verified_connect;
 mod verified_send;
 
