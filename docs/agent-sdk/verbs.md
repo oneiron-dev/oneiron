@@ -701,9 +701,11 @@ both bindings and their export-census tests in one change.
 - `vault.code.symbols.renew`
 - `vault.code.symbols.release`
 - `vault.code.proposal_submit`
+- `vault.code.proposal_rereview`
 - `vault.code.conflict_record`
 - `vault.code.conflict_view`
 - `vault.code.proposal_resolve`
+- `vault.code.proposal_resolve_rereview`
 - `vault.code.proposal_review`
 - `vault.code.proposal_settle`
 - `vault.code.proposal_settlement`
@@ -743,6 +745,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.publish.approve`
 - `vault.code.origin.publish.execute`
 - `vault.code.origin.publish.cancel`
+- `vault.devices.predecessor.name`
 - `vault.code.origin.authority.get`
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`
