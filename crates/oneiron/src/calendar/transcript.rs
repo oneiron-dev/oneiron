@@ -16,8 +16,8 @@ mod door;
 mod landing;
 mod pending;
 
-use landing::ingest_parsed_transcript_in_txn;
 pub use door::TranscriptFileDropInput;
+use landing::ingest_parsed_transcript_in_txn;
 pub use pending::{
     PendingTranscriptPass, TRANSCRIPT_OPEN_SESSION_WAIT_SECS, TRANSCRIPT_PENDING_ATTEMPT_KIND,
     run_pending_transcript_ingests,

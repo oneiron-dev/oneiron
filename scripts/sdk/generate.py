@@ -220,7 +220,10 @@ for row in ROWS:
         raise ValueError(f'{row["name"]}: require_granted_scope is only a non-Read lane_record_scope facade row\'s, with no other record-scope admission, and on a host door only a caller or listing one')
     # FIX 9609: `mcp_off_runtime` marks a plain memory row whose MCP arm runs
     # its engine call on a blocking thread, on a surface rebuilt there
-    # (`mcp_off_runtime_row`), because the call may wait out a host deadline.
+    # (`mcp_off_runtime_row`), because the call may wait out a host deadline
+    # or read a provider over blocking HTTP, whose client a debug build
+    # refuses on an async runtime worker (a Gmail reply draft's raw read, fix
+    # list row 20520).
     # Only a plain memory row reaches that helper: no ladder, no turn, no
     # other door shape, no owner-grade admission.
     if row.get('mcp_off_runtime') and (row.get('task_decisions') or row.get('task_work') or row.get('host_door')
@@ -373,6 +376,10 @@ ARGUMENTS = {
     'query_affect': {'rust': 'Option<oneiron::task_verb::sdk::QueryAffect>', 'napi': 'Option<NapiQueryAffect>', 'native_ts': 'QueryAffect | undefined', 'py': 'dict[str, Any] | None', 'stub': 'QueryAffect | None', 'native_py': 'Option<&str>', 'json': True,
         'napi_convert': 'let {name} = {name}.map(query_affect_to_engine);', 'py_convert': 'let {name}: Option<oneiron::task_verb::sdk::QueryAffect> = {name}.map(|value| decode(value, "recall query affect")).transpose()?;', 'field': '{name}'},
     'ref': {'rust': 'Option<&str>', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str | None', 'stub': 'str | None', 'native_py': 'Option<String>', 'borrow': '', 'suffix': '.as_deref()', 'field': '{name}.map(str::to_owned)'},
+    # FIX 3977: a recall's caller retrieval filter, the request's own JSON
+    # shape at every boundary, decoded onto the engine's `ReadFilterInput`.
+    'read_filter': {'rust': 'Option<oneiron::memory::ReadFilterInput>', 'napi': 'Option<serde_json::Value>', 'native_ts': 'ReadFilterInput | undefined', 'py': 'dict[str, Any] | None', 'stub': 'Facade.ReadFilterInput | None', 'native_py': 'Option<&str>', 'json': True,
+        'napi_convert': 'let {name} = {name}.map(|value| read_filter_to_engine(js_json(value))).transpose().map_err(facade_error)?;', 'py_convert': 'let {name}: Option<oneiron::memory::ReadFilterInput> = {name}.map(|value| decode(value, "recall filter")).transpose()?;', 'field': '{name}'},
     # OF-237: the receipt kinds a read lists, as `ReceiptKind` names them; none
     # is the gate decision ledger.
     'kinds': {'rust': '&[String]', 'napi': 'Option<Vec<String>>', 'native_ts': 'string[] | undefined', 'py': 'list[str] | None', 'stub': 'list[str] | None', 'native_py': 'Option<Vec<String>>',
@@ -861,6 +868,8 @@ def mcp_input_dispatch(row):
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  'if !auth.is_owner_grade() { return Err(McpGatewayError::new(-32020, "forbidden", "full-vault export requires owner authority")); }\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
+                 '// An export a code run calls follows the world settings as before owner ruling 1-EXPORT = B (FIX 9591): the run\'s dispatch says so, never the request.\n'
+                 'let input = oneiron::memory::ExportOptions { in_code_run: crate::api::facade::host_doors::support::in_code_run(), ..input };\n'
                  '// A host credential resolves first (FIX 2222): a hosted operator root gets the typed refusal, and a self-hosted root or the explicit dev mode exports as the owner it acts as.\n'
                  'let action = crate::api::host_action::host_action_of(server.vault(), auth).transpose().map_err(|error| mcp_engine_error("host action failed", error))?;\n'
                  '// The person path lists through its surface; the host paths beside their archive. A slip keeps its own path; a host action with no slip (the dev mode) takes the host-action export.\n'
@@ -961,9 +970,10 @@ def mcp_input_dispatch(row):
                      'let output = output.map_err(mcp_facade_error)?;\n')
         elif name in CALL_HOME_DOORS:
             # Its page as the plain arm reads it, then the home's references.
-            body += ('let asked = (input.query.clone(), input.limit);\n'
+            # The caller's own filter rides the home ask too (FIX 3977).
+            body += ('let asked = (input.query.clone(), input.limit, input.filter.clone());\n'
                      f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
-                     f'let (output, listed) = Box::pin({CALL_HOME_DOORS[name][1]}(server.vault(), output, &asked.0, asked.1, &actor.home_caller())).await;\n'
+                     f'let (output, listed) = Box::pin({CALL_HOME_DOORS[name][1]}(server.vault(), output, &asked.0, asked.1, asked.2.as_ref(), &actor.home_caller())).await;\n'
                      '// The home\'s references, found under the caller\'s own proof.\n'
                      'served.extend(listed);\n')
         else:
@@ -2263,6 +2273,44 @@ UNIFFI_RESULTS = {
 # Generated records with an owned codec for a nested opaque JSON result.
 # `types.root()` still emits their public records before this codec is selected.
 UNIFFI_GENERATED_RESULT_LIFTS = {
+    'crate::lens::InspectionResolved': 'InspectionResolved',
+    'crate::lens::LensSelectionResolved': 'LensSelectionResolved',
+    'crate::claim::WeaveReportView': 'WeaveReportView',
+    'crate::lens::LensFrameCard': 'LensFrameCard',
+    'crate::claim::ScopedReadResult<crate::lens::LensFrameCard>': 'ScopedReadResultLensFrameCard',
+    'crate::claim::WeaveDigestView': 'WeaveDigestView',
+    'crate::lens::LensListPage': 'LensListPage',
+    'crate::agent_inbox_lens::InboxItemView': 'InboxItemView',
+    'crate::inbox::NotificationPage': 'NotificationPage',
+    'crate::inbox::NotificationRow': 'NotificationRow',
+    'crate::task_verb::sdk::OffRecordResultCards': 'OffRecordResultCards',
+    'crate::memory::result_doors::ResultReadView': 'ResultReadView',
+    'crate::vault_shape::ShapeRead': 'ShapeRead',
+    'crate::vault_shape::ShapePlan': 'ShapePlan',
+    'crate::vault_shape::ShapeApplyReceipt': 'ShapeApplyReceipt',
+    'crate::memory::ShapeItemReceipt': 'ShapeItemReceipt',
+    'crate::inbox::UnifiedInboxGroupPage': 'UnifiedInboxGroupPage',
+    'crate::inbox::InboxGroupResolution': 'InboxGroupResolution',
+    'crate::task_verb::sdk::FeedbackSubjectPreview': 'FeedbackSubjectPreview',
+    'crate::task_verb::sdk::OffRecordResultRead': 'OffRecordResultRead',
+    'crate::memory::ShapePlanCardView': 'ShapePlanCardView',
+    'crate::dreamer_runner::maintenance::identity::IdentityActNow': 'IdentityActNow',
+    'crate::task_verb::sdk::BrowserObservationPage': 'BrowserAnswerObservationPage',
+    'crate::task_verb::sdk::BrowserImageOutput': 'BrowserAnswerImageOutput',
+    'crate::task_verb::sdk::BrowserFindOutput': 'BrowserAnswerFindOutput',
+    'crate::task_verb::sdk::BrowserWaitForOutput': 'BrowserAnswerWaitForOutput',
+    'crate::task_verb::sdk::BrowserExpectOutput': 'BrowserAnswerExpectOutput',
+    'crate::task_verb::sdk::BrowserScreenshotOutput': 'BrowserAnswerScreenshotOutput',
+    'crate::task_verb::sdk::BrowserLibraryFindOutput': 'BrowserAnswerLibraryFindOutput',
+    'crate::task_verb::sdk::BrowserLibraryDraftOutput': 'BrowserAnswerDraftOutput',
+    'crate::task_verb::sdk::BrowserDemonstrationStartOutput': 'BrowserAnswerDemonstrationStarted',
+    'crate::task_verb::sdk::BrowserDemonstrationStopOutput': 'BrowserAnswerDemonstrationOutput',
+    'crate::task_verb::sdk::BrowserLibraryRetireOutput': 'BrowserAnswerLibraryRetireOutput',
+    'crate::task_verb::sdk::BrowserLibraryRetiredOutput': 'BrowserAnswerLibraryRetiredOutput',
+    'crate::task_verb::sdk::BrowserHandoverOutput': 'BrowserAnswerHandoverOutput',
+    'crate::task_verb::sdk::BrowserSwitchEngineOutput': 'BrowserAnswerSwitchEngineOutput',
+    'crate::task_verb::sdk::BrowserLibraryProposeOutput': 'BrowserAnswerProposeOutput',
+    'crate::task_verb::sdk::BrowserLibraryRunOutput': 'BrowserAnswerLibraryRunOutput',
     'crate::task_verb::sdk::BrowserBatchOutput': 'BrowserAnswerBatchOutput',
     'crate::edit_settle::PendingProposalView': 'PendingProposalView',
     'crate::memory::ClaimProposalReview': 'ClaimProposalReview',
@@ -2398,7 +2446,37 @@ def uniffi_export(row, types, census):
             if owned and owned != mirror:
                 raise ValueError(f'{row["name"]}: its owned result codec must keep the generated record {mirror}')
             output = mirror
-            if owned:
+            if row['output'] == 'Vec<crate::vault_shape::ShapeInboxGroup>':
+                result = 'crate::codec::lift_shape_groups(output)'
+            elif row['output'] == 'crate::task_verb::sdk::AiAnswer':
+                result = f'crate::codec::lift_ai_answer({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::AiVideoJob':
+                result = f'crate::codec::lift_ai_video_job({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::AskImageAnswer':
+                result = f'crate::codec::lift_ask_image({name}, output)'
+            elif row['output'] == 'crate::llm::manifest::doors::ModelRoleInvocation':
+                result = f'crate::codec::lift_model_role_invocation({name}, output)'
+            elif row['output'] == 'crate::llm::model_step::ModelStepReceipt':
+                result = f'crate::codec::lift_model_step_receipt({name}, output)'
+            elif row['output'] == 'crate::llm::model_stream::ModelStreamEvents':
+                result = f'crate::codec::lift_model_stream_events({name}, output)'
+            elif row['output'] == 'crate::llm::model_stream::ModelStreamTerminal':
+                result = f'crate::codec::lift_model_stream_terminal({name}, output)'
+            elif row['output'] == 'Option<crate::llm::model_step::SettledStepView>':
+                result = f'crate::codec::lift_settled_step({name}, output)'
+            elif row['output'] == 'Option<crate::dreamer_runner::SettledProgramStepView>':
+                result = f'crate::codec::lift_settled_program_step({name}, output)'
+            elif row['output'] == 'crate::llm::catalog_doors::ModelTrialView':
+                result = f'crate::codec::lift_model_trial({name}, output)'
+            elif row['output'] == 'crate::llm::catalog_doors::ModelBindingProposal':
+                result = f'crate::codec::lift_model_binding_proposal({name}, output)'
+            elif row['output'] == 'crate::campaign::surface::SavedQueryRecordView':
+                result = f'crate::codec::lift_saved_query_record({name}, output)'
+            elif row['output'] == 'crate::campaign::surface::SavedQueryReadResult':
+                result = f'crate::codec::lift_saved_query_read({name}, output)'
+            elif row['output'] == 'crate::campaign::surface::SavedQueryEvaluationReceipt':
+                result = f'crate::codec::lift_saved_query_evaluation({name}, output)'
+            elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
                 nested_voice = ''
