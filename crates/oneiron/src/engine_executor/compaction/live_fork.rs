@@ -3,10 +3,16 @@
 //! actor, the backend freezes it for the flight's calls, and the flight lets
 //! go of it when it ends. Thresholds, the hot window and the single flight
 //! are unchanged.
+//!
+//! FIX 4933: the capture is the run's latest completed call, as the rung
+//! that answered it sent it, never the call the step is about to send. Its
+//! flight seals only the steps that call holds; the later steps stay raw
+//! for a later breakpoint. No breakpoint waits for an unsent call.
 
 use crate::code_run::{AdmittedLiveFork, LiveCompactionFork};
 use crate::compaction::{CompactionBackend, CompactionDriver, SelfCompactionUnavailable};
-use crate::{EntityId, LlmRequest, WriteActor};
+use crate::engine_executor::ENGINE_EXECUTOR_FALLBACK_NAME;
+use crate::{CallClass, EntityId, LlmRequest, WriteActor};
 
 /// What one breakpoint captured of the run's `live` request (FIX 4465 C):
 /// nothing when the flight is written from the retained turns (a row on
@@ -35,6 +41,49 @@ pub(in crate::engine_executor) fn capture(
         _ => driver.backend().input_token_limit(budget),
     };
     (captured, room)
+}
+
+/// How many of the run's steps a breakpoint's live fork holds (FIX 4933):
+/// the steps before the one its prefix's call was assembled for, as that
+/// call names them. A prefix of another run's call, or one that names no
+/// step, holds none. `None` when the flight is not a live fork.
+pub(in crate::engine_executor) fn held_steps(
+    live: Option<&Result<LiveCompactionFork, SelfCompactionUnavailable>>,
+    request: &LlmRequest,
+) -> Option<u64> {
+    let Some(Ok(fork)) = live else {
+        return None;
+    };
+    Some(match (step_of(fork.request()), step_of(request)) {
+        (Some((run, steps)), Some((current, _))) if run == current => steps,
+        _ => 0,
+    })
+}
+
+/// The last step a flight seals through `watermark` when its live fork
+/// holds `held` steps (FIX 4933): never one past them, and `None` when the
+/// fork holds none.
+pub(in crate::engine_executor) fn within_prefix(watermark: u64, held: Option<u64>) -> Option<u64> {
+    match held {
+        None => Some(watermark),
+        Some(steps) => steps.checked_sub(1).map(|last| watermark.min(last)),
+    }
+}
+
+/// The run and the step count a step's call names in its envelope, as the
+/// executor wrote them when it assembled the call.
+fn step_of(request: &LlmRequest) -> Option<(&str, u64)> {
+    let CallClass::Durable { fallback } = &request.envelope.class else {
+        return None;
+    };
+    if fallback.name != ENGINE_EXECUTOR_FALLBACK_NAME {
+        return None;
+    }
+    let config = fallback.config.as_ref()?;
+    Some((
+        config.get("run_id")?.as_str()?,
+        config.get("step_seq")?.as_u64()?,
+    ))
 }
 
 /// The breakpoint's capture, admitted by the run's driver for `byline`.
