@@ -58,10 +58,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/put_apply/mod.rs` | src | s | 2 struct · 1 enum · 1 fn | AppliedPut, BatchEntityPut, EffectiveEntity | Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers |
 | `src/batch/row_put.rs` | src | s | 1 enum | RowPut | What a put is to the row it writes, as the record-scope stamp reads it |
 | `src/batch/secret_scan.rs` | src | s | 7 mod | — | Store-layer modules of core `batch::secret_scan`; core re-exports each one at its old path |
-| `src/batch/secret_scan/container.rs` | src | m | 1 struct · 3 enum · 21 fn · 1 type · 3 const · 8 mod · 1 re-export | Budget, ContainerReadMode, Kind, Stop | Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office… |
+| `src/batch/secret_scan/container.rs` | src | m | 1 struct · 3 enum · 24 fn · 1 type · 3 const · 9 mod · 2 re-export | Budget, ContainerReadMode, Kind, Stop | Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office… |
 | `src/batch/secret_scan/container/archive.rs` | src | s | 1 struct · 6 fn · 2 const | Entry | A ZIP archive's members: each entry in central-directory order, Stored or Deflated, read whole against its… |
 | `src/batch/secret_scan/container/gzip.rs` | src | s | 2 fn | — | A gzip file's payload: every member it chains, decoded in order as one payload, each member's CRC-32 and… |
-| `src/batch/secret_scan/container/pdf.rs` | src | m | 10 fn · 3 const | — | A PDF's streams: each stream object decoded (no filter, or one Flate filter with a PNG predictor, exactly… |
+| `src/batch/secret_scan/container/pacing.rs` | src | s | 2 struct · 1 enum · 1 trait · 3 fn | ReadCancelled, ReadPacer, ReadPacing, ReadProgress | Scheduling data for one live container read |
+| `src/batch/secret_scan/container/pdf.rs` | src | m | 11 fn · 3 const | — | A PDF's streams: each stream object decoded (no filter, or one Flate filter with a PNG predictor, exactly… |
 | `src/batch/secret_scan/container/projection_edit.rs` | src | s | 1 struct · 1 enum · 1 type | MemberEdits, RetainedProjectionEdit | An agent's edit of a masked container copy, replayed member by member onto its ORIGINAL (FIX 7608 slice… |
 | `src/batch/secret_scan/container/retained_iterative.rs` | src | s | 2 struct · 1 enum · 1 trait | FillPlaces, Frame, RebuildAll, RetainedLeafTransform | The container walk and rebuild with their frames on the heap (FIX 8031, 7943): each container's frame held… |
 | `src/batch/secret_scan/container/sevenz.rs` | src | s | 3 fn · 1 const | — | A 7z archive's members (FIX 11575): each entry with data, by its place in the archive's file list, decoded… |
@@ -444,7 +445,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retrieval_policy/posterior.rs` | src | s | 1 struct · 1 const | RewardPosterior | A continuous-context Beta kernel posterior |
 | `src/retrieval_signal.rs` | src | s | 1 enum | Signal | The retrieval signals a run scores entities by: which channel ranked a result |
 | `src/retrieval_telemetry.rs` | src | s | 2 mod | — | Store-layer modules of core `store::retrieval_telemetry`; core re-exports each one at its old path |
-| `src/retrieval_telemetry/state.rs` | src | s | 2 struct | RetrievalReplayInputs, RetrievalTurn | Query-free retrieval context, preserved verbatim for offline replay |
+| `src/retrieval_telemetry/state.rs` | src | s | 2 struct · 1 fn | RetrievalReplayInputs, RetrievalTurn | Query-free retrieval context, preserved verbatim for offline replay |
 | `src/retrieval_telemetry/types.rs` | src | s | 1 re-export | — | Retrieval-telemetry record, trace, signal, and blend-weight types |
 | `src/retrieval_values.rs` | src | s | 1 struct | PendingVectorEmbedding | Retrieval result values and transaction-local candidate admission contracts |
 | `src/revision_ref.rs` | src | s | 1 struct | RevisionRef | A retained document frontier's opaque reference (`RevisionRef`), the revision a manifest entry and a… |

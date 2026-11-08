@@ -17,8 +17,10 @@
 //! deadline by its last slice. The first slice is one day, and a slice
 //! doubles only while the deadline leaves more than twice the time the last
 //! one took. An uncounted rule's walk in a slice is bounded by the slice's
-//! span; a COUNT rule's walk starts again at its DTSTART in every slice
-//! (bounded by its COUNT). The first slice always runs, so every call moves
+//! span; a COUNT rule's walk resumes in each slice where the slice before
+//! left it (FIX 16174: each series' cursor is kept for the page, by its
+//! EVENT, rule and start), so its prefix is walked once per page, bounded
+//! by its COUNT. The first slice always runs, so every call moves
 //! the frontier on. With neither a deadline nor a limit the window is one
 //! slice, as before.
 //!
@@ -104,7 +106,7 @@ impl Slices {
 
 /// `vault.calendar.search` as a page: [`CalendarSearchRequest`]'s fields,
 /// a deadline, and the frontier an earlier page answered.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarSearchPageRequest {
     /// Calendar selectors; see [`CalendarSel`] for passport matching.
@@ -127,6 +129,10 @@ pub struct CalendarSearchPageRequest {
     /// none starts at the range's start. Needs a range.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_from: Option<u64>,
+    /// The caller's retrieval filter (FIX 3977): it narrows every EVENT the
+    /// page reads, conjoined with the calendar, window and name selectors.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 impl CalendarSearchPageRequest {
@@ -136,6 +142,7 @@ impl CalendarSearchPageRequest {
             range: self.range,
             text: self.text.clone(),
             limit: self.limit,
+            filter: self.filter.clone(),
         }
     }
 }
