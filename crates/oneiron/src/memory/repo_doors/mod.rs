@@ -14,10 +14,7 @@
 //! declarations, its proposals and its queue entries (`symbols`,
 //! `proposals`), fenced by its declaration in each writer. PR3b adds the
 //! public run binding (`host`), the run's checkout and export (`custody`)
-//! and the host's stock review policy (`review_policy`). FIX 4300 adds the
-//! one read join the snapshot, file and definition reads share
-//! (`read_join`): anchor, pinned snapshot, path and ASSET or symbol rows in
-//! one read snapshot, under the run's admission and its own read lane.
+//! and the host's stock review policy (`review_policy`).
 
 mod custody;
 mod neighbor_types;
@@ -26,7 +23,6 @@ pub use neighbor_types::*;
 mod holder;
 mod host;
 mod proposals;
-mod read_join;
 mod reads;
 mod review_policy;
 mod symbols;
@@ -253,19 +249,6 @@ impl Vault {
 /// and a Grant's repo bounds never widen what a lane reads.
 pub const REPO_LANE_UNREADABLE: &str = "repo_lane_unreadable";
 
-/// The [`REPO_LANE_UNREADABLE`] door error: distinct from every membership
-/// refusal, since the Grant admitted the repo.
-pub(crate) fn repo_lane_unreadable() -> MemoryError {
-    MemoryError::new(
-        REPO_LANE_UNREADABLE,
-        "this run's Grant names the repo, but the run's read lane does not read its rows",
-        &[
-            "A repo row sits in base reality: the run's lane must read base reality \
-           for its repo doors to answer.",
-        ],
-    )
-}
-
 /// The door error a refusal answers: its stable public code and message.
 pub(crate) fn refusal_error(refusal: RepoAccessRefusal) -> MemoryError {
     MemoryError::new(refusal.public_code(), refusal.message(), &[])
@@ -363,6 +346,13 @@ impl Memory<'_> {
         {
             return Ok(());
         }
-        Err(repo_lane_unreadable())
+        Err(MemoryError::new(
+            REPO_LANE_UNREADABLE,
+            "this run's Grant names the repo, but the run's read lane does not read its rows",
+            &[
+                "A repo row sits in base reality: the run's lane must read base reality \
+               for its repo doors to answer.",
+            ],
+        ))
     }
 }
