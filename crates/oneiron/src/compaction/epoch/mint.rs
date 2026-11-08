@@ -1,6 +1,8 @@
 //! The transactional epoch mint: one SUMMARY, its lineage and its
 //! dependencies in one write (FIX 5029: a chat epoch re-proves its
 //! conversation's turn order and reads its prior in its own lineage there).
+//! A self-written epoch lands only while its worn home still reads at the
+//! revisions its call wore (FIX 4817).
 
 use crate::compaction::driver::{CompactionProduct, CompactionRequest, WindowLog};
 use crate::compaction::withdrawn::WithdrawnKeyframe;
@@ -135,6 +137,9 @@ pub(in crate::compaction) fn mint_epoch_summary_guarded(
 
     let epoch = vault.with_write_txn_grouped(|wtxn| {
         landing(wtxn)?;
+        // FIX 4817: a self-written summary lands only while every home part
+        // its call wore still reads at the revision it was read at.
+        crate::compaction::home_pins::check_home_pins_in_txn(&vault.store, wtxn, writer)?;
         refuse_overlay_derived_mint(
             &vault.store,
             request
@@ -400,6 +405,7 @@ pub(in crate::compaction) fn mint_epoch_summary_in_overlay(
     };
     session.overlay_write_routed(route, |wtxn, apply| {
         let view = session.read_view()?;
+        crate::compaction::home_pins::check_home_pins_in_txn(&view, wtxn, writer)?;
         let live = crate::compaction::epoch_intent::standing_in(&view, wtxn, &derived)?;
         let withdrawn = live.len() < derived.len();
         let data = if withdrawn {

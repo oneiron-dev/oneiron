@@ -69,6 +69,7 @@ mod fold_kinds;
 mod fold_words;
 mod folds;
 mod gate;
+mod home_pins;
 mod hooks;
 pub mod output;
 mod packet_source;
@@ -123,6 +124,8 @@ pub use gate::{
 pub(crate) use gate::{
     compaction_input_tokens, compaction_pin_input_tokens, compaction_step_input_tokens,
 };
+pub use home_pins::HOME_PART_SELF_MODEL;
+pub(crate) use home_pins::{home_pins_stand_in, self_written_execution_in};
 pub(crate) use hooks::host_compact_as_owner;
 pub use hooks::{
     CompactHooks, HOST_COMPACT, check_host_compact_rewrite,
@@ -139,7 +142,8 @@ pub(crate) use self_writer::{
 pub use self_writer::{
     CompactionCall, CompactionEvidence, CompactionExecution, CompactionHomeRef, CompactionLanding,
     CompactionLandingReceipt, CompactionStepRef, CompactionUsage, HOME_PART_WORN,
-    SelfCompactionUnavailable, compaction_home_worn_rows, compaction_usage_projection,
+    SelfCompactionUnavailable, compaction_home_worn_parts, compaction_home_worn_rows,
+    compaction_usage_projection,
 };
 pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
 pub(crate) use withdrawn::{WithdrawnKeyframe, erased_form, scrub_withdrawn_epoch_in_txn};
