@@ -8,5 +8,6 @@ crate::side_table::side_tables! {
     /// facts (an address among them) as that apply committed them. Dropped with the identity's
     /// erase or retirement and by its actor's erase. Key: id16 (request ref).
     CHANNEL_IDENTITY_LIFECYCLE_REQUEST: VaultMeta b"channel_identity_lifecycle_request:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical]
         => crate::channel_identity_lifecycle::erase_lifecycle_request_actor_in_txn;
 }

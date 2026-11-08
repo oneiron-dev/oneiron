@@ -1341,7 +1341,7 @@ fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
             source
                 .store
                 .vault_meta
-                .put(txn, b"retr_run:test", b"runtime")?;
+                .put(txn, b"retr_run:v0:test", b"runtime")?;
             source.store.ppr_cache.put(txn, b"derived", b"cache")?;
             Ok(())
         })
@@ -1426,7 +1426,7 @@ fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
             restored
                 .store
                 .vault_meta
-                .get(&txn, b"retr_run:test")
+                .get(&txn, b"retr_run:v0:test")
                 .unwrap()
                 .is_none()
         );

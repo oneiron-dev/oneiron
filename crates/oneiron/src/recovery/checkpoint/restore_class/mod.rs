@@ -3,19 +3,15 @@
 //!
 //! ARCH-0038 (RD-20, amended 2026-09-26): a historical restore gives content as
 //! it stood and never resets live authority, freshness pins or destroyed
-//! identity keys. Every canonical side-table family (the declarations in
-//! `side_table::decls`, one part file per declaration file below) and every
-//! entity kind has exactly one [`Class`] here. A row the table does not name,
-//! by an undeclared prefix or an unregistered kind, is refused if it differs
-//! from the live vault's, never restored silently. `every_canonical_family_and_kind_has_one_class`
-//! fails when a declaration or kind is added without a class.
+//! identity keys. Every canonical side-table family has one [`Class`], on its
+//! own declaration row (`[restore: ..]`, core split slice 1; a row that says
+//! `none` has none yet), and every entity kind has exactly one here. A row the
+//! table does not name, by an undeclared prefix, a family with no class or an
+//! unregistered kind, is refused if it differs from the live vault's, never
+//! restored silently. `every_canonical_family_and_kind_has_one_class` fails
+//! while a canonical family or a kind has no class.
 
 mod handover;
-mod sync_state;
-mod vault_meta_a_c;
-mod vault_meta_d_l;
-mod vault_meta_m_r;
-mod vault_meta_s_z;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,7 +34,7 @@ use crate::registry::{
     ENTITY_TYPE_SUSPICIOUS_WAKE, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
     ENTITY_TYPE_WORKFLOW, ENTITY_TYPE_WORLD, ENTITY_TYPE_WORLD_KEY_PAD,
 };
-use crate::side_table::{SideDb, SideTableDecl};
+use crate::side_table::{RestoreClass, SideDb};
 
 /// What a restore over a live vault does with one family's rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,43 +196,11 @@ const MACHINE_IDENTITIES: Class = refuse("machine identities");
 /// an image taken before it. Every other machine row stays refused.
 const SERVING_MACHINE: Class = LIVE;
 const SKILL_HUB_CONFIGURATION: Class = refuse("skill hub configuration");
-const STANDING_GRANTS: Class = refuse("standing consent grants");
-/// A code consent wait (DOOR-079) entangles a one-shot answer, an external
-/// effect's admission and settlement, and (1b) the replay that consumed it:
-/// a rollback could unspend it, and keeping it live alone would point into
-/// a rolled-back replay. Its family refuses a restore instead (CALLS: restore
-/// Refuse).
-const CODE_CONSENT_WAITS: Class = refuse("code consent waits");
-const STANDING_BLOCKS: Class = refuse("standing blocks");
-const DISCLOSURE_SCOPES: Class = refuse("disclosure scopes");
-const ORG_ADMIN_GRANTS: Class = refuse("org admin grants");
-const SHARED_VAULT_MEMBERSHIP: Class = refuse("shared vault membership");
-const ESIGN_CAPABILITIES: Class = refuse("e-sign capabilities");
-const SHARE_ADMISSIONS: Class = refuse("share admissions");
-const PUBLIC_BOOKING_PAGES: Class = refuse("public booking pages");
-const PUBLISHED_ARTIFACTS: Class = refuse("published artifacts");
-const ORIGIN_AUTHORITY: Class = refuse("repository origin authority");
 /// An authority row whose writer an actor's erase replaced (FIX 3877): the
 /// erase changes who it names and nothing else, so the row stays as the live
 /// vault holds it, and a checkpoint that holds it naming that writer still
 /// restores. A cutover moves the epoch, so it still refuses.
 const ERASED_ORIGIN_AUTHORITY: Class = LIVE;
-const ORIGIN_MIRRORS: Class = refuse("repository mirror targets");
-/// An exact publish request (FIX 6866) records an act whose effect left the
-/// vault: it stays as the live vault holds it, so a request made after a
-/// checkpoint never refuses that checkpoint's restore, and no restore
-/// unspends a push (CALLS "FIX 6866 restore class"). A request whose commit
-/// a restore took refuses at dispatch, not here.
-const ORIGIN_PUBLISH_REQUESTS: Class = LIVE;
-/// A mirror's automatic push plans (FIX 6866) record what left the vault and
-/// how far each plan got: they stay as the live vault holds them, so a
-/// restore never revives an unsent batch or resends a settled one. A plan
-/// whose objects a restore took fails its push, and its reconcile settles it.
-const ORIGIN_MIRROR_WORKS: Class = LIVE;
-const ROOMS: Class = Class::Refuse {
-    what: "room roles and membership",
-    scope: Scope::ImageEntities,
-};
 const ROOM_BODIES: Class = Class::Refuse {
     what: "room roles and membership",
     scope: Scope::Authority(Projection::Room),
@@ -354,25 +318,6 @@ const RUNTIME_KINDS: &[(&str, &str, Class)] = &[
         CONTENT,
     ),
 ];
-/// A derived row's carried policies only ever grow (FIX 17207): a restore
-/// that would give back a smaller set for a row the image holds refuses, so
-/// a reader one of the added policies denies never reads the row again. The
-/// floor of a row made after the checkpoint leaves with the row.
-const SOURCE_AUDIENCE_FLOORS: Class = Class::Refuse {
-    what: "a derived row's carried policies",
-    scope: Scope::ImageEntities,
-};
-const ESIGN_CEREMONIES: Class = Class::Refuse {
-    what: "e-sign ceremonies",
-    scope: Scope::ImageEntities,
-};
-/// A STOP's send hold before this replica projected it, keyed by the event:
-/// it leaves with an event made after the checkpoint, and a changed one for
-/// an event both vaults hold refuses.
-const PENDING_COMM_STOPS: Class = Class::Refuse {
-    what: "pending communication STOP",
-    scope: Scope::ImageEntities,
-};
 const UNCLASSIFIED_ROWS: Class = refuse("rows of an undeclared family");
 const UNCLASSIFIED_KINDS: Class = refuse("entities of an unregistered kind");
 
@@ -438,7 +383,7 @@ const ENTITY_KINDS: &[(u8, Class)] = &[
 /// How each database's canonical rows are classed.
 #[derive(Clone, Copy, Debug)]
 enum Rows {
-    /// By declared family ([`SIDE_TABLES`]).
+    /// By declared family: each side table's class is on its row.
     ByFamily,
     /// By entity kind ([`ENTITY_KINDS`]).
     ByKind,
@@ -488,14 +433,20 @@ const DATABASES: &[(&str, Rows)] = &[
     ("job_dedupe", Rows::Rebuilt),
 ];
 
-/// Every canonical side-table family, one part per declaration file.
-static SIDE_TABLES: [&[(&SideTableDecl, Class)]; 5] = [
-    sync_state::PART,
-    vault_meta_a_c::PART,
-    vault_meta_d_l::PART,
-    vault_meta_m_r::PART,
-    vault_meta_s_z::PART,
-];
+/// The class a side table's row declares, if it names one: a `not_imaged`
+/// table's rows are in no image, and a `none` one has no class yet.
+const fn declared_class(restore: RestoreClass) -> Option<Class> {
+    match restore {
+        RestoreClass::Content => Some(CONTENT),
+        RestoreClass::Live => Some(LIVE),
+        RestoreClass::Refuse(what) => Some(refuse(what)),
+        RestoreClass::RefuseImageEntities(what) => Some(Class::Refuse {
+            what,
+            scope: Scope::ImageEntities,
+        }),
+        RestoreClass::NotImaged | RestoreClass::None => None,
+    }
+}
 
 /// The table as a lookup: the class of any canonical row.
 pub(super) struct Classes {
@@ -545,10 +496,13 @@ impl Classes {
     ) -> crate::Result<Self> {
         let mut vault_meta = Vec::new();
         let mut sync_state = Vec::new();
-        for (decl, class) in SIDE_TABLES.iter().copied().flatten() {
+        for decl in crate::side_table::declared() {
+            let Some(class) = declared_class(decl.restore) else {
+                continue;
+            };
             match decl.db {
-                SideDb::VaultMeta => vault_meta.push((decl.prefix, *class)),
-                SideDb::SyncState => sync_state.push((decl.prefix, *class)),
+                SideDb::VaultMeta => vault_meta.push((decl.prefix, class)),
+                SideDb::SyncState => sync_state.push((decl.prefix, class)),
             }
         }
         vault_meta.sort_unstable_by_key(|(prefix, _)| *prefix);

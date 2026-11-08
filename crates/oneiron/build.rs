@@ -4,7 +4,8 @@
 //! The `side_tables!` macro expands each row into its `static` where the row is written. This
 //! script writes only `$OUT_DIR/side_table_catalogue.rs`, included by `side_table::decls`:
 //! - a `pub(crate) use` of every row declared outside `side_table::decls`, so `side_table::NAME`
-//!   names every table wherever its row lives, and two rows of one name do not compile;
+//!   names every table wherever its row lives, and two rows of one name do not compile. A row no
+//!   code reads by that path is still re-exported, so the uses allow `unused_imports`;
 //! - `CATALOGUE`, a `&crate::<module>::NAME` reference to every row, sorted by database (`sync_state`
 //!   first) and then by prefix bytes. That is the order the actor-scrub sweep runs in and the order
 //!   `assert_disjoint` checks at compile time.
@@ -465,9 +466,11 @@ fn render(mut rows: Vec<Row>) -> String {
     );
     for (module, mut members) in by_module {
         members.sort_unstable();
+        // Every row is re-exported, read through `side_table::NAME` or not: the re-export is what
+        // makes two rows of one name fail to compile.
         writeln!(
             out,
-            "pub(crate) use crate::{module}::{{{}}};",
+            "#[allow(unused_imports, reason = \"every row is re-exported, so a name declared twice does not compile\")]\npub(crate) use crate::{module}::{{{}}};",
             members.join(", ")
         )
         .expect("writing to a String");

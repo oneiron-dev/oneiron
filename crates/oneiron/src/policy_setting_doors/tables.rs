@@ -5,5 +5,6 @@ crate::side_table::side_tables! {
     /// The owner's act on a vault-wide setting (the dreamer's wake policy, the inference
     /// defaults), recorded in the commit that changed it (WILL-PLAN L13 row 01). Key:
     /// u64be(sequence).
-    POLICY_SETTING_ACT: VaultMeta b"settings:owner_act:v1:" Named;
+    POLICY_SETTING_ACT: VaultMeta b"settings:owner_act:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
 }
