@@ -2,9 +2,11 @@
 //! receipt per SUMMARY, written in its mint's own transaction, naming the
 //! epoch's lineage (the SESSION and the conversation, FIX 5029), the epoch,
 //! the conversation's turn range within the SESSION and the host's record of
-//! what wrote it, the conversation evidence included. The Dreamer's check,
-//! the agent's next log and a folded turn's board history read it; it holds
-//! refs, hashes and usage, never words.
+//! what wrote it, the conversation evidence included. The evidence names the
+//! ref of the accepted try's check material (FIX 5040), so the receipt and
+//! its digest bind that material. The Dreamer's check, the agent's next log
+//! and a folded turn's board history read it; it holds refs, hashes and
+//! usage, never words.
 
 use serde::{Deserialize, Serialize};
 

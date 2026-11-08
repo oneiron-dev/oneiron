@@ -20,6 +20,13 @@
 //! pins, its summaries' evidence and their words all meet the roster, each
 //! member's entry, each private thread and each live speaker, as the room's
 //! next turn would. A projection that refuses or holds stops the log.
+//!
+//! A queued Continue or Retry reads its own log cut at the turn it answers
+//! again (FIX 5027): the branch that leads to that turn, before the user turn
+//! it answers, so neither its reply nor any turn after it is a window's turn.
+//! A conversation's first turn, whose witness mints the conversation, reads
+//! its log once that turn is witnessed (FIX 5034): the history before it,
+//! proven empty on the ledger.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -33,7 +40,7 @@ use crate::conversation::{TurnActionAttempt, TurnActionContext, TurnActionLine};
 use crate::memory::{Memory, RoomTurnHandle, TranscriptTurn, WitnessAuthor};
 use crate::tokenizer::count_context_pack_tokens;
 use crate::{EntityId, Error};
-use oneiron_contracts::memory::MemoryResult;
+use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 /// One line of a self agent's model-facing chat log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +96,16 @@ pub(super) struct ReadTurn {
     pub(super) open: bool,
 }
 
+/// Where a queued Continue's or Retry's chat log ends (FIX 5027).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChatLogCut {
+    /// The assistant TURN the action answers again: a DAG log reads the
+    /// branch that leads to it, never whatever HEAD is now.
+    pub target: EntityId,
+    /// The user TURN `target` answers: the log holds the turns before it.
+    pub before: EntityId,
+}
+
 /// Reads `conversation`'s chat log as `memory`'s reader: at most
 /// `history_lines` raw messages after its summaries, the last
 /// `hot_turns` turns never in a window. When a room's audience reads the
@@ -105,21 +122,111 @@ pub fn read_chat_log(
     hot_turns: u64,
     history_lines: usize,
 ) -> MemoryResult<ChatLog> {
+    read_log(memory, conversation, None, hot_turns, history_lines)
+}
+
+/// [`read_chat_log`] for a queued Continue or Retry (FIX 5027): the log of
+/// the turns before `cut`'s user turn, on the branch that leads to the turn
+/// the action answers again, read as `memory` reads it, the last `hot_turns`
+/// never in a window. What the action's own flight compacts; the action's
+/// request stays the one its breakpoint kept.
+///
+/// # Errors
+///
+/// [`read_chat_log`]'s, and a cut whose user turn the reader does not read
+/// on that branch.
+pub fn read_action_chat_log(
+    memory: &Memory<'_>,
+    conversation: EntityId,
+    cut: ChatLogCut,
+    hot_turns: u64,
+) -> MemoryResult<ChatLog> {
+    read_log(memory, conversation, Some(cut), hot_turns, usize::MAX)
+}
+
+/// The log a conversation's first chat turn was assembled from (FIX 5034):
+/// none, proven on the ledger. Read as `memory` reads it once the user's
+/// turn was witnessed, the conversation holds that turn alone, its MESSAGE
+/// rows exactly `written`, and no summary. The log returned is the history
+/// before that turn: empty and pinned, on no branch and in no SESSION.
+/// `None` when the reader reads any other line or summary of the
+/// conversation, the turn it reads is not the one written, or its pin does
+/// not hold.
+///
+/// # Errors
+///
+/// [`read_chat_log`]'s.
+pub fn read_first_chat_log(
+    memory: &Memory<'_>,
+    conversation: EntityId,
+    written: &[EntityId],
+) -> MemoryResult<Option<ChatLog>> {
+    let read = read_log(memory, conversation, None, 0, usize::MAX)?;
+    let [span] = read.sources.as_slice() else {
+        return Ok(None);
+    };
+    let only_written = !written.is_empty()
+        && span.messages == written
+        && read
+            .message_ids
+            .iter()
+            .all(|id| id.is_some_and(|id| written.contains(&id)));
+    if !read.pinned || !read.summaries.is_empty() || !only_written {
+        return Ok(None);
+    }
+    Ok(Some(ChatLog {
+        conversation,
+        branch: None,
+        lines: Vec::new(),
+        message_ids: Vec::new(),
+        sources: Vec::new(),
+        summaries: Vec::new(),
+        pinned: true,
+        session: None,
+        uncompacted_tokens: 0,
+        room_projection: read.room_projection,
+        window: None,
+    }))
+}
+
+/// The held room handle `conversation`'s chat log is read through (FIX
+/// 5031): `Some` when a room's audience reads it (a roster or a live call),
+/// whose words reach the room's roster, so the read is held, each private
+/// thread met turn by turn, as a queued action's history is. `None` reads
+/// as `memory` itself.
+///
+/// # Errors
+///
+/// A room projection that refuses or holds, and storage errors.
+pub(crate) fn chat_log_room<'v>(
+    memory: &Memory<'v>,
+    conversation: EntityId,
+) -> MemoryResult<Option<RoomTurnHandle<'v>>> {
     let vault = memory.vault();
     let roomed = {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         let roster = crate::context_board::room_roster_in(vault, &txn, conversation)?;
         roster.is_some_and(|members| !members.is_empty()) || vault.room_has_live_call(conversation)
     };
-    // The words reach the room's roster, so the read is held, each private
-    // thread met turn by turn, as a queued action's history is.
-    let room = if roomed {
-        Some(memory.for_room_projection(conversation)?.held())
-    } else {
-        None
-    };
+    if !roomed {
+        return Ok(None);
+    }
+    Ok(Some(memory.for_room_projection(conversation)?.held()))
+}
+
+/// [`read_chat_log`], cut at `cut` when an action reads it.
+fn read_log(
+    memory: &Memory<'_>,
+    conversation: EntityId,
+    cut: Option<ChatLogCut>,
+    hot_turns: u64,
+    history_lines: usize,
+) -> MemoryResult<ChatLog> {
+    let vault = memory.vault();
+    let room = chat_log_room(memory, conversation)?;
+    let roomed = room.is_some();
     let memory = room.as_ref().map_or(memory, RoomTurnHandle::memory);
-    let (transcript, branch) = retained_turns(memory, conversation)?;
+    let (transcript, branch) = retained_turns(memory, conversation, cut)?;
     let turns = transcript
         .iter()
         .map(read_turn)
@@ -128,6 +235,9 @@ pub fn read_chat_log(
     // turn's ceilings, resolved before the snapshot: the room resolver opens
     // its own. Raw pins, a summary's evidence and its words are read under it.
     let scoped = vault.scoped_read(memory.read_key()?);
+    // FIX 6188: grant time is persisted before the snapshot, never inside it,
+    // so a grant that has expired is judged expired for these reads.
+    scoped.persist_grant_clock()?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let read: BTreeSet<EntityId> = turns.iter().map(|turn| turn.id).collect();
     // Summaries whose turns the reader reads, every one, whose evidence
@@ -265,35 +375,56 @@ enum Entry {
 }
 
 /// The conversation's retained turns as the reader reads them, and the
-/// branch read.
+/// branch read: a DAG conversation's HEAD, or `cut`'s target. With `cut`,
+/// only the turns before its user turn (FIX 5027).
 fn retained_turns(
     memory: &Memory<'_>,
     conversation: EntityId,
+    cut: Option<ChatLogCut>,
 ) -> MemoryResult<(Vec<TranscriptTurn>, Option<EntityId>)> {
     let vault = memory.vault();
     let dag = {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         crate::conversation_dag::keeps_dag_topology(&vault.store, &txn, &conversation)?
     };
-    if dag {
-        let Some(head) = vault.head(&conversation)? else {
+    let (mut turns, branch) = if dag {
+        let head = match cut {
+            Some(cut) => Some(cut.target),
+            None => vault.head(&conversation)?,
+        };
+        let Some(head) = head else {
             return Ok((Vec::new(), None));
         };
         let page = memory.turn_action_branch_transcript(&conversation, &head)?;
-        return Ok((page.map(|page| page.turns).unwrap_or_default(), Some(head)));
-    }
-    let mut turns = Vec::new();
-    let mut after: Option<String> = None;
-    loop {
-        let page = memory
-            .conversation_transcript(&conversation, after.as_deref(), MAX_TRANSCRIPT_PAGE_TURNS)?
-            .value;
-        turns.extend(page.turns);
-        match page.next {
-            Some(next) => after = Some(next),
-            None => return Ok((turns, None)),
+        (page.map(|page| page.turns).unwrap_or_default(), Some(head))
+    } else {
+        let mut turns = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let page = memory
+                .conversation_transcript(
+                    &conversation,
+                    after.as_deref(),
+                    MAX_TRANSCRIPT_PAGE_TURNS,
+                )?
+                .value;
+            turns.extend(page.turns);
+            match page.next {
+                Some(next) => after = Some(next),
+                None => break (turns, None),
+            }
         }
+    };
+    if let Some(cut) = cut {
+        let before = cut.before.to_hex();
+        let Some(at) = turns.iter().position(|turn| turn.id == before) else {
+            return Err(MemoryError::not_found(
+                "the user turn the action answers is not read",
+            ));
+        };
+        turns.truncate(at);
     }
+    Ok((turns, branch))
 }
 
 fn read_turn(turn: &TranscriptTurn) -> MemoryResult<ReadTurn> {
@@ -471,6 +602,9 @@ pub fn read_action_pinned_log(
     }
     // The reader's whole key, as `read_chat_log` pins its turns (FIX 5031).
     let scoped = vault.scoped_read(memory.read_key()?);
+    // FIX 6188: grant time is persisted before the snapshot, never inside it,
+    // so a grant that has expired is judged expired for these reads.
+    scoped.persist_grant_clock()?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let mut sources = Vec::new();
     for &index in &held {

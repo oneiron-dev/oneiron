@@ -3,16 +3,13 @@
 use super::{DocAuthorization, EntityDoc, invalid};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result, StoreError};
-use crate::ports::EntityStoreRead;
 use crate::ports::{
-    DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, UpdateSeq,
+    DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, EntityStoreRead, UpdateSeq,
 };
 use crate::side_table::{self, HexId, Named, SideTable};
-use crate::store::Store;
-use crate::store::row_birth::RowBirth;
+use crate::store::{Store, row_birth::RowBirth};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
-use crate::write_envelope::WriteActor;
-use crate::write_envelope::provenance::made_by::MadeByClass;
+use crate::write_envelope::{WriteActor, provenance::made_by::MadeByClass};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -230,6 +227,9 @@ pub(super) fn persist_scanned(
     // The stamp tokens its new changes name, for the hold check (FIX 11965).
     super::token_uses::record_token_uses_in_txn(store, txn, entity, doc, before)?;
     history::capture_document_revision_in_txn(store, txn, entity, h, doc, birth)?;
+    // FIX 4817: a home part's new revision withdraws what wore the old one.
+    let custody = crate::secret_custody::CustodyWrite::of(vault);
+    crate::ports::withdraw_changed_home_dependents_in_txn(&custody, txn, entity)?;
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::embed::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
