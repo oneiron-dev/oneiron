@@ -342,9 +342,8 @@ fn rebuilt_pass(
                     && !within(tree, *at).any(|(_, node)| node.is(DML, "fld"))
                 {
                     runs.push_str(std::str::from_utf8(&bytes[node.span.clone()]).ok()?);
-                    if field_free {
-                        original_sources.push(node.span.clone());
-                    }
+                    // Emitted raw, field or not: an identity source (review #6779).
+                    original_sources.push(node.span.clone());
                 } else if start < end {
                     if field_free
                         && (node.is(DML, "r") || node.is(DML, "br"))
@@ -400,9 +399,7 @@ fn rebuilt_pass(
                         let bindings = crate::edit::xml::inherited_bindings(bytes, tree, *at);
                         owned.insert_str(node.open_end - node.span.start - 1, &bindings);
                         runs.push_str(&owned);
-                        if field_free {
-                            original_sources.push(node.span.clone());
-                        }
+                        original_sources.push(node.span.clone());
                     }
                 }
                 position += text.len();
