@@ -9,8 +9,8 @@
 
 mod body;
 mod evaluation;
+mod hook_feeds;
 mod retained;
-mod watcher_feeds;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -233,7 +233,7 @@ impl FactHookRunner {
                 pass.run_source(source, max_entries, &bindings)?;
             }
         }
-        pass.prune_watcher_feeds(&bindings, max_entries)?;
+        pass.prune_hook_feeds(&bindings, max_entries)?;
         Ok(pass.report)
     }
 
