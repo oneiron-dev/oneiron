@@ -5,7 +5,8 @@ use super::versions::AdmittedRevision;
 use super::{RetrievalFilter, ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ClaimSubject;
-use crate::vault::ReadMode;
+use crate::vault::entity_revision::revision_for_mode_in_txn;
+use crate::vault::{ReadMode, RevisionRef};
 use crate::{EntityId, Error, HydratedShortIdDeletion, Result, TimeRange};
 type EntityParts = (u8, u64, Vec<u8>);
 
@@ -217,6 +218,36 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<Option<ReadRow>>>> {
         self.read_projected(reads, requested, |_, rows| Ok::<_, Error>(rows))
+    }
+
+    /// [`Self::read`], each row with the live revision of its record in the
+    /// read's own snapshot (FIX 4817): the revision whose words the row
+    /// carries, so a later reader can tell whether those words still stand.
+    pub(crate) fn read_revisions(
+        &self,
+        reads: &[PointRead<'_>],
+    ) -> Result<ScopedReadResult<Vec<Option<(ReadRow, Option<RevisionRef>)>>>> {
+        self.read_projected(reads, None, |txn, rows| {
+            rows.into_iter()
+                .map(|row| {
+                    row.map(|row| {
+                        let revision = match self.session_view {
+                            Some(view) => {
+                                revision_for_mode_in_txn(view, txn, &row.id, ReadMode::Live)?
+                            }
+                            None => revision_for_mode_in_txn(
+                                &self.vault.store,
+                                txn,
+                                &row.id,
+                                ReadMode::Live,
+                            )?,
+                        };
+                        Ok::<_, Error>((row, revision))
+                    })
+                    .transpose()
+                })
+                .collect::<Result<Vec<_>>>()
+        })
     }
 
     /// Reads every target in ordered frames under one snapshot and receipt.

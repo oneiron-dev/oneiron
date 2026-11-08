@@ -217,7 +217,8 @@ pub(super) enum SessionFault {
     /// refusal, a close or fault it sent, a protocol error in what it sent,
     /// or a timeout waiting on it.
     Remote(String),
-    /// This machine's own: a read or write of its store or queue, its
+    /// This machine's own: its upgrade's request, a carrier it cannot set up
+    /// for its URL (FIX 22217), a read or write of its store or queue, its
     /// full-resync markers, an encode, or the recovery it needs first.
     Local(String),
 }
