@@ -27,11 +27,13 @@ use super::threads::thread_from_head;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::secret_custody::SecretSight;
 use crate::side_table::{self, Named, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
+mod code;
 mod scoped;
 
 /// Key: artifact + thread + the version the sweep moved the thread onto.
@@ -102,6 +104,8 @@ pub struct UnattachedThread {
 #[non_exhaustive]
 pub struct ReattachOffer {
     pub thread_id: EntityId,
+    /// The head version the place is in; `CODE_ANCHOR_VERSION` on a code
+    /// artifact, whose locator names the commit and file (FIX 7905).
     pub version: u64,
     pub locator: Locator,
 }
@@ -518,12 +522,18 @@ impl Vault {
     }
 
     /// Every exact place in the artifact's head where an unattached comment's
-    /// words read again. An offer is only an offer: nothing moves until a
-    /// person picks one through [`Vault::reattach_annotation_thread`].
+    /// words read again. A code artifact's head is its current snapshot, the
+    /// tree at its repo_ref commit, and each place names that commit, a
+    /// file's path and hash, and a span in it (FIX 7905). An offer is only an
+    /// offer: nothing moves until a person picks one through
+    /// [`Vault::reattach_annotation_thread`].
     pub fn annotation_reattach_offers(&self, artifact_id: &EntityId) -> Result<Vec<ReattachOffer>> {
         let unattached = self.unattached_annotation_threads(artifact_id)?;
         if unattached.iter().all(|thread| thread.snapshot.is_none()) {
             return Ok(Vec::new());
+        }
+        if self.get_entity_type(artifact_id)? == Some(ENTITY_TYPE_CODE_ARTIFACT) {
+            return self.code_annotation_reattach_offers(artifact_id, &unattached);
         }
         let head = self
             .blob_artifact_head(artifact_id)?
@@ -562,6 +572,9 @@ impl Vault {
 
     /// One-click reattach of an unattached comment at `locator` in `version`.
     /// Refused unless the words there read exactly as the comment's snapshot.
+    /// On a code artifact `version` is `CODE_ANCHOR_VERSION`, and `locator`
+    /// names the artifact's current repo_ref commit and that commit's file
+    /// hash for its path (FIX 7905).
     #[expect(clippy::too_many_arguments)]
     pub fn reattach_annotation_thread(
         &self,
@@ -574,6 +587,8 @@ impl Vault {
         learned_at: u64,
     ) -> Result<AnnotationThread> {
         self.with_write_txn_grouped(|wtxn| {
+            let code_artifact =
+                self.get_entity_type_in_txn(wtxn, artifact_id)? == Some(ENTITY_TYPE_CODE_ARTIFACT);
             self.require_anchor_version_in_txn(wtxn, artifact_id, version)?;
             let thread = self
                 .annotation_thread_in_txn(wtxn, artifact_id, thread_id, true)?
@@ -586,12 +601,23 @@ impl Vault {
                     "only an unattached comment with a snapshot reattaches",
                 )));
             };
-            let bytes = self
-                .read_blob_artifact_version_in_txn(wtxn, artifact_id, version)?
-                .ok_or(Error::EntityNotFound)?;
-            let limits = self.text_limits_in_txn(wtxn)?;
-            // A resource refusal is the engine's error (FIX 10587), never a word mismatch.
-            if anchor_text(&bytes, locator, &limits)?.as_deref() != Some(snapshot.as_str()) {
+            let words = if code_artifact {
+                code::code_reattach_words_in_txn(
+                    self,
+                    wtxn,
+                    artifact_id,
+                    &thread.anchor.locator,
+                    locator,
+                )?
+            } else {
+                let bytes = self
+                    .read_blob_artifact_version_in_txn(wtxn, artifact_id, version)?
+                    .ok_or(Error::EntityNotFound)?;
+                let limits = self.text_limits_in_txn(wtxn)?;
+                // A resource refusal is the engine's error (FIX 10587), never a word mismatch.
+                anchor_text(&bytes, locator, &limits)?
+            };
+            if words.as_deref() != Some(snapshot.as_str()) {
                 return Err(Error::Artifact(ArtifactError::InvalidAnchor(
                     "the words at that place are not the comment's words",
                 )));
