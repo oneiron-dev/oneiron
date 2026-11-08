@@ -39,6 +39,7 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
         &spawn.scope,
         &spawn.type_ref,
         &spawn.budget,
+        &spawn.token_ceiling,
         &spawn.spend,
         &spawn.room,
         &spawn.team,
@@ -264,6 +265,7 @@ impl<'a> AgentDispatcher<'a> {
         let requested_ref = input.target.agent_definition_ref()?;
         let spend = spawn.spend.clone();
         let budget = spawn.budget;
+        let token_ceiling = spawn.token_ceiling;
         let planned = spawn.plan.is_some();
         let origin =
             self.origin_conversation_in_txn(wtxn, requested_parent, spawn.origin_conversation)?;
@@ -287,6 +289,7 @@ impl<'a> AgentDispatcher<'a> {
             requested_parent,
             spend.as_ref(),
             budget,
+            token_ceiling,
             &input.target,
             dispatch_input.plan.as_ref().map(|plan| &plan.plan.model),
             input.now,
@@ -414,6 +417,8 @@ impl<'a> AgentDispatcher<'a> {
         // FIX 11592: the requester the host's door named, or the parent's.
         let requester =
             self.inherited_requester_in_txn(wtxn, spawn.requester.clone(), requested_parent)?;
+        let caller_origin =
+            self.inherited_caller_origin_in_txn(wtxn, requested_parent, spawn.caller_origin)?;
         let requested_target = input.target.agent_definition_ref()?;
         self.observe_seat(requested_target);
 
@@ -488,7 +493,8 @@ impl<'a> AgentDispatcher<'a> {
         // planned spawn takes the stamp its plan read and is never placed
         // again; a supplied stamp the current tree accepts is kept; anything
         // else is placed, and unsure is the root — never an untyped spawn.
-        let type_ref = self.spawn_type_in_txn(wtxn, project_ref, requested_target, &spawn)?;
+        let (type_ref, type_parents) =
+            self.spawn_type_in_txn(wtxn, project_ref, requested_target, &spawn)?;
 
         // OF-540: the team run, frozen once here. An explicit stamp wins (a
         // nested team names its own); otherwise a child keeps its parent's
@@ -539,6 +545,7 @@ impl<'a> AgentDispatcher<'a> {
             spawn_intent: Some(spawn_intent),
             scope,
             type_ref,
+            type_parents: Some(type_parents),
             budget: spawn.budget,
             launch: None,
             room: spawn.room,
@@ -550,6 +557,7 @@ impl<'a> AgentDispatcher<'a> {
             // OF-541: carried as asked; `spawn_intent` above never reads it.
             direct_spawn,
             requester,
+            caller_origin,
         })
     }
 
@@ -560,7 +568,7 @@ impl<'a> AgentDispatcher<'a> {
         project_ref: EntityId,
         requested_target: EntityId,
         spawn: &AgentSpawnContext,
-    ) -> Result<crate::task_type::TaskTypeRef> {
+    ) -> Result<(crate::task_type::TaskTypeRef, Vec<crate::learning::TypeRef>)> {
         let tree =
             super::task_type_tree::load_team_type_tree_in_txn(self.vault, txn, Some(project_ref))?;
         if spawn
@@ -572,7 +580,7 @@ impl<'a> AgentDispatcher<'a> {
                 "task_type_ref node_id must not be empty",
             )));
         }
-        Ok(match &spawn.plan {
+        let type_ref = match &spawn.plan {
             Some(plan) => {
                 plan.validate()?;
                 if spawn
@@ -612,7 +620,10 @@ impl<'a> AgentDispatcher<'a> {
                 Some(project_ref),
                 None,
             ),
-        })
+        };
+        let type_parents = crate::task_type::TypeTree::from(tree)
+            .ancestors(&crate::learning::TypeRef::from(&type_ref));
+        Ok((type_ref, type_parents))
     }
 
     /// Loads a dispatch target's LIVE stored row and applies the dispatchability

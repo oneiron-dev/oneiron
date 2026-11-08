@@ -31,7 +31,13 @@ impl HostSelfDispatcher<'_> {
         let Some(door) = &self.agent_verbs else {
             return Ok(Ok(None));
         };
-        let admitted = door.admit_run_call(call);
+        // Speech is admitted with where this run's storage lands it.
+        let admitted = match call {
+            RunCall::Bridge(effect) if effect.is_speech() => {
+                door.admit_run_speech(effect, self.storage.speech_destination())
+            }
+            RunCall::Bridge(_) | RunCall::RecordedOutput => door.admit_run_call(call),
+        };
         if let Err(refusal) = &admitted
             && let Some(rejected) = gate_rejection(&refusal.code)
         {
@@ -79,8 +85,10 @@ impl HostSelfDispatcher<'_> {
         // closes on every exit, and an outer call's frame stays as it was.
         let _seats = self.spawn_capture.open();
         // A hook's view of an earlier call is never this call's, nor is its
-        // read-world capture (FIX 6130).
+        // read-world capture (FIX 6130), nor the skill bodies its producer
+        // witnessed (FIX 3608).
         *self.hook_view.borrow_mut() = None;
+        *self.skill_bodies.borrow_mut() = None;
         self.uncover_read_worlds();
         // A leased run's writes in this call are its own derivations (OF-540).
         let _run_writes = self
@@ -98,8 +106,10 @@ impl HostSelfDispatcher<'_> {
         }
         // The halt rule and the door rule inside the bracket: a run whose
         // participant left the room hears `NotInRoom`, never their verdict.
+        // The off-record rule reads the whole call: an anonymous room tells
+        // its five room reads from every other verb by it (FIX 5166).
         self.storage.answered(|| {
-            self.enforce_off_record_effect_policy(call.effect())?;
+            self.enforce_off_record_effect_policy(&call)?;
             // A reader child reads its source and reports; a scoped child
             // also calls the ports its parent lent it (FIX 7507). Neither
             // makes any other call.

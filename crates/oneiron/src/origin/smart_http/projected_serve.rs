@@ -23,7 +23,7 @@ use super::paths::serve_failed;
 use super::push_projection::{bind_projection_ingress_in_txn, prepare_projection_ingress};
 use super::read_projection::{RepoGitBackend, prepare_recipient_read_backend};
 use super::recipient_serve::delivery::prepare_repo_git_delivery;
-use super::recipient_serve::{RepoGitReadContext, store_holds_readable_marks_in_txn};
+use super::recipient_serve::{RepoGitReadContext, store_may_need_masked_copy_in_txn};
 use super::serve::unpinned_repo_ref;
 use super::serve_cmd::{ServeCommand, ServeRequest};
 use crate::Vault;
@@ -38,10 +38,11 @@ use crate::origin::secret_projection::claims::{
     RepoProjectionClaim, RepoProjectionIngressStore, RepoProjectionRecord,
 };
 use crate::origin::secret_projection::disposal::retire_superseded_recipient_copies;
+use crate::origin::secret_projection::git::recipient::recipient_repo_binding;
 use crate::origin::secret_projection::git::{
     RepoGitProjection, RepoGitProjectionRoots, materialize_masked_git_graph,
     materialize_recipient_git_graph, plan_repo_git_release, projection_ingress_dir,
-    recipient_repo_anchor, reopen_repo_git_projection,
+    reopen_repo_git_projection,
 };
 use crate::origin::secret_projection::recipient::RepoProjectionRevealBinding;
 use crate::secret_custody::RepoFileReadDisclosure;
@@ -164,7 +165,7 @@ pub(super) fn select_projected_exchange(
     let store = lfs_repo_id(&wire.repository_identity(repo_dir)?.as_hex())?;
     {
         let txn = vault.store.env.read_txn()?;
-        if !store_holds_readable_marks_in_txn(vault, &txn, &store)? {
+        if !store_may_need_masked_copy_in_txn(vault, &txn, &store)? {
             return Ok(None);
         }
     }
@@ -239,12 +240,13 @@ fn granted_variant(
     };
     let binding = match bound {
         Some(bound) => bound,
-        None => match recipient_repo_anchor(vault, canonical, actual.project())? {
-            Some(repo) => RepoProjectionRevealBinding::of(repo, actual),
+        None => match recipient_repo_binding(vault, canonical, actual, read.portable_repo())? {
+            Some(binding) => binding,
             None => return Ok(masked),
         },
     };
-    let Some(mut plan) = plan_repo_git_release(vault, &masked, binding.clone())? else {
+    let Some(mut plan) = plan_repo_git_release(vault, wire, canonical, &masked, binding.clone())?
+    else {
         retire_superseded_recipient_copies(vault, &masked, &binding, None);
         return Ok(masked);
     };

@@ -65,8 +65,9 @@ pub(crate) fn unclear_floor_sourced(
 /// The project and task type terminal pack receipt `receipt` records: its
 /// type stamp, else its frozen attribution's type, and that attribution's
 /// project. Either is `None` where the receipt records none: unknown, never
-/// read off its actor or session.
-fn outcome_scope_in_txn(
+/// read off its actor or session. An attempt's unclear notes freeze the same
+/// pair (FIX 7824).
+pub(super) fn outcome_scope_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     receipt: &str,

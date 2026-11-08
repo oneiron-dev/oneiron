@@ -15,13 +15,21 @@
 //! named (FIX 6352, `reads`). A reader admitted to the step's capture (FIX
 //! 8704, `admitted`) has its admission read again before each raw read of
 //! it: the request, the start, the record of its end and its replay
-//! context, each record a read context names, and each body frozen.
+//! context, each record a read context names, and each body frozen. A
+//! host's worker that prepares an arm's source again holds that admission
+//! as an owned witness (FIX 9446), and releases the arm's bodies to a model
+//! under it (FIX 20607).
 
 mod admitted;
 mod context;
 mod reads;
 
-pub(crate) use self::admitted::{ShadowSourceAdmission, prepare_admitted_shadow_step_source};
+pub(super) use self::admitted::lapsed;
+pub use self::admitted::{
+    ShadowSourceAdmission, ShadowSourceWitness, WitnessedRelease,
+    prepare_witnessed_shadow_step_source,
+};
+pub(crate) use self::admitted::{admission_lapsed, prepare_admitted_shadow_step_source};
 use self::context::ArmContext;
 use self::reads::ForeignBody;
 use super::types::{
@@ -31,8 +39,8 @@ use super::types::{
 use crate::code_run::{
     CapsuleRequest, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStepStart,
     ReplayRoutePin, SelfDispatchOutcome, StepReplayCapsule, StepStartBody, StoredRungBinding,
-    capsule_context_body, capsule_request, capsule_start_body, decode_code_run_replay_record,
-    resolve_result, route_prompt_at, step_replay_capsules_in_txn,
+    capsule_context_body, capsule_fold_words_withdrawn, capsule_request, capsule_start_body,
+    decode_code_run_replay_record, resolve_result, route_prompt_at, step_replay_capsules_in_txn,
 };
 use crate::engine_executor::{JsResultRef, is_result_output_path};
 use crate::limit_ask::EngineLimit;
@@ -222,6 +230,13 @@ fn prepare_step_source(
     if shadow_source_gone(vault, &source_actor) {
         return Ok(Err(unavailable(
             Reason::SourceWithheld,
+            crate::code_run::RESPONSE_ERASED,
+        )));
+    }
+    // FIX 18924: a source whose bodies copy withdrawn fold words is erased.
+    if capsule_fold_words_withdrawn(vault, capsule)? {
+        return Ok(Err(unavailable(
+            Reason::SourceErased,
             crate::code_run::RESPONSE_ERASED,
         )));
     }

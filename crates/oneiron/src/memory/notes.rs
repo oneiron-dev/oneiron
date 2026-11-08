@@ -16,7 +16,15 @@ impl Memory<'_> {
     }
     pub fn edit_note(&self, note_ref: &str, edit: &NoteEdit) -> MemoryResult<NoteEditOutcome> {
         let id = self.resolve_ref(note_ref)?;
-        self.vault.edit_note(id, edit, self.write_actor())
+        let actor = self.write_actor();
+        let result = self.with_actor_content_write_txn_as(actor, |content| {
+            content.update_note(id, |txn, lane| {
+                self.vault.edit_note_in_txn(txn, id, edit, actor, lane)
+            })
+        })?;
+        #[cfg(feature = "sync")]
+        self.vault.notify_note_document(id);
+        Ok(result)
     }
     pub fn create_note_from_entity(
         &self,

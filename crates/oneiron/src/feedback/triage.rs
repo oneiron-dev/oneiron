@@ -40,6 +40,7 @@
 //! the `jobs` child's; the graph's writers are the `work_store` child's.
 mod erased;
 mod github;
+mod handoff_index;
 mod jobs;
 mod owner;
 mod source;
@@ -482,7 +483,7 @@ pub(crate) fn acknowledge_feedback_triage_in_txn(
     }
     erased::refuse_erased_in_txn(vault, txn, &row)?;
     row.result = Some(result);
-    HANDOFFS.put(&vault.store, txn, &key, &row)
+    handoff_index::put_handoff_in_txn(&vault.store, txn, &key, &row)
 }
 
 /// One revision as its source read it: its name, the exact bytes its
@@ -551,7 +552,7 @@ fn hand_off_revision_in_txn(
         result: None,
         work: None,
     };
-    HANDOFFS.put(&vault.store, txn, &key, &handoff)?;
+    handoff_index::put_handoff_in_txn(&vault.store, txn, &key, &handoff)?;
     Ok((handoff, true))
 }
 

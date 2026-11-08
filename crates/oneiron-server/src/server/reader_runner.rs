@@ -22,9 +22,10 @@
 //! session's children run in its overlay and are not restart-durable: the
 //! overlay evaporates.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant};
 
 use oneiron::agent_def::{birth_under_inherited_list, ensure_inherited_model_list};
@@ -32,10 +33,11 @@ use oneiron::agent_dispatch::{AgentDispatcher, LAUNCH_COST_PRIOR_UNITS, SpendSco
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, ClaimOutcome, DEFAULT_READER_WINDOW_TOKENS, HostSelfDispatcher, ReaderJob,
-    ReaderJobKind, ReaderJobRunner, ReaderJobWake, ReaderJobs, ReaderRunEnd, ReaderSpend,
-    RunDeadline, SCOPED_CHILD_PARENT_LEASE_LOST, SUMMARY_READ_BYTES_PER_TOKEN, ScopedChildPorts,
-    ScopedChildProfile, SpawnHostSeat, SummarizeRecipe, SummaryRead, reader_task_brief,
-    summarize_input, summarize_prompt, summary_exceeds_window, summary_token_budget,
+    ReaderJobKind, ReaderJobRunner, ReaderJobWake, ReaderJobs, ReaderQueueCursor, ReaderRunEnd,
+    ReaderSpend, RunDeadline, SCOPED_CHILD_PARENT_LEASE_LOST, SUMMARY_READ_BYTES_PER_TOKEN,
+    ScopedChildPorts, ScopedChildProfile, SpawnHostSeat, SummarizeRecipe, SummaryRead,
+    reader_task_brief, summarize_input, summarize_prompt, summary_exceeds_window,
+    summary_token_budget,
 };
 use oneiron::engine_executor::{
     ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorError, EngineExecutorStatus, EngineNativeExecutor,
@@ -52,7 +54,7 @@ use oneiron::{
     TierPrecedence, Vault,
 };
 
-use crate::admission::Permit;
+use crate::admission::{Admission, Permit};
 use crate::ai_host::payer_funding::scope_funding;
 use crate::ai_host::scoped_child::{
     ReaderParentClock, ReaderParentHost, ScopedChildDoor, scoped_child_service,
@@ -61,6 +63,7 @@ use crate::mcp::{McpCodeExecutionHost, McpCodeModeProvider, run_seat};
 use crate::runtime::wall_clock_ms as unix_millis_now;
 
 mod child;
+mod nested;
 mod scoped;
 
 /// The window a run with no decision clock gives its children: one, fixed
@@ -74,7 +77,8 @@ const READER_RESIDENT_BYTES: u64 = 32 << 20;
 /// The longest the worker waits between two ticks.
 const TICK: Duration = Duration::from_secs(1);
 
-/// Queued children one tick looks at in one store.
+/// Queued children one tick tries to claim in one store, and the queue rows
+/// one page of its walk reads (FIX 9708).
 const QUEUED_PER_TICK: usize = 64;
 
 /// The purpose a summary job's model call is admitted under.
@@ -88,7 +92,7 @@ pub(crate) const READER_CHILD_READ_ONLY: &str = "reader_child_read_only";
 /// parent run's caller's rows go, as its host noted it at the run's last
 /// entry: its locality, with the machine its connection proved (FIX 4937).
 pub(crate) struct ReaderSeats {
-    callers: Mutex<HashMap<EntityId, (ReadDestination, u64)>>,
+    callers: Mutex<HashMap<EntityId, ReaderCaller>>,
     /// Each parent run's live clock, as its host last lent it (FIX 1839):
     /// it bounds the parent's children's work beside the clock its first
     /// spawn froze, and is forgotten with the parent's caller.
@@ -96,6 +100,15 @@ pub(crate) struct ReaderSeats {
     /// The memory one running child may hold: its run's memory share over
     /// the children one parent runs at once.
     child_memory_bytes: u64,
+}
+
+/// A live entry's destination, bound to the same actor and storage route as
+/// its durable note. Clocks retain their existing process-local lifetime.
+struct ReaderCaller {
+    destination: ReadDestination,
+    noted_ms: u64,
+    route: oneiron::code_run::ReaderRoute,
+    actor: oneiron::code_run::ReaderActor,
 }
 
 impl ReaderSeats {
@@ -119,12 +132,14 @@ impl ReaderSeats {
     /// parent's: [`Self::seat_with_parent`] with none.
     pub(crate) fn seat(
         &self,
+        jobs: &ReaderJobs<'_>,
+        actor: oneiron::code_run::ReaderActor,
         run: EntityId,
         scope: Option<SpendScopeId>,
         caller: impl Into<ReadDestination>,
         window_tokens: Option<u64>,
-    ) -> SpawnHostSeat {
-        self.seat_with_parent(run, scope, caller, window_tokens, None)
+    ) -> oneiron::Result<SpawnHostSeat> {
+        self.seat_with_parent(jobs, actor, run, scope, caller, window_tokens, None)
     }
 
     /// [`Self::seat`] for a parent its host lends `parent` (FIX 1839, FIX
@@ -136,19 +151,35 @@ impl ReaderSeats {
     /// and its children outlive it, as before.
     pub(crate) fn seat_with_parent(
         &self,
+        jobs: &ReaderJobs<'_>,
+        actor: oneiron::code_run::ReaderActor,
         run: EntityId,
         scope: Option<SpendScopeId>,
         caller: impl Into<ReadDestination>,
         window_tokens: Option<u64>,
         parent: Option<&ReaderParentHost>,
-    ) -> SpawnHostSeat {
+    ) -> oneiron::Result<SpawnHostSeat> {
         let now = unix_millis_now();
-        lock(&self.callers).insert(run, (caller.into(), now));
+        let caller = caller.into();
+        // Entry and fallback share this lock: no child can pair a newer
+        // durable note with an older live entry, or observe a half-update.
+        let mut callers = lock(&self.callers);
+        jobs.note_parent_caller(run, actor, &caller)?;
+        callers.insert(
+            run,
+            ReaderCaller {
+                destination: caller,
+                noted_ms: now,
+                route: jobs.route(),
+                actor,
+            },
+        );
+        drop(callers);
         let clock = parent.and_then(ReaderParentHost::clock);
         if let Some(clock) = clock {
             lock(&self.clocks).insert(run, clock);
         }
-        SpawnHostSeat {
+        Ok(SpawnHostSeat {
             spend: ReaderSpend::for_run_scope(scope),
             deadline: reader_parent_deadline(clock, now),
             // A child holds one model call's prior at its claim, or what its
@@ -163,6 +194,51 @@ impl ReaderSeats {
             // (`run_bound`, and a session run's `parent_model_list`).
             listed: Vec::new(),
             parent_lease: parent.and_then(ReaderParentHost::lease).cloned(),
+        })
+    }
+
+    /// A Read child's own spawn seat. Its remaining clock already excludes
+    /// its parent's fold reserve; only its own fold is carved out here.
+    fn nested_seat(
+        &self,
+        jobs: &ReaderJobs<'_>,
+        job: &ReaderJob,
+        clock: ReaderParentClock,
+        now_ms: u64,
+        window_tokens: Option<u64>,
+    ) -> SpawnHostSeat {
+        // A nested child stands as its children's parent on its own route and
+        // actor, live only: its destination is its parent's, derived at each
+        // bind, never a host's entry, so it writes no durable note.
+        let caller = self.caller(jobs, job.binding.parent_run, job.binding.actor);
+        lock(&self.callers).insert(
+            job.run,
+            ReaderCaller {
+                destination: caller,
+                noted_ms: now_ms,
+                route: jobs.route(),
+                actor: job.binding.actor,
+            },
+        );
+        lock(&self.clocks).insert(job.run, clock);
+        SpawnHostSeat {
+            spend: ReaderSpend::for_run_scope(
+                job.binding
+                    .spend
+                    .scope()
+                    .map(|_| SpendScopeId::for_attempt(&job.attempt)),
+            ),
+            deadline: RunDeadline::with_default_reserve(
+                now_ms
+                    .saturating_add(clock.remaining_ms())
+                    .min(job.binding.child_cutoff_unix_ms),
+                now_ms,
+            ),
+            hold_units: LAUNCH_COST_PRIOR_UNITS,
+            window_tokens: window_tokens.unwrap_or(DEFAULT_READER_WINDOW_TOKENS),
+            memory_bytes: self.child_memory_bytes,
+            listed: job.binding.listed.clone(),
+            parent_lease: None,
         }
     }
 
@@ -174,11 +250,24 @@ impl ReaderSeats {
     /// Where `parent`'s caller's rows go: as its host last noted it, else a
     /// destination nobody proved, the rule that withholds the most. A child
     /// gets a copy of that destination, never its parent's credential.
-    fn caller(&self, parent: EntityId) -> ReadDestination {
-        lock(&self.callers).get(&parent).map_or_else(
-            || CallerLocality::OffDevice.into(),
-            |(caller, _)| caller.clone(),
-        )
+    fn caller(
+        &self,
+        jobs: &ReaderJobs<'_>,
+        parent: EntityId,
+        actor: oneiron::code_run::ReaderActor,
+    ) -> ReadDestination {
+        let callers = lock(&self.callers);
+        let route = jobs.route();
+        if let Some(note) = callers.get(&parent)
+            && note.route == route
+            && note.actor == actor
+        {
+            return note.destination.clone();
+        }
+        jobs.parent_caller(parent, actor)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| CallerLocality::OffDevice.into())
     }
 
     /// Forgets every parent last noted more than two windows before `now`
@@ -188,8 +277,8 @@ impl ReaderSeats {
         let horizon = now.saturating_sub(DEFAULT_READER_WINDOW_MS.saturating_mul(2));
         let mut callers = lock(&self.callers);
         let mut clocks = lock(&self.clocks);
-        callers.retain(|run, (_, noted)| {
-            *noted >= horizon
+        callers.retain(|run, note| {
+            note.noted_ms >= horizon
                 || clocks
                     .get(run)
                     .is_some_and(|clock| clock.remaining_ms() > 0)
@@ -242,6 +331,9 @@ struct Shared {
     /// Children one parent runs at once: a run's memory share over what one
     /// child holds.
     per_parent: usize,
+    /// Delivery progress is observed on the existing runner ticks and wakes.
+    progress: Mutex<u64>,
+    progressed: Condvar,
 }
 
 impl Shared {
@@ -286,6 +378,8 @@ impl ReaderRunner {
             seats: Arc::new(ReaderSeats::new(child_memory_bytes(memory, per_parent))),
             running: Mutex::default(),
             per_parent: usize::try_from(per_parent).unwrap_or(usize::MAX),
+            progress: Mutex::new(0),
+            progressed: Condvar::new(),
         });
         let recovers = {
             let mut started = lock(&STARTED);
@@ -304,6 +398,7 @@ impl ReaderRunner {
             signals: signals.clone(),
             wakes,
             sessions: BTreeSet::new(),
+            resume: RefCell::new(BTreeMap::new()),
             recovers,
         };
         let started =
@@ -349,6 +444,11 @@ struct Worker {
     wakes: Receiver<Signal>,
     /// The live sessions the runner holds children for.
     sessions: BTreeSet<SessionSeat>,
+    /// Where each store's claim walk goes on from at the next tick: just
+    /// after the last child the last tick's walk reached before its tries or
+    /// the background permits ran out (FIX 9708). The canonical store is
+    /// `None`.
+    resume: RefCell<BTreeMap<Option<SessionSeat>, ReaderQueueCursor>>,
     /// Whether it is its vault's first live runner in this process, which
     /// alone recovers what a stopped one left active.
     recovers: bool,
@@ -432,8 +532,10 @@ impl Worker {
             }
         }
         for held in done {
+            self.resume.get_mut().remove(&Some(held.clone()));
             self.sessions.remove(&held);
         }
+        self.shared.note_progress();
         next
     }
 
@@ -454,58 +556,99 @@ impl Worker {
         // A child parked on its payer is queued again once the owners said
         // yes (FIX 3740); while one waits, its session stays held.
         let parked = crate::ai_host::payer_funding::resume_reader_payer_parks(vault, jobs, now);
-        let queued = jobs.queued(QUEUED_PER_TICK)?;
-        let waiting = !queued.is_empty() || parked > 0;
+        let front = jobs.queued_after(None, QUEUED_PER_TICK)?;
+        let waiting = !front.jobs.is_empty() || parked > 0;
         let host = self.shared.host();
         if let Some(native) = host.as_ref().and_then(|host| host.engine_native()) {
             // Parents whose window is full, or whose scope has nothing left
-            // to hold, wait for the next tick.
+            // to hold, wait for the next tick, and the walk pages on past
+            // their children (FIX 9708). It starts where the last tick's
+            // stopped, goes to the queue's end, then from the front up to
+            // that start, so each queued child gets its try in turn, until
+            // the tick has tried QUEUED_PER_TICK claims or the background
+            // permits run out.
+            let key = session.cloned();
+            let start = self.resume.borrow_mut().remove(&key);
+            let mut page = match start {
+                Some(at) => jobs.queued_after(Some(at), QUEUED_PER_TICK)?,
+                None => front,
+            };
+            // Set once the walk turned back to the front: where it stops.
+            let mut bound = None;
+            let mut last = start;
+            let mut stopped = None;
             let mut held_back = HashSet::new();
-            for job in queued {
-                let parent = job.binding.parent_run;
-                if held_back.contains(&parent) {
-                    continue;
-                }
-                if self.shared.running_of(parent) >= self.shared.per_parent {
-                    held_back.insert(parent);
-                    continue;
-                }
-                let Some(permit) = native.runs().try_admit_background() else {
-                    break;
-                };
-                match jobs.claim(job.task, now) {
-                    Ok(ClaimOutcome::Claimed(job)) => {
-                        let child = Child {
-                            clock: self.shared.seats.clock(job.binding.parent_run),
-                            job: *job,
-                            session: session.cloned(),
-                            provider: Arc::clone(native.provider()),
-                        };
-                        self.spawn(vault, jobs, child, permit, now);
+            let mut tried = 0;
+            'walk: loop {
+                for job in page.jobs {
+                    let here = ReaderQueueCursor::after(&job);
+                    if bound.is_some_and(|bound| here > bound) {
+                        break 'walk;
                     }
-                    Ok(ClaimOutcome::WaitingForSpend) => {
+                    let parent = job.binding.parent_run;
+                    if held_back.contains(&parent) {
+                        last = Some(here);
+                        continue;
+                    }
+                    if self.shared.running_of(parent) >= self.shared.per_parent {
                         held_back.insert(parent);
+                        last = Some(here);
+                        continue;
                     }
-                    Ok(ClaimOutcome::SourceNotReady | ClaimOutcome::Settled) => {}
-                    Err(error) => {
-                        tracing::warn!(%error, task = %job.task.to_hex(), "a reader child was not claimed");
+                    let permit = if tried < QUEUED_PER_TICK {
+                        native.runs().try_admit_background()
+                    } else {
+                        None
+                    };
+                    let Some(permit) = permit else {
+                        stopped = last;
+                        break 'walk;
+                    };
+                    tried += 1;
+                    last = Some(here);
+                    match jobs.claim(job.task, now) {
+                        Ok(ClaimOutcome::Claimed(job)) => {
+                            let child = Child {
+                                clock: self.shared.seats.clock(job.binding.parent_run),
+                                job: *job,
+                                session: session.cloned(),
+                                provider: Arc::clone(native.provider()),
+                                shared: Arc::clone(&self.shared),
+                                runs: native.runs().clone(),
+                                permit: Mutex::new(Some(permit)),
+                                signals: self.signals.clone(),
+                            };
+                            self.spawn(vault, jobs, child, now);
+                        }
+                        Ok(ClaimOutcome::WaitingForSpend) => {
+                            held_back.insert(parent);
+                        }
+                        Ok(ClaimOutcome::SourceNotReady | ClaimOutcome::Settled) => {}
+                        Err(error) => {
+                            tracing::warn!(%error, task = %job.task.to_hex(), "a reader child was not claimed");
+                        }
                     }
                 }
+                page = match (page.next, start) {
+                    (Some(next), _) => jobs.queued_after(Some(next), QUEUED_PER_TICK)?,
+                    (None, Some(start)) if bound.is_none() => {
+                        bound = Some(start);
+                        last = None;
+                        jobs.queued_after(None, QUEUED_PER_TICK)?
+                    }
+                    (None, _) => break,
+                };
+            }
+            if let Some(at) = stopped {
+                self.resume.borrow_mut().insert(key, at);
             }
         }
         Ok((jobs.next_due()?, waiting))
     }
 
-    /// Runs one claimed child on its own thread, holding `permit` until it
-    /// settles.
-    fn spawn(
-        &self,
-        vault: &Arc<Vault>,
-        jobs: &ReaderJobs<'_>,
-        child: Child,
-        permit: Permit,
-        now: u64,
-    ) {
+    /// Runs one claimed child on its own thread. Its active execution
+    /// permit is released while its durable nested wait is parked.
+    fn spawn(&self, vault: &Arc<Vault>, jobs: &ReaderJobs<'_>, child: Child, now: u64) {
         let parent = child.job.binding.parent_run;
         let (task, generation) = (child.job.task, child.job.generation);
         self.shared.started(parent);
@@ -514,7 +657,7 @@ impl Worker {
         let vault = Arc::clone(vault);
         let spawned = crate::engine_thread("oneiron-code-reader".to_owned()).spawn(move || {
             child.run_and_settle(&shared, &vault);
-            drop(permit);
+            drop(child);
             shared.ended(parent);
             let _ = signals.send(Signal::Freed);
         });
@@ -536,6 +679,10 @@ struct Child {
     session: Option<SessionSeat>,
     provider: Arc<dyn McpCodeModeProvider>,
     clock: Option<ReaderParentClock>,
+    shared: Arc<Shared>,
+    runs: Admission<String>,
+    permit: Mutex<Option<Permit>>,
+    signals: Sender<Signal>,
 }
 
 /// Why a canonical job's seat, or a pinned session job's, was not born

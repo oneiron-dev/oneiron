@@ -42,6 +42,7 @@ use super::seal::{
 };
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::store::retirement_in_txn;
 use crate::store::{INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES, Store};
 
 /// The vault subkey every snapshot's data key is wrapped under.
@@ -112,7 +113,17 @@ fn named_id(name: &str) -> Option<SnapshotId> {
 /// `catalog id ‖ manifest`, after the domain: what each chunk of a body
 /// binds, so it opens under its own row alone.
 fn associated_data(id: &SnapshotId, manifest: &SnapshotManifest) -> Result<Vec<u8>> {
-    let manifest = rmp_serde::to_vec_named(manifest).map_err(|_| corrupt())?;
+    let manifest = rmp_serde::to_vec_named(manifest).map_err(|error| match error {
+        rmp_serde::encode::Error::InvalidValueWrite(error) => {
+            let error: std::io::Error = error.into();
+            if error.kind() == ErrorKind::OutOfMemory {
+                error.into()
+            } else {
+                corrupt()
+            }
+        }
+        _ => corrupt(),
+    })?;
     let len = AAD_DOMAIN
         .len()
         .checked_add(16)
@@ -304,14 +315,18 @@ impl Vault {
             if !self.snapshot_admission_holds(admission) {
                 return Ok(false);
             }
-            let earlier: Vec<SnapshotId> = catalog::rows(store, &wtxn)?
+            let mut earlier: Vec<SnapshotId> = Vec::new();
+            for id in catalog::rows(store, &wtxn)?
                 .into_iter()
                 .filter(|(_, row)| {
                     row.as_ref()
                         .is_some_and(|row| same_session(&row.manifest, &record.manifest))
                 })
                 .map(|(id, _)| id)
-                .collect();
+            {
+                earlier.try_reserve(1).map_err(std::io::Error::from)?;
+                earlier.push(id);
+            }
             store.publish_inference_snapshot_key_in_txn(&mut wtxn, &record.id.0, wrapped)?;
             CATALOG.put(store, &mut wtxn, &record.id, record)?;
             catalog::put_conversation_entry(
@@ -365,6 +380,9 @@ impl Vault {
             match store.read_inference_snapshot_key(&wtxn, &id.0) {
                 Ok(Some(wrapped)) => (record, wrapped),
                 Ok(None) => return Ok(None),
+                Err(Error::Io(error)) if error.kind() == ErrorKind::OutOfMemory => {
+                    return Err(error.into());
+                }
                 Err(_) => {
                     drop(wtxn);
                     self.retire_inference_snapshot(id)?;
@@ -413,10 +431,15 @@ impl Vault {
         let Some(body) = body else {
             return Ok(Some(None));
         };
-        let Some(sealed) = SealedSnapshot::parse(&body).ok().filter(|sealed| {
-            sealed.seal_id() == record.seal_id && body.len() as u64 == record.sealed_bytes
-        }) else {
-            return Ok(Some(None));
+        let sealed = match SealedSnapshot::parse(&body) {
+            Ok(sealed)
+                if sealed.seal_id() == record.seal_id
+                    && body.len() as u64 == record.sealed_bytes =>
+            {
+                sealed
+            }
+            Ok(_) | Err(Error::CorruptedIndex(_)) => return Ok(Some(None)),
+            Err(error) => return Err(error),
         };
         let plaintext = match open_snapshot_with_expected_len(
             &key,
@@ -453,7 +476,7 @@ impl Vault {
     /// host's restore candidates, matched against a turn before any open.
     ///
     /// # Errors
-    /// Storage errors.
+    /// Storage and allocation errors.
     pub fn inference_snapshot_records(&self) -> Result<Vec<SnapshotRecord>> {
         let txn = self.store.env.read_txn()?;
         Ok(catalog::rows(&self.store, &txn)?
@@ -508,7 +531,7 @@ impl Vault {
     /// unlinked. Startup and housekeeping run it.
     ///
     /// # Errors
-    /// Storage, custody and file faults.
+    /// Storage, custody, file and allocation faults.
     pub fn finish_inference_snapshot_retirements(&self) -> Result<()> {
         let files = self.store.inference_snapshots.files();
         self.sweep_inference_snapshots(&files).map(drop)
@@ -518,7 +541,7 @@ impl Vault {
     /// or a sweep holds the body files: then nothing is done.
     ///
     /// # Errors
-    /// Storage, custody and file faults.
+    /// Storage, custody, file and allocation faults.
     pub(crate) fn try_finish_inference_snapshot_retirements(&self) -> Result<()> {
         let Some(files) = self.store.inference_snapshots.try_files() else {
             return Ok(());
@@ -588,13 +611,14 @@ impl Vault {
         Ok(unlinked)
     }
 
-    /// Brings the catalog and the body files back in step at startup: a
-    /// row whose body file is missing or is not the length it names
-    /// retires, and every file no row names is unlinked, with the staged
-    /// retirements carried out. Publication waits for it.
+    /// Brings the catalog, custody and body files back in step at startup:
+    /// a row whose body file is missing or is not the length it names
+    /// retires, and a published key with no row or standing retirement has
+    /// its retirement staged. Every body file no row names is unlinked,
+    /// with the staged retirements carried out. Publication waits for it.
     ///
     /// # Errors
-    /// Storage, custody and file faults.
+    /// Storage, custody, file and allocation faults.
     pub fn reconcile_inference_snapshots(&self) -> Result<SnapshotReconcile> {
         let store = &self.store;
         let mut retired = 0;
@@ -618,6 +642,19 @@ impl Vault {
                     &id,
                 )?;
             }
+        }
+        // Publication holds the same files guard, so a rowless entry cannot
+        // belong to a publish whose catalog transaction is still in flight.
+        let named: BTreeSet<SnapshotId> = catalog::rows(store, &wtxn)?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        for subject in store.inference_snapshot_key_subjects()? {
+            let id = SnapshotId(subject.item().try_into().map_err(|_| corrupt())?);
+            if named.contains(&id) || retirement_in_txn(store, &wtxn, &subject)?.is_some() {
+                continue;
+            }
+            store.stage_inference_snapshot_retirement_in_txn(&mut wtxn, &id.0)?;
         }
         wtxn.commit()?;
         let unlinked = self.sweep_inference_snapshots(&files)?;

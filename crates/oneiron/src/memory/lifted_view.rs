@@ -48,6 +48,88 @@ impl Memory<'_> {
     }
 }
 
+impl Memory<'_> {
+    /// A claim's served `value` and `scope` as the bound reader reads them
+    /// (FIX 13735): for every reader but the owner, each lifted key a string
+    /// or an object key of either holds becomes its handle, as in a recall
+    /// hit's body. A view masks them before it makes its label from them.
+    pub(crate) fn mask_lifted_claim_parts(
+        &self,
+        value: &mut serde_json::Value,
+        scope: Option<&mut serde_json::Value>,
+    ) -> MemoryResult<()> {
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        if !self.reads_lifted_keys_masked_in_txn(&txn)? {
+            return Ok(());
+        }
+        let mut texts = Vec::new();
+        claim_texts(value, &mut texts);
+        if let Some(scope) = scope.as_deref() {
+            claim_texts(scope, &mut texts);
+        }
+        let keys = LiftedKeys::of_in_txn(&self.vault.store, &txn, texts)?;
+        if !keys.is_empty() {
+            mask_claim_json(&keys, value);
+            if let Some(scope) = scope {
+                mask_claim_json(&keys, scope);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Every string `value` holds, its object keys included: the texts a lifted
+/// key of a claim's value or scope is found by.
+fn claim_texts<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a str>) {
+    match value {
+        serde_json::Value::String(text) => out.push(text),
+        serde_json::Value::Array(items) => items.iter().for_each(|item| claim_texts(item, out)),
+        serde_json::Value::Object(fields) => {
+            for (key, item) in fields {
+                out.push(key);
+                claim_texts(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `value` with each lifted key `keys` names as its handle, in its strings
+/// and its object keys alike. An object two of whose member names would read
+/// as one handle is redacted whole, so no member silently replaces another.
+fn mask_claim_json(keys: &LiftedKeys, value: &mut serde_json::Value) {
+    let collided = match value {
+        serde_json::Value::String(text) => {
+            if let Some(masked) = keys.masked(text) {
+                *text = masked;
+            }
+            false
+        }
+        serde_json::Value::Array(items) => {
+            items
+                .iter_mut()
+                .for_each(|item| mask_claim_json(keys, item));
+            false
+        }
+        serde_json::Value::Object(fields) => {
+            let mut masked = serde_json::Map::new();
+            let mut collided = false;
+            for (key, mut item) in std::mem::take(fields) {
+                mask_claim_json(keys, &mut item);
+                collided |= masked
+                    .insert(keys.masked(&key).unwrap_or(key), item)
+                    .is_some();
+            }
+            *fields = masked;
+            collided
+        }
+        _ => false,
+    };
+    if collided {
+        *value = serde_json::Value::String("[redacted]".to_owned());
+    }
+}
+
 /// `view` with each value `keys` reads held as its handle when `masked`.
 fn masked_view<T: Serialize + DeserializeOwned>(
     masked: bool,

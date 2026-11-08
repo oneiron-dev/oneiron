@@ -2,9 +2,11 @@
 //! #guest-grants, #relationship-lifecycle).
 //!
 //! Each owner mints, for the peer vault, one FEDERATION_GRANT of purpose
-//! [`FederationGrantScope::Connect`] and role Guest: read and propose inside
-//! explicit local named worlds, never base and never a received foreign
-//! world. The grant names a vault-resident guest actor for that peer, never a
+//! [`FederationGrantScope::Connect`] and role Guest: read, propose or both
+//! inside explicit local named worlds, never base and never a received
+//! foreign world. A propose-only grant stands and confers no read (FIX
+//! 8734): mint and binding judge its liveness, each door its verb. The grant
+//! names a vault-resident guest actor for that peer, never a
 //! host key or a vault id, and that actor's row carries the origin vault.
 //!
 //! A minted grant is inert until one Active pact binds it: every reader asks
@@ -48,11 +50,6 @@ const CONNECT_GUEST_VERBS: [&str; 2] = ["read", "propose"];
 const GUEST_ACTOR_SCHEMA_VERSION: u64 = 1;
 const GUEST_ACTOR_KIND: &str = "connect_guest";
 const GUEST_ACTOR_KEYS: [&str; 4] = ["schema_version", "kind", "name", "origin_vault"];
-
-/// How many guest actor generations a (this vault, peer vault) pair may use
-/// up: each deleted actor moves the next mint to the next generation. Never
-/// reached in practice; the mint refuses past it.
-const GUEST_ACTOR_GENERATIONS: u64 = 1024;
 
 /// What [`Vault::mint_connect_grant`] wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,8 +210,9 @@ pub(crate) fn pact_admits_grant(
 
 /// Refuses unless `grant_ref` is a live Connect guest grant here for
 /// `peer_vault_id`, unexpired now, whose scope projects exactly to
-/// `outbound`, the pact half this vault shares. Ask, membership, own-device
-/// and Delegate rows all refuse.
+/// `outbound`, the pact half this vault shares. Liveness asks no verb, so a
+/// propose-only grant binds (FIX 8734). Ask, membership, own-device and
+/// Delegate rows all refuse.
 pub(crate) fn require_connect_grant_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -235,7 +233,7 @@ pub(crate) fn require_connect_grant_in_txn(
             peer_vault_id: *peer_vault_id,
         })
         || !grant.role.is_guest()
-        || !grant.confers_at(vault.store.clock.now_recorded_at())
+        || !grant.is_live_at(vault.store.clock.now_recorded_at())
     {
         return Err(refused(
             "the grant is not a live Connect grant for that peer vault",
@@ -325,9 +323,10 @@ impl Vault {
     /// approved by `owner` (FIX 3016). In one writer: a live Owner and an
     /// unconflicted local root; not this vault; no live Connect with that
     /// peer; worlds that are this vault's live named worlds, never base or a
-    /// received foreign world; verbs read/propose only; the request inside
-    /// the manifest's Connect guest ceiling (an excess refuses, never a
-    /// clamp); an expiry, when given, in the future. The grant names the
+    /// received foreign world; verbs read/propose only, propose alone
+    /// included (FIX 8734); the request inside the manifest's Connect guest
+    /// ceiling (an excess refuses, never a clamp); an expiry, when given, in
+    /// the future; the resolved grant live. The grant names the
     /// peer's vault-resident guest actor, resolved or created here. It is
     /// inert until both owners' Connect makes its pact Active.
     pub fn mint_connect_grant(
@@ -383,9 +382,9 @@ impl Vault {
             resolved.clone(),
             expires_at,
         )?;
-        if !grant.confers_at(now) {
+        if !grant.is_live_at(now) {
             return Err(refused(
-                "the requested scope confers no read: name its bands, audience and sensitivity",
+                "the requested scope reaches no record: name its bands, audience and sensitivity",
             ));
         }
         let id = self.store.clock.entity_id()?;
@@ -410,7 +409,9 @@ impl Vault {
     /// carrying the origin vault. The first generation whose id was never
     /// deleted is the actor (FIX 3685): resolved when present with the same
     /// body, created when absent; any other row there refuses. A deleted
-    /// actor stays deleted, and older grants keep naming it.
+    /// actor stays deleted, and older grants keep naming it. Each deleted
+    /// actor moves the next mint one generation on, with no fixed ceiling
+    /// (FIX 8733): the walk ends at the first generation never deleted.
     fn connect_guest_actor_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -419,7 +420,8 @@ impl Vault {
         now: u64,
     ) -> Result<EntityId> {
         let body = guest_actor_body(peer_vault_id)?;
-        for generation in 0..GUEST_ACTOR_GENERATIONS {
+        let mut generation: u64 = 0;
+        loop {
             let actor = EntityId::derive(
                 derived_domains::CONNECT_GUEST_ACTOR,
                 &[&local[..], &peer_vault_id[..], &generation.to_be_bytes()],
@@ -427,6 +429,9 @@ impl Vault {
             if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, txn, &actor)?
                 .deleted
             {
+                generation = generation.checked_add(1).ok_or_else(|| {
+                    refused("the peer vault's guest actor generations are used up")
+                })?;
                 continue;
             }
             match live_entity_row_in_txn(&self.store, txn, &actor)? {
@@ -445,9 +450,6 @@ impl Vault {
                 }
             }
         }
-        Err(refused(
-            "the peer vault's guest actor generations are used up",
-        ))
     }
 
     fn put_connect_row_in_txn(
