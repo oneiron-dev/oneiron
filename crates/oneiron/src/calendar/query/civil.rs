@@ -1,7 +1,9 @@
 //! The civil time of an all-day or floating occurrence (FIX 17869), carried
 //! on the calendar views beside UTC bounds, which such an occurrence has
-//! none of: it happens on its days, or at its wall times, in whatever zone
-//! its reader is in.
+//! none of: it happens on its days, or at its wall times. A floating one,
+//! or an all-day one in no zone, happens so in whatever zone its reader is
+//! in; an all-day one whose calendar names a zone, on its days there (fix
+//! list row 17868).
 
 /// What a calendar shows for an all-day or floating occurrence.
 #[derive(
