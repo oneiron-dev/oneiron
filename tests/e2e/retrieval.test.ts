@@ -1157,7 +1157,10 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
     rows: { label: string; vad?: Facade.QueryAffect; confidence: number }[];
     queryAffect: Facade.QueryAffect;
   }>("RETRIEVAL-09");
-  const engine = await EngineFixture.start({ id: "RETRIEVAL-09", profile });
+  // RET-TRACE-1 is a default-off measurement lane: this case opts its
+  // served vault in (FIX 21998) so a capture_trace recall returns a run id.
+  const engine = await EngineFixture.start({ id: "RETRIEVAL-09", profile,
+    serverConfig: "[recall]\nretrieval_telemetry_capture = true\n" });
   let primaryFailed: boolean = false;
   let primary: unknown;
   try {
