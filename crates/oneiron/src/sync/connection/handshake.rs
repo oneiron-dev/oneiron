@@ -12,7 +12,7 @@ use crate::sync::client::{SyncClient, SyncEvent, SyncStatus, next_backoff};
 use crate::sync::types::parse_window_key_str;
 use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
-use super::peer_session::{HomeReach, home_served};
+use super::peer_session::HomeReach;
 use super::server_close::ServerClose;
 use super::session::FullResyncMarker;
 use super::{LocalUpdate, LoopExit, SyncConnection};
@@ -227,14 +227,13 @@ impl SyncConnection {
                 connected = self.connect_and_sync(&mut client, &event_tx) => connected,
             };
             drop(connect_batch);
-            // Whether the far end served this session's sync, opened or not:
-            // a home that did not counts toward down (FIX 4748).
-            let served = client.home_served;
             let mut renegotiate = false;
             let mut home_returned = false;
             match connected {
                 Ok(ws_stream) => {
-                    reach.opened(peer, served);
+                    // A home session opens once its first round completed:
+                    // the home served this machine's sync (FIX 4748).
+                    reach.opened(peer);
                     // Reset backoff on successful connect
                     // Note: connect_and_sync already emits Synced, so we don't emit Connected here
                     // to avoid regressing status for observers.
@@ -280,8 +279,9 @@ impl SyncConnection {
                                 event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
                             renegotiate = super::residence_mode::RENEGOTIATE_AT_ONCE;
                         }
-                        // FIX 4748: the home serves this machine's sync
-                        // again; its session follows at once.
+                        // FIX 4748: the home sent a peer session's probe
+                        // its root; its session follows at once, the home
+                        // still down until that session's round completes.
                         LoopExit::HomeReturned => {
                             let _ =
                                 event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
@@ -292,8 +292,9 @@ impl SyncConnection {
                 }
                 Err(e) => {
                     // The first peer is dialed on the first backoff step, not
-                    // the home's grown one (FIX 4748).
-                    if reach.failed(peer, served) {
+                    // the home's grown one, as is the peer after a home turn
+                    // that failed (FIX 4748).
+                    if reach.failed(peer) {
                         backoff_ms = self.config.client_config.reconnect_initial_ms;
                     }
                     let _ = event_tx.send(SyncEvent::Error(format!("Connection failed: {e}")));
@@ -310,8 +311,8 @@ impl SyncConnection {
             }
 
             // Check for queue overflow → re-bootstrap. Not while the home is
-            // down: nothing re-bootstraps then, and the home session replays
-            // the queue whole once the home answers (FIX 4748).
+            // down, its probe turn included: nothing re-bootstraps then, and
+            // the home session replays the queue whole (FIX 4748).
             if !reach.down() {
                 self.admitted_overflow_check(&mut client, &event_tx).await;
             }
@@ -372,15 +373,15 @@ impl SyncConnection {
 
     /// Connects to the server and performs initial sync + queue replay. A
     /// peer session (FIX 4748, `client.peer_session`) dials its peer over
-    /// the mesh and runs the same exchange, confirming nothing. Either way it
-    /// ends, `client.home_served` says whether the far end served this
-    /// machine's sync on it ([`home_served`]).
+    /// the mesh and runs the same exchange, confirming nothing. A home
+    /// session returns its socket only once its first round completed, so
+    /// the home served this machine's sync; an error before that, the home's
+    /// refusal, fault or close included, leaves it unserved ([`HomeReach`]).
     pub(super) async fn connect_and_sync(
         &self,
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
     ) -> Result<crate::sync::carrier::SyncSocket, String> {
-        client.home_served = false;
         client.note_session_bound = false;
         client.artifact_publication_resend.clear();
         client.document_retries = Default::default();
@@ -466,11 +467,6 @@ impl SyncConnection {
 
             match msg {
                 Some(Ok(Message::Binary(data))) => {
-                    // FIX 4748: the far end served this machine's sync when
-                    // the first frame it sends is its root.
-                    if init_messages_received == 0 {
-                        client.home_served = home_served(&data);
-                    }
                     let responses = client
                         .handle_server_message(&data)
                         .map_err(|e| format!("Handle server message failed: {e}"))?;
@@ -660,6 +656,8 @@ impl SyncConnection {
         // Reunite the stream
         let ws_stream = read.reunite(write).map_err(|e| format!("{e}"))?;
 
+        // The first round is complete: root and windows applied, the queue
+        // replayed and taken. The home served this machine's sync (FIX 4748).
         let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Synced));
 
         // m:last_sync (ARCH-0023b key table) — last successful sync stamp.
