@@ -217,8 +217,8 @@ pub use oneiron_authority::authority::{
 // The custody work body's own types (WILL L04 row 04), its permits in
 // pieces (FIX 11866) and its shared permit set (FIX 12281).
 pub use oneiron_authority::authority::{
-    CustodyChange, CustodyPermitPiece, CustodyPermitPieces, CustodyRecipientPermit,
-    CustodyRecipientPermits, CustodyRequestAuthority,
+    CustodyChange, CustodyPermitPiece, CustodyPermitPieces, CustodyPermitSet,
+    CustodyRecipientPermit, CustodyRecipientPermits, CustodyRequestAuthority,
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
@@ -345,8 +345,8 @@ pub use machine_write::machine_claim_transcript;
 pub use managed_owner_check::{ManagedOwnerCheck, ManagedOwnerCheckError};
 pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_in_txn};
 pub use mesh_machine::{
-    MeshAlpnGrant, MeshBindingIdentity, MeshMachineAddress, MeshMachineAddressEnvelope,
-    MeshMachineBinding,
+    MeshAlpnGrant, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshMachineAddress,
+    MeshMachineAddressEnvelope, MeshMachineBinding,
 };
 // The vault as its own `/mcp`'s OAuth 2.1 authorization server (FIX 4902 slice B), and the
 // agent tiers it and `oneiron token agent` share.
