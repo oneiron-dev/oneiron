@@ -217,8 +217,8 @@ fn stamp_copy_fields(
 
 /// The digest one post's request binds: the actor, the key, the brief,
 /// every routed field and `parent_ref`, the parent it files under
-/// (DOOR-113). A replay under the same key with any other request is
-/// refused, as an ask's is.
+/// (DOOR-113), and its due time (FIX 4749). A replay under the same key
+/// with any other request is refused, as an ask's is.
 fn request_digest(
     actor: EntityId,
     key: &str,
@@ -234,6 +234,7 @@ fn request_digest(
         post.ttl,
         &post.label,
         parent_ref,
+        post.due_at,
     ))
     .map_err(|_| MemoryError::bad_request("task post does not encode"))?;
     let mut hasher = blake3::Hasher::new();
@@ -259,8 +260,8 @@ pub(super) fn brief_type_ref_in(
 }
 
 /// The create spec one post validates and mints as: a standard task, with
-/// the brief's resolved stamp and its project's tree to place against, and
-/// the parent it files under.
+/// the brief's resolved stamp and its project's tree to place against, the
+/// parent it files under, and its due time.
 fn create_spec_of(
     post: &TaskPost,
     owner: EntityId,
@@ -283,6 +284,9 @@ fn create_spec_of(
     }
     if let Some(parent_ref) = post.parent_ref {
         spec = spec.with_parent_ref(parent_ref);
+    }
+    if let Some(due_at) = post.due_at {
+        spec = spec.with_due_at(due_at);
     }
     spec.brief = Some(post.brief.clone());
     spec
@@ -400,13 +404,6 @@ impl Memory<'_> {
                 "a briefed create is a standard task",
             ));
         }
-        // FIX 4749: a post carries no due time; a watcher is a brief-less
-        // create.
-        if spec.due_at.is_some() {
-            return Err(MemoryError::bad_request(
-                "a briefed create carries no due time",
-            ));
-        }
         let via = match self.task_host() {
             Some(binding) => TaskVia::Host(binding.clone()),
             None => TaskVia::Wire,
@@ -421,6 +418,7 @@ impl Memory<'_> {
                 ttl: spec.ttl,
                 label: spec.label.clone(),
                 parent_ref: spec.parent_ref,
+                due_at: spec.due_at,
             }),
         )?;
         let landed = receipt.related.iter().find_map(|handle| match handle {

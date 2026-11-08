@@ -113,8 +113,8 @@ pub(super) fn settle_post(
         return Ok(());
     }
     // The approved value is what lands: an approver's amendment to the
-    // assignee, spec, label, TTL or parent rides through the same keys it was
-    // parked under, and the brief through the stamp.
+    // assignee, spec, label, TTL, parent or due time rides through the same
+    // keys it was parked under, and the brief through the stamp.
     let assignee = match task_body_optional(entries, "assignee")? {
         Some(value) => decode_task_assignee(value)?,
         None => TaskAssignee::Dreamer,
@@ -141,6 +141,15 @@ pub(super) fn settle_post(
     let parent_ref = task_body_optional(entries, "parent_ref")?
         .map(|value| decode_entity_ref(value, "tasks.proposal.parent_ref"))
         .transpose()?;
+    let due_at = task_body_optional(entries, "due_at")?
+        .map(|value| {
+            value
+                .as_u64()
+                .ok_or(Error::Record(crate::error::RecordError::InvalidTaskBody(
+                    "tasks.proposal.due_at",
+                )))
+        })
+        .transpose()?;
     let spec = task_body_field(entries, "spec")?.clone();
     let copied = stamp.redo_of.is_some();
     let post = TaskPost {
@@ -151,6 +160,7 @@ pub(super) fn settle_post(
         ttl,
         label,
         parent_ref,
+        due_at,
     };
     let memory = vault
         .memory(proposer, class)

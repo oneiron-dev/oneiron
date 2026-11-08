@@ -316,8 +316,8 @@ pub struct TaskCreateRequest {
     pub parent_ref: Option<String>,
     /// When the TASK falls due, Unix seconds (FIX 4749). A due TASK is a
     /// watcher: it ticks once on `schedule.tick` after this time, and a hook
-    /// bound to that tick returns Nothing or Enqueue. Only a brief-less
-    /// standard task carries one; absent is no tick.
+    /// bound to that tick returns Nothing or Enqueue. A standard task, briefed
+    /// or not, carries one; absent is no tick.
     #[serde(default)]
     pub due_at: Option<u64>,
 }
