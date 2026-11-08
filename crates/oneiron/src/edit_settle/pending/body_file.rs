@@ -117,6 +117,7 @@ impl Vault {
             &OwnedBody {
                 owner: *artifact_id,
                 occurrence,
+                mark_occurrence: occurrence,
                 state: BodyState::Complete {
                     body: staged.body.clone(),
                 },
