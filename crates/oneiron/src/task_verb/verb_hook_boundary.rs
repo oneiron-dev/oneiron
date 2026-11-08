@@ -354,7 +354,8 @@ pub fn stop_refusal(stop: VerbHookStop, session: Option<&HookSession>) -> Memory
 }
 
 pub use row_run::{
-    browser_row_pre, row, row_pre, row_retained, row_tapped, typed_row, typed_row_validated,
+    browser_row_pre, row, row_pre, row_retained, row_tapped, row_with_notice, typed_row,
+    typed_row_validated,
 };
 pub(crate) use session::{session_row_call, session_row_post, session_row_pre};
 
