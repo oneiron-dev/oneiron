@@ -626,6 +626,9 @@ pub(crate) fn file_put_body_in_txn(
         mint.mint()?,
     )?;
     crate::store::bind_body_key_in_txn(store, txn, &dir, &key)?;
+    // Filed with no pin: the collector's notes on its digest, from before
+    // it was named again, go (FIX 22101).
+    store.result_body_pins.named_again(&facts.blake3);
     let manifest = AssetFileManifest {
         facts,
         kind,

@@ -175,6 +175,7 @@ impl Store {
             key_custody,
             #[cfg(unix)]
             body_instance_pool: crate::store::BodyInstancePool::default(),
+            result_body_pins: Default::default(),
             env: StoreEnv::new(shared_env),
             raw,
             kind_registry,

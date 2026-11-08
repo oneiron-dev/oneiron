@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// The result bodies one vault handle's readers hold, counted by digest. In
 /// memory only: no pin outlives the process that reads.
-#[derive(Default)]
+/// A clone shares the table: the store's writers and the vault's readers
+/// and collector meet in one (FIX 22101).
+#[derive(Clone, Default)]
 pub struct ResultBodyPins {
     pub counts: Arc<Mutex<PinCounts>>,
 }
@@ -158,40 +160,54 @@ impl ResultBodyPins {
     /// Notes `file` of `digest` as unnamed by write transaction `since`
     /// (FIX 22101). A file noted again keeps its first note: a note stands
     /// only while no pin on its digest has dropped, so the file has stayed
-    /// unnamed since.
+    /// unnamed since. A released body's note replaces every older note of
+    /// its digest: a body released again was named again in between.
     pub fn retire(&self, digest: [u8; 32], file: RetiringFile, since: usize) {
-        lock(&self.counts)
-            .retiring
-            .entry(digest)
-            .or_default()
-            .entry(file)
-            .or_insert(since);
+        let mut counts = lock(&self.counts);
+        let notes = counts.retiring.entry(digest).or_default();
+        if matches!(file, RetiringFile::Released(_)) {
+            notes.retain(|_, noted| *noted >= since);
+        }
+        notes.entry(file).or_insert(since);
     }
 
-    /// Up to `limit` noted files `wanted` takes that no live reader can
-    /// still see named: `oldest`, the oldest live read transaction's id, is
-    /// none or at least each one's note (FIX 22101). They stay noted until
-    /// [`Self::remove_retiring`] or [`Self::forget_retiring`].
+    /// Forgets every note of `digest`: a writer names its file again (FIX
+    /// 22101). A writer that files a body without a pin calls it before it
+    /// commits; one that holds a pin across its commit needs not.
+    pub fn named_again(&self, digest: &[u8; 32]) {
+        lock(&self.counts).retiring.remove(digest);
+    }
+
+    /// Up to `limit` noted files `wanted` takes that may go now: no live
+    /// reader can still see them named (`oldest`, the oldest live read
+    /// transaction's id, is none or at least each one's note), and no
+    /// reader holds their digest (FIX 22101). Beside them, how many other
+    /// notes `wanted` takes wait for an older reader or a pin. They all stay
+    /// noted until [`Self::remove_retiring`] or [`Self::forget_retiring`].
     pub fn due_retiring(
         &self,
         oldest: Option<usize>,
         limit: usize,
         wanted: impl Fn(&[u8; 32], &RetiringFile) -> bool,
-    ) -> Vec<([u8; 32], RetiringFile, usize)> {
+    ) -> (Vec<([u8; 32], RetiringFile, usize)>, usize) {
         let counts = lock(&self.counts);
-        counts
-            .retiring
-            .iter()
-            .flat_map(|(digest, files)| {
-                files
-                    .iter()
-                    .map(move |(file, since)| (*digest, *file, *since))
-            })
-            .filter(|(digest, file, since)| {
-                oldest.is_none_or(|oldest| oldest >= *since) && wanted(digest, file)
-            })
-            .take(limit)
-            .collect()
+        let mut due = Vec::new();
+        let mut waiting = 0;
+        for (digest, files) in &counts.retiring {
+            for (file, since) in files {
+                if !wanted(digest, file) {
+                    continue;
+                }
+                if oldest.is_none_or(|oldest| oldest >= *since) && !counts.holds(digest) {
+                    if due.len() < limit {
+                        due.push((*digest, *file, *since));
+                    }
+                } else {
+                    waiting += 1;
+                }
+            }
+        }
+        (due, waiting)
     }
 
     /// Runs `remove` and forgets the note when `file` of `digest` is still

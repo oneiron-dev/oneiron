@@ -19,6 +19,10 @@ struct PreparedRunResult {
     id: EntityId,
     bytes: Vec<u8>,
     held: Option<OwnedBody>,
+    /// The answer's body, pinned from before its file is probed until the
+    /// TURN that names it has committed: the collector leaves the file, and
+    /// the pin's drop forgets its notes on the body (FIX 22101).
+    _pin: Option<crate::store::result_body_pins::ResultBodyPin>,
 }
 
 impl AgentDispatcher<'_> {
@@ -153,6 +157,7 @@ impl AgentDispatcher<'_> {
         rmpv::encode::write_value(&mut bytes, &artifact)
             .map_err(|error| Error::InvalidConfig(error.to_string()))?;
         // An inline body lives in the run's own rows; only a file needs a holder.
+        let pin = answer.map(|output| self.vault.pin_result_body(output.raw_blake3));
         let held = match answer {
             Some(output)
                 if self
@@ -183,6 +188,7 @@ impl AgentDispatcher<'_> {
             id: result_ref,
             bytes,
             held,
+            _pin: pin,
         })
     }
 
