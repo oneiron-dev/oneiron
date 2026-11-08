@@ -278,7 +278,8 @@ pub trait MeetingAudioHost {
 }
 
 /// The consent request binds the complete artifact, not only an audio filename.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BulkImportBinding {
     /// Opaque vault/owner context supplied by the authenticated authorizer.
     pub vault_scope: String,
@@ -288,7 +289,7 @@ pub struct BulkImportBinding {
     pub source_record_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct BulkImportReceipt {
     pub binding: BulkImportBinding,
     pub receipt_ref: String,

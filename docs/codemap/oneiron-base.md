@@ -11,6 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `examples/tokenizer_count.rs` | src | s | — | — | Bench-only micro-bench (never part of production paths): the public default O200k context-pack token counter… |
 | `src/analyzer.rs` | src | s | 1 re-export | — | Multilingual analyzer subsystem |
 | `src/calendar_body_screen.rs` | src | s | 3 struct · 1 enum · 1 trait · 2 fn · 2 const | CalendarAdmissionRequest, CalendarBodyScreener, CalendarInboundBody, CalendarScreenVerdict, Screened | Optional inbound-body screen for imported calendar content (CAL-09) |
 | `src/config.rs` | src | m | 4 struct · 2 enum · 7 fn · 5 const · 2 mod · 1 re-export | HostingPrivacyPosture, TextAnalyzerConfig, TextIndexOptions, VaultDataKeyCustody, VaultPrivacyConfig, VectorEvidenceFloors | Portable runtime configuration moved down from the engine crate |

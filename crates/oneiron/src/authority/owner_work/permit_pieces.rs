@@ -225,8 +225,8 @@ fn joins_as(request: &OwnerWorkRequest, joined: &OwnerWorkRequest) -> bool {
 /// (FIX 12139); a join of another request on the set whose pieces name its
 /// carrier shares that request's permits, copying and hashing none (FIX
 /// 12014, 12281). The first join still verifies: one piece hands over its
-/// shared run, copying no permit (FIX 12310), more join into one list sized
-/// to them, which the set then keeps without a copy.
+/// shared run, copying no permit (FIX 12310), more share their kept runs
+/// under one small descriptor, copying no permit (FIX 12370).
 pub(super) fn joined_request<'r>(
     work: &OwnerWorkState,
     signer: &[u8; 32],
@@ -267,17 +267,17 @@ pub(super) fn joined_request<'r>(
     // One piece carries the whole set: hand over its shared run, copying no
     // permit (FIX 12310).
     if let [only] = runs.as_slice() {
-        let joined = with_permits(request, only.permits.clone());
+        let joined = with_permits(request, CustodyPermitSet::from_run(only.permits.clone()));
         if verified.is_none() {
             joined.validate().ok()?;
         }
         return Some(KeptRequest::Joined(Arc::new(joined)));
     }
-    let mut permits = Vec::with_capacity(joined_len);
-    for piece in runs {
-        permits.extend_from_slice(&piece.permits);
-    }
-    let joined = with_permits(request, CustodyRecipientPermits::from(permits));
+    let runs: Vec<CustodyRecipientPermits> = runs
+        .into_iter()
+        .map(|piece| piece.permits.clone())
+        .collect();
+    let joined = with_permits(request, CustodyPermitSet::from_runs(runs));
     if verified.is_none() {
         joined.validate().ok()?;
     }
@@ -292,7 +292,7 @@ fn piece_carrier(request: &OwnerWorkRequest) -> Option<EntityId> {
 
 /// `request`, signed with its permits in pieces, carrying `permits` joined:
 /// the set itself, shared, never a copy of it.
-fn with_permits(request: &OwnerWorkRequest, permits: CustodyRecipientPermits) -> OwnerWorkRequest {
+fn with_permits(request: &OwnerWorkRequest, permits: CustodyPermitSet) -> OwnerWorkRequest {
     let mut joined = request.clone();
     if let OwnerWorkBody::Custody { recipients, .. } = &mut joined.work {
         *recipients = permits;
@@ -376,16 +376,26 @@ impl Vault {
         else {
             return Ok(None);
         };
-        let Some(run) = custody_permit_piece_len(self.limit_watch(), recipients) else {
+        let joined: Vec<CustodyRecipientPermit>;
+        let inline: &[CustodyRecipientPermit] = match recipients.single_run() {
+            Some(run) => run,
+            // A rotate or bind that keeps a joined segmented set joins once
+            // for staging; the fold still reads the kept runs without a copy.
+            None => {
+                joined = recipients.iter().copied().collect();
+                &joined
+            }
+        };
+        let Some(run) = custody_permit_piece_len(self.limit_watch(), inline) else {
             return Ok(None);
         };
         let mut parents = fold.owner_work_parents();
         if parents.len() > MAX_PARENTS {
             return Ok(None);
         }
-        let runs: Vec<&[CustodyRecipientPermit]> = recipients.chunks(run).collect();
+        let runs: Vec<&[CustodyRecipientPermit]> = inline.chunks(run).collect();
         let commitment =
-            CustodyPermitPieces::of(recipients, runs.len()).ok_or_else(invalid_authority)?;
+            CustodyPermitPieces::of(inline, runs.len()).ok_or_else(invalid_authority)?;
         let signer = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
         let mut seq = next_sequence(fold, &signer)?;
         let now = self.instant_in_txn(txn)?.secs();
@@ -422,7 +432,7 @@ impl Vault {
         {
             return Err(authority_refused(PIECE_NOT_FOLDED));
         }
-        *recipients = CustodyRecipientPermits::default();
+        *recipients = CustodyPermitSet::default();
         *pieces = Some(commitment);
         Ok(Some(staged))
     }
