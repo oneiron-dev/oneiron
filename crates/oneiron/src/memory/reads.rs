@@ -681,9 +681,13 @@ impl Memory<'_> {
             }
         };
         let short_ref = self.short_ref_of(id)?;
-        let value = served(&body.value);
+        let (mut value, mut scope) = (served(&body.value), body.scope.as_ref().map(served));
+        if !secret {
+            self.mask_lifted_claim_parts(&mut value, scope.as_mut())?;
+        }
         let claim = crate::lens::RecordRef::from_id(ENTITY_TYPE_CLAIM, id, short_ref.as_deref());
-        // The label is the value this view serves: redacted for a secret.
+        // The label is the value this view serves: redacted for a secret, a
+        // lifted key as its handle (FIX 13735).
         let claim = match &value {
             serde_json::Value::String(text) => claim.with_label(text),
             other => claim.with_label(&other.to_string()),
@@ -704,7 +708,7 @@ impl Memory<'_> {
             lifecycle: body.lifecycle.as_str().to_owned(),
             source: body.source.map(|source| source.as_str().to_owned()),
             world_ref: body.world.map(|world| world.to_hex()),
-            scope: body.scope.as_ref().map(served),
+            scope,
             claim_scope: ClaimScope::of_body(body),
             made_by: self.collection_view(id)?.and_then(|view| view.made_by),
             valid_from: body.valid_from,
