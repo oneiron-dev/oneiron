@@ -39,6 +39,7 @@ mod restore;
 mod route_prompt;
 mod source_erase;
 mod spawn_erase;
+mod start_landing;
 mod start_parts;
 mod start_pieces;
 
@@ -79,6 +80,7 @@ pub(crate) use self::restore::retire_replay_bodies_in_rows;
 pub(crate) use self::route_prompt::{capsule_route_prompt, finalize_capsule, route_prompt_at};
 pub(super) use self::source_erase::retire_source_step_starts_in_txn;
 pub(super) use self::spawn_erase::erase_spawn_prefixes_in_txn;
+pub(crate) use self::start_landing::{StrippedPieces, republish_step_start_lengths_in_rows};
 pub(crate) use self::start_parts::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,

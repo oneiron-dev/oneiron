@@ -32,6 +32,7 @@ use crate::{
 // Fair dispatch of authenticated admissions, and their receipts (FIX 8620, 8621).
 mod admission;
 mod dial;
+mod outbound;
 
 pub use dial::{OwnerMachineLookup, owner_machine_lookup};
 
@@ -452,7 +453,16 @@ impl IrohTransport {
         bind_addr: SocketAddr,
         private_relays: Option<RelayMap>,
     ) -> Result<Self, MeshError> {
-        Self::bind_with(secret, policy, alpns, bind_addr, private_relays, None).await
+        Self::bind_with(
+            secret,
+            policy,
+            alpns,
+            bind_addr,
+            private_relays,
+            None,
+            false,
+        )
+        .await
     }
     async fn bind_with(
         secret: SecretKey,
@@ -461,6 +471,7 @@ impl IrohTransport {
         bind_addr: SocketAddr,
         private_relays: Option<RelayMap>,
         receipts: Option<PathRecorder>,
+        outbound_only: bool,
     ) -> Result<Self, MeshError> {
         if alpns.is_empty() || alpns.iter().any(Vec::is_empty) {
             return Err(MeshError::Unavailable);
@@ -504,7 +515,11 @@ impl IrohTransport {
                 (alpn.clone(), gate)
             })
             .collect();
-        endpoint.set_alpns(alpns.clone());
+        endpoint.set_alpns(if outbound_only {
+            Vec::new()
+        } else {
+            alpns.clone()
+        });
         let accepting = tokio::spawn(accept_loop(
             endpoint.clone(),
             Arc::new(gates),
@@ -539,6 +554,7 @@ impl IrohTransport {
             bind_addr,
             private_relays,
             Some(PathRecorder::new(receipts)),
+            false,
         )
         .await
     }
