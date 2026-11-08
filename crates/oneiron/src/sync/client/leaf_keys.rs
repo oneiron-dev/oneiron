@@ -37,8 +37,9 @@ impl SyncClient {
     /// # Errors
     ///
     /// [`TransportError::UnknownTag`] on a federation lane; a frame that does
-    /// not decode; [`TransportError::Storage`] where secret custody could not
-    /// take an answer or a failure.
+    /// not decode, or an answer custody refuses; [`TransportError::Storage`]
+    /// where a fault of this vault's own kept custody from taking an answer
+    /// or a failure.
     pub(super) fn handle_leaf_key_frame(
         &mut self,
         tag: u8,
@@ -76,10 +77,12 @@ impl SyncClient {
                     logged(tag, &id, holder, executor, "no_request_out");
                     return Ok(Vec::new());
                 };
+                // This vault's own fault is its own; any other is the
+                // answer refused (FIX 22153).
                 self.vault
                     .accept_leaf_key_answer(&request, &answer)
                     .map_err(|error| {
-                        TransportError::Storage(format!("accept leaf key answer: {error}"))
+                        TransportError::from_applied(&error, "leaf key answer refused")
                     })?;
                 self.leaf_key_sends.sent.remove(&id);
                 logged(tag, &id, holder, executor, "accepted");
