@@ -24,6 +24,11 @@ side_tables! {
     FAILURE_SIGNALS_TIER1_COUNTS: VaultMeta b"failure_signals:tier1_counts:v1:" Raw;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
+    /// A Connect guest's proposal in its pact's review inbox (FIX 3684): the proposer, the world
+    /// and record it names, the text update as sent until the owner decides, then the decision.
+    /// Never a vault write. Key: id16(grant) + id16(proposal).
+    FEDERATION_CONNECT_PROPOSAL: VaultMeta b"federation:connect_proposal:v1:" Named
+        => crate::federation::erase_connect_proposer_in_txn;
     /// An ask guest's FEDERATION_GRANT the owner withdrew: the guest it conferred on and when, so
     /// a repeat revoke reports the first (OF-232). Key: id16 (grant).
     FEDERATION_GUEST_REVOKE: VaultMeta b"federation:guest_revoke:v1:" Named;
