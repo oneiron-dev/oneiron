@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::wake::{PrepEvent, PrepPolicy, prep_is_eligible};
 use crate::calendar::claims::is_calendar_claim_predicate;
+use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
 use crate::context_pack::ContextEntity;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -150,11 +151,15 @@ pub struct PrepBuildRequest {
     pub policy: PrepPolicy,
 }
 
-/// Assembles one prep pack from live vault state at `fired_at`.
+/// Assembles the vault owners' prep pack from live vault state at `fired_at`:
+/// the card every vault owner is shown (FIX 22323). It is assembled on the
+/// first owner's own lane and keeps only rows every other owner's lane reads
+/// too, so a row a source audience or a private thread withholds from any
+/// one owner never reaches the card.
 ///
-/// `Ok(None)` means deliberately blank — the EVENT stopped being eligible, or
-/// scoping and ranking left nothing worth saying. It is never an error and never
-/// an empty pack; the caller renders nothing.
+/// `Ok(None)` means deliberately blank — the EVENT stopped being eligible, the
+/// vault has no owner, or scoping and ranking left nothing worth saying. It is
+/// never an error and never an empty pack; the caller renders nothing.
 ///
 /// The order below is load-bearing:
 ///
@@ -174,13 +179,47 @@ pub fn build_prep_pack(vault: &Vault, request: &PrepBuildRequest) -> Result<Opti
     if !prep_is_eligible(&request.event, request.policy) {
         return Ok(None);
     }
-    let candidates = prep_context_candidates(vault, &request.event, request.fired_at)?;
-    pack_from_candidates(vault, request, &candidates)
+    let owners = {
+        let txn = vault.store.env.read_txn()?;
+        crate::policy_model::owners_in_txn(vault, &txn)?
+    };
+    let mut lanes = owners.into_iter().map(|owner| {
+        vault
+            .scoped_read(ScopedReadActorKey::vault_owner(owner))
+            .with_claim_status(ClaimReadStatus::Surfaceable)
+    });
+    let Some(lane) = lanes.next() else {
+        return Ok(None);
+    };
+    let others: Vec<ScopedRead<'_>> = lanes.collect();
+    // The card names its meeting, so every owner reads the EVENT itself: one
+    // whose words came from a member's own mail may be withheld from some.
+    {
+        let txn = vault.store.env.read_txn()?;
+        for owner_lane in std::iter::once(&lane).chain(&others) {
+            let read = owner_lane
+                .get_entities_parts_in_txn(&txn, std::slice::from_ref(&request.event.event_ref))?;
+            if read.into_iter().next().flatten().is_none() {
+                return Ok(None);
+            }
+        }
+    }
+    Ok(build_prep_pack_read_by_all(&lane, &others, request)?.value)
 }
 
 /// The same assembly, with retrieval and citations narrowed by the caller's lane.
 pub(crate) fn build_prep_pack_scoped(
-    read: &crate::claim::ScopedRead<'_>,
+    read: &ScopedRead<'_>,
+    request: &PrepBuildRequest,
+) -> Result<crate::claim::ScopedReadResult<Option<PrepPack>>> {
+    build_prep_pack_read_by_all(read, &[], request)
+}
+
+/// [`build_prep_pack_scoped`] on `read`, keeping only the candidates every
+/// lane in `also` reads too, each judged in the assembly's own snapshot.
+fn build_prep_pack_read_by_all(
+    read: &ScopedRead<'_>,
+    also: &[ScopedRead<'_>],
     request: &PrepBuildRequest,
 ) -> Result<crate::claim::ScopedReadResult<Option<PrepPack>>> {
     if !prep_is_eligible(&request.event, request.policy) {
@@ -197,10 +236,16 @@ pub(crate) fn build_prep_pack_scoped(
     // Every candidate goes to the actor gate, under one authority per
     // snapshot (FIX 11648).
     let gate = read.recall_candidate_gate(&policy, &filter);
-    let admitted = |_: &crate::store::StoreRead<'_>,
-                    _: &heed::RoTxn<'_>,
-                    _: &EntityId|
-     -> Result<bool> { Ok(true) };
+    let admitted =
+        |_: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| -> Result<bool> {
+            for lane in also {
+                let read = lane.get_entities_parts_in_txn(txn, std::slice::from_ref(id))?;
+                if read.into_iter().next().flatten().is_none() {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        };
     let (scoped, _) = prep_context_builder(read.vault(), &request.event, request.fired_at)
         .authority_filter(plan_candidates)
         .filter_candidates(&admitted)
@@ -247,24 +292,13 @@ fn pack_from_candidates(
     ))
 }
 
-/// Runs the scoped live assembly around one EVENT.
+/// The live assembly around one EVENT, before a lane scopes it.
 ///
 /// Seeded on the EVENT and its attendees, walked over the ordinary retrieval
 /// graph, narrowed to the entity types the three sections read, and — the part
 /// that makes this render-time rather than replayed — bounded to rows the vault
 /// had already learned at `fired_at`. Nothing here is cached: two assemblies at
 /// two instants legitimately answer differently.
-fn prep_context_candidates(
-    vault: &Vault,
-    event: &PrepEvent,
-    fired_at: u64,
-) -> Result<Vec<ContextEntity>> {
-    let pack = prep_context_builder(vault, event, fired_at).run()?;
-    let mut candidates = pack.results;
-    candidates.extend(pack.neighbors);
-    Ok(candidates)
-}
-
 fn prep_context_builder<'a>(
     vault: &'a Vault,
     event: &PrepEvent,
