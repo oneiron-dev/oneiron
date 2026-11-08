@@ -257,18 +257,18 @@ pub(crate) fn room_row_placed(
 }
 
 /// Whether the base row `id` of `kind` sits in the same worlds in `view`'s
-/// room as on base: always for a row that is not a NOTE, whose world is
-/// stamped; for a NOTE, whose world its live `InWorld` edges name, only when
-/// the room's edges name the same worlds (review P1 #5926).
+/// room as on base: always for a row whose world is stamped; for a NOTE, an
+/// ASSET or a caption, whose worlds live edges give, only when the room's
+/// edges give the same worlds (review P1 #5926, FIX 22223).
 fn keeps_base_worlds(
     view: &crate::store::SessionStoreView<'_>,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
 ) -> bool {
-    kind != crate::registry::ENTITY_TYPE_NOTE
-        || super::note_world::note_worlds_in(view, txn, id)
-            == super::note_world::note_worlds_in(view.read().base(), txn, id)
+    !super::note_world::takes_live_worlds(kind)
+        || super::note_world::live_worlds_in(view, txn, id, kind)
+            == super::note_world::live_worlds_in(view.read().base(), txn, id, kind)
 }
 
 /// Settles an epoch SUMMARY's birth position in its mint transaction: born

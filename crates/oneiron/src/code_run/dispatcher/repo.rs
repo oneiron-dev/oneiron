@@ -87,6 +87,10 @@ impl HostSelfDispatcher<'_> {
                 effect,
                 memory.repo_symbols_definitions_for_run(&binding, input),
             ),
+            RepoRunCall::SymbolsNeighbors(input) => answered(
+                effect,
+                memory.repo_symbols_neighbors_for_run(&binding, input),
+            ),
             RepoRunCall::ViewsGet(input) => {
                 answered(effect, memory.repo_views_get_for_run(&binding, input))
             }
@@ -398,6 +402,7 @@ fn refused(effect: SelfEffect, error: &MemoryError) -> SelfDispatchOutcome {
 
 fn denied(effect: SelfEffect, code: &str) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Denied(SelfDeniedResult {
+        hook_notice: None,
         effect,
         outcome: code.to_owned(),
         reason_codes: Vec::new(),

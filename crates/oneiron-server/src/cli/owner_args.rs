@@ -684,7 +684,7 @@ pub struct SubscriptionPutArgs {
     #[arg(long)]
     pub agent: String,
 
-    /// `slack` or `line`.
+    /// `slack`, `line` or `email`.
     #[arg(long)]
     pub channel: String,
 
@@ -1042,6 +1042,12 @@ pub struct RunDecisionArgs {
     /// The bundle id `runs show` printed for exactly these proposals.
     #[arg(long)]
     pub bundle: String,
+
+    /// A reminder wording the owner saw, as `CLAIM_ID=HASH`: the
+    /// `reminder_wording_hash` `runs show` printed. Repeat for more; an
+    /// approved reminder sends these words (FIX 12321).
+    #[arg(long = "wording", value_name = "CLAIM_ID=HASH")]
+    pub wording: Vec<String>,
 
     #[command(flatten)]
     pub serve: ServeArgs,

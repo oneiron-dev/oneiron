@@ -62,6 +62,10 @@ pub struct UnclearContext {
     pub scope: Option<String>,
     /// The project the outcome ran in, where it recorded one.
     pub project: Option<EntityId>,
+    /// The world the judged run or the quoted document stood in, where it
+    /// recorded one world (FIX 22064); base reality is explicit, as
+    /// `base_world_id`.
+    pub world: Option<EntityId>,
     /// The task type the outcome ran as, where it recorded one.
     pub type_ref: Option<TypeRef>,
     /// The terminal pack receipt of the attempt the outcome is about: an
@@ -78,12 +82,17 @@ pub struct UnclearContext {
 }
 
 impl UnclearContext {
-    /// Every entity the context names.
+    /// Every entity the context names; base reality is no entity.
     fn entities(&self) -> impl Iterator<Item = &EntityId> {
         self.actor
             .iter()
             .chain(&self.skill)
             .chain(&self.project)
+            .chain(
+                self.world
+                    .iter()
+                    .filter(|world| **world != crate::claim::base_world_id()),
+            )
             .chain(&self.sources)
     }
 
@@ -132,6 +141,7 @@ struct StoredContext {
     skill: Option<String>,
     scope: Option<String>,
     project: Option<String>,
+    world: Option<String>,
     type_ref: Option<TypeRef>,
     attempt_receipt: Option<String>,
     judge_revision: Option<String>,
@@ -146,6 +156,7 @@ impl StoredContext {
             skill: context.skill.map(|id| id.to_hex()),
             scope: context.scope.clone(),
             project: context.project.map(|id| id.to_hex()),
+            world: context.world.map(|id| id.to_hex()),
             type_ref: context.type_ref.clone(),
             attempt_receipt: context.attempt_receipt.clone(),
             judge_revision: context.judge_revision.clone(),
@@ -162,6 +173,7 @@ impl StoredContext {
             skill: self.skill.as_deref().map(entity).transpose()?,
             scope: self.scope,
             project: self.project.as_deref().map(entity).transpose()?,
+            world: self.world.as_deref().map(entity).transpose()?,
             type_ref: self.type_ref,
             attempt_receipt: self.attempt_receipt,
             judge_revision: self.judge_revision,
@@ -240,11 +252,7 @@ pub(crate) fn put_unclear_in_txn(
         if crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &*wtxn, id)?.deleted
         {
             UNCLEAR.delete(&vault.store, wtxn, &key)?;
-            crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(
-                &vault.store,
-                wtxn,
-                &key,
-            )?;
+            crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(vault, wtxn, &key)?;
             return Ok(());
         }
     }
@@ -267,12 +275,27 @@ pub(crate) fn put_unclear_in_txn(
         context: StoredContext::new(&row.context),
         at: row.at,
     };
+    // A re-judgment that changed the row withdraws the label proposals that
+    // quoted its notes while they wait on their owner (FIX 21885); the same
+    // row again changes nothing. A held row that does not decode counts as
+    // changed.
+    let unchanged = UNCLEAR
+        .get(&vault.store, &*wtxn, &key)
+        .ok()
+        .flatten()
+        .is_some_and(|held| held.to_raw().ok() == stored.to_raw().ok());
+    if !unchanged {
+        crate::dreamer_runner::maintenance::withdraw_label_proposals_quoting_in_txn(
+            vault, wtxn, &key,
+        )?;
+    }
     UNCLEAR.put(&vault.store, wtxn, &key, &stored)?;
     Ok(())
 }
 
 /// Withdraws the outcome's row: a re-judgment that left nothing unclear. The
-/// Coach's clustering stops counting its notes in the same write.
+/// Coach's clustering stops counting its notes in the same write, and a label
+/// proposal that quoted one and waits on its owner is withdrawn (FIX 21885).
 pub(crate) fn delete_unclear_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -281,7 +304,7 @@ pub(crate) fn delete_unclear_in_txn(
 ) -> Result<()> {
     let key = unclear_key(lane, reference);
     UNCLEAR.delete(&vault.store, wtxn, &key)?;
-    crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(&vault.store, wtxn, &key)
+    crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(vault, wtxn, &key)
 }
 
 /// Drops every unclear row whose context names erased `entity` — its actor,

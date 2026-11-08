@@ -267,6 +267,11 @@ impl SessionReadSet {
         }
     }
 
+    /// Filters the loaded handle projection without acknowledging or changing served rows.
+    pub fn retain_loaded_skills(&mut self, mut readable: impl FnMut(&str) -> bool) {
+        self.loaded_skills.retain(|id, _| readable(id));
+    }
+
     pub fn loaded_skills(&self) -> impl Iterator<Item = (&str, &str)> {
         self.loaded_skills
             .iter()

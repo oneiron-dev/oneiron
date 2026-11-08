@@ -87,7 +87,9 @@ pub(super) mod intent_routes;
 pub(super) mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
+mod meeting_transcript_routes;
 pub(super) mod model_setting_routes;
+mod oauth_authorization_routes;
 #[cfg(target_os = "linux")]
 pub(super) mod outbox_diverged_routes;
 pub(super) mod owner_key_enrollment_routes;
@@ -99,6 +101,7 @@ pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;
 pub(super) mod recovery_kit_routes;
 pub(super) mod recovery_kit_target_routes;
+mod remote_task_input_routes;
 mod removal_archive_routes;
 pub(super) mod room_thread_setting_routes;
 pub(super) mod root_routes;
@@ -116,6 +119,7 @@ mod stream_recovery_routes;
 mod support_grant_routes;
 mod support_repair_routes;
 mod training_swap_routes;
+mod uncertain_send_routes;
 mod usage_repair_routes;
 pub(super) mod vault_key_routes;
 pub(super) mod weave_digest_channel_routes;
@@ -165,6 +169,7 @@ fn owner_tables() -> OwnerTable {
         concern_routes::owner_table(),
         learning_setting_routes::owner_table(),
         machine_routes::owner_table(),
+        meeting_transcript_routes::owner_table(),
         model_setting_routes::owner_table(),
         room_thread_setting_routes::owner_table(),
         backup_setting_routes::owner_table(),
@@ -177,6 +182,8 @@ fn owner_tables() -> OwnerTable {
         support_grant_routes::owner_table(),
         support_repair_routes::owner_table(),
         agent_grant_routes::owner_table(),
+        oauth_authorization_routes::owner_table(),
+        uncertain_send_routes::owner_table(),
         proactivity_routes::owner_table(),
         weave_routes::owner_table(),
         weave_digest_channel_routes::owner_table(),
@@ -186,6 +193,7 @@ fn owner_tables() -> OwnerTable {
         federation_connect_routes::owner_table(),
         feedback_triage_routes::owner_table(),
         decision_ask_routes::owner_table(),
+        remote_task_input_routes::owner_table(),
         desktop_takeover_routes::owner_table(),
         browser_takeover_routes::owner_table(),
         peer_confidence_routes::owner_table(),
@@ -793,6 +801,11 @@ struct DecideRun {
     run_ref: Option<String>,
     /// The bundle id review returned for exactly these proposals.
     bundle_id: String,
+    /// On approve, the reminder wordings the owner saw: per proposal claim
+    /// id, the BLAKE3 hash (64 hex) of the wording text. Each such reminder
+    /// sends those words.
+    #[serde(default)]
+    reminder_wordings: std::collections::BTreeMap<String, String>,
 }
 
 async fn approve_run(
@@ -823,13 +836,14 @@ async fn decide_run(
     let resolved = blocking(move || {
         let run =
             runs::RunName::from_fields(request.run_id.as_deref(), request.run_ref.as_deref())?;
-        runs::resolve(
+        runs::resolve_with_wordings(
             server.vault(),
             &owner,
             run,
             &request.bundle_id,
             action,
             destination,
+            &request.reminder_wordings,
         )
     })
     .await?;

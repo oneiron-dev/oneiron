@@ -8,7 +8,7 @@ use super::media::MediaCallProgress;
 use super::{LlmCapability, ModelId};
 
 #[derive(
-    Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema,
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema,
 )]
 pub enum LlmError {
     #[error("retryable LLM error: {0}")]

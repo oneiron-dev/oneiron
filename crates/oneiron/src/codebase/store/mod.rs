@@ -23,14 +23,19 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
 
+mod capture;
 pub(crate) mod checkpoint;
 mod index_rows;
 mod ingest_writer;
 mod lift;
 mod repo_index;
+mod scope_members;
 use self::index_rows::{
     codebase_ids_by_index, delete_exact_index_rows_for_snapshot, delete_index_rows_for_id,
     fork_has_other_snapshot, put_scope_index_rows_for_snapshot,
+};
+pub(crate) use self::scope_members::{
+    delete_scope_symbol_rows_in_txn, put_scope_symbol_rows_in_txn,
 };
 
 /// A codebase snapshot's file manifest, keyed by the CODE_ARTIFACT entity id it snapshots.
@@ -56,7 +61,8 @@ const PROJECT_INDEX: SideTable<TextIndexKey, (), Raw> =
 const FORK_INDEX: SideTable<HashIndexKey, (), Raw> =
     SideTable::new(&side_table::CODEBASE_FORK_INDEX);
 
-/// Index from a codebase scope key to the snapshot and asset entities visible under it.
+/// Index from a codebase scope key to the entities visible under it: the registered anchor,
+/// each snapshot CODE, its ASSETs and its manifest's symbols (FIX 4300).
 const SCOPE_INDEX: SideTable<HashIndexKey, (), Raw> =
     SideTable::new(&side_table::CODEBASE_SCOPE_INDEX);
 
@@ -312,12 +318,7 @@ impl Vault {
             crate::origin::secret_projection::index::RepoIndexMarks::read_in_txn(self, &wtxn)?;
         let (files, custody_report) =
             self.repo_snapshot_inputs_in_txn(&wtxn, &repo_marks, snapshot, file_contents)?;
-        let filtered_snapshot = CodebaseSnapshot::new(
-            snapshot.project_id.clone(),
-            snapshot.repo_ref.clone(),
-            snapshot.commit_hash.clone(),
-            files,
-        )?;
+        let filtered_snapshot = snapshot.rebuilt_with_files(files)?;
         self.put_filtered_codebase_snapshot_in_txn(
             &mut wtxn,
             code_artifact_id,
