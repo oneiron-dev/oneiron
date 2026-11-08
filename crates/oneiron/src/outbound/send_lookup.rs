@@ -110,11 +110,12 @@ pub(crate) const SENT_LOOKUP_CANNOT_TELL_REASON: &str = "sent_lookup_cannot_tell
 
 /// Whether a send under `taken` first looks itself up: an earlier executor
 /// may have sent it. Engine call (CALLS, FIX 4747): a TASK taken at a lease
-/// generation above the first, with no terminal outcome, whose send no
-/// lookup or owner's resend has cleared at this generation yet.
+/// generation above the first whose send no lookup or owner's resend has
+/// cleared at this generation yet. An older Failed outcome proves nothing
+/// about a later executor's send, so it does not skip the lookup (review
+/// #6574); a TASK whose outcome permits no send never reaches here.
 pub(super) fn earlier_executor_may_have_sent(taken: &TakenSendExecutorLease) -> bool {
     taken.lease.generation > SEND_EXECUTOR_LEASE_FIRST_GENERATION
-        && taken.outcome.is_none()
         && taken.lookup_cleared_generation != Some(taken.lease.generation)
 }
 

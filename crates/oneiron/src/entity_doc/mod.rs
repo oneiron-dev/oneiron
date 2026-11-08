@@ -94,6 +94,7 @@ pub(crate) use storage::{
     pointer_field_in, record_bodies_at_in_txn, record_body_at, record_body_history_in_txn,
     record_document, record_head_bytes, record_head_key, record_head_row_in_txn, record_head_slot,
     reindex_repo_document_in_txn, resolve_record_body, resolve_record_body_len,
+    resolve_record_body_with_utf8_admission,
 };
 #[cfg(feature = "sync")]
 pub(crate) use sweep::{compact_entity_doc_for_sweep, entity_doc_slots_in};
