@@ -3103,6 +3103,9 @@ impl OneironClient {
                 "vault.graph.ask" => remote_agent_verb_output::<oneiron::receipt::GraphAskOutcome>(
                     client, verb, &input,
                 ),
+                "self.skills.graph" => remote_agent_verb_output::<
+                    oneiron::receipt::GraphSkillRunOutcome,
+                >(client, verb, &input),
                 "vault.graph.admit" => {
                     remote_agent_verb_output::<oneiron::receipt::GraphAskOutcome>(
                         client, verb, &input,
@@ -16365,6 +16368,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.graph.ask", value)
+    }
+    pub fn self_skills_graph(
+        &self,
+        input: &oneiron::receipt::GraphSkillRunRequest,
+    ) -> Result<oneiron::receipt::GraphSkillRunOutcome, MemoryError> {
+        input.validate()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.skills.graph", value)
     }
     pub fn vault_graph_admit(
         &self,
