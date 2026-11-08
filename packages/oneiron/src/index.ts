@@ -2118,6 +2118,14 @@ export class Oneiron {
         /** Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling. */
         replace: (input: Facade.InferenceDefaultsReplaceRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaultsReplace(input) as Facade.PolicyActionOutcome),
       }),
+      models: {
+        responses_store: {
+          /** Reads the owner's Responses store switch from the serving vault. */
+          read: (input: Facade.EmptyRequest): Facade.ModelResponsesStoreSettings => this.#call(() => this.#client.vaultSettingsModelsResponsesStoreRead(input) as Facade.ModelResponsesStoreSettings),
+          /** Sets the owner's Responses store switch, persisting it before updating this server's live providers. */
+          set: (input: Facade.ModelResponsesStoreSettings): Facade.ModelResponsesStoreSettings => this.#call(() => this.#client.vaultSettingsModelsResponsesStoreSet(input) as Facade.ModelResponsesStoreSettings),
+        },
+      },
       /** Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key. */
       web_connector: Object.assign((input: Facade.EmptyRequest): Facade.WebConnectorSetting => this.#call(() => this.#client.vaultSettingsWebConnector(input) as Facade.WebConnectorSetting), {
         /** Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector. */
@@ -2554,7 +2562,7 @@ export class Oneiron {
         reuse: (input: Facade.CodeViewBuildRequest): Facade.CodeCacheOutcome => this.#call(() => this.#client.vaultCodeCacheReuse(input) as Facade.CodeCacheOutcome),
       },
       snapshots: {
-        /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt. */
+        /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership. */
         ingest: (input: Facade.CodeSnapshotIngestRequest): Facade.CodeSnapshotView => this.#call(() => this.#client.vaultCodeSnapshotsIngest(input) as Facade.CodeSnapshotView),
         /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
         get: (input: Facade.CodeSnapshotRequest): Facade.CodeSnapshotView | null => this.#call(() => this.#client.vaultCodeSnapshotsGet(input) as Facade.CodeSnapshotView | null),
@@ -2657,7 +2665,7 @@ export class Oneiron {
         revoke: (input: Facade.GitPushGrantRevokeInput): Facade.GitPushGrantRevokeOutput => this.#call(() => this.#client.vaultRepoGitPushRevoke(input) as Facade.GitPushGrantRevokeOutput),
       },
       anchor: {
-        /** The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing. */
+        /** The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership. */
         bind: (input: Facade.RepoAnchorBindInput): Facade.RepoAnchorBindOutput => this.#call(() => this.#client.vaultRepoAnchorBind(input) as Facade.RepoAnchorBindOutput),
       },
       snapshots: {
