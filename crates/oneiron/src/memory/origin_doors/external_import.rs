@@ -216,7 +216,7 @@ impl Memory<'_> {
                     self.actor_class(),
                     code_repo,
                     &target,
-                    |standing| standing.id == grant,
+                    |standing, _| standing.id == grant,
                 )?;
                 if read.is_err() {
                     return Ok(None);

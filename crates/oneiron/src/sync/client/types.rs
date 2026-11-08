@@ -58,7 +58,7 @@ pub struct SyncClientConfig {
     pub mesh_dialer: Option<std::sync::Arc<dyn crate::sync::SyncDialer>>,
     /// The carriers to this device's other machines while its home is down
     /// (FIX 4748): set only where a mesh listener runs, and the connection
-    /// then syncs with a peer once the home has not answered for
+    /// then syncs with a peer once the home has served it no sync for
     /// [`crate::sync::peer_route::HOME_DOWN_AFTER_SECS`]. `None` never
     /// counts the home down.
     pub peer_dialer: Option<std::sync::Arc<dyn crate::sync::SyncPeerDialer>>,
