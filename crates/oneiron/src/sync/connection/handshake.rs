@@ -488,8 +488,10 @@ impl SyncConnection {
 
             match msg {
                 Some(Ok(Message::Binary(data))) => {
+                    // A fault of this machine's own store applying the
+                    // home's frame says nothing of the home (FIX 22153).
                     let responses = client.handle_server_message(&data).map_err(|e| {
-                        SessionFault::Remote(format!("Handle server message failed: {e}"))
+                        SessionFault::of_frame(&e, format!("Handle server message failed: {e}"))
                     })?;
                     // Judged per frame: a device-only flag may turn while an
                     // earlier frame waits on the socket.
@@ -524,9 +526,10 @@ impl SyncConnection {
                             Ok(Some(Ok(Message::Binary(data)))) => {
                                 let responses =
                                     client.handle_server_message(&data).map_err(|e| {
-                                        SessionFault::Remote(format!(
-                                            "Handle server message failed: {e}"
-                                        ))
+                                        SessionFault::of_frame(
+                                            &e,
+                                            format!("Handle server message failed: {e}"),
+                                        )
                                     })?;
                                 // Judged per frame: a device-only flag may turn while an
                                 // earlier frame waits on the socket.
@@ -607,9 +610,14 @@ impl SyncConnection {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |duration| duration.as_secs());
             client
-                .fetch_current_index(now_secs)
+                .fetch_current_index_by_side(now_secs)
                 .await
-                .map_err(|e| SessionFault::Remote(format!("Fetch residence index failed: {e}")))?;
+                .map_err(|fault| {
+                    SessionFault::of_index_fetch(
+                        &fault,
+                        format!("Fetch residence index failed: {fault}"),
+                    )
+                })?;
         }
 
         // Phase 3: Drain offline queue
