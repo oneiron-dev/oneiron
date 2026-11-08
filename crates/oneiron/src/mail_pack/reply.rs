@@ -18,7 +18,9 @@
 //! - **Google** (Workspace or not): through the source's delegated identity
 //!   granted `gmail.send`, on the Gmail thread (`threadId`); the plan is
 //!   kept by the Gmail plan store until it sends, or its draft is discarded
-//!   or redrafted (fix list row 17646).
+//!   or redrafted (fix list row 17646). Its recipients come from the
+//!   answered message's raw source, read once at Gmail as it is drafted,
+//!   never from the decoded metadata headers (fix list row 20520).
 //! - **IMAP** (fix list row 17872): submitted over SMTP to the server the
 //!   mailbox's credential names, as the mailbox's own account.
 //! - **Microsoft 365** (fix list row 17643): one MIME `sendMail` on Graph
@@ -36,13 +38,17 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::gmail::{HttpGmailMailWire, reads_google_mail};
 use super::inbox::sources_by_audience_in;
 use super::reply_ask::{clear_reply_ask_in_txn, raise_reply_ask_in_txn};
 use super::reply_mime::{REPLY_MESSAGE_REF_PREFIX, ReplyDraft, ReplyMessage};
 use super::reply_recipients::{addresses_in, reply_recipients};
 use super::reply_send::{ReplySink, ReplyTransport};
 use super::source::{MailProvider, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
-use super::state::{MailOccurrence, MailPresence, MailReplyHeaders, OCCURRENCES};
+use super::state::{
+    MailOccurrence, MailPresence, MailReplyHeaders, MailReplyRecipients, OCCURRENCES,
+};
+use super::wire::{MailAddressHeaders, MailProviderWire};
 use crate::channel_identity_provider::gmail::{
     GmailDelegatedAdapter, GmailReplyThread, GmailSendPlan, GmailSendSink, HttpGmailSendWire,
 };
@@ -369,11 +375,12 @@ fn adapter_of(vault: &Vault, identity: EntityId) -> MemoryResult<GmailDelegatedA
     })
 }
 
-/// The message a reply answers, with its whole reply headers.
+/// The message a reply answers: its TURN, its provider id and its whole
+/// reply headers.
 fn parent_of(
     messages: &[MailOccurrence],
     parent_turn: Option<EntityId>,
-) -> MemoryResult<(EntityId, MailReplyHeaders)> {
+) -> MemoryResult<(EntityId, String, MailReplyHeaders)> {
     let parent = match parent_turn {
         Some(turn) => messages.iter().find(|occurrence| occurrence.turn == turn),
         None => messages.iter().rev().find(|occurrence| {
@@ -387,7 +394,65 @@ fn parent_of(
     let reply = parent.reply.clone().ok_or_else(|| {
         invalid_state("the message landed before replies were drafted; sync it again")
     })?;
-    Ok((parent.turn, reply))
+    Ok((parent.turn, parent.provider_id.clone(), reply))
+}
+
+/// The address headers of the answered message `provider_id` of the source
+/// `source`, read once from its raw message through this host's wire for
+/// the source's provider (fix list row 20520): Gmail's metadata headers come
+/// with their encoded words decoded, so a display name that encodes a comma
+/// or an address would read as another recipient. `None` for a source whose
+/// stored headers keep each mailbox apart already (IMAP and mbox split them
+/// before decoding; Microsoft 365 names typed addresses). The wire reads the
+/// source's own credential at its door, over blocking HTTP, outside any
+/// vault transaction of this call.
+///
+/// # Errors
+///
+/// A read that fails, the message gone at the provider included: the reply
+/// is refused, never addressed from the decoded headers.
+fn answered_address_headers(
+    vault: &Vault,
+    source: EntityId,
+    provider_id: &str,
+) -> MemoryResult<Option<MailAddressHeaders>> {
+    let snapshot = vault
+        .mail_sync_source(source)?
+        .ok_or_else(|| MemoryError::not_found("no mail thread by that ref"))?;
+    if !reads_google_mail(snapshot.provider) {
+        return Ok(None);
+    }
+    let wire = HttpGmailMailWire::new(vault)?;
+    wire.raw_address_headers(&snapshot, provider_id)
+        .map_err(|error| {
+            MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                format!(
+                    "the answered message could not be read at its provider ({error}); a reply's \
+                     recipients are read from the message there, never from its copied headers"
+                ),
+                &[
+                    "Draft the reply again in a moment.",
+                    "If the message is gone at the provider, answer another on the thread.",
+                ],
+            )
+        })
+}
+
+/// `parent` addressed by `addresses`, its raw message's address headers: its
+/// sender, `Reply-To`, To and Cc as that message names them; its thread,
+/// `Message-ID`, `References` and subject as they were stored.
+fn readdressed(parent: MailReplyHeaders, addresses: MailAddressHeaders) -> MailReplyHeaders {
+    let from = (!addresses.from.is_empty()).then(|| addresses.from.join(", "));
+    MailReplyHeaders {
+        from,
+        reply_to: addresses.reply_to,
+        recipients: Some(MailReplyRecipients {
+            to: addresses.to,
+            cc: addresses.cc,
+        }),
+        ..parent
+    }
 }
 
 /// The first recipient of `recipients`, a reply's whole list, and the list
@@ -668,7 +733,13 @@ impl Memory<'_> {
         let route = reply_route(&row)?;
         // The mailbox's own person approves it, so they are asked.
         let asked = row.owner.filter(|person| *person != actor);
-        let (parent_turn, parent) = parent_of(&messages, parent_turn)?;
+        let (parent_turn, provider_id, parent) = parent_of(&messages, parent_turn)?;
+        // A Gmail message's addresses come from its raw message, read once
+        // here, outside any write transaction (fix list row 20520).
+        let parent = match answered_address_headers(vault, source, &provider_id)? {
+            Some(addresses) => readdressed(parent, addresses),
+            None => parent,
+        };
         // Every recipient the reply names, as it would send, so a redraft to
         // the same people is the same revision (fix list row 17645). The
         // mailbox's own address is never one of them; one no mail can go to

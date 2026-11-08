@@ -829,7 +829,8 @@ async fn mcp_task_row<T: Send + 'static>(
 
 /// Runs blocking row `tool` by `row` on a blocking thread, on the caller's
 /// surface rebuilt there (FIX 9609): an organ call may wait out its whole
-/// deadline, which must never hold an async runtime worker. The row's hooks
+/// deadline, and a provider read over blocking HTTP panics on a debug
+/// runtime worker (fix list row 20520); neither may hold one. The row's hooks
 /// stay with its caller. The rows its reads listed come back beside its
 /// result, a refusal's too. The rebuilt surface keeps the row's credential
 /// and write context. Rows needing direct authorship must not take this

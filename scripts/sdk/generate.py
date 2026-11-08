@@ -220,7 +220,10 @@ for row in ROWS:
         raise ValueError(f'{row["name"]}: require_granted_scope is only a non-Read lane_record_scope facade row\'s, with no other record-scope admission, and on a host door only a caller or listing one')
     # FIX 9609: `mcp_off_runtime` marks a plain memory row whose MCP arm runs
     # its engine call on a blocking thread, on a surface rebuilt there
-    # (`mcp_off_runtime_row`), because the call may wait out a host deadline.
+    # (`mcp_off_runtime_row`), because the call may wait out a host deadline
+    # or read a provider over blocking HTTP, whose client a debug build
+    # refuses on an async runtime worker (a Gmail reply draft's raw read, fix
+    # list row 20520).
     # Only a plain memory row reaches that helper: no ladder, no turn, no
     # other door shape, no owner-grade admission.
     if row.get('mcp_off_runtime') and (row.get('task_decisions') or row.get('task_work') or row.get('host_door')
