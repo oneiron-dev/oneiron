@@ -87,6 +87,7 @@ pub(super) mod intent_routes;
 pub(super) mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
+mod meeting_transcript_routes;
 pub(super) mod model_setting_routes;
 #[cfg(target_os = "linux")]
 pub(super) mod outbox_diverged_routes;
@@ -167,6 +168,7 @@ fn owner_tables() -> OwnerTable {
         concern_routes::owner_table(),
         learning_setting_routes::owner_table(),
         machine_routes::owner_table(),
+        meeting_transcript_routes::owner_table(),
         model_setting_routes::owner_table(),
         room_thread_setting_routes::owner_table(),
         backup_setting_routes::owner_table(),
