@@ -40,6 +40,15 @@ pub enum SkillEditDisposition {
     /// and automatic admission defers. The proposal stays OPEN for a later
     /// measurement.
     DeferredInconclusive,
+    /// A primary axis still inconclusive after 5 Dreamer re-measure passes
+    /// (Engine 00:26 measured give-up): the proposal closes as Inconclusive,
+    /// not adopted, freeing its open-proposal slot for the next draft. The
+    /// owner can still draft anew or pick by hand.
+    InconclusiveExhausted,
+    /// A primary axis whose online interval width stopped shrinking over 2
+    /// passes (Engine 00:26 measured give-up): the same Inconclusive close as
+    /// `InconclusiveExhausted`, earlier. The arm records which trigger fired.
+    InconclusiveStalled,
     /// Identity- or alignment-tier at accept time, on the TARGET or on the
     /// PROPOSAL itself — protected, ambiguous, or moved since the basis was
     /// taken. One arm carries every tier answer, and as a refusal it closes the
@@ -74,6 +83,8 @@ impl SkillEditDisposition {
             Self::DeferredCycleCap => "deferred_cycle_cap",
             Self::DeferredJudgeCadence => "deferred_judge_cadence",
             Self::DeferredInconclusive => "deferred_inconclusive",
+            Self::InconclusiveExhausted => "inconclusive_exhausted",
+            Self::InconclusiveStalled => "inconclusive_stalled",
             Self::RefusedProtectedTier => "refused_protected_tier",
             Self::RefusedStaleTarget => "refused_stale_target",
             Self::RefusedSourceLoss => "refused_source_loss",
@@ -92,6 +103,8 @@ impl SkillEditDisposition {
             "deferred_cycle_cap" => Some(Self::DeferredCycleCap),
             "deferred_judge_cadence" => Some(Self::DeferredJudgeCadence),
             "deferred_inconclusive" => Some(Self::DeferredInconclusive),
+            "inconclusive_exhausted" => Some(Self::InconclusiveExhausted),
+            "inconclusive_stalled" => Some(Self::InconclusiveStalled),
             // "deferred_evidence_changed" is deliberately ABSENT: the evidence
             // race is a retryable abort that commits nothing, so a row
             // spelling it is a row from a build whose contract no longer
