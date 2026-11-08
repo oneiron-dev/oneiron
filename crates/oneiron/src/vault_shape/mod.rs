@@ -62,6 +62,7 @@ pub use run::{
     shape_item_ref_parts,
 };
 pub use seed::StoredShapeSeed;
+pub(crate) use seed::names_shape_seed;
 pub use shared_setup::{ShapeLearningOutcome, ShapeLearningSetting};
 pub use skill::ShapeSkillSource;
 

@@ -738,6 +738,11 @@ impl Store {
             drop(announced);
             return self.solo_write(write);
         }
+        // A put inside this write that files a long body draws an instance
+        // minted out here, before the writer: a writer never mints (FIX
+        // 22091).
+        #[cfg(unix)]
+        self.top_up_body_instance_pool();
         self.queue_write(callback, announced, write, None)
     }
 

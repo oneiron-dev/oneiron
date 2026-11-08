@@ -194,6 +194,139 @@ impl BodyMint {
     }
 }
 
+/// How many instances the store's pool holds once a put has wanted one
+/// (FIX 22091, Engine call C3 = B).
+pub(crate) const BODY_INSTANCE_POOL_TARGET: usize = 8;
+
+/// Body instances minted outside every writer, which a put inside a writer
+/// draws when it files a long body no reserve was taken for (FIX 22091). It
+/// starts empty and fills once a put first wants an instance: each grouped
+/// write tops it up to [`BODY_INSTANCE_POOL_TARGET`] before it takes the
+/// writer, and does nothing while it is full. Its instances are leased, so
+/// retention leaves them; one no row names when the process ends is debris
+/// retention takes. A put that finds it dry keeps its body in its row, and
+/// that is logged once per top-up.
+#[derive(Default)]
+pub(crate) struct BodyInstancePool {
+    state: Mutex<PoolState>,
+}
+
+#[derive(Default)]
+struct PoolState {
+    /// The mint the pooled instances were reserved under, holding them.
+    mint: Option<BodyMint>,
+    /// A put has wanted an instance: top-ups fill the pool from then on.
+    wanted: bool,
+    /// A put found the pool dry since the last top-up, and that was logged.
+    dry_logged: bool,
+    /// One top-up is minting: no other mints beside it.
+    refilling: bool,
+}
+
+impl PoolState {
+    fn held(&self) -> usize {
+        self.mint
+            .as_ref()
+            .and_then(|mint| mint.reserve.as_ref())
+            .map_or(0, |reserve| {
+                reserve.lock().unwrap_or_else(PoisonError::into_inner).len()
+            })
+    }
+}
+
+impl BodyInstancePool {
+    /// One pooled instance, as a mint that holds it alone, for a put inside
+    /// a writer: `None` when the pool is dry. Wanting one fills the pool
+    /// from the next top-up on.
+    pub(crate) fn draw(&self) -> Option<BodyMint> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.wanted = true;
+        let drawn = state.mint.as_ref().and_then(|mint| {
+            let entry = mint
+                .reserve
+                .as_ref()?
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .pop_front()?;
+            Some(BodyMint {
+                binding: mint.binding.clone(),
+                reserve: Some(Arc::new(Mutex::new(VecDeque::from([entry])))),
+                leases: Arc::clone(&mint.leases),
+            })
+        });
+        if drawn.is_none() && !state.dry_logged {
+            state.dry_logged = true;
+            tracing::info!(
+                pool_target = BODY_INSTANCE_POOL_TARGET,
+                "body instance pool dry: a long body stays in its row until the next top-up"
+            );
+        }
+        drawn
+    }
+
+    /// How many instances this top-up mints, claiming the refill: none
+    /// until a put has wanted one, none while another top-up mints, then
+    /// what the pool lacks of its target.
+    fn claim_refill(&self) -> usize {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if !state.wanted || state.refilling {
+            return 0;
+        }
+        let missing = BODY_INSTANCE_POOL_TARGET.saturating_sub(state.held());
+        state.refilling = missing > 0;
+        missing
+    }
+
+    /// Ends a refill that minted nothing.
+    fn abandon_refill(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .refilling = false;
+    }
+
+    /// Adds the instances `fresh` holds to the pool, ending the refill.
+    fn fill(&self, fresh: BodyMint) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.refilling = false;
+        state.dry_logged = false;
+        if state.held() == 0 {
+            state.mint = Some(fresh);
+            return;
+        }
+        let added = fresh.reserve.as_ref().map_or_else(VecDeque::new, |added| {
+            std::mem::take(&mut *added.lock().unwrap_or_else(PoisonError::into_inner))
+        });
+        if let Some(pooled) = state.mint.as_ref().and_then(|mint| mint.reserve.as_ref()) {
+            pooled
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend(added);
+        }
+    }
+}
+
+impl Store {
+    /// Tops the body-instance pool up before a write takes the writer
+    /// (FIX 22091): a no-op while it is full or before a put has wanted an
+    /// instance. A vault that cannot mint (an archived one) leaves it as it
+    /// is, and its long bodies stay in their rows.
+    pub(crate) fn top_up_body_instance_pool(&self) {
+        // Minted outside the pool's lock, which a put inside a writer takes.
+        let missing = self.body_instance_pool.claim_refill();
+        if missing == 0 {
+            return;
+        }
+        match self.body_mint().and_then(|mint| mint.reserve(missing)) {
+            Ok(fresh) => self.body_instance_pool.fill(fresh),
+            Err(error) => {
+                self.body_instance_pool.abandon_refill();
+                tracing::debug!(%error, "body instance pool not topped up");
+            }
+        }
+    }
+}
+
 /// The mint of the store `dbs` writes, its binding read in `txn` (a read
 /// transaction, never a writer): bound in memory at its first use, pinned
 /// by the first transaction that commits a row naming an instance. An
