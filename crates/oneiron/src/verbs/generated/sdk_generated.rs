@@ -3577,6 +3577,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.shares.issue_view_link",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ShareViewLinkRequest,
+                >(),
+            ),
+            (
                 "vault.shares.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ShareRevokeRequest,
@@ -4290,6 +4296,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.snapshots.capture",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::codebase_doors::CodeSnapshotCaptureRequest,
+                >(),
+            ),
+            (
                 "vault.code.snapshots.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::codebase_doors::CodeSnapshotRequest,
@@ -4457,6 +4469,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.agents.verb_classes.configure",
                 crate::code_run::vault_read::request_schema::<
                     crate::policy_manifest_doors::AgentVerbClassesConfigureRequest,
+                >(),
+            ),
+            (
+                "vault.oauth.authorization.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OAuthAuthorizationAnswer,
                 >(),
             ),
             (
@@ -8167,6 +8185,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.secrets.renew",
     "self.secrets.teardown",
     "self.secrets.use",
+    "vault.shares.issue_view_link",
     "host.compact",
     "host.wake",
     "host.budget.hit",
@@ -8270,6 +8289,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.cache.get",
     "vault.code.cache.reuse",
     "vault.code.snapshots.ingest",
+    "vault.code.snapshots.capture",
     "vault.code.snapshots.get",
     "vault.code.snapshots.read",
     "vault.code.symbols.definitions",
@@ -8286,6 +8306,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.grants.revoke",
     "vault.agents.verb_classes.get",
     "vault.agents.verb_classes.configure",
+    "vault.oauth.authorization.answer",
     "vault.repo.git_push.mint",
     "vault.repo.git_push.revoke",
     "vault.connectors.read_grants.grant",
@@ -10058,6 +10079,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.secrets.use" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SecretUseAnswer>()
         }
+        "vault.shares.issue_view_link" => {
+            crate::code_run::vault_read::request_schema::<crate::authority::PairingLink>()
+        }
         "host.compact" => crate::code_run::vault_read::request_schema::<
             crate::runtime_hooks::host_doors::HostCompactResult,
         >(),
@@ -10373,6 +10397,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.snapshots.ingest" => crate::code_run::vault_read::request_schema::<
             crate::memory::codebase_doors::CodeSnapshotView,
         >(),
+        "vault.code.snapshots.capture" => crate::code_run::vault_read::request_schema::<
+            crate::memory::codebase_doors::CodeSnapshotView,
+        >(),
         "vault.code.snapshots.get" => crate::code_run::vault_read::request_schema::<
             Option<crate::memory::codebase_doors::CodeSnapshotView>,
         >(),
@@ -10424,6 +10451,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.agents.verb_classes.configure" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::AgentVerbClassesReceipt,
+        >(),
+        "vault.oauth.authorization.answer" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OAuthAuthorizationAnswered,
         >(),
         "vault.repo.git_push.mint" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::GitPushGrantMintOutput,
@@ -16079,6 +16109,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.shares.issue_view_link" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.shares.revoke" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -16919,6 +16956,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.snapshots.capture" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.snapshots.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -17110,6 +17154,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.agents.verb_classes.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.oauth.authorization.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21767,6 +21818,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.secrets.teardown" => validate_input_self_secrets_teardown(value)?,
         "self.secrets.use" => validate_input_self_secrets_use(value)?,
         "vault.shares.create" => validate_input_vault_shares_create(value)?,
+        "vault.shares.issue_view_link" => validate_input_vault_shares_issue_view_link(value)?,
         "vault.shares.revoke" => validate_input_vault_shares_revoke(value)?,
         "vault.shares.view" => validate_input_vault_shares_view(value)?,
         "host.compact" => validate_input_host_compact(value)?,
@@ -21923,6 +21975,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.cache.get" => validate_input_vault_code_cache_get(value)?,
         "vault.code.cache.reuse" => validate_input_vault_code_cache_reuse(value)?,
         "vault.code.snapshots.ingest" => validate_input_vault_code_snapshots_ingest(value)?,
+        "vault.code.snapshots.capture" => validate_input_vault_code_snapshots_capture(value)?,
         "vault.code.snapshots.get" => validate_input_vault_code_snapshots_get(value)?,
         "vault.code.snapshots.read" => validate_input_vault_code_snapshots_read(value)?,
         "vault.code.symbols.definitions" => validate_input_vault_code_symbols_definitions(value)?,
@@ -21967,6 +22020,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.agents.verb_classes.get" => validate_input_vault_agents_verb_classes_get(value)?,
         "vault.agents.verb_classes.configure" => {
             validate_input_vault_agents_verb_classes_configure(value)?
+        }
+        "vault.oauth.authorization.answer" => {
+            validate_input_vault_oauth_authorization_answer(value)?
         }
         "vault.repo.git_push.mint" => validate_input_vault_repo_git_push_mint(value)?,
         "vault.repo.git_push.revoke" => validate_input_vault_repo_git_push_revoke(value)?,
@@ -26215,6 +26271,11 @@ fn validate_input_vault_shares_create(value: &serde_json::Value) -> MemoryResult
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_shares_issue_view_link(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::ShareViewLinkRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_shares_revoke(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::ShareRevokeRequest = decode(value.clone())?;
     Ok(())
@@ -26848,6 +26909,11 @@ fn validate_input_vault_code_snapshots_ingest(value: &serde_json::Value) -> Memo
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_code_snapshots_capture(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::codebase_doors::CodeSnapshotCaptureRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_code_snapshots_get(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::codebase_doors::CodeSnapshotRequest = decode(value.clone())?;
     Ok(())
@@ -27014,6 +27080,11 @@ fn validate_input_vault_agents_verb_classes_configure(
 ) -> MemoryResult<()> {
     let _input: crate::policy_manifest_doors::AgentVerbClassesConfigureRequest =
         decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_oauth_authorization_answer(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::OAuthAuthorizationAnswer = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -30104,16 +30175,29 @@ pub fn invoke(
     verb: &str,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
+    invoke_with_notice(memory, verb, value).0
+}
+/// The row's result and its actual hook-chain notice bit; a source without metadata returns None.
+pub fn invoke_with_notice(
+    memory: &Memory<'_>,
+    verb: &str,
+    value: serde_json::Value,
+) -> (MemoryResult<serde_json::Value>, Option<bool>) {
     if !AgentVerb::from_name(verb).is_some_and(AgentVerb::is_facade) {
-        return Err(
-            wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))
+        return (
+            Err(wrong_root(verb)
+                .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))),
+            None,
         );
     }
     if verb == "ai.anonymous_chat" {
-        return encode(ai_anonymous_chat(memory, decode(value)?)?);
+        return (
+            (|| encode(ai_anonymous_chat(memory, decode(value)?)?))(),
+            None,
+        );
     }
     // The row's one verb-hook boundary (ARCH-0080 §3).
-    crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {
+    crate::task_verb::verb_hook_boundary::row_with_notice(memory, verb, value, |value| match verb {
         "vault.commitments.create" => invoke_vault_commitments_create(memory, value),
         "vault.commitments.get" => invoke_vault_commitments_get(memory, value),
         "vault.commitments.ledger" => invoke_vault_commitments_ledger(memory, value),
@@ -31028,6 +31112,7 @@ pub fn invoke(
         "self.secrets.teardown" => invoke_self_secrets_teardown(memory, value),
         "self.secrets.use" => invoke_self_secrets_use(memory, value),
         "vault.shares.create" => invoke_vault_shares_create(memory, value),
+        "vault.shares.issue_view_link" => invoke_vault_shares_issue_view_link(memory, value),
         "vault.shares.revoke" => invoke_vault_shares_revoke(memory, value),
         "vault.shares.view" => invoke_vault_shares_view(memory, value),
         "host.compact" => invoke_host_compact(memory, value),
@@ -31184,6 +31269,7 @@ pub fn invoke(
         "vault.code.cache.get" => invoke_vault_code_cache_get(memory, value),
         "vault.code.cache.reuse" => invoke_vault_code_cache_reuse(memory, value),
         "vault.code.snapshots.ingest" => invoke_vault_code_snapshots_ingest(memory, value),
+        "vault.code.snapshots.capture" => invoke_vault_code_snapshots_capture(memory, value),
         "vault.code.snapshots.get" => invoke_vault_code_snapshots_get(memory, value),
         "vault.code.snapshots.read" => invoke_vault_code_snapshots_read(memory, value),
         "vault.code.symbols.definitions" => invoke_vault_code_symbols_definitions(memory, value),
@@ -31228,6 +31314,9 @@ pub fn invoke(
         "vault.agents.verb_classes.get" => invoke_vault_agents_verb_classes_get(memory, value),
         "vault.agents.verb_classes.configure" => {
             invoke_vault_agents_verb_classes_configure(memory, value)
+        }
+        "vault.oauth.authorization.answer" => {
+            invoke_vault_oauth_authorization_answer(memory, value)
         }
         "vault.repo.git_push.mint" => invoke_vault_repo_git_push_mint(memory, value),
         "vault.repo.git_push.revoke" => invoke_vault_repo_git_push_revoke(memory, value),
@@ -36637,6 +36726,13 @@ fn invoke_vault_shares_create(
     encode(vault_shares_create(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_shares_issue_view_link(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_shares_issue_view_link(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_shares_revoke(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -37486,6 +37582,13 @@ fn invoke_vault_code_snapshots_ingest(
     encode(vault_code_snapshots_ingest(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_code_snapshots_capture(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_snapshots_capture(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_code_snapshots_get(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -37699,6 +37802,13 @@ fn invoke_vault_agents_verb_classes_configure(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_agents_verb_classes_configure(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_oauth_authorization_answer(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_oauth_authorization_answer(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_repo_git_push_mint(
@@ -47290,6 +47400,12 @@ pub fn vault_shares_create(
 ) -> MemoryResult<crate::task_verb::sdk::ShareCreated> {
     crate::task_verb::sdk::create_share_as_caller(memory, input)
 }
+pub fn vault_shares_issue_view_link(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ShareViewLinkRequest,
+) -> MemoryResult<crate::authority::PairingLink> {
+    crate::task_verb::sdk::issue_share_view_link_as_caller(memory, input)
+}
 pub fn vault_shares_revoke(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ShareRevokeRequest,
@@ -48179,6 +48295,15 @@ pub fn vault_code_snapshots_ingest(
         input,
     )
 }
+pub fn vault_code_snapshots_capture(
+    memory: &Memory<'_>,
+    input: crate::memory::codebase_doors::CodeSnapshotCaptureRequest,
+) -> MemoryResult<crate::memory::codebase_doors::CodeSnapshotView> {
+    memory.code_snapshot_capture_as(
+        &memory.embedded_owner("vault.code.snapshots.capture")?,
+        input,
+    )
+}
 pub fn vault_code_snapshots_get(
     memory: &Memory<'_>,
     input: crate::memory::codebase_doors::CodeSnapshotRequest,
@@ -48438,6 +48563,17 @@ pub fn vault_agents_verb_classes_configure(
         input,
     )
     .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_oauth_authorization_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OAuthAuthorizationAnswer,
+) -> MemoryResult<crate::task_verb::sdk::OAuthAuthorizationAnswered> {
+    crate::task_verb::sdk::answer_oauth_authorization_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.oauth.authorization.answer")?,
+        crate::authority::ActSurface::ThisInstall,
+        input,
+    )
 }
 pub fn vault_repo_git_push_mint(
     memory: &Memory<'_>,

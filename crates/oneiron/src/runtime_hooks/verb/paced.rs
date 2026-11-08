@@ -374,6 +374,7 @@ fn not_retained() -> SavedOutcome {
     SavedOutcome::error(
         super::HOOK_RESULT_NOT_RETAINED.to_owned(),
         "this paced call ran on its turn, but its answer was not kept; do not send it again",
+        None,
     )
 }
 
@@ -560,17 +561,20 @@ impl Vault {
             let outcome = SavedOutcome::error(
                 MEMORY_CODE_INVALID_STATE.to_owned(),
                 "this paced call's saved args do not decode; it never ran",
+                None,
             );
             self.end_paced_turn(key, row.work, TurnEnd::Ended(outcome, None))?;
             return Ok(true);
         };
         let receipt = RefusalReceipt::new(&row.reference, &row.verb, row.actor, class, &args, None);
-        let (ran, producers) = self
+        let (ran, producers, hook_notice) = self
             .resume_paced_turn(key, &row, class, args)?
             .into_outcome();
         let now = self.store.clock.now_recorded_at();
         let end = match ran {
-            Ok(value) => TurnEnd::Ended(SavedOutcome::result(&value, producers)?, None),
+            Ok(value) => {
+                TurnEnd::Ended(SavedOutcome::result(&value, producers, hook_notice)?, None)
+            }
             Err(error) if error.code == MEMORY_CODE_PACED_HOLD => TurnEnd::Back(
                 error
                     .resets_at
@@ -595,7 +599,7 @@ impl Vault {
             Err(error) => {
                 let receipt = receipt.refused(&error.code, &error.message);
                 TurnEnd::Ended(
-                    SavedOutcome::error(error.code, &error.message),
+                    SavedOutcome::error(error.code, &error.message, hook_notice),
                     Some(receipt),
                 )
             }
@@ -682,6 +686,7 @@ impl Vault {
                         code,
                         message,
                         receipt: saved,
+                        ..
                     } = &mut outcome
                     {
                         if let Some(receipt) = receipt {
@@ -751,7 +756,7 @@ impl Vault {
                         MEMORY_CODE_INVALID_STATE,
                         EXPIRED,
                     )?;
-                    SavedOutcome::error(MEMORY_CODE_INVALID_STATE.to_owned(), EXPIRED)
+                    SavedOutcome::error(MEMORY_CODE_INVALID_STATE.to_owned(), EXPIRED, None)
                 });
                 row.state = PacedState::Ended;
                 row.ended_at = Some(now);
