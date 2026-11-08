@@ -241,23 +241,51 @@ fn held_occurrence(id: &EntityId, body: &BodyRef) -> Result<EntityId> {
     )
 }
 
-/// The occurrence `id`'s revisions keep a superseded body file of `id`
-/// under (FIX 22091): apart from a legal hold's, so either lets go alone.
-fn revision_occurrence(id: &EntityId, body: &BodyRef) -> Result<EntityId> {
-    EntityId::derive(
-        ASSET_BODY_REVISION,
-        &[id.as_bytes(), &body.blake3, &body.bytes.to_be_bytes()],
+/// The occurrence `id`'s revisions keep the body file of its stored row
+/// `row` under once a later write supersedes that row (FIX 22091): one per
+/// stored row, header and manifest, so it names the exact row a revision
+/// holds and never another row with the same bytes in its body; apart from
+/// a legal hold's, so either lets go alone.
+fn revision_occurrence(id: &EntityId, row: &[u8]) -> Result<EntityId> {
+    EntityId::derive(ASSET_BODY_REVISION, &[id.as_bytes(), row])
+}
+
+/// The manifest `row`, a stored row of `id`, holds: `None` for any row that
+/// is not an ASSET's or whose body is no manifest.
+fn manifest_of_row(row: &[u8]) -> Option<AssetFileManifest> {
+    EntityMetadataHeader::parse(row)
+        .filter(|header| header.entity_type == ENTITY_TYPE_ASSET)
+        .and_then(|_| row.get(ENTITY_METADATA_HEADER_LEN..))
+        .and_then(AssetFileManifest::decode)
+}
+
+/// ASSET `id`'s stored row, when its body is a manifest: what a put that
+/// replaces it hands [`stage_asset_body_in_txn`], which keeps its file for
+/// the revision that row becomes when the current descriptor shows it was
+/// filed (FIX 22091). Read before the put stages its own row.
+///
+/// # Errors
+///
+/// Storage errors as they occur.
+pub(crate) fn superseded_file_row_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<Vec<u8>>> {
+    Ok(
+        crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, id, |row| {
+            Ok(manifest_of_row(row).map(|_| row.to_vec()))
+        })?
+        .flatten(),
     )
 }
 
-/// The body file a stored revision `raw` of ASSET `id` names, when one of
-/// `id`'s descriptors still holds exactly the file its manifest names: the
-/// current one (the live row's, or an older row's with the same body), the
-/// one its revisions keep it under since a later write superseded it, or a
-/// legal hold's (FIX 22091). `None` for any row that is not an ASSET's, an
-/// inline revision, and a file no descriptor holds any longer, which keeps
-/// the manifest it was stored as. A revision is not the live row, so a
-/// descriptor that names another file is no fault here.
+/// The body file a stored revision `raw` of ASSET `id` names, when `id`'s
+/// revisions keep it: a later write superseded that exact row while it was
+/// filed (FIX 22091). `None` for any row that is not an ASSET's, an inline
+/// revision whatever its bytes, and a file no descriptor keeps for it,
+/// which keeps the manifest it was stored as. The live row is the current
+/// descriptor's to resolve.
 ///
 /// # Errors
 ///
@@ -268,35 +296,25 @@ pub(crate) fn revision_file_in_txn(
     id: &EntityId,
     raw: &[u8],
 ) -> Result<Option<AssetFileManifest>> {
-    if EntityMetadataHeader::parse(raw).is_none_or(|header| header.entity_type != ENTITY_TYPE_ASSET)
-    {
-        return Ok(None);
-    }
-    let Some(manifest) = raw
-        .get(ENTITY_METADATA_HEADER_LEN..)
-        .and_then(AssetFileManifest::decode)
-    else {
+    let Some(manifest) = manifest_of_row(raw) else {
         return Ok(None);
     };
-    let body = manifest.facts.body_ref();
-    let held = BodyState::Complete { body: body.clone() };
-    for occurrence in [
-        current_occurrence(id)?,
-        revision_occurrence(id, &body)?,
-        held_occurrence(id, &body)?,
-    ] {
-        if owned_body_in_txn(store, txn, id, &occurrence)?.is_some_and(|owned| owned.state == held)
-        {
-            return Ok(Some(manifest));
-        }
-    }
-    Ok(None)
+    let kept = owned_body_in_txn(store, txn, id, &revision_occurrence(id, raw)?)?;
+    Ok(kept
+        .is_some_and(|kept| {
+            kept.state
+                == BodyState::Complete {
+                    body: manifest.facts.body_ref(),
+                }
+        })
+        .then_some(manifest))
 }
 
-/// [`short_content_hash_in_txn`] for a selected revision `raw` of `id`:
-/// the live row's as that; an older one's from the manifest of the file
-/// its descriptors still hold ([`revision_file_in_txn`]), else from its
-/// stored body, as an inline revision's.
+/// [`short_content_hash_in_txn`] for a selected revision `raw` of `id`, the
+/// one hash every pinned reference to a revision is minted and checked by:
+/// the live row's as that; an older one's from the manifest of the file its
+/// revisions keep ([`revision_file_in_txn`]), else from its stored body, as
+/// an inline revision's.
 ///
 /// # Errors
 ///
@@ -325,15 +343,21 @@ pub(crate) fn revision_content_hash_in_txn(
     })
 }
 
-/// Releases every body `id` holds but the files its revisions keep (FIX
-/// 22091): its current one, and a legal hold's once the hold has lifted.
-fn release_unkept_bodies_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+/// Releases `id`'s current body file and each one a legal hold kept, once
+/// the hold has lifted; the files its revisions keep stay (FIX 22091).
+fn release_unkept_bodies_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    current: &EntityId,
+) -> Result<()> {
     for owned in owned_bodies_in_txn(store, txn, id)? {
-        let kept = match owned.state.held() {
-            Some(body) => owned.occurrence == revision_occurrence(id, body)?,
-            None => false,
-        };
-        if !kept {
+        let released = owned.occurrence == *current
+            || match owned.state.held() {
+                Some(body) => owned.occurrence == held_occurrence(id, body)?,
+                None => false,
+            };
+        if released {
             release_body_in_txn(store, txn, id, &owned.occurrence)?;
         }
     }
@@ -607,9 +631,14 @@ pub(crate) fn file_put_body_in_txn(
 
 /// Binds ASSET `id`'s body file to the row a put just staged, in the put's
 /// transaction: `file` is the body's facts when the row `body` is its
-/// manifest, `None` when the row holds the body itself. The file the row
-/// held before is released, unless a legal hold stands on the record: then
-/// it stays, held by the record, until the record is erased.
+/// manifest, `None` when the row holds the body itself. `superseded` is the
+/// stored row the put replaced when its body is a manifest
+/// ([`superseded_file_row_in_txn`]): the put captured it among `id`'s
+/// revisions, so the file it names stays for that revision while the
+/// current descriptor shows it was filed (FIX 22091), until the record's
+/// teardown. The current descriptor is released otherwise, and a legal
+/// hold keeps the file the row held before under its own occurrence until
+/// the record is erased.
 ///
 /// # Errors
 ///
@@ -621,6 +650,7 @@ pub(crate) fn stage_asset_body_in_txn(
     id: &EntityId,
     body: &[u8],
     file: Option<AssetBodyFacts>,
+    superseded: Option<&[u8]>,
 ) -> Result<()> {
     let occurrence = current_occurrence(id)?;
     let next = match file {
@@ -656,30 +686,27 @@ pub(crate) fn stage_asset_body_in_txn(
         None => None,
     };
     let prior = owned_body_in_txn(store, txn, id, &occurrence)?;
+    let prior_file = prior.as_ref().and_then(|prior| prior.state.held());
+    // The put captured the row it replaces among `id`'s revisions, manifest
+    // and all. When the current descriptor holds the very file that row
+    // names, the row was filed: its file stays for that revision, under that
+    // row alone, so a revision read resolves its body as an inline
+    // revision keeps its bytes (FIX 22091), a metadata-only change's too.
+    if let (Some(row), Some(file)) = (superseded, prior_file)
+        && manifest_of_row(row).is_some_and(|manifest| manifest.facts.body_ref() == *file)
+    {
+        keep_superseded_in_txn(store, txn, id, revision_occurrence(id, row)?, file)?;
+    }
     if prior == next {
         return Ok(());
     }
-    let superseded = prior.as_ref().and_then(|prior| prior.state.held());
-    // The put captured the row it replaces among `id`'s revisions, manifest
-    // and all; its file stays while they keep it, so a revision read
-    // resolves its body as an inline revision keeps its bytes (FIX 22091).
-    // The owner's teardown releases it with every other descriptor.
-    if let Some(superseded) = superseded {
-        keep_superseded_in_txn(
-            store,
-            txn,
-            id,
-            revision_occurrence(id, superseded)?,
-            superseded,
-        )?;
-    }
     if crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())? {
-        if let Some(superseded) = superseded {
-            keep_superseded_in_txn(store, txn, id, held_occurrence(id, superseded)?, superseded)?;
+        if let Some(file) = prior_file {
+            keep_superseded_in_txn(store, txn, id, held_occurrence(id, file)?, file)?;
         }
         release_body_in_txn(store, txn, id, &occurrence)?;
     } else {
-        release_unkept_bodies_in_txn(store, txn, id)?;
+        release_unkept_bodies_in_txn(store, txn, id, &occurrence)?;
     }
     if let Some(next) = next {
         publish_body_in_txn(store, txn, &next)?;
