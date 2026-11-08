@@ -942,6 +942,8 @@ pub enum AgentVerb {
     VaultSkillsPackReceipt,
     VaultSkillsOutcomesProject,
     VaultSkillsOutcomesGet,
+    VaultSettingsModelsResponsesStoreRead,
+    VaultSettingsModelsResponsesStoreSet,
     VaultModelsManifestRead,
     VaultModelsManifestReplace,
     VaultSettingsWebConnector,
@@ -2294,6 +2296,8 @@ impl AgentVerb {
         Self::VaultSkillsPackReceipt,
         Self::VaultSkillsOutcomesProject,
         Self::VaultSkillsOutcomesGet,
+        Self::VaultSettingsModelsResponsesStoreRead,
+        Self::VaultSettingsModelsResponsesStoreSet,
         Self::VaultModelsManifestRead,
         Self::VaultModelsManifestReplace,
         Self::VaultSettingsWebConnector,
@@ -3675,6 +3679,12 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => "vault.skills.pack_receipt",
             Self::VaultSkillsOutcomesProject => "vault.skills.outcomes.project",
             Self::VaultSkillsOutcomesGet => "vault.skills.outcomes.get",
+            Self::VaultSettingsModelsResponsesStoreRead => {
+                "vault.settings.models.responses_store.read"
+            }
+            Self::VaultSettingsModelsResponsesStoreSet => {
+                "vault.settings.models.responses_store.set"
+            }
             Self::VaultModelsManifestRead => "vault.models.manifest.read",
             Self::VaultModelsManifestReplace => "vault.models.manifest.replace",
             Self::VaultSettingsWebConnector => "vault.settings.web_connector",
@@ -5041,6 +5051,8 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSettingsModelsResponsesStoreRead
+                | Self::VaultSettingsModelsResponsesStoreSet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
@@ -6422,6 +6434,8 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSettingsModelsResponsesStoreRead
+                | Self::VaultSettingsModelsResponsesStoreSet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
@@ -7927,6 +7941,8 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSettingsModelsResponsesStoreRead
+                | Self::VaultSettingsModelsResponsesStoreSet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
@@ -8856,6 +8872,7 @@ impl AgentVerb {
                 | Self::SelfSkillsFork
                 | Self::VaultSkillsCallableAmend
                 | Self::VaultSkillsOutcomesProject
+                | Self::VaultSettingsModelsResponsesStoreSet
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnectorReplace
                 | Self::VaultSettingsModelPackReplace
@@ -9211,6 +9228,7 @@ impl AgentVerb {
                 "ttl",
                 "parent_ref",
                 "due_at",
+                "watch",
             ],
             Self::TasksWave => &["spec"],
             Self::VaultFanoutSpawn => &["spec"],
@@ -10079,6 +10097,8 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
+            Self::VaultSettingsModelsResponsesStoreRead => &["spec"],
+            Self::VaultSettingsModelsResponsesStoreSet => &["spec"],
             Self::VaultModelsManifestRead => &["spec"],
             Self::VaultModelsManifestReplace => &["spec"],
             Self::VaultSettingsWebConnector => &["spec"],
@@ -11432,6 +11452,8 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
+            Self::VaultSettingsModelsResponsesStoreRead => &["spec"],
+            Self::VaultSettingsModelsResponsesStoreSet => &["spec"],
             Self::VaultModelsManifestRead => &["spec"],
             Self::VaultModelsManifestReplace => &["spec"],
             Self::VaultSettingsWebConnector => &["spec"],
@@ -14613,6 +14635,12 @@ impl AgentVerb {
             }
             Self::VaultSkillsOutcomesGet => {
                 "Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."
+            }
+            Self::VaultSettingsModelsResponsesStoreRead => {
+                "Reads the owner's Responses store switch from the serving vault."
+            }
+            Self::VaultSettingsModelsResponsesStoreSet => {
+                "Sets the owner's Responses store switch, persisting it before updating this server's live providers."
             }
             Self::VaultModelsManifestRead => {
                 "Reads the owner-pinned v2 model manifest, or none when no manifest is configured."
