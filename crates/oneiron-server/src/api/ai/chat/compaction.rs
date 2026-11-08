@@ -23,9 +23,7 @@ use std::sync::Arc;
 
 use oneiron::attempt_queue::ManifestEntry;
 use oneiron::claim::CallerLocality;
-use oneiron::compaction::{
-    ChatLog, ChatLogLine, ConversationCompactionUnavailable, read_chat_log, read_first_chat_log,
-};
+use oneiron::compaction::{ChatLog, ChatLogLine, read_chat_log, read_first_chat_log};
 use oneiron::conversation::{
     ChatBreakpoint, ChatBreakpointUserTurn, TurnAction, TurnActionAttempt,
 };
@@ -34,7 +32,7 @@ use oneiron::memory::{Memory, WitnessAuthor, resolve_entity_ref};
 use oneiron::{EntityId, LlmMessage, LlmMessageRole, LlmRequest, Vault, WriteActor};
 
 use super::{AnswerStream, text_message};
-use crate::ai_host::{AiHandle, ChatBreakpointCall, ChatSelfMode};
+use crate::ai_host::{AiHandle, ChatSelfMode};
 use crate::models::RoleCall;
 
 mod reuse;
@@ -286,15 +284,12 @@ pub(super) struct TurnMeter {
     pub(super) budget_units: u64,
 }
 
-/// The answer's breakpoint, right before its stream: the seed its reply
-/// keeps (a chat turn's, captured from its own admitted call; a reuse's,
-/// its source's again), kept for `handle`'s generation before the call is
-/// sent (FIX 5028), and, past its threshold, the flight of its log queued
-/// off the answer's path: a chat turn's, or a reused prefix's own action
-/// log (FIX 5027). `sources` is every row `admitted` was read from, `None`
-/// when not all were witnessed.
+/// The answer's breakpoint, right before its stream: a provisional seed is
+/// kept for `handle`'s generation before the call is sent (FIX 5028). Once
+/// the answer ends, [`keep`] binds its seed and any flight of its log to the
+/// rung that answered it (FIX 4933). `sources` is every row `admitted` was
+/// read from, `None` when not all were witnessed.
 pub(super) fn enter(
-    ai: &AiHandle,
     vault: &Arc<Vault>,
     breakpoint: AnswerBreakpoint,
     admitted: &RoleCall,
@@ -302,53 +297,7 @@ pub(super) fn enter(
     meter: TurnMeter,
     sources: Option<Vec<EntityId>>,
 ) -> PendingSeed {
-    let AnswerBreakpoint {
-        mode,
-        log,
-        locality,
-        reader,
-        instructions_digest,
-        source,
-        recalled,
-        craft,
-        user_turn,
-    } = breakpoint;
-    let seed = match source {
-        Some(source) => Some(source),
-        None if recalled => None,
-        None => log.as_ref().and_then(|log| {
-            seeds::capture_seed(
-                mode.agent(),
-                reader,
-                log.log(),
-                instructions_digest,
-                craft,
-                user_turn,
-                admitted,
-            )
-        }),
-    };
-    if let Some(BreakpointLog::Compact(log)) = log {
-        let call = ChatBreakpointCall {
-            vault: Arc::clone(vault),
-            mode,
-            log,
-            locality,
-            payer: meter.payer,
-            funding: meter.funding,
-            budget_units: meter.budget_units,
-            message: handle.correlation_id(),
-            sources,
-        };
-        match crate::server::blocking(|| ai.enter_chat_breakpoint(call, admitted)) {
-            Ok(()) | Err(ConversationCompactionUnavailable::Quiet) => {}
-            Err(why) => tracing::info!(
-                reason = why.as_str(),
-                "a chat turn's own compaction is unavailable; its log stays raw"
-            ),
-        }
-    }
-    PendingSeed::new(vault, handle, seed)
+    PendingSeed::new(vault, handle, breakpoint, admitted, meter, sources)
 }
 
 pub(super) fn message_text(message: &LlmMessage) -> String {
