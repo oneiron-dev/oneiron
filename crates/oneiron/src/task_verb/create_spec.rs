@@ -31,8 +31,14 @@ pub struct TaskCreateSpec {
     /// and briefed highway posts alike. A standard TASK that carries one is
     /// also a watcher (FIX 4749, ARCH-0080): it ticks once on `schedule.tick`
     /// after this time, while it is open; the tick is a hook event and
-    /// changes none of the above.
+    /// changes none of the above, unless `watch` is set.
     pub due_at: Option<u64>,
+    /// FIX 22121: a watch TASK (ARCH-0080 §4 Watchers). Its work is what the
+    /// hooks on its `due_at` tick enqueue: its create queues no realizing
+    /// attempt and dispatches nothing, and that tick settles it Done. It
+    /// needs `due_at`, and no assignee or the Dreamer. False is an ordinary
+    /// TASK.
+    pub watch: bool,
     /// OF-543: the one task-type stamp, placed once. Absent means the
     /// create path places it (unsure uses the root) — a landed TASK and
     /// its receipts always carry one; see [`Self::resolved_type_ref`].
@@ -67,6 +73,7 @@ impl TaskCreateSpec {
             assignee: None,
             ttl: None,
             due_at: None,
+            watch: false,
             type_ref: None,
             brief: None,
             intent_key: None,
@@ -115,6 +122,14 @@ impl TaskCreateSpec {
     #[must_use]
     pub const fn with_due_at(mut self, due_at: u64) -> Self {
         self.due_at = Some(due_at);
+        self
+    }
+
+    /// Makes this a watch TASK when `watch` is set (FIX 22121): no work at
+    /// create, and its due tick settles it.
+    #[must_use]
+    pub const fn with_watch(mut self, watch: bool) -> Self {
+        self.watch = watch;
         self
     }
 

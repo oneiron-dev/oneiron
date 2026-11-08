@@ -9046,6 +9046,7 @@ impl AgentVerb {
                 "ttl",
                 "parent_ref",
                 "due_at",
+                "watch",
             ],
             Self::TasksWave => &["spec"],
             Self::VaultFanoutSpawn => &["spec"],

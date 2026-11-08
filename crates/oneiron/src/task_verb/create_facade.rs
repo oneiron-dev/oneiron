@@ -66,6 +66,7 @@ fn create_proposal_identity(value: &Value) -> Vec<u8> {
 impl Memory<'_> {
     /// Mints one TASK plus one linked realizing attempt when the actor's live
     /// definition/manifest ceiling permits Auto; otherwise parks one proposal.
+    /// A watch TASK mints with no attempt: its due tick settles it (FIX 22121).
     ///
     /// A create carrying a typed brief is a post: it runs through the one
     /// task highway (OF-220), which owns its idempotency, settlement and
@@ -381,6 +382,7 @@ impl Memory<'_> {
             consult: validated.consult.clone(),
             ttl: validated.ttl,
             due_at: validated.due_at,
+            watch: validated.watch,
             state: Some(TaskExecutionState::Queued),
             provenance: provenance.clone(),
             created_at: now,
@@ -535,6 +537,10 @@ impl Memory<'_> {
     /// a live binding's, a host-bound post's, or the one an approved
     /// proposal or wave plan witnessed. `None` is an unstamped root; a root
     /// witness carries only the conversation that started the work.
+    ///
+    /// Every create route lands here, so a watch TASK (FIX 22121) queues
+    /// no realizing attempt and dispatches nothing on any of them: the
+    /// hooks on its due tick do its work, and that tick settles it.
     pub(super) fn route_created_task_with_origin_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -543,6 +549,9 @@ impl Memory<'_> {
         origin: Option<&TaskCreateOrigin>,
         now: u64,
     ) -> MemoryResult<TaskRouteOutcome> {
+        if let Some(due_at) = validated.watch_due_at() {
+            return Ok(TaskRouteOutcome::WatchTick { due_at });
+        }
         match validated.assignee {
             // Absent assignee is the schema-v1 representation of the Dreamer
             // lane and routes identically — old rows are never rewritten.

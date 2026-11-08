@@ -5236,6 +5236,11 @@ pub enum TaskRouteOutcome {
         #[serde(rename = "actor_ref")]
         actor_ref: String,
     },
+    #[serde(rename = "WatchTick")]
+    WatchTick {
+        #[serde(rename = "due_at")]
+        due_at: u64,
+    },
 }
 
 /// `oneiron::authority::task_ask_handle::TaskAskHandle`.
@@ -6792,6 +6797,8 @@ pub struct TaskCreateRequest {
     pub parent_ref: Option<String>,
     #[serde(rename = "due_at", default, skip_serializing_if = "Option::is_none")]
     pub due_at: Option<u64>,
+    #[serde(rename = "watch", default, skip_serializing_if = "Option::is_none")]
+    pub watch: Option<bool>,
 }
 
 /// `oneiron::task_verb::route_receipts::TaskCreateReceipt`.
