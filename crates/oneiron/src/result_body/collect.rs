@@ -30,7 +30,8 @@ pub struct ResultBodyCollectReport {
     /// as they are.
     pub held: usize,
     /// Released bodies, and orphan files (FIX 11137), a reader still
-    /// pinned: left for a later pass.
+    /// pinned, or a read snapshot older than their release may still read
+    /// (FIX 22101): left for a later pass.
     pub pinned: usize,
     /// Orphan body files (and line indexes whose body is gone) removed.
     pub orphans: usize,
@@ -56,8 +57,11 @@ impl Vault {
     /// owned occurrence's marks stay with its manifest. An orphan is a body
     /// file no raw-output row or descriptor names, older than an hour, so a
     /// body whose row has yet to commit stays; it too goes only once a fresh
-    /// writer finds it unnamed. A pinned body is left for a later pass.
-    /// Idempotent; a file already gone is fine.
+    /// writer finds it unnamed. A pinned body is left for a later pass. No
+    /// file goes while a read transaction older than the write that stopped
+    /// naming it is live, so every snapshot reads the files it names,
+    /// whatever door opened it (FIX 22101). Idempotent; a file already gone
+    /// is fine.
     ///
     /// # Errors
     ///
@@ -91,6 +95,9 @@ impl Vault {
             retirement_reaches_kept_copies: BODY_FILE_SHRED_SCOPE.reaches_kept_copies(),
             ..ResultBodyCollectReport::default()
         };
+        // The released bodies an older read snapshot kept, now no reader
+        // that old is left (FIX 22101).
+        self.collect_due_released_bodies(&mut report)?;
         let released = {
             let rtxn = self.store.env.read_txn()?;
             released_bodies_in_txn(&self.store, &rtxn, limit)?
@@ -99,7 +106,11 @@ impl Vault {
             return Ok(report);
         }
         let pins = &self.result_body_pins;
+        // The write that stops naming them: a read snapshot older than it
+        // still names their files (FIX 22101).
+        let mut released_at = 0;
         let taken = self.with_write_txn_grouped(|txn| {
+            released_at = txn.id();
             let mut taken = Vec::with_capacity(released.len());
             for digest in &released {
                 // A reader holding it keeps it queued for a later pass, and
@@ -132,10 +143,23 @@ impl Vault {
         // named again, or a reader pinned since, stays until the orphan
         // sweep finds it unnamed and unpinned.
         let dir = self.store.body_dir()?;
+        // A reader that began before the release reads the files its
+        // snapshot names: they wait for it (FIX 22101). None that old can
+        // begin now.
+        let waits = self
+            .store
+            .env
+            .oldest_reader_txn_id()?
+            .is_some_and(|oldest| oldest < released_at);
         self.with_write_txn_grouped(|txn| {
             for (digest, instance) in &taken {
                 if self.released_named_in_txn(txn, digest)? {
                     report.held += 1;
+                    continue;
+                }
+                if waits {
+                    pins.defer_released(*digest, *instance, released_at);
+                    report.pinned += 1;
                     continue;
                 }
                 match pins.unless_pinned(digest, || unlink_body(&dir, digest, instance.as_ref())) {
@@ -154,6 +178,43 @@ impl Vault {
         // An erase's retirement of an instance whose file just went.
         self.finish_body_custody_retirements_after_commit();
         Ok(report)
+    }
+
+    /// Unlinks the released bodies an older read snapshot kept
+    /// ([`Self::collect_released_result_bodies`]) once no read transaction
+    /// older than their release is live (FIX 22101), each in a fresh writer
+    /// that finds it unnamed again and while no reader pins it. One named
+    /// again stays; one pinned is left to the orphan sweep.
+    fn collect_due_released_bodies(&self, report: &mut ResultBodyCollectReport) -> Result<()> {
+        let oldest = self.store.env.oldest_reader_txn_id()?;
+        let due = self.result_body_pins.take_due_released(oldest);
+        if due.is_empty() {
+            return Ok(());
+        }
+        let dir = self.store.body_dir()?;
+        let pins = &self.result_body_pins;
+        let collected = self.with_write_txn_grouped(|txn| {
+            let mut collected = 0;
+            for (digest, instance) in &due {
+                if self.released_named_in_txn(txn, digest)? {
+                    report.held += 1;
+                    continue;
+                }
+                match pins.unless_pinned(digest, || unlink_body(&dir, digest, instance.as_ref())) {
+                    Some(unlinked) => {
+                        unlinked?;
+                        collected += 1;
+                    }
+                    None => report.pinned += 1,
+                }
+            }
+            Ok(collected)
+        })?;
+        if collected > 0 {
+            sync_dir(&dir)?;
+            report.collected += collected;
+        }
+        Ok(())
     }
 
     /// Gives back a save's `pins` and unlinks each body it brought into
@@ -255,7 +316,8 @@ impl Vault {
     /// descriptor names, each with its line index, and line indexes whose
     /// body is gone: what a writer left before its row committed, or the
     /// collector left to a reader. Returns how many went, and how many a
-    /// reader's pin kept (FIX 11137).
+    /// reader's pin kept (FIX 11137) or a read snapshot older than the
+    /// sweep's own kept: one may still name them (FIX 22101).
     fn sweep_orphan_result_bodies(&self, dir: &BodyDir, limit: usize) -> Result<(usize, usize)> {
         let now = SystemTime::now();
         let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
@@ -277,7 +339,18 @@ impl Vault {
             // Each goes in a fresh writer that finds it unnamed again, so no
             // row naming it commits between that check and the unlink (FIX
             // 5399b).
-            let (went, kept) = self.with_write_txn_grouped(|txn| {
+            let (went, kept, waits) = self.with_write_txn_grouped(|txn| {
+                // This writer reads the last snapshot written; a reader of
+                // an older one may still name what it finds unnamed.
+                let snapshot = txn.id().saturating_sub(1);
+                if self
+                    .store
+                    .env
+                    .oldest_reader_txn_id()?
+                    .is_some_and(|oldest| oldest < snapshot)
+                {
+                    return Ok((0, unnamed.len(), true));
+                }
                 let (mut went, mut kept) = (0, 0);
                 for entry in &unnamed {
                     if removed + went == limit {
@@ -292,10 +365,14 @@ impl Vault {
                         RemoveOutcome::Skipped => {}
                     }
                 }
-                Ok((went, kept))
+                Ok((went, kept, false))
             })?;
             removed += went;
             pinned += kept;
+            // The older reader keeps every batch: the next sweep goes on.
+            if waits {
+                break;
+            }
         }
         if removed > 0 {
             sync_dir(dir)?;

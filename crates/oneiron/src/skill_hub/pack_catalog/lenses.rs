@@ -409,9 +409,6 @@ impl Vault {
     /// slot names: the inventory a host mounts pack lenses from.
     pub fn pack_lenses(&self) -> Result<Vec<PackLensEntry>> {
         let installed = self.installed_packs()?;
-        // A carrier's body file stays on disk while this snapshot reads it
-        // (FIX 22091).
-        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let mut entries = Vec::new();
         for receipt in installed {

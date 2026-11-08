@@ -50,9 +50,6 @@ impl Vault {
         Ok(id)
     }
     pub fn get_pack_source(&self, id: &EntityId) -> Result<Option<PackSource>> {
-        // A carrier's body file stays on disk while this snapshot reads it
-        // (FIX 22091).
-        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         self.pack_source_in_txn(&txn, id)
     }
@@ -109,9 +106,6 @@ impl Vault {
     }
 
     pub fn list_pack_sources(&self) -> Result<Vec<(EntityId, PackSource)>> {
-        // A carrier's body file stays on disk while this snapshot reads it
-        // (FIX 22091).
-        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         self.pack_sources_in_txn(&txn)
     }
