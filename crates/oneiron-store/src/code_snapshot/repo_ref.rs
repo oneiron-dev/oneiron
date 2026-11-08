@@ -121,7 +121,9 @@ impl RepoRef {
     #[must_use]
     pub fn locator(&self) -> String {
         match self {
-            Self::LocalFolder { path, .. } => format!("local:{path}"),
+            Self::LocalFolder { path, .. } | Self::LocalCapture { path } => {
+                format!("local:{path}")
+            }
             Self::GitHubAtCommit { owner, repo, .. } => format!("github:{owner}/{repo}"),
         }
     }

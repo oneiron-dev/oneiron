@@ -59,7 +59,19 @@ pub(super) async fn execute_mcp_native_read(
         }) => {
             let rows = stop_release_rows(server, actor, &stop, served);
             // The drain read that answer, not this retry (FIX 21614).
-            if super::super::served_rows::drained_rows_lapsed(server, actor, &stop, rows) {
+            let owner_whole_vault_export =
+                super::super::device_release::owner_whole_vault_export_call(
+                    server,
+                    actor,
+                    args.tool.name,
+                );
+            if super::super::served_rows::drained_rows_lapsed(
+                server,
+                actor,
+                &stop,
+                rows,
+                owner_whole_vault_export,
+            ) {
                 let ran = super::super::claimed_release::details_on_device_result();
                 return Ok(ControlFlow::Break(ran));
             }
