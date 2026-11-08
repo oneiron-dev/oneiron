@@ -54,6 +54,10 @@ pub struct SessionDistillTurn {
     /// The MESSAGE rows `said` was read from, in its order (FIX 7101); empty
     /// when the TURN body held the words.
     pub messages: Vec<EntityId>,
+    /// Source provenance from the stored TURN, never a speaker credential.
+    pub imported: bool,
+    pub import_source: Option<String>,
+    pub source_speaker_label: Option<String>,
 }
 /// What a session-end distillation gets to reason over.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -311,17 +315,47 @@ fn distill_turns(vault: &Vault, turn_ids: Vec<EntityId>) -> Result<Vec<SessionDi
     let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, turn_ids.len() as u64);
     let mut turns = Vec::with_capacity(turn_ids.len());
     for turn in turn_ids {
-        let (messages, said) = match turn_utterance(vault, &turn)? {
+        let (messages, mut said) = match turn_utterance(vault, &turn)? {
             Some(utterance) => (Vec::new(), vec![utterance]),
             None => turn_message_utterances(vault, &turn)?,
         };
+        let rtxn = vault.store.env.read_txn()?;
+        let record = vault.store.port_entity_record(&rtxn, &turn)?;
+        let body = record
+            .as_ref()
+            .map(|record| record.body.as_slice())
+            .unwrap_or_default();
+        let facts = crate::dreamer_consolidation::decode_turn_body(body);
+        let source_speaker_label = imported_speaker_label(body);
+        if facts.import_source.as_deref() == Some(crate::ingest::MEETING_TRANSCRIPT_SOURCE_ID) {
+            // Meeting roles make words admissible to MESO, not authored by
+            // the SESSION's storage owner. No source PERSON was established.
+            for utterance in &mut said {
+                utterance.speaker = None;
+            }
+        }
         turns.push(SessionDistillTurn {
             turn,
             said,
             messages,
+            imported: facts.imported,
+            import_source: facts.import_source,
+            source_speaker_label,
         });
     }
     Ok(turns)
+}
+
+/// An imported TURN's display label, kept apart from speaker identity.
+fn imported_speaker_label(body: &[u8]) -> Option<String> {
+    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut &body[..]) else {
+        return None;
+    };
+    entries.into_iter().find_map(|(key, value)| {
+        (key.as_str() == Some("speaker_label"))
+            .then(|| value.as_str().map(str::to_owned))
+            .flatten()
+    })
 }
 
 /// The rows a brief over `turns` of `session` was read from: the sitting,
