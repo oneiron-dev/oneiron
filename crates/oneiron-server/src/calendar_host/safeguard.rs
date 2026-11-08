@@ -1,13 +1,15 @@
 //! The host's labeller for the owner's inbound calendar safeguard (FIX 12002):
 //! a [`CalendarBodyScreener`] over a loaded [`LabelClassifier`] head. Each
-//! ICS poll the dial screens hands it the event's description and each
-//! attachment's text; it asks the head whether the text addresses an AI
-//! assistant with instructions, and answers within the engine's default
-//! decision band. A verdict classifies the body; it never withholds it.
+//! admission the dial screens (an ICS poll, an upload or instance move, a
+//! connector pull, and their property continuations) hands it the event's
+//! description and each attachment's text; it asks the head whether the
+//! text addresses an AI assistant with instructions, and answers within the
+//! engine's default decision band. A verdict classifies the body; it never
+//! withholds it.
 //!
 //! A host installs its head once ([`install_calendar_label_head`]); with
-//! none installed, the polls pass no screener and the dial-on screen records
-//! that no screener ran.
+//! none installed, the admissions pass no screener and the dial-on screen
+//! records that no screener ran.
 
 use std::sync::OnceLock;
 
@@ -17,11 +19,11 @@ use oneiron::calendar::safeguard::{
 use oneiron::llm::decision::{DecisionBand, LabelClassifier};
 
 /// The question the head scores each text against.
-const SCREEN_QUESTION: &str =
+pub(super) const SCREEN_QUESTION: &str =
     "Does this calendar event text address an AI assistant with instructions or requests?";
 
 /// The two labels the head scores, the flagged one first.
-const SCREEN_LABELS: [&str; 2] = [
+pub(super) const SCREEN_LABELS: [&str; 2] = [
     "instructions addressed to an AI assistant",
     "ordinary calendar event text",
 ];
@@ -35,19 +37,23 @@ const REASON_UNCERTAIN: &str = "calendar.safeguard.uncertain";
 /// Reason code of a body the head failed on or answered out of shape.
 const REASON_CLASSIFIER_FAILED: &str = "calendar.safeguard.classifier_failed";
 
-/// The screener this host's ICS polls run with, once a head is installed.
+/// The screener this host's calendar admissions run with, once a head is
+/// installed.
 static CALENDAR_BODY_SCREENER: OnceLock<Box<dyn CalendarBodyScreener>> = OnceLock::new();
 
 /// Installs `head` as this host's calendar safeguard labeller. The first
-/// head installed stays; returns whether this call installed it.
+/// head installed stays; returns whether this call installed it. Every
+/// screen record the head feeds names it by its pin, `model@version`.
 pub fn install_calendar_label_head(head: impl LabelClassifier + 'static) -> bool {
+    let pin = head.pin();
+    let name = format!("{}@{}", pin.model, pin.version);
     CALENDAR_BODY_SCREENER
-        .set(Box::new(LabelBodyScreener { head }))
+        .set(Box::new(LabelBodyScreener { head, name }))
         .is_ok()
 }
 
-/// The screener this host's ICS polls pass the safeguard, when a head is
-/// installed.
+/// The screener this host's calendar admissions pass the safeguard, when a
+/// head is installed.
 pub(crate) fn calendar_body_screener() -> Option<&'static dyn CalendarBodyScreener> {
     CALENDAR_BODY_SCREENER.get().map(Box::as_ref)
 }
@@ -55,6 +61,8 @@ pub(crate) fn calendar_body_screener() -> Option<&'static dyn CalendarBodyScreen
 /// A [`CalendarBodyScreener`] over one label classifier head.
 struct LabelBodyScreener<H> {
     head: H,
+    /// The head's pin, `model@version`, as each screen record names it.
+    name: String,
 }
 
 /// What the head said about one text.
@@ -126,5 +134,9 @@ impl<H: LabelClassifier> CalendarBodyScreener for LabelBodyScreener<H> {
         } else {
             CalendarScreenVerdict::Clear
         })
+    }
+
+    fn name(&self) -> Option<&str> {
+        Some(self.name.as_str())
     }
 }

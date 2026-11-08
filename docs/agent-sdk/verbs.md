@@ -67,6 +67,7 @@ both bindings and their export-census tests in one change.
 - `self.grants.asked`
 - `vault.companions.access_requests.answer`
 - `self.grants.answer`
+- `vault.proactivity.digest.get`
 - `vault.personas.preview`
 - `vault.personas.export`
 - `vault.personas.edit`
@@ -672,7 +673,11 @@ both bindings and their export-census tests in one change.
 - `vault.hooks.replay`
 - `vault.hooks.regen.due`
 - `vault.hooks.regen.get`
+- `vault.hooks.regen.history`
+- `vault.hooks.regen.revert`
+- `vault.hooks.regen.run`
 - `vault.hooks.regen.adopt`
+- `vault.hooks.regen.cancel`
 - `vault.artifacts.publish_approval`
 - `vault.artifacts.publish`
 - `vault.artifacts.repoint`
@@ -1262,6 +1267,8 @@ both bindings and their export-census tests in one change.
 - `self.run.attach`
 - `self.folds.describe`
 - `self.history`
+- `self.hooks.regen.adopt`
+- `self.hooks.regen.get`
 - `vault.runs.review`
 - `vault.runs.settle`
 - `vault.runs.settlement`

@@ -511,6 +511,10 @@ impl AgentVerbDoor for RunHostDoor {
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        // Reading the reason is capture-only; a missing key must not refuse the decline.
+        if matches!(call, RunCall::Bridge(SelfEffect::TasksRefuse)) {
+            return Ok(self.host_turn_read_key());
+        }
         let repo = matches!(call, RunCall::Bridge(effect) if effect.is_repo());
         if !repo
             && !matches!(

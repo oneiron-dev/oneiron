@@ -316,7 +316,6 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
         if matches!(
             header.entity_type,
             crate::registry::ENTITY_TYPE_ACCESS_GRANT
-                | crate::registry::ENTITY_TYPE_OUTBOUND_GRANT
                 | crate::registry::ENTITY_TYPE_FEDERATION_GRANT
         ) {
             let old = &raw[ENTITY_METADATA_HEADER_LEN..];
@@ -324,11 +323,6 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 crate::registry::ENTITY_TYPE_ACCESS_GRANT => {
                     crate::access_grant::decode_access_grant_body(old)?;
                     old.to_vec()
-                }
-                crate::registry::ENTITY_TYPE_OUTBOUND_GRANT => {
-                    crate::outbound_grant::encode_standing_outbound_grant_body(
-                        &crate::outbound_grant::decode_standing_outbound_grant_body(old)?,
-                    )?
                 }
                 _ => crate::federation::encode_federation_grant_body(
                     &crate::federation::decode_federation_grant_body(old)?,
