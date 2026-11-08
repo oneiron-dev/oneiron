@@ -16057,6 +16057,11 @@ async fn mcp_verb_row_vault_export(row: McpVerbRow<'_>) -> McpVerbRowResult {
     oneiron::task_verb::sdk::validate_input("vault.export", &input).map_err(mcp_facade_error)?;
     let input: oneiron::memory::ExportOptions =
         serde_json::from_value(input).map_err(|_| invalid())?;
+    // An export a code run calls follows the world settings as before owner ruling 1-EXPORT = B (FIX 9591): the run's dispatch says so, never the request.
+    let input = oneiron::memory::ExportOptions {
+        in_code_run: crate::api::facade::host_doors::support::in_code_run(),
+        ..input
+    };
     // A host credential resolves first (FIX 2222): a hosted operator root gets the typed refusal, and a self-hosted root or the explicit dev mode exports as the owner it acts as.
     let action = crate::api::host_action::host_action_of(server.vault(), auth)
         .transpose()

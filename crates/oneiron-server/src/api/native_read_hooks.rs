@@ -303,7 +303,16 @@ fn released_completed(
     if rows.is_none() {
         return details_on_device();
     }
-    released_saved_result(&server.vault, auth, method.tool_name(), rows, result)
+    let owner_whole_vault_export =
+        crate::api::facade::owner_whole_vault_export_admitted(server, auth, method.tool_name());
+    released_saved_result(
+        &server.vault,
+        auth,
+        method.tool_name(),
+        rows,
+        result,
+        owner_whole_vault_export,
+    )
 }
 
 /// The rewrite `args` the pre chain left, admitted by the route's own
