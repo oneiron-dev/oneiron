@@ -31,9 +31,9 @@ use crate::store::policy_record::{ExternalEffectPolicyRisk, GateActor};
 use crate::store::receipt_row::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::write_envelope::WriteActor;
 
+mod backend_principal;
 /// The KS7 getter of the hosting rows, under each blob artifact (FIX 10436).
 pub(crate) mod checkpoint;
-mod backend_principal;
 pub use backend_principal::ArtifactBackendPairing;
 /// Typed requests and replies for publication and live-preview host doors.
 pub mod door_types;
