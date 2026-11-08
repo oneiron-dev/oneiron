@@ -147,6 +147,7 @@ mod model_setting_doors;
 mod model_step_doors;
 mod model_stream_doors;
 mod note_doors;
+mod oauth_authorization_doors;
 mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;
@@ -433,6 +434,7 @@ fn unknown_verb(verb: &str) -> FacadeApiError {
 pub(crate) struct FacadeApiError {
     status: StatusCode,
     body: FacadeErrorEnvelope,
+    hook_notice: bool,
 }
 
 /// `{error: {...}}`, the same transport envelope shape `/v1/core` uses,
