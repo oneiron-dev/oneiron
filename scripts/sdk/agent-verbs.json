@@ -1150,7 +1150,8 @@
         "intent_key": "intent_key",
         "brief": "brief",
         "ttl": "ttl",
-        "parent_ref": "parent_ref"
+        "parent_ref": "parent_ref",
+        "due_at": "due_at"
       },
       "mcp_required_fields": [
         "spec"
