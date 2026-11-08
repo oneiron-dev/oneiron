@@ -13,6 +13,7 @@ use crate::claim::ScopedRead;
 use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::federation::record_scope::BirthPosition;
 use crate::store::{BodyMint, StagedHold};
 use crate::write_envelope::WriteActor;
 use heed::RwTxn;
@@ -56,6 +57,8 @@ pub(super) fn validate_native_output(
 /// The row `output` waits in. With `in_body_file` its bytes wait in the
 /// body file staged for them, which the writer that keeps the row names
 /// (FIX 20812), and the row holds none of them.
+/// The row a native output waits in. `producer_position` is frozen in its
+/// body as the producing run's host bound it (FIX 3171).
 #[expect(clippy::too_many_arguments)]
 pub(super) fn native_output_pending_row(
     output: &NativeOutput,
@@ -67,6 +70,7 @@ pub(super) fn native_output_pending_row(
     report: String,
     delta_receipt: Option<&str>,
     in_body_file: bool,
+    producer_position: BirthPosition,
 ) -> PendingRow {
     PendingRow {
         proposal_ref: output.run_ref.clone(),
@@ -99,6 +103,8 @@ pub(super) fn native_output_pending_row(
             name: output.name.clone(),
             media_type: output.media_type.clone(),
             report,
+            producer_world: producer_position.world,
+            producer_facet: producer_position.facet,
         },
     }
 }
@@ -110,6 +116,7 @@ impl Vault {
     /// instance from `mint`, which the caller took before its writer opened
     /// and no landed version used; the file's hold comes back beside the
     /// view, for the caller to keep until its writer commits (FIX 20812).
+    /// The proposal keeps `producer_position` for its Keep (FIX 3171).
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn propose_direct_append_output_in_txn(
         &self,
@@ -117,9 +124,9 @@ impl Vault {
         artifact_id: &EntityId,
         output: &NativeOutput,
         mint: Option<&BodyMint>,
-        actor: WriteActor,
-        retained_at: u64,
+        (actor, retained_at): (WriteActor, u64),
         base_override: Option<(u64, [u8; 32])>,
+        producer_position: BirthPosition,
     ) -> Result<(PendingProposalView, Option<StagedHold>)> {
         let body = self
             .get_blob_artifact_in_txn(wtxn, artifact_id)?
@@ -142,6 +149,7 @@ impl Vault {
             report,
             None,
             staged.is_some(),
+            producer_position,
         );
         // None cannot clock a lane. It still rejects an envelope naming
         // anything beyond its writer; no reader authority is invented here.
