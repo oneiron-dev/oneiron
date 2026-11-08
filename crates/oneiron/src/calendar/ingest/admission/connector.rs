@@ -119,7 +119,24 @@ pub(in crate::calendar) fn sweep_connector_resource<'a>(
 ) -> Result<(), CalendarError> {
     connector_admission(vault, system, source.into(), now).sweep_resource(
         feed,
-        Some(uid),
+        Some(&std::collections::BTreeSet::from([uid])),
+        CalendarStatusBasis::ImportedAbsence,
+    )
+}
+
+/// Marks every UID in `uids` absent for `system` in one EVENT scan: each of
+/// its live inbound passports there, master and instances, as an omitted
+/// feed item does, under the source's screen.
+pub(in crate::calendar) fn sweep_connector_uids<'a>(
+    vault: &'a Vault,
+    system: &'a str,
+    source: impl Into<ConnectorAdmissionSource<'a>>,
+    uids: &std::collections::BTreeSet<&str>,
+    now: u64,
+) -> Result<(), CalendarError> {
+    connector_admission(vault, system, source.into(), now).sweep_resource(
+        &super::super::ics::ParsedIcsFeed { events: Vec::new() },
+        Some(uids),
         CalendarStatusBasis::ImportedAbsence,
     )
 }
@@ -134,7 +151,7 @@ pub(in crate::calendar) fn delete_connector_resource<'a>(
 ) -> Result<(), CalendarError> {
     connector_admission(vault, system, source.into(), now).sweep_resource(
         &super::super::ics::ParsedIcsFeed { events: Vec::new() },
-        Some(uid),
+        Some(&std::collections::BTreeSet::from([uid])),
         CalendarStatusBasis::ImportedCancel,
     )
 }

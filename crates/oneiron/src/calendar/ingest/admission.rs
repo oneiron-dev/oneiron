@@ -31,6 +31,7 @@ use crate::write_envelope::WriteActor;
 pub(in crate::calendar) use connector::{
     ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
     delete_connector_resource, preflight_connector_feed, sweep_connector_resource,
+    sweep_connector_uids,
 };
 use continuation::OwedProperties;
 pub use continuation::{
