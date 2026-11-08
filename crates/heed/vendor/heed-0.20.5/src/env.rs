@@ -127,8 +127,12 @@ unsafe extern "C" fn oldest_reader_line(
     }
     // SAFETY: LMDB passes a NUL-terminated line it owns for this call, and
     // `ctx` is the `Option<usize>` `oldest_reader_txn_id` lends it.
-    let (line, oldest) =
-        unsafe { (std::ffi::CStr::from_ptr(message).to_bytes(), &mut *ctx.cast::<Option<usize>>()) };
+    let (line, oldest) = unsafe {
+        (
+            std::ffi::CStr::from_ptr(message).to_bytes(),
+            &mut *ctx.cast::<Option<usize>>(),
+        )
+    };
     let txnid = line
         .split(u8::is_ascii_whitespace)
         .filter(|token| !token.is_empty())
@@ -1248,7 +1252,9 @@ impl Env {
             )
         };
         if listed < 0 {
-            return Err(Error::Io(io::Error::other("the LMDB reader table did not list")));
+            return Err(Error::Io(io::Error::other(
+                "the LMDB reader table did not list",
+            )));
         }
         Ok(oldest)
     }

@@ -579,10 +579,8 @@ impl Vault {
         // An output past the inline size waits in its body file, written
         // before the writer that keeps its row opens; the row names it
         // (FIX 20812).
-        let staged = self.stage_pending_output_body(
-            content,
-            self.asset_body_mint([content.len()])?.as_ref(),
-        )?;
+        let staged = self
+            .stage_pending_output_body(content, self.asset_body_mint([content.len()])?.as_ref())?;
         // The producer is bound once, here, at proposal authentication and
         // retention: Keep preserves this envelope instead of rebinding it to
         // the keeper, and the provenance matches what Keep settles under
