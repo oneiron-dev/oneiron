@@ -4,32 +4,34 @@ use super::*;
 use crate::federation::record_scope::note_world;
 
 impl ScopedRead<'_> {
-    /// `scope`, the stamped position of the row `id` of `kind` a non-owner
-    /// reads, as its live worlds hold it when its kind takes them
-    /// (`note_world::takes_live_worlds`): an ASSET or a caption reads, as a
+    /// Whether a non-owner reads the row `id` of `kind`, stamped at `scope`,
+    /// by its live worlds when its kind takes them
+    /// (`note_world::takes_live_worlds`). An ASSET or a caption reads, as a
     /// NOTE does below, only where the asked worlds, the credential's and the
-    /// Grant's hold one of its worlds, and one only in worlds other than base
+    /// Grant's hold one of its worlds. One only in worlds other than base
     /// reality also needs one policy read Grant alone to reach one of them
-    /// (FIX-LIST 9433, 10726; FIX 22223). It is then held at its witness
-    /// there, so an ASSET in several worlds reads in each. `None` where it
-    /// does not read; any other row keeps `scope`.
-    pub(super) fn live_world_scope_in(
+    /// (FIX-LIST 9433, 10726; FIX 22223). It is then judged under the proof,
+    /// and under each Grant alone, at one world it is in that every ceiling
+    /// there holds, so an ASSET in several worlds reads wherever one Grant
+    /// reaches one of them (review R2 P1). `None` for any other row, which
+    /// the caller judges at `scope`.
+    pub(super) fn live_world_read_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         kind: u8,
-        scope: oneiron_authority::federation::Scope,
+        scope: &oneiron_authority::federation::Scope,
         policy: &crate::gate::PolicyManifestResolution,
         grant: Option<&oneiron_authority::federation::Scope>,
-    ) -> Result<Option<oneiron_authority::federation::Scope>> {
+    ) -> Result<Option<bool>> {
         if !note_world::takes_live_worlds(kind) {
-            return Ok(Some(scope));
+            return Ok(None);
         }
         let ceiling = self.actor_key.world_ceiling();
         let held = [&ceiling.worlds, &grant.unwrap_or(&ceiling).worlds];
         let worlds = note_world::live_worlds_in(&self.store_read(), txn, *id, kind);
         if !worlds.readable_at(&held) {
-            return Ok(None);
+            return Ok(Some(false));
         }
         if grant.is_none()
             && matches!(&worlds, note_world::NoteWorlds::In(set)
@@ -41,9 +43,15 @@ impl ScopedRead<'_> {
             && crate::gate::scoped_read_note_world_witness(policy, &self.actor_key, &worlds, &held)
                 == Some(false)
         {
-            return Ok(None);
+            return Ok(Some(false));
         }
-        Ok(Some(note_world::position_at(&scope, Some(&worlds), &held)))
+        Ok(Some(crate::gate::scoped_read_note_allowed(
+            policy,
+            &self.actor_key,
+            scope,
+            grant.or(self.actor_key.authority_scope()),
+            (&worlds, &held[..]),
+        )))
     }
 
     /// Scoped actor keys are asserted by a trusted host, not bearer secrets.
