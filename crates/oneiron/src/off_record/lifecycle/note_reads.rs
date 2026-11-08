@@ -21,8 +21,9 @@ use crate::error::Result;
 
 /// The rows that serve a room NOTE by its ref (Engine 10-22): no edit, fork,
 /// cite or settle row reaches a room NOTE.
-const ROOM_NOTE_READS: [&str; 3] = [
+const ROOM_NOTE_READS: [&str; 4] = [
     "vault.notes.read",
+    "vault.notes.read_indexed",
     "vault.notes.history",
     "vault.notes.editor.bind",
 ];

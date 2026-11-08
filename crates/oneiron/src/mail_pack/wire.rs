@@ -93,6 +93,10 @@ pub struct MailHeaders {
     pub from: Option<String>,
     pub to: Vec<String>,
     pub cc: Vec<String>,
+    /// The `Reply-To` addresses, where a reply goes when the sender named
+    /// one (FIX 15420).
+    #[serde(default)]
+    pub reply_to: Vec<String>,
     pub subject: Option<String>,
     /// The authored `Date` header, Unix seconds.
     pub date: Option<u64>,
@@ -106,6 +110,18 @@ pub struct MailHeaders {
     pub trash_or_spam: bool,
     /// Whether it is a draft: not mail yet, never ingested.
     pub draft: bool,
+}
+
+/// One message's address headers as its raw RFC 5322 source names them,
+/// each entry one mailbox, split at the header's top-level commas before
+/// any encoded word is decoded (fix list row 20520): a display name whose
+/// encoded words decode to a comma or an address stays one quoted name.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MailAddressHeaders {
+    pub from: Vec<String>,
+    pub reply_to: Vec<String>,
+    pub to: Vec<String>,
+    pub cc: Vec<String>,
 }
 
 /// A message read whole: its headers, its plain-text body, and its
@@ -189,6 +205,47 @@ pub trait MailProviderWire {
         anchor: &str,
         page: Option<&str>,
     ) -> Result<MailHistoryRead>;
+
+    /// The labels a listing read for `provider_id` in this wire's step,
+    /// when they come at no further provider read: a provider whose folders
+    /// are labels (IMAP) names a message once per folder, so a message the
+    /// vault holds carries the folders it is found in. `None` by default.
+    fn listed_labels(&self, _provider_id: &str) -> Option<Vec<String>> {
+        None
+    }
+
+    /// The address headers of `provider_id`, read once from its raw message,
+    /// for a reply to it (fix list row 20520). `None` by default: a wire
+    /// whose header stage keeps each mailbox apart already (IMAP and mbox
+    /// split before they decode; Graph names typed addresses) leaves the
+    /// stored headers to stand. A wire that answers here never answers
+    /// `None` for a message it cannot read.
+    ///
+    /// # Errors
+    ///
+    /// The provider's own failure, the message gone at the provider
+    /// included.
+    fn raw_address_headers(
+        &self,
+        _source: &MailSyncSource,
+        _provider_id: &str,
+    ) -> Result<Option<MailAddressHeaders>> {
+        Ok(None)
+    }
+
+    /// The addresses the provider proves the mailbox owns, as it names them
+    /// (fix list row 20400): Gmail's primary and verified send-as addresses,
+    /// Graph's `mail` and SMTP proxy addresses. Never one the mailbox only
+    /// has a right to send as, a delegate's, or a rewritten address. `None`
+    /// by default: a provider that proves none (IMAP, mbox) keeps the
+    /// source's stored set. The importer reads a failure here as `None`.
+    ///
+    /// # Errors
+    ///
+    /// The provider's own failure, a refusal for a missing scope included.
+    fn own_addresses(&self, _source: &MailSyncSource) -> Result<Option<Vec<String>>> {
+        Ok(None)
+    }
 
     /// One attachment's bytes, as a reader opened it; `None` when the
     /// provider no longer has the message or the attachment.
