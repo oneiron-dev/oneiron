@@ -47,6 +47,7 @@ impl Memory<'_> {
             self.code_readable(original, None)?;
         }
         let repo_id = input.change.repo;
+        let repair_of = input.change.repair_of;
         let (mut request, catalog) = owner_submission(repo, actor, input.change);
         let RepoMutationOperation::CommitFile {
             path,
@@ -64,24 +65,20 @@ impl Memory<'_> {
             content,
             message,
         };
+        if original.is_some() && repair_of.is_some() {
+            return Err(MemoryError::bad_request(
+                "a re-review cannot also repair a failed proposal",
+            ));
+        }
         let row = match original {
             Some(original) => self
                 .vault
                 .propose_repo_rereview_as_owner(owner, repo_id, original, request, catalog)?,
             None => self
                 .vault
-                .propose_repo_mutation_as_owner(owner, repo_id, request, catalog)?,
+                .propose_repo_mutation_as_owner(owner, repo_id, request, catalog, repair_of)?,
         };
-        self.produced_from([row.id]);
-        Ok(CodeProposalSubmitted {
-            proposal: row.id,
-            repo: repo_id,
-            actor,
-            session: row.session,
-            provenance_claim: row.provenance_claim,
-            base: fork_hex(&row.pre_action_fork_hash),
-            status: row.status,
-        })
+        self.code_submitted(repo_id, actor, &row)
     }
 
     pub fn code_proposal_review_as(
@@ -209,6 +206,34 @@ impl Memory<'_> {
                 (Some(*open_conflict_claim_id), Some(task), value, resolution)
             }
         };
+        let admission_receipt = self.vault.repo_proposal_admission_receipt(&row)?;
+        let attempt_receipts = self.vault.repo_proposal_attempt_receipts(row.id)?;
+        let repair_of = match row.repair_of {
+            Some(source) => Some(
+                self.vault
+                    .repo_proposal_replacement(source)?
+                    .filter(|link| link.replacement == row.id)
+                    .ok_or(crate::error::Error::CorruptedIndex(
+                        "a replacement proposal's repair link is missing",
+                    ))?,
+            ),
+            None => None,
+        };
+        let replaced_by = self.vault.repo_proposal_replacement(row.id)?;
+        for receipt in admission_receipt.iter().chain(&attempt_receipts).chain(
+            repair_of
+                .iter()
+                .chain(&replaced_by)
+                .map(|link| &link.receipt),
+        ) {
+            self.code_readable(*receipt, Some(crate::registry::ENTITY_TYPE_CLAIM))?;
+        }
+        self.code_listed(
+            repair_of
+                .iter()
+                .chain(&replaced_by)
+                .flat_map(|link| [link.source, link.replacement]),
+        )?;
         Ok(CodeProposalSettlementView {
             proposal: row.id,
             status: row.status,
@@ -219,6 +244,22 @@ impl Memory<'_> {
             parents,
             mutation_seq: row.operation_seq,
             resolution,
+            admission_receipt,
+            attempt_receipts,
+            repair_of: repair_of.map(replacement_view),
+            replaced_by: replaced_by.map(replacement_view),
         })
+    }
+}
+
+/// A stored repair link as the wire carries it (FIX 4364).
+fn replacement_view(
+    link: crate::repo_mutation::proposal::RepoProposalReplacement,
+) -> CodeProposalReplacementView {
+    CodeProposalReplacementView {
+        receipt: link.receipt,
+        source: link.source,
+        replacement: link.replacement,
+        replacement_base: fork_hex(&link.replacement_fork),
     }
 }

@@ -660,6 +660,7 @@ pub enum AgentVerb {
     SelfSecretsTeardown,
     SelfSecretsUse,
     VaultSharesCreate,
+    VaultSharesIssueViewLink,
     VaultSharesRevoke,
     VaultSharesView,
     HostCompact,
@@ -780,6 +781,7 @@ pub enum AgentVerb {
     VaultCodeCacheGet,
     VaultCodeCacheReuse,
     VaultCodeSnapshotsIngest,
+    VaultCodeSnapshotsCapture,
     VaultCodeSnapshotsGet,
     VaultCodeSnapshotsRead,
     VaultCodeSymbolsDefinitions,
@@ -2021,6 +2023,7 @@ impl AgentVerb {
         Self::SelfSecretsTeardown,
         Self::SelfSecretsUse,
         Self::VaultSharesCreate,
+        Self::VaultSharesIssueViewLink,
         Self::VaultSharesRevoke,
         Self::VaultSharesView,
         Self::HostCompact,
@@ -2141,6 +2144,7 @@ impl AgentVerb {
         Self::VaultCodeCacheGet,
         Self::VaultCodeCacheReuse,
         Self::VaultCodeSnapshotsIngest,
+        Self::VaultCodeSnapshotsCapture,
         Self::VaultCodeSnapshotsGet,
         Self::VaultCodeSnapshotsRead,
         Self::VaultCodeSymbolsDefinitions,
@@ -3405,6 +3409,7 @@ impl AgentVerb {
             Self::SelfSecretsTeardown => "self.secrets.teardown",
             Self::SelfSecretsUse => "self.secrets.use",
             Self::VaultSharesCreate => "vault.shares.create",
+            Self::VaultSharesIssueViewLink => "vault.shares.issue_view_link",
             Self::VaultSharesRevoke => "vault.shares.revoke",
             Self::VaultSharesView => "vault.shares.view",
             Self::HostCompact => "host.compact",
@@ -3529,6 +3534,7 @@ impl AgentVerb {
             Self::VaultCodeCacheGet => "vault.code.cache.get",
             Self::VaultCodeCacheReuse => "vault.code.cache.reuse",
             Self::VaultCodeSnapshotsIngest => "vault.code.snapshots.ingest",
+            Self::VaultCodeSnapshotsCapture => "vault.code.snapshots.capture",
             Self::VaultCodeSnapshotsGet => "vault.code.snapshots.get",
             Self::VaultCodeSnapshotsRead => "vault.code.snapshots.read",
             Self::VaultCodeSymbolsDefinitions => "vault.code.symbols.definitions",
@@ -4790,6 +4796,7 @@ impl AgentVerb {
                 | Self::SelfSecretsTeardown
                 | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
+                | Self::VaultSharesIssueViewLink
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
                 | Self::HostCompact
@@ -4910,6 +4917,7 @@ impl AgentVerb {
                 | Self::VaultCodeCacheGet
                 | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsCapture
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
@@ -6180,6 +6188,7 @@ impl AgentVerb {
                 | Self::SelfSecretsTeardown
                 | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
+                | Self::VaultSharesIssueViewLink
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
                 | Self::HostCompact
@@ -6300,6 +6309,7 @@ impl AgentVerb {
                 | Self::VaultCodeCacheGet
                 | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsCapture
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
@@ -7726,6 +7736,7 @@ impl AgentVerb {
                 | Self::SelfSecretsTeardown
                 | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
+                | Self::VaultSharesIssueViewLink
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
                 | Self::HostCompact
@@ -7832,6 +7843,7 @@ impl AgentVerb {
                 | Self::VaultCodeCacheGet
                 | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsCapture
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
@@ -8754,6 +8766,7 @@ impl AgentVerb {
                 | Self::SelfSecretsTeardown
                 | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
+                | Self::VaultSharesIssueViewLink
                 | Self::VaultSharesRevoke
                 | Self::HostCompact
                 | Self::HostWake
@@ -8814,6 +8827,7 @@ impl AgentVerb {
                 | Self::VaultCodeViewsBuild
                 | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsCapture
                 | Self::VaultCodeMergeQueueEnqueue
                 | Self::VaultCodeMergeQueueStage
                 | Self::VaultCodeMergeQueueRequeueSurvivors
@@ -9864,6 +9878,7 @@ impl AgentVerb {
             Self::SelfSecretsTeardown => &["spec"],
             Self::SelfSecretsUse => &["spec"],
             Self::VaultSharesCreate => &["spec"],
+            Self::VaultSharesIssueViewLink => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
             Self::HostCompact => &["spec"],
@@ -9984,6 +9999,7 @@ impl AgentVerb {
             Self::VaultCodeCacheGet => &["spec"],
             Self::VaultCodeCacheReuse => &["spec"],
             Self::VaultCodeSnapshotsIngest => &["spec"],
+            Self::VaultCodeSnapshotsCapture => &["spec"],
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
@@ -11226,6 +11242,7 @@ impl AgentVerb {
             Self::SelfSecretsTeardown => &["spec"],
             Self::SelfSecretsUse => &["spec"],
             Self::VaultSharesCreate => &["spec"],
+            Self::VaultSharesIssueViewLink => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
             Self::HostCompact => &["spec"],
@@ -11346,6 +11363,7 @@ impl AgentVerb {
             Self::VaultCodeCacheGet => &["spec"],
             Self::VaultCodeCacheReuse => &["spec"],
             Self::VaultCodeSnapshotsIngest => &["spec"],
+            Self::VaultCodeSnapshotsCapture => &["spec"],
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
@@ -13875,6 +13893,9 @@ impl AgentVerb {
             Self::VaultSharesCreate => {
                 "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."
             }
+            Self::VaultSharesIssueViewLink => {
+                "Issues a holder-bound view-only pairing link for one admitted share's recipient."
+            }
             Self::VaultSharesRevoke => "",
             Self::VaultSharesView => "",
             Self::HostCompact => {
@@ -14013,7 +14034,7 @@ impl AgentVerb {
                 "Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."
             }
             Self::VaultCodeSymbolsRelease => {
-                "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."
+                "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver."
             }
             Self::VaultCodeProposalSubmit => {
                 "Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed."
@@ -14231,6 +14252,9 @@ impl AgentVerb {
             Self::VaultCodeSnapshotsIngest => {
                 "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership."
             }
+            Self::VaultCodeSnapshotsCapture => {
+                "Capture current files of a host folder as a custody-filtered snapshot with no Git commit witness. Owner only. Includes untracked and ignored files; Git metadata and linked or nested repositories stay opaque."
+            }
             Self::VaultCodeSnapshotsGet => {
                 "Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."
             }
@@ -14253,7 +14277,7 @@ impl AgentVerb {
                 "Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt."
             }
             Self::VaultCodeMergeQueueRequeueSurvivors => {
-                "Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written."
+                "Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. The two batches are linked once; a retry returns the same batch."
             }
             Self::VaultCodeMergeQueueLandReviewed => {
                 "Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs the review it is held to and exact bytes and base; the owner proof approves nothing."
