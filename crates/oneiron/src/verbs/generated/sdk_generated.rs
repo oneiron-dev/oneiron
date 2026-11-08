@@ -49621,6 +49621,25 @@ pub fn vault_artifacts_propose_output(
     )?;
     memory.artifacts_propose_output(&input)
 }
+pub fn vault_artifacts_propose_output_file(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::NativeOutputRequest,
+    body: &crate::blob_artifact::BlobBodyFile<'_>,
+) -> MemoryResult<crate::edit_settle::PendingProposalView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.propose_output",
+        &input,
+        &[
+            "/read_rows/*",
+            "/made_by/inputs/*/row",
+            "/made_by/trigger/task",
+            "/made_by/trigger/ask",
+            "/made_by/trigger/skill",
+        ],
+    )?;
+    memory.artifacts_propose_output_file(&input, body)
+}
 pub fn vault_artifacts_keep(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ProposalSettleRequest,
@@ -51662,6 +51681,13 @@ pub fn vault_artifacts_create(
 ) -> MemoryResult<Option<crate::blob_artifact::ArtifactView>> {
     memory.artifacts_create(&input)
 }
+pub fn vault_artifacts_create_file(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactCreateRequest,
+    body: &crate::blob_artifact::BlobBodyFile<'_>,
+) -> MemoryResult<Option<crate::blob_artifact::ArtifactView>> {
+    memory.artifacts_create_file(&input, body)
+}
 pub fn vault_esign_create(
     memory: &Memory<'_>,
     input: crate::blob_artifact::esign::EsignCreateRequest,
@@ -52075,6 +52101,13 @@ pub fn vault_artifacts_append(
     input: AppendBlobVersionRequest,
 ) -> MemoryResult<crate::memory::BlobVersionAppendOutcome> {
     memory_requests::append_blob(memory, input)
+}
+pub fn vault_artifacts_append_file(
+    memory: &Memory<'_>,
+    input: AppendBlobVersionRequest,
+    body: &crate::blob_artifact::BlobBodyFile<'_>,
+) -> MemoryResult<crate::memory::BlobVersionAppendOutcome> {
+    memory_requests::append_blob_file(memory, input, body)
 }
 pub fn vault_artifacts_read(
     memory: &Memory<'_>,

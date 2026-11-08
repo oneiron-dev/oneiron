@@ -55,7 +55,8 @@ pub use self::call::{
     ActionInputs, CALL_RECEIPT_REF_PREFIX, CONNECTION_CALL_ACTOR_CLASS, CallAttemptRef,
     CallAttemptWitness, CallOutcome, CallReceipt, CallReceiptInput, CallReceiptRequest,
     CallTransport, ERASED_CALL_IDENTITY, MAX_ACTION_INPUT_ENTITIES, MAX_CALL_RECEIPT_SERVED,
-    call_bytes_digest, call_json_digest, call_reads_world, call_refusal_digest, json_entity_refs,
+    call_bytes_digest, call_json_digest, call_json_digest_with_member, call_reads_world,
+    call_refusal_digest, json_entity_refs,
 };
 pub(crate) use self::content::ReceiptContent;
 pub use self::context_emit::ContextEmitReceipt;

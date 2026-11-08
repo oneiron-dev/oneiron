@@ -32,7 +32,7 @@ use super::state::{Carry, Entered, HookDepth, depth};
 use super::storage::VerbHookStorage;
 use super::{
     InvocationId, VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume, ask,
-    redact,
+    held_member, redact,
 };
 
 use run::RunRecord;
@@ -120,6 +120,9 @@ fn pre_with_saved(
     turn: Option<Arc<TaskWorkTurn>>,
     require_saved: bool,
 ) -> Result<Stopped<VerbHookPre>> {
+    // A member its host holds as a file is this call's alone (FIX 22074):
+    // taken first, so no nested call of its run meets it.
+    let held = held_member::take();
     let unavailable = || {
         Ok(Err(VerbHookStop::Skipped {
             hook: String::new(),
@@ -209,6 +212,12 @@ fn pre_with_saved(
                     .is_empty())
             {
                 return through(call, args);
+            }
+            // A hook reads these args: a held member is back in them before
+            // any does, and the call runs on them as JSON (FIX 22074).
+            let mut args = args;
+            if let Some(held) = held {
+                held.restore(&mut args)?;
             }
             (0, args, None)
         }

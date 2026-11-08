@@ -252,6 +252,28 @@ pub(super) fn append_blob(
     )
 }
 
+/// [`append_blob`] for content its host decoded into `body` before the call
+/// (FIX 22074): the request's own content is empty, and the version's bytes
+/// are read from the file, measured as [`append_blob`] measures them.
+pub(super) fn append_blob_file(
+    memory: &Memory<'_>,
+    input: AppendBlobVersionRequest,
+    body: &crate::blob_artifact::BlobBodyFile<'_>,
+) -> MemoryResult<crate::memory::BlobVersionAppendOutcome> {
+    if !input.content_base64.is_empty() {
+        return Err(MemoryError::bad_request(
+            "content arrives in the body file, not in the request",
+        ));
+    }
+    memory.append_blob_version_file(
+        &input.artifact_ref,
+        body,
+        input.run_ref.as_deref(),
+        input.occurred_at,
+        input.learned_at,
+    )
+}
+
 pub(super) fn read_blob(
     memory: &Memory<'_>,
     input: ReadBlobVersionRequest,
