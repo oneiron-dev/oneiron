@@ -307,6 +307,7 @@ pub(super) fn dispatch_result_receipt(
         gate_reason_codes,
         gate_receipt_reasons,
         effector_charge,
+        budget_settlement_events,
         effect_state,
         resolution,
         outcome,
@@ -343,6 +344,7 @@ pub(super) fn dispatch_result_receipt(
             resolution,
             effector_budget: None,
             budget_ladder_events: Vec::new(),
+            budget_settlement_events,
             budget_pool: None,
         };
     }
@@ -517,6 +519,7 @@ pub(super) fn dispatch_result_receipt(
         resolution,
         effector_budget,
         budget_ladder_events,
+        budget_settlement_events,
         budget_pool,
     }
 }

@@ -402,7 +402,30 @@ fn send_pending_with_gate<T: OutboundTransport>(
     // idempotency. Clear that permit durably immediately before transport so a
     // crash after the wire may have started is once again Q4 Pending/uncertain.
     let record = if record.recorded_outcome == Some(RecordedOutboundOutcome::DefiniteNonDelivery) {
-        let claimed = begin_definite_non_delivery_retry(vault, record.id, now_ms)?;
+        let (claimed, block) = begin_definite_non_delivery_retry(vault, record.id, now_ms)?;
+        if block != connector_key::BudgetBlock::Open {
+            let mut held = effect_result(&claimed, None, replayed, None);
+            match block {
+                connector_key::BudgetBlock::Paced { next_eligible_at } => {
+                    held.gate_outcome = Some(GateOutcome::Allow.as_str().to_owned());
+                    held.gate_reason_codes
+                        .push(crate::linear_sync::LINEAR_RATE_WINDOW_REASON.to_owned());
+                    held.paced_until = Some(next_eligible_at);
+                }
+                connector_key::BudgetBlock::Hard => {
+                    held.gate_outcome = Some(GateOutcome::Deny.as_str().to_owned());
+                    held.gate_reason_codes.push(
+                        gate::GateReasonCode::DenyEffectorBudgetExhausted
+                            .as_str()
+                            .to_owned(),
+                    );
+                    held.gate_receipt_reasons
+                        .push("effector_budget_exhausted".to_owned());
+                }
+                connector_key::BudgetBlock::Open => unreachable!(),
+            }
+            return Ok(held);
+        }
         if claimed.state == IntentState::Abandoned {
             return Ok(effect_result(
                 &claimed,
@@ -453,7 +476,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
                     now_ms / 1_000,
                 );
             })?;
-            Ok(effect_result(&done, Some(outcome), replayed, None))
+            let mut result = effect_result(&done.record, Some(outcome), replayed, None);
+            result.budget_settlement_events = done.budget_events;
+            Ok(result)
         }
         // A provider key makes its resend safe. FIX 4747: a call its
         // transport looks up stays Pending and uncertain too, and its resend
@@ -546,12 +571,10 @@ fn step_uncertain_send<T: OutboundTransport>(
     match transport.uncertain_send_step(&FrozenOutboundCall::from_record(&record)) {
         UncertainSendStep::Delivered => {
             let done = complete_record_bridged(vault, record.id, now_ms, |_, _| {})?;
-            Ok(effect_result(
-                &done,
-                Some(OutboundSendOutcome::Acked),
-                true,
-                None,
-            ))
+            let mut result =
+                effect_result(&done.record, Some(OutboundSendOutcome::Acked), true, None);
+            result.budget_settlement_events = done.budget_events;
+            Ok(result)
         }
         UncertainSendStep::LookedUpUnsent => {
             let proven = record_looked_up_non_delivery(vault, record.id, now_ms)?;
@@ -801,6 +824,7 @@ fn settled_result(
         gate_reason_codes: Vec::new(),
         gate_receipt_reasons: Vec::new(),
         budget_charge: None,
+        budget_settlement_events: Vec::new(),
         dedupe_suppressed: false,
         suppression_receipt: None,
         ceiling_count: None,
@@ -839,6 +863,7 @@ pub(super) fn gate_rejection(
             .map(|reason| (*reason).to_owned())
             .collect(),
         budget_charge: None,
+        budget_settlement_events: Vec::new(),
         dedupe_suppressed: false,
         suppression_receipt: None,
         ceiling_count: None,
