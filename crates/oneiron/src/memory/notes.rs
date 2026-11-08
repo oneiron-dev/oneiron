@@ -11,7 +11,9 @@ impl Memory<'_> {
             self.actor_class,
             markdown,
         )?;
-        let id = self.vault.create_note(kind, markdown, self.write_actor())?;
+        let id =
+            self.vault
+                .create_note_born(kind, markdown, self.write_actor(), self.birth_position)?;
         self.entity_ref_receipt_of(&id, crate::registry::ENTITY_TYPE_NOTE)
     }
     pub fn edit_note(&self, note_ref: &str, edit: &NoteEdit) -> MemoryResult<NoteEditOutcome> {
