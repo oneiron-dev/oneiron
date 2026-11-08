@@ -721,6 +721,9 @@ pub(super) async fn mcp_endpoint(
         super::super::oauth_call::auth_challenge(&server, &headers, &connection, error)
     });
     let reply = mcp_envelope(id, result);
+    // A verb hook's ask holds the call: no answer is kept for its
+    // invocation, so a same-id retry reaches the held call again (FIX 1435).
+    let held = mcp_held_by_ask(&reply);
     if let Some(claim) = claim {
         let mut saved = reply.clone();
         if let Some(saved) = saved.as_object_mut() {
@@ -733,13 +736,25 @@ pub(super) async fn mcp_endpoint(
             body: saved,
             release,
         };
-        if failed {
+        if failed || held {
             claim.finish_failed(outcome);
         } else {
             claim.finish(outcome);
         }
     }
     super::super::oauth_call::challenged(mcp_http_reply(reply, stamp.as_ref()), challenge)
+}
+
+/// Whether `reply` is a tool result a verb hook's pending ask holds (FIX
+/// 1435): the call has no answer yet, as a held facade call has none
+/// (`FacadeApiError::is_held_call`).
+fn mcp_held_by_ask(reply: &Value) -> bool {
+    reply
+        .pointer("/result/structuredContent/hook")
+        .and_then(|stop| {
+            serde_json::from_value::<oneiron::runtime_hooks::VerbHookStop>(stop.clone()).ok()
+        })
+        .is_some_and(|stop| matches!(stop, oneiron::runtime_hooks::VerbHookStop::Pending { .. }))
 }
 
 /// The invocation a `tools/call` names in `_meta`, when it names a valid
