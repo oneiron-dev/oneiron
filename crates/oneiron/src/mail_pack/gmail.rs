@@ -27,8 +27,9 @@ use super::rest::{
 };
 use super::source::MailProvider;
 use super::wire::{
-    MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
-    MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
+    MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange,
+    MailHistoryPage, MailHistoryRead, MailIdPage, MailListQuery, MailMessageRef, MailProviderWire,
+    MailSyncSource,
 };
 use crate::Vault;
 use crate::channel_identity_provider::gmail::GMAIL_CONNECTOR_EFFECTOR;
@@ -227,6 +228,45 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
             }
         }
         Ok(Some(full_from(headers, parts)))
+    }
+
+    fn raw_address_headers(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+    ) -> Result<Option<MailAddressHeaders>> {
+        // Gmail's `metadata` and `full` headers come with their encoded
+        // words decoded, so an encoded comma or address would split a
+        // mailbox; only `raw` keeps each one's bounds as the sender wrote
+        // them (fix list row 20520).
+        let params = [("format", "raw".to_owned())];
+        let answer = self
+            .get(source, &Self::message_url(provider_id)?, &params)?
+            .ok_or_else(|| refused("gmail_mail_message_not_found"))?;
+        let raw = answer
+            .get("raw")
+            .and_then(Value::as_str)
+            .ok_or_else(|| refused("gmail_mail_raw_message_missing"))?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(raw.trim_end_matches('='))
+            .map_err(|_| refused("gmail_mail_raw_message_unreadable"))?;
+        Ok(Some(super::mime::raw_address_headers(&bytes)))
+    }
+
+    fn own_addresses(&self, source: &MailSyncSource) -> Result<Option<Vec<String>>> {
+        // The mailbox's primary address and each alias Gmail verified it
+        // owns (fix list row 20400); a pending alias never counts.
+        let Some(listed) = self.get(source, &format!("{GMAIL_USER_URL}/settings/sendAs"), &[])?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(
+            array(&listed, "sendAs")
+                .iter()
+                .filter(|alias| proven_send_as(alias))
+                .filter_map(|alias| text_of(alias.get("sendAsEmail")))
+                .collect(),
+        ))
     }
 
     fn history(
@@ -476,6 +516,13 @@ fn reads_mailbox(profile: &Value, source: &MailSyncSource) -> Result<()> {
     }
 }
 
+/// Whether a Gmail `sendAs` entry is an address the mailbox owns: its
+/// primary address, or an alias whose verification Gmail accepted.
+fn proven_send_as(alias: &Value) -> bool {
+    alias.get("isPrimary").and_then(Value::as_bool) == Some(true)
+        || alias.get("verificationStatus").and_then(Value::as_str) == Some("accepted")
+}
+
 /// What a message's MIME parts hold.
 #[derive(Default)]
 struct MessageParts {
@@ -587,28 +634,131 @@ fn charset_of(content_type: &str) -> Option<String> {
     })
 }
 
-/// The addresses of an address-list header, split at the commas outside
-/// quotes and angle brackets.
+/// Where one character of an RFC 5322 address header value stands.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum AddressPlace {
+    /// Outside every quoted string, comment, angle address and domain
+    /// literal. The delimiters that open and close one stand here too.
+    Top,
+    /// Inside a quoted string (`"Name, Jr."`).
+    Quoted,
+    /// Inside a comment (`(work)`), nested ones included.
+    Comment,
+    /// Inside an angle address (`<a@b>`), a quoted local part included.
+    Angle,
+    /// Inside a domain literal (`[192.0.2.1]`).
+    Literal,
+}
+
+/// Each character of the address header value `value`, with its byte
+/// offset and its [`AddressPlace`]; and whether a quoted string, comment,
+/// angle address or domain literal is still open at its end. A `\\`
+/// escape inside a quoted string, comment or domain literal takes the next
+/// character with it, so an escaped delimiter closes nothing.
+pub(super) fn address_places(value: &str) -> (Vec<(usize, char, AddressPlace)>, bool) {
+    let mut places = Vec::with_capacity(value.len());
+    let (mut comment, mut quoted, mut angled, mut literal, mut escaped) =
+        (0_usize, false, false, false, false);
+    for (at, character) in value.char_indices() {
+        let place = if comment > 0 {
+            if escaped {
+                escaped = false;
+            } else {
+                match character {
+                    '\\' => escaped = true,
+                    '(' => comment += 1,
+                    ')' => comment -= 1,
+                    _ => {}
+                }
+            }
+            if comment > 0 || character != ')' {
+                AddressPlace::Comment
+            } else {
+                AddressPlace::Top
+            }
+        } else if angled {
+            if escaped {
+                escaped = false;
+            } else if quoted {
+                match character {
+                    '\\' => escaped = true,
+                    '"' => quoted = false,
+                    _ => {}
+                }
+            } else {
+                match character {
+                    '"' => quoted = true,
+                    '>' => angled = false,
+                    _ => {}
+                }
+            }
+            if angled {
+                AddressPlace::Angle
+            } else {
+                AddressPlace::Top
+            }
+        } else if quoted {
+            if escaped {
+                escaped = false;
+                AddressPlace::Quoted
+            } else {
+                match character {
+                    '\\' => {
+                        escaped = true;
+                        AddressPlace::Quoted
+                    }
+                    '"' => {
+                        quoted = false;
+                        AddressPlace::Top
+                    }
+                    _ => AddressPlace::Quoted,
+                }
+            }
+        } else if literal {
+            if escaped {
+                escaped = false;
+                AddressPlace::Literal
+            } else {
+                match character {
+                    '\\' => {
+                        escaped = true;
+                        AddressPlace::Literal
+                    }
+                    ']' => {
+                        literal = false;
+                        AddressPlace::Top
+                    }
+                    _ => AddressPlace::Literal,
+                }
+            }
+        } else {
+            match character {
+                '(' => comment = 1,
+                '"' => quoted = true,
+                '<' => angled = true,
+                '[' => literal = true,
+                _ => {}
+            }
+            AddressPlace::Top
+        };
+        places.push((at, character, place));
+    }
+    (places, comment > 0 || quoted || angled || literal)
+}
+
+/// The addresses of an address-list header, split at its top-level commas:
+/// a comma inside a quoted string, a comment, an angle address or a domain
+/// literal never splits a mailbox.
 pub(super) fn address_list(value: &str) -> Vec<String> {
     let mut addresses = Vec::new();
-    let mut current = String::new();
-    let mut quoted = false;
-    let mut angle = 0_u32;
-    for ch in value.chars() {
-        match ch {
-            '"' => quoted = !quoted,
-            '<' if !quoted => angle += 1,
-            '>' if !quoted => angle = angle.saturating_sub(1),
-            ',' if !quoted && angle == 0 => {
-                push_address(&mut addresses, &current);
-                current.clear();
-                continue;
-            }
-            _ => {}
+    let mut start = 0;
+    for (at, character, place) in address_places(value).0 {
+        if character == ',' && place == AddressPlace::Top {
+            push_address(&mut addresses, &value[start..at]);
+            start = at + 1;
         }
-        current.push(ch);
     }
-    push_address(&mut addresses, &current);
+    push_address(&mut addresses, &value[start..]);
     addresses
 }
 

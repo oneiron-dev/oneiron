@@ -77,6 +77,7 @@ pub(super) enum Step {
     AwaitingInput {
         intent: Option<[u8; 32]>,
         input: ConnectorAwaitingInput,
+        budget_steering: Vec<String>,
     },
     /// A full count-bound budget window paces the call until
     /// `next_eligible_at`, Unix seconds (FIX 8686): unsent and uncharged, it
@@ -411,7 +412,11 @@ impl Vault {
             // call's row, kept for a first call too, holds the round for its
             // caller to poll, and the host keeps it current (FIX 3837).
             // A row that cannot keep them leaves no caller to answer them.
-            Step::AwaitingInput { intent, input } => {
+            Step::AwaitingInput {
+                intent,
+                input,
+                budget_steering,
+            } => {
                 let row = PendingConnectorCall {
                     held_reasons: Vec::new(),
                     input: Some(super::connector_call_input::PendingConnectorInput::kept(
@@ -430,6 +435,7 @@ impl Vault {
                     call_ref: resolved,
                     intent,
                     input,
+                    budget_steering,
                 };
                 host.bind_awaiting_call(&handle, resolved);
                 let resume = host.take_awaiting_resume(&handle, resolved);
@@ -730,6 +736,11 @@ impl Vault {
             now_ms(),
             &mut *host,
         )?;
+        // FIX 4747 slice 5: the run that made the call no longer runs here;
+        // nothing went, and the call names why.
+        if dispatch.agent_run_stood_down {
+            return Ok(refused(crate::agent_dispatch::AGENT_RUN_STOOD_DOWN));
+        }
         if let ScopedMcpConsentDecision::Escalate(reason) = dispatch.decision {
             *scope_evidence = crate::connector_key::connector_scope_evidence(
                 reason,
@@ -759,11 +770,25 @@ impl Vault {
         tool: &str,
         read: &mut Vec<EntityId>,
     ) -> crate::Result<(DataClass, bool, OutboundToolDescriptor)> {
-        let catalog_slate = self
-            .get_connector_key(&route.key_ref)?
-            .and_then(|key| key.slate_ref);
+        let txn = self.store.env.read_txn()?;
+        self.connector_tool_class_in_txn(&txn, governing, route, tool, read)
+    }
+
+    /// [`Self::connector_tool_class`] read in `txn`, a writer's included, so
+    /// a check inside one opens no read of its own (FIX 16029).
+    pub(super) fn connector_tool_class_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        governing: &ConnectorKeyRecord,
+        route: &ConnectorCallRoute,
+        tool: &str,
+        read: &mut Vec<EntityId>,
+    ) -> crate::Result<(DataClass, bool, OutboundToolDescriptor)> {
+        let catalog_slate =
+            crate::connector_key::read_key_for_pack_in_txn(self, txn, &route.key_ref)?
+                .and_then(|key| key.slate_ref);
         for slate_id in [governing.slate_ref, catalog_slate].into_iter().flatten() {
-            let slate = self.connector_slate(slate_id)?;
+            let slate = crate::connector_key::read_connector_slate_in_txn(self, txn, slate_id)?;
             if slate.is_some() {
                 read.push(slate_id);
             }
