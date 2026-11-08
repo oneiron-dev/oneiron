@@ -27,6 +27,7 @@ mod retry_edge;
 mod schedule_contract;
 pub use schedule_contract::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 mod send_lookup;
+mod send_reaper;
 mod served_sink;
 mod uncertain_send;
 mod weave_digest_send;
@@ -92,6 +93,7 @@ pub use self::reply_job::{
     ConnectorReplyJob, ConnectorReplyJobResult, ConnectorReplyStage,
 };
 pub use self::send_lookup::{EngineSendId, SENT_LOOKUP_TIMEOUT, SentLookup, SentLookupTarget};
+pub use self::send_reaper::ConnectorSendLeaseReap;
 pub use self::served_sink::{
     APNS_EFFECTOR, ApnsAppConfig, ApnsDeviceAddress, ApnsEnvironment, LINE_API_BASE,
     OwnedServedChannelSink, SLACK_API_BASE, ServedChannelSink, ServedEndpoints, ServedTransports,

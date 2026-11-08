@@ -1,6 +1,7 @@
 //! Chokepoint OutboundTransport adapter: frozen-call guard, header/invite rehydration, sink execute.
 use super::retry_after::{PROVIDER_RETRY_AFTER_FIELD, provider_retry_after_secs};
 use crate::Vault;
+use crate::agent_dispatch::{AGENT_RUN_FENCE_FIELD, AGENT_RUN_STOOD_DOWN};
 use crate::outbound::capability::OutboundVerbContract;
 use crate::outbound::connector_task::{
     SEND_EXECUTOR_FENCE_FIELD, SEND_EXECUTOR_STOOD_DOWN, send_executor_fence_permits_send,
@@ -40,6 +41,9 @@ enum LookupFound {
 /// now, as the execution and outcome it stands for.
 enum SinkCall {
     Executed(OutboundExecutionOutcome),
+    /// FIX 4747 slice 5: the agent run that started this send is no longer
+    /// held by this machine; nothing was sent.
+    RunStoodDown,
     LookedUp(
         OutboundExecutionOutcome,
         crate::outbound_intent_ledger::OutboundSendOutcome,
@@ -117,6 +121,15 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
                 {
                     return None;
                 }
+                // FIX 4747 slice 5: a send an agent run starts goes only
+                // while that run's machine still holds the run; a stale
+                // executor stands down here, at the same last point, and its
+                // sink is never called.
+                if let Some(run_fence) = request.agent_run_fence.as_ref()
+                    && !crate::agent_dispatch::agent_run_fence_permits_effect(vault, run_fence)
+                {
+                    return Some(SinkCall::RunStoodDown);
+                }
                 // FIX 4747: a send an earlier executor of its TASK may have
                 // made is looked up first: one the provider kept settles
                 // delivered, sending nothing; one nobody can tell about
@@ -160,6 +173,13 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             Some(SinkCall::LookedUp(execution, outcome)) => {
                 self.execution = Some(execution);
                 return outcome;
+            }
+            Some(SinkCall::RunStoodDown) => {
+                self.execution = Some(
+                    OutboundExecutionOutcome::failed(AGENT_RUN_STOOD_DOWN)
+                        .with_receipt_field(AGENT_RUN_FENCE_FIELD, AGENT_RUN_STOOD_DOWN),
+                );
+                return transport_not_started();
             }
             None => {
                 self.execution = Some(

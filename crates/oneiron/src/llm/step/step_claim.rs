@@ -51,7 +51,10 @@ pub(crate) use super::step_index::{
 /// wake-observed call the claim closes (DOOR-144), in a savepoint of the same
 /// write that never refuses it. `None` when an owner's erase took the
 /// response first (FIX 6226): the write checked its owners before anything
-/// was filed, keeps the row's erased skeleton, and files nothing.
+/// was filed, keeps the row's erased skeleton, and files nothing. An agent
+/// run's step commits only while its machine holds the run (FIX 4747): a
+/// stale executor's write files nothing and fails with
+/// `Error::AgentRunExecutorMoved`.
 pub(super) fn log_terminal_step(
     ctx: &DurableStepContext<'_>,
     step_hash: &[u8; 32],
@@ -80,6 +83,9 @@ pub(super) fn log_terminal_step(
 
     ctx.vault
         .with_write_txn_grouped(|wtxn| {
+            // FIX 4747: the run fence first, in this same write; it renews
+            // the run's executor lease when less than half a hold is left.
+            crate::agent_dispatch::fence_agent_run_step_in_txn(ctx.vault, wtxn, ctx.attempt_id)?;
             // The Logged private row lands first, its owners checked in this
             // same write (FIX 6226): an erase that took an owner after the
             // answer came keeps the row's skeleton, and no response, artifact
