@@ -26,7 +26,7 @@ pub(super) use cursor::{
 };
 pub(super) use erase::{
     ErasedIds, args_erased, dependencies_erased_in_txn, erased_by_args_in_txn,
-    retire_kept_runs_in_txn, rows_named_by_call, scrub_erased_memo_in_txn,
+    retire_kept_runs_in_txn, rows_named_by_call, rows_named_by_fact, scrub_erased_memo_in_txn,
     scrub_erased_verb_run_in_txn, scrub_intent_payload, scrub_memo_payload, scrub_receipt_payload,
     scrub_verb_payload, source_erased_in_txn,
 };
@@ -405,6 +405,12 @@ pub(super) struct HookRunRecord {
     pub(super) entity: EntityId,
     /// The exact input the body saw; `None` past the pin bound or after erase.
     pub(super) input_json: Option<String>,
+    /// The rows the input names anywhere but as the fact's actor, read from
+    /// the whole input before the pin bound drops any of it (FIX 22240,
+    /// review #6848): a permanent erase of one retires the memo even when
+    /// its input was past the bound ([`rows_named_by_fact`]).
+    #[serde(default, with = "crate::serialize::entity_ref::sequence")]
+    pub(super) named_rows: Vec<EntityId>,
     /// Source erasure retired this run's retained payload (FIX 10080).
     pub(super) history_erased: bool,
     pub(super) input_hash: String,
