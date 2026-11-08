@@ -232,7 +232,7 @@ impl ConsolidationExecutor<'_> {
                 }
                 Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
-                    step_hashes: charges.step_hashes.clone(),
+                    step_bindings: charges.step_bindings.clone(),
                 })
             }
             Ok(PartitionRun::Held {
@@ -257,7 +257,7 @@ impl ConsolidationExecutor<'_> {
                 Ok(DreamerAttemptExecution::Deferred {
                     completed_units: charges.units,
                     retry_at: retry_at_ms.div_ceil(1_000),
-                    step_hashes: charges.step_hashes.clone(),
+                    step_bindings: charges.step_bindings.clone(),
                 })
             }
             // The step layer already parked the trapped attempt; Park it for resume

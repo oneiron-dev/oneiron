@@ -8,6 +8,11 @@
 //! roster per vault; the live board names persons by handle, and a handle the
 //! reader's cached roster does not hold carries its name inline.
 
+mod prepared;
+pub(crate) use prepared::{
+    PreparedAgentPerson, prepare_agent_person_after_puts_in_txn, prepare_agent_person_in_txn,
+};
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::one_line_token;
@@ -498,15 +503,7 @@ pub(crate) fn ensure_agent_person_in_txn(
         return Ok(());
     }
     if vault.store.port_entity_record(&*txn, &person)?.is_none() {
-        let mut body = Vec::new();
-        rmpv::encode::write_value(
-            &mut body,
-            &rmpv::Value::Map(vec![(
-                rmpv::Value::from("display_name"),
-                rmpv::Value::from(name),
-            )]),
-        )
-        .map_err(|_| crate::Error::InvariantViolation("agent person body encoding failed"))?;
+        let body = agent_person_body(name)?;
         vault
             .batch_in()
             .put(
@@ -522,6 +519,19 @@ pub(crate) fn ensure_agent_person_in_txn(
     crate::subject_model::ensure_model_person_in_txn(vault, txn, person, writer, at)?;
     crate::subject_model::ensure_actor_subject_in_txn(vault, txn, agent, person, writer, at)?;
     Ok(())
+}
+
+fn agent_person_body(name: &str) -> Result<Vec<u8>> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("display_name"),
+            rmpv::Value::from(name),
+        )]),
+    )
+    .map_err(|_| crate::Error::InvariantViolation("agent person body encoding failed"))?;
+    Ok(body)
 }
 
 /// [`ensure_agent_person_in_txn`] for a seeded system agent (FIX 12098):
@@ -652,6 +662,13 @@ fn person_name(body: &[u8]) -> Option<String> {
             .ok()?
             .get("display_name")?
             .as_str()
+            .map(str::to_owned)
+    })
+    .or_else(|| {
+        fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("name"))
+            .and_then(|(_, value)| value.as_str())
             .map(str::to_owned)
     })
     .filter(|name| !name.trim().is_empty())

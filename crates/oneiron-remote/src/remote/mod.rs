@@ -28,7 +28,9 @@ use reqwest::{Method, StatusCode, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::caps::{MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES};
+use crate::caps::MAX_REMOTE_REQUEST_BYTES;
+#[cfg(test)]
+use crate::caps::MAX_REMOTE_RESPONSE_BYTES;
 use crate::error::{bad_request, forbidden, transport_error};
 
 // OF-469: a pinned authority checkpoint, fetched for adoption.
@@ -49,8 +51,8 @@ mod wire;
 use self::origin::{bearer_header, normalize_origin};
 pub(crate) use self::pairing::{pair, parse_credential};
 use self::response::{
-    ReadFailure, describe_send_failure, encode_request, read_capped, read_error_envelope,
-    read_export, serialize_request, serialize_whole, within_ceiling,
+    describe_send_failure, encode_request, read_error_envelope, read_export, read_reply,
+    serialize_request, serialize_whole, within_ceiling,
 };
 use self::wire::Wire;
 
@@ -477,23 +479,26 @@ impl RemoteClient {
             .credential_headers()
             .map_err(|_| oneiron::FatalLlmError::Auth)?;
         let bytes = encode_request(bytes, &mut credential);
-        self.stream_agent()?
+        let request = self
+            .stream_agent()?
             .post(url)
             .timeout(REQUEST_TIMEOUT)
             .headers(credential)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .header("x-oneiron-budget-lease", lease.id())
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    oneiron::RetryableLlmError::Timeout.into()
-                } else {
-                    oneiron::RetryableLlmError::StreamCut.into()
-                }
-            })
+            .body(bytes);
+        if lease.has_dispatch_release() {
+            lease.check_dispatch_release()?;
+            lease.begin_physical_attempt();
+        }
+        request.send().await.map_err(|e| {
+            if e.is_timeout() {
+                oneiron::RetryableLlmError::Timeout.into()
+            } else {
+                oneiron::RetryableLlmError::StreamCut.into()
+            }
+        })
     }
 
     pub(crate) async fn llm_stream(
@@ -511,22 +516,25 @@ impl RemoteClient {
             .credential_headers()
             .map_err(|_| oneiron::FatalLlmError::Auth)?;
         let bytes = encode_request(bytes, &mut credential);
-        self.stream_agent()?
+        let request = self
+            .stream_agent()?
             .post(url)
             .headers(credential)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/x-ndjson")
             .header("x-oneiron-budget-lease", lease.id())
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    oneiron::RetryableLlmError::Timeout.into()
-                } else {
-                    oneiron::RetryableLlmError::StreamCut.into()
-                }
-            })
+            .body(bytes);
+        if lease.has_dispatch_release() {
+            lease.check_dispatch_release()?;
+            lease.begin_physical_attempt();
+        }
+        request.send().await.map_err(|e| {
+            if e.is_timeout() {
+                oneiron::RetryableLlmError::Timeout.into()
+            } else {
+                oneiron::RetryableLlmError::StreamCut.into()
+            }
+        })
     }
 
     /// The streaming agent the own-server LLM transport posts on. A served
@@ -582,26 +590,14 @@ fn long_running(verb: &str) -> bool {
     matches!(verb, "vault.export" | "vault.embedding_spaces.move_check")
 }
 
-/// Decodes a success body read under the ordinary response ceiling; `what`
-/// names the call in a refusal.
+/// Decodes a success body straight from the wire, whatever its length
+/// ([`read_reply`]); `what` names the call in a refusal.
 fn read_json<R: DeserializeOwned, B: Read>(
     body: B,
     status: StatusCode,
     what: &str,
 ) -> Result<R, MemoryError> {
-    let bytes = read_capped(body, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| match failure {
-        ReadFailure::TooLarge => transport_error(format!(
-            "the server's response exceeded the {MAX_REMOTE_RESPONSE_BYTES}-byte read ceiling"
-        )),
-        ReadFailure::Io(message) => {
-            transport_error(format!("the server's response was truncated: {message}"))
-        }
-    })?;
-    serde_json::from_slice(&bytes).map_err(|error| {
-        transport_error(format!(
-            "the server answered {status} for {what} with a body this call could not decode: {error}"
-        ))
-    })
+    read_reply(body, status, what)
 }
 
 /// The blocking client every facade verb and `pair` share.

@@ -83,6 +83,9 @@ impl AgentDispatcher<'_> {
             lease_owner,
             attempt.attempt_count,
         )?;
+        // FIX 4747: the run's result TURN, only while its run TASK names the
+        // holding its claim took.
+        crate::agent_dispatch::fence_agent_run_settlement_in_txn(self.vault, &txn, attempt.id)?;
         self.put_agent_run_result_in_txn(&mut txn, &result, now)?;
         txn.commit()?;
         Ok(Some(result.id))
@@ -136,12 +139,12 @@ impl AgentDispatcher<'_> {
                     .store
                     .body_file_present(&output.raw_blake3, output.raw_len)? =>
             {
+                let occurrence =
+                    EntityId::derive(RUN_RESULT_BODY, &[result_ref.as_bytes().as_slice()])?;
                 Some(OwnedBody {
                     owner: result_ref,
-                    occurrence: EntityId::derive(
-                        RUN_RESULT_BODY,
-                        &[result_ref.as_bytes().as_slice()],
-                    )?,
+                    occurrence,
+                    mark_occurrence: occurrence,
                     state: BodyState::Complete {
                         body: BodyRef {
                             blake3: output.raw_blake3,
@@ -150,6 +153,7 @@ impl AgentDispatcher<'_> {
                         },
                     },
                     result: None,
+                    code_run_output: None,
                 })
             }
             _ => None,

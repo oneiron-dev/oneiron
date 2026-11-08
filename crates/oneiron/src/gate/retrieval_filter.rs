@@ -16,6 +16,7 @@ use super::grants::{
 };
 use super::resolution::PolicyManifestResolution;
 
+use oneiron_contracts::gate::MAX_SENSITIVITY_BAND;
 pub use oneiron_contracts::gate::RetrievalFilter;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +40,11 @@ pub(crate) struct ResolvedRetrievalFilter {
     pub(crate) min_confidence: f32,
     pub(crate) min_salience: f32,
     pub(crate) deny_all: bool,
+    /// Whether the read's bound caller filter names `include_stale = false`
+    /// (FIX 3977, `ScopedRead::under_caller_filter`). A record lane reads
+    /// stale claims whatever the floor says, but never past the caller's own
+    /// exclusion. Narrowing never sets this; only the lane marks it.
+    pub(crate) caller_excludes_stale: bool,
     /// The verified credential a scoped read retrieves under, if any. A TASK
     /// the pipeline denies outside its worlds or facets adds to no
     /// suppression count (ARCH-0067 §5, DEC-0005).
@@ -58,6 +64,40 @@ impl ResolvedRetrievalFilter {
     #[must_use]
     pub(crate) fn read_scope(&self) -> Scope {
         read_scope(self.entity_types.as_ref(), self.max_sensitivity_band)
+    }
+
+    /// The rows this filter reads and the rows `other` reads, as one
+    /// prefilter (FIX 7528): kinds joined, the higher band, staleness if
+    /// either reads it (a caller's stale exclusion only if both carry it),
+    /// the lower minima. A deny-all side adds nothing. It is a candidate
+    /// envelope, never an authorization: each row it lets through must
+    /// still pass one whole alternative's own check. Both sides retrieve
+    /// under the same key, so this filter's credential is kept.
+    #[must_use]
+    pub(crate) fn union_envelope(&self, other: &Self) -> Self {
+        if other.deny_all {
+            return self.clone();
+        }
+        if self.deny_all {
+            return Self {
+                credential: self.credential.clone(),
+                ..other.clone()
+            };
+        }
+        let entity_types = match (&self.entity_types, &other.entity_types) {
+            (Some(left), Some(right)) => Some(left.union(right).copied().collect()),
+            _ => None,
+        };
+        Self {
+            entity_types,
+            max_sensitivity_band: self.max_sensitivity_band.max(other.max_sensitivity_band),
+            include_stale: self.include_stale || other.include_stale,
+            min_confidence: self.min_confidence.min(other.min_confidence),
+            min_salience: self.min_salience.min(other.min_salience),
+            deny_all: false,
+            caller_excludes_stale: self.caller_excludes_stale && other.caller_excludes_stale,
+            credential: self.credential.clone(),
+        }
     }
 }
 
@@ -422,7 +462,7 @@ impl RetrievalPolicyFloor {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.max_sensitivity_band > 3
+        if self.max_sensitivity_band > MAX_SENSITIVITY_BAND
             || !valid_minimum(self.min_confidence)
             || !valid_minimum(self.min_salience)
         {
@@ -489,7 +529,9 @@ pub(crate) fn narrow_retrieval_filter(
         // These are meet identities, NOT a substitute authority floor.
         let request = RetrievalPolicyFloor {
             allowed_entity_types: requested.entity_types.clone(),
-            max_sensitivity_band: requested.max_sensitivity_band.unwrap_or(3),
+            max_sensitivity_band: requested
+                .max_sensitivity_band
+                .unwrap_or(MAX_SENSITIVITY_BAND),
             include_stale: requested.include_stale.unwrap_or(true),
             min_confidence: requested.min_confidence.unwrap_or(0.0),
             min_salience: requested.min_salience.unwrap_or(0.0),
@@ -505,6 +547,7 @@ pub(crate) fn narrow_retrieval_filter(
         min_confidence: narrowed.min_confidence,
         min_salience: narrowed.min_salience,
         deny_all: narrowed.deny_all,
+        caller_excludes_stale: false,
         credential: None,
     })
 }

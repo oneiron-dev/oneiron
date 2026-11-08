@@ -1,10 +1,6 @@
 use std::borrow::Cow;
-use std::cell::Cell;
 use std::sync::Mutex;
 
-use rmpv::Value;
-
-use crate::receipt::{ActionInputs, call_bytes_digest};
 use crate::{EntityId, Error, Result};
 
 use super::codec::{
@@ -12,23 +8,29 @@ use super::codec::{
     CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS, CODE_RUN_STEP_CHECKPOINT_KEYS,
 };
 use super::payload::{
-    decode_self_dispatch_outcome, replay_denied_trap_error, replay_failed_trap_error,
-    self_call_request_value, self_dispatch_outcome_value,
+    decode_self_dispatch_outcome, self_call_request_value, self_dispatch_outcome_value,
 };
-use super::spawn_replay::replay_request_match;
 use super::support::{
     code_run_layout_hash, expect_map, invalid_code_run_replay, map_get, str_value, u64_value,
     validate_text,
 };
-use super::types::{
-    SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect, SelfSpeechCall, SelfSpeechResult,
-};
+use super::types::{SelfCall, SelfDispatchOutcome, SelfEffect, SelfSpeechCall, SelfSpeechResult};
+// The bridge call's body names these by their `super::` paths.
+use super::{SelfStoredReply, SelfStoredReplyKind, spawn_replay};
+mod bridge;
 mod checkpoint;
+mod cursor;
+mod pending_step;
 mod position;
+mod request_identity;
 
+pub use self::bridge::CodeRunBridgeCall;
 pub use self::checkpoint::CodeRunStepCheckpoint;
+pub use self::cursor::CodeRunReplayCursor;
+pub use self::pending_step::PendingCodeStep;
+pub(super) use self::request_identity::ErasedRequest;
 
-pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 2;
+pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 3;
 pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
 pub use crate::store::result_manifest::CODE_RUN_REPLAY_HASH_LEN;
 
@@ -48,404 +50,6 @@ impl CodeRunDeterminism {
             rng_seed,
         }
     }
-}
-
-/// One host bridge call captured for deterministic step replay.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct CodeRunBridgeCall {
-    pub seq: u64,
-    pub effect: SelfEffect,
-    pub request: Value,
-    pub outcome: Value,
-    pub started_at_ms: u64,
-    pub finished_at_ms: u64,
-    /// The call's action digest over its effect, its canonical request and
-    /// the input versions the host captured before it ran
-    /// ([`ActionInputs::action_digest`], OF-568); `None` when the host
-    /// captured none, or the call never ran.
-    pub action_digest: Option<String>,
-    /// The targets its host resolved for a spawn (FIX 9180), text-free;
-    /// none for every other call.
-    pub(crate) spawn_targets: super::spawn_replay::SpawnTargets,
-    /// A verb hook's view of this outcome was served to the guest. Its own
-    /// read rows are not witnessed yet, so source capture stays unknown.
-    pub hook_view_served: bool,
-    /// The dispatched rewritten call when a verb hook rewrote it (FIX 1442):
-    /// the guest's original stays in `request`. `None` for legacy rows and
-    /// un-rewritten calls.
-    pub rewritten_request: Option<Value>,
-}
-
-impl CodeRunBridgeCall {
-    /// Captures one typed `self.*` call and its host outcome.
-    ///
-    /// Replay compares `effect` and the canonical request payload before
-    /// returning this stored outcome. A changed call cannot consume an old row.
-    pub fn record(
-        seq: u64,
-        call: &SelfCall,
-        outcome: &SelfDispatchOutcome,
-        started_at_ms: u64,
-        finished_at_ms: u64,
-    ) -> Result<Self> {
-        if finished_at_ms < started_at_ms {
-            return Err(invalid_code_run_replay(
-                "bridge call finished before it started",
-            ));
-        }
-
-        let mut row = Self {
-            seq,
-            effect: call.effect(),
-            request: self_call_request_value(call)?,
-            outcome: self_dispatch_outcome_value(outcome)?,
-            started_at_ms,
-            finished_at_ms,
-            action_digest: None,
-            spawn_targets: super::spawn_replay::SpawnTargets::default(),
-            hook_view_served: false,
-            rewritten_request: None,
-        };
-        row.scrub_target_erased_ask()?;
-        row.validate_speech_coherence()?;
-        row.validate_spawn_coherence()?;
-        row.validate_rewritten_coherence()?;
-        Ok(row)
-    }
-
-    /// This row with the dispatched rewritten call beside the guest's
-    /// original request (FIX 1442): `None` leaves the row as offered. A
-    /// rewrite changes args, never the call: another effect is refused.
-    pub fn with_rewritten_request(mut self, rewritten: Option<&SelfCall>) -> Result<Self> {
-        let Some(rewritten) = rewritten else {
-            return Ok(self);
-        };
-        if rewritten.effect() != self.effect {
-            return Err(invalid_code_run_replay(
-                "rewritten request changes its call's effect",
-            ));
-        }
-        self.rewritten_request = Some(self_call_request_value(rewritten)?);
-        self.validate_rewritten_coherence()?;
-        Ok(self)
-    }
-
-    /// This row with its action digest over `inputs`, the versions the host
-    /// captured before the call ran (OF-568); `None` leaves it unknown.
-    #[must_use]
-    pub fn with_inputs(mut self, inputs: Option<&ActionInputs>) -> Self {
-        self.action_digest = inputs.and_then(|inputs| {
-            let mut request = Vec::new();
-            rmpv::encode::write_value(&mut request, &self.request).ok()?;
-            Some(inputs.action_digest(self.effect.as_str(), &call_bytes_digest(&request)))
-        });
-        self
-    }
-
-    /// Validates every host-owned and outcome-owned axis of a speech row.
-    ///
-    /// The top-level effect, canonical request, decoded result and host stamp
-    /// are one fact. Keeping this check on the row lets record construction,
-    /// codec encode/decode and an in-memory replay cursor all enforce the same
-    /// contract rather than trusting whichever boundary happened to run first.
-    pub(super) fn validate_speech_coherence(&self) -> Result<()> {
-        let outcome = decode_self_dispatch_outcome(&self.outcome)?;
-        let expected_order = if self.effect.is_speech() {
-            let order = u32::try_from(self.seq)
-                .map_err(|_| invalid_code_run_replay("speech bridge seq exceeds u32"))?;
-            let entries = expect_map(&self.request, "speech request must be a map")?;
-            let text = str_value(map_get(entries, "text")?)?;
-            let unstamped = match self.effect {
-                SelfEffect::Speak => SelfCall::Speak(SelfSpeechCall::new(text)),
-                SelfEffect::Think => SelfCall::Think(SelfSpeechCall::new(text)),
-                SelfEffect::Express => SelfCall::Express(SelfSpeechCall::new(text)),
-                _ => unreachable!("is_speech exhaustively names the speech family"),
-            };
-            let expected_call = unstamped.with_bridge_stamp(self.seq, self.started_at_ms);
-            if self.request != self_call_request_value(&expected_call)? {
-                return Err(invalid_code_run_replay(
-                    "speech request contradicts its host bridge stamp",
-                ));
-            }
-            Some(order)
-        } else {
-            None
-        };
-
-        match outcome {
-            SelfDispatchOutcome::WakePolicyWritten(_)
-                if self.effect == SelfEffect::WakePolicyWrite =>
-            {
-                Ok(())
-            }
-            SelfDispatchOutcome::WakePolicyWritten(_) => Err(invalid_code_run_replay(
-                "wake policy result belongs to another effect",
-            )),
-            SelfDispatchOutcome::Denied(result)
-                if self.effect == SelfEffect::WakePolicyWrite && result.effect == self.effect =>
-            {
-                Ok(())
-            }
-            SelfDispatchOutcome::Failed(result)
-                if self.effect == SelfEffect::WakePolicyWrite && result.effect == self.effect =>
-            {
-                Ok(())
-            }
-            _ if self.effect == SelfEffect::WakePolicyWrite => Err(invalid_code_run_replay(
-                "wake policy effect carries another success outcome",
-            )),
-            // `connector.answer`'s reply is the door's verb answer (ONE-2510).
-            SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::ConnectorAnswer => {
-                Ok(())
-            }
-            // `vault.worlds.privacy.set`'s answer is the world-privacy door's
-            // outcome, as a verb answer (FIX 4480).
-            SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::WorldPrivacySet => {
-                Ok(())
-            }
-            // `tasks.consult.result`'s answer is the landed consult's terminal
-            // register, as a verb answer (DOOR-063).
-            SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::ConsultResult => Ok(()),
-            // `self.workflows.dispatch_bound`'s answer is the bound run's
-            // view, as a verb answer (FIX 5316).
-            SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::WorkflowDispatch => {
-                Ok(())
-            }
-            // A run repo row's answer is its door's output, as a verb answer
-            // (FIX 6867).
-            SelfDispatchOutcome::AgentVerb(_) if self.effect.is_repo() => Ok(()),
-            SelfDispatchOutcome::AgentVerb(_) if self.effect != SelfEffect::AgentVerb => Err(
-                invalid_code_run_replay("agent verb result belongs to another effect"),
-            ),
-            SelfDispatchOutcome::Fold(_) if self.effect != SelfEffect::Fold => Err(
-                invalid_code_run_replay("fold answer belongs to another effect"),
-            ),
-            SelfDispatchOutcome::TaskRefusal(_) if self.effect != SelfEffect::TasksRefuse => Err(
-                invalid_code_run_replay("task refusal belongs to another effect"),
-            ),
-            SelfDispatchOutcome::SkillCall(_) if self.effect != SelfEffect::SkillsCall => Err(
-                invalid_code_run_replay("skill call answer belongs to another effect"),
-            ),
-            SelfDispatchOutcome::ReaderSpawn(_) if self.effect != SelfEffect::ReaderSpawn => Err(
-                invalid_code_run_replay("reader spawn receipt belongs to another effect"),
-            ),
-            SelfDispatchOutcome::ReaderReport(_) if self.effect != SelfEffect::ReaderReport => Err(
-                invalid_code_run_replay("reader report receipt belongs to another effect"),
-            ),
-            SelfDispatchOutcome::TaskWaitSet(_) if self.effect != SelfEffect::TasksWaitSet => Err(
-                invalid_code_run_replay("task wait set answer belongs to another effect"),
-            ),
-            SelfDispatchOutcome::Summarize(_) if self.effect != SelfEffect::Summarize => Err(
-                invalid_code_run_replay("summary answer belongs to another effect"),
-            ),
-            SelfDispatchOutcome::Leader(_)
-                if !matches!(self.effect, SelfEffect::Leader | SelfEffect::LeaderSplit) =>
-            {
-                Err(invalid_code_run_replay(
-                    "leader answer belongs to another effect",
-                ))
-            }
-            SelfDispatchOutcome::StoredReply(super::SelfStoredReply {
-                kind: super::SelfStoredReplyKind::TeamStartReceipt,
-                ..
-            }) if self.effect != SelfEffect::Team => Err(invalid_code_run_replay(
-                "stored team receipt belongs to another effect",
-            )),
-            SelfDispatchOutcome::Team(_) if self.effect != SelfEffect::Team => Err(
-                invalid_code_run_replay("team answer belongs to another effect"),
-            ),
-            SelfDispatchOutcome::TeamSubmitted(_) if self.effect != SelfEffect::Team => Err(
-                invalid_code_run_replay("team submit answer belongs to another effect"),
-            ),
-            SelfDispatchOutcome::Speech(result) => {
-                let Some(expected_order) = expected_order else {
-                    return Err(invalid_code_run_replay(
-                        "speech outcome belongs to a non-speech bridge effect",
-                    ));
-                };
-                validate_speech_result(self.effect, expected_order, result)
-            }
-            // A speech attempt can fail at the gate or hit the fail-closed
-            // barrier after an earlier durable wait. Those are replay-visible
-            // outcomes, but they are not successful speech and therefore carry
-            // no bubble identity to validate here. Denied/Failed still name the
-            // attempted effect; a DurableWait intentionally carries the wait
-            // that caused the barrier, which may be a different effect.
-            SelfDispatchOutcome::Denied(result)
-                if self.effect.is_speech() && result.effect == self.effect =>
-            {
-                Ok(())
-            }
-            SelfDispatchOutcome::Failed(result)
-                if self.effect.is_speech() && result.effect == self.effect =>
-            {
-                Ok(())
-            }
-            SelfDispatchOutcome::DurableWait(_) if self.effect.is_speech() => Ok(()),
-            // A successful non-speech result for a speech request is not a
-            // weaker variant. It is an impossible cross-effect row and must
-            // fail closed before a replay cursor can hand it to the guest.
-            _ if self.effect.is_speech() => Err(invalid_code_run_replay(
-                "speech bridge effect carries a non-speech success outcome",
-            )),
-            // Non-speech bridge effects retain their existing outcome family;
-            // the speech-specific checks above do not narrow those rows.
-            _ => Ok(()),
-        }
-    }
-
-    /// The rewritten request beside the original is coherent with this row
-    /// (FIX 1442): a rewrite changes args, never the call, so the rewritten
-    /// map carries its call's own shape; a speech rewrite carries the row's
-    /// own bridge stamp; a spawn rewrite's ask stays well-formed. `None`
-    /// (legacy rows, un-rewritten calls) skips.
-    pub(super) fn validate_rewritten_coherence(&self) -> Result<()> {
-        let Some(rewritten) = &self.rewritten_request else {
-            return Ok(());
-        };
-        let original = expect_map(&self.request, "bridge request must be a map")?;
-        let fields = expect_map(rewritten, "rewritten request must be a map")?;
-        let mut original_keys: Vec<&str> = original
-            .iter()
-            .filter_map(|(key, _)| key.as_str())
-            .collect();
-        let mut rewritten_keys: Vec<&str> =
-            fields.iter().filter_map(|(key, _)| key.as_str()).collect();
-        original_keys.sort_unstable();
-        rewritten_keys.sort_unstable();
-        if original_keys != rewritten_keys {
-            return Err(invalid_code_run_replay(
-                "rewritten request changes its call's shape",
-            ));
-        }
-        if self.effect.is_speech() {
-            let order = u32::try_from(self.seq)
-                .map_err(|_| invalid_code_run_replay("speech bridge seq exceeds u32"))?;
-            if u64_value(map_get(fields, "order")?)? != u64::from(order)
-                || u64_value(map_get(fields, "occurred_at")?)? != self.started_at_ms / 1000
-            {
-                return Err(invalid_code_run_replay(
-                    "rewritten speech contradicts its host bridge stamp",
-                ));
-            }
-        }
-        if self.effect == SelfEffect::AgentsSpawn {
-            let ask = match rewritten {
-                Value::Map(entries) => super::spawn_replay::ask_of(entries),
-                _ => None,
-            };
-            let erased = ask.is_some_and(super::spawn_replay::is_erased_ask);
-            let barrier = ask.is_some_and(super::spawn_replay::is_barrier_ask);
-            let live = ask.is_some_and(Value::is_str);
-            if !erased && !barrier && !live && ask.is_some_and(|ask| !ask.is_nil()) {
-                return Err(invalid_code_run_replay(
-                    "rewritten spawn ask is not text, nil, or a typed marker",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    /// Whether this row is an explicit speech call that ACTUALLY emitted.
-    ///
-    /// The two conditions are separate on purpose. A speech row whose outcome
-    /// is a durable wait or a failed trap is a call the fail-closed barrier
-    /// refused: it is replay-visible, but no bubble exists for it, so it must
-    /// not suppress the trailing plaintext fallback. Only a row carrying a
-    /// speech OUTCOME says the run spoke — and the decoder refuses a speech
-    /// outcome that claims `emitted: false`, so "decodes as speech" and
-    /// "emitted" are one fact rather than two that could disagree.
-    #[must_use]
-    pub fn emitted_speech(&self) -> bool {
-        self.effect.is_speech()
-            && self.validate_speech_coherence().is_ok()
-            && matches!(
-                decode_self_dispatch_outcome(&self.outcome),
-                Ok(SelfDispatchOutcome::Speech(SelfSpeechResult {
-                    emitted: true,
-                    ..
-                }))
-            )
-    }
-
-    /// The bubble position this row emitted at, when it emitted one.
-    pub(crate) fn emitted_speech_order(&self) -> Option<u32> {
-        if !self.emitted_speech() {
-            return None;
-        }
-        match decode_self_dispatch_outcome(&self.outcome) {
-            Ok(SelfDispatchOutcome::Speech(result)) => Some(result.order),
-            _ => None,
-        }
-    }
-
-    /// The visible TEXT this row spoke, when it emitted an addressed bubble.
-    ///
-    /// Read from the row's own request payload — the same canonical value
-    /// replay compares a re-dispatched call against — so what the fallback
-    /// treats as "already said" is exactly what the user could already see.
-    /// Hidden `self.think` text deliberately returns `None`: a private thought
-    /// that matches the terminal observation must not suppress its visible
-    /// trailing fallback.
-    #[must_use]
-    pub fn emitted_visible_speech_text(&self) -> Option<&str> {
-        if self.validate_speech_coherence().is_err() {
-            return None;
-        }
-        let Ok(SelfDispatchOutcome::Speech(SelfSpeechResult {
-            is_visible: true,
-            emitted: true,
-            ..
-        })) = decode_self_dispatch_outcome(&self.outcome)
-        else {
-            return None;
-        };
-        // The bubble spoke the dispatched call: read the rewritten text when
-        // a hook rewrote it (FIX 1442).
-        let effective = self.rewritten_request.as_ref().unwrap_or(&self.request);
-        let Value::Map(entries) = effective else {
-            return None;
-        };
-        entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some("text"))
-            .and_then(|(_, value)| value.as_str())
-    }
-}
-
-fn validate_speech_result(
-    bridge_effect: SelfEffect,
-    expected_order: u32,
-    result: SelfSpeechResult,
-) -> Result<()> {
-    if result.effect != bridge_effect {
-        return Err(invalid_code_run_replay(
-            "speech outcome effect contradicts its bridge effect",
-        ));
-    }
-    if result.order != expected_order {
-        return Err(invalid_code_run_replay(
-            "speech outcome order contradicts its request",
-        ));
-    }
-    let expected_visibility = bridge_effect
-        .speech_utterance()
-        .ok_or(invalid_code_run_replay(
-            "speech outcome belongs to a non-speech effect",
-        ))?
-        .is_visible();
-    if result.is_visible != expected_visibility {
-        return Err(invalid_code_run_replay(
-            "speech outcome visibility contradicts its bridge effect",
-        ));
-    }
-    if !result.emitted {
-        return Err(invalid_code_run_replay(
-            "speech outcome claims no emitted bubble",
-        ));
-    }
-    Ok(())
 }
 
 pub(crate) use crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD;
@@ -628,6 +232,9 @@ fn cached_rows(
 #[non_exhaustive]
 pub struct CodeRunReplayRecord {
     pub run_id: EntityId,
+    /// The host-bound birth world. Known base reality has its actual id;
+    /// `None` means no accepted placement was witnessed. Not read authority.
+    pub birth_world: Option<EntityId>,
     /// Frozen inputs when witnessed; imported outputs can retain unknown inputs.
     pub determinism: Option<CodeRunDeterminism>,
     pub bridge_calls: Vec<CodeRunBridgeCall>,
@@ -643,6 +250,10 @@ pub struct CodeRunReplayRecord {
     /// Skills loaded and other runs' result rows read so far (FIX 6999).
     /// `None` once any such constituent read is unknown.
     pub callable_rows: Option<Vec<EntityId>>,
+    /// The step its deadline stopped before its program ended (FIX 7703):
+    /// the run's next entry runs that stored program again before any new
+    /// model turn. `None` while no step is pending.
+    pub pending_step: Option<PendingCodeStep>,
     /// Decoded row memos, never part of the replay codec or ABI (FIX 837).
     /// Any future in-place prefix outcome rewrite must invalidate them.
     pub(crate) verb_rows_cache: VerbRowsCache,
@@ -701,6 +312,8 @@ pub struct CodeRunReplayGeneration {
     pub step_checkpoint_count: u64,
     pub output_count: u64,
     pub last_state_hash: [u8; CODE_RUN_REPLAY_HASH_LEN],
+    /// The pending step's digest, zero while none is pending (FIX 7703).
+    pub pending_digest: [u8; CODE_RUN_REPLAY_HASH_LEN],
 }
 
 impl CodeRunReplayGeneration {
@@ -718,6 +331,10 @@ impl CodeRunReplayGeneration {
                 .map_or([0; CODE_RUN_REPLAY_HASH_LEN], |checkpoint| {
                     checkpoint.state_hash
                 }),
+            pending_digest: match &record.pending_step {
+                Some(pending) => super::codec::pending_step_digest(pending)?,
+                None => [0; CODE_RUN_REPLAY_HASH_LEN],
+            },
         })
     }
 }
@@ -779,6 +396,7 @@ impl CodeRunReplayRecord {
     ) -> Self {
         Self {
             run_id,
+            birth_world: None,
             determinism,
             bridge_calls: Vec::new(),
             step_checkpoints: Vec::new(),
@@ -787,6 +405,7 @@ impl CodeRunReplayRecord {
             bindings: Vec::new(),
             live_run: None,
             callable_rows: Some(Vec::new()),
+            pending_step: None,
             verb_rows_cache: VerbRowsCache::default(),
         }
     }
@@ -810,6 +429,7 @@ impl CodeRunReplayRecord {
             return Cow::Borrowed(self);
         };
         let mut record = self.clone();
+        record.birth_world = held.birth_world.or(record.birth_world);
         for (call, kept) in record.bridge_calls.iter_mut().zip(&held.bridge_calls) {
             if call.seq == kept.seq
                 && call.effect == kept.effect
@@ -939,97 +559,4 @@ pub fn code_run_replay_abi_layout_checks() -> Vec<CodeRunAbiLayoutCheck> {
             &CODE_RUN_OUTPUT_PREVIEW_KEYS,
         ),
     ]
-}
-
-/// Cursor that replays bridge calls from a stored record without invoking live host effects.
-pub struct CodeRunReplayCursor<'a> {
-    record: &'a CodeRunReplayRecord,
-    next: Cell<usize>,
-}
-
-impl<'a> CodeRunReplayCursor<'a> {
-    #[must_use]
-    pub const fn new(record: &'a CodeRunReplayRecord) -> Self {
-        Self {
-            record,
-            next: Cell::new(0),
-        }
-    }
-
-    #[must_use]
-    pub fn consumed(&self) -> usize {
-        self.next.get()
-    }
-
-    #[must_use]
-    pub fn is_complete(&self) -> bool {
-        self.consumed() == self.record.bridge_calls.len()
-    }
-}
-
-impl SelfDispatcher for CodeRunReplayCursor<'_> {
-    fn dispatch(&self, call: SelfCall) -> Result<SelfDispatchOutcome> {
-        let index = self.next.get();
-        let stored = self
-            .record
-            .bridge_calls
-            .get(index)
-            .ok_or(invalid_code_run_replay(
-                "code-run replay bridge log exhausted",
-            ))?;
-        if stored.seq != index as u64 {
-            return Err(invalid_code_run_replay("code-run replay bridge seq drift"));
-        }
-        if stored.effect != call.effect() {
-            return Err(invalid_code_run_replay("code-run replay effect mismatch"));
-        }
-
-        // ONE-1686: replay re-stamps the HOST-owned bridge identity from the
-        // PERSISTED row — its seq and its start clock — exactly as the live
-        // bridge stamps it at dispatch. Guest code supplies neither on either
-        // path, so a replayed speech call cannot claim a different position or
-        // timestamp than the one its bubble was written under, and an
-        // unstamped re-dispatch cannot fail the comparison below for a
-        // difference the guest was never allowed to control.
-        let call = call.with_bridge_stamp(stored.seq, stored.started_at_ms);
-        let request = self_call_request_value(&call)?;
-        // A spawn row's erased ask answers only from a coherent row (FIX 9180).
-        stored.validate_spawn_coherence()?;
-        // A stored request keeps the handles the side-row wall placed where
-        // the live call still holds the secrets (OF-067). This cursor issues
-        // nothing, so a spawn's miss (FIX 7447) is a mismatch here.
-        // A re-offered call meets its row by the guest's original request;
-        // hooks never run on replay (FIX 1442 H4: match stays on original).
-        if !replay_request_match(stored.effect, &stored.request, &request)?.is_hit() {
-            return Err(invalid_code_run_replay("code-run replay request mismatch"));
-        }
-        // A cursor can be built from an in-memory record that never passed the
-        // codec. Recheck speech effect/request/result coherence here before the
-        // stored outcome can reach the guest.
-        stored.validate_speech_coherence()?;
-
-        let outcome = decode_self_dispatch_outcome(&stored.outcome)?;
-        self.next.set(index + 1);
-        match outcome {
-            // A refused SDK verb reached the guest as a typed refusal it could
-            // handle, so replay hands back that same refusal, not a gate trap.
-            SelfDispatchOutcome::Denied(result)
-                if stored.effect == SelfEffect::AgentVerb
-                    && result.effect == SelfEffect::AgentVerb =>
-            {
-                Ok(SelfDispatchOutcome::Denied(result))
-            }
-            // So did a host door's refusal of a call the run serves itself. A
-            // gate's denial carries the gate's own outcome word and replays as
-            // the trap it was; a door's code is never one.
-            SelfDispatchOutcome::Denied(result)
-                if crate::error::GateDenialOutcome::parse(&result.outcome).is_none() =>
-            {
-                Ok(SelfDispatchOutcome::Denied(result))
-            }
-            SelfDispatchOutcome::Denied(result) => Err(replay_denied_trap_error(&result)),
-            SelfDispatchOutcome::Failed(result) => Err(replay_failed_trap_error(&result)),
-            outcome => Ok(outcome),
-        }
-    }
 }

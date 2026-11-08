@@ -108,6 +108,24 @@ pub struct ConsolidationDeliveryOrigin {
     pub delivered_row_hash: String,
 }
 
+/// The admitted source body, not the full stored row or a frozen citation.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConsolidationSourceImage {
+    pub learned_at: u64,
+    /// Native domain-separated consolidation hash of the live projected body.
+    pub body_hash: [u8; 32],
+    /// The source's own document, when available in the same read snapshot.
+    /// No pin is inferred for cited entities or joined MESSAGE children.
+    pub document: Option<ConsolidationDocumentImage>,
+}
+
+/// An active source document and its native causal frontier, not a row hash.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConsolidationDocumentImage {
+    pub doc: String,
+    pub at: Vec<u8>,
+}
+
 /// Source facts and the engine's separate read-admission axes. Effector
 /// evidence eligibility is not permission to perform any outbound action.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -132,6 +150,9 @@ pub struct ConsolidationEvidenceSource {
     pub source_meet: Option<String>,
     pub chain: Vec<ConsolidationEvidenceHop>,
     pub locators: Vec<ConsolidationEvidenceLocator>,
+    /// The requested source's live projected body in this read snapshot.
+    /// This does not version a TURN's joined MESSAGE transcript.
+    pub current_image: ConsolidationSourceImage,
     /// Local receipt facts for readable sources. None means unavailable;
     /// an empty list means no matching facts were found, not complete history.
     pub delivery_history: Option<Vec<ConsolidationDeliveryOrigin>>,
@@ -222,6 +243,26 @@ impl Memory<'_> {
                         source_meet: None,
                         chain: Vec::new(),
                         locators: Vec::new(),
+                        current_image: ConsolidationSourceImage {
+                            learned_at: row.learned_at,
+                            body_hash:
+                                crate::store::consolidation_evidence::swarm_evidence_content_hash(
+                                    row.body.as_deref().ok_or(Error::EntityNotFound)?,
+                                ),
+                            document: crate::entity_doc::source_document_pin_in_txn(
+                                &self.vault.store,
+                                txn,
+                                &row.id,
+                            )
+                            .ok()
+                            .flatten()
+                            .map(|(doc, at)| {
+                                ConsolidationDocumentImage {
+                                    doc: doc.to_hex(),
+                                    at,
+                                }
+                            }),
+                        },
                         delivery_history: None,
                     };
                     if row.entity_type == ENTITY_TYPE_CLAIM {
@@ -497,7 +538,7 @@ impl Memory<'_> {
                 candidate = candidate.with_relationships(Some(
                     refs.iter()
                         .map(|r| self.resolve_ref(r))
-                        .collect::<MemoryResult<std::collections::BTreeSet<_>>>()?,
+                        .collect::<MemoryResult<crate::claim::RelationshipSet>>()?,
                 ));
             }
             candidate = candidate.with_evidence(rmpv::Value::Map(vec![(

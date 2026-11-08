@@ -26,6 +26,10 @@ pub struct HybridSearchRequest {
     #[serde(default)]
     pub replay: Option<HybridRankReplay>,
     pub limit: usize,
+    /// The caller's retrieval filter (FIX 3977): bound before candidate
+    /// generation, so it narrows every channel, seed and terminal read.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -64,9 +68,6 @@ pub struct HybridSearchHit {
 impl HybridSearchRequest {
     pub fn validate(&self) -> MemoryResult<()> {
         caps::check_limit_nonzero(self.limit)?;
-        if let Some(query) = &self.query {
-            caps::check_query(query)?;
-        }
         if let Some(vector) = &self.query_vector {
             caps::check_dimensions(vector.len())?;
             if vector.iter().any(|value| !value.is_finite()) {
@@ -74,7 +75,6 @@ impl HybridSearchRequest {
             }
         }
         for code in &self.phonetic_codes {
-            caps::check_query(code)?;
             if code.trim().is_empty() {
                 return Err(MemoryError::bad_request("phonetic codes must not be empty"));
             }
@@ -116,10 +116,21 @@ impl Memory<'_> {
         &self,
         input: &HybridSearchRequest,
     ) -> MemoryResult<ScopedReadResult<Vec<HybridSearchHit>>> {
+        if let Some(filter) = &input.filter {
+            // Bind the caller's filter on this call's handle once, so every
+            // lane the search opens meets it (FIX 3977).
+            let bound = HybridSearchRequest {
+                filter: None,
+                ..input.clone()
+            };
+            return self.with_read_filter(Some(filter)).query_hybrid(&bound);
+        }
         input.validate()?;
         let limit = input.limit;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        let mut receipt = lane.read_receipt(None, 0)?;
+        // The receipt of a search: the candidates it ranks, the key's own
+        // rows and those its own live Grants read (FIX 7528).
+        let mut receipt = lane.search_receipt(None, 0)?;
         let mut seeds = Vec::new();
         if let Some(ppr) = &input.ppr {
             let reads = ppr
@@ -135,7 +146,11 @@ impl Memory<'_> {
             seeds.extend(admitted.value.into_iter().flatten().map(|row| row.id));
         }
         self.produced_from(seeds.iter().copied());
-        let (filter, policy) = lane.recall_plan()?;
+        let crate::claim::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = lane.recall_plan()?;
         // Every candidate goes to the actor gate, under one authority per
         // snapshot (FIX 11648).
         let gate = lane.recall_candidate_gate(&policy, &filter);
@@ -147,7 +162,7 @@ impl Memory<'_> {
             .vault
             .query()
             .reading(lane.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates)
             .scoped_note_reader(lane.actor_key().clone())
             .for_destination(lane.actor_key().destination())
             .filter_candidates(&admitted)

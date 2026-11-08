@@ -67,6 +67,15 @@ side_tables! {
     /// The SKILL the Coach's feedback triage runs, as the owner bound it, with the binding's
     /// revision (OF-420 T1); absent until the owner binds one. Key: ().
     FEEDBACK_TRIAGE_BINDING: VaultMeta b"feedback:triage-binding:v1:" Named;
+    /// Each acknowledged feedback triage handoff whose evidence is retained, under its evidence
+    /// ASSET (FIX 7550). Key: id16(evidence) + bytes32(handoff key). Value: empty.
+    FEEDBACK_TRIAGE_HANDOFF_BY_EVIDENCE: VaultMeta b"feedback:triage-handoff-by-evidence:v1:" Raw;
+    /// Each feedback triage handoff under the sweep that handed it off and the sweep that queued
+    /// its current job (FIX 7550). Key: id16(sweep attempt) + bytes32(handoff key). Value: empty.
+    FEEDBACK_TRIAGE_HANDOFF_BY_SWEEP: VaultMeta b"feedback:triage-handoff-by-sweep:v1:" Raw;
+    /// Each feedback triage handoff a requeue pass visits: unacknowledged, or settled erased
+    /// (FIX 7550). Key: bytes32(handoff key). Value: empty.
+    FEEDBACK_TRIAGE_HANDOFF_OPEN: VaultMeta b"feedback:triage-handoff-open:v1:" Raw;
     /// One feedback revision a triage sweep handed off: its source, id and revision, the ASSET
     /// holding the exact item the triage reads, the sweeps that handed it off and queued its
     /// current job, that job, and the committed result once acknowledged. Source and result
@@ -281,6 +290,22 @@ side_tables! {
     HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
     /// The last settlement sequence handed out. Key: ().
     HOOKS_SETTLED_NEXT: VaultMeta b"hooks:settled_next:v1" Named;
+    /// The inbound surface-event feed fact hooks follow (FIX 4749): one row per admitted
+    /// connector SurfaceEvent, its ids and tokens only. Key: u64be (sequence).
+    HOOKS_SURFACE_INBOUND: VaultMeta b"hooks:surface_inbound:v1:" Named;
+    /// The last inbound surface-event sequence handed out. Key: ().
+    HOOKS_SURFACE_INBOUND_NEXT: VaultMeta b"hooks:surface_inbound_next:v1" Named;
+    /// Each TASK with a due time not yet ticked (FIX 4749). Key: u64be (due time, Unix seconds)
+    /// + id16 (TASK).
+    HOOKS_TASK_DUE: VaultMeta b"hooks:task_due:v1:" Named;
+    /// Each TASK the due index holds (FIX 4749): the due time it holds, and the tick sequence
+    /// its release committed, if it has ticked. Key: id16 (TASK).
+    HOOKS_TASK_DUE_REVERSE: VaultMeta b"hooks:task_due_reverse:v1:" Named;
+    /// The tick feed fact hooks follow (FIX 4749): one row per due TASK released. Key: u64be
+    /// (sequence).
+    HOOKS_TICK: VaultMeta b"hooks:tick:v1:" Named;
+    /// The last tick sequence handed out. Key: ().
+    HOOKS_TICK_NEXT: VaultMeta b"hooks:tick_next:v1" Named;
     /// A call a verb hook's ask stopped: the call, its re-validated args, the hook's place in the
     /// chain and the ask handle, Open until a retry resumes it once. Key: id16 (invocation).
     HOOKS_VERB_ASK: VaultMeta b"hooks:verb_ask:v1:" Named;
@@ -414,12 +439,21 @@ side_tables! {
     /// order's events are in `LEGAL_HOLD_HOST_EVENT`; the owner reads those through
     /// `LegalHold::owner_may_see`. Key: id16 (hold) + u64be (sequence).
     LEGAL_HOLD_EVENT: VaultMeta b"legal_hold:event:v1:" Named;
-    /// The host orders an owner's confirmed erase met (OF-470 C4). Host-only and runtime-tier:
-    /// no checkpoint image carries it. Key: id16 (record).
-    LEGAL_HOLD_HOST_ERASE_LINK: VaultMeta b"legal_hold:host:erase_link:v1:" Named;
     /// The host-only legal-hold log (OF-470 C2). Runtime-tier: no checkpoint image carries it.
     /// Key: id16 (hold) + u64be (sequence).
     LEGAL_HOLD_HOST_EVENT: VaultMeta b"legal_hold:host:event:v1:" Named;
+    /// A HOST order's standing explicit prospective capture (LEGAL-HOLD-USE = B as a clone,
+    /// FIX 13866): its capture binding, term, public recipient key and next outbox ordinal.
+    /// Host-only, runtime-tier, carried with the host-order family. Key: id16 (order) + u64be
+    /// (generation).
+    LEGAL_HOLD_HOST_PROSPECTIVE: VaultMeta b"legal_hold:host:prospective:v1:" Named;
+    /// A new MESSAGE row sealed to its prospective order when it landed, until the HOST
+    /// acknowledges its batch or the order ends: clone custody, never vault data. Host-only,
+    /// runtime-tier. Key: id16 (order) + u64be (generation) + u64be (ordinal).
+    LEGAL_HOLD_HOST_PROSPECTIVE_OUTBOX: VaultMeta b"legal_hold:host:prospective_outbox:v1:" Named;
+    /// A released prospective order generation, so a late reconnect never stands it again.
+    /// Content-free. Key: id16 (order) + u64be (generation).
+    LEGAL_HOLD_HOST_PROSPECTIVE_RELEASED: VaultMeta b"legal_hold:host:prospective_released:v1:" Raw;
     /// A host-order legal hold Oneiron placed on an authority order (OF-470 C1). Runtime-tier: no
     /// checkpoint image carries it. Key: id16 (hold).
     LEGAL_HOLD_HOST_ROW: VaultMeta b"legal_hold:host:row:v1:" Named;
@@ -448,6 +482,10 @@ side_tables! {
     /// Key: string (pack name "\0" skill id hex).
     LENS_SLOT: VaultMeta b"lens/slot/v1\0" Named
         => crate::lens::erase_slot_actor_in_txn;
+    /// Native provider archive version captured by a LINE observation. Key: id16(claim).
+    LINE_CHAT_ARCHIVE_PIN: VaultMeta b"line:chat_archive_pin:v1:" Named Engine;
+    /// Exact native join-version release still owed after capture teardown. Key: id16(claim).
+    LINE_CHAT_ARCHIVE_RELEASE: VaultMeta b"line:chat_archive_release:v1:" Named Engine;
     /// Tracker issue id to task id. Key: string.
     LINEAR_ISSUE_REVERSE: VaultMeta b"linear.issue.v1/" Raw;
     /// One TASK's mirror control (OF-427 C6): whether it is opted out, its mapping revision and
@@ -508,6 +546,23 @@ side_tables! {
     /// Revision-pinned description of one registered model, read by seat routing. Key:
     /// string(model id).
     LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson Authored [accepts: crate::store::seat_model_description::llm_model_description_accepts_masked];
+    /// The model pack the vault followed at its last pack change and the one it followed
+    /// before, each as its install receipt named it: what a way back returns to (FIX 5367,
+    /// FIX 5369). Key: ().
+    LLM_MODEL_PACK_ACTIVE: VaultMeta b"llm:model_pack_active:v1" Named;
+    /// The owner's model pack preference: follow the latest pack, pin a season or pin one pack
+    /// (FIX 5367, FIX 5369). Key: ().
+    LLM_MODEL_PACK_PREFERENCE: VaultMeta b"llm:model_pack_preference:v1" Named;
+    /// Each model pack's version a same-name update replaced, as its install receipt named it:
+    /// the version the update's change notice names as `previous`, which the one-tap revert
+    /// installs again once its bytes pass an install's checks (FIX 20192). One per pack name;
+    /// the next same-name update replaces it and the pack's removal removes it. Key:
+    /// string(pack name).
+    LLM_MODEL_PACK_REPLACED: VaultMeta b"llm:model_pack_replaced:v1:" Named Admitted;
+    /// Each model pack retirement notice sent to the vault's owners, and when, so a restart or a
+    /// second pass sends none twice (FIX 5368). Key: u64be(retirement epoch day) + u64be(mark,
+    /// days before it) + string(`pack:<pack id>` or `model:<model id>`).
+    LLM_MODEL_PACK_RETIREMENT_NOTICE: VaultMeta b"llm:model_pack_retirement_notice:v1:" Named Engine;
     /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
     LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
     /// The loaded native Oneironer bundle's receipt at its bind: stack and

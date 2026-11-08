@@ -68,6 +68,37 @@ impl Vault {
         payload_ref: &str,
         now: u64,
     ) -> Result<EntityId> {
+        self.observe_line_chat_inner(destination, chat, payload_ref, None, now)
+    }
+
+    /// Records a native webhook observation with the exact archive version
+    /// returned by its producer. `own_join` names the verified join branch;
+    /// a text event's archive remains borrowed by the message path.
+    pub fn observe_line_chat_from_archive(
+        &self,
+        destination: &str,
+        chat: &LineChat,
+        archive: &crate::surface_event::ProviderEventArchiveReceipt,
+        own_join: bool,
+        now: u64,
+    ) -> Result<EntityId> {
+        self.observe_line_chat_inner(
+            destination,
+            chat,
+            &archive.payload_ref(),
+            Some((archive, own_join)),
+            now,
+        )
+    }
+
+    fn observe_line_chat_inner(
+        &self,
+        destination: &str,
+        chat: &LineChat,
+        payload_ref: &str,
+        archive: Option<(&crate::surface_event::ProviderEventArchiveReceipt, bool)>,
+        now: u64,
+    ) -> Result<EntityId> {
         let destination = normalize_line_user_like_id(
             destination,
             "LINE OA Messaging API destination",
@@ -122,6 +153,11 @@ impl Vault {
             },
             now,
         )?;
+        if let Some((archive, own_join)) = archive {
+            super::line_chat_archive_pins::register_in_txn(
+                self, &mut wtxn, &id, archive, own_join,
+            )?;
+        }
         wtxn.commit()?;
         Ok(id)
     }

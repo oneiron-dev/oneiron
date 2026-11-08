@@ -25,6 +25,11 @@ impl VerifiedOwnDeviceLane {
     pub(in crate::batch) fn machine_for(&self, _id: &EntityId, _data: &[u8]) -> Option<EntityId> {
         match *self {}
     }
+
+    /// Never answers: there is no lane to ask.
+    pub(in crate::batch) fn authored_by(&self) -> Option<EntityId> {
+        match *self {}
+    }
 }
 
 /// One entity put through the `apply_put` chokepoint.
@@ -216,6 +221,10 @@ pub(in crate::batch) struct PutContext<'a> {
     /// Pending-birth prompt sources for FIX 11000 anchors: `Some` proven
     /// from batch state (possibly empty), `None` unknown (incomplete).
     pub(in crate::batch) pending_prompt: Option<&'a [EntityId]>,
+    pub(in crate::batch) prepared_person_substrate:
+        Option<&'a crate::batch::PreparedPersonSubstrate>,
+    pub(in crate::batch) prepared_agent_birth:
+        Option<&'a crate::agent_def::PreparedAgentDefinitionBirth>,
 }
 
 /// One claim candidate through `apply_claim_candidate`: the candidate and its

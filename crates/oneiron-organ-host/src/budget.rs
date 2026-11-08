@@ -21,7 +21,10 @@
 //! class apart from what its answers and outputs hold, until the call ends.
 //! That growth waits within the call's deadline, and a revocation ends it.
 //! The process's kernel limits grow with what its buffers were granted, and
-//! shrink back when the call ends (FIX 6194).
+//! shrink back when the call ends (FIX 6194). The organ's read of each call
+//! and answer the host sends it is held the same way, but its frames' bytes
+//! go back as soon as the organ asks again, which it does only once it has
+//! decoded them (FIX 12437).
 //!
 //! Calls of one class take their turns in the order they came (FIX 8025):
 //! a newer call never passes an older one of its class, however small. A
@@ -364,17 +367,24 @@ struct RoomState {
     /// Of the permit's memory, what answers lent and outputs kept hold.
     held: u64,
     /// Of the permit's memory, what the organ's own buffers hold
-    /// (`memory.grow`). No answer's arithmetic reads it or gives it back: it
-    /// stays until the room drops with the call.
+    /// (`memory.grow`), and its reads of what the host sent it. No answer's
+    /// arithmetic reads it or gives it back: it stays until the room drops
+    /// with the call, but for the reads' frames (`reading`).
     native: u64,
+    /// Of `native`, the frames' bytes and descriptors' room of each call or
+    /// answer the host sent the organ that it is not yet seen to have
+    /// decoded ([`CallRoom::grow_read`]): given back when it next asks
+    /// ([`CallRoom::reads_decoded`], FIX 12437).
+    reading: u64,
     overcommit: u64,
     peak: u64,
 }
 
 /// The machine's lease behind one room's native memory for the organ's own
-/// buffers: one cumulative handle, grown as the buffers take shape and
-/// given back as the room drops (FIX 12440). Earlier unallocated grants
-/// remain charged as pending memory.
+/// buffers: one cumulative handle, grown as the buffers take shape, shrunk
+/// as the organ's reads are decoded (FIX 12437), and given back as the room
+/// drops (FIX 12440). Earlier unallocated grants remain charged as pending
+/// memory.
 #[derive(Default)]
 struct Leases(Option<Box<dyn FloorLease>>);
 
@@ -408,6 +418,7 @@ impl CallRoom {
                 permit,
                 held: 0,
                 native: 0,
+                reading: 0,
                 overcommit: 0,
                 peak: 0,
             }),
@@ -526,6 +537,52 @@ impl CallRoom {
             limits.grant(bytes);
         }
         Ok(())
+    }
+
+    /// Holds the organ's read of a call or answer the host is about to send
+    /// it, as [`Self::grow_native`] holds its own buffers: `bytes` at the
+    /// read's peak, of which `frames` (the message's encoded bytes and its
+    /// descriptors' room) are the read's alone, gone once the organ has
+    /// decoded the message. Those go back at [`Self::reads_decoded`]; what
+    /// the message decodes into stays until the room drops (FIX 12437).
+    pub(crate) fn grow_read(
+        &self,
+        bytes: u64,
+        frames: u64,
+        deadline: Instant,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), NativeRefusal> {
+        self.grow_native(bytes, deadline, stopped)?;
+        let mut state = self.lock();
+        state.reading = state.reading.saturating_add(frames.min(bytes));
+        Ok(())
+    }
+
+    /// The organ asked again for the call. Its runtime decodes each message
+    /// and frees the message's frames and descriptor list before the call's
+    /// verb holds it, and a call asks again only once it holds the answer to
+    /// its last ask: so every message the host sent it for the call before
+    /// is decoded, and their reads' frames are gone (FIX 12437). That room
+    /// goes back: the machine's lease shrinks by it, and the room's native
+    /// memory and the kernel's limits with it. The booking keeps its size.
+    /// What the messages decoded into stays until the room drops, since the
+    /// organ may keep it.
+    pub(crate) fn reads_decoded(&self) {
+        let mut slot = lock_leases(&self.leases);
+        let mut state = self.lock();
+        let bytes = std::mem::take(&mut state.reading);
+        if bytes == 0 {
+            return;
+        }
+        state.native = state.native.saturating_sub(bytes);
+        drop(state);
+        if let Some(held) = slot.0.as_mut() {
+            held.shrink(bytes);
+        }
+        drop(slot);
+        if let Some(limits) = self.limits.get() {
+            limits.give_back(bytes);
+        }
     }
 
     /// Gives back `bytes` held for an answer the organ was never sent. The

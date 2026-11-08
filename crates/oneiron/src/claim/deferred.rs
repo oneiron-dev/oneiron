@@ -8,6 +8,11 @@ use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
 const CONTRADICTION_PENDING: &str = "gate.pending.contradiction_closure";
+/// The reason code of the allow decision an owner's direct correction of
+/// their own claim records (FIX 22041): the replacement landed at once and
+/// closed the prior head in the same write, so no closure proposal opened
+/// (DEC-0006 row 10; ARCH-0003 change policy).
+const GATE_REASON_SUPERSEDE_OWNER_CORRECTION: &str = "gate.supersede.owner_correction";
 
 #[derive(Serialize, Deserialize)]
 pub(super) enum DeferredAction {
@@ -196,6 +201,72 @@ impl Vault {
             )?;
         }
         Ok(())
+    }
+
+    /// Closes `old` under `new`, its owner's direct correction, inside the
+    /// write that landed `new` (FIX 22041). The prior is superseded as a
+    /// settled approval leaves it (`superseded`, `valid_to` and the
+    /// `supersedes` edge), closed by `owner`, and the correction's allow
+    /// decision is recorded on `new` as the write's receipt. No pending row,
+    /// tray entry or proposal opens. The writer has checked that `owner` is a
+    /// live owner writing in person and the prior's author; the replacement
+    /// must have landed (Auto or Approved, as the settled close requires),
+    /// and a class a manifest rule declares critical keeps its owner
+    /// confirmation, so either fails the write closed. The prior's close is
+    /// gated as `owner`'s verified close of its row, so a prior that was
+    /// settled Approved passes the fallback floor as an Auto one does.
+    pub(crate) fn supersede_by_owner_correction_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        new: &EntityId,
+        old: &EntityId,
+        owner: crate::WriteActor,
+        now: u64,
+    ) -> Result<()> {
+        let old_body = self.require_named_claim_target_active_in(txn, old)?;
+        let body = self
+            .get_claim_in_txn(txn, new)?
+            .ok_or(Error::EntityNotFound)?;
+        if !matches!(
+            body.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) {
+            return Err(Error::InvalidClaimBody(
+                "an owner correction closes nothing before it lands",
+            ));
+        }
+        let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+        if policy.declares_predicate_critical(&old_body.predicate)
+            || policy.declares_predicate_critical(&body.predicate)
+        {
+            return Err(Error::InvalidClaimBody(
+                "a critical replacement keeps its owner confirmation",
+            ));
+        }
+        self.supersede_claim_in_txn_as(txn, new, old, now, Some(owner))?;
+        let (diff_handle, read_frontier_hash) =
+            crate::gate::claim_consent_binding_parts(&self.store, txn, &body)?;
+        let mut record = GateDecisionRecord {
+            version: 0,
+            decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
+            created_at: now,
+            outcome: "allow".to_owned(),
+            reason_codes: vec![GATE_REASON_SUPERSEDE_OWNER_CORRECTION.to_owned()],
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: owner.actor_class().gate_actor_class().to_owned(),
+            actor_ref: Some(owner.entity_ref().to_hex()),
+            content_kind: "claim".to_owned(),
+            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            claim_id: Some(*new.as_bytes()),
+            grant_ref: None,
+            diff_handle,
+            read_frontier_hash,
+            context: Default::default(),
+            redacted_at: None,
+        };
+        self.store
+            .append_fresh_gate_decision_in_txn(txn, &mut record)
     }
 
     /// Re-evaluate an ordinary parked replacement for Auto and close the
@@ -448,17 +519,26 @@ impl Vault {
                 }
                 let decision = self
                     .supersede_granted_deferred_claim_in_txn(txn, id, &old, now, checker, closer)?;
-                self.store.close_pending_gate_consent_in_txn(
+                self.store.close_pending_gate_consent_as_in_txn(
                     txn,
                     id,
                     now,
                     "superseded",
                     vec!["gate.supersede.contradiction_closure".to_owned()],
                     None,
+                    if critical_confirmed {
+                        // Keep the outer Clear's existing obligation result.
+                        crate::store::TrayRemoval::Answered
+                    } else {
+                        crate::store::TrayRemoval::Unanswered
+                    },
                 )?;
                 let envelope = super::supersession_provenance::envelope(&body)?;
                 super::supersession_provenance::write_companion(
                     self, txn, id, &old, &body, &old_body, &envelope, now,
+                )?;
+                super::supersession_provenance::settle_coaching_in_txn(
+                    self, txn, id, &old, &body, &envelope, closer, now,
                 )?;
                 decision
             }
@@ -589,6 +669,7 @@ fn park(
             reason_codes: vec![reason.to_owned()],
             dreamer_run_id: parker.run,
             predicate: Some(body.predicate.clone()),
+            expires_at: None,
         },
     )?;
     DEFERRED.put(&vault.store, txn, id, &proposal)?;

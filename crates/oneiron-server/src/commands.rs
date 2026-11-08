@@ -128,6 +128,8 @@ mod account;
 pub use account::account;
 mod device;
 pub use device::device_enrol;
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub(crate) mod hook_regen;
 mod serve;
 pub(crate) use self::serve::hook_sandbox;
 pub(crate) use self::serve::open_served_vault_anchored;
@@ -157,6 +159,7 @@ pub use owner::legal_holds;
 pub(crate) use owner::page_seal_at;
 pub use owner::reminder_route;
 pub use owner::widen_proposals;
+pub use owner::{MeetingTranscriptArgs, meeting_transcript};
 pub use owner::{
     backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, recovery_kit,
     restore, runs, secret_scan, secrets, vault_key, whoami,
@@ -169,6 +172,8 @@ pub use self::seat::{
     seat_login_plan, seat_routes, seat_runner_policy, seat_runners, seat_siwc_clear,
     seat_siwc_login, seat_siwc_revoke,
 };
+mod model_workers;
+pub use model_workers::model_workers;
 mod registry;
 pub use self::registry::registry;
 

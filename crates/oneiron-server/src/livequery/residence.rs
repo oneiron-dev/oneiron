@@ -188,6 +188,10 @@ struct SearchRequest {
     /// A later page of a search served in pages (FIX 8865).
     #[serde(default)]
     page: Option<oneiron::sync::residence::ResidenceSearchCursor>,
+    /// The caller's own retrieval filter (FIX 3977): the home's reader meets
+    /// it before the candidate cut, and a forwarded search signs it.
+    #[serde(default)]
+    filter: Option<oneiron::memory::ReadFilterInput>,
 }
 
 impl SearchRequest {
@@ -223,6 +227,7 @@ impl SearchRequest {
             &selector_wire,
             self.scope.as_ref(),
             self.as_of,
+            self.filter.as_ref(),
             locality,
             self.page.as_ref(),
             |request| {
@@ -440,8 +445,10 @@ pub(super) fn run(
     touch_stage: &mut Option<ResidenceTouchStage>,
 ) -> Result<super::RpcReply, crate::protocol::ProtocolError> {
     let call = super::RpcCall::of(&request);
-    // A forwarded search's verified caller, whom its receipt names (FIX 3550).
+    // A forwarded search's verified caller, whom its receipt names (FIX 3550),
+    // and whether it sits off the carrying device (FIX 11991).
     let mut attribution = None;
+    let mut off_carrier = false;
     let result = (|| {
         auth.require(CoreScope::Read)?;
         if !auth.credential_is_live(server.vault.as_ref()) {
@@ -461,6 +468,7 @@ pub(super) fn run(
                 request.params,
                 budgets,
                 &mut attribution,
+                &mut off_carrier,
             ),
             "residence.media_vectors" => {
                 media_vectors::media_vectors(server, auth, peer, request.params)
@@ -522,6 +530,7 @@ pub(super) fn run(
         request.request_id,
         result,
     )
+    .map(|reply| reply.released_off_carrier(off_carrier))
 }
 
 fn operation_budgets(server: &SyncServer) -> Result<ResidenceOperationBudgets, AppError> {

@@ -126,6 +126,9 @@ pub(crate) struct WindowPadLedger {
     /// its envelope id and payload, read whole when its first frame is
     /// judged (FIX 8247). A later one of the window takes its place.
     continued: HashMap<String, ([u8; 32], Vec<u8>)>,
+    /// Windows whose update this connection could not judge now, so a ready
+    /// exchange that made it is asked again (FIX 19634).
+    ready_retry: HashSet<String>,
 }
 
 fn invalid(why: &'static str) -> TransportError {
@@ -139,10 +142,23 @@ impl SyncClient {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// The windows whose ready exchange this connection asks again: an
+    /// update it made for them could not be judged whole now (FIX 19634).
+    pub(crate) fn take_ready_retries(&self) -> Vec<WindowKey> {
+        std::mem::take(&mut self.window_pad_ledger().ready_retry)
+            .into_iter()
+            .filter_map(WindowKey::try_new)
+            .collect()
+    }
+
     /// Forgets every association of the last connection, the sealed updates
     /// it left waiting included: the next exchange asks for them again.
     pub(crate) fn reset_window_pads(&mut self) {
         *self.window_pad_ledger() = WindowPadLedger::default();
+        self.document_parts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         self.deferred_sealed_updates.clear();
     }
 
@@ -621,6 +637,7 @@ impl SyncClient {
                                     window = key,
                                     "window update past one frame withheld: payload not held"
                                 );
+                                ledger.ready_retry.insert(key.to_owned());
                             }
                             return true;
                         };
@@ -628,8 +645,12 @@ impl SyncClient {
                         (id, Cow::Owned(whole), true)
                     }
                 };
-                let withheld = self.update_verdict(key, &inner) != UpdateVerdict::Portable;
+                let verdict = self.update_verdict(key, &inner);
+                let withheld = verdict != UpdateVerdict::Portable;
                 let mut ledger = self.window_pad_ledger();
+                if verdict == UpdateVerdict::Uninspectable {
+                    ledger.ready_retry.insert(key.to_owned());
+                }
                 if withheld {
                     let digest = *blake3::hash(&inner).as_bytes();
                     ledger.sent.remove(&SentKey::Update(key.to_owned(), digest));

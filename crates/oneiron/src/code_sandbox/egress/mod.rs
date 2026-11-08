@@ -3,6 +3,7 @@
 
 mod dns;
 mod fixture;
+mod floor;
 mod http;
 mod name_gate;
 mod quic;
@@ -12,10 +13,9 @@ use crate::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest, PolicyV
 use crate::{EntityId, Vault};
 pub use dns::{UnusableResolver, exchange_dns_query};
 pub use fixture::{FixtureForward, FixtureForwardError};
+pub use floor::{ProcessDescriptorFloor, VaultHostFloor, guest_network_permits};
 pub use name_gate::EgressNameRefusal;
-use oneiron_container::{
-    EgressRelay, HostNetFloor, HostNetPermit, HttpRequest, HttpResponse, UnmeteredFloor,
-};
+use oneiron_container::{EgressRelay, HostNetFloor, HttpRequest, HttpResponse};
 use oneiron_sandbox_contract::network::global_address;
 pub use quic::EgressDatagramNameRefusal;
 pub use receipt::EgressReceipt;
@@ -115,42 +115,6 @@ fn within(domain: &str, host: &str) -> bool {
         || host
             .strip_suffix(&domain)
             .is_some_and(|prefix| prefix.ends_with('.'))
-}
-
-impl Vault {
-    /// Lends guest network work this host's floor (FIX 5978, FIX 5979):
-    /// every relay a run on this vault opens charges its guest's sockets and
-    /// relayed datagrams to it. The first lend holds.
-    pub fn lend_host_net_floor(&self, floor: Arc<dyn HostNetFloor>) {
-        let _ = self.host_net_floor.set(floor);
-    }
-
-    /// Takes `fds` descriptors and `workers` threads of the floor this
-    /// vault's host lent ([`Vault::lend_host_net_floor`]), looked up now, as
-    /// a run's relay charges it; a vault no host lent one charges nothing.
-    /// For a host relay that serves no run (FIX 7333).
-    ///
-    /// # Errors
-    /// Returns the floor's `WouldBlock` back-pressure when it is full.
-    pub fn acquire_host_net_floor(&self, fds: usize, workers: usize) -> io::Result<HostNetPermit> {
-        match self.host_net_floor.get() {
-            Some(floor) => floor.acquire(fds, workers),
-            None => UnmeteredFloor.acquire(fds, workers),
-        }
-    }
-
-    /// Takes `bytes` of the floor this vault's host lent, looked up now, as
-    /// a run's relay charges its paused request and answer bodies; a vault no
-    /// host lent one charges nothing.
-    ///
-    /// # Errors
-    /// Returns the floor's `WouldBlock` back-pressure when it is full.
-    pub fn acquire_host_net_bytes(&self, bytes: u64) -> io::Result<HostNetPermit> {
-        match self.host_net_floor.get() {
-            Some(floor) => floor.acquire_bytes(bytes),
-            None => UnmeteredFloor.acquire_bytes(bytes),
-        }
-    }
 }
 
 pub struct OpenEgressProxy {
@@ -466,27 +430,11 @@ impl OpenEgressProxy {
         result.map(|_| response)
     }
 }
-/// The floor the vault's host lent ([`Vault::lend_host_net_floor`]), looked
-/// up at each charge, so a run opened before the lend is charged once it
-/// lands. A vault no host lent one charges nothing.
-impl HostNetFloor for OpenEgressProxy {
-    fn acquire(&self, fds: usize, workers: usize) -> io::Result<HostNetPermit> {
-        match self.vault.host_net_floor.get() {
-            Some(floor) => floor.acquire(fds, workers),
-            None => UnmeteredFloor.acquire(fds, workers),
-        }
-    }
-
-    fn acquire_bytes(&self, bytes: u64) -> io::Result<HostNetPermit> {
-        match self.vault.host_net_floor.get() {
-            Some(floor) => floor.acquire_bytes(bytes),
-            None => UnmeteredFloor.acquire_bytes(bytes),
-        }
-    }
-}
 impl EgressRelay for OpenEgressProxy {
+    /// The vault's host floor ([`VaultHostFloor`]), looked up at each
+    /// charge: the process's descriptor line until a host attaches its own.
     fn host_net_floor(&self) -> &dyn HostNetFloor {
-        self
+        &*self.vault.host_net_floor
     }
     fn record_abandoned(&self, manifest: &oneiron_container::SessionManifest) -> io::Result<()> {
         self.vault

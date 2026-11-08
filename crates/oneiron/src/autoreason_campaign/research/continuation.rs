@@ -10,6 +10,7 @@
 //! write scope. A consumed confirmation shot stays spent: a referee that does
 //! not answer holds the campaign, and is never asked again.
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound::{Excluded, Unbounded};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -18,13 +19,13 @@ use serde_json::json;
 use super::super::CampaignDatasetRef;
 use super::super::beam_promotion::SealedRefereeMeasurement;
 use super::super::general::Measurement;
-use super::budget::is_budget_refusal;
+use super::budget::{is_budget_refusal, settle_research_work_unknown};
 use super::estimator::{self, ENGINE_ESTIMATOR_VERSION};
 use super::{
     BINDING, CandidateRef, ConfirmationOutcome, ExperimentNode, ForkInput, ForkKind, HeldOutCall,
     NODE, PromotionBasis, PromotionDisposition, ROUND, ResearchBinding, ResearchExecution,
     ResearchReservation, ResearchStep, ResearchTarget, SearchEvidence, SelectionReceipt, hex,
-    invalid, nodes_in_txn, promote_measured, promotion_basis, record_fork,
+    invalid, nodes_in_txn, promote_measured, promotion_basis, proposal_of, record_fork,
     record_held_out_measurement, record_invalid_experiment, record_search_measurement,
     refund_research_work, research_binding, research_incumbent, research_promotions,
     research_reservations, reserve_confirmation, reserve_research_work, settle_research_work,
@@ -37,7 +38,8 @@ use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::context_projection::ContextSpec;
 use crate::research_budget::RsiSpendPurpose;
 use crate::run_budget::LeaseUnit;
-use crate::side_table::{self, Named, SideTable};
+use crate::scan_check::{EngineScan, ScanCount};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::skill_optimize::{EvalRelease, SufficiencyInput};
 use crate::{AttemptId, AttemptQueue, EntityId, Error, Result, Vault};
 
@@ -47,6 +49,9 @@ mod pass;
 /// bootstrap, `n + 1` selection round `n`.
 const CONTINUATION: SideTable<([u8; 16], u64), ResearchContinuation, Named> =
     SideTable::new(&side_table::AUTORESEARCH_CONTINUATION);
+/// The root the continuation sweep served last, for fair rotation. Key: ().
+const CONTINUATION_CURSOR: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::AUTORESEARCH_CONTINUATION_CURSOR);
 
 /// Steps one continuation takes in one pass.
 const MAX_STEPS_PER_PASS: usize = 16;
@@ -254,8 +259,69 @@ pub fn research_work_pending(vault: &Vault) -> Result<bool> {
     Ok(false)
 }
 
-/// The Coach host's pass: create what is owed, then advance each live
-/// continuation until a run is still going, it holds or it ends. A refused
+/// The root the sweep served last, read from its cursor; `None` from the start.
+fn cursor_after(cursor: &[u8]) -> Result<Option<[u8; 16]>> {
+    if cursor.is_empty() {
+        return Ok(None);
+    }
+    let key: [u8; 16] = cursor
+        .try_into()
+        .map_err(|_| crate::Error::CorruptedIndex("research continuation cursor"))?;
+    Ok(Some(key))
+}
+
+/// One page of at most `limit` executed roots past `after`, or from the start,
+/// each counted as read.
+fn page_executed_roots_past(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    after: Option<&[u8; 16]>,
+    limit: usize,
+    count: &mut ScanCount,
+) -> Result<Vec<AttemptId>> {
+    let mut roots = Vec::new();
+    for row in BINDING.iter_range(
+        &vault.store,
+        txn,
+        after.map_or(Unbounded, Excluded),
+        Unbounded,
+    )? {
+        let (_, binding) = row?;
+        count.row();
+        if binding.execution.is_none() {
+            continue;
+        }
+        roots.push(binding.root);
+        if roots.len() == limit {
+            break;
+        }
+    }
+    Ok(roots)
+}
+
+/// Whether the Coach attempt that started the pass may serve another root: its
+/// queue row still exists, is still leased, and its lease never moved on.
+fn coach_attempt_still_usable(
+    vault: &Vault,
+    coach_attempt: AttemptId,
+    coach_lease: &Option<(Option<String>, u32)>,
+) -> Result<bool> {
+    let Some((owner, attempt_count)) = coach_lease else {
+        return Ok(false);
+    };
+    let queue = AttemptQueue::new(vault);
+    Ok(queue.get(coach_attempt)?.is_some_and(|record| {
+        record.state == AttemptState::Leased
+            && record.lease_owner == *owner
+            && record.attempt_count == *attempt_count
+    }))
+}
+
+/// The Coach host's pass: serve one rotating page of executed roots past the
+/// persisted cursor, wrapping from the start once past the last, then advance
+/// each served root's owed and live continuations until a run is still going,
+/// it holds or it ends. Every inspected root moves the cursor, budget-held
+/// ones included, so no funded campaign starves past the page. A refused
 /// record door fails that continuation alone; a storage error stops the pass.
 /// # Errors
 /// Storage errors, or another pass advancing a continuation concurrently.
@@ -264,32 +330,71 @@ pub fn advance_research_continuations(
     coach_attempt: AttemptId,
     now: u64,
 ) -> Result<()> {
-    let live = ensure_research_continuations(vault, now)?;
-    let mut roots: Vec<AttemptId> = Vec::new();
-    for (root, work) in &live {
-        if !roots.contains(root) {
-            if roots.len() == MAX_ROOTS_PER_PASS {
-                continue;
-            }
-            roots.push(*root);
+    let queue = AttemptQueue::new(vault);
+    let coach_lease = queue.get(coach_attempt)?.and_then(|record| {
+        (record.state == AttemptState::Leased).then(|| (record.lease_owner, record.attempt_count))
+    });
+    let txn = vault.store.env.read_txn()?;
+    let after = cursor_after(
+        &CONTINUATION_CURSOR
+            .get(&vault.store, &txn, &())?
+            .unwrap_or_default(),
+    )?;
+    let mut count = ScanCount::start(
+        &vault.store,
+        &txn,
+        EngineScan::ResearchContinuationRoots,
+        &[],
+    )?;
+    let mut roots =
+        page_executed_roots_past(vault, &txn, after.as_ref(), MAX_ROOTS_PER_PASS, &mut count)?;
+    if roots.is_empty() && after.is_some() {
+        roots = page_executed_roots_past(vault, &txn, None, MAX_ROOTS_PER_PASS, &mut count)?;
+    }
+    drop(txn);
+    count.finish(vault);
+    let Some(last) = roots.last() else {
+        return Ok(());
+    };
+    let last = last.as_bytes().to_vec();
+    vault.with_write_txn_grouped(|txn| {
+        CONTINUATION_CURSOR.put(&vault.store, txn, &(), &last)?;
+        Ok(())
+    })?;
+    let mut served = 0;
+    for root in roots {
+        if !coach_attempt_still_usable(vault, coach_attempt, &coach_lease)? {
+            break;
         }
-        let Some(binding) = research_binding(vault, *root)? else {
+        create_missing(vault, root, now)?;
+        let Some(binding) = research_binding(vault, root)? else {
             continue;
         };
         let Some(execution) = &binding.execution else {
             continue;
         };
-        Pass {
-            vault,
-            binding: &binding,
-            execution,
-            now,
+        let txn = vault.store.env.read_txn()?;
+        let live: Vec<ResearchWork> = CONTINUATION
+            .scan_from(&vault.store, &txn, root.as_bytes())?
+            .into_iter()
+            .filter(|(_, row)| row.state.live())
+            .map(|(_, row)| row.work)
+            .collect();
+        drop(txn);
+        for work in live {
+            served += 1;
+            Pass {
+                vault,
+                binding: &binding,
+                execution,
+                now,
+            }
+            .advance(work)?;
         }
-        .advance(*work)?;
     }
     tracing::debug!(
         coach_attempt = %hex(&coach_attempt),
-        continuations = live.len(),
+        continuations = served,
         "autoresearch continuations advanced"
     );
     Ok(())
@@ -460,6 +565,7 @@ fn expected_gain_for(
     node: AttemptId,
     evidence: &SearchEvidence,
 ) -> Result<f64> {
+    let incumbent = research_incumbent(vault, binding.root)?;
     let txn = vault.store.env.read_txn()?;
     let mut nodes = nodes_in_txn(vault, &txn, binding.root)?;
     drop(txn);
@@ -470,7 +576,7 @@ fn expected_gain_for(
         });
     }
     Ok(
-        estimator::branch_beliefs(&nodes, binding.root, &binding.prior_ladder)
+        estimator::branch_beliefs(&nodes, binding.root, incumbent, &binding.prior_ladder)
             .and_then(|beliefs| {
                 beliefs
                     .get(node.as_bytes())
@@ -481,21 +587,18 @@ fn expected_gain_for(
     )
 }
 
-/// What a finished run spent, at most its reservation: the metered tokens of
-/// the spend scope it ran under.
-fn run_spend_units(vault: &Vault, run: AttemptId, reserved: u64) -> Result<u64> {
+/// The token-denominated spend recorded by a finished run's native scope,
+/// without clipping to its reservation. Other units and absent scopes are
+/// unknown, not interchangeable with a token reservation.
+fn run_spend_units(vault: &Vault, run: AttemptId) -> Result<Option<u64>> {
     let dispatcher = AgentDispatcher::new(vault);
     let scope = match dispatcher.spend_scope_for_attempt(run)? {
         Some(id) => dispatcher.read_spend_scope(&id)?,
         None => None,
     };
-    Ok(match scope {
-        Some(scope) if scope.unit == LeaseUnit::tokens() => scope.spent_units.min(reserved),
-        // FIX: a run under an unmetered campaign root, or in a non-token
-        // unit, reports no token spend; it settles the whole reservation
-        // until the research dispatch opens a token spend scope for its runs.
-        _ => reserved,
-    })
+    Ok(scope
+        .filter(|scope| scope.unit == LeaseUnit::tokens())
+        .map(|scope| scope.spent_units))
 }
 
 /// The text of a finished agent run's answer: the observation its result
@@ -551,17 +654,4 @@ fn answer_object<T: DeserializeOwned>(text: &str) -> Option<T> {
     let start = text.find('{')?;
     let end = text.rfind('}')?;
     serde_json::from_str(text.get(start..=end)?).ok()
-}
-
-/// The staged skill proposal a skill candidate names: `skill_proposal:<32 hex>`.
-fn proposal_of(candidate: &CandidateRef) -> Option<EntityId> {
-    let id = candidate.config_ref.strip_prefix("skill_proposal:")?;
-    if id.len() != 32
-        || !id
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return None;
-    }
-    EntityId::from_hex(id).ok()
 }
