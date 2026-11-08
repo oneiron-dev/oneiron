@@ -53,6 +53,26 @@ impl Vault {
             _pin: pin,
         }))
     }
+    /// A bounded range under the caller's snapshot. The caller holds custody
+    /// and a body pin across all ranges, but drops each transaction before
+    /// an admission check that may open a snapshot of its own.
+    pub(crate) fn read_code_run_raw_output_range_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        output: &CodeRunRawOutput,
+        offset: u64,
+        len: usize,
+    ) -> Result<Option<Vec<u8>>> {
+        validate_raw_output(output)?;
+        let Some(row) = RAW_OUTPUTS.get_borrowed(&self.store, rtxn, &output.handle)? else {
+            return Ok(None);
+        };
+        let key = body_key_row_in_txn(&self.store, rtxn, &output.raw_blake3)?;
+        read_body_row_range(output, &row, key.as_ref(), offset, len, || {
+            Ok(vec![self.store.body_dir()?])
+        })
+        .map(Some)
+    }
 }
 
 impl CodeRunResultBodyReader<'_> {

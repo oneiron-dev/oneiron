@@ -31,12 +31,26 @@ pub(super) fn require_anchor_entities_in_txn(
 }
 
 fn require_anchor_headers(actor_raw: Option<&[u8]>, subject_raw: Option<&[u8]>) -> Result<()> {
-    // Validate present rows before classifying absence as retryable. A known
-    // wrong type is terminal even if the other dependency has not arrived.
-    if let Some(raw) = actor_raw {
-        let header = EntityMetadataHeader::parse(raw)
-            .ok_or(Error::CorruptedIndex("subject model entity header"))?;
-        let class = match header.entity_type {
+    require_anchor_headers_with_planned_kinds(actor_raw, subject_raw, None, None)
+}
+
+fn require_anchor_headers_with_planned_kinds(
+    actor_raw: Option<&[u8]>,
+    subject_raw: Option<&[u8]>,
+    planned_actor_kind: Option<u8>,
+    planned_subject_kind: Option<u8>,
+) -> Result<()> {
+    // Present rows are authoritative, including malformed or wrong-type rows.
+    let actor_kind = match actor_raw {
+        Some(raw) => Some(
+            EntityMetadataHeader::parse(raw)
+                .ok_or(Error::CorruptedIndex("subject model entity header"))?
+                .entity_type,
+        ),
+        None => planned_actor_kind,
+    };
+    if let Some(kind) = actor_kind {
+        let class = match kind {
             ENTITY_TYPE_PERSON | ENTITY_TYPE_AGENT_DEF => crate::edge::EdgeActorClass::Agent,
             ENTITY_TYPE_MACHINE => crate::edge::EdgeActorClass::System,
             _ => {
@@ -45,20 +59,47 @@ fn require_anchor_headers(actor_raw: Option<&[u8]>, subject_raw: Option<&[u8]>) 
                 ));
             }
         };
-        crate::provenance::validate_actor_class(header.entity_type, class)?;
+        crate::provenance::validate_actor_class(kind, class)?;
     }
-    if let Some(raw) = subject_raw {
-        let header = EntityMetadataHeader::parse(raw)
-            .ok_or(Error::CorruptedIndex("subject model entity header"))?;
-        if !matches!(header.entity_type, ENTITY_TYPE_PERSON | ENTITY_TYPE_ORG) {
+    let subject_kind = match subject_raw {
+        Some(raw) => Some(
+            EntityMetadataHeader::parse(raw)
+                .ok_or(Error::CorruptedIndex("subject model entity header"))?
+                .entity_type,
+        ),
+        None => planned_subject_kind,
+    };
+    if let Some(kind) = subject_kind {
+        if !matches!(kind, ENTITY_TYPE_PERSON | ENTITY_TYPE_ORG) {
             return Err(Error::InvalidClaimBody(
                 "actor.subject_ref subject must be a PERSON or ORG",
             ));
         }
     }
-    actor_raw.ok_or(Error::InvalidClaimBody(MISSING_ACTOR))?;
-    subject_raw.ok_or(Error::InvalidClaimBody(MISSING_ANCHOR))?;
+    actor_kind.ok_or(Error::InvalidClaimBody(MISSING_ACTOR))?;
+    subject_kind.ok_or(Error::InvalidClaimBody(MISSING_ANCHOR))?;
     Ok(())
+}
+
+pub(super) fn require_planned_anchor_entities_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+    subject: &EntityId,
+    planned: &super::prepared::PlannedSubjectEntities<'_>,
+) -> Result<()> {
+    let actor_raw = store
+        .port_entity_record(txn, actor)?
+        .map(|row| row.encode());
+    let subject_raw = store
+        .port_entity_record(txn, subject)?
+        .map(|row| row.encode());
+    require_anchor_headers_with_planned_kinds(
+        actor_raw.as_deref(),
+        subject_raw.as_deref(),
+        planned.kind(actor),
+        planned.kind(subject),
+    )
 }
 
 pub(crate) use crate::write_envelope::subject_record::validate_person_substrate_claim_structure;
