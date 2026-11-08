@@ -36,7 +36,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/coach_site_skills.rs` | src | s | 1 crate-vis | — | The Coach's site skills on the host (CUA E8b, FIX 7606): the engine's fixed-code distill pass under the… |
 | `src/ai_host/code_fix.rs` | src | m | 14 crate-vis | — | The host Coach's code fixes (DEC-0005 FIX6, OF-380) |
 | `src/ai_host/code_fix/shadow.rs` | src | s | 2 crate-vis | — | The Coach's shadow runner for a code fix's engine candidates (FIX 1661, 2144): the host's… |
-| `src/ai_host/code_mode.rs` | src | m | 1 crate-vis | — | MCP `execute_code` on the served vault: the checked-in QuickJS component, run by the engine executor on the… |
+| `src/ai_host/code_mode.rs` | src | L | 1 crate-vis | — | MCP `execute_code` on the served vault: the checked-in QuickJS component, run by the engine executor on the… |
 | `src/ai_host/commitment_reminder_wording.rs` | src | m | 1 crate-vis | — | Native model wording for the durable commitment-reminder queue |
 | `src/ai_host/compaction.rs` | src | m | 12 crate-vis | — | Compaction for code mode's runs (agent-runtime-v1 §d7) |
 | `src/ai_host/compaction/chat.rs` | src | m | 7 crate-vis | — | A self agent's chat compaction (FIX 4465 D, Engine D4): the conversation constructor of the shared writer… |
@@ -437,7 +437,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/host_trigger_doors.rs` | src | s | 3 crate-vis | — | The owner's typed host triggers |
 | `src/api/facade/hub_doors.rs` | src | m | 22 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/hyde_doors.rs` | src | s | 6 crate-vis | — | Typed host configuration, work and completion receipts for HydeExpander |
-| `src/api/facade/identity.rs` | src | s | 13 crate-vis | — | Who a facade call acts as: its actor, its invocation id and the owner's authorship |
+| `src/api/facade/identity.rs` | src | s | 14 crate-vis | — | Who a facade call acts as: its actor, its invocation id and the owner's authorship |
 | `src/api/facade/identity_doors.rs` | src | s | 4 crate-vis | — | PERSON identity setup, look-before-mint and saved-mention provenance |
 | `src/api/facade/identity_topology_doors.rs` | src | s | 10 crate-vis | — | Typed identity-topology host doors under the caller's own owner proof |
 | `src/api/facade/inbox_group_doors.rs` | src | s | 3 crate-vis | — | The owner inbox's group doors over both group kinds (FIX 3024, 3026): the owner's answer to one group… |
@@ -484,7 +484,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/release.rs` | src | m | 15 crate-vis | — | A facade answer's destination release, once its call has nothing left to wait on (FIX 8170), and again for… |
 | `src/api/facade/reply_doors.rs` | src | s | 1 crate-vis | — | The generated context-bearing reply door, under the existing owner's inference authority |
 | `src/api/facade/repo_copy_edit_doors.rs` | src | s | 2 crate-vis | — | FIX 13274: `vault.sync.documents.copy_edit.review` and `vault.sync.documents.copy_edit.settle`, the owner's… |
-| `src/api/facade/repo_doors.rs` | src | m | 16 crate-vis | — | The public `vault.repo.*` run doors (FIX 6867, G1 PR3b): an external agent's own attached live run reads and… |
+| `src/api/facade/repo_doors.rs` | src | m | 17 crate-vis | — | The public `vault.repo.*` run doors (FIX 6867, G1 PR3b): an external agent's own attached live run reads and… |
 | `src/api/facade/repo_manifest_conflict_doors.rs` | src | s | 2 crate-vis | — | The owner's durable manifest-conflict review and exact keep-held discard |
 | `src/api/facade/research_doors.rs` | src | s | 3 crate-vis | — | Owner-authenticated child admission and sealed-cohort setup |
 | `src/api/facade/reservoir_source_doors.rs` | src | s | 1 crate-vis | — | The host door of `vault.coach.training_offers.sources` (FIX 11352): the owner's read, before he prepares a… |
@@ -636,11 +636,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/served_rows.rs` | src | s | 11 crate-vis | — | The rows an MCP call's result was derived from, as its producers listed them (DEC-0005; SCAN C018, FIX… |
 | `src/api/mcp_gateway/skill_execution.rs` | src | s | 4 crate-vis | — | The original MCP credential context lent to a callable skill's host door |
 | `src/api/mcp_gateway/stream_reads.rs` | src | s | 4 crate-vis | — | Own-task STREAM lines as one connection's credential may read them now: the board publisher admits each… |
-| `src/api/mcp_gateway/tasks_response.rs` | src | L | 15 crate-vis | — | Tasks verb and response shaping |
+| `src/api/mcp_gateway/tasks_response.rs` | src | L | 18 crate-vis | — | Tasks verb and response shaping |
 | `src/api/mcp_gateway/tasks_response/native_read.rs` | src | s | 2 crate-vis | — | The native memory read arm of one generated verb tool call, through the verb-hook boundary every generated… |
 | `src/api/mcp_gateway/tool_receipt.rs` | src | s | 1 crate-vis | — | A `tools/call`'s lasting receipt on MCP (OF-538), as the gateway's one door writes it |
 | `src/api/mcp_gateway/type_feedback_release.rs` | src | m | 14 crate-vis | — | Type feedback leaves an MCP answer on its own release (FIX 10390, CALLS "feedback released apart from its… |
-| `src/api/mcp_gateway/verb_hooks.rs` | src | m | 4 crate-vis | — | The verb-hook boundary of an MCP row (ARCH-0080 §3), as the generated dispatch crosses it: the row door's… |
+| `src/api/mcp_gateway/verb_hooks.rs` | src | m | 8 crate-vis | — | The verb-hook boundary of an MCP row (ARCH-0080 §3), as the generated dispatch crosses it: the row door's… |
 | `src/api/mcp_gateway/verb_hooks/ceiling.rs` | src | s | 1 crate-vis | — | A paused MCP call stays within both its original and live registration |
 | `src/api/mcp_gateway/wakes.rs` | src | s | 1 crate-vis | — | The authenticated host handoff |
 | `src/api/mcp_gateway/wire.rs` | src | s | 2 crate-vis | — | What an MCP request counts as on the wire (FIX 1085) |
@@ -1177,9 +1177,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/decision_graph/mod.rs` | src | m | 12 crate-vis | — | Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question |
 | `src/decision_host/adapters.rs` | src | m | 2 crate-vis | — | Decision host adapters: the engine traits its rungs and notes implement |
 | `src/decision_host/attach.rs` | src | s | 6 fn · 4 crate-vis | — | Decision host attach: the server's decision ladder and its config |
+| `src/decision_host/big_binding.rs` | src | s | 1 struct · 3 fn | BigRung | The Big rung's binding (OF-495): the big model on the seat `[models.decisions.big]` names, and the provider… |
 | `src/decision_host/claim_merge.rs` | src | s | 1 fn | — | The decision host's caller of the session-branch claim merge (OF-493 row G, FIX 1328): the useful-upstream… |
 | `src/decision_host/doors.rs` | src | m | 14 fn · 14 crate-vis | — | Decision host doors: the ladder, dials and the hooks built on them |
-| `src/decision_host/mod.rs` | src | m | 1 struct · 6 fn · 2 const · 9 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
+| `src/decision_host/mod.rs` | src | m | 1 struct · 6 fn · 2 const · 1 re-export · 9 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
 | `src/decision_host/native_capture.rs` | src | s | 3 crate-vis | — | Post-settlement evidence for house reads on their actual admitted run |
 | `src/decision_host/notes.rs` | src | s | 2 crate-vis | — | The host's notes beside decided answers (FIX 3040, 654): a critic review's evidence refs and suggested… |
 | `src/decision_host/refresh.rs` | src | s | 2 crate-vis | — | Decision host person- and think-threshold refresh |
@@ -1291,6 +1292,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/peer_serve.rs` | src | s | 10 crate-vis | — | FIX 4748: this machine serving another machine of its vault while their home is down (owner RULING B… |
 | `src/handler/protocol_close.rs` | src | s | 9 crate-vis | — | A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would… |
 | `src/handler/residence_socket_tests.rs` | test | XL | — | — | A real enrol: root + thin index, one opened item, remote search and offline honesty |
+| `src/handler/root_updates.rs` | src | s | 1 crate-vis | — | Root exports leave as one immutable image |
 | `src/handler/sealed_updates.rs` | src | s | 3 crate-vis | — | The home's side of the sealed world-update relay (DEC-0005 fix 8: "The cloud relays its sealed updates… |
 | `src/handler/selector_scope.rs` | src | s | 1 crate-vis | — | Single-vault selector grant scope shared by handler and livequery (FIX 9251) |
 | `src/handler/socket_stop.rs` | src | s | 5 crate-vis | — | An upgraded socket's transport under its server's stop (OF-237) |
@@ -1503,7 +1505,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/codec.rs` | src | m | 1 struct · 1 fn · 5 crate-vis | McpToolArguments | MCP argument codecs: parsed-value and raw-JSON integer normalization |
 | `src/mcp/endpoint_args.rs` | src | m | 9 struct · 1 enum · 4 fn · 3 crate-vis | McpCacheHint, McpExecuteCodeToolArgs, McpInvokeActionToolArgs, McpPageRequest, McpReadResultToolArgs, McpResultFacet, McpSetupToolArgs, McpVerbArguments +2 | Endpoint tool argument envelopes: setup, execute-code, paging, and verbs |
 | `src/mcp/endpoint_schema.rs` | src | m | 5 const · 8 crate-vis | — | JSON schemas for endpoint tools: setup, execute-code, paging, and verbs |
-| `src/mcp/exec_host.rs` | src | L | 2 struct · 1 enum · 3 trait · 5 fn · 5 type · 2 re-export · 16 crate-vis | McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider, McpCodeRunSelfBrief, PlannedModel | MCP code-execution host seam and the engine-native host binding |
+| `src/mcp/exec_host.rs` | src | L | 2 struct · 1 enum · 3 trait · 5 fn · 6 type · 2 re-export · 16 crate-vis | McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider, McpCodeRunSelfBrief, PlannedModel | MCP code-execution host seam and the engine-native host binding |
 | `src/mcp/exec_host/active_run.rs` | src | s | 4 crate-vis | — | Single flight for each durable code-mode run (FIX 9505): an entry of a run whose earlier entry still runs… |
 | `src/mcp/exec_host/compaction_home.rs` | src | s | 1 crate-vis | — | The compaction host binding of a run its caller's credential entered: the host assembles it from what the… |
 | `src/mcp/exec_host/description_route.rs` | src | s | 1 crate-vis | — | Description routing for an agent run's typed seat (FIX 11307) |
@@ -1573,7 +1575,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/kept_on_device_tests.rs` | test | m | — | — | World privacy on a fallback ladder (owner ruling 2026-10-14, "Models": no silent fallback to a cloud model… |
 | `src/models/ladder.rs` | src | XL | 1 struct · 5 fn · 1 re-export · 36 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
 | `src/models/ladder/cache_warmth.rs` | src | m | 6 crate-vis | — | Prompt-cache warmth (FIX 6029): this runtime's own note, in memory, of which reusable prefix each route… |
-| `src/models/ladder/call_deadline.rs` | src | m | 1 enum · 7 fn · 15 crate-vis | CallDeadline | One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait… |
+| `src/models/ladder/call_deadline.rs` | src | m | 1 enum · 7 fn · 16 crate-vis | CallDeadline | One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait… |
 | `src/models/ladder/decision_posture.rs` | src | s | 1 crate-vis | — | A decision call whose question's posture keeps its unit text on the host (FIX 9525): it goes down only the… |
 | `src/models/ladder/device_bound.rs` | src | s | 1 crate-vis | — | A ladder held to this device for one Dreamer pass (FIX 12735): each of its rungs sends on the device, and… |
 | `src/models/ladder/generation.rs` | src | m | 8 fn · 4 crate-vis | — | The generation walk of one chat call: its entry points and the walk rung by rung; the send to one rung is in… |
@@ -1843,6 +1845,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/lifecycle.rs` | src | m | 17 crate-vis | — | Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and the engine's housekeeping pass |
 | `src/server/live_rows_tests.rs` | test | s | 2 crate-vis | — | Rule five at the vault's live rows as this server sets them from `[limits]` (census rows 45 and 57): past a… |
 | `src/server/live_runs.rs` | src | m | 41 crate-vis | — | The live agent runs a harness may act for over HTTP (OF-181) |
+| `src/server/live_runs/model_request.rs` | src | s | 2 crate-vis | — | Real model requests served on one held credential attachment (FIX 7176) |
 | `src/server/live_runs/pattern_action.rs` | src | s | 1 crate-vis | — | A live run's own pattern runner for an action between its entries (OF-181, DOOR-111 S4c-4) |
 | `src/server/media_door.rs` | src | m | 1 struct · 9 crate-vis | MediaDoor | The vault-bound media door (FIX-LIST 467): the one door engine code makes a media call through |
 | `src/server/media_embedding.rs` | src | L | 10 crate-vis | — | The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same… |

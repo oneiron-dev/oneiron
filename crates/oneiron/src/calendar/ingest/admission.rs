@@ -232,25 +232,38 @@ impl PollAdmission<'_> {
                     calendar_name: Some(self.system.to_owned()),
                     ..Default::default()
                 };
+                let occurred = self.event_occurred(event);
                 let admitted = self.vault.with_write_txn_grouped(|txn| {
+                    let landing =
+                        crate::mail_pack::calendar_source_landing_in(self.vault, txn, self.system)?;
                     self.vault.stage_calendar_event(
                         txn,
                         &input,
                         None,
-                        self.event_occurred(event),
+                        occurred,
                         WriteActor::new(actor, crate::EdgeActorClass::System),
                         id,
                         self.now,
                     )?;
-                    // A pack calendar source's EVENT is bound to the source's
-                    // audience in its birth commit (FIX 12559); a no-op for
-                    // any other system.
-                    crate::mail_pack::bind_calendar_source_row_in_txn(
-                        self.vault,
-                        txn,
-                        self.system,
-                        &id,
-                    )?;
+                    // A pack calendar source's EVENT is stamped with the
+                    // source's audience and bound to it in its birth commit
+                    // (FIX 12559, fix list row 16256); any other system's
+                    // lands unstamped and unbound.
+                    if let Some(landing) = &landing {
+                        let body = landing.stamp_in_txn(self.vault, txn, &id, &input.encode()?)?;
+                        self.vault
+                            .batch_in()
+                            .put_source_bound(
+                                &id,
+                                ENTITY_TYPE_EVENT,
+                                occurred,
+                                self.now,
+                                &body,
+                                landing.birth(),
+                            )
+                            .apply(txn)?;
+                        landing.bind_in_txn(self.vault, txn, &id)?;
+                    }
                     Ok(id)
                 });
                 Ok((admitted, token))
@@ -276,13 +289,27 @@ impl PollAdmission<'_> {
             ..Default::default()
         };
         self.vault.with_write_txn_grouped(|txn| {
+            // A pack calendar source's EVENT keeps its stamp through drift:
+            // its landing marks it born again, rewrites it under its proof
+            // and binds it where it was born.
+            let landing =
+                crate::mail_pack::calendar_source_landing_in(self.vault, txn, self.system)?;
+            let birth = landing
+                .as_ref()
+                .map(|landing| landing.mark_in_txn(self.vault, txn, &event_ref))
+                .transpose()?;
             self.vault.update_calendar_import_in_txn(
                 txn,
                 event_ref,
                 &input,
                 self.event_occurred(event),
                 self.now,
-            )
+                birth,
+            )?;
+            match &landing {
+                Some(landing) => landing.bind_in_txn(self.vault, txn, &event_ref),
+                None => Ok(()),
+            }
         })?;
         Ok(())
     }

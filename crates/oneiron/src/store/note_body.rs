@@ -1,4 +1,5 @@
-//! NOTE body vocabulary and the pinned four-field MessagePack codec.
+//! NOTE vocabulary and its two pinned MessagePack codecs: the stored row,
+//! which is the NOTE's immutable core, and the logical value a reader gets.
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -8,8 +9,15 @@ use crate::error::{Error, RecordError, Result};
 use crate::store::note_kind as kinds;
 use crate::store::receipt_identity::ERASED_CALL_IDENTITY;
 
-/// The pinned NOTE body ABI. A NOTE body is exactly one MessagePack map over
-/// these four string keys — no more, no fewer, no repeats.
+/// The pinned NOTE row ABI (FIX 7783): a stored NOTE row is exactly one
+/// MessagePack map over these three string keys, its immutable core, with no
+/// more, no fewer and no repeats. The text is the NOTE's document's, never
+/// the row's.
+pub const NOTE_CORE_KEYS: [&str; 3] = ["kind", "author_ref", "source_revision_ref"];
+
+/// The pinned logical NOTE value: the core and the text of its document at
+/// the read's version, one map over these four keys. Read doors project it
+/// in their own transaction; no write door stores it.
 pub const NOTE_BODY_KEYS: [&str; 4] = ["kind", "author_ref", "markdown", "source_revision_ref"];
 
 const KEY_KIND: &str = NOTE_BODY_KEYS[0];
@@ -165,7 +173,7 @@ impl<'de> Deserialize<'de> for NoteActor {
 
 const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];
 
-/// A decoded NOTE body.
+/// A stored NOTE row, decoded: the NOTE's immutable core (FIX 7783).
 ///
 /// `author_ref` is engine-stamped from the bound facade actor, never caller
 /// data. A live author always equals the target of the NOTE's mandatory
@@ -176,12 +184,49 @@ const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];
 /// names the author a source vault recorded and no edge; it is provenance,
 /// and opens nothing either (FIX 7777).
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteCore {
+    pub kind: NoteKind,
+    pub author_ref: NoteActor,
+    /// Opaque source revision identity, stored as exactly 16 binary bytes.
+    pub source_revision_ref: [u8; 16],
+}
+
+impl NoteCore {
+    /// The logical NOTE of this core whose document reads `markdown` at the
+    /// read's version.
+    #[must_use]
+    pub fn with_markdown(self, markdown: String) -> NoteBody {
+        NoteBody {
+            kind: self.kind,
+            author_ref: self.author_ref,
+            markdown,
+            source_revision_ref: self.source_revision_ref,
+        }
+    }
+}
+
+/// A logical NOTE: its core and the text of its document at the version a
+/// read selected. It is a projection: no write door stores it, and the row
+/// codec refuses its `markdown` key.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoteBody {
     pub kind: NoteKind,
     pub author_ref: NoteActor,
     pub markdown: String,
     /// Opaque source revision identity, stored as exactly 16 binary bytes.
     pub source_revision_ref: [u8; 16],
+}
+
+impl NoteBody {
+    /// The immutable core this logical NOTE was projected from.
+    #[must_use]
+    pub fn core(&self) -> NoteCore {
+        NoteCore {
+            kind: self.kind.clone(),
+            author_ref: self.author_ref,
+            source_revision_ref: self.source_revision_ref,
+        }
+    }
 }
 
 /// What a take is about.
@@ -217,42 +262,66 @@ pub struct NoteWriteEnvelope {
     pub mask: Option<EntityId>,
 }
 
-/// Encodes a NOTE body to the pinned four-key MessagePack map.
+/// Encodes a NOTE row: its core, the pinned three-key MessagePack map.
+pub fn encode_note_core(core: &NoteCore) -> Result<Vec<u8>> {
+    encode_map(core, None)
+}
+
+/// Encodes a logical NOTE to the pinned four-key MessagePack map, for a read
+/// door's projection.
 pub fn encode_note_body(body: &NoteBody) -> Result<Vec<u8>> {
     validate_markdown(&body.markdown)?;
-    if NoteKind::wire(&body.kind.as_str()).as_ref() != Some(&body.kind) {
+    encode_map(&body.core(), Some(&body.markdown))
+}
+
+fn encode_map(core: &NoteCore, markdown: Option<&str>) -> Result<Vec<u8>> {
+    if NoteKind::wire(&core.kind.as_str()).as_ref() != Some(&core.kind) {
         return Err(Error::Record(RecordError::InvalidNoteBody(
             "invalid NOTE kind",
         )));
     }
-    let value = Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(KEY_KIND),
-            Value::from(body.kind.as_str().as_ref()),
+            Value::from(core.kind.as_str().as_ref()),
         ),
         (
             Value::from(KEY_AUTHOR_REF),
-            Value::from(body.author_ref.to_wire()),
+            Value::from(core.author_ref.to_wire()),
         ),
-        (
-            Value::from(KEY_MARKDOWN),
-            Value::from(body.markdown.as_str()),
-        ),
-        (
-            Value::from(KEY_SOURCE_REVISION),
-            Value::Binary(body.source_revision_ref.to_vec()),
-        ),
-    ]);
+    ];
+    if let Some(markdown) = markdown {
+        entries.push((Value::from(KEY_MARKDOWN), Value::from(markdown)));
+    }
+    entries.push((
+        Value::from(KEY_SOURCE_REVISION),
+        Value::Binary(core.source_revision_ref.to_vec()),
+    ));
     let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &value)
+    rmpv::encode::write_value(&mut out, &Value::Map(entries))
         .map_err(|_| Error::InvariantViolation("NOTE body MessagePack encode failed"))?;
     Ok(out)
 }
 
-/// Decodes a NOTE body, fail-closed on every deviation from the ABI: bad
-/// MessagePack, trailing bytes, non-string or unknown or duplicate keys, an
-/// unknown kind, an actor ref that is neither an id nor the erased marker,
-/// and blank markdown.
+/// Decodes a stored NOTE row, fail-closed on every deviation from the row
+/// ABI: bad MessagePack, trailing bytes, non-string or unknown or duplicate
+/// keys (a `markdown` key included: a projection is never a row), an
+/// unknown kind, and an actor ref that is neither an id nor the erased
+/// marker.
+pub fn decode_note_core(bytes: &[u8]) -> Result<NoteCore> {
+    decode_note_core_using(bytes, NoteKind::parse)
+}
+
+pub(crate) fn decode_note_core_using(
+    bytes: &[u8],
+    resolve: impl Fn(&str) -> Option<NoteKind>,
+) -> Result<NoteCore> {
+    decode_map(bytes, resolve, &NOTE_CORE_KEYS).map(|(core, _)| core)
+}
+
+/// Decodes a logical NOTE a read door projected, fail-closed as
+/// [`decode_note_core`] is, over the four logical keys, and on blank
+/// markdown.
 pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
     decode_note_body_using(bytes, NoteKind::parse)
 }
@@ -261,6 +330,21 @@ pub(crate) fn decode_note_body_using(
     bytes: &[u8],
     resolve: impl Fn(&str) -> Option<NoteKind>,
 ) -> Result<NoteBody> {
+    let (core, markdown) = decode_map(bytes, resolve, &NOTE_BODY_KEYS)?;
+    Ok(
+        core.with_markdown(markdown.ok_or(Error::Record(RecordError::InvalidNoteBody(
+            "missing required body key markdown",
+        )))?),
+    )
+}
+
+/// One NOTE map over exactly `keys`: the core, and the markdown when `keys`
+/// names it.
+fn decode_map(
+    bytes: &[u8],
+    resolve: impl Fn(&str) -> Option<NoteKind>,
+    keys: &[&str],
+) -> Result<(NoteCore, Option<String>)> {
     let mut cursor = bytes;
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
         Error::Record(RecordError::InvalidNoteBody(
@@ -290,10 +374,17 @@ pub(crate) fn decode_note_body_using(
                 "body keys must be strings",
             )));
         };
-        let Some(index) = NOTE_BODY_KEYS.iter().position(|known| *known == key) else {
+        if !keys.contains(&key) {
             return Err(Error::Record(RecordError::InvalidNoteBody(
-                "body key is not in the pinned NOTE_BODY_KEYS set",
+                if keys.contains(&KEY_MARKDOWN) {
+                    "body key is not in the pinned NOTE_BODY_KEYS set"
+                } else {
+                    "body key is not in the pinned NOTE_CORE_KEYS set"
+                },
             )));
+        }
+        let Some(index) = NOTE_BODY_KEYS.iter().position(|known| *known == key) else {
+            unreachable!("every NOTE key set is within NOTE_BODY_KEYS");
         };
         if seen[index] {
             return Err(Error::Record(RecordError::InvalidNoteBody(
@@ -352,7 +443,7 @@ pub(crate) fn decode_note_body_using(
         }
     }
 
-    Ok(NoteBody {
+    let core = NoteCore {
         source_revision_ref: source_revision_ref.ok_or(Error::Record(
             RecordError::InvalidNoteBody("missing required body key source_revision_ref"),
         ))?,
@@ -362,10 +453,8 @@ pub(crate) fn decode_note_body_using(
         author_ref: author_ref.ok_or(Error::Record(RecordError::InvalidNoteBody(
             "missing required body key author_ref",
         )))?,
-        markdown: markdown.ok_or(Error::Record(RecordError::InvalidNoteBody(
-            "missing required body key markdown",
-        )))?,
-    })
+    };
+    Ok((core, markdown))
 }
 
 pub(crate) fn validate_markdown(markdown: &str) -> Result<()> {

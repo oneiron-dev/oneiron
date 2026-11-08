@@ -2,8 +2,8 @@
 //! named `mail_pack:<source>` lands EVENTs of its own: one per source and
 //! UID, its id derived from both, so two people's copies of one meeting
 //! never share a row and a person's copy never attaches to another's. The
-//! birth commit binds each to the source's audience
-//! ([`crate::mail_pack::bind_calendar_source_row_in_txn`], called from
+//! birth commit stamps each with the source's audience and binds it there
+//! ([`crate::mail_pack::calendar_source_landing_in`], called from
 //! [`PollAdmission::mint_event_with_id`]), so its details read only to the
 //! calendar's owner, or the vault when the owner shares it. Everything
 //! after the identity (passport, properties, drift, cancellation) is the

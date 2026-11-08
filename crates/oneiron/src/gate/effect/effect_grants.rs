@@ -20,7 +20,7 @@ use crate::store::Store;
 /// grant its dispatch door named.
 pub(super) fn standing_outbound_grant_for_effect(
     store: &Store,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
     required_grant_id: Option<EntityId>,
