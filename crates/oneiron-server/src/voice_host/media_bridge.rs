@@ -23,6 +23,11 @@
 //! sentence is sent and before its audio comes back. A roster change the
 //! owner reports stops a generation assembled for the old audience before
 //! the next audio plays.
+//!
+//! Heard words pass the agent's floor before they are prepared (FIX 4899):
+//! words that are not a backchannel, heard while the person's speech is a
+//! pending interruption, stop the agent's output, and a backchannel final
+//! while the agent holds the floor starts no reply.
 
 use std::collections::VecDeque;
 use std::io;
@@ -38,8 +43,8 @@ use oneiron::voice_cascade::media::{
 };
 use oneiron::voice_cascade::soniox::SonioxUpdate;
 use oneiron::voice_cascade::{
-    AsrEvent, AsrEventKind, AsrStream, Brain, CascadeControl, GenerationEpoch, OutputStop,
-    PcmFrame, TtsCommand, TtsSeamClient,
+    AsrEvent, AsrEventKind, AsrStream, Brain, CascadeControl, GenerationEpoch, HeardLedger,
+    OutputStop, PcmFrame, TtsCommand, TtsSeamClient,
 };
 use tokio::sync::mpsc;
 
@@ -88,7 +93,21 @@ pub enum VoiceMediaIn {
     /// The owner's playout played all of a generation's audio, up to its
     /// [`VoicePlayout::End`], on the server and the client. The generation
     /// finishes once its brain and every sentence's verdict are done too.
-    Drained(GenerationEpoch),
+    /// `played_samples` is how many of the generation's samples the client
+    /// played, counted over its audio in order; what the person heard rests
+    /// on it (FIX 4899), and on the server's count without it.
+    Drained {
+        generation: GenerationEpoch,
+        played_samples: Option<u64>,
+    },
+    /// The owner's playout applied a generation's flush and playout stop.
+    /// `played_samples` is how many of its samples the client played before
+    /// the stop; what the person heard rests on it (FIX 4899), and on the
+    /// server's count without it.
+    Stopped {
+        generation: GenerationEpoch,
+        played_samples: Option<u64>,
+    },
 }
 
 /// The media side of one served voice connection.
@@ -102,7 +121,8 @@ pub struct VoiceMediaBindings {
     /// The rate and channels of the microphone's PCM16LE.
     pub sample_rate: u32,
     pub channels: u16,
-    /// The owner's audio side: microphone audio, cuts, VAD and drains.
+    /// The owner's audio side: microphone audio, cuts, VAD, drains and
+    /// stop acknowledgements.
     /// `None` when the connection carries it itself (the wire, a public
     /// session): absent, never a closed input, so the live hearing ends
     /// only when the session does (FIX 9543).
@@ -176,6 +196,7 @@ impl VoiceMediaBindings {
                 chunking: self.chunking,
                 queue,
                 speech: None,
+                unacknowledged: None,
                 verdicts: Verdicts::new(),
                 tick_at: None,
                 started: Instant::now(),
@@ -322,6 +343,9 @@ pub(super) struct MediaBridge {
     pub(super) queue: VoiceMediaSender,
     /// The generation being spoken, while its audio is open.
     pub(super) speech: Option<Speech>,
+    /// The last stopped generation's heard ledger, until the owner's
+    /// playout acknowledges the stop with the samples it played (FIX 4899).
+    pub(super) unacknowledged: Option<HeardLedger>,
     pub(super) verdicts: Verdicts,
     /// When a quiet brain's buffered words are next held against the
     /// cadence; kept across polls, so steady microphone audio cannot
@@ -381,6 +405,16 @@ pub(super) struct HeardWork<'a> {
     pub(super) revision: u64,
     pub(super) work: EnrichmentWork<'a>,
     pub(super) final_text: bool,
+}
+
+/// What live words did (FIX 4899): how many of the owner's cuts they
+/// finalized, in order, and the words to enrich, if any. A cut is consumed
+/// whether its final goes on to `work`, was a backchannel the agent's floor
+/// kept, heard nothing or was refused; a final in `work` is the last one.
+#[derive(Default)]
+pub(super) struct LiveHeard<'a> {
+    pub(super) consumed_finals: usize,
+    pub(super) work: Option<HeardWork<'a>>,
 }
 
 /// One thing the bridge has for the served connection.
@@ -575,11 +609,27 @@ impl MediaWorker {
             vault,
             deliver,
         } = self;
-        worker
-            .run(door.as_ref(), &vault, move |output| {
-                deliver.send(output).ok();
-            })
-            .await;
+        let deliver = move |output| {
+            deliver.send(output).ok();
+        };
+        if let Some(phone) = door.phone_read() {
+            let release = |generation| {
+                if phone.accepts_output(generation) {
+                    Ok(())
+                } else {
+                    Err(oneiron::RetryableLlmError::not_sent(
+                        "media_release",
+                        "phone output is no longer current",
+                    )
+                    .into())
+                }
+            };
+            worker
+                .run_released(door.as_ref(), &vault, deliver, Some(&release))
+                .await;
+        } else {
+            worker.run(door.as_ref(), &vault, deliver).await;
+        }
     }
 }
 
@@ -624,8 +674,18 @@ impl VoiceHost {
                     speech::stopped(&stop, bridge, outputs);
                 }
             }),
-            VoiceMediaIn::Drained(generation) => {
-                self.drained(generation, bridge);
+            VoiceMediaIn::Drained {
+                generation,
+                played_samples,
+            } => {
+                self.drained(generation, played_samples, bridge, outputs);
+                Ok(())
+            }
+            VoiceMediaIn::Stopped {
+                generation,
+                played_samples,
+            } => {
+                speech::stop_acknowledged(generation, played_samples, bridge, outputs);
                 Ok(())
             }
         }
@@ -633,11 +693,13 @@ impl VoiceHost {
 
     /// A heard utterance as the session's next final: opened, then prepared
     /// for enrichment outside the lock. An endpoint heard nothing; an error
-    /// is logged.
-    pub(super) fn heard(
+    /// is logged. Words that took the agent's floor stop its output first,
+    /// and a backchannel while it holds the floor starts nothing (FIX 4899).
+    pub(super) fn heard<B: Brain, T: TtsSeamClient, C: CascadeControl>(
         &self,
         bridge: &mut MediaBridge,
         event: AsrEvent,
+        outputs: &mut VoiceOutputs<B, T, C>,
     ) -> Option<(String, EnrichmentWork<'_>)> {
         match event.kind {
             AsrEventKind::Final if !event.text.trim().is_empty() => {}
@@ -654,8 +716,11 @@ impl VoiceHost {
                 return None;
             }
         };
-        match self.prepare(&handle, HEARD_REVISION, event.text, true) {
-            Ok(work) => Some((handle, work)),
+        let mut stops = Vec::new();
+        let prepared = self.prepare_words(&handle, HEARD_REVISION, event.text, true, &mut stops);
+        speech::interrupted(stops, Some(bridge), outputs);
+        match prepared {
+            Ok(work) => work.map(|work| (handle, work)),
             Err(error) => {
                 tracing::warn!(%error, "voice media: heard utterance refused");
                 self.close(&handle).ok();
@@ -669,22 +734,38 @@ impl VoiceHost {
     /// at the next revision, and the owner's cut, once Soniox finalized it,
     /// is the one final; Soniox's own endpoint changes nothing. While an
     /// earlier final is still being enriched (`final_pending`), what
-    /// follows waits for it ([`Self::live_resume`]).
-    pub(super) fn live_heard(
+    /// follows waits for it ([`Self::live_resume`]). Words that took the
+    /// agent's floor stop its output (FIX 4899), and every cut finalized
+    /// counts as consumed, work or none.
+    pub(super) fn live_heard<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+        &self,
+        bridge: &mut MediaBridge,
+        updates: Vec<SonioxUpdate>,
+        final_pending: bool,
+        outputs: &mut VoiceOutputs<B, T, C>,
+    ) -> LiveHeard<'_> {
+        let mut stops = Vec::new();
+        let heard = self.live_words(bridge, updates, final_pending, &mut stops);
+        speech::interrupted(stops, Some(bridge), outputs);
+        heard
+    }
+
+    fn live_words(
         &self,
         bridge: &mut MediaBridge,
         updates: Vec<SonioxUpdate>,
         mut final_pending: bool,
-    ) -> Option<HeardWork<'_>> {
+        stops: &mut Vec<OutputStop>,
+    ) -> LiveHeard<'_> {
+        let mut heard = LiveHeard::default();
         let MediaBridge {
             hearing: Hearing::Live(live),
             next_utterance,
             ..
         } = bridge
         else {
-            return None;
+            return heard;
         };
-        let mut work = None;
         let mut words = None;
         let mut finalized = String::new();
         for update in updates {
@@ -703,12 +784,14 @@ impl VoiceHost {
                     let text = std::mem::take(&mut finalized);
                     if final_pending {
                         live.waiting_partial = None;
-                        if !text.trim().is_empty() {
-                            live.waiting_finals.push_back(text);
+                        // An empty one waits too, so its cut is consumed in turn.
+                        live.waiting_finals.push_back(text);
+                    } else {
+                        heard.consumed_finals += 1;
+                        if let Some(work) = self.live_final(live, next_utterance, text, stops) {
+                            heard.work = Some(work);
+                            final_pending = true;
                         }
-                    } else if let Some(heard) = self.live_final(live, next_utterance, text) {
-                        work = Some(heard);
-                        final_pending = true;
                     }
                 }
             }
@@ -719,36 +802,58 @@ impl VoiceHost {
             if let Some((handle, _)) = live.heard.take() {
                 self.close(&handle).ok();
             }
-            return work;
+            return heard;
         }
         if let Some(text) = words.filter(|text| !text.trim().is_empty()) {
             if final_pending {
                 live.waiting_partial = Some(text);
-            } else if let Some(heard) = self.live_partial(live, next_utterance, text) {
-                work = Some(heard);
+            } else if let Some(work) = self.live_partial(live, next_utterance, text, stops) {
+                heard.work = Some(work);
             }
         }
-        work
+        heard
     }
 
     /// What waited for a final that is now enriched: the next final, else
-    /// the words heard since.
-    pub(super) fn live_resume(&self, bridge: &mut MediaBridge) -> Option<HeardWork<'_>> {
+    /// the words heard since. Words that took the agent's floor stop its
+    /// output (FIX 4899), and every waiting final taken counts as consumed,
+    /// work or none.
+    pub(super) fn live_resume<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+        &self,
+        bridge: &mut MediaBridge,
+        outputs: &mut VoiceOutputs<B, T, C>,
+    ) -> LiveHeard<'_> {
+        let mut stops = Vec::new();
+        let heard = self.resumed_words(bridge, &mut stops);
+        speech::interrupted(stops, Some(bridge), outputs);
+        heard
+    }
+
+    fn resumed_words(
+        &self,
+        bridge: &mut MediaBridge,
+        stops: &mut Vec<OutputStop>,
+    ) -> LiveHeard<'_> {
+        let mut heard = LiveHeard::default();
         let MediaBridge {
             hearing: Hearing::Live(live),
             next_utterance,
             ..
         } = bridge
         else {
-            return None;
+            return heard;
         };
         while let Some(text) = live.waiting_finals.pop_front() {
-            if let Some(heard) = self.live_final(live, next_utterance, text) {
-                return Some(heard);
+            heard.consumed_finals += 1;
+            if let Some(work) = self.live_final(live, next_utterance, text, stops) {
+                heard.work = Some(work);
+                return heard;
             }
         }
-        let text = live.waiting_partial.take()?;
-        self.live_partial(live, next_utterance, text)
+        if let Some(text) = live.waiting_partial.take() {
+            heard.work = self.live_partial(live, next_utterance, text, stops);
+        }
+        heard
     }
 
     /// A live hearing that failed: the utterance it was building closes,
@@ -769,6 +874,7 @@ impl VoiceHost {
         live: &mut LiveHearing,
         next_utterance: &mut u64,
         text: String,
+        stops: &mut Vec<OutputStop>,
     ) -> Option<HeardWork<'_>> {
         let (handle, revision) = match live.heard.take() {
             Some((handle, revision)) => (handle, revision.saturating_add(1)),
@@ -780,8 +886,8 @@ impl VoiceHost {
                 }
             },
         };
-        match self.prepare(&handle, revision, text, false) {
-            Ok(work) => {
+        match self.prepare_words(&handle, revision, text, false, stops) {
+            Ok(Some(work)) => {
                 live.heard = Some((handle.clone(), revision));
                 Some(HeardWork {
                     handle,
@@ -790,6 +896,9 @@ impl VoiceHost {
                     final_text: false,
                 })
             }
+            // A partial never closes its utterance at the floor; the next
+            // words open another if it closed.
+            Ok(None) => None,
             // A stale handle is gone: the next words open another.
             Err(HostError::Stale) => None,
             Err(error) => {
@@ -801,12 +910,14 @@ impl VoiceHost {
     }
 
     /// The owner's cut, finalized: the utterance's final, or, when the cut
-    /// heard nothing, its close, with no retrieval.
+    /// heard nothing, its close, with no retrieval. A backchannel while the
+    /// agent holds the floor closes it too, and starts nothing (FIX 4899).
     fn live_final(
         &self,
         live: &mut LiveHearing,
         next_utterance: &mut u64,
         text: String,
+        stops: &mut Vec<OutputStop>,
     ) -> Option<HeardWork<'_>> {
         let heard = live.heard.take();
         if text.trim().is_empty() {
@@ -825,13 +936,14 @@ impl VoiceHost {
                 }
             },
         };
-        match self.prepare(&handle, revision, text, true) {
-            Ok(work) => Some(HeardWork {
+        match self.prepare_words(&handle, revision, text, true, stops) {
+            Ok(Some(work)) => Some(HeardWork {
                 handle,
                 revision,
                 work,
                 final_text: true,
             }),
+            Ok(None) => None,
             Err(error) => {
                 tracing::warn!(%error, "voice media: heard utterance refused");
                 self.close(&handle).ok();

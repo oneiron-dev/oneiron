@@ -5,7 +5,7 @@
 use super::super::access_gate::HeldAuthority;
 use super::*;
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// The audience conjunct every admission path applies, over the current
     /// row. Paths that serve a known revision use [`Self::audience_readable_raw_in`].
     pub(in crate::claim::scoped_read) fn audience_readable_in(
@@ -27,7 +27,12 @@ impl<'v> ScopedRead<'v> {
                 return Ok(true);
             };
             let raw = record.encode();
-            return Ok(self.private_threads_readable_in(txn, id, &raw)?
+            return Ok(self.scoped_comm_audience_readable_in(
+                txn,
+                id,
+                &raw,
+                &HeldAuthority::default(),
+            )? && self.private_threads_readable_in(txn, id, &raw)?
                 && self.own_entry_readable_in(txn, id, &raw)?);
         }
         let Some(record) = self.entity_record_in(txn, id)? else {
@@ -79,12 +84,13 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         if self.device_withholds_in(txn, id, Some(raw))? {
             return Ok(false);
         }
-        if !self.private_threads_readable_in(txn, id, raw)?
+        if !self.scoped_comm_audience_readable_in(txn, id, raw, authority)?
+            || !self.private_threads_readable_in(txn, id, raw)?
             || !self.own_entry_readable_in(txn, id, raw)?
         {
             return Ok(false);
@@ -250,7 +256,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let own = self
             .actor_key
@@ -267,5 +273,36 @@ impl<'v> ScopedRead<'v> {
             return Ok(false);
         }
         self.peers_read_raw_in(txn, &self.peer_reads, id, raw, false, authority)
+    }
+
+    /// A scoped touch reads only with its actual current original CLAIM,
+    /// through this same content view, transaction and credential.
+    fn scoped_comm_audience_readable_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_COMM_RECORD {
+            return Ok(true);
+        }
+        let data = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+        match crate::federation::record_scope::read_scoped_comm_in_txn(
+            &self.store_read(),
+            txn,
+            *id,
+            data,
+        )? {
+            crate::federation::record_scope::ScopedCommRead::Ordinary => Ok(true),
+            crate::federation::record_scope::ScopedCommRead::Unavailable => Ok(false),
+            crate::federation::record_scope::ScopedCommRead::Claim { original, raw, .. } => {
+                // The supplier admits only a live CLAIM, so forwarding cannot
+                // enter another scoped-Comm source edge.
+                self.audience_readable_raw_in(txn, &original, &raw, authority)
+            }
+        }
     }
 }

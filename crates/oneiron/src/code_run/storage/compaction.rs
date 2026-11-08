@@ -1,5 +1,9 @@
 //! Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY.
 //! Raw outputs cannot write or impersonate this disjoint vault-meta keyspace.
+//! A continuation's child takes its source's rows at the cut as aliases that
+//! change only the run (FIX 4198, [`put_coverage_aliases_in_txn`]).
+
+use serde::{Deserialize, Serialize};
 
 use crate::code_run::{CodeRunReplayRecord, ExecutorStorage};
 use crate::compaction::EpochMint;
@@ -11,6 +15,7 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::ManifestDbs;
+use crate::write_envelope::provenance::made_by::MadeByTrigger;
 use crate::{EntityId, Error, Result, Vault};
 
 /// One coverage row per (run id, minted SUMMARY id), in the frame [`encode`]
@@ -26,6 +31,9 @@ const WRITTEN: SideTable<(EntityId, EntityId), WrittenCoverage, Raw> =
 const VERSION: u8 = 4;
 /// The fixed coverage, then the receipt's length.
 const BODY_LEN: usize = 1 + 16 * 3 + 8 * 4 + 32;
+/// The digest slot of a row whose summary is withdrawn (FIX 928): no hash
+/// of the erased words stays. BLAKE3 never yields it for a real body.
+const WITHDRAWN_DIGEST: [u8; 32] = [0; 32];
 const FRAME_LEN: usize = BODY_LEN + 4;
 
 /// A run-local span derived from the durable replay and the sealed compaction
@@ -109,8 +117,10 @@ pub(crate) struct CodeRunCompactionCoverage {
     /// before it, so the next epoch lets this one stand for them.
     calls: u64,
     /// BLAKE3 of the SUMMARY body the gate accepted: a generic write that
-    /// replaces it later never renders as the run's summary.
-    digest: [u8; 32],
+    /// replaces it later never renders as the run's summary. `None` once the
+    /// summary is withdrawn: the row keeps its span and renders no words
+    /// again, and no confirmation hash of what they said (FIX 928).
+    digest: Option<[u8; 32]>,
 }
 
 impl CodeRunCompactionCoverage {
@@ -133,6 +143,71 @@ impl CodeRunCompactionCoverage {
     pub(crate) fn calls(&self) -> u64 {
         self.calls
     }
+
+    /// Whether this row continues the chain whose last row is `prior`: the
+    /// first epoch, or the next epoch from the step after `prior`'s span,
+    /// its calls never fewer (FIX 4198).
+    pub(super) fn continues(&self, prior: Option<&Self>) -> bool {
+        match prior {
+            None => self.epoch == 1,
+            Some(prior) => {
+                prior.epoch.checked_add(1) == Some(self.epoch)
+                    && prior.last.checked_add(1) == Some(self.first)
+                    && prior.calls <= self.calls
+            }
+        }
+    }
+
+    /// This row with no digest: the form a step start captures and its body
+    /// carries (FIX 4198). The start then keeps no hash of the summary's
+    /// words, so a withdrawal has no copy there to clear (FIX 928).
+    pub(super) fn without_digest(self) -> Self {
+        Self {
+            digest: None,
+            ..self
+        }
+    }
+
+    /// Withdraws every coverage row bound to the epoch summary `summary`,
+    /// in the writer that withdraws it (FIX 928; ARCH-0038: deleted words
+    /// leave no confirmation hash): each keeps its run, summary, epoch and
+    /// span, and loses its body digest for good, and a self-written row's
+    /// receipt loses the accepted snapshot's hash and length; its
+    /// content-free execution record stays.
+    ///
+    /// A continuation's aliases are rows here too, so each child seeded
+    /// before the withdrawal loses its copy of the digest in this walk. A
+    /// step start's capture holds no digest (FIX 4198), so no start body
+    /// is rewritten, and no start digest a continuation binds changes.
+    ///
+    /// # Errors
+    /// A store failure, or a coverage row that does not decode.
+    pub(crate) fn withdraw_summary_in_txn(
+        dbs: &impl ManifestDbs,
+        txn: &mut heed::RwTxn<'_>,
+        summary: &EntityId,
+    ) -> Result<()> {
+        let mut withdrawn = Vec::new();
+        for item in WRITTEN.iter_from(dbs, &*txn, &[])? {
+            let (key, mut written) = item?;
+            let snapshot = written.writer.as_ref().is_some_and(|writer| {
+                writer.snapshot_hash.is_some() || writer.snapshot_len.is_some()
+            });
+            if key.1 != *summary || (written.row.digest.is_none() && !snapshot) {
+                continue;
+            }
+            written.row.digest = None;
+            if let Some(writer) = written.writer.as_mut() {
+                writer.snapshot_hash = None;
+                writer.snapshot_len = None;
+            }
+            withdrawn.push((key, written));
+        }
+        for (key, written) in withdrawn {
+            WRITTEN.put(dbs, txn, &key, &written)?;
+        }
+        Ok(())
+    }
 }
 
 impl RawValue for CodeRunCompactionCoverage {
@@ -142,6 +217,32 @@ impl RawValue for CodeRunCompactionCoverage {
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
         Ok(decode(bytes)?.0)
+    }
+}
+
+/// A row as a step start's body carries it (FIX 4198): its own frame, with
+/// no receipt and no digest, read back as strictly as the table reads it.
+/// No start body holds a hash of a summary's words (FIX 928). A seed takes
+/// each digest from the source's own row ([`put_coverage_aliases_in_txn`]).
+impl Serialize for CodeRunCompactionCoverage {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        encode(&self.without_digest(), None)
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for CodeRunCompactionCoverage {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let raw = Vec::<u8>::deserialize(deserializer)?;
+        decode(&raw)
+            .map(|(row, _)| row)
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -185,7 +286,7 @@ fn encode(
     raw.extend_from_slice(&row.first.to_be_bytes());
     raw.extend_from_slice(&row.last.to_be_bytes());
     raw.extend_from_slice(&row.calls.to_be_bytes());
-    raw.extend_from_slice(&row.digest);
+    raw.extend_from_slice(&row.digest.unwrap_or(WITHDRAWN_DIGEST));
     raw.extend_from_slice(&receipt_len.to_be_bytes());
     raw.extend_from_slice(&receipt);
     Ok(raw)
@@ -221,7 +322,8 @@ fn decode(raw: &[u8]) -> Result<(CodeRunCompactionCoverage, Option<CompactionExe
         first: number(57)?,
         last: number(65)?,
         calls: number(73)?,
-        digest: raw[81..BODY_LEN].try_into().map_err(|_| corrupt())?,
+        digest: Some(raw[81..BODY_LEN].try_into().map_err(|_| corrupt())?)
+            .filter(|digest| *digest != WITHDRAWN_DIGEST),
     };
     if row.epoch == 0 || row.first > row.last {
         return Err(corrupt());
@@ -239,6 +341,10 @@ fn verify_summary(
     row: &CodeRunCompactionCoverage,
 ) -> Result<Option<String>> {
     let corrupt = || Error::CorruptedIndex("code-run compaction summary binding");
+    // A withdrawn row renders nothing, whatever is stored under its id now.
+    let Some(digest) = row.digest else {
+        return Ok(None);
+    };
     let Some(summary) = dbs.port_entity_record(txn, &row.summary_id)? else {
         return Ok(None);
     };
@@ -246,7 +352,7 @@ fn verify_summary(
     if state.deleted || state.stale || summary.body.is_empty() {
         return Ok(None);
     }
-    if *blake3::hash(&summary.body).as_bytes() != row.digest {
+    if *blake3::hash(&summary.body).as_bytes() != digest {
         return Ok(None);
     }
     if summary.entity_type != ENTITY_TYPE_SUMMARY {
@@ -317,7 +423,7 @@ fn put_coverage_in(
         first: span.first,
         last: span.last,
         calls: span.calls,
-        digest: *blake3::hash(&minted.body).as_bytes(),
+        digest: Some(*blake3::hash(&minted.body).as_bytes()),
     };
     verify_summary(dbs, &*txn, &row)?.ok_or(Error::InvariantViolation(
         "executor coverage names no live summary",
@@ -366,6 +472,62 @@ fn put_coverage_in(
     Ok(())
 }
 
+/// Writes `rows`, a continuation's inherited coverage, as `child`'s, in
+/// `txn` (FIX 4198). Each row is `source`'s own row as `txn` holds it, but
+/// for its digest, which a step start never carries. Each alias changes
+/// only its run. It takes the source row's summary, session, span, calls
+/// and digest, so [`verify_summary`] binds it as it binds the source's row.
+/// An alias whose summary is withdrawn has no digest, whatever the source's
+/// row holds (FIX 928). It carries no receipt, so no snapshot hash or
+/// length either: no pass runs or bills again. The rows must chain from
+/// epoch 1, and `child` must hold none yet.
+pub(super) fn put_coverage_aliases_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    source: EntityId,
+    child: EntityId,
+    rows: &[CodeRunCompactionCoverage],
+) -> Result<()> {
+    if !coverage_rows_in_txn(dbs, &*txn, child)?.is_empty() {
+        return Err(Error::ConcurrentWrite(
+            "code-run continuation coverage seed",
+        ));
+    }
+    let mut prior = None;
+    for row in rows {
+        let stored = COVERAGE.get(dbs, &*txn, &(source, row.summary_id))?;
+        let Some(stored) = stored.filter(|stored| {
+            row.run_id == source && stored.without_digest() == row.without_digest()
+        }) else {
+            return Err(Error::InvariantViolation(
+                "an inherited coverage row is not its source's",
+            ));
+        };
+        let mut alias = CodeRunCompactionCoverage {
+            run_id: child,
+            ..stored
+        };
+        if !alias.continues(prior.as_ref()) {
+            return Err(Error::InvariantViolation(
+                "an inherited coverage row does not continue its chain",
+            ));
+        }
+        // A withdrawn summary still covers its steps, and its alias keeps
+        // no digest (FIX 928); a corrupt binding refuses.
+        if verify_summary(dbs, &*txn, &alias)?.is_none() {
+            alias.digest = None;
+        }
+        let key = (alias.run_id, alias.summary_id);
+        let written = WrittenCoverage {
+            row: alias,
+            writer: None,
+        };
+        WRITTEN.put(dbs, txn, &key, &written)?;
+        prior = Some(alias);
+    }
+    Ok(())
+}
+
 /// Every coverage row of `run_id` with its summary's prose, `None` when the
 /// summary is withdrawn. Read-time verification never trusts the coverage
 /// bytes alone: the keyed run/summary and the minted SUMMARY must agree.
@@ -379,24 +541,51 @@ fn code_run_compaction_epochs_in(
     run_id: EntityId,
 ) -> Result<Vec<(CodeRunCompactionCoverage, Option<String>)>> {
     let mut rows = Vec::new();
+    for item in WRITTEN.iter_from(dbs, txn, run_id.as_bytes())? {
+        let ((key_run, key_summary), written) = item?;
+        let row = written.row;
+        if (key_run, key_summary) != (row.run_id, row.summary_id) || row.run_id != run_id {
+            return Err(Error::CorruptedIndex("code-run compaction coverage key"));
+        }
+        let text = verified_text(dbs, txn, &row, written.writer.as_ref())?;
+        rows.push((row, text));
+    }
+    Ok(rows)
+}
+
+/// Every coverage row of `run_id` as `txn` holds it, each under its own
+/// key, with no summary read.
+pub(super) fn coverage_rows_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    run_id: EntityId,
+) -> Result<Vec<CodeRunCompactionCoverage>> {
+    let mut rows = Vec::new();
     for item in COVERAGE.iter_from(dbs, txn, run_id.as_bytes())? {
         let ((key_run, key_summary), row) = item?;
         if (key_run, key_summary) != (row.run_id, row.summary_id) || row.run_id != run_id {
             return Err(Error::CorruptedIndex("code-run compaction coverage key"));
         }
-        let text = verified_text(dbs, txn, &row)?;
-        rows.push((row, text));
+        rows.push(row);
     }
     Ok(rows)
 }
 
 /// The row's summary prose as a read through `dbs` may show it, `None` when
 /// withdrawn: on a room's union read, only while no record it came from is.
+/// A self-written summary's words show only while every home part its
+/// `writer` wore still reads at the revision it was read at (FIX 4817).
 fn verified_text(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     row: &CodeRunCompactionCoverage,
+    writer: Option<&CompactionExecution>,
 ) -> Result<Option<String>> {
+    if let Some(writer) = writer
+        && !crate::compaction::home_pins_stand_in(dbs, txn, writer)?
+    {
+        return Ok(None);
+    }
     let text = verify_summary(dbs, txn, row)?;
     if text.is_some() && dbs.is_union() {
         let summary = dbs
@@ -435,7 +624,7 @@ fn code_run_epoch_receipts_in(
         let Some(execution) = written.writer else {
             continue;
         };
-        let summary = verified_text(dbs, txn, &row)?;
+        let summary = verified_text(dbs, txn, &row, Some(&execution))?;
         receipts.push(CompactionLandingReceipt {
             run: run_id,
             landing: CompactionLanding::Epoch {
@@ -450,6 +639,27 @@ fn code_run_epoch_receipts_in(
         });
     }
     Ok(receipts)
+}
+
+/// The receipt of self-written epoch `summary` (FIX 4817), found through
+/// the run its birth names as its trigger. `None` for any other row, and for
+/// an epoch whose birth names no run (a Base-route run's record lives in its
+/// room): [`verified_text`] still withholds that one's words once a home
+/// part it wore is edited.
+pub(crate) fn epoch_execution_in(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    summary: &EntityId,
+) -> Result<Option<CompactionExecution>> {
+    let Some(birth) = crate::store::birth_record::row_birth_in_txn(dbs, txn, summary)? else {
+        return Ok(None);
+    };
+    let Some(MadeByTrigger::Run(run)) = birth.made_by.trigger else {
+        return Ok(None);
+    };
+    Ok(WRITTEN
+        .get(dbs, txn, &(run, *summary))?
+        .and_then(|written| written.writer))
 }
 
 impl Vault {

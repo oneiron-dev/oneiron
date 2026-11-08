@@ -1,6 +1,15 @@
 //! Typed policy reads, owner edits and inert untrusted contributions.
 //! The owner writer is the same one `install_owner_policy_manifest` takes;
 //! composition and validation remain the existing manifest resolver's.
+mod agent_verb_classes;
+pub(crate) use agent_verb_classes::{
+    AGENT_VERB_CLASSES_KEY, agent_verb_class_rows_for_store_in_txn, agent_verb_class_rows_of_body,
+    decode_agent_verb_classes, verb_classes_narrow,
+};
+pub use agent_verb_classes::{
+    AgentVerbClassRow, AgentVerbClassesConfigureRequest, AgentVerbClassesReceipt,
+    AgentVerbClassesView, agent_verb_classes_as_owner, configure_agent_verb_classes_as_owner,
+};
 mod calendar_outcome_grace;
 pub use calendar_outcome_grace::{
     calendar_outcome_grace_as_owner, set_calendar_outcome_grace_as_owner,
@@ -28,6 +37,10 @@ pub(crate) use retrieval_weights::{
 pub use retrieval_weights::{
     RetrievalWeights, RetrievalWeightsConfigureRequest, RetrievalWeightsReceipt,
     RetrievalWeightsView, configure_retrieval_weights_as_owner, retrieval_weights_as_owner,
+};
+mod scoped_grants;
+pub use scoped_grants::{
+    PolicyGrantExtension, PolicyGrantMapEntry, PolicyGrantValue, PolicyScopedGrantRow,
 };
 mod types;
 pub use types::*;
@@ -58,6 +71,9 @@ const FIELDS: &[&str] = &[
     "signatures",
     "auto_checker",
     "slide_review_policy",
+    crate::gate::code_consent_settlement::KEY,
+    "teacher_probe",
+    "sheet_answer_limits",
 ];
 
 fn invalid(message: &str) -> Error {
@@ -99,10 +115,24 @@ fn view_in_txn(
     body: &[u8],
 ) -> Result<PolicyManifestView> {
     let mut fields = decode_fields(body)?;
+    let scoped_grants = {
+        let mut tables = fields
+            .iter()
+            .filter(|(key, _)| key.as_str() == Some(super::constants::POLICY_SCOPED_GRANTS_KEY));
+        let rows = tables
+            .next()
+            .map(|(_, value)| scoped_grants::decode_table(value))
+            .transpose()?;
+        if tables.next().is_some() {
+            return Err(invalid("duplicate scoped grants table"));
+        }
+        rows
+    };
     fields.retain(|(key, _)| key.as_str().is_some_and(|key| FIELDS.contains(&key)));
     let selected = encode_fields(fields)?;
-    let manifest = rmp_serde::from_slice(&selected)
+    let mut manifest: PolicyManifest = rmp_serde::from_slice(&selected)
         .map_err(|_| invalid("policy manifest write axes do not decode"))?;
+    manifest.scoped_grants = scoped_grants;
     Ok(PolicyManifestView {
         manifest_ref: id.to_hex(),
         body_hash: blake3::hash(body).to_hex().to_string(),
@@ -124,8 +154,7 @@ fn decode_fields(body: &[u8]) -> Result<Vec<(rmpv::Value, rmpv::Value)>> {
 
 fn encode_fields(fields: Vec<(rmpv::Value, rmpv::Value)>) -> Result<Vec<u8>> {
     let mut data = Vec::new();
-    rmpv::encode::write_value(&mut data, &rmpv::Value::Map(fields))
-        .map_err(|_| invalid("policy manifest encoding"))?;
+    super::value_encoding::write_value(&mut data, &rmpv::Value::Map(fields))?;
     Ok(data)
 }
 
@@ -136,7 +165,14 @@ fn encode_manifest(manifest: &PolicyManifest, existing: Option<&[u8]>) -> Result
     fields.retain(|(key, _)| !key.as_str().is_some_and(|key| FIELDS.contains(&key)));
     let replacement =
         rmp_serde::to_vec_named(manifest).map_err(|_| invalid("policy manifest encoding"))?;
-    fields.extend(decode_fields(&replacement)?);
+    fields.extend(
+        decode_fields(&replacement)?
+            .into_iter()
+            .filter(|(key, _)| key.as_str() != Some(super::constants::POLICY_SCOPED_GRANTS_KEY)),
+    );
+    if let Some(rows) = &manifest.scoped_grants {
+        scoped_grants::replace_table(&mut fields, rows)?;
+    }
     let data = encode_fields(fields)?;
     let decoded = super::decode::decode_policy_manifest(&data)
         .ok_or_else(|| invalid("malformed policy manifest"))?;
@@ -181,7 +217,7 @@ fn record(
     vault
         .store
         .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
-    Ok(receipt.decision_id.to_hex())
+    Ok(format!("gate:{}", receipt.decision_id.to_hex()))
 }
 
 /// Replaces one field of the owner-trusted default manifest through the

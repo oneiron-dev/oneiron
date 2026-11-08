@@ -67,7 +67,9 @@ use crate::entity_id::EntityId;
 use super::machine_standing::{InstallCounted, Mark, Standing, StandingView};
 use super::*;
 
-pub(crate) use self::root_basis::{RootBasisCheck, check_root_basis_in_txn};
+pub(crate) use self::root_basis::{
+    RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn,
+};
 
 /// One admitted request, as its entry carried it. The body rides in an
 /// `Arc` the folded view shares, so a view build clones no permit set
@@ -217,6 +219,21 @@ impl AuthorityFold {
             .map(|folded| folded.request.as_ref())
     }
 
+    /// The entry hashes of the admitted requests that count here (FIX
+    /// 4633): the owner-work map's keys whose stored `counts` flag is
+    /// true. Same native membership as
+    /// [`counted_owner_work_request`](Self::counted_owner_work_request),
+    /// as an enumeration.
+    pub(super) fn counted_owner_work_request_hashes(
+        &self,
+    ) -> impl Iterator<Item = AuthorityEntryHash> + '_ {
+        self.owner_work
+            .requests
+            .iter()
+            .filter(|(_, folded)| folded.counts)
+            .map(|(hash, _)| *hash)
+    }
+
     /// The one result of the request signed as entry `request`.
     pub(crate) fn owner_work_result(
         &self,
@@ -276,20 +293,34 @@ impl AuthorityFold {
     /// builds them again in its own writer transaction (`root_basis`): a
     /// different revision is a change the owner did not see, or heads the
     /// target has not folded yet. The request itself is never a head, so no
-    /// request makes itself stale.
+    /// request makes itself stale. The basis names the anchor it left out
+    /// (FIX 6556); the recorder adds the heads' parents
+    /// ([`root_work_witness_in_txn`]).
     pub(crate) fn root_work_basis(
         &self,
         target: EntityId,
         change: RootChange,
     ) -> RootRevisionBasis {
+        let bound = change.root().and_then(|root| {
+            self.root_anchors
+                .iter()
+                .find(|(_, roots)| roots.contains(&root))
+                .map(|(anchor, _)| *anchor)
+        });
+        self.root_work_heads(target, bound)
+    }
+
+    /// [`Self::root_work_basis`]'s heads on `target`, leaving out `bound`'s
+    /// roots and its chain of the target: the anchor this fold holds the
+    /// change's root under, or, on a target the root's record has not
+    /// reached, the one its witness names (FIX 6556).
+    pub(crate) fn root_work_heads(
+        &self,
+        target: EntityId,
+        bound: Option<[u8; 32]>,
+    ) -> RootRevisionBasis {
         match ROOT_WORK_REVISION {
             RootRevisionHeads::RootsAndTargetStanding => {
-                let bound = change.root().and_then(|root| {
-                    self.root_anchors
-                        .iter()
-                        .find(|(_, roots)| roots.contains(&root))
-                        .map(|(anchor, _)| *anchor)
-                });
                 let roots = self
                     .root_anchors
                     .iter()
@@ -311,6 +342,8 @@ impl AuthorityFold {
                         .filter(|(anchor, _)| Some(**anchor) != bound)
                         .map(|(anchor, revision)| (*anchor, revision.entry))
                         .collect(),
+                    bound,
+                    parents: BTreeMap::new(),
                 }
             }
         }

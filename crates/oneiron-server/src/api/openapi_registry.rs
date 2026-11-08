@@ -2,7 +2,7 @@
 
 use super::__path_core_reject_widen;
 use super::__path_restore_quarantined_booking;
-use super::run_tree::CoreAttemptPlacement;
+use super::run_tree::{CoreAttemptPlacement, CoreRunTreeDeletion};
 use super::{
     __path_annotate_turn_vad, __path_append_core_record, __path_booking_agent_instructions,
     __path_booking_availability, __path_booking_book, __path_booking_cancel,
@@ -159,6 +159,7 @@ use utoipa::OpenApi;
         core_run_tree_observe,
         core_run_tree_intervene,
         submit_core_surface_event,
+        super::phone_line::submit_core_phone_line_arrival,
         get_core_surface_event,
         super::linear_push::core_linear_push,
         super::org_admin::configure,
@@ -303,6 +304,7 @@ use utoipa::OpenApi;
         CoreRunTreeEvent,
         CoreRunTreeEventKind,
         CoreRunTreeRepair,
+        CoreRunTreeDeletion,
         SurfaceEventSubmitRequest,
         super::SurfaceEmailThreadPayload,
         SurfaceEventSourcePayload,
@@ -315,6 +317,7 @@ use utoipa::OpenApi;
         SurfaceEventRejectionResponse,
         SurfaceEventStatusResponse,
         SurfaceEventHandoffStatePayload,
+        super::phone_line::PhoneLineArrivalAck,
         super::linear_push::LinearPushRequest,
         super::linear_push::LinearPushReply,
         CoreTextField,

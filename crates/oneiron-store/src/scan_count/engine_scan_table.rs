@@ -1,6 +1,11 @@
 //! Default scan thresholds, including the context-projection-owned threshold.
 
 use crate::scan_kind::{DEFAULT_SCAN_CHECK_THRESHOLD, EngineScan};
+use oneiron_contracts::limits::MAX_ANCESTOR_DEPTH;
+
+/// The records a word-source walk judges before it asks: the count it once
+/// withheld past, four times the ancestor depth (FIX 9787).
+const WORD_SOURCE_CHECK_RECORDS: u64 = 4 * MAX_ANCESTOR_DEPTH as u64;
 
 pub trait EngineScanThreshold {
     fn default_threshold(self) -> u64;
@@ -91,8 +96,11 @@ impl EngineScanThreshold for EngineScan {
             Self::AgentDefinitionVerbatimPinBytes => 1024,
             Self::AgentBirthSourceBytes => 32 * 1024 * 1024,
             Self::TaskPostIntentKeyBytes => 256,
-            Self::AudienceCoverDepth | Self::ProjectAnchorDepth => 64,
+            Self::AudienceCoverDepth
+            | Self::ProjectAnchorDepth
+            | Self::MachineTransitionFrontier => 64,
             Self::ProjectFoldDepth => 256,
+            Self::WordSourceRecords => WORD_SOURCE_CHECK_RECORDS,
             _ => DEFAULT_SCAN_CHECK_THRESHOLD,
         }
     }

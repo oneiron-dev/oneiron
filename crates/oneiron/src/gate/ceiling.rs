@@ -50,19 +50,49 @@ impl PolicyCriticality {
     }
 }
 
+/// A predicate class's rung on the DEC-0005 content ladder (`public` ·
+/// `private` · `sensitive` · `restricted`), plus `normal`, the ordinary
+/// non-sensitive label the shipped packs carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PolicySensitivity {
-    Normal,
+    Public,
+    Private,
     Sensitive,
+    Restricted,
+    Normal,
 }
 
 impl PolicySensitivity {
     pub(super) fn parse(value: &Value) -> Option<Self> {
         match value.as_str()? {
-            "normal" => Some(Self::Normal),
+            "public" => Some(Self::Public),
+            "private" => Some(Self::Private),
             "sensitive" => Some(Self::Sensitive),
+            "restricted" => Some(Self::Restricted),
+            "normal" => Some(Self::Normal),
             _ => None,
         }
+    }
+
+    /// Order for the most-restrictive-wins meet. `public` is an explicit
+    /// opening and `private` an explicit closing, so `normal`, which asserts
+    /// neither, ranks between them. All three rank below `sensitive`;
+    /// `restricted` ranks highest.
+    const fn meet_rank(self) -> u8 {
+        match self {
+            Self::Public => 0,
+            Self::Normal => 1,
+            Self::Private => 2,
+            Self::Sensitive => 3,
+            Self::Restricted => 4,
+        }
+    }
+
+    /// Whether this label is at or above the `sensitive` rung that a
+    /// predicate no pack labels reads, so a new pack carrying it only
+    /// narrows.
+    pub(super) const fn at_least_sensitive(self) -> bool {
+        self.meet_rank() >= Self::Sensitive.meet_rank()
     }
 }
 
@@ -295,6 +325,27 @@ pub(crate) struct PolicySignature {
     pub(crate) sig: String,
 }
 
+/// A native checker selected by an actor's own source-trust permit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NativeAutoChecker {
+    SealJob,
+}
+
+impl NativeAutoChecker {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::SealJob => "native.esign.seal",
+        }
+    }
+
+    pub(super) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "native.esign.seal" => Some(Self::SealJob),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct SourceTrustRow {
     pub(super) max_auto_sensitivity: Option<u8>,
@@ -314,6 +365,7 @@ pub(super) struct SourceTrustRow {
     /// auto-approves every unstamped claim of the class rather than the one
     /// engine writer it was authored for.
     pub(super) actor_ref: Option<EntityId>,
+    pub(super) auto_checker: Option<NativeAutoChecker>,
 }
 
 impl SourceTrustRow {
@@ -339,6 +391,7 @@ impl SourceTrustRow {
                 receipted: false,
                 warned: false,
                 actor_ref: None,
+                auto_checker: None,
             };
         }
 
@@ -352,6 +405,9 @@ impl SourceTrustRow {
             receipted: self.receipted && other.receipted,
             warned: self.warned && other.warned,
             actor_ref: self.actor_ref,
+            auto_checker: self
+                .auto_checker
+                .filter(|checker| other.auto_checker == Some(*checker)),
         }
     }
 }
@@ -395,8 +451,8 @@ impl SourceTrustCeiling {
         actor_ref: Option<&str>,
     ) -> Option<SourceTrustRow> {
         let first = self.row(source)?;
-        // Actor-specific untrusted clamps override a class-wide permit only
-        // for that actor. They can never create a permit without that baseline.
+        // An actor-specific row overrides a class-wide permit only for that
+        // actor. It never creates a permit without that baseline.
         if let Some(id) = actor_ref.and_then(|actor| EntityId::from_hex(actor).ok())
             && let Some(row) = self.additional_bound_rows.get(&(source, id))
         {
@@ -450,68 +506,6 @@ impl SourceTrustCeiling {
         }
         for ((source, _), row) in other.additional_bound_rows {
             self.set_row(source, row);
-        }
-    }
-
-    fn restrict_row(&mut self, source: ClaimSource, row: SourceTrustRow) {
-        let Some(first) = self.row(source) else {
-            return; // Untrusted input cannot open a source permit.
-        };
-        match row.actor_ref {
-            Some(actor) if first.actor_ref != Some(actor) => {
-                if let Some(existing) = self.additional_bound_rows.get_mut(&(source, actor)) {
-                    *existing = existing.merge(row);
-                } else if first.actor_ref.is_none() {
-                    // A class-wide permit covers this actor. Intersect just
-                    // that actor's scope, leaving every other actor unchanged.
-                    let bound_first = SourceTrustRow {
-                        actor_ref: Some(actor),
-                        ..first
-                    };
-                    self.additional_bound_rows
-                        .insert((source, actor), bound_first.merge(row));
-                }
-            }
-            _ => {
-                if row.actor_ref.is_none() {
-                    // A class-wide restriction intersects every existing
-                    // actor slot, preserving each binding. It must neither
-                    // single out the first scanned actor nor grant outsiders.
-                    *self.slot_mut(source) = Some(first.merge(SourceTrustRow {
-                        actor_ref: first.actor_ref,
-                        ..row
-                    }));
-                    for ((slot_source, _), bound) in &mut self.additional_bound_rows {
-                        if *slot_source == source {
-                            *bound = bound.merge(SourceTrustRow {
-                                actor_ref: bound.actor_ref,
-                                ..row
-                            });
-                        }
-                    }
-                } else {
-                    *self.slot_mut(source) = Some(first.merge(row));
-                }
-            }
-        }
-    }
-
-    pub(super) fn restrict_only(&mut self, other: Self) {
-        self.malformed_manifest_seen |= other.malformed_manifest_seen;
-        for source in [
-            ClaimSource::UserStated,
-            ClaimSource::Observed,
-            ClaimSource::Inferred,
-            ClaimSource::Imported,
-            ClaimSource::ToolOutput,
-            ClaimSource::Generated,
-        ] {
-            if let Some(row) = other.row(source) {
-                self.restrict_row(source, row);
-            }
-        }
-        for ((source, _), row) in other.additional_bound_rows {
-            self.restrict_row(source, row);
         }
     }
 
@@ -728,10 +722,10 @@ impl Restrict for PolicyCriticality {
 
 impl Restrict for PolicySensitivity {
     fn restrict(self, other: Self) -> Self {
-        if matches!(self, Self::Sensitive) || matches!(other, Self::Sensitive) {
-            Self::Sensitive
+        if other.meet_rank() > self.meet_rank() {
+            other
         } else {
-            Self::Normal
+            self
         }
     }
 }

@@ -39,7 +39,37 @@ mod request;
 
 pub(crate) use oneiron_vault_contract::MCP_CREDENTIAL_HEADER;
 
-pub(crate) const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+/// The newest MCP protocol version this server speaks: what `initialize`
+/// answers a client that asks for none of [`MCP_PROTOCOL_VERSIONS`].
+pub(crate) const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
+
+/// The MCP protocol versions this server speaks, newest first: the
+/// revisions this host's own connector client speaks
+/// (`connector_admission_host.rs` `SPOKEN_REVISIONS`, with 2026-07-28 the
+/// pinned stateless revision of canon ARCH-0028), and `2024-11-05`, since an
+/// old-style client is served, never refused. An engine call (CALLS, FIX
+/// 4902). Each is served alike: one JSON-RPC request per POST, answered
+/// `application/json`; no batch (2025-03-26's batches stay refused); no
+/// server-initiated stream. The endpoint holds no session: it mints no
+/// `Mcp-Session-Id` and reads none, so each POST stands alone.
+pub(crate) const MCP_PROTOCOL_VERSIONS: &[&str] = &[
+    MCP_PROTOCOL_VERSION,
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+];
+
+/// The version `initialize` answers (MCP lifecycle): the one the client
+/// asks for when this server speaks it, else the newest. An engine call
+/// (CALLS, FIX 4902).
+fn mcp_negotiated_version(requested: Option<&str>) -> &'static str {
+    MCP_PROTOCOL_VERSIONS
+        .iter()
+        .copied()
+        .find(|version| Some(*version) == requested)
+        .unwrap_or(MCP_PROTOCOL_VERSION)
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct McpJsonRpcRequest {
@@ -100,6 +130,8 @@ pub(crate) struct McpGatewayError {
     /// A verb hook's stop (ARCH-0080 §3), surfaced as `error.data.hook`; a
     /// code-mode door hands it back to the run as the typed stop.
     pub(super) hook: Option<Box<oneiron::runtime_hooks::VerbHookStop>>,
+    /// A successful row's target-rewrite notice, retained beside a post-hook error.
+    pub(super) hook_notice: Option<String>,
     /// When a model call no provider answered may be sent again, in seconds
     /// (FIX 3194), surfaced as `error.data.retry_after`; a code-mode door
     /// hands it back to the run as the typed outage.
@@ -118,6 +150,8 @@ pub(crate) struct McpGatewayError {
     pub(super) reason_codes: Vec<String>,
     /// The typed legal-hold notice, surfaced as `error.data.legal_hold`.
     pub(super) legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
+    /// The held room join, surfaced as `error.data.room_join_hold`.
+    pub(super) room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
 }
 
 impl McpGatewayError {
@@ -135,11 +169,13 @@ impl McpGatewayError {
             call_receipt: None,
             row_receipt: None,
             hook: None,
+            hook_notice: None,
             retry_after: None,
             resets_at: None,
             program_steps: None,
             reason_codes: Vec::new(),
             legal_hold: None,
+            room_join_hold: None,
         }
     }
 
@@ -158,6 +194,11 @@ impl McpGatewayError {
         .with_field(field);
         error.byte_bound = Some(Box::new((max_bytes, received_bytes)));
         error
+    }
+
+    pub(super) fn with_hook_notice(mut self, notice: Option<String>) -> Self {
+        self.hook_notice = notice.or(self.hook_notice);
+        self
     }
 
     pub(super) fn with_field(mut self, field: impl Into<String>) -> Self {
@@ -231,6 +272,8 @@ pub(crate) struct McpCallContext {
     /// `None` lowers for the whole atom kit. It selects a rendering and
     /// grants nothing.
     pub(crate) client_surface: Option<oneiron::lens::GeneratedUiSurfaceCapabilities>,
+    /// The current request's actual transport, for signing audit only.
+    pub(crate) signing_request_transport: Option<oneiron::memory::SigningRequestTransport>,
 }
 
 impl std::ops::Deref for McpCallContext {

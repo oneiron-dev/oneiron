@@ -20,22 +20,22 @@ pub(crate) enum HomeText {
     /// no proof to forward), was out of reach, refused or ran late: the page
     /// is the device's alone, and not the whole answer.
     LocalOnly,
-    /// The home's answer. `capped`: the ask was cut to the residence
-    /// `search_limit`.
-    Answered {
-        search: ResidenceSearch,
-        capped: bool,
-    },
+    /// The home's answer. A home search pages to the whole limit (FIX
+    /// 8865), so no answer is cut to the residence `search_limit`; its own
+    /// `complete` says whether it is whole (FIX 9257).
+    Answered { search: ResidenceSearch },
 }
 
-/// Asks `vault`'s home `query` for `caller`, before `due`. A device whose
-/// own sync connection dropped still syncs only what it opened, so its page
-/// stays local-only rather than reading whole.
+/// Asks `vault`'s home `query` for `caller`, before `due`, under the
+/// caller's own retrieval `filter` (FIX 3977). A device whose own sync
+/// connection dropped still syncs only what it opened, so its page stays
+/// local-only rather than reading whole.
 pub(crate) async fn ask_home_text(
     vault: &Vault,
     caller: &HomeRecallCaller,
     query: &str,
     limit: usize,
+    filter: Option<&oneiron::memory::ReadFilterInput>,
     due: Option<Instant>,
 ) -> HomeText {
     let DeviceResidence::Opened { search } = vault.device_residence() else {
@@ -49,15 +49,13 @@ pub(crate) async fn ask_home_text(
         (false, Some(proof)) => Some(proof),
         (false, None) => return HomeText::LocalOnly,
     };
-    let capped = vault
-        .residence_operation_budgets()
-        .ok()
-        .flatten()
-        .is_some_and(|budgets| limit > budgets.search_limit);
     let asked = async {
         match forwarded {
-            Some(proof) => home.search_for(query, limit, proof, caller.locality).await,
-            None => home.search(query, limit).await,
+            Some(proof) => {
+                home.search_for(query, limit, proof, caller.locality, filter)
+                    .await
+            }
+            None => home.search(query, limit, filter).await,
         }
     };
     let answer = match due {
@@ -65,10 +63,7 @@ pub(crate) async fn ask_home_text(
         None => Some(asked.await),
     };
     match answer {
-        Some(Ok(found)) => HomeText::Answered {
-            search: found,
-            capped,
-        },
+        Some(Ok(found)) => HomeText::Answered { search: found },
         Some(Err(_)) | None => HomeText::LocalOnly,
     }
 }
@@ -87,6 +82,7 @@ pub(crate) async fn complete_bm25_with_home(
     mut page: Bm25Search,
     query: &str,
     limit: usize,
+    filter: Option<&oneiron::memory::ReadFilterInput>,
     home: &HomeRecallCaller,
 ) -> (Bm25Search, Vec<EntityId>) {
     if page.residence.is_none() {
@@ -98,9 +94,9 @@ pub(crate) async fn complete_bm25_with_home(
         .filter_map(|hit| hit.record.as_ref())
         .map(|record| record.id.clone())
         .collect();
-    let residence = match ask_home_text(vault, home, query, limit, None).await {
-        HomeText::Answered { search, capped } if search.source == SearchSource::Home => {
-            home_residence(search, capped, &held)
+    let residence = match ask_home_text(vault, home, query, limit, filter, None).await {
+        HomeText::Answered { search } if search.source == SearchSource::Home => {
+            home_residence(search, &held)
         }
         HomeText::Whole | HomeText::LocalOnly | HomeText::Answered { .. } => {
             RecallResidence::local_only()
@@ -116,11 +112,12 @@ pub(crate) async fn complete_bm25_with_home(
 }
 
 /// The home's answer as a residence beside a page holding `held`.
-fn home_residence(search: ResidenceSearch, capped: bool, held: &[String]) -> RecallResidence {
+fn home_residence(search: ResidenceSearch, held: &[String]) -> RecallResidence {
     let hits = search.hits.into_iter().map(|hit| RecallResidenceHit {
         id: hit.entity_id,
         score: hit.score,
         window: hit.window.to_string(),
     });
-    RecallResidence::home_text(hits, search.complete, capped, held)
+    // Never capped: the paged search answers the whole limit (FIX 9257).
+    RecallResidence::home_text(hits, search.complete, false, held)
 }

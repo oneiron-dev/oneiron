@@ -15,9 +15,9 @@ pub(crate) mod topology;
 #[cfg(test)]
 pub(crate) use admission::stored_body_pin_for_test;
 pub(crate) use admission::{
-    guard_record_put, guard_room_membership_delete, guard_room_turn_delete, keep_membership_pin,
-    pin_membership, pin_typed_record, record_is_append_only_in_txn, room_turn_owner,
-    validate_local_membership,
+    exact_core_turn_retry_in_txn, guard_record_put, guard_room_membership_delete,
+    guard_room_turn_delete, keep_membership_pin, pin_membership, pin_typed_record,
+    record_is_append_only_in_txn, room_turn_owner, validate_local_membership,
 };
 #[cfg(feature = "sync")]
 pub(crate) use admission::{validate_received_edge, validate_received_parent_value};
@@ -46,8 +46,8 @@ mod writes;
 pub(crate) use branch_scope::{prove_branch_anchor, prove_branch_span};
 pub(crate) use graph::{
     actor_in_txn, chain as retained_chain, conversation_of, counted_edge_ids, edge_ids,
-    is_sub_session_record, is_thread_record, keeps_dag_topology, parent as retained_parent,
-    record_has_dag_topology, require_type,
+    is_sub_session_record, is_thread_record, keeps_dag_topology, named_room,
+    parent as retained_parent, record_has_dag_topology, require_type,
 };
 pub(crate) use participation::{erased_thread_room_in_txn, offer_turns_in_txn};
 pub(crate) use policy::{
@@ -55,8 +55,8 @@ pub(crate) use policy::{
     require_append_references_in_txn,
 };
 pub(crate) use quote::{
-    ProvenRoomQuote, QuotedReply, pin_arrived_body_quotes_in_txn,
-    pin_body_quotes_at_message_birth_in_txn, require_quote_landing_in_txn,
+    ProvenRoomQuote, QuotedReply, message_body_quotes, pin_arrived_body_quotes_in_txn,
+    pin_body_quotes_at_message_birth_in_txn, require_quote_landing_in_txn, turn_body_quotes,
     witness_reply_field_count, witness_turn_quotes,
 };
 pub use quote::{QuoteAnchor, RoomQuote};
@@ -89,4 +89,4 @@ mod tests;
 #[cfg(any(test, all(feature = "sync", feature = "test-hooks")))]
 pub mod test_support;
 
-pub(crate) use migration::migrate_in_txn;
+pub(crate) use migration::{join_core_turn_in_txn, migrate_in_txn, permit_core_turn_in_txn};

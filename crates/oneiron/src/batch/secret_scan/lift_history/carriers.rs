@@ -12,10 +12,13 @@ use std::borrow::Cow;
 use heed::{RoTxn, RwTxn};
 
 use super::super::write_payload_hit;
+use super::accounting::Source;
 use super::{Done, LiftCause, Page, hex, table_page};
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self as t, SideDb, SideTableDecl};
+use crate::origin::lfs::LfsOid;
+use crate::side_table::{self as t, HexId, SideDb, SideKey, SideTableDecl};
 
 /// The carriers, in walk order. A cursor's first byte is a carrier's place
 /// here.
@@ -65,7 +68,10 @@ pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize)
             .map_err(|_| Error::InvariantViolation("the lift sweep's carriers outgrew a byte"))?;
         for (key, value) in &rows {
             page.read += 1;
-            page.known_reads.extend(source_of(decl, key));
+            let source = source_of_in_txn(vault, txn, decl, key)?;
+            if !source.entities().is_empty() {
+                page.known_reads.push(source);
+            }
             // A repo-mutation row reads by its own door (FIX 2890).
             let found = match super::retained::hit(vault, txn, decl, key, value)? {
                 Some(found) => found,
@@ -140,18 +146,92 @@ pub(super) fn path(key: &[u8]) -> String {
     }
 }
 
-/// The typed-body producer keys its document by the actual source entity.
-/// No source is inferred for other carrier formats.
-pub(super) fn source(key: &[u8]) -> Option<crate::entity_id::EntityId> {
-    let (decl, row_key) = carrier_of(key)?;
-    source_of(decl, row_key)
+/// Typed-body documents and codebase snapshots are keyed by their actual
+/// source entity; a typed-body fork pairs that entity with its fork id.
+/// A note proposal pairs its owning NOTE with its fork head; its source is
+/// the first. An office-body fork pairs its artifact with its fork id; its
+/// source is the first. A repo-mutation proposal's key is its own admitted
+/// journal claim. An LFS object's source is its live native manifest ASSET
+/// binding in this transaction. A MESSAGE continuation names its live
+/// MESSAGE. Eval cases' native receipts, including same-seat, same-family
+/// ancestors' receipts, establish known dependencies from frozen read sets.
+/// Labels remain untraced.
+/// Other formats remain unknown.
+pub(super) fn source_in_txn(vault: &Vault, txn: &RoTxn<'_>, key: &[u8]) -> Result<Source> {
+    let Some((decl, row_key)) = carrier_of(key) else {
+        return Ok(Source::Unmapped);
+    };
+    source_of_in_txn(vault, txn, decl, row_key)
+}
+
+fn source_of_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    decl: &SideTableDecl,
+    row_key: &[u8],
+) -> Result<Source> {
+    if std::ptr::eq(decl, &t::SKILL_OPTIMIZE_EVAL_CASE) {
+        let Some(case) = row_key
+            .strip_prefix(decl.prefix)
+            .and_then(<EntityId as SideKey>::decode_key)
+        else {
+            return Ok(Source::Unmapped);
+        };
+        return Ok(Source::of_set(
+            vault.eval_case_receipt_sources_in_txn(txn, &case)?,
+        ));
+    }
+    if std::ptr::eq(decl, &t::ORIGIN_LFS_OBJECT) {
+        let Some(oid) = row_key
+            .strip_prefix(decl.prefix)
+            .and_then(LfsOid::decode_key)
+        else {
+            return Ok(Source::Unmapped);
+        };
+        return Ok(vault
+            .lfs_object_source_in_txn(txn, oid)?
+            .map_or(Source::Unmapped, Source::Entity));
+    }
+    if std::ptr::eq(decl, &t::MESSAGE_STREAM_ACTIVE) {
+        let Some(message) = row_key
+            .strip_prefix(decl.prefix)
+            .and_then(<EntityId as SideKey>::decode_key)
+        else {
+            return Ok(Source::Unmapped);
+        };
+        return Ok(vault
+            .message_stream_continuation_source_in_txn(txn, &message)?
+            .map_or(Source::Unmapped, Source::Entity));
+    }
+    Ok(source_of(decl, row_key).map_or(Source::Unmapped, Source::Entity))
 }
 
 fn source_of(decl: &SideTableDecl, row_key: &[u8]) -> Option<crate::entity_id::EntityId> {
-    if !std::ptr::eq(decl, &t::TYPED_BODY_DOC) {
+    if std::ptr::eq(decl, &t::TYPED_BODY_FORK_DOC) || std::ptr::eq(decl, &t::OFFICE_BODY_FORK) {
+        let (entity, _): (EntityId, EntityId) =
+            SideKey::decode_key(row_key.strip_prefix(decl.prefix)?)?;
+        return Some(entity);
+    }
+    if std::ptr::eq(decl, &t::NOTE_PROPOSAL_DOC) {
+        return note_proposal_source(row_key.strip_prefix(decl.prefix)?);
+    }
+    if !std::ptr::eq(decl, &t::TYPED_BODY_DOC)
+        && !std::ptr::eq(decl, &t::CODEBASE_SNAPSHOT)
+        && !std::ptr::eq(decl, &t::REPO_MUTATION_PROPOSAL)
+    {
         return None;
     }
     super::records::record_id(row_key.strip_prefix(decl.prefix)?)
+}
+
+/// The owning NOTE a note-proposal row's key leads with: `hex32(note) ":"`
+/// `hex32(head)`. Both halves must decode; only the first is the source.
+pub(super) fn note_proposal_source(key: &[u8]) -> Option<EntityId> {
+    let (note, rest) = key.split_at_checked(32)?;
+    let head = rest.strip_prefix(b":")?;
+    let note = HexId::decode_key(note)?;
+    HexId::decode_key(head)?;
+    Some(note.0)
 }
 
 fn cursor(place: u8, key: &[u8]) -> Vec<u8> {

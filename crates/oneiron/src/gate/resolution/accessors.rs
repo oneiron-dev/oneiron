@@ -109,10 +109,11 @@ impl PolicyManifestResolution {
         }
     }
 
-    /// Resolved restrictive cap, with vault cap and applicable artifact/sheet
-    /// rows combined by minimum. An untrusted row can only narrow this cap.
-    /// The holder may request a smaller limit, never exceed the vault cap.
-    pub(crate) fn sheet_answer_limit(
+    /// Resolved answer-batch size, with vault and applicable artifact/sheet
+    /// rows combined by minimum. Only trusted rows count: an untrusted row is
+    /// a proposal until a holder authors it (FIX 8780). The holder may
+    /// request a smaller batch, never exceed the vault batch size.
+    pub(crate) fn sheet_answer_batch_size(
         &self,
         artifact_ref: &str,
         sheet: &str,
@@ -141,20 +142,8 @@ impl PolicyManifestResolution {
                 _ => {}
             }
         }
-        // Untrusted rows can narrow the trusted vault cap, never replace the
-        // shipped fallback when the owner omitted their vault row.
         let vault_cap = trusted_vault_cap.or(self.sheet_answer_default_max_count)?;
-        let mut cap = vault_cap.min(scoped_cap);
-        for row in &self.untrusted_sheet_answer_limits {
-            match (row.artifact_ref.as_deref(), row.sheet.as_deref()) {
-                (None, None) => cap = cap.min(row.max_count),
-                (Some(artifact), None) if artifact == artifact_ref => cap = cap.min(row.max_count),
-                (Some(artifact), Some(name)) if artifact == artifact_ref && name == sheet => {
-                    cap = cap.min(row.max_count);
-                }
-                _ => {}
-            }
-        }
+        let cap = vault_cap.min(scoped_cap);
         if holder_override == Some(0) {
             return None;
         }
@@ -490,6 +479,21 @@ impl PolicyManifestResolution {
         self.auto_checker.as_deref()
     }
 
+    /// The native checker selected by this writer's resolved source permit.
+    /// The top-level host checker remains independent and Dreamer-scoped.
+    pub(crate) fn source_auto_checker(
+        &self,
+        source: crate::claim::ClaimSource,
+        actor_ref: Option<&str>,
+    ) -> Option<crate::gate::NativeAutoChecker> {
+        if self.is_fail_closed() || self.source_trust.malformed_manifest_seen {
+            return None;
+        }
+        self.source_trust
+            .row_for_actor(source, actor_ref)?
+            .auto_checker
+    }
+
     /// The quality floor lives in a trusted, seeded POLICY_MANIFEST row.
     /// Holder overrides are nested restrict-only rows capped at the vault.
     #[must_use]
@@ -650,9 +654,9 @@ impl PolicyManifestResolution {
             ));
         }
         // `packs` holds exactly the trusted packs this fold read: one is
-        // pushed per trusted pack, after untrusted ones have left the fold.
-        // An untrusted pack counts in `manifest_count`, so the count proves
-        // nothing; a trusted pack read is the positive proof of absence.
+        // pushed per trusted pack. An untrusted pack leaves the fold before
+        // anything is counted (FIX 8780); a trusted pack read is the positive
+        // proof of absence.
         let trusted_absence = !self.packs.is_empty();
         crate::gate::voice_serving::resolve(&self.voice_serving, holder, trusted_absence)
     }
@@ -792,6 +796,9 @@ impl PolicyManifestResolution {
             .unwrap_or(PolicyCriticality::Critical)
     }
 
+    /// `predicate`'s rung on the content ladder, the most restrictive label
+    /// any pack selects for it; `sensitive` when no pack labels it or the
+    /// manifest fails closed.
     #[must_use]
     pub(in crate::gate) fn sensitivity_for_predicate(&self, predicate: &str) -> PolicySensitivity {
         if self.is_fail_closed() {

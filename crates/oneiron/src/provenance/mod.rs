@@ -172,6 +172,7 @@ pub(crate) use invalidation::{
 mod lifecycle;
 pub mod made_by;
 mod queries;
+pub(crate) use queries::EdgeProvenanceAudit;
 pub mod text_commit;
 mod writes;
 pub(crate) use writes::EdgeProvenanceWrite;
@@ -264,6 +265,12 @@ pub(crate) fn erase_row_provenance_without_attempt_payloads_in_txn(
     // the hold log like every other door's.
     store.reject_legal_hold_in_txn(txn, row.as_bytes())?;
     crate::world_keys::reject_held_pad_world_in_txn(store, txn, &[*row])?;
+    if erase {
+        crate::channel_identity_provider::erase_line_chat_source_observations_in_txn(
+            write, txn, row,
+        )?;
+    }
+    crate::channel_identity_provider::release_line_chat_archive_pin_in_txn(write, txn, row, erase)?;
     // A step claim's response pins go before anything of it does, on an
     // erase and a delete alike: each exact version no other claim holds goes
     // with them, and an erase retires or owes its kept copies (FIX 6225).
@@ -273,6 +280,10 @@ pub(crate) fn erase_row_provenance_without_attempt_payloads_in_txn(
     #[cfg(unix)]
     crate::store::settle_inline_asset_in_txn(store, txn, row, erase)?;
     birth::erase_row_birth_in_txn(store, txn, row)?;
+    #[cfg(unix)]
+    if erase {
+        crate::code_run::retire_sourced_code_outputs_in_txn(store, txn, row)?;
+    }
     // The cause is read before the descriptors go.
     let held: Vec<[u8; 32]> = if erase {
         let bodies = body::owned_bodies_in_txn(store, txn, row)?;

@@ -10,13 +10,14 @@ use super::boundary::{
     BoundaryResult, FORGET_PAGE_SIZE, ts_from_engine, ts_opt_to_engine, ts_to_engine,
 };
 use super::dtos::{
-    NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
-    NapiCommitOutcome, NapiCommitReceipt, NapiDreamerParkedJobView, NapiEmbeddingMatchEvidence,
-    NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack,
-    NapiMemoryProvenance, NapiMemoryStaleStamp, NapiQuoteSpan, NapiReadReceipt, NapiReadScope,
-    NapiRecallResidence, NapiRecallResidenceHit, NapiRecallScope, NapiRecordRef, NapiRecordRefusal,
-    NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
-    NapiTurnProgramWakeOutcome, NapiWitnessAssertions, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiCalendarCivilSpan, NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel,
+    NapiCitedMessage, NapiClaimView, NapiCommitOutcome, NapiCommitReceipt,
+    NapiDreamerParkedJobView, NapiEmbeddingMatchEvidence, NapiEntityRefReceipt, NapiEntityView,
+    NapiGateReceipt, NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance, NapiMemoryStaleStamp,
+    NapiQuoteSpan, NapiReadReceipt, NapiReadScope, NapiRecallResidence, NapiRecallResidenceHit,
+    NapiRecallScope, NapiRecordRef, NapiRecordRefusal, NapiRetrievalMeta, NapiScopeHonesty,
+    NapiStructuralPutInput, NapiTemporalHint, NapiTurnProgramWakeOutcome, NapiWitnessAssertions,
+    NapiWitnessReceipt, NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -63,6 +64,11 @@ pub(super) fn calendar_event_from_engine(
             .transpose()?,
         calendar_systems: view.calendar_systems,
         blocks_time: view.blocks_time,
+        civil: view.civil.map(|civil| NapiCalendarCivilSpan {
+            time_kind: civil.time_kind,
+            start: civil.start,
+            end: civil.end,
+        }),
     })
 }
 
@@ -228,6 +234,7 @@ pub(super) fn forget_active_matches(
             predicate: Some(predicate.to_owned()),
             lifecycle: Some("active".to_owned()),
             limit: FORGET_PAGE_SIZE,
+            filter: None,
         })?;
         if matches.value.is_empty() {
             break;
@@ -357,6 +364,7 @@ pub(super) fn witness_receipt_from_engine(
     receipt: oneiron::memory::WitnessReceipt,
 ) -> NapiWitnessReceipt {
     NapiWitnessReceipt {
+        turn_id: receipt.turn_id.to_hex(),
         turn_short_id: receipt.turn_short_id,
         message_short_ids: receipt.message_short_ids,
         receipt_ref: receipt.receipt_ref,
@@ -472,6 +480,7 @@ pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> Napi
         }),
         world: item.world,
         facet: item.facet,
+        project_ref: item.project_ref,
         salience: item.salience.map(f64::from),
         reactions: item.reactions,
         cited_messages: item
@@ -640,6 +649,17 @@ pub(crate) fn recall_media_to_engine(
     clippy::cast_possible_truncation,
     reason = "f64→f32 affect narrowing at the N-API boundary is intentional"
 )]
+/// A recall's caller retrieval filter, as the JS boundary passes it, onto the
+/// engine's `ReadFilterInput` (FIX 3977): the same JSON a request body's
+/// `filter` carries, refused as a bad request when it is not that shape.
+pub(super) fn read_filter_to_engine(
+    filter: serde_json::Value,
+) -> Result<oneiron::memory::ReadFilterInput, oneiron::memory::MemoryError> {
+    serde_json::from_value(filter).map_err(|error| {
+        oneiron::memory::MemoryError::bad_request(format!("invalid recall filter: {error}"))
+    })
+}
+
 pub(super) fn query_affect_to_engine(
     affect: super::dtos::NapiQueryAffect,
 ) -> oneiron::task_verb::sdk::QueryAffect {
@@ -650,9 +670,69 @@ pub(super) fn query_affect_to_engine(
     }
 }
 
+/// The convenience JS boundary uses camelCase; the engine's wire is snake_case.
+#[derive(serde::Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum RecallWorldsInput {
+    All,
+    Base,
+    World {
+        world_ref: String,
+        include_base: bool,
+    },
+    Worlds {
+        world_refs: Vec<String>,
+        include_base: bool,
+    },
+}
+
+impl From<RecallWorldsInput> for oneiron::memory::RecallWorlds {
+    fn from(worlds: RecallWorldsInput) -> Self {
+        match worlds {
+            RecallWorldsInput::All => Self::All,
+            RecallWorldsInput::Base => Self::Base,
+            RecallWorldsInput::World {
+                world_ref,
+                include_base,
+            } => Self::World {
+                world_ref,
+                include_base,
+            },
+            RecallWorldsInput::Worlds {
+                world_refs,
+                include_base,
+            } => Self::Worlds {
+                world_refs,
+                include_base,
+            },
+        }
+    }
+}
+
 /// Lowers the boundary recall scope onto the engine's.
-pub(super) fn recall_scope_to_engine(scope: Option<NapiRecallScope>) -> RecallScope {
-    scope.map_or_else(RecallScope::default, |scope| RecallScope {
+pub(super) fn recall_scope_to_engine(
+    scope: Option<NapiRecallScope>,
+) -> Result<RecallScope, MemoryError> {
+    let Some(scope) = scope else {
+        return Ok(RecallScope::default());
+    };
+    let worlds = scope
+        .worlds
+        .map(|value| {
+            serde_json::from_value::<RecallWorldsInput>(value)
+                .map(oneiron::memory::RecallWorlds::from)
+                .map_err(|error| {
+                    MemoryError::bad_request(&format!("scope.worlds is invalid: {error}"))
+                })
+        })
+        .transpose()?;
+    Ok(RecallScope {
+        worlds,
         world_ref: scope.world_ref,
         facet: scope.facet,
         kinds: scope.kinds,

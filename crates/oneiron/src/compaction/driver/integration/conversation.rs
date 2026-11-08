@@ -3,23 +3,40 @@
 //! the window's SESSION; the packet must be the gated request's own, over
 //! exactly the evidence's turns, written by the run's byline. One write
 //! transaction re-proves the SESSION and its turns, mints the epoch with its
-//! writer, puts the durable receipt keyed by the SUMMARY and declares the
-//! Dreamer's check, so a crash loses all of them or none.
+//! writer, puts the accepted try's check material (FIX 5040), puts the
+//! durable receipt keyed by the SUMMARY and declares the Dreamer's check, so
+//! a crash loses all of them or none. The side-row wall admits the material
+//! first in that transaction, and the evidence names the admitted material's
+//! ref before the mint, so the receipt, its digest and the declaration bind
+//! the bytes its row keeps. The request's conversation binding must be the
+//! evidence's (FIX 5029): the mint re-proves that conversation's turn order
+//! and lands in its lineage.
+
+use std::cell::Cell;
 
 use super::*;
-use crate::compaction::{CompactionEvidence, CompactionExecution, ConversationEvidence};
+use crate::compaction::{
+    CompactionCheckMaterial, CompactionCheckMaterialRef, CompactionEvidence, CompactionExecution,
+    ConversationEvidence,
+};
+use crate::dreamer_runner::maintenance::compaction_check::declare_conversation_check_in_txn;
 
 impl CompactionDriver {
     /// Lands `gated`, a conversation window's accepted summary, with
     /// `execution`, the host's record of what wrote it, its conversation
-    /// evidence set.
+    /// evidence set, and `material`, the accepted try's gate input, which
+    /// the check judges again (FIX 5040).
     pub(crate) fn integrate_conversation(
         &mut self,
         vault: &Vault,
         byline: WriteActor,
         gated: GatedCompaction,
         execution: CompactionExecution,
+        material: Option<CompactionCheckMaterial>,
     ) -> Result<SwapPlan> {
+        let material = material.ok_or(Error::InvariantViolation(
+            "a conversation's summary carries no check material",
+        ))?;
         let Some(CompactionEvidence::Conversation(evidence)) = execution.evidence.clone() else {
             return Err(Error::InvariantViolation(
                 "a conversation's summary carries no conversation evidence",
@@ -29,29 +46,65 @@ impl CompactionDriver {
             vault, &gated, execution,
         )?;
         Self::check_conversation_landing(&gated, byline, &landing, &evidence)?;
+        if material.sealed_request() != gated.request {
+            return Err(Error::InvariantViolation(
+                "a conversation summary's check material is not its gated request's",
+            ));
+        }
         let session = gated.request.session_ref;
         let turns: Vec<EntityId> = evidence.turns.iter().map(|span| span.turn).collect();
         let writer = landing.execution;
+        // The material as the wall admitted it, handed from the landing to
+        // the extra write of the same transaction (FIX 5040).
+        let admitted: Cell<Option<(CompactionCheckMaterial, CompactionCheckMaterialRef)>> =
+            Cell::new(None);
         self.integrate_inner(gated, &[], |request, product| {
-            crate::compaction::epoch::mint_epoch_summary_guarded(
+            crate::compaction::epoch::mint_epoch_summary_admitted_writer(
                 vault,
                 &session,
                 byline,
                 request,
                 product,
-                Some(&writer),
-                |txn| {
+                |txn, summary| {
                     crate::compaction::validate_session(&vault.store, txn, session)?;
-                    crate::compaction::validate_turn_membership(&vault.store, txn, &turns, session)
+                    crate::compaction::validate_turn_membership(
+                        &vault.store,
+                        txn,
+                        &turns,
+                        session,
+                    )?;
+                    let (reference, kept) = crate::compaction::admit_check_material_in_txn(
+                        vault, txn, summary, material,
+                    )?;
+                    let mut writer = writer;
+                    if let Some(CompactionEvidence::Conversation(evidence)) =
+                        writer.evidence.as_mut()
+                    {
+                        evidence.check_material = Some(reference.clone());
+                    }
+                    admitted.set(kept.map(|kept| (kept, reference)));
+                    Ok(Some(writer))
                 },
-                |txn, mint| {
-                    crate::compaction::put_conversation_receipt_in_txn(vault, txn, mint, &writer)?;
-                    crate::dreamer_runner::maintenance::compaction_check::declare_conversation_check_in_txn(
+                |txn, mint, writer| {
+                    let writer = writer.ok_or(Error::InvariantViolation(
+                        "a conversation summary lands with no writer",
+                    ))?;
+                    if let Some((material, reference)) = admitted.take() {
+                        crate::compaction::put_check_material_in_txn(
+                            vault,
+                            txn,
+                            mint.summary_id(),
+                            material,
+                            &reference,
+                        )?;
+                    }
+                    crate::compaction::put_conversation_receipt_in_txn(vault, txn, mint, writer)?;
+                    declare_conversation_check_in_txn(
                         vault,
                         txn,
                         mint.summary_id(),
                         mint.epoch(),
-                        &writer,
+                        writer,
                     )
                 },
             )
@@ -59,9 +112,10 @@ impl CompactionDriver {
     }
 
     /// A conversation summary's packet belongs to its gated request: a
-    /// conversation window's, in its SESSION, over its turns in order, which
-    /// are the evidence's, as a digest of exactly the gated prose with the
-    /// snapshot its pass stamped, written by the byline.
+    /// conversation window's, bound to the evidence's conversation and branch
+    /// (FIX 5029), in its SESSION, over its turns in order, which are the
+    /// evidence's, as a digest of exactly the gated prose with the snapshot
+    /// its pass stamped, written by the byline.
     fn check_conversation_landing(
         gated: &GatedCompaction,
         byline: WriteActor,
@@ -77,7 +131,13 @@ impl CompactionDriver {
         }
         let declared: Vec<EntityId> = evidence.turns.iter().map(|span| span.turn).collect();
         let packet = &landing.packet;
-        if request.log != WindowLog::Conversation
+        let bound = matches!(
+            request.log,
+            WindowLog::Conversation(Some(binding))
+                if binding.conversation == evidence.conversation
+                    && binding.branch == evidence.branch
+        );
+        if !bound
             || packet.host_log().is_some()
             || packet.session() != request.session_ref
             || evidence.session != request.session_ref

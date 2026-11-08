@@ -76,8 +76,11 @@ impl Memory<'_> {
         self.view_readable(revision.session_id)?;
         let mut contents = BTreeMap::new();
         let mut documents = BTreeMap::new();
+        // The repository's code-document identity, as its writers key it
+        // (FIX 12761).
+        let identity = self.vault.resolve_repo_identity(&repo_ref)?;
         for frontier in revision.file_frontiers.values() {
-            if frontier.repo != repo_ref.canonical() {
+            if frontier.repo != identity.as_str() {
                 return Err(MemoryError::bad_request(
                     "tested file belongs to another repository",
                 ));
@@ -109,7 +112,8 @@ impl Memory<'_> {
                 )
             })
             .collect();
-        let snapshot = CodebaseSnapshot::new(repo.to_hex(), repo_ref, None, entries)?;
+        let commit_hash = repo_ref.commit_hash().map(str::to_owned);
+        let snapshot = CodebaseSnapshot::new(repo.to_hex(), repo_ref, commit_hash, entries)?;
         Ok((snapshot, contents, documents))
     }
 

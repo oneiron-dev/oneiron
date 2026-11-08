@@ -2,7 +2,15 @@
 //! The entry point is `Vault::seal_vault_bundle`.
 //! `super` owns the private frame codec and shared carrier storage.
 
+use serde::Serialize;
+use serde::ser::SerializeStruct as _;
+
+#[cfg(feature = "sync")]
+use super::frame_seal::WrittenPayload;
+use super::frame_seal::{BodySource, bundle_body};
+use super::sections::FreshSection;
 use super::*;
+use crate::error::ErrorKind;
 
 impl SealedVaultBundle {
     /// Strict parse of a frame: a positive multiple of the size step, the bundle
@@ -68,6 +76,80 @@ pub struct SealedVaultUpload {
     /// history held here, merged with the capsule it replaces, is incomplete
     /// (FIX 4497): the latest generation's capsule rides unchanged, or none.
     pub incomplete_authority: Vec<EntityId>,
+    /// Each section of the latest generation that this machine may read but
+    /// that did not open, decode or merge here (FIX 19525): the upload carries
+    /// it unchanged, and the erased-actor cleanup did not run on it. The sync
+    /// assembly fills it; the seal alone leaves it empty.
+    pub unmerged_sections: Vec<UnmergedSection>,
+}
+
+/// Where a readable world section stopped before it merged here (FIX 19525).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnmergedStage {
+    /// The section did not open with the world key held here.
+    Open,
+    /// The section opened, and its payload did not decode.
+    Decode,
+    /// One window of the section did not merge into its mirror here.
+    Merge,
+}
+
+impl UnmergedStage {
+    /// The words a surface shows.
+    #[must_use]
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::Open => {
+                "the world's section did not open here: it is carried unchanged, the erased-actor \
+                 cleanup did not run on it, and the owner repairs it"
+            }
+            Self::Decode => {
+                "the world's section opened but did not decode here: it is carried unchanged, the \
+                 erased-actor cleanup did not run on it, and the owner repairs it"
+            }
+            Self::Merge => {
+                "a window of the world's section did not merge here: the section is carried \
+                 unchanged, the erased-actor cleanup did not run on it, and the owner repairs it"
+            }
+        }
+    }
+}
+
+/// A section of the latest generation that a publisher may read and carries
+/// unchanged, because it did not open, decode or merge here (FIX 19525). No
+/// unique history is dropped and no publication stops, but the erased-actor
+/// cleanup that every merged section takes did not run on it: a repair case
+/// for the owner. It names the world, the window when one window's merge
+/// failed, the stage and the error's kind: never a section byte, a row or an
+/// error message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnmergedSection {
+    pub world: EntityId,
+    /// The label of the window whose merge failed; `None` when the section
+    /// did not open or decode.
+    pub window: Option<String>,
+    pub stage: UnmergedStage,
+    /// The kind of the error that stopped it.
+    pub kind: ErrorKind,
+}
+
+impl Serialize for UnmergedSection {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        let mut out = serializer.serialize_struct("UnmergedSection", 5)?;
+        out.serialize_field("world", &self.world)?;
+        match &self.window {
+            Some(window) => out.serialize_field("window", window)?,
+            None => out.skip_field("window")?,
+        }
+        out.serialize_field("stage", &self.stage)?;
+        out.serialize_field("kind", &self.kind)?;
+        out.serialize_field("text", self.stage.text())?;
+        out.end()
+    }
 }
 
 /// What an ordinary take imported from the world capsules this machine opens
@@ -108,23 +190,57 @@ impl Vault {
         worlds: &[(EntityId, &[u8])],
         carried: &[SealedBundleSection],
     ) -> Result<SealedVaultUpload> {
+        let mut fresh = Vec::with_capacity(worlds.len());
+        for &(world, payload) in worlds {
+            fresh.push(self.seal_fresh_section(world, payload)?);
+        }
         let carried: Vec<_> = carried.iter().map(|section| (None, section)).collect();
         self.seal_vault_bundle_carrying(
             slot,
             holder,
-            base,
-            worlds,
+            Zeroizing::new(base.to_vec()),
+            fresh,
             &carried,
             &BundleCarry::default(),
         )
     }
 
-    /// [`Self::seal_vault_bundle`] for a publisher that carries `carried` on
-    /// from the generation whose pad object is `carry.latest`: the new pad
-    /// object also holds each pad of `carry.latest` this machine has no row
-    /// for, of a world the bundle still carries for `holder` (or whose settings
-    /// are not here: FIX 4211), not deleted here and whose keys were not
-    /// destroyed here, so a carried section's key still restores with the kit.
+    /// Seals a fresh section of `world` for a bundle under the world's current
+    /// key, from the payload `write` writes, the same bytes on every call: once
+    /// to count it, once to digest it and once into its parts, never joined
+    /// (FIX 11947). This machine must read the world now; the bundle's seal
+    /// ([`Self::seal_vault_bundle_carrying`]) checks the rest.
+    #[cfg(feature = "sync")]
+    pub(crate) fn seal_bundle_section<W>(&self, world: EntityId, write: W) -> Result<FreshSection>
+    where
+        W: Fn(&mut dyn FnMut(&[u8]) -> Result<()>) -> Result<()>,
+    {
+        self.seal_fresh_section(world, WrittenPayload::new(write)?)
+    }
+
+    fn seal_fresh_section(
+        &self,
+        world: EntityId,
+        payload: impl BodySource,
+    ) -> Result<FreshSection> {
+        let key = self.world_key(world)?;
+        let section = SealedBundleSection::seal(&self.bundle_vault_id()?, &key, payload)?;
+        Ok(FreshSection {
+            key: *key.id(),
+            section,
+        })
+    }
+
+    /// [`Self::seal_vault_bundle`] for a publisher that seals `fresh` first
+    /// (`Self::seal_bundle_section`), one world at a time, and carries
+    /// `carried` on from the generation whose pad object is `carry.latest`.
+    /// The bundle body streams into its frame, and `base` and each fresh
+    /// section are freed as they are sealed in, so neither is held twice (FIX
+    /// 11947). The new pad object also holds each pad of `carry.latest` this
+    /// machine has no row for, of a world the bundle still carries for
+    /// `holder` (or whose settings are not here: FIX 4211), not deleted here
+    /// and whose keys were not destroyed here, so a carried section's key
+    /// still restores with the kit.
     /// Its index files each fresh section's tag under its key, and each carried
     /// one's under the key it names, where known
     /// ([`OpenedVaultBundle::sections_known`]). The body files a fresh capsule
@@ -136,43 +252,45 @@ impl Vault {
         &self,
         slot: u64,
         holder: Destination,
-        base: &[u8],
-        worlds: &[(EntityId, &[u8])],
+        base: Zeroizing<Vec<u8>>,
+        fresh: Vec<FreshSection>,
         carried: &[(Option<WorldKeyId>, &SealedBundleSection)],
         carry: &BundleCarry<'_>,
     ) -> Result<SealedVaultUpload> {
         let secret = self.machine_secret_outside_txn()?;
-        let mut keys: Vec<(Arc<WorldKey>, &[u8])> = Vec::with_capacity(worlds.len());
-        for &(world, payload) in worlds {
-            if keys.iter().any(|(key, _)| key.id().world == world) {
+        for (at, section) in fresh.iter().enumerate() {
+            if fresh[..at]
+                .iter()
+                .any(|kept| kept.key.world == section.key.world)
+            {
                 return Err(refused("a world appears twice in one bundle"));
             }
-            keys.push((self.world_key(world)?, payload));
         }
-        let plan = self.seal_plan(&secret, holder, &keys, carry)?;
+        let plan = self.seal_plan(&secret, holder, &fresh, carry)?;
         let generation = SealedBundleGeneration::fresh(slot)?;
-        let mut sections = Vec::with_capacity(keys.len() + carried.len());
-        let mut index = Vec::with_capacity(keys.len() + carried.len());
-        for (key, payload) in &keys {
-            let section = SealedBundleSection::seal(&plan.vault_id, key, payload)?;
-            index.push((*key.id(), section.tag));
+        let mut sections = Vec::with_capacity(fresh.len());
+        let mut index = Vec::with_capacity(fresh.len() + carried.len());
+        for FreshSection { key, section } in fresh {
+            index.push((key, section.tag));
             sections.push(section);
         }
+        // Carried sections ride by reference, never cloned.
+        let mut kept: Vec<&SealedBundleSection> = Vec::with_capacity(carried.len());
         for (known, section) in carried {
             if !sections
                 .iter()
-                .any(|kept: &SealedBundleSection| kept.tag == section.tag)
+                .chain(kept.iter().copied())
+                .any(|held| held.tag == section.tag)
             {
                 if let Some(key) = known {
                     index.push((*key, section.tag));
                 }
-                sections.push((*section).clone());
+                kept.push(*section);
             }
         }
         let (authorities, incomplete_authority) =
             self.seal_world_authorities(&secret.secret, &plan, generation, carry)?;
-        let body = encode_bundle_body(&plan, generation, base, &sections, &authorities)?;
-        drop(sections);
+        let body = bundle_body(&plan, generation, base, sections, kept, &authorities)?;
         let bundle = seal_object(BUNDLE, &plan, generation, body)?;
         let pads_body = encode_pads_body(&plan.vault_id, generation, &plan.pads, &index, None)?;
         let pads = seal_object(PADS, &plan, generation, pads_body)?;
@@ -181,6 +299,7 @@ impl Vault {
             pads: SealedKeyPads(pads),
             kit_root: plan.kit_root,
             incomplete_authority,
+            unmerged_sections: Vec::new(),
         })
     }
 

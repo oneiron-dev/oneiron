@@ -12,7 +12,7 @@ use crate::{EntityId, TimeRange, Vault, error::Result};
 
 /// Marker (engine version string) that the built-in connector packs have been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_PACK_BUILTIN_SEED);
-const PACKS: [(&str, &str); 7] = [
+const PACKS: [(&str, &str); 8] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/PACK.md"),
@@ -41,11 +41,15 @@ const PACKS: [(&str, &str); 7] = [
         "telegram",
         include_str!("../../../../../packs/builtin/telegram/PACK.md"),
     ),
+    (
+        "sheets",
+        include_str!("../../../../../packs/builtin/sheets/PACK.md"),
+    ),
 ];
 /// Each built-in pack's guided setup skill (OF-378), at the folder its
 /// PACK.md `setup` names. It ships in the same exact source, so the owner
 /// reads it while the connector is still a Candidate.
-const SETUP_SKILLS: [(&str, &str); 7] = [
+const SETUP_SKILLS: [(&str, &str); 8] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/skills/setup/SKILL.md"),
@@ -74,6 +78,10 @@ const SETUP_SKILLS: [(&str, &str); 7] = [
         "telegram",
         include_str!("../../../../../packs/builtin/telegram/skills/setup/SKILL.md"),
     ),
+    (
+        "sheets",
+        include_str!("../../../../../packs/builtin/sheets/skills/setup/SKILL.md"),
+    ),
 ];
 const SETUP_SKILL_PATH: &str = "skills/setup/SKILL.md";
 
@@ -93,6 +101,35 @@ pub(super) fn embedded_builtin_source(channel: &str) -> Result<PackSource> {
         .find(|(name, _)| *name == channel)
         .ok_or_else(|| super::invalid("unknown built-in connector pack"))?;
     builtin_source(name, markdown)
+}
+
+/// The built-in packs' seed rows, for the empty-vault join guard: each
+/// source's entity id with its bundled skills' ids and content hashes,
+/// recomputed from the embedded sources the seed pass stages and imports.
+pub(crate) fn builtin_pack_seed_ids()
+-> Result<Vec<(EntityId, Vec<(EntityId, crate::skill::SkillContentHash)>)>> {
+    fn seeded(
+        source: &PackSource,
+    ) -> Result<(EntityId, Vec<(EntityId, crate::skill::SkillContentHash)>)> {
+        let mut skills = Vec::new();
+        for (_, package) in super::bundled_skills::bundled_skill_packages(source)? {
+            let hash = package.content_hash()?;
+            let id = crate::codebase::entity_id_from_hash_material(
+                b"oneiron.pack-skill.v1",
+                &[hash.as_bytes()],
+            )?;
+            skills.push((id, hash));
+        }
+        Ok((source.entity_id()?, skills))
+    }
+    let mut seeds = vec![seeded(&super::local::local_seed_source()?)?];
+    for (name, markdown) in PACKS {
+        seeds.push(seeded(&builtin_source(name, markdown)?)?);
+    }
+    seeds.push(seeded(&PackSource::from_files(
+        super::lenses::weave_lens_pack_files(),
+    )?)?);
+    Ok(seeds)
 }
 
 /// The engine hub ref a built-in source's bundled skills are imported under,

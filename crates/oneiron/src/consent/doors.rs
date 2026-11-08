@@ -21,8 +21,10 @@ use super::support::{
 };
 use crate::error::GateError;
 
+mod code_wait_rebind;
 mod decision_slot;
 mod grants;
+mod invitee_credential;
 mod lineage;
 mod owner;
 mod person_credential;
@@ -30,6 +32,10 @@ mod queue_check;
 mod read;
 mod request_credential;
 
+pub(crate) use grants::{
+    DerivedGrantOrigin, DerivedGrantSetting, record_standing_grant_use_for_store_in_txn,
+    standing_grant_rows_in_txn,
+};
 pub(crate) use queue_check::QueuedCheckApproval;
 
 // ---------------------------------------------------------------------------

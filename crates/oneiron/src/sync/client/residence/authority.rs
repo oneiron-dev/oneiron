@@ -35,8 +35,8 @@ use super::super::base::home_withheld_worlds;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{
-    AUTHORITY_CHECKPOINT_V2_MAX_BYTES, AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation,
-    AuthorityCheckpointPin, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
+    AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation, AuthorityCheckpointPin,
+    AuthorityCheckpointV2, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
     AuthorityHistorySelection, AuthorityRepairOutcome, authority_entry_hash,
     decode_authority_log_entry_body, side_world,
 };
@@ -131,7 +131,7 @@ pub(crate) async fn catch_up_authority(
 ) -> Result<usize, TransportError> {
     let budgets = residence_budgets(vault)?;
     let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
-        return Err(TransportError::Storage("home node offline".into()));
+        return Err(TransportError::home_offline());
     };
     // A checkpoint that cannot be read this round holds back no tail.
     if let Some(pin) = &config.authority_checkpoint_pin
@@ -220,11 +220,36 @@ async fn adopt_pinned_checkpoint(
     };
     attestations
         .retain(|attestation| pin.binding(&attestation.binding.root) == Some(&attestation.binding));
-    match vault.adopt_authority_checkpoint(pin, &image, &attestations) {
+    match adopt(vault, pin, &image, &attestations) {
         Ok(_) => tracing::info!("pinned authority checkpoint adopted"),
         Err(error) => tracing::warn!(%error, "pinned authority checkpoint refused"),
     }
     Ok(())
+}
+
+/// Adopts `image` under `pin`. A vault that joins from empty (FIX 3375),
+/// with no Genesis and no owner-root pin yet, first pins the root the image
+/// was built under, as a kit restore does
+/// ([`Vault::adopt_recovered_authority_checkpoint`]): the image stands only
+/// under that pin, the pin's digest is the one the owner's link named, and
+/// the root pins only once the image verifies under the pin's roots. A vault
+/// that holds either adopts as before.
+fn adopt(
+    vault: &Vault,
+    pin: &AuthorityCheckpointPin,
+    image: &[u8],
+    attestations: &[AuthorityCheckpointAttestation],
+) -> crate::Result<[u8; 32]> {
+    match AuthorityCheckpointV2::decode(image)?.building_pin {
+        Some(root) => vault.adopt_recovered_authority_checkpoint(
+            pin,
+            image,
+            attestations,
+            pin.digest()?,
+            root,
+        ),
+        None => vault.adopt_authority_checkpoint(pin, image, attestations),
+    }
 }
 
 /// The checkpoint image the home keeps at `checkpoint` and the attestations
@@ -255,7 +280,7 @@ pub(super) async fn fetch_authority_checkpoint(
         let reply: AuthorityCheckpointReply =
             serde_json::from_value(reply).map_err(|_| refused())?;
         if *total.get_or_insert(reply.total) != reply.total
-            || reply.total > AUTHORITY_CHECKPOINT_V2_MAX_BYTES as u64
+            || usize::try_from(reply.total).is_err()
             || (!image.is_empty() && !reply.attestations.is_empty())
         {
             return Err(refused());
@@ -263,10 +288,15 @@ pub(super) async fn fetch_authority_checkpoint(
         let part = base64::engine::general_purpose::STANDARD
             .decode(reply.part)
             .map_err(|_| refused())?;
-        if part.is_empty()
-            || part.len() > AUTHORITY_CHECKPOINT_PART_MAX
-            || (image.len() + part.len()) as u64 > reply.total
-        {
+        let Some(end) = image.len().checked_add(part.len()) else {
+            return Err(refused());
+        };
+        // `reply.total` fits in `usize` (checked above), so the joined length
+        // compares in `usize` with no truncation.
+        let Ok(total) = usize::try_from(reply.total) else {
+            return Err(refused());
+        };
+        if part.is_empty() || part.len() > AUTHORITY_CHECKPOINT_PART_MAX || end > total {
             return Err(refused());
         }
         if image.is_empty() {

@@ -19,7 +19,7 @@ use serde_json::Value as JsonValue;
 
 use super::cache_usage::carry_chat_evidence;
 use super::exl3_evidence::{Tie, external_tie};
-use super::http::{HttpFailure, ProviderHttp, SseItem};
+use super::http::{HttpFailure, HttpReleaseError, ProviderHttp, SseItem};
 use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver, execution_mode};
 use super::output_cap::OutputCap;
 use super::served::record_served_model;
@@ -75,10 +75,16 @@ impl OpenAiHttp {
             let observed = bound.map(|bound| bound.worker.clone());
             let tie = tie.or_else(|| bound.and_then(external_tie));
             // One physical request, observed from its send (FIX 9417).
-            let publisher = InferencePublisher::begin(lease);
+            let mut inference = InferenceUsage::new(
+                lease,
+                target
+                    .as_deref()
+                    .and_then(|wire| self.engine_models.get(wire))
+                    .cloned(),
+            );
             let mut reply = self
                 .http
-                .post_json(&request.path, &request.headers, &body)
+                .post_json_leased(&request.path, &request.headers, &body, lease)
                 .await?;
             let answering = match reply.body.get("model").and_then(JsonValue::as_str) {
                 Some(returned) if (200..300).contains(&reply.status) => {
@@ -86,6 +92,7 @@ impl OpenAiHttp {
                 }
                 _ => None,
             };
+            let native = has_inference_calls(&reply.body);
             carry_sent_reply_evidence(
                 reply.status,
                 &mut reply.body,
@@ -96,18 +103,9 @@ impl OpenAiHttp {
             if let Some(tie) = tie.as_ref() {
                 tie.apply(&mut reply.body);
             }
-            // The receipt the reply carries is the request's final one.
-            if let Some(mut receipt) = carried_receipts(&reply.body).pop() {
-                if let Some(worker) = &observed {
-                    note_served_epoch(worker, &receipt);
-                }
-                if let Some(model) = target
-                    .as_deref()
-                    .and_then(|wire| self.engine_models.get(wire))
-                {
-                    receipt.model = Some(model.clone());
-                }
-                publisher.finish(receipt);
+            inference.record(&mut reply.body, native);
+            if (200..300).contains(&reply.status) {
+                inference.finish(observed.as_ref());
             }
             Ok(OpenAiCompatHttpResponse {
                 status: reply.status,
@@ -137,23 +135,26 @@ impl OpenAiHttp {
         let observed = bound.map(|bound| bound.worker.clone());
         let tie = tie.or_else(|| bound.and_then(external_tie));
         // One physical request, observed from its send (FIX 9417).
-        let publisher = InferencePublisher::begin(lease);
-        let model = target
-            .as_deref()
-            .and_then(|wire| self.engine_models.get(wire))
-            .cloned();
-        let events = self.http.post_sse(&request.path, &request.headers, &body);
+        let inference = InferenceUsage::new(
+            lease,
+            target
+                .as_deref()
+                .and_then(|wire| self.engine_models.get(wire))
+                .cloned(),
+        );
+        let events = self
+            .http
+            .post_sse_leased(&request.path, &request.headers, &body, lease);
         let frames = futures_util::stream::unfold(
             Frames {
                 transport: self,
                 target,
                 execution,
-                model,
                 tie,
                 worker: observed,
                 answering: None,
-                publisher,
-                measured: None,
+                inference,
+                observed_terminal: false,
                 events: Box::pin(events),
                 served: None,
                 saw_usage: false,
@@ -184,6 +185,15 @@ impl From<HttpFailure> for OpenAiCompatTransportError {
     }
 }
 
+impl From<HttpReleaseError> for OpenAiCompatTransportError {
+    fn from(error: HttpReleaseError) -> Self {
+        match error {
+            HttpReleaseError::Transport(error) => error.into(),
+            HttpReleaseError::Release(error) => Self::DispatchRelease(error),
+        }
+    }
+}
+
 impl OpenAiCompatTransport for OpenAiHttp {
     fn execute<'a>(
         &'a self,
@@ -202,19 +212,111 @@ impl OpenAiCompatTransport for OpenAiHttp {
     }
 }
 
-/// The receipts a reply's or a chunk's usage carries (FIX 9417), as
-/// [`carry_chat_evidence`] wrote them.
-fn carried_receipts(body: &JsonValue) -> Vec<InferenceCallReceipt> {
+/// Whether the reply itself supplied an inference key, before llama.cpp
+/// evidence is added. Even an empty or invalid native list takes precedence.
+fn has_inference_calls(body: &JsonValue) -> bool {
     body.get("usage")
-        .and_then(|usage| usage.get(INFERENCE_CALLS_KEY))
-        .and_then(JsonValue::as_array)
-        .map(|records| {
-            records
-                .iter()
-                .filter_map(|record| InferenceCallReceipt::deserialize(record).ok())
-                .collect()
-        })
-        .unwrap_or_default()
+        .is_some_and(|usage| usage.get(INFERENCE_CALLS_KEY).is_some())
+}
+
+/// Every measured call carried by one physical send (FIX 15015, 9417).
+pub(super) struct InferenceUsage {
+    lease: BudgetLease,
+    model: Option<ModelId>,
+    calls: Vec<ObservedCall>,
+    native_slots: BTreeMap<usize, usize>,
+    saw_native_key: bool,
+}
+
+struct ObservedCall {
+    publisher: InferencePublisher,
+    measured: Option<InferenceCallReceipt>,
+}
+
+impl InferenceUsage {
+    pub(super) fn new(lease: &BudgetLease, model: Option<ModelId>) -> Self {
+        Self {
+            lease: lease.clone(),
+            model,
+            calls: vec![ObservedCall {
+                publisher: InferencePublisher::begin(lease),
+                measured: None,
+            }],
+            native_slots: BTreeMap::new(),
+            saw_native_key: false,
+        }
+    }
+
+    pub(super) fn record(&mut self, body: &mut JsonValue, native: bool) {
+        self.saw_native_key |= native;
+        if self.saw_native_key && !native {
+            return;
+        }
+        let Some(records) = body
+            .get_mut("usage")
+            .and_then(|usage| usage.get_mut(INFERENCE_CALLS_KEY))
+            .and_then(JsonValue::as_array_mut)
+        else {
+            return;
+        };
+        for (native_index, record) in records.iter_mut().enumerate() {
+            let Ok(mut receipt) = InferenceCallReceipt::deserialize(&*record) else {
+                continue;
+            };
+            let Some(record) = record.as_object_mut() else {
+                continue;
+            };
+            match &self.model {
+                Some(model) => {
+                    record.insert(
+                        "model".to_owned(),
+                        JsonValue::String(model.as_str().to_owned()),
+                    );
+                }
+                None => {
+                    record.remove("model");
+                }
+            }
+            receipt.model.clone_from(&self.model);
+            let slot = if native {
+                if let Some(&slot) = self.native_slots.get(&native_index) {
+                    slot
+                } else {
+                    // The first actual native member replaces the synthetic
+                    // receipt, even when invalid members precede it.
+                    let slot = if self.native_slots.is_empty() {
+                        0
+                    } else {
+                        self.calls.len()
+                    };
+                    self.native_slots.insert(native_index, slot);
+                    slot
+                }
+            } else {
+                0
+            };
+            while self.calls.len() <= slot {
+                self.calls.push(ObservedCall {
+                    publisher: InferencePublisher::begin(&self.lease),
+                    measured: None,
+                });
+            }
+            let call = &mut self.calls[slot];
+            call.publisher.partial(receipt.clone());
+            call.measured = Some(receipt);
+        }
+    }
+
+    pub(super) fn finish(&mut self, worker: Option<&InferenceWorker>) {
+        for call in &mut self.calls {
+            if let Some(receipt) = call.measured.take() {
+                if let Some(worker) = worker {
+                    note_served_epoch(worker, &receipt);
+                }
+                call.publisher.finish(receipt);
+            }
+        }
+    }
 }
 
 /// Notes a serving answer's backend epoch on its bound external worker (FIX 9200):
@@ -343,17 +445,15 @@ fn carry_timings(body: &mut JsonValue) {
 /// The receipt's identity is what this stream's own last `model` names
 /// (FIX 7895), never another stream's or a discovered one. Each chunk with a
 /// usage object, a usage-only last chunk included, gets the llama.cpp
-/// receipt its timings or that alias give (FIX 8314); the adapter keeps the
-/// last usage it reads, so a request's receipt is read once.
+/// receipt its timings or that alias give (FIX 8314). The adapter keeps the
+/// last usage it reads; the lease retains every valid native member, with
+/// terminal observations deduplicated against the returned receipts.
 struct Frames<'a, S> {
     transport: &'a OpenAiHttp,
     /// The configured wire id the call sent.
     target: Option<String>,
     /// The execution mode of the request the call sent (FIX 8329).
     execution: Option<CacheDigest>,
-    /// The engine model the call was admitted for, when its wire id names
-    /// one: stamped on its final receipt.
-    model: Option<ModelId>,
     /// The managed launch the HTTP fallback's answers tie to when one names
     /// it (FIX 9296): `None` is the direct HTTP route, as before.
     tie: Option<Tie>,
@@ -361,11 +461,10 @@ struct Frames<'a, S> {
     worker: Option<InferenceWorker>,
     /// The last top-level `model` this stream's chunks named, as it came.
     answering: Option<String>,
-    /// The request's observation (FIX 9417): each receipt a usage chunk
-    /// carries is its progress, and the last one its final receipt once the
-    /// stream finished; a cut stream keeps the last as it was.
-    publisher: InferencePublisher,
-    measured: Option<InferenceCallReceipt>,
+    /// All receipts a usage chunk carries, retained on a cut or dropped stream.
+    inference: InferenceUsage,
+    /// The first choice reported a string finish reason, as the lower decoder reads it.
+    observed_terminal: bool,
     events: std::pin::Pin<Box<S>>,
     served: Option<JsonValue>,
     saw_usage: bool,
@@ -377,7 +476,7 @@ type Frame = Result<OpenAiCompatStreamFrame, OpenAiCompatTransportError>;
 
 impl<S> Frames<'_, S>
 where
-    S: futures_util::Stream<Item = Result<SseItem, HttpFailure>>,
+    S: futures_util::Stream<Item = Result<SseItem, HttpReleaseError>>,
 {
     async fn next(mut self) -> Option<(Frame, Self)> {
         if self.closed {
@@ -397,11 +496,13 @@ where
                 .transport
                 .answering(self.answering.as_deref(), self.target.as_deref())
                 .await;
-            carry_chat_evidence(&mut carrier, answering.as_ref(), self.execution.as_ref());
+            if !self.inference.saw_native_key {
+                carry_chat_evidence(&mut carrier, answering.as_ref(), self.execution.as_ref());
+            }
             if let Some(tie) = self.tie.as_ref() {
                 tie.apply(&mut carrier);
             }
-            self.publish(&carrier);
+            self.publish(&mut carrier, false);
             self.published_end();
             return Some((Ok(OpenAiCompatStreamFrame::Chunk(carrier)), self));
         };
@@ -409,12 +510,14 @@ where
         Some((frame, self))
     }
 
-    async fn frame(&mut self, item: Result<SseItem, HttpFailure>) -> Frame {
+    async fn frame(&mut self, item: Result<SseItem, HttpReleaseError>) -> Frame {
         match item? {
             SseItem::Status(mut reply) => {
+                let native = has_inference_calls(&reply.body);
                 if let Some(tie) = self.tie.as_ref() {
                     tie.apply(&mut reply.body);
                 }
+                self.inference.record(&mut reply.body, native);
                 Ok(OpenAiCompatStreamFrame::Status(OpenAiCompatHttpResponse {
                     status: reply.status,
                     headers: reply.headers,
@@ -428,7 +531,17 @@ where
                     self.answering = model.as_str().map(str::to_owned);
                     self.served = Some(served_label(model, self.target.as_deref()));
                 }
+                let native = has_inference_calls(&chunk);
                 self.saw_usage |= chunk.get("usage").is_some_and(JsonValue::is_object);
+                self.observed_terminal |= !chunk
+                    .get("error")
+                    .is_some_and(|error| error.is_object() || error.is_string())
+                    && chunk
+                        .get("choices")
+                        .and_then(JsonValue::as_array)
+                        .and_then(|choices| choices.first())
+                        .and_then(|choice| choice.get("finish_reason"))
+                        .is_some_and(JsonValue::is_string);
                 self.finished |= chunk
                     .get("choices")
                     .and_then(JsonValue::as_array)
@@ -446,39 +559,32 @@ where
                 } else {
                     None
                 };
-                carry_chat_evidence(&mut chunk, answering.as_ref(), self.execution.as_ref());
+                if !self.inference.saw_native_key {
+                    carry_chat_evidence(&mut chunk, answering.as_ref(), self.execution.as_ref());
+                }
                 if let Some(tie) = self.tie.as_ref() {
                     tie.apply(&mut chunk);
                 }
-                self.publish(&chunk);
+                self.publish(&mut chunk, native);
                 record_served_model(chunk.get_mut("usage"), self.served.clone());
                 Ok(OpenAiCompatStreamFrame::Chunk(chunk))
             }
         }
     }
 
-    /// Records the receipt `chunk` carries, if any, as the request's
-    /// progress.
-    fn publish(&mut self, chunk: &JsonValue) {
-        if let Some(receipt) = carried_receipts(chunk).pop() {
-            self.publisher.partial(receipt.clone());
-            self.measured = Some(receipt);
+    /// Records every carried member before the lower decoder can fail or
+    /// return Done without polling this transport again.
+    fn publish(&mut self, chunk: &mut JsonValue, native: bool) {
+        self.inference.record(chunk, native);
+        if self.observed_terminal {
+            self.inference.finish(self.worker.as_ref());
         }
     }
 
-    /// The stream ended: a finished one's last receipt is its final one; a
-    /// stream cut before its finish keeps it as progress.
+    /// EOF alone invents no terminal measurement.
     fn published_end(&mut self) {
-        if self.finished
-            && let Some(mut receipt) = self.measured.take()
-        {
-            if let Some(worker) = &self.worker {
-                note_served_epoch(worker, &receipt);
-            }
-            if let Some(model) = &self.model {
-                receipt.model = Some(model.clone());
-            }
-            self.publisher.finish(receipt);
+        if self.observed_terminal {
+            self.inference.finish(self.worker.as_ref());
         }
     }
 

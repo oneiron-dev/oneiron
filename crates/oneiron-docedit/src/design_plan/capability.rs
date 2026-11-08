@@ -136,11 +136,15 @@ impl Metrics {
             State::Unresolved(_) => return None,
             _ => style.indent.value.unwrap_or(0),
         };
-        let typeface = match style.typeface.value.as_deref() {
-            Some("+mj-lt") => theme.major,
-            Some("+mn-lt") | None => theme.minor,
-            Some(name) => Some(name),
-        };
+        let typeface =
+            style
+                .resolved_typeface
+                .as_deref()
+                .or_else(|| match style.typeface.value.as_deref() {
+                    Some("+mj-lt") => theme.major,
+                    Some("+mn-lt") | None => theme.minor,
+                    Some(name) => Some(name),
+                });
         let bold = style.bold.value.unwrap_or(false);
         let italic = style.italic.value.unwrap_or(false);
         Some(Self {
@@ -203,19 +207,33 @@ impl Metrics {
     /// characters) in `first` width, then `rest`; at least one. A word
     /// wider than the line breaks across lines.
     fn lines_in(&self, text: &str, first: i64, rest: i64) -> i64 {
+        let start = text.trim_start_matches(char::is_whitespace);
+        let leading = &text[..text.len() - start.len()];
+        let body = start.trim_end_matches(char::is_whitespace);
+        let trailing = &start[body.len()..];
+        let literal_spaces =
+            |run: &str| !run.is_empty() && run.chars().all(|ch| ch == ' ' || ch == '\u{3000}');
+        let leading = literal_spaces(leading).then_some((leading, ""));
+        let trailing = literal_spaces(trailing).then_some((trailing, ""));
         let space = self.advance(" ");
         let mut lines = 1;
         let mut used = 0;
         let mut width = first.max(1);
-        for (word, space_before) in words(text) {
+        for (word, separator) in leading.into_iter().chain(words(body)).chain(trailing) {
             let need = self.advance(word);
-            let gap = if used == 0 || !space_before { 0 } else { space };
+            let gap = if used == 0 || separator.is_empty() {
+                0
+            } else if literal_spaces(separator) {
+                self.advance(separator)
+            } else {
+                space
+            };
             if used > 0 && used + gap + need > width {
                 lines += 1;
                 used = 0;
                 width = rest.max(1);
             }
-            let gap = if used == 0 || !space_before { 0 } else { space };
+            let gap = if used == 0 { 0 } else { gap };
             used += gap + need;
             while used > width {
                 lines += 1;
@@ -258,9 +276,13 @@ impl Metrics {
 }
 
 /// Break opportunities: runs of non-space text, with every wide character
-/// a word of its own. The flag marks the start of a whitespace word.
-fn words(text: &str) -> impl Iterator<Item = (&str, bool)> {
-    text.split_whitespace().flat_map(|word| {
+/// a word of its own, carrying the original separator before each word.
+fn words(text: &str) -> impl Iterator<Item = (&str, &str)> {
+    let mut remaining = text;
+    text.split_whitespace().flat_map(move |word| {
+        let trimmed = remaining.trim_start_matches(char::is_whitespace);
+        let separator = &remaining[..remaining.len() - trimmed.len()];
+        remaining = &trimmed[word.len()..];
         let mut pieces = Vec::new();
         let mut start = 0;
         for (at, ch) in word.char_indices() {
@@ -278,7 +300,7 @@ fn words(text: &str) -> impl Iterator<Item = (&str, bool)> {
         pieces
             .into_iter()
             .enumerate()
-            .map(|(index, piece)| (piece, index == 0))
+            .map(move |(index, piece)| (piece, if index == 0 { separator } else { "" }))
     })
 }
 

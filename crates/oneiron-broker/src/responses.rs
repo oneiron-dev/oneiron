@@ -7,18 +7,20 @@
 //! only `previous_response_id` is removed. No other retry exists here.
 
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Url;
 use serde_json::Value as JsonValue;
-use tokio::io::AsyncWrite;
-use tokio_tungstenite::connect_async;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
+use tokio_tungstenite::{Connector, connect_async_tls_with_config};
 use zeroize::Zeroizing;
 
 use crate::deadline::{CallDeadline, within};
+use crate::frame::dispatch::{DispatchPoint, request_dispatch};
 use crate::frame::{MAX_STREAM, STREAM_CHUNK, write_chunk, write_stream_end, write_stream_header};
 use crate::send::{answer, auth_value, reply_headers};
 use crate::strip::strip;
@@ -28,11 +30,13 @@ const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 const PREVIOUS_NOT_FOUND: &str = "previous_response_not_found";
 const SOCKET_LIMIT: &str = "websocket_connection_limit_reached";
 
-pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
+pub(crate) async fn responses_to<W: AsyncRead + AsyncWrite + Unpin>(
+    ws_tls: &Arc<rustls::ClientConfig>,
     call: &CallHeader,
     checked: Result<Url, Refusal>,
     body: Zeroizing<Vec<u8>>,
     whole: Option<Zeroizing<Vec<u8>>>,
+    released: bool,
     secret: &[u8],
     writer: &mut W,
     deadline: CallDeadline,
@@ -119,7 +123,16 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
         )
         .await;
     };
-    let connected = tokio::time::timeout(OPEN_TIMEOUT.min(left), connect_async(request)).await;
+    let connected = tokio::time::timeout(
+        OPEN_TIMEOUT.min(left),
+        connect_async_tls_with_config(
+            request,
+            None,
+            false,
+            Some(Connector::Rustls(Arc::clone(ws_tls))),
+        ),
+    )
+    .await;
     let (mut socket, _) = match connected {
         Ok(Ok(connected)) => connected,
         Ok(Err(WsError::Http(response))) => {
@@ -173,6 +186,17 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
         Ok(create) => create,
         Err(_) => return cut_before_header(writer, call, Failure::Send, deadline).await,
     };
+    if released {
+        tokio::time::timeout_at(
+            deadline.send_by(),
+            request_dispatch(writer, call, DispatchPoint::Initial),
+        )
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+        if deadline.send_left().is_none() {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+    }
     if let Err(error) = within(deadline, async {
         socket
             .send(Message::text(create_text))
@@ -248,6 +272,17 @@ pub(crate) async fn responses_to<W: AsyncWrite + Unpin>(
                         Ok(retry) => retry,
                         Err(_) => return cut_after_header(writer, Failure::Send, deadline).await,
                     };
+                    if released {
+                        tokio::time::timeout_at(
+                            deadline.send_by(),
+                            request_dispatch(writer, call, DispatchPoint::WholeRetry),
+                        )
+                        .await
+                        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+                        if deadline.send_left().is_none() {
+                            return Err(io::ErrorKind::TimedOut.into());
+                        }
+                    }
                     if let Err(error) = within(deadline, async {
                         socket
                             .send(Message::text(retry))

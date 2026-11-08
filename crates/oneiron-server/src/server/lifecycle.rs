@@ -64,6 +64,7 @@ pub(super) enum LifecycleJobKind {
     AuthorityCheckpoint,
     OwnerWork,
     MergeQueueChecks,
+    HookRegen,
 }
 
 /// The lifecycle loop and the housekeeping pass it last started, beside the
@@ -167,6 +168,23 @@ impl SyncServer {
                 // neither holds back the next tick's lease expiry, nor one
                 // the other.
                 server.start_housekeeping_pass(&admit).await;
+                // Leave checks use the existing public engine door, but their
+                // writes are host work too: acquire the same admission before
+                // spawning any and hold it until the whole round finishes.
+                if !server.housekeeping_passes.stopping()
+                    && let Some(registry) = server.shared_envs.get()
+                    && let Some(admission) = admit()
+                {
+                    let checks = registry.leave_check_round(unix_seconds_now());
+                    if !checks.is_empty() {
+                        server.housekeeping_passes.hold(tokio::spawn(async move {
+                            let _admission = admission;
+                            for check in checks {
+                                let _ = check.await;
+                            }
+                        }));
+                    }
+                }
                 if Instant::now() >= repositories_due
                     && server.start_repository_maintenance(&admit).await
                 {
@@ -182,6 +200,10 @@ impl SyncServer {
                 // same tick, with no interval of its own.
                 server.start_owner_work_drain(&admit).await;
                 server.start_merge_queue_checker(&admit).await;
+                // A verb-table or sandbox-contract change runs the due
+                // hooks' intents again (ARCH-0080 §8); the pass returns at
+                // once when none is due.
+                server.start_hook_regen_pass(&admit).await;
             }
         });
         LifecycleScheduler {

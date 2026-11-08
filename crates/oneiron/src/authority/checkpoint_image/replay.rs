@@ -13,11 +13,10 @@
 //! back to the field exactly; any other field keeps its whole value.
 //! The encoding is deterministic and lossless: [`fold_state_fields`] names
 //! every field of the fold state, so a field added there without a name here
-//! does not compile. An image whose evidence would pass the encoded size cap
-//! carries [`ReplayEvidence::FrontierOnly`] instead and claims no per-row
-//! replay (CALLS AUTHORITY_REPLAY_OVERFLOW); every fold past it keeps
-//! today's history request. A point that does not decode is no evidence,
-//! never a refusal.
+//! does not compile. Replay that exceeds the existing points-only budget
+//! keeps a parents-first suffix as whole states and explicit rejections.
+//! The suffix has no dropped delta bases. An omitted or undecodable point
+//! is no evidence and keeps today's history request, never a refusal.
 
 use serde::de::DeserializeOwned;
 
@@ -28,8 +27,8 @@ use super::*;
 /// 3007 replay representation").
 pub(in crate::authority) const AUTHORITY_REPLAY_FULL_STRIDE: u32 = 32;
 
-/// What an image whose replay evidence would pass the size cap carries
-/// instead (CALLS AUTHORITY_REPLAY_OVERFLOW): its frontier states alone.
+/// What an image whose replay evidence is unavailable carries instead
+/// (CALLS AUTHORITY_REPLAY_OVERFLOW): its frontier states alone.
 pub(in crate::authority) const AUTHORITY_REPLAY_OVERFLOW: ReplayEvidence =
     ReplayEvidence::FrontierOnly;
 
@@ -45,7 +44,8 @@ pub(in crate::authority) const AUTHORITY_RESIDENCE_BODY_OVERFLOW: bool = true;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::authority) enum ReplayEvidence {
-    /// One point at each covered row off the frontier, keyed ascending.
+    /// All covered off-frontier points, or a parents-first suffix containing
+    /// only whole states and explicit rejections, keyed ascending.
     Rows(BTreeMap<AuthorityEntryHash, ReplayPoint>),
     /// The frontier states alone: no fold past the image reads a state off
     /// its frontier.
@@ -283,6 +283,7 @@ fold_state_fields!(
     checkpoint_policy,
     home_pick,
     origin_cut,
+    device_succession,
     conversation_training,
     conversation_training_vault,
     policy_settings,
@@ -318,15 +319,17 @@ impl ReplayEvidence {
                 points.insert(*hash, ReplayPoint::Rejected);
                 continue;
             };
-            let anchor = parents(hash).into_iter().flatten().find_map(|parent| {
-                if let Some(anchor) = anchors.get(&parent) {
-                    return Some(*anchor);
-                }
-                match kept.get(&parent) {
-                    Some(ReplayPoint::Full(_)) => Some((parent, 0)),
-                    _ => None,
-                }
-            });
+            let anchor = parents(hash)
+                .and_then(|parents| parents.into_iter().next())
+                .and_then(|parent| {
+                    if let Some(anchor) = anchors.get(&parent) {
+                        return Some(*anchor);
+                    }
+                    match kept.get(&parent) {
+                        Some(ReplayPoint::Full(_)) => Some((parent, 0)),
+                        _ => None,
+                    }
+                });
             let delta = anchor
                 .filter(|(_, depth)| depth + 1 < AUTHORITY_REPLAY_FULL_STRIDE)
                 .and_then(|(base, depth)| {
@@ -352,6 +355,41 @@ impl ReplayEvidence {
             }
         }
         Some(points)
+    }
+
+    /// A canonical, self-contained suffix of `order`, measured as replay
+    /// points alone. A missing older state or the first point that does not
+    /// fit ends the suffix; neither is evidence that the fold rejected it.
+    pub(in crate::authority) fn full_state_suffix(
+        order: &[AuthorityEntryHash],
+        states: &dyn Fn(&AuthorityEntryHash) -> Option<Option<FoldState>>,
+    ) -> Result<Self> {
+        let mut points = BTreeMap::new();
+        let overhead = replay_encoded_size(&Self::Rows(BTreeMap::new()))?;
+        let empty_map = replay_encoded_size(&BTreeMap::<AuthorityEntryHash, &ReplayPoint>::new())?;
+        let mut entries = 0;
+        for hash in order.iter().rev() {
+            let Some(state) = states(hash) else {
+                break;
+            };
+            let point = state.map_or(ReplayPoint::Rejected, |state| {
+                ReplayPoint::Full(Box::new(state))
+            });
+            let entry = replay_encoded_size(&BTreeMap::from([(*hash, &point)]))? - empty_map;
+            // MessagePack maps use fixmap, map16, then map32 headers.
+            let header_growth = match points.len() + 1 {
+                0..=15 => 0,
+                16..=65_535 => 2,
+                _ => 4,
+            };
+            if overhead + entries + entry + header_growth > AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES
+            {
+                break;
+            }
+            entries += entry;
+            points.insert(*hash, point);
+        }
+        Ok(Self::Rows(points))
     }
 
     /// Whether the evidence holds a point at `hash`, without decoding it.
@@ -383,25 +421,35 @@ impl ReplayEvidence {
         }
     }
 
-    /// The points, checked alone: exactly `off_frontier`'s rows, each whole
-    /// state naming `vault_id`, each delta resting on a whole state it holds
-    /// and replacing only known fields, never the vault.
+    /// Complete points keep their delta checks. Partial points must be an
+    /// exact parents-first suffix with no delta depending on a dropped base.
     pub(super) fn shape(
         &self,
         vault_id: &AuthorityVaultId,
-        off_frontier: impl Iterator<Item = AuthorityEntryHash>,
+        off_frontier: impl Iterator<Item = AuthorityEntryHash> + Clone,
+        parents: &dyn Fn(&AuthorityEntryHash) -> Option<Vec<AuthorityEntryHash>>,
     ) -> Result<()> {
         let Self::Rows(points) = self else {
             return Ok(());
         };
-        if !points.keys().copied().eq(off_frontier) {
-            return Err(refused("checkpoint image replay coverage"));
+        let complete = points.keys().copied().eq(off_frontier.clone());
+        if !complete {
+            let rows = off_frontier
+                .map(|hash| Some((hash, parents(&hash)?)))
+                .collect::<Option<BTreeMap<_, _>>>()
+                .ok_or_else(|| refused("checkpoint image replay coverage"))?;
+            let order = parents_first_of(&rows);
+            let suffix: BTreeSet<_> = order.into_iter().rev().take(points.len()).collect();
+            if !points.keys().eq(suffix.iter()) {
+                return Err(refused("checkpoint image replay coverage"));
+            }
         }
         let sound = points.values().all(|point| match point {
             ReplayPoint::Rejected => true,
             ReplayPoint::Full(state) => state.vault_id == *vault_id,
             ReplayPoint::Delta { base, fields } => {
-                matches!(points.get(base), Some(ReplayPoint::Full(_)))
+                complete
+                    && matches!(points.get(base), Some(ReplayPoint::Full(_)))
                     && fields
                         .keys()
                         .all(|name| name != "vault_id" && FIELDS.contains(&name.as_str()))
@@ -412,6 +460,25 @@ impl ReplayEvidence {
         }
         Ok(())
     }
+}
+
+/// Named MessagePack size without retaining a second encoded image.
+pub(super) fn replay_encoded_size(value: &impl Serialize) -> Result<usize> {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    rmp_serde::encode::write_named(&mut count, value)
+        .map_err(|_| refused("checkpoint image does not encode"))?;
+    Ok(count.0)
 }
 
 /// `rows`' hashes, each after every parent of it among `rows`, ties by

@@ -21,10 +21,13 @@ use crate::llm::{
     DurableStepContext, DurableStepResult, LlmBackend, LlmError, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, LlmUsage, ResponseFormat, StepOutcome, call_as_step,
 };
+use crate::model_step_context::StepEffectBinding;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result};
 
+#[path = "generated_read/score.rs"]
 mod score;
+#[path = "generated_read/wire.rs"]
 mod wire;
 pub use wire::DecisionWireLabels;
 
@@ -93,10 +96,11 @@ pub enum GeneratedStep<'a> {
 
 /// What a generated pack gave its caller.
 pub enum GeneratedDecisions {
-    /// Each question's decision in order, and each generation's request hash and usage.
+    /// Each question's decision in order, and each generation's request hash, usage,
+    /// durable binding (`None` for a raw or admitted generation), and memoized flag.
     Decided {
         decisions: Vec<TypedDecision>,
-        steps: Vec<([u8; 32], LlmUsage)>,
+        steps: Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
     },
     /// The durable step suspended the attempt; it parked, and replays on resume.
     Trapped,
@@ -162,7 +166,7 @@ impl DecisionLadder<'_> {
     }
 
     /// [`Self::run_pack_generated`], each generation that finished pushed onto `spent`
-    /// (its request hash and usage) as it finishes, so a caller books what the pack spent
+    /// (its request hash, usage and optional durable binding and memoized flag) as it finishes, so a caller books what the pack spent
     /// even when a later step traps, misses or fails. With `labels`, every request shows
     /// the table's labels and its reply reads back through the same table (FIX 7506).
     #[expect(
@@ -180,7 +184,7 @@ impl DecisionLadder<'_> {
         policy: &DecisionBandPolicy,
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
-        spent: &mut Vec<([u8; 32], LlmUsage)>,
+        spent: &mut Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
         labels: Option<&dyn DecisionWireLabels>,
     ) -> DurableStepResult<GeneratedDecisions> {
         validate_pin(&rung.pin, dial.first)?;
@@ -210,6 +214,7 @@ impl DecisionLadder<'_> {
             policy,
             reversibility,
             deadline,
+            labels,
         )?;
         let mut readings = pack.readings();
         let mut first = Vec::with_capacity(questions.len());
@@ -226,13 +231,14 @@ impl DecisionLadder<'_> {
                 state,
                 deadline,
                 run: None,
+                labels,
             };
             // A read the work time cannot start never goes out.
             if !deadline.decision_may_start() {
                 first.extend(chunk.iter().map(|_| Some(Read::NotStarted)));
                 continue;
             }
-            let answers = match read(rung, &pack, &call, spent, labels).await? {
+            let answers = match read(rung, &pack, &call, spent).await? {
                 Reply::Answers(answers) => answers,
                 Reply::Trapped => return Ok(GeneratedDecisions::Trapped),
                 Reply::Unread(miss) => return Ok(GeneratedDecisions::Unread(miss)),
@@ -263,9 +269,9 @@ async fn read(
     rung: &GeneratedRung<'_>,
     pack: &OpenPack<'_>,
     call: &DecisionPack<'_>,
-    steps: &mut Vec<([u8; 32], LlmUsage)>,
-    labels: Option<&dyn DecisionWireLabels>,
+    steps: &mut Vec<([u8; 32], LlmUsage, Option<StepEffectBinding>, bool)>,
 ) -> DurableStepResult<Reply> {
+    let labels = call.labels;
     let asked = asked(call, pack.person);
     let paired = pack.paired.map(|paired| (paired, call.questions));
     let request = (rung.seal)(request(
@@ -276,16 +282,21 @@ async fn read(
         labels,
     ))?;
     let hash = request.canonical_hash()?;
-    let response = match rung.step {
+    let (response, binding, memoized) = match rung.step {
         GeneratedStep::Durable { step, guard } => {
             match call_as_step(step, rung.backend, guard, request).await? {
-                StepOutcome::Finished { response, .. } => response,
+                StepOutcome::Finished {
+                    response,
+                    binding,
+                    memoized,
+                    ..
+                } => (response, Some(binding), memoized),
                 StepOutcome::Trapped { .. } => return Ok(Reply::Trapped),
             }
         }
         GeneratedStep::Raw { lease } => {
             match within_work_time(call.deadline, rung.backend.generate(request, lease)).await {
-                Some(Ok(response)) => response,
+                Some(Ok(response)) => (response, None, false),
                 Some(Err(error)) => return Ok(Reply::Unread(GeneratedMiss::Backend(error))),
                 None => return Ok(Reply::Answers(Err(cut()))),
             }
@@ -293,14 +304,14 @@ async fn read(
         GeneratedStep::Admitted { guard } => {
             match within_work_time(call.deadline, admitted(rung.backend, guard, request)).await {
                 Some(answered) => match answered? {
-                    Ok(response) => response,
+                    Ok(response) => (response, None, false),
                     Err(miss) => return Ok(Reply::Unread(miss)),
                 },
                 None => return Ok(Reply::Answers(Err(cut()))),
             }
         }
     };
-    steps.push((hash, response.usage.clone()));
+    steps.push((hash, response.usage.clone(), binding, memoized));
     Ok(Reply::Answers(
         answers(&response, &asked, pack.paired, labels)
             .and_then(|answers| joined(answers, call.questions.len(), pack.person)),
@@ -531,6 +542,7 @@ fn answers(
                     paired,
                     person: None,
                     served: None,
+                    cost_per_thousand: None,
                 };
             };
             let mut top = 0;
@@ -551,6 +563,7 @@ fn answers(
                 paired,
                 person: None,
                 served: None,
+                cost_per_thousand: None,
             }
         })
         .collect())

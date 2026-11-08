@@ -11,17 +11,23 @@
 //! no copy and no rebuild (FIX 6251). No copy of a call's request is read
 //! unless the Coach's own Grant admits its capture (FIX 8704): one it does
 //! not admit keeps its capsule as a reference only, and is rebuilt as a
-//! call with no copy kept is; no other copy stands in for it.
+//! call with no copy kept is; no other copy stands in for it. Under that
+//! same admission the capsule's route prompt is read from its body beside
+//! the request (FIX 6255), and the replay sends it on the call's rung: a
+//! prompt that does not read leaves the call with no replay at all, never
+//! one under no prompt or today's.
 
 use serde::{Deserialize, Serialize};
 
 use super::{CodeFixSource, failed_case_in};
 use crate::attempt_queue::AttemptId;
-use crate::code_run::{capsule_request, step_replay_capsules};
+use crate::code_run::{capsule_request, capsule_route_prompt, step_replay_capsules};
 use crate::dreamer_runner::maintenance::code_fix::CoachReplayAdmission;
+use crate::dreamer_runner::shadow_values::ShadowUnavailable;
 use crate::dreamer_runner::step_replay::CapsuleRequest;
-use crate::dreamer_runner::step_replay::CapsuleRungBinding;
+use crate::dreamer_runner::step_replay::ReplayRung;
 use crate::dreamer_runner::step_replay::StepReplayCapsule;
+use crate::dreamer_runner::step_replay::StoredRungBinding;
 use crate::self_heal::blocked_reports::{SentRequest, blocked_source_in, step_sources_in};
 use crate::{EntityId, Result, Vault};
 use oneiron_model::llm::LlmRequest;
@@ -33,12 +39,13 @@ pub struct ExactReplayRequest {
     /// The request, canonical, with its tool declarations: a replay keeps
     /// them, and runs no tool the answer names.
     pub request: LlmRequest,
-    /// The rung that answered the call, when one did; a call no provider
+    /// The rung that answered the call, with its route prompt as the
+    /// capsule's body holds it (FIX 6255), when one did; a call no provider
     /// answered has none.
-    pub rung: Option<CapsuleRungBinding>,
+    pub rung: Option<ReplayRung>,
     /// Whether the copy is the request as sent. `false` when the side-row
-    /// wall masked a secret in it: the replay sends the custody handle,
-    /// never the secret.
+    /// wall masked a secret in it, or in its rung's route prompt: the
+    /// replay sends the custody handle, never the secret.
     pub as_sent: bool,
 }
 
@@ -60,7 +67,8 @@ impl ExactReplayRequest {
 pub enum ReplayFidelity {
     /// The request the failing call sent, as it was sent.
     Exact,
-    /// That request, with each secret in it masked into its custody handle.
+    /// That request, with each secret in it, or in its rung's route prompt,
+    /// masked into its custody handle.
     ExactMasked,
     /// Rebuilt from the failure's instructions, briefing and task: not the
     /// request the call sent.
@@ -86,11 +94,21 @@ pub(crate) enum ExactReplay {
     /// The call's replay capsule was erased with its actor (FIX 6144): no
     /// replay of the call runs, rebuilt or not.
     Erased,
+    /// The call's request is kept, but its rung's route prompt is withheld,
+    /// retired or no longer reads (FIX 6255): as for `Erased`, no replay of
+    /// the call runs, rebuilt or not, and no other prompt stands in.
+    PromptUnavailable,
 }
 
 impl ExactReplay {
     fn of(copy: Option<ExactReplayRequest>) -> Self {
         copy.map_or(Self::NotKept, |copy| Self::Kept(Box::new(copy)))
+    }
+
+    /// Whether no replay of the call runs at all, rebuilt or not: its
+    /// capsule was erased, or its route prompt is unavailable (FIX 6255).
+    pub(crate) const fn runs_none(&self) -> bool {
+        matches!(self, Self::Erased | Self::PromptUnavailable)
     }
 
     /// The request a replay sends: the copy kept, or a withheld capsule's
@@ -103,7 +121,10 @@ impl ExactReplay {
                 fallback: Some(request),
                 ..
             } => Some(request),
-            Self::NotKept | Self::Withheld { fallback: None, .. } | Self::Erased => None,
+            Self::NotKept
+            | Self::Withheld { fallback: None, .. }
+            | Self::Erased
+            | Self::PromptUnavailable => None,
         }
     }
 }
@@ -305,7 +326,7 @@ fn failing_call(
 /// it is the request as sent when that is `sent` too.
 fn as_kept(
     request: LlmRequest,
-    rung: Option<CapsuleRungBinding>,
+    rung: Option<ReplayRung>,
     sent: [u8; 32],
     stored: [u8; 32],
 ) -> Option<ExactReplayRequest> {
@@ -331,37 +352,52 @@ fn attempt_request(
     digest: Option<[u8; 32]>,
     capsule: Option<StepReplayCapsule>,
 ) -> Result<(ExactReplay, Option<([u8; 32], u64, u32)>)> {
-    // The selected capsule, once it read as live but its copy as none.
+    // The selected capsule, once it read as live but its copy as none, and
+    // the rung its call sent on.
     let mut held = None;
     if let Some(capsule) = capsule {
         // An erased capsule's request went with its actor (FIX 6144): no
         // other copy stands in for it.
-        if capsule.content.actor().is_none() {
+        if capsule.content.actor().is_none()
+            || matches!(&capsule.request, CapsuleRequest::Kept { erased: true, .. })
+        {
             return Ok((ExactReplay::Erased, None));
         }
         // The copy kept is the request as sent unless the wall masked a
-        // secret in it: its sent identity and its stored hash then differ.
+        // secret in it or in its route prompt: its sent identity and its
+        // stored hash then differ.
         let as_sent = capsule.as_sent();
+        // The route prompt reads before the request (FIX 6255): a prompt
+        // that does not read latches the call, so no step row's copy and no
+        // rebuilt baseline stands in for it.
+        let Ok(rung) = replay_rung(vault, &capsule)? else {
+            return Ok((prompt_unavailable(vault, attempt, &capsule)?, None));
+        };
         if let Some(request) = capsule_request(vault, &capsule)? {
             return Ok((
                 ExactReplay::of(Some(ExactReplayRequest {
                     request,
-                    rung: capsule.binding,
+                    rung,
                     as_sent,
                 })),
                 None,
             ));
         }
-        held = Some(capsule);
+        held = Some((capsule, rung));
     }
     let steps = {
         let txn = vault.store.env.read_txn()?;
         step_sources_in(vault, &txn, AttemptId::from_bytes(attempt.as_bytes())?)?
     };
+    // A held capsule's call is the one a step row may stand in for.
+    let wanted = held
+        .as_ref()
+        .map(|(capsule, _)| capsule.request_hash)
+        .or(digest);
     let chosen = steps
         .into_iter()
         .rev()
-        .find(|(key, _)| digest.is_none_or(|digest| key.step == digest));
+        .find(|(key, _)| wanted.is_none_or(|wanted| key.step == wanted));
     let (copy, step) = match chosen {
         Some((key, source)) => {
             let copy = as_kept(
@@ -375,9 +411,10 @@ fn attempt_request(
         }
         None => (None, None),
     };
-    let Some(capsule) = held else {
+    let Some((capsule, rung)) = held else {
         return Ok((ExactReplay::of(copy), step));
     };
+    let copy = copy.map(|copy| on_capsule_rung(copy, &capsule, rung));
     // Read again after the step's row, before its copy stands in: an erase
     // since the first read takes the call, and no copy replays it.
     let erased = step_replay_capsules(vault, attempt)?
@@ -385,7 +422,10 @@ fn attempt_request(
         .find(|again| {
             again.lease_generation == capsule.lease_generation && again.step == capsule.step
         })
-        .is_some_and(|again| again.content.actor().is_none());
+        .is_some_and(|again| {
+            again.content.actor().is_none()
+                || matches!(&again.request, CapsuleRequest::Kept { erased: true, .. })
+        });
     if erased {
         return Ok((ExactReplay::Erased, None));
     }
@@ -398,6 +438,54 @@ fn attempt_request(
             step,
         ),
         CapsuleRequest::Kept { .. } => (ExactReplay::of(copy), step),
+    })
+}
+
+/// A step row's `copy` standing in for `capsule`'s request (FIX 6255): it
+/// sends on the capsule's `rung`, with the route prompt the capsule kept,
+/// never the one configured now, and it is the call as sent only while
+/// that prompt is too.
+fn on_capsule_rung(
+    mut copy: ExactReplayRequest,
+    capsule: &StepReplayCapsule,
+    rung: Option<ReplayRung>,
+) -> ExactReplayRequest {
+    copy.rung = rung;
+    copy.as_sent &= capsule
+        .binding
+        .as_ref()
+        .is_none_or(StoredRungBinding::prompt_as_sent);
+    copy
+}
+
+/// The rung a replay of `capsule`'s call sends on (FIX 6255): its answering
+/// rung, with the route prompt read from the capsule's body now, under the
+/// same admission as its request; `Ok(None)` when no rung answered the
+/// call. The reason the prompt does not read in its place.
+fn replay_rung(
+    vault: &Vault,
+    capsule: &StepReplayCapsule,
+) -> Result<std::result::Result<Option<ReplayRung>, ShadowUnavailable>> {
+    let Some(binding) = &capsule.binding else {
+        return Ok(Ok(None));
+    };
+    Ok(capsule_route_prompt(vault, capsule)?.map(|prompt| Some(ReplayRung::of(binding, prompt))))
+}
+
+/// What a capsule whose route prompt did not read keeps of its call (FIX
+/// 6255), read again by its storage identity: `Erased` when an erase took
+/// it meanwhile, else `PromptUnavailable`. Either way no replay runs.
+fn prompt_unavailable(
+    vault: &Vault,
+    attempt: EntityId,
+    capsule: &StepReplayCapsule,
+) -> Result<ExactReplay> {
+    let erased = pinned_capsule(vault, attempt, capsule)?
+        .is_some_and(|again| again.content.actor().is_none());
+    Ok(if erased {
+        ExactReplay::Erased
+    } else {
+        ExactReplay::PromptUnavailable
     })
 }
 
@@ -462,24 +550,33 @@ fn pinned_attempt_request(
     let Some(again) = pinned_capsule(vault, attempt, chosen)? else {
         return Ok(ExactReplay::NotKept);
     };
-    if again.content.actor().is_none() {
+    if again.content.actor().is_none()
+        || matches!(&again.request, CapsuleRequest::Kept { erased: true, .. })
+    {
         return Ok(ExactReplay::Erased);
     }
     let as_sent = again.as_sent();
+    // The route prompt reads before the request, as at choose (FIX 6255).
+    let Ok(rung) = replay_rung(vault, &again)? else {
+        return prompt_unavailable(vault, attempt, chosen);
+    };
     if let Some(request) = capsule_request(vault, &again)? {
         return Ok(ExactReplay::of(Some(ExactReplayRequest {
             request,
-            rung: again.binding,
+            rung,
             as_sent,
         })));
     }
     let copy = match pinned.step {
         Some(step) => pinned_step_copy(vault, attempt, step)?,
         None => None,
-    };
+    }
+    .map(|copy| on_capsule_rung(copy, &again, rung));
     // Read again after the step's row, before its copy stands in.
-    let erased =
-        pinned_capsule(vault, attempt, chosen)?.is_some_and(|once| once.content.actor().is_none());
+    let erased = pinned_capsule(vault, attempt, chosen)?.is_some_and(|once| {
+        once.content.actor().is_none()
+            || matches!(&once.request, CapsuleRequest::Kept { erased: true, .. })
+    });
     if erased {
         return Ok(ExactReplay::Erased);
     }

@@ -20,10 +20,13 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Run the server, with or without models](run-with-models.md) — `[models]` config keys
   (HIGH, MID, DETAILED), provider kinds and env vars, what the Dreamer needs to start, chat
   streaming, the saved-workflow pump, and swapping a model in one edit.
+- [Read a delivered proactivity digest](proactivity-digest-read.md) — the owner-grade SDK, facade and MCP door for an inbox `source.result` locator.
 - [Coach jobs in an embedded wake executor](dreamer-coach-embedded-executor.md) — explicit
   executor support for Coach host jobs and heals, with normal wake admission and settlement.
 - [Shared proactivity-policy proposals](proactivity-policy.md) — nightly cadence
   proposals, exact owner review and confirmation, and atomic run-tray approval.
+- [Case-backed Coach prompt drafts](coach-prompt-repair-artifacts.md) — optional
+  host authors, Proposed prompt artifacts and the boundary before execution.
 - [Oneironer workers](oneironer-workers.md) — the managed MLX worker and the native Core ML worker beside Candle: placement, activation, fallback, the Core ML cold compile, restart and down reasons, shutdown, receipts
 - [Legal-hold clone implementation map](legal-hold-clone-map.md) — planned per-order legal custody, normal user erase, and the remaining implementation slices; MAP only, not a shipped clone.
 - [Known-CSAM hosted media response](known-csam-hosted-media.md)
@@ -49,7 +52,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Forked dependencies](forked-dependencies.md) — the crates pinned by `rev` to the org forks
   (sudachi, formualizer): upstream base, fork branch, our commits, and how to change one.
 - [Documents API handoff](documents-api-handoff.md) — the document engine's contract
-  (`oneiron_docedit::contract`, schema 1): ops, media types, limits, refusal codes, and what the
+  (`oneiron_docedit::contract`, schema 5): ops, media types, limits, refusal codes, and what the
   hosted documents API in oneiron-cloud owns (auth, metering, hosting, session images).
 - [Deck export gate run](deck-gate.md) — OF-510 `pptx-live-v1`: the engine half on a Linux fleet
   host, the Office half on the Mac mini, and the command that records the oracle receipt.

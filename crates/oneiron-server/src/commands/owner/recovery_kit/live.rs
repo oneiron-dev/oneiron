@@ -93,8 +93,8 @@ impl Server {
         // The command runs on the CLI's runtime, so the blocking call gets a
         // thread of its own.
         std::thread::scope(|scope| {
-            scope
-                .spawn(move || -> anyhow::Result<Value> {
+            crate::engine_thread("recovery-kit-live".into())
+                .spawn_scoped(scope, move || -> anyhow::Result<Value> {
                     let client = reqwest::blocking::Client::builder()
                         .redirect(reqwest::redirect::Policy::none())
                         .timeout(None::<std::time::Duration>)
@@ -123,6 +123,7 @@ impl Server {
                     serde_json::from_str(&text)
                         .map_err(|_| anyhow::anyhow!("{url} answered {status} with no JSON"))
                 })
+                .expect("failed to spawn thread")
                 .join()
                 .map_err(|_| anyhow::anyhow!("the call to {path} stopped"))?
         })

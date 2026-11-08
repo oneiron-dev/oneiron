@@ -33,6 +33,8 @@ use crate::skills_pack::{self, OutputMode};
 /// added here.
 pub(crate) mod api;
 pub(crate) mod credential_file;
+mod credential_helper;
+pub use self::credential_helper::credential_helper;
 mod host_init;
 pub use self::host_init::host_init;
 mod host_re_root;
@@ -126,6 +128,8 @@ mod account;
 pub use account::account;
 mod device;
 pub use device::device_enrol;
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub(crate) mod hook_regen;
 mod serve;
 pub(crate) use self::serve::hook_sandbox;
 pub(crate) use self::serve::open_served_vault_anchored;
@@ -152,8 +156,10 @@ mod owner;
 pub use owner::embedding_spaces;
 pub use owner::learning_settings;
 pub use owner::legal_holds;
+pub(crate) use owner::page_seal_at;
 pub use owner::reminder_route;
 pub use owner::widen_proposals;
+pub use owner::{MeetingTranscriptArgs, meeting_transcript};
 pub use owner::{
     backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, recovery_kit,
     restore, runs, secret_scan, secrets, vault_key, whoami,
@@ -166,6 +172,8 @@ pub use self::seat::{
     seat_login_plan, seat_routes, seat_runner_policy, seat_runners, seat_siwc_clear,
     seat_siwc_login, seat_siwc_revoke,
 };
+mod model_workers;
+pub use model_workers::model_workers;
 mod registry;
 pub use self::registry::registry;
 
@@ -328,6 +336,7 @@ pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
     let credential = mint_paired_credential(
         &vault,
         &issuer,
+        None,
         &principal,
         &args.actor_class,
         [CoreScope::Read.as_str().to_owned()].into_iter().collect(),
@@ -422,33 +431,26 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
 }
 
 /// ARCH-0028's tiers as stored authority: the verbs the slip carries and the
-/// agent's ceiling. Propose-only writes with `core:propose`, which only doors
-/// that hold a write for review honour: `/v1/core/propose`, and the MCP verbs
-/// whose write lands at the agent's `proposed` ceiling (`AgentVerb::proposes`).
-/// `core:write`, which every unbound write door and every MCP write that takes
-/// effect at once requires, is full-access's alone. Nothing else —
-/// `core:auth`, an organization power, a companion scope — is ever an agent's.
+/// agent's ceiling, as the engine's [`oneiron::authority::AgentTier`] maps
+/// them for every door that admits an agent, the vault's OAuth sign-in too
+/// (FIX 4902).
 fn agent_tier_authority(
     tier: AgentTier,
 ) -> (
     std::collections::BTreeSet<String>,
     oneiron::agent_def::AgentCeiling,
 ) {
-    use oneiron::agent_def::AgentCeiling;
-    let (verbs, ceiling): (&[CoreScope], _) = match tier {
-        AgentTier::ReadOnly => (&[CoreScope::Read], AgentCeiling::Proposed),
-        AgentTier::ProposeOnly => (
-            &[CoreScope::Read, CoreScope::Propose],
-            AgentCeiling::Proposed,
-        ),
-        AgentTier::FullAccess => (
-            &[CoreScope::Read, CoreScope::Propose, CoreScope::Write],
-            AgentCeiling::Auto,
-        ),
+    let tier = match tier {
+        AgentTier::ReadOnly => oneiron::authority::AgentTier::ReadOnly,
+        AgentTier::ProposeOnly => oneiron::authority::AgentTier::ProposeOnly,
+        AgentTier::FullAccess => oneiron::authority::AgentTier::FullAccess,
     };
     (
-        verbs.iter().map(|verb| verb.as_str().to_owned()).collect(),
-        ceiling,
+        tier.core_scopes()
+            .iter()
+            .map(|scope| (*scope).to_owned())
+            .collect(),
+        tier.ceiling(),
     )
 }
 
@@ -498,6 +500,9 @@ fn mint_agent_credential(
     let credential = mint_paired_credential(
         &vault,
         &issuer,
+        // The owner makes the link, so the slip records them as the agent's
+        // minting member (FIX 11713).
+        Some(&owner),
         &principal,
         "agent",
         verbs,
@@ -588,10 +593,14 @@ fn comm_arg(comm: Option<&str>) -> anyhow::Result<Option<oneiron::agent_dispatch
 /// redeems it at once with a fresh connection key: the host-rooted pairing
 /// doors `/v1/core/pairing/redeem` uses, on the stopped vault. The slip is
 /// logged like every paired slip and revoked by its id. `comm` is the
-/// owner's reach for it, fixed on the link (FIX 3899).
+/// owner's reach for it, fixed on the link (FIX 3899). `link_owner`, when
+/// named, makes the link, so the slip records that owner as its minting
+/// member (FIX 11713); `None` is the host-only link, which names no person.
+#[allow(clippy::too_many_arguments)]
 fn mint_paired_credential(
     vault: &oneiron::Vault,
     issuer: &oneiron::authority::HostSlipIssuer,
+    link_owner: Option<&oneiron::consent::AuthenticatedOwner>,
     principal: &str,
     actor_class: &str,
     verbs: std::collections::BTreeSet<String>,
@@ -601,18 +610,28 @@ fn mint_paired_credential(
     use ed25519_dalek::{Signer, SigningKey};
     let mut scope = oneiron::federation::Scope::top();
     scope.verbs = oneiron::federation::ScopeAxis::Some(verbs);
-    let link = vault.issue_pairing_link_for_principal(
-        issuer,
-        scope,
-        lifetime_secs,
-        oneiron::authority::PairingPrincipal {
-            holder_ref: Some(principal.to_owned()),
-            actor_class: Some(actor_class.to_owned()),
-            org_ref: None,
-            write_facet: None,
-            comm,
-        },
-    )?;
+    let pairing_principal = oneiron::authority::PairingPrincipal {
+        holder_ref: Some(principal.to_owned()),
+        actor_class: Some(actor_class.to_owned()),
+        org_ref: None,
+        write_facet: None,
+        comm,
+    };
+    let link = match link_owner {
+        Some(owner) => vault.issue_owner_pairing_link(
+            issuer,
+            owner,
+            scope,
+            lifetime_secs,
+            pairing_principal,
+        )?,
+        None => vault.issue_pairing_link_for_principal(
+            issuer,
+            scope,
+            lifetime_secs,
+            pairing_principal,
+        )?,
+    };
     let key = SigningKey::generate(&mut rand_core::OsRng);
     let binding_key = key.verifying_key().to_bytes();
     let transcript = oneiron::authority::pairing_binding_transcript_pinned(

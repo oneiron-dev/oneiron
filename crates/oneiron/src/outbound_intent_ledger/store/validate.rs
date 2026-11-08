@@ -4,7 +4,7 @@
 use super::super::dispatch::derive_intent_id;
 use super::super::payload;
 use super::super::types::{
-    IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentState,
+    BudgetChargeMarker, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentState,
     OUTBOUND_BINDING_VERSION, RecordedOutboundOutcome,
 };
 use super::approval;
@@ -20,11 +20,6 @@ pub(in crate::outbound_intent_ledger) fn validate_record(
     if record.server.trim().is_empty() || record.tool.trim().is_empty() {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound intent endpoint is empty",
-        ));
-    }
-    if record.updated_ms < record.created_ms {
-        return Err(IntentLedgerError::InvalidRecord(
-            "outbound intent updated_ms predates created_ms",
         ));
     }
     if record.binding_version != OUTBOUND_BINDING_VERSION {
@@ -76,6 +71,7 @@ pub(in crate::outbound_intent_ledger) fn validate_record(
     }
     // A sealed request is checked when it opens, an erased one never again
     // (FIX 9283, 9372): the stored form keeps its digest, not its hash.
+    approval::validate_pinned_approval(record)?;
     let readable = payload::readable_payload(record.payload())?;
     if let Some(payload) = readable {
         approval::validate_admitted_approval(record, payload)?;
@@ -87,54 +83,13 @@ pub(in crate::outbound_intent_ledger) fn validate_record(
             "an erased outbound intent cannot stay pending",
         ));
     }
-    if record.budget_accounting.key_ref.is_none()
-        && (!record.budget_accounting.matched_rows.is_empty()
-            || record.budget_accounting.sends_debit != 0)
-    {
-        return Err(IntentLedgerError::InvalidRecord(
-            "unkeyed budget marker contains a debit",
-        ));
-    }
-    if record.budget_accounting.sends_debit > 1
-        || (!record.budget_accounting.budget_class.is_send()
-            && record.budget_accounting.sends_debit != 0)
-    {
-        return Err(IntentLedgerError::InvalidRecord(
-            "outbound intent sends debit is invalid",
-        ));
-    }
-    if record
-        .budget_accounting
-        .matched_rows
-        .windows(2)
-        .any(|rows| rows[0] >= rows[1])
-    {
-        return Err(IntentLedgerError::InvalidRecord(
-            "outbound intent matched rows are not canonical",
-        ));
-    }
-    let outcome_matches_state = matches!(
-        (record.state, record.recorded_outcome),
-        (IntentState::Pending, None)
-            | (
-                IntentState::Pending,
-                Some(RecordedOutboundOutcome::DefiniteNonDelivery)
-            )
-            | (IntentState::Done, Some(RecordedOutboundOutcome::Acked))
-            | (
-                IntentState::Deferred,
-                Some(RecordedOutboundOutcome::Deferred)
-            )
-            | (
-                IntentState::Abandoned,
-                Some(RecordedOutboundOutcome::Abandoned(_))
-            )
-    );
-    if !outcome_matches_state {
-        return Err(IntentLedgerError::InvalidRecord(
-            "outbound intent state and recorded_outcome disagree",
-        ));
-    }
+    validate_accounting(
+        &record.budget_accounting,
+        record.state,
+        record.recorded_outcome,
+        record.created_ms,
+        record.updated_ms,
+    )?;
     if readable.is_some_and(|payload| hash_frozen_payload(payload) != record.payload_hash) {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound intent payload hash mismatch",
@@ -155,6 +110,65 @@ pub(in crate::outbound_intent_ledger) fn validate_record(
     if derived != record.id {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound intent identity hash mismatch",
+        ));
+    }
+    Ok(())
+}
+
+/// The rules a ledger row's accounting and state keep, its own or as a
+/// restore kept them outside the call's compartment (FIX 12117): clocks in
+/// order, a canonical budget marker, and an outcome its state allows.
+pub(in crate::outbound_intent_ledger) fn validate_accounting(
+    budget: &BudgetChargeMarker,
+    state: IntentState,
+    outcome: Option<RecordedOutboundOutcome>,
+    created_ms: u64,
+    updated_ms: u64,
+) -> IntentLedgerResult<()> {
+    if updated_ms < created_ms {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent updated_ms predates created_ms",
+        ));
+    }
+    if budget.key_ref.is_none() && (!budget.matched_rows.is_empty() || budget.sends_debit != 0) {
+        return Err(IntentLedgerError::InvalidRecord(
+            "unkeyed budget marker contains a debit",
+        ));
+    }
+    if budget.sends_debit > 1 || (!budget.budget_class.is_send() && budget.sends_debit != 0) {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent sends debit is invalid",
+        ));
+    }
+    if budget
+        .matched_rows
+        .windows(2)
+        .any(|rows| rows[0] >= rows[1])
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent matched rows are not canonical",
+        ));
+    }
+    let outcome_matches_state = matches!(
+        (state, outcome),
+        (IntentState::Pending, None)
+            | (
+                IntentState::Pending,
+                Some(RecordedOutboundOutcome::DefiniteNonDelivery)
+            )
+            | (IntentState::Done, Some(RecordedOutboundOutcome::Acked))
+            | (
+                IntentState::Deferred,
+                Some(RecordedOutboundOutcome::Deferred)
+            )
+            | (
+                IntentState::Abandoned,
+                Some(RecordedOutboundOutcome::Abandoned(_))
+            )
+    );
+    if !outcome_matches_state {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent state and recorded_outcome disagree",
         ));
     }
     Ok(())
