@@ -375,7 +375,7 @@ impl SpaceProbeAuthor for ServerProbeAuthor<'_> {
                     .chars()
                     .take(PROBE_SOURCE_MAX_CHARS)
                     .collect(),
-                    signature: None,
+                signature: None,
             },
             InputKind::Image => ContentPart::Image {
                 media_type: document.media_type.to_owned(),

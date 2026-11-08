@@ -963,7 +963,10 @@ pub(super) fn epoch_frame(
         }
         return Ok(Some(Some(crate::LlmMessage {
             role: crate::LlmMessageRole::User,
-            content: vec![ContentPart::Text { text: fold.stub(), signature: None }],
+            content: vec![ContentPart::Text {
+                text: fold.stub(),
+                signature: None,
+            }],
         })));
     };
     if seq as u64 != row.first() {
