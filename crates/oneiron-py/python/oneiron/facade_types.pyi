@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1352 facade rows, 4869 declarations.
-Inputs: 1280 of 1352 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1181 of 1352 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 120; unread shapes: 0.
+Census: 1353 facade rows, 4870 declarations.
+Inputs: 1280 of 1353 fully typed, 73 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1181 of 1353 fully typed, 172 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 122; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -15100,6 +15100,32 @@ class RepoSymbolsReleaseOutput(TypedDict):
     work: EntityId
     declaration: EntityId
     task: EntityId
+LlmMessageRole = Literal["system", "user", "assistant", "tool"]
+class LlmMessage(TypedDict):
+    role: LlmMessageRole
+    content: list[ContentPart]
+class LlmToolSpec(TypedDict):
+    name: str
+    description: str
+    input_schema: Any
+class ResponseFormatText(TypedDict):
+    format: Literal["text"]
+class ResponseFormatJson(TypedDict):
+    format: Literal["json"]
+    schema: Any
+ResponseFormat = ResponseFormatText | ResponseFormatJson
+class RepoModelGenerateInput(TypedDict):
+    messages: list[LlmMessage]
+    tools: NotRequired[list[LlmToolSpec]]
+    params: NotRequired[dict[str, Any]]
+    provider_options: NotRequired[dict[str, Any]]
+    response_format: ResponseFormat
+class LlmResponse(TypedDict):
+    message: LlmMessage
+    usage: LlmUsage
+    finish_reason: FinishReason
+    reply_assertions: NotRequired[ReplyAssertions]
+    token_scores: NotRequired[Any | None]
 class RepoProposalSubmitInput(TypedDict):
     work: EntityId
     path: str
@@ -15674,7 +15700,7 @@ class BornFromView(TypedDict):
     born: list[EntityId]
     born_records: list[RecordRef]
     versions: list[BornFromArtifact]
-PendingProposalKind = Literal["edit", "output"]
+PendingProposalKind = Literal["needs_staging", "edit", "output"]
 class PendingProposalView(TypedDict):
     artifact_id: EntityId
     artifact: RecordRef
@@ -15922,6 +15948,7 @@ class UnitRefusal(TypedDict):
     judged_live: NotRequired[LivePin | None]
 class ArtifactAskOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
+    needs_staging: NotRequired[PendingProposalView | None]
     abstained: list[UnitAbstention]
     refused: list[UnitRefusal]
     next_sheet_row: NotRequired[int | None]
@@ -17829,21 +17856,7 @@ class TierPrecedence(TypedDict):
     purpose_default: NotRequired[ModelTierRef | None]
     global_default: ModelTierRef
     seat: NotRequired[ModelTierRef | None]
-class ResponseFormatText(TypedDict):
-    format: Literal["text"]
-class ResponseFormatJson(TypedDict):
-    format: Literal["json"]
-    schema: Any
-ResponseFormat = ResponseFormatText | ResponseFormatJson
 CallEnvelope = TypedDict("CallEnvelope", {"scope": NotRequired[ScopeScope], "purpose": CallPurpose, "class": CallClass, "tier": TierPrecedence, "response_format": ResponseFormat, "locality": ModelLocality, "seat_effort": NotRequired[ReasoningEffort | None]})
-LlmMessageRole = Literal["system", "user", "assistant", "tool"]
-class LlmMessage(TypedDict):
-    role: LlmMessageRole
-    content: list[ContentPart]
-class LlmToolSpec(TypedDict):
-    name: str
-    description: str
-    input_schema: Any
 class LlmRequest(TypedDict):
     model: ModelId
     envelope: CallEnvelope
@@ -17864,12 +17877,6 @@ ModelRoleInput = ModelRoleInputGenerate | ModelRoleInputEmbed | ModelRoleInputTa
 class ModelRoleInvoke(TypedDict):
     role: ModelRole
     input: ModelRoleInput
-class LlmResponse(TypedDict):
-    message: LlmMessage
-    usage: LlmUsage
-    finish_reason: FinishReason
-    reply_assertions: NotRequired[ReplyAssertions]
-    token_scores: NotRequired[Any | None]
 class NerSpan(TypedDict):
     message: int
     start: int
