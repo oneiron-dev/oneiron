@@ -14145,7 +14145,7 @@ impl AgentVerb {
                 "Reuse an authorized clean action result into another matching working view without dispatching a cold build."
             }
             Self::VaultCodeSnapshotsIngest => {
-                "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."
+                "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership."
             }
             Self::VaultCodeSnapshotsCapture => {
                 "Capture current files of a host folder as a custody-filtered snapshot with no Git commit witness. Owner only. Includes untracked and ignored files; Git metadata and linked or nested repositories stay opaque."
@@ -14250,7 +14250,7 @@ impl AgentVerb {
                 "The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing."
             }
             Self::VaultRepoAnchorBind => {
-                "The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing."
+                "The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership."
             }
             Self::VaultRepoSnapshotsGet => {
                 "Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease."

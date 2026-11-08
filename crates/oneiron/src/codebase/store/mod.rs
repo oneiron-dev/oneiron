@@ -318,12 +318,7 @@ impl Vault {
             crate::secret_snapshot::snapshot_root(&snapshot.repo_ref),
             file_contents,
         )?;
-        let filtered_snapshot = CodebaseSnapshot::new(
-            snapshot.project_id.clone(),
-            snapshot.repo_ref.clone(),
-            snapshot.commit_hash.clone(),
-            files,
-        )?;
+        let filtered_snapshot = snapshot.rebuilt_with_files(files)?;
         self.put_filtered_codebase_snapshot_in_txn(
             &mut wtxn,
             code_artifact_id,
