@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1360 code-mode rows (1318 host rows, 42 run rows), 4790 declarations.
-// Replies: 1168 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1363 code-mode rows (1321 host rows, 42 run rows), 4792 declarations.
+// Replies: 1171 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -1426,6 +1426,7 @@ declare namespace Sdk {
   type PendingAuthorityAct = { id: string; vault_id: string; act: string; payload: number[]; starter: string; started_at: number; deadline: number; objector_roles: FederationGrantRole[]; required_verb: string; starter_may_object: boolean; objections: string[]; completed: boolean; execution?: ActExecution | null };
   type SharedTransferRequest = { vault_id: string; to: string; from_keeps?: FederationGrantRole | null };
   type SharedRemoveOwnerRequest = { vault_id: string; target: string; successor?: string | null; target_keeps?: FederationGrantRole | null; export_first: boolean };
+  type SharedAddOwnerRequest = { vault_id: string; owner: string };
   type SharedActRequest = { act_id: string };
   type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { owner_added: { owner: string } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_invited: { invitation: string; member: string; role: FederationGrantRole; expires_at: number } } | { invitation_accepted: { invitation: string; member: string; role: FederationGrantRole } } | { invitation_declined: { invitation: string; member: string } } | { invitation_withdrawn: { invitation: string; member: string } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } } | { record_erased: { record: string; redaction?: string | null } };
   type ExportDiaryRead = { agent: string; diaries: number; reason: string };
@@ -1493,6 +1494,7 @@ declare namespace Sdk {
   type SharedActPolicyChange = { id: string; vault_id: string; act: string; policy?: SharedActPolicy | null; base_policy_hash: string; proposer: string; proposed_at: number; approvals: string[]; vetoed_by?: string | null; state: SharedActPolicyChangeState; settled_at?: number | null; awaiting?: string[] };
   type SharedActPolicyAnswerRequest = { change_id: string; approve: boolean };
   type SharedActPolicyChangeRequest = { change_id: string };
+  type SharedOwnerChangeWaitSetRequest = { vault_id: string; days?: number | null };
   type CoreferenceStatus = "proposed" | "confirmed";
   type CoreferenceLinkRequest = { local_person: EntityId; other_person: EntityId; status: CoreferenceStatus };
   type CoreferenceLinkReceipt = { local_person: EntityId; other_person: EntityId; status: CoreferenceStatus; status_claim: EntityId };
@@ -7760,6 +7762,12 @@ declare const vault: Sdk.VaultHost & {
     object(input: Sdk.SharedActRequest): Promise<Sdk.PendingAuthorityAct | StoredResult>;
     /** The reader's own outcome notices for a shared vault. */
     outcomes(input: Sdk.SharedVaultRequest): Promise<Sdk.SharedActOutcome[] | StoredResult>;
+    owner_change_wait: {
+      /** The shared vault's common owner-change wait in seconds, if one is set. */
+      get(input: Sdk.EmptyRequest): Promise<number | null | StoredResult>;
+      /** One live Owner sets the shared vault's common owner-change wait in whole days, or null to remove it, and receives the effective wait in seconds. */
+      set(input: Sdk.SharedOwnerChangeWaitSetRequest): Promise<number | null | StoredResult>;
+    };
     policy: {
       /** A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row. */
       answer(input: Sdk.SharedActPolicyAnswerRequest): Promise<Sdk.SharedActPolicyChange | StoredResult>;
@@ -7772,6 +7780,8 @@ declare const vault: Sdk.VaultHost & {
       /** A live policy editor proposes one shared-act policy row change against the policy_hash they read; it applies only when every live editor approves it, and one no vetoes it. */
       propose(input: Sdk.SharedActPolicyProposeRequest): Promise<Sdk.SharedActPolicyChange | StoredResult>;
     };
+    /** Starts a shared vault's add_owner act: a live Owner adds another person as Owner. */
+    propose_add_owner(input: Sdk.SharedAddOwnerRequest): Promise<Sdk.PendingAuthorityAct | StoredResult>;
     /** Starts a shared vault's delete_vault act, returned as a typed pending act. */
     propose_delete(input: Sdk.SharedVaultRequest): Promise<Sdk.PendingAuthorityAct | StoredResult>;
     /** Starts a shared vault's remove_owner act, with its export-first answer. */

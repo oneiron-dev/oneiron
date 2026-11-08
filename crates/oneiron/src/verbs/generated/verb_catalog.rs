@@ -348,6 +348,7 @@ pub enum AgentVerb {
     VaultSharedProposeDelete,
     VaultSharedProposeTransfer,
     VaultSharedProposeRemoveOwner,
+    VaultSharedProposeAddOwner,
     VaultSharedExecute,
     VaultSharedReceipt,
     VaultSharedOutcomes,
@@ -380,6 +381,8 @@ pub enum AgentVerb {
     VaultSharedPolicyAnswer,
     VaultSharedPolicyChange,
     VaultSharedPolicyChanges,
+    VaultSharedOwnerChangeWaitSet,
+    VaultSharedOwnerChangeWaitGet,
     VaultFederationCoreferenceLink,
     VaultFederationCoreferenceConfirm,
     VaultFederationCoreferenceShareConsent,
@@ -1680,6 +1683,7 @@ impl AgentVerb {
         Self::VaultSharedProposeDelete,
         Self::VaultSharedProposeTransfer,
         Self::VaultSharedProposeRemoveOwner,
+        Self::VaultSharedProposeAddOwner,
         Self::VaultSharedExecute,
         Self::VaultSharedReceipt,
         Self::VaultSharedOutcomes,
@@ -1712,6 +1716,8 @@ impl AgentVerb {
         Self::VaultSharedPolicyAnswer,
         Self::VaultSharedPolicyChange,
         Self::VaultSharedPolicyChanges,
+        Self::VaultSharedOwnerChangeWaitSet,
+        Self::VaultSharedOwnerChangeWaitGet,
         Self::VaultFederationCoreferenceLink,
         Self::VaultFederationCoreferenceConfirm,
         Self::VaultFederationCoreferenceShareConsent,
@@ -3017,6 +3023,7 @@ impl AgentVerb {
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
             Self::VaultSharedProposeTransfer => "vault.shared.propose_transfer",
             Self::VaultSharedProposeRemoveOwner => "vault.shared.propose_remove_owner",
+            Self::VaultSharedProposeAddOwner => "vault.shared.propose_add_owner",
             Self::VaultSharedExecute => "vault.shared.execute",
             Self::VaultSharedReceipt => "vault.shared.receipt",
             Self::VaultSharedOutcomes => "vault.shared.outcomes",
@@ -3049,6 +3056,8 @@ impl AgentVerb {
             Self::VaultSharedPolicyAnswer => "vault.shared.policy.answer",
             Self::VaultSharedPolicyChange => "vault.shared.policy.change",
             Self::VaultSharedPolicyChanges => "vault.shared.policy.changes",
+            Self::VaultSharedOwnerChangeWaitSet => "vault.shared.owner_change_wait.set",
+            Self::VaultSharedOwnerChangeWaitGet => "vault.shared.owner_change_wait.get",
             Self::VaultFederationCoreferenceLink => "vault.federation.coreference.link",
             Self::VaultFederationCoreferenceConfirm => "vault.federation.coreference.confirm",
             Self::VaultFederationCoreferenceShareConsent => {
@@ -4387,6 +4396,7 @@ impl AgentVerb {
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
+                | Self::VaultSharedProposeAddOwner
                 | Self::VaultSharedExecute
                 | Self::VaultSharedReceipt
                 | Self::VaultSharedOutcomes
@@ -4419,6 +4429,8 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
                 | Self::VaultSharedPolicyChanges
+                | Self::VaultSharedOwnerChangeWaitSet
+                | Self::VaultSharedOwnerChangeWaitGet
                 | Self::VaultFederationCoreferenceLink
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
@@ -5748,6 +5760,7 @@ impl AgentVerb {
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
+                | Self::VaultSharedProposeAddOwner
                 | Self::VaultSharedExecute
                 | Self::VaultSharedReceipt
                 | Self::VaultSharedOutcomes
@@ -5780,6 +5793,8 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
                 | Self::VaultSharedPolicyChanges
+                | Self::VaultSharedOwnerChangeWaitSet
+                | Self::VaultSharedOwnerChangeWaitGet
                 | Self::VaultFederationCoreferenceLink
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
@@ -7263,6 +7278,7 @@ impl AgentVerb {
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
+                | Self::VaultSharedProposeAddOwner
                 | Self::VaultSharedExecute
                 | Self::VaultSharedReceipt
                 | Self::VaultSharedOutcomes
@@ -7295,6 +7311,8 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
                 | Self::VaultSharedPolicyChanges
+                | Self::VaultSharedOwnerChangeWaitSet
+                | Self::VaultSharedOwnerChangeWaitGet
                 | Self::VaultFederationCoreferenceLink
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
@@ -8373,6 +8391,7 @@ impl AgentVerb {
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
+                | Self::VaultSharedProposeAddOwner
                 | Self::VaultSharedExecute
                 | Self::VaultOrgAdminConfigure
                 | Self::VaultMembersResetProjectAccess
@@ -8393,6 +8412,7 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
+                | Self::VaultSharedOwnerChangeWaitSet
                 | Self::VaultFederationCoreferenceLink
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
@@ -9354,6 +9374,7 @@ impl AgentVerb {
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
             Self::VaultSharedProposeRemoveOwner => &["spec"],
+            Self::VaultSharedProposeAddOwner => &["spec"],
             Self::VaultSharedExecute => &["spec"],
             Self::VaultSharedReceipt => &["spec"],
             Self::VaultSharedOutcomes => &["spec"],
@@ -9386,6 +9407,8 @@ impl AgentVerb {
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
             Self::VaultSharedPolicyChanges => &["spec"],
+            Self::VaultSharedOwnerChangeWaitSet => &["spec"],
+            Self::VaultSharedOwnerChangeWaitGet => &["spec"],
             Self::VaultFederationCoreferenceLink => &["spec"],
             Self::VaultFederationCoreferenceConfirm => &["spec"],
             Self::VaultFederationCoreferenceShareConsent => &["spec"],
@@ -10687,6 +10710,7 @@ impl AgentVerb {
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
             Self::VaultSharedProposeRemoveOwner => &["spec"],
+            Self::VaultSharedProposeAddOwner => &["spec"],
             Self::VaultSharedExecute => &["spec"],
             Self::VaultSharedReceipt => &["spec"],
             Self::VaultSharedOutcomes => &["spec"],
@@ -10719,6 +10743,8 @@ impl AgentVerb {
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
             Self::VaultSharedPolicyChanges => &["spec"],
+            Self::VaultSharedOwnerChangeWaitSet => &["spec"],
+            Self::VaultSharedOwnerChangeWaitGet => &["spec"],
             Self::VaultFederationCoreferenceLink => &["spec"],
             Self::VaultFederationCoreferenceConfirm => &["spec"],
             Self::VaultFederationCoreferenceShareConsent => &["spec"],
@@ -12701,6 +12727,9 @@ impl AgentVerb {
             Self::VaultSharedProposeRemoveOwner => {
                 "Starts a shared vault's remove_owner act, with its export-first answer."
             }
+            Self::VaultSharedProposeAddOwner => {
+                "Starts a shared vault's add_owner act: a live Owner adds another person as Owner."
+            }
             Self::VaultSharedExecute => {
                 "A live Owner runs a matured shared-vault act and gets its receipt."
             }
@@ -12790,6 +12819,12 @@ impl AgentVerb {
             }
             Self::VaultSharedPolicyChanges => {
                 "A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale."
+            }
+            Self::VaultSharedOwnerChangeWaitSet => {
+                "One live Owner sets the shared vault's common owner-change wait in whole days, or null to remove it, and receives the effective wait in seconds."
+            }
+            Self::VaultSharedOwnerChangeWaitGet => {
+                "The shared vault's common owner-change wait in seconds, if one is set."
             }
             Self::VaultFederationCoreferenceLink => {
                 "The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads."

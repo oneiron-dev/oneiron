@@ -367,6 +367,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.propose_delete", post(facade_route))
         .route("/vault.shared.propose_transfer", post(facade_route))
         .route("/vault.shared.propose_remove_owner", post(facade_route))
+        .route("/vault.shared.propose_add_owner", post(facade_route))
         .route("/vault.shared.execute", post(facade_route))
         .route("/vault.shared.receipt", post(facade_route))
         .route("/vault.shared.outcomes", post(facade_route))
@@ -399,6 +400,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.policy.answer", post(facade_route))
         .route("/vault.shared.policy.change", post(facade_route))
         .route("/vault.shared.policy.changes", post(facade_route))
+        .route("/vault.shared.owner_change_wait.set", post(facade_route))
+        .route("/vault.shared.owner_change_wait.get", post(facade_route))
         .route("/vault.federation.coreference.link", post(facade_route))
         .route("/vault.federation.coreference.confirm", post(facade_route))
         .route(
