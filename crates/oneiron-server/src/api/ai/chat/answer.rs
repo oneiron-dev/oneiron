@@ -117,9 +117,10 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         || container.is_some_and(|container| vault.room_has_unrecorded_stretch(container));
     let wakes = container.map(|_| vault.subscribe_task_updates());
     // FIX 4465 D: a self agent's breakpoint, right before the answer's
-    // stream: its live fork is this answer's own admitted call. Its seed is
-    // kept for this stream's generation before that call is sent (FIX 5028),
-    // then bound to the rung that answered it once the answer ends (FIX 4933).
+    // stream: its live fork is this answer's own admitted call, bound to the
+    // rung that answered it once the answer ends (FIX 4933). A reuse's seed
+    // is kept for this stream's generation before that call is sent (FIX
+    // 5028).
     let pending = breakpoint.map(|breakpoint| {
         compaction::enter(
             &vault,
