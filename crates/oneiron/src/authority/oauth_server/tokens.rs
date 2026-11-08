@@ -11,14 +11,17 @@
 //! on its row (`access_slips`, FIX 4902 slice C); a refresh retires the family's previous access
 //! token and its slip, and a family's revocation revokes its slip. A new family whose first slip
 //! does not stand ends its sign-in: the code is spent, no token was handed out, and the writer
-//! that revokes the family takes the grant back (FIX 22193).
+//! that revokes the family takes the grant back (FIX 22193). When that writer fails, the
+//! `oauth_expiry` sweep's next pass ends the sign-in in the same one write (FIX 22226).
 
 use base64::Engine as _;
 use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
 
 use super::access_slips::take_live_access_in_txn;
-use super::rows::{AuthorizedGrant, CODES, FAMILIES, IssuedToken, TOKENS, TokenFamily, TokenKind};
+use super::rows::{
+    AuthorizedGrant, CODES, FAMILIES, FamilyOpening, IssuedToken, TOKENS, TokenFamily, TokenKind,
+};
 use super::{
     OAUTH_ACCESS_TOKEN_PREFIX, OAUTH_ACCESS_TTL_SECS, OAUTH_CODE_PREFIX,
     OAUTH_REFRESH_TOKEN_PREFIX, OAUTH_REFRESH_TTL_SECS, access_holder_key, mint_secret,
@@ -296,7 +299,8 @@ impl Vault {
     /// which goes too. A code refused for its client, redirect URI, verifier or resource stays:
     /// a matching exchange may still redeem it, and its lapse takes its grant back. A redeemed
     /// code whose new family's first slip does not stand is spent with no token handed out: the
-    /// family is revoked and its grant taken back (FIX 22193).
+    /// family is revoked and its grant taken back (FIX 22193), or, when that write fails, by the
+    /// expiry sweep's next pass (FIX 22226).
     ///
     /// # Errors
     /// A store failure, a fold failure taking a grant back, or a failure minting the access
@@ -364,6 +368,7 @@ impl Vault {
                     expires_at: refresh_expires_at,
                     revoked: false,
                     live_access: None,
+                    opening: FamilyOpening::Pending { opened_at: now },
                 },
             )?;
             code.redeemed_family = Some(family);

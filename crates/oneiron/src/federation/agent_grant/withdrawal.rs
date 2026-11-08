@@ -1,7 +1,8 @@
-//! A Grant an owner's signed mint made, withdrawn on the record (FIX 22188,
-//! 22193): the one rule the consent registry's revoked view, the agent and
-//! GitPush revoke doors, the authority audit and a checkpoint restore's
-//! classes read, so none of them drifts from another.
+//! A Grant an owner's signed mint made, an agent or a GitPush grant,
+//! withdrawn on the record (FIX 22188, 22193, 22226): the one rule the
+//! consent registry's revoked view, the agent and GitPush revoke doors, the
+//! authority audit and a checkpoint restore's classes read, so none of them
+//! drifts from another.
 //!
 //! A Grant is withdrawn on the record when the owner's counted revoke act
 //! names it, or when a counted signed owner mint of its kind made it and a
@@ -131,22 +132,25 @@ impl Vault {
             .withdrew(self, txn, grant, kind)
     }
 
-    /// The agent grants withdrawn on the record, for a checkpoint restore's
-    /// classes: each Grant the owner's counted revoke act names, and each
-    /// agent grant a counted signed owner mint made that
-    /// [`LoggedOwnerGrants::withdrew`] names. An entry whose body this vault
-    /// no longer holds (an adopted checkpoint covers it) names none.
+    /// The agent and GitPush grants withdrawn on the record, for a
+    /// checkpoint restore's classes: each Grant the owner's counted revoke
+    /// act names, and each Grant a counted signed owner mint made that
+    /// [`LoggedOwnerGrants::withdrew`] names, read with the kind its own
+    /// mint made (FIX 22226). An entry whose body this vault no longer holds
+    /// (an adopted checkpoint covers it) names none.
     ///
     /// # Errors
     /// A store or fold failure.
-    pub(crate) fn withdrawn_agent_grants_in_txn(
+    pub(crate) fn withdrawn_owner_grants_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<BTreeSet<EntityId>> {
         let logged = self.logged_owner_grants_in_txn(txn)?;
         let mut withdrawn = logged.owner_revoked.clone();
-        for grant in logged.mints.keys() {
-            if logged.withdrew(self, txn, *grant, FederationGrantKind::Access)? {
+        for (grant, (record, _)) in &logged.mints {
+            if let Some(kind) = signed_mint_kind(&record.change)
+                && logged.withdrew(self, txn, *grant, kind)?
+            {
                 withdrawn.insert(*grant);
             }
         }
