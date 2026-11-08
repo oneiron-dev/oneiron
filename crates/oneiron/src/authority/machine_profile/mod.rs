@@ -461,6 +461,25 @@ impl AuthorityFold {
         self.machines.get(&machine)
     }
 
+    /// Whether any admitter profiled a machine besides `own`, this install's
+    /// own MACHINE row (`None` before it has one), that no chain removed:
+    /// another device the vault may be held on, in any role and whatever
+    /// its standing here. A removal on any branch is terminal, so a removed
+    /// machine never counts again. The tick release of a vault with no
+    /// elected home reads it (`runtime_hooks::source::schedule`).
+    #[must_use]
+    pub(crate) fn profiles_other_machine(&self, own: Option<EntityId>) -> bool {
+        self.machines.iter().any(|(machine, folded)| {
+            Some(*machine) != own
+                && !folded
+                    .roster
+                    .iter()
+                    .chain(&folded.roster_trusted)
+                    .chain(folded.anchored.values())
+                    .any(|chain| chain.removed)
+        })
+    }
+
     /// The machine mine under this install's pin whose trusted identity
     /// signs with `machine_key`.
     #[must_use]
