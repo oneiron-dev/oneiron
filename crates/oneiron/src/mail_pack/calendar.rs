@@ -232,6 +232,29 @@ pub(crate) fn calendar_source_of_system_in(
     Ok(calendar_source_row_in(vault, txn, system)?.map(|(source, row)| (source, row.audience)))
 }
 
+/// The PERSON whose own pack calendar landed the EVENT `event`: the owner
+/// the Calendar source row names whose audience the EVENT is bound to, read
+/// in `txn` (FIX 16308). `None` for an EVENT no Calendar source binds, and
+/// for one whose source names no owner (that person was erased).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn calendar_source_person_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &EntityId,
+) -> Result<Option<EntityId>> {
+    let Some(policy) = crate::source_audience::binding_in(vault, txn, event)? else {
+        return Ok(None);
+    };
+    Ok(SOURCES
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .find(|(_, row)| row.kind == MailSourceKind::Calendar && row.audience == policy)
+        .and_then(|(_, row)| row.owner))
+}
+
 /// One write of a pack calendar source's landing: the proof its rows (an
 /// EVENT, the artifact its resource is archived in) are stamped under, and
 /// the source's audience each is bound to in the same commit (fix list row
