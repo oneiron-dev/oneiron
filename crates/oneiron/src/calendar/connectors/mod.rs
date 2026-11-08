@@ -74,7 +74,7 @@ use super::caldav;
 use super::claims;
 use super::google_internal;
 
-pub use self::inbound::run_calendar_connector_sync;
+pub use self::inbound::{run_calendar_connector_sync, run_calendar_connector_sync_with_screener};
 pub(crate) use self::outbound::calendar_connector_write_accepts_masked;
 pub use self::outbound::{
     CalendarRemoteObjectRow, CalendarWriteAction, CalendarWriteOutboxRow, CalendarWriteOutboxState,

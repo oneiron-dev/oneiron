@@ -225,6 +225,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             post(artifact_backend_pairing::create),
         )
         .route("/v1/core/pairing/redeem", post(pairing::redeem))
+        .route("/v1/core/pairing/pin", post(pairing::pending_pin))
         .route("/v1/core/pairing/oauth", post(pairing::oauth_exchange))
         .route("/v1/core/slips/revoke", post(pairing::revoke))
         .route("/v1/core/slips/renew", post(slip_renewal::renew))
