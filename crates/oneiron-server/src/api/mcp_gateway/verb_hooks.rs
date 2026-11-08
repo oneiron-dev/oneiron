@@ -101,10 +101,25 @@ fn mcp_verb_ask_credential(
     actor: &McpCallContext,
     memory: &Memory<'_>,
 ) -> Option<VerbAskCredential> {
-    let door = actor
+    memory
+        .clone()
+        .with_credential_door(mcp_verb_ask_door(actor, memory.invocation()))
+        .verb_ask_credential()
+}
+
+/// The door a connector's call of a row under `invocation` is rebuilt by:
+/// the drain's own door on its run of that invocation, else the managed
+/// vault's attested owner's STREAM connection (FIX 5204), else the
+/// connector's registration at its admitted ceiling. Bound on the row's
+/// own surface too, so a paced call holds in its caller's line (FIX 19034).
+pub(super) fn mcp_verb_ask_door(
+    actor: &McpCallContext,
+    invocation: Option<oneiron::runtime_hooks::InvocationId>,
+) -> VerbAskDoor {
+    actor
         .drain
         .as_ref()
-        .filter(|drain| Some(drain.invocation()) == memory.invocation())
+        .filter(|drain| Some(drain.invocation()) == invocation)
         .and_then(|drain| drain.credential_door())
         .cloned()
         .unwrap_or_else(|| {
@@ -121,11 +136,38 @@ fn mcp_verb_ask_credential(
                     ceiling: mcp_adapter_ceiling(actor),
                 },
             }
-        });
-    memory
-        .clone()
-        .with_credential_door(door)
-        .verb_ask_credential()
+        })
+}
+
+tokio::task_local! {
+    /// The saved answer of a paced call the drain already ended, as the MCP
+    /// admission door read it for this retry before it skipped a new intent
+    /// (FIX 19034). The row answers it, never a second read of the line.
+    pub(super) static ENDED_PACED_REPLY: std::cell::RefCell<Option<oneiron::memory::MemoryResult<Value>>>;
+}
+
+/// What a retry of a call its budget window paced meets at the MCP row
+/// door, before its hooks or its row run again (FIX 19034): still held, or
+/// the saved answer of the drain's turn, the caller's view after every post
+/// hook. The door's own admission of `tool` stands first, as for any call.
+/// `None` when nothing of the invocation is held, and on the drain's run.
+pub(crate) fn mcp_row_paced_reply(
+    server: &Arc<SyncServer>,
+    tool: &str,
+    actor: &McpCallContext,
+    memory: &Memory<'_>,
+) -> Result<Option<Value>, McpGatewayError> {
+    // The answer the admission door already read for this retry comes
+    // first: the line's expiry may have removed the row since (FIX 19034).
+    let captured = ENDED_PACED_REPLY
+        .try_with(|slot| slot.borrow_mut().take())
+        .ok()
+        .flatten();
+    let Some(reply) = captured.or_else(|| memory.paced_verb_reply(tool)) else {
+        return Ok(None);
+    };
+    mcp_hooks_admitted(server, tool, actor, memory)?;
+    reply.map(Some).map_err(mcp_facade_error)
 }
 
 /// The registration a connector call came in by, saved without a credential
@@ -461,10 +503,20 @@ async fn rerun_saved_call(
 #[cfg(feature = "code-sandbox-wasmtime")]
 fn mcp_saved_error(error: McpGatewayError) -> (oneiron::MemoryError, Option<bool>) {
     let hook_notice = error.hook_notice.is_some().then_some(true);
+    // A paced call held again, and a pre hook that asked again, keep the
+    // engine's own codes, so the paced drain puts the call back in its line
+    // at `resets_at` or hands it to the ask (FIX 19034).
     let code = if error.legal_hold.is_some() {
         oneiron::memory::MEMORY_CODE_INVALID_STATE
     } else if error.code == -32603 {
         oneiron::memory::MEMORY_CODE_INTERNAL
+    } else if error.kind == "paced_hold" {
+        oneiron::memory::MEMORY_CODE_PACED_HOLD
+    } else if matches!(
+        error.hook.as_deref(),
+        Some(oneiron::runtime_hooks::VerbHookStop::Pending { .. })
+    ) {
+        oneiron::memory::MEMORY_CODE_PENDING_ASK
     } else {
         error.kind
     };
@@ -472,5 +524,8 @@ fn mcp_saved_error(error: McpGatewayError) -> (oneiron::MemoryError, Option<bool
     saved.hook = error.hook;
     saved.legal_hold = error.legal_hold;
     saved.reason_codes = error.reason_codes;
+    if let Some(resets_at) = error.resets_at {
+        saved.resets_at = *resets_at;
+    }
     (saved, hook_notice)
 }
