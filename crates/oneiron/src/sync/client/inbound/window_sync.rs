@@ -278,7 +278,8 @@ impl SyncClient {
                 } else {
                     QueuedSends::Retire
                 };
-                // Judged again once no demotion holds the window closed.
+                // Judged again once no demotion holds the window closed. A fault
+                // not this vault's own is the home's, refused (FIX 22153).
                 let (window, conflicts) = self
                     .manager
                     .replace_window_bounded(
@@ -299,10 +300,7 @@ impl SyncClient {
                         }) => TransportError::Storage(
                             "window replacement waits on a held window".to_string(),
                         ),
-                        Error::Sync(SyncError::SyncProtocolError {
-                            context: SyncProtocolValidation::ReplacementRejected,
-                        }) => TransportError::InvalidPayload("window replacement rejected"),
-                        error => TransportError::Storage(error.to_string()),
+                        e => TransportError::from_applied(&e, "window replacement rejected"),
                     })?;
                 if !conflicts.is_empty() {
                     let _ = self.event_tx.send(SyncEvent::ReplacementConflicts {
@@ -698,7 +696,9 @@ impl SyncClient {
                         Ok(missing) => missing,
                         Err(e) => {
                             self.manager.discard_window(&key);
-                            return Err(super::map_delta_export_err(e));
+                            return Err(TransportError::Storage(format!(
+                                "export durable delta: {e}"
+                            )));
                         }
                     };
                 // Its pads persist by reference where custody here holds them
