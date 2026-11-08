@@ -198,11 +198,11 @@ pub(crate) use self::effect::live_grant_covering_effect_in_txn;
 pub(crate) use self::effect::{
     ApprovalContext, ApprovalTarget, BrowserSendTarget, CampaignLegFacts,
     ChannelIdentityLifecycleFacts, ExternalEffectGovernance, ExternalEffectPreflight,
-    LinearMirrorFacts, OutboundSendFacts, PairAdmission, PreflightVerdict, ScopedMcpCallFacts,
-    check_external_effect_policy, check_external_effect_policy_pair, code_wait_approval_digest,
-    counterparty_send_override_in_txn, evaluate_external_effect_policy,
+    LinearMirrorFacts, OutboundSendFacts, PairAdmission, PreflightBudget, PreflightVerdict,
+    ScopedMcpCallFacts, check_external_effect_policy, check_external_effect_policy_pair,
+    code_wait_approval_digest, counterparty_send_override_in_txn, evaluate_external_effect_policy,
     external_effect_approval_digest, hydrate_external_effect_contact, judge_external_effect_in_txn,
-    native_mail_cold_approval_digest, preflight_answer, record_external_effect_policy,
+    native_mail_cold_approval_digest, preflight_answer_in_txn, record_external_effect_policy,
     record_held_external_effect_policy,
 };
 pub(crate) use self::effect::{ExternalEffectCheck, check_external_effect_policy_paced};

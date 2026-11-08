@@ -3237,7 +3237,7 @@ declare namespace Sdk {
   type TaskAskPreflightRecipient = { who: EntityId; face?: string | null; channel?: string | null; word_required: boolean };
   type TaskAskPreflight = { recipients: TaskAskPreflightRecipient[] };
   type CanEffectVerdict = "allow" | "deny" | "would_ask" | "held";
-  type CanEffectAnswer = { verdict: CanEffectVerdict; reasons: string[]; holds: string[]; waits_for_envelope_window: boolean; checked_at: number };
+  type CanEffectAnswer = { verdict: CanEffectVerdict; reasons: string[]; holds: string[]; waits_for_envelope_window: boolean; rate_window_opens_at?: number | null; checked_at: number };
   type CanAnswer = TaskAskPreflight | CanEffectAnswer;
   type TaskAskPersonKind = "word" | "companion" | "default" | "unknown";
   type TaskAskPersonEvidence = { who: EntityId; answer?: TaskAskWord | null; kind: TaskAskPersonKind; at: number; source?: EntityId | null };

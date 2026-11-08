@@ -471,7 +471,18 @@ impl Memory<'_> {
         lane: &ScopedRead<'_>,
         targets: &[ReadTargetSlot],
     ) -> MemoryResult<ScopedReadResult<Vec<NamedView>>> {
-        lane.read_named_projected(&point_reads(targets), None, |txn, value| {
+        lane.with_grant_read_snapshot(|txn| self.read_named_views_in_txn(lane, txn, targets))
+    }
+
+    /// [`Self::read_named_views`] in the caller's snapshot `txn`, which the
+    /// caller opened: it persists no grant time of its own.
+    fn read_named_views_in_txn(
+        &self,
+        lane: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        targets: &[ReadTargetSlot],
+    ) -> MemoryResult<ScopedReadResult<Vec<NamedView>>> {
+        lane.read_named_projected_in_txn(txn, &point_reads(targets), None, |txn, value| {
             let mut slots = value.into_iter();
             let mut views = Vec::with_capacity(targets.len());
             for target in targets {
@@ -495,14 +506,18 @@ impl Memory<'_> {
         lane: &ScopedRead<'_>,
         target: ReadTargetSlot,
     ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
-        let ScopedReadResult { value, receipt } = self.read_named_views(lane, &[target])?;
-        match value.into_iter().next() {
-            Some(Err(refusal)) => Err(MemoryError::from(refusal).with_read_receipt(receipt)),
-            view => Ok(ScopedReadResult {
-                value: view.and_then(std::result::Result::ok).flatten(),
-                receipt,
-            }),
-        }
+        one_named_view(self.read_named_views(lane, &[target])?)
+    }
+
+    /// [`Self::read_named_view`] in the caller's snapshot `txn`, which the
+    /// caller opened: it persists no grant time of its own (FIX 22102).
+    pub(super) fn read_named_view_in_txn(
+        &self,
+        lane: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        target: ReadTargetSlot,
+    ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
+        one_named_view(self.read_named_views_in_txn(lane, txn, &[target])?)
     }
 
     /// A resolved live id as `get_entity` serves it, with admission, its
@@ -686,6 +701,22 @@ impl Memory<'_> {
 /// owner, as its handle for everyone else.
 fn sight_of(key: &ScopedReadActorKey) -> crate::secret_custody::SecretSight {
     key.secret_sight()
+}
+
+/// The one named view a single-target read answers, under the read's
+/// receipt: the legal order's refusal carries that receipt as a `NOT_FOUND`
+/// does.
+fn one_named_view(
+    read: ScopedReadResult<Vec<NamedView>>,
+) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
+    let ScopedReadResult { value, receipt } = read;
+    match value.into_iter().next() {
+        Some(Err(refusal)) => Err(MemoryError::from(refusal).with_read_receipt(receipt)),
+        view => Ok(ScopedReadResult {
+            value: view.and_then(std::result::Result::ok).flatten(),
+            receipt,
+        }),
+    }
 }
 
 /// The point read of each resolved target, in order.

@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::gate::record_references::{
-    ReferenceRefusal, invented_reference, record_references_at, validate_record_references,
+    ReferenceRefusal, invented_reference, peek_record_references, record_references_at,
 };
 use crate::memory::CanEffectAnswer;
 use crate::verbs::OutboundScheduleRequest;
@@ -28,13 +28,15 @@ impl Memory<'_> {
     ) -> MemoryResult<CanEffectAnswer> {
         let (draft, continuation) = crate::verbs::outbound_schedule_parts(request.clone());
         let schedule_context = OutboundScheduleContext::default();
-        // The row's record-ref check, read-only: an unresolved ref gets the
-        // same refusal, and no refusal receipt is written.
+        // The row's record-ref check, read-only: each ref is read as the
+        // writer's scoped read reads it, with no grant time persisted, so an
+        // unresolved ref gets the same refusal and nothing is written, not
+        // even a refusal receipt.
         let value = serde_json::to_value(request).map_err(|_| {
             MemoryError::bad_request("the verb input could not be read for the records it names")
         })?;
         let refs = record_references_at(&value, OUTBOUND_SCHEDULE_REFS);
-        match validate_record_references(self, &refs) {
+        match peek_record_references(self, &refs) {
             Ok(()) => {}
             Err(ReferenceRefusal::Read(error)) => return Err(error),
             Err(ReferenceRefusal::Unresolved { pointer }) => {
@@ -105,9 +107,15 @@ impl Memory<'_> {
             at,
             Some(at),
         )?;
-        Ok(CanEffectAnswer::judged(
-            crate::gate::preflight_answer(&judgment),
-            at,
-        ))
+        // The send's admission is the dispatch pipeline's: a Send-class
+        // effect, through a transport that waits for a full count-bound
+        // window.
+        let budget = crate::gate::PreflightBudget {
+            send_like: crate::outbound_intent_ledger::BudgetClass::Send.is_send(),
+            paces: true,
+        };
+        let preflight =
+            crate::gate::preflight_answer_in_txn(&self.vault.store, &txn, &judgment, budget, at)?;
+        Ok(CanEffectAnswer::judged(preflight, at))
     }
 }
