@@ -6,6 +6,7 @@ mod effect_grants;
 mod effect_paced;
 mod effect_pair;
 mod evaluate;
+mod preflight;
 mod record;
 
 pub(crate) use self::approval_target::{
@@ -28,6 +29,7 @@ use self::effect_grants::{
 pub(crate) use self::effect_paced::{ExternalEffectCheck, check_external_effect_policy_paced};
 pub(crate) use self::effect_pair::{PairAdmission, check_external_effect_policy_pair};
 pub(crate) use self::evaluate::{evaluate_external_effect_policy, judge_external_effect_in_txn};
+pub(crate) use self::preflight::{ExternalEffectPreflight, PreflightVerdict, preflight_answer};
 pub(crate) use self::record::{
     check_external_effect_policy, record_external_effect_policy, record_held_external_effect_policy,
 };
@@ -138,32 +140,22 @@ impl ExternalEffectJudgment {
         }
     }
 
-    // read by can(effect), FIX 22102 slice 1b
-    #[allow(dead_code)]
     #[must_use]
     pub(crate) fn outcome(&self) -> GateOutcome {
         self.decision.outcome()
     }
 
-    // read by can(effect), FIX 22102 slice 1b
-    #[allow(dead_code)]
     pub(crate) fn decision(&self) -> &GateDecision {
         &self.decision
     }
 
-    // read by can(effect), FIX 22102 slice 1b
-    #[allow(dead_code)]
+    /// FIX 7948: the Gate allowed this send on an envelope whose window is
+    /// full, so the send would keep its place in that envelope's line rather
+    /// than go now, as
+    /// [`ExternalEffectGovernance::retain_envelope_wait_in_txn`] keeps it.
     #[must_use]
-    pub(crate) fn created_at(&self) -> u64 {
-        self.created_at
-    }
-
-    /// The actual hydrated consent composition for a live scoped-MCP hold.
-    /// It is metadata for an owner question, never admission authority.
-    // read by can(effect), FIX 22102 slice 1b
-    #[allow(dead_code)]
-    pub(crate) fn ask_consent(&self) -> Option<&crate::llm::decision::AskConsent> {
-        self.ask_consent.as_ref()
+    pub(crate) fn waits_for_envelope_window(&self) -> bool {
+        self.decision.outcome() == GateOutcome::Allow && self.envelope_wait.is_some()
     }
 }
 

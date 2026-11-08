@@ -3841,8 +3841,8 @@ export class Oneiron {
   }
   /** Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal. */
   execute_code(input: Facade.ForeignCodeRunRequest): Facade.ForeignCodeRunResult { return this.#call(() => this.#client.executeCode(input) as Facade.ForeignCodeRunResult) }
-  /** Read-only ask routing or attributed partial answers. */
-  can(request: TaskCanAskRequest): TaskAskPreflight { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as TaskAskPreflight; return result }) }
+  /** Read-only ask routing, or one effect's dated allow, deny, would-ask or named hold. */
+  can(request: Facade.CanRequest): Facade.CanAnswer { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as Facade.CanAnswer; return result }) }
   /** Read-only ask routing or attributed partial answers. */
   peek(request: TaskAskHandle): TaskAskPersonEvidence[] { return this.#call(() => {  const result = JSON.parse(this.#client.peek(keyedJson(request))) as TaskAskPersonEvidence[]; return result.map(item => item) }) }
   /** Asks people or an authority a typed question and returns at admission with the ask's handle. */

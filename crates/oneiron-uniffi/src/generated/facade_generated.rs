@@ -4271,8 +4271,8 @@ export_facade! {
     let output = client.vault_artifacts_undo(&input)?;
     crate::codec::lift_record("vault.artifacts.undo", &output)
 };
-"can" => fn can(&self, input: TaskCanAskRequest) -> TaskAskPreflight = |client| {
-    let input: oneiron::task_verb::sdk::TaskCanAskRequest = crate::codec::lower_record("can", input)?;
+"can" => fn can(&self, input: CanRequest) -> CanAnswer = |client| {
+    let input: oneiron::verbs::CanRequest = crate::codec::lower_record("can", input)?;
     let output = client.can(&input)?;
     crate::codec::lift_record("can", &output)
 };
