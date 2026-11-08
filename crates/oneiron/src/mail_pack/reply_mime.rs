@@ -4,13 +4,15 @@
 //! approves is frozen when the draft is written and hashed into its content
 //! ref, and the bytes sent are rendered from exactly those fields, with the
 //! dispatch's frozen hygiene headers. One recipient, no attachments, UTF-8
-//! text in base64, threaded by `In-Reply-To` and `References` (RFC 5322).
+//! text in base64 and, when drafted, an HTML alternative beside it (fix list
+//! row 17645), threaded by `In-Reply-To` and `References` (RFC 5322).
 
 use std::collections::BTreeMap;
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
+use crate::channel_identity_provider::mail_html::{push_mail_body, sanitize_mail_html};
 use crate::channel_identity_provider::native_mail::canonical_recipient;
 use crate::error::{Error, Result};
 use crate::write_envelope::thread_claim::{canonical_message_id, canonical_message_id_list};
@@ -41,6 +43,10 @@ pub(super) struct ReplyMessage {
     pub(super) to: String,
     pub(super) subject: String,
     pub(super) body: String,
+    /// The HTML alternative, as the mail HTML gate wrote it again; `None`
+    /// for plain text alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) html: Option<String>,
     /// RFC 5322 `Date`, frozen when drafted.
     pub(super) date: String,
     /// Its own `Message-ID`, without angle brackets.
@@ -58,6 +64,8 @@ pub(super) struct ReplyDraft<'d> {
     pub(super) to: &'d str,
     pub(super) subject: &'d str,
     pub(super) body: &'d str,
+    /// The HTML alternative as drafted, before the mail HTML gate.
+    pub(super) html: Option<&'d str>,
     /// The answered message's `Message-ID`.
     pub(super) parent_message_id: &'d str,
     /// The answered message's own `References`.
@@ -74,7 +82,8 @@ impl ReplyMessage {
     ///
     /// [`Error::InvalidConfig`] for a malformed sender or recipient, a
     /// Subject that is too long or carries a control character, a body that
-    /// is too long, a malformed `Message-ID`, or an unrepresentable time.
+    /// is too long, HTML the mail HTML gate refuses, a malformed
+    /// `Message-ID`, or an unrepresentable time.
     pub(super) fn new(draft: &ReplyDraft<'_>) -> Result<Self> {
         let from = canonical_recipient(draft.from)?;
         let to = canonical_recipient(draft.to)?;
@@ -82,6 +91,7 @@ impl ReplyMessage {
         if draft.body.len() > MAX_BODY_BYTES {
             return Err(invalid("the body is too long"));
         }
+        let html = draft.html.map(sanitize_mail_html).transpose()?;
         let date = i64::try_from(draft.composed_at)
             .ok()
             .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0))
@@ -112,6 +122,9 @@ impl ReplyMessage {
         ] {
             hash_part(&mut seed, part);
         }
+        if let Some(html) = &html {
+            hash_part(&mut seed, html);
+        }
         let digest = seed.finalize().to_hex();
         let local = &digest.as_str()[..32];
         let message_id = canonical_message_id(&format!("<{local}.oneiron@{domain}>"))?
@@ -122,6 +135,7 @@ impl ReplyMessage {
             to,
             subject: draft.subject.to_owned(),
             body: draft.body.to_owned(),
+            html,
             date,
             message_id,
             in_reply_to: in_reply_to.as_str().to_owned(),
@@ -148,6 +162,12 @@ impl ReplyMessage {
         hasher.update(&(self.references.len() as u64).to_le_bytes());
         for reference in &self.references {
             hash_part(&mut hasher, reference);
+        }
+        // An HTML alternative follows the counted references (fix list row
+        // 17645); plain text alone hashes as before.
+        if let Some(html) = &self.html {
+            hasher.update(b"html");
+            hash_part(&mut hasher, html);
         }
         format!("{REPLY_MESSAGE_REF_PREFIX}{}", hasher.finalize().to_hex())
     }
@@ -192,17 +212,8 @@ impl ReplyMessage {
             push_header(&mut out, name, value);
         }
         push_header(&mut out, "MIME-Version", "1.0");
-        push_header(&mut out, "Content-Type", "text/plain; charset=UTF-8");
-        push_header(&mut out, "Content-Transfer-Encoding", "base64");
-        out.push_str("\r\n");
-        let body = self.body.replace("\r\n", "\n").replace('\n', "\r\n");
-        let encoded = base64::engine::general_purpose::STANDARD.encode(body.as_bytes());
-        let mut rendered = out.into_bytes();
-        for line in encoded.as_bytes().chunks(76) {
-            rendered.extend_from_slice(line);
-            rendered.extend_from_slice(b"\r\n");
-        }
-        Ok(rendered)
+        push_mail_body(&mut out, &self.body, self.html.as_deref());
+        Ok(out.into_bytes())
     }
 }
 

@@ -31,8 +31,11 @@ sends nothing. The mailbox's owner reviews it (`vault.mail.reply.drafts`) and
 it goes out only when they approve that exact revision
 (`vault.mail.reply.approve`, theirs alone, never yours). Redrafting under the
 same key makes a new revision that needs its own approval; discard a draft
-you no longer want (`vault.mail.reply.discard`). A reply goes to one
-recipient, in plain text, from the person's own mailbox: a Google mailbox
+you no longer want (`vault.mail.reply.discard`). You may add `body_html`, the
+same reply as simple HTML (paragraphs, links, lists, quotes, emphasis); it
+sends beside the plain text, which must still read as the whole reply. An
+image, style or script is refused. A reply goes to one recipient, with no CC
+or attachment yet, from the person's own mailbox: a Google mailbox
 granted `gmail.send`, an IMAP mailbox whose credential names its submission
 server, or a Microsoft 365 mailbox whose token may send mail. A group address
 does not send replies yet.

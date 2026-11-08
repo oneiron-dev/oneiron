@@ -24,6 +24,8 @@ struct StoredPlan {
     to: String,
     subject: String,
     body_text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    body_html: Option<String>,
     date: String,
     message_id: String,
     reply: Option<StoredReply>,
@@ -52,6 +54,7 @@ impl GmailSendPlan {
             to: self.to.clone(),
             subject: self.subject.clone(),
             body_text: self.body_text.clone(),
+            body_html: self.body_html.clone(),
             date: self.date.clone(),
             message_id: self.message_id.as_str().to_owned(),
             reply: self.reply.as_ref().map(|reply| StoredReply {
@@ -98,6 +101,7 @@ impl GmailSendPlan {
             to: stored.to,
             subject: stored.subject,
             body_text: stored.body_text,
+            body_html: stored.body_html,
             date: stored.date,
             message_id: canonical_message_id(&stored.message_id)?,
             reply,

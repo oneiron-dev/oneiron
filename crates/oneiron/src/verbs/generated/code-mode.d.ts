@@ -4682,9 +4682,9 @@ declare namespace Sdk {
   type SourceAudienceEventView = { revision: number; op: SourceAudienceOp; person_ref?: string | null; by_ref?: string | null; at: number };
   type MailThreadShareRequest = { record_ref: string; person_ref: string };
   type MailThreadShareReceipt = { thread_ref: string; person_ref: string; shared: boolean; changed: boolean; shared_with: string[] };
-  type MailReplyDraftRequest = { thread_ref: string; parent_turn_ref?: string | null; body: string; request_key: string };
+  type MailReplyDraftRequest = { thread_ref: string; parent_turn_ref?: string | null; body: string; body_html?: string | null; request_key: string };
   type MailReplyDraftState = "proposed" | "approved" | "sent" | "unsettled" | "discarded";
-  type MailReplyDraftView = { draft_ref: string; revision: number; source_ref: string; thread_ref: string; parent_turn_ref: string; to: string; subject: string; body: string; plan_ref: string; state: MailReplyDraftState; outcome?: string | null; drafted_at: number; updated_at: number };
+  type MailReplyDraftView = { draft_ref: string; revision: number; source_ref: string; thread_ref: string; parent_turn_ref: string; to: string; subject: string; body: string; body_html?: string | null; plan_ref: string; state: MailReplyDraftState; outcome?: string | null; drafted_at: number; updated_at: number };
   type MailReplyDraftsRequest = { thread_ref?: string | null; include_settled?: boolean };
   type MailReplyDraftPage = { drafts: MailReplyDraftView[] };
   type MailReplyDraftRef = { draft_ref: string };
@@ -6939,7 +6939,7 @@ declare const vault: Sdk.VaultHost & {
       approve(input: Sdk.MailReplyApproveRequest): Promise<Sdk.MailReplyDraftView | StoredResult>;
       /** Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends. */
       discard(input: Sdk.MailReplyDraftRef): Promise<Sdk.MailReplyDraftView | StoredResult>;
-      /** Drafts a plain-text reply to a mail thread the caller reads, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first. */
+      /** Drafts a reply to a mail thread the caller reads, in plain text with an optional simple HTML alternative, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first. */
       draft(input: Sdk.MailReplyDraftRequest): Promise<Sdk.MailReplyDraftView | StoredResult>;
       /** The drafted replies on the mail threads the caller reads, newest first, each with its words, recipient, frozen plan and state. */
       drafts(input: Sdk.MailReplyDraftsRequest): Promise<Sdk.MailReplyDraftPage | StoredResult>;
