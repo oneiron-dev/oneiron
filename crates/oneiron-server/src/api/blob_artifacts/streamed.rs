@@ -12,7 +12,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::body::Body;
 use axum::http::HeaderMap;
-use futures_util::StreamExt as _;
 use serde::de::DeserializeOwned;
 
 use crate::api::body_spool::{
@@ -55,7 +54,7 @@ pub(super) async fn read<H: DeserializeOwned + Send + 'static>(
         return Err(too_large(limit, declared));
     }
     let over = Arc::new(AtomicBool::new(false));
-    let body = capped(body, limit, Arc::clone(&over));
+    let body = body_spool::capped(body, limit, Arc::clone(&over));
     let vault = Arc::clone(&server.vault);
     let read = body_spool::spool_then(
         server,
@@ -117,23 +116,6 @@ pub(super) async fn read<H: DeserializeOwned + Send + 'static>(
         Err(SinkRefusal::NoRoom) => Err(Unspooled::NoRoom.refusal()),
         Err(SinkRefusal::Failed) => Err(Unspooled::Failed.refusal()),
     }
-}
-
-/// `body`, ended with an error once more than `limit` bytes of it arrived;
-/// `over` says so.
-fn capped(body: Body, limit: u64, over: Arc<AtomicBool>) -> Body {
-    let mut arrived = 0u64;
-    Body::from_stream(body.into_data_stream().map(move |piece| {
-        let piece = piece?;
-        arrived = arrived.saturating_add(piece.len() as u64);
-        if arrived > limit {
-            over.store(true, Ordering::Relaxed);
-            return Err(axum::Error::new(std::io::Error::other(
-                "the request body exceeds its route's bound",
-            )));
-        }
-        Ok(piece)
-    }))
 }
 
 /// A body past the route's bound.

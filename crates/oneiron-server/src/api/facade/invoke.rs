@@ -215,6 +215,14 @@ pub(super) fn facade_invoke_in_turn_with_notice(
                                 oneiron::task_verb::sdk::invoke_with_notice(&memory, verb, value)
                             }
                         })
+                    } else if let Some(body) = call.blob_body(verb) {
+                        // The content its body held as a file (FIX 22074).
+                        oneiron::task_verb::sdk::invoke_blob_input(
+                            &memory,
+                            verb,
+                            value,
+                            body.file(),
+                        )
                     } else {
                         oneiron::task_verb::sdk::invoke_with_notice(&memory, verb, value)
                     }
