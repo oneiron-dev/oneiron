@@ -164,6 +164,7 @@ pub(super) fn repo_record(repo: &RepoRef) -> String {
     match repo {
         RepoRef::LocalFolder { path, .. } => format!("local:{path}"),
         RepoRef::GitHubAtCommit { owner, repo, .. } => format!("github:{owner}/{repo}"),
+        RepoRef::LocalCapture { .. } => repo.canonical(),
     }
 }
 

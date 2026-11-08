@@ -91,7 +91,11 @@ impl Vault {
     ) -> Result<Option<String>> {
         let txn = self.store.env.read_txn()?;
         self.campaign_step_body_latest_ref_if_matches_in_txn(
-            &txn, program_ref, step_ref, call_seq, expected,
+            &txn,
+            program_ref,
+            step_ref,
+            call_seq,
+            expected,
         )
     }
 

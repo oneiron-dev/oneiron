@@ -41,6 +41,7 @@ use crate::store::Store;
 pub use crate::store::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 
 pub use self::actors_memory::ActorBound;
+pub(crate) use self::actors_memory::is_named_agent_principal_body;
 #[cfg(test)]
 pub(crate) use self::database_digests::{mask_embed_job_stamps, mask_unrepeatable_stamps};
 pub use self::doctor_manifest::{
@@ -79,6 +80,11 @@ pub(crate) use self::vector_evidence::NoMatchFloors;
 pub struct Vault {
     /// Live seat prefixes are vault-owned, never process-global.
     pub(crate) model_seats: std::sync::Mutex<crate::llm::seat::SeatPool>,
+    /// Each installed model pack's last full check, beside the receipt,
+    /// frozen pin, source liveness and row, and scan evidence it read (FIX
+    /// 20043, 22119): a role call reuses it while those match the store. In
+    /// memory only.
+    pub(crate) admitted_model_packs: crate::skill_hub::pack_catalog::AdmittedModelPacks,
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
     /// Exact HOST live-session orders, independent of a failed capture socket.
     /// In memory only; never tenant hold state, source bytes or private keys.
@@ -210,6 +216,17 @@ pub struct Vault {
     /// sweep safety and must defer.
     #[cfg(feature = "sync")]
     pub(crate) live_window_manager_attached: std::sync::atomic::AtomicBool,
+    /// FIX 4747: this process released its executor leases as it closes,
+    /// its connector sends' (`release_send_executor_leases`) and its agent
+    /// runs' (`release_agent_run_leases`); from then on it takes, renews and
+    /// reaps none of either, so a pass still running before the workers stop
+    /// cannot undo the release, until a new serve run over the same open
+    /// vault resumes them (`resume_executor_leases`). In memory only.
+    pub(crate) executor_leases_released: std::sync::atomic::AtomicBool,
+    /// FIX 4747 slice 5: the fence each agent run on this process's host
+    /// took at its claim, by attempt: what the run's step commits and
+    /// outbound effects meet. In memory only, never persisted.
+    pub(crate) agent_run_fences: std::sync::Mutex<crate::agent_dispatch::AgentRunFences>,
     /// This device's home search, lent by its own sync connection
     /// ([`crate::sync::HomeSearch`], OF-534). A `Weak`, so a dropped
     /// connection routes nothing; the slot keeps the mode that connection
@@ -263,6 +280,12 @@ pub struct Vault {
     /// ([`Vault::install_served_transports`]). In memory only.
     pub(crate) served_transports:
         std::sync::OnceLock<std::sync::Arc<crate::outbound::ServedTransports>>,
+    /// The host's isolated inspection of e-sign original PDFs, reached before
+    /// a field save's or a sign act's writer (FIX 9609,
+    /// [`Vault::install_esign_page_inspector`]). In memory only.
+    pub(crate) esign_page_inspector: std::sync::Mutex<
+        Option<std::sync::Arc<dyn crate::blob_artifact::esign::EsignPageInspector>>,
+    >,
     /// The served host's precision recalculator (LibreOffice headless) for
     /// the workbooks the native formula engine refuses (FIX 2462), installed
     /// by [`Vault::install_xlsx_precision_recalc`]. In memory only; with none,

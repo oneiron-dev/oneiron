@@ -145,6 +145,7 @@ pub const SLIP_KEY_GRANT_REF: &str = "grant_ref";
 /// The membership execution receipt this signed Grant withdrawal belongs to.
 pub const SLIP_KEY_MEMBERSHIP_RECEIPT: &str = "membership_receipt";
 pub const SLIP_KEY_INVITATION_REF: &str = "invitation_ref";
+pub const SLIP_KEY_SHARE_REF: &str = "share_ref";
 /// A support slip's signed delegation (OF-606). Present only on a support
 /// slip's mint, so every other slip's wire form is unchanged.
 pub const SLIP_KEY_DELEGATION: &str = "delegation";
@@ -195,7 +196,7 @@ pub const SLIP_SEAT_CLAIM_KEYS: [&str; 3] = [
     SEAT_CLAIM_KEY_LEASE_OWNER,
     SEAT_CLAIM_KEY_ATTEMPT_COUNT,
 ];
-pub const SLIP_MINT_KEYS: [&str; 17] = [
+pub const SLIP_MINT_KEYS: [&str; 18] = [
     OP_KEY_KIND,
     SLIP_KEY_SLIP_ID,
     SLIP_KEY_VAULT_ID,
@@ -213,6 +214,7 @@ pub const SLIP_MINT_KEYS: [&str; 17] = [
     SLIP_KEY_ORG_REF,
     SLIP_KEY_GRANT_REF,
     SLIP_KEY_INVITATION_REF,
+    SLIP_KEY_SHARE_REF,
 ];
 pub const SLIP_SCOPE_KEYS: [&str; 6] = [
     SCOPE_KEY_WORLDS,

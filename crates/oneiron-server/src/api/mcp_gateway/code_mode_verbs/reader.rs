@@ -26,6 +26,7 @@ impl ReaderChildDoor {
 
 pub(super) fn read_only() -> AgentVerbRefusal {
     AgentVerbRefusal {
+        hook_notice: None,
         code: crate::server::READER_CHILD_READ_ONLY.to_owned(),
     }
 }
@@ -79,6 +80,7 @@ impl AgentVerbDoor for ReaderChildDoor {
         };
         crate::device_local::withholds_retained(&self.vault, &self.caller, rows, &[]).map_err(
             |_| AgentVerbRefusal {
+                hook_notice: None,
                 code: "engine_error".to_owned(),
             },
         )

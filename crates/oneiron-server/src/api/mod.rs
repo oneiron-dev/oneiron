@@ -85,6 +85,7 @@ mod booking;
 mod booking_anti_abuse;
 mod campaign;
 mod client_metadata;
+// FIX 4902 slice B: the vault as its own `/mcp`'s OAuth 2.1 authorization server.
 mod companion;
 mod consumer_usage;
 mod context_pack;
@@ -98,9 +99,12 @@ mod discover;
 mod entity;
 mod error_map;
 mod esign;
+mod oauth_server;
 pub(crate) use self::esign::delivery_outbox::spawn as spawn_esign_delivery_outbox;
 pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;
 pub(crate) use self::esign::notice_worker::dispatch_due_notices as dispatch_esign_due_notices;
+#[cfg(unix)]
+pub(crate) use self::esign::page_inspector::EsignOrganPageInspector;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 #[cfg(unix)]
@@ -147,7 +151,7 @@ mod git_http;
 pub(crate) use self::git_http::install_origin_git_transport;
 mod git_lfs;
 mod transfer;
-pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers};
+pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers, send_within, spawn_worker};
 mod lease;
 // FIX 9382: a caller's own push of one TASK to Linear now.
 mod linear_push;
@@ -241,16 +245,16 @@ pub(crate) use self::mcp_gateway::{
     execute_run_board_verb_in_session, mcp_gateway, mcp_method_not_allowed, mcp_stream_reads_task,
     mcp_stream_task_row, mcp_tool_first_gateway, person_socket_admits, preflight_task_workflow,
     reenter_ready_mcp_code_runs, resolve_mcp_caller, ride_run_carrier, run_brief_people_budget,
-    run_brief_pins, run_session_reads,
+    run_brief_pins, run_session_reads, swap_oauth_access_token,
 };
 pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
 pub(crate) use self::openapi::*;
 pub(crate) use self::openapi_registry::ApiDoc;
-pub(crate) use self::params::ViewQuery;
+pub(crate) use self::params::{MemoryTimelineQuery, ViewQuery};
 use self::params::{
     default_limit, has_json_content_type, hex_bytes, json_payload, parse_entity_id_param,
-    parse_optional_entity_id, query_params, unix_seconds_now,
+    parse_optional_entity_id, query_params, read_filter_param, unix_seconds_now,
 };
 pub(crate) use self::reactive::ReactiveChange;
 #[cfg(test)]

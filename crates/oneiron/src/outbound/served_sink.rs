@@ -20,10 +20,13 @@
 //! a space posting preset in the owner's mode) posts with his own user token
 //! from the app's install, so Slack shows it as his.
 //!
-//! Telegram (its `telegram` module), and email from a native mail identity
-//! through the host's own mail server (its `email` module), ride beside them.
+//! Telegram (its `telegram` module), email from a native mail identity
+//! through the host's own mail server (its `email` module), and email from a
+//! member's delegated Gmail row through Gmail as the member (its `gmail`
+//! module), ride beside them.
 //! Each provider's API is where the host's installed [`ServedTransports`]
-//! put it.
+//! put it. A LinkedIn reply (its `linkedin` module) calls the installed
+//! LinkedIn connector's tools through the host's connector calls.
 
 use std::io::Read;
 use std::sync::Arc;
@@ -33,6 +36,7 @@ use super::dispatch_types::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
 use super::intent::OutboundIntentSource;
+use super::send_lookup::{EngineSendId, SentLookup, SentLookupTarget};
 use crate::channel_identity_autonomy::FrozenSpacePosting;
 use crate::channel_identity_provider::{
     DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, EMAIL_CHANNEL, LINE_CHANNEL, SLACK_CHANNEL,
@@ -46,14 +50,17 @@ use crate::{EntityId, Vault};
 mod apns;
 mod content;
 mod email;
+mod gmail;
 mod host;
 mod line_wire;
+mod linkedin;
 mod telegram;
 
 pub use self::apns::{APNS_EFFECTOR, ApnsAppConfig, ApnsDeviceAddress, ApnsEnvironment};
 use self::content::trusted_contact_check_in_text;
 pub use self::host::{
-    LINE_API_BASE, SLACK_API_BASE, ServedEndpoints, ServedTransports, TELEGRAM_API_BASE,
+    LINE_API_BASE, SLACK_API_BASE, ServedConnectorCalls, ServedEndpoints, ServedTransports,
+    TELEGRAM_API_BASE,
 };
 use self::line_wire::{
     fresh_line_reply_token, line_archived_audience, line_destination, line_retry_key, line_text,
@@ -451,9 +458,13 @@ impl<'a> ServedChannelSink<'a> {
             return OutboundExecutionOutcome::failed("line_target_unrecognized");
         };
         self.line_count_push(token);
+        // FIX 4747: a connector-send TASK's push carries the retry key its
+        // engine send id derives, the same from every machine.
         let retry_key = line_retry_key(
             request
-                .idempotency_key
+                .engine_send_id
+                .map(EngineSendId::as_str)
+                .or(request.idempotency_key)
                 .or(request.intent.idempotency_key.as_deref())
                 .unwrap_or(request.intent_ref),
         );
@@ -693,6 +704,34 @@ fn slack_reply_thread(body: &serde_json::Value) -> Option<String> {
     None
 }
 
+impl ServedChannelSink<'_> {
+    /// Whether this machine holds what the served sink sends `intent` with
+    /// (FIX 4747 slice 4): the reaper's read-only check before it takes a
+    /// send another machine let lapse. It makes the machine-side reads each
+    /// send makes before its bytes, without the send's content, the
+    /// credential door or the provider: the checked pack connection whose
+    /// credential Slack, LINE and Telegram post with, the host's mail server
+    /// for native mail, and the APNs application the target device names. A
+    /// channel the sink has no transport for is not held.
+    #[must_use]
+    pub fn holds_channel(vault: &Vault, intent: &super::OutboundIntent) -> bool {
+        match (intent.channel.as_str(), intent.verb.as_str()) {
+            ("slack", "send") => vault
+                .verified_pack_connection_secret(SLACK_PACK, SLACK_CONNECTION)
+                .is_ok(),
+            (LINE_CHANNEL, "send" | "reply" | "push") => vault
+                .verified_pack_connection_secret(LINE_PACK, LINE_CONNECTION)
+                .is_ok(),
+            (telegram::TELEGRAM_CHANNEL, "send") => telegram::telegram_connection_held(vault),
+            (EMAIL_CHANNEL, "send") => vault.served_transports().native_mail().is_some(),
+            ("apns", "push") => {
+                apns::apns_application_held(vault, &vault.served_transports(), &intent.target)
+            }
+            _ => false,
+        }
+    }
+}
+
 impl OutboundExecutionSink for ServedChannelSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
         match (
@@ -704,11 +743,72 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
             (LINE_CHANNEL, "reply") => self.line_send(request, LineMode::Reply),
             (LINE_CHANNEL, "push") => self.line_send(request, LineMode::Push),
             (telegram::TELEGRAM_CHANNEL, "send") => self.telegram_send(request),
+            (EMAIL_CHANNEL, "send") if self.sends_from_gmail(request) => self.gmail_send(request),
             (EMAIL_CHANNEL, "send") => self.email_send(request),
+            (linkedin::LINKEDIN_CHANNEL, linkedin::LINKEDIN_SEND_DM_VERB) => {
+                self.linkedin_send(request)
+            }
             ("apns", "push") => self.apns_push(request),
             _ => OutboundExecutionOutcome::failed("no_served_transport_for_channel"),
         }
     }
+
+    /// FIX 4747: native mail looks the send's submission up by its
+    /// Message-ID. A LINE push carries the retry key the engine send id
+    /// derives, and LINE drops a resend under a key it already accepted, so
+    /// while LINE still keeps that key its resend is safe and stands as not
+    /// sent; once the send's approval is older than LINE's retry-key window
+    /// ([`line_push_resend_is_deduplicated`]) it cannot tell (review #4747
+    /// slices 2+3). A LINE reply carries no key, and Slack and Telegram keep
+    /// no id of ours: they cannot tell. Engine call (CALLS, FIX 4747).
+    fn lookup_sent(
+        &mut self,
+        engine_send_id: &EngineSendId,
+        target: &SentLookupTarget<'_>,
+    ) -> SentLookup {
+        match (target.intent.channel.as_str(), target.intent.verb.as_str()) {
+            (LINE_CHANNEL, "push")
+                if line_push_resend_is_deduplicated(
+                    target.send_approved_at,
+                    crate::unix_seconds_now(),
+                ) =>
+            {
+                SentLookup::DedupedResend
+            }
+            (EMAIL_CHANNEL, "send") => self.email_lookup_sent(engine_send_id, target),
+            _ => SentLookup::CannotTell,
+        }
+    }
+
+    /// Only an email send reads back (FIX 8814 follow-up): the host's mail
+    /// server keeps the draft its send key names. Every other channel
+    /// answers `Unknown`.
+    fn read_back_delivery(
+        &self,
+        request: &OutboundExecutionRequest<'_>,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        match (
+            request.intent.channel.as_str(),
+            request.intent.verb.as_str(),
+        ) {
+            (EMAIL_CHANNEL, "send") => self.email_read_back(request),
+            _ => crate::outbound_intent_ledger::DeliveryReadBack::Unknown,
+        }
+    }
+}
+
+/// How long after a send's approval its LINE retry key still deduplicates a
+/// resend: LINE keeps a retry key for 24 hours from the first request, and
+/// the approval is the earliest that request could have been, so an hour of
+/// margin is left. Engine call (CALLS, FIX 4747).
+const LINE_RETRY_KEY_DEDUPE_SECS: u64 = 23 * 60 * 60;
+
+/// Whether a LINE push approved at `approved_at` is still inside LINE's
+/// retry-key window at `now`, so a resend under the same key cannot reach
+/// its audience twice. Unknown approval: not.
+fn line_push_resend_is_deduplicated(approved_at: Option<u64>, now: u64) -> bool {
+    approved_at
+        .is_some_and(|approved_at| now.saturating_sub(approved_at) < LINE_RETRY_KEY_DEDUPE_SECS)
 }
 
 /// The served sink a host keeps past one borrow of its vault: a connector
@@ -747,5 +847,44 @@ impl OutboundExecutionSink for OwnedServedChannelSink {
         .unwrap_or_else(|_| {
             OutboundExecutionOutcome::failed("served_send_panicked").with_possible_delivery()
         })
+    }
+
+    /// The served sink's lookup (FIX 4747), on a thread of its own as a
+    /// send is; a lookup that panicked cannot tell.
+    fn lookup_sent(
+        &mut self,
+        engine_send_id: &EngineSendId,
+        target: &SentLookupTarget<'_>,
+    ) -> SentLookup {
+        let vault = self.vault.as_ref();
+        let allowance = self.line_push_allowance;
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| match ServedChannelSink::new(vault) {
+                    Ok(sink) => sink
+                        .with_line_push_allowance(allowance)
+                        .lookup_sent(engine_send_id, target),
+                    Err(_) => SentLookup::CannotTell,
+                })
+                .join()
+        })
+        .unwrap_or(SentLookup::CannotTell)
+    }
+
+    /// The served sink's read-back, on a thread of its own as a send runs.
+    fn read_back_delivery(
+        &self,
+        request: &OutboundExecutionRequest<'_>,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        let vault = self.vault.as_ref();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| match ServedChannelSink::new(vault) {
+                    Ok(sink) => sink.read_back_delivery(request),
+                    Err(_) => crate::outbound_intent_ledger::DeliveryReadBack::Unknown,
+                })
+                .join()
+        })
+        .unwrap_or(crate::outbound_intent_ledger::DeliveryReadBack::Unknown)
     }
 }

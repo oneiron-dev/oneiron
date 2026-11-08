@@ -36,7 +36,7 @@
 //! projection reads back through the same checks as any archive. Row order
 //! is kept.
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, BufReader, Cursor, Read, Write};
+use std::io::{BufRead, BufReader, Read, Seek, Write};
 
 use serde_json::Value;
 
@@ -146,13 +146,17 @@ enum RowFate {
 }
 
 /// The archive `archive`, cut from the records `archived`, holding only what
-/// `kept` (a subset of them) leaves it, as this module says.
-pub(crate) fn project_stored_archive(
-    archive: &[u8],
+/// `kept` (a subset of them) leaves it, as this module says, written into
+/// `sink` from its current position and returned with it. Neither archive is
+/// held whole (FIX 21529): the stored one is read member by member where it
+/// lies, and the projection is written through as it is built.
+pub(crate) fn project_stored_archive<R: Read + Seek, W: Write + Seek>(
+    archive: R,
     archived: &BTreeSet<EntityId>,
     kept: &BTreeSet<EntityId>,
-) -> Result<Vec<u8>> {
-    let mut source = zip::ZipArchive::new(Cursor::new(archive)).map_err(|_| invalid())?;
+    sink: W,
+) -> Result<W> {
+    let mut source = zip::ZipArchive::new(archive).map_err(|_| invalid())?;
     let mut manifest: WholeVaultDocumentManifest = {
         let mut member = source
             .by_name(VAULT_ARCHIVE_MANIFEST_PATH)
@@ -276,7 +280,7 @@ pub(crate) fn project_stored_archive(
             members[at][row].0 = serde_json::to_vec(&rebuilt).map_err(|_| invalid())?;
         }
     }
-    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let mut out = zip::ZipWriter::new(sink);
     let options = zip::write::FileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .large_file(true);
@@ -340,13 +344,13 @@ pub(crate) fn project_stored_archive(
             .map_err(|_| invalid())?;
         std::io::copy(&mut member, &mut out)?;
     }
-    Ok(out.finish().map_err(|_| invalid())?.into_inner())
+    out.finish().map_err(|_| invalid())
 }
 
 /// The archive file `file` names, read whole and checked against its length
 /// and BLAKE3.
-fn archived_file(
-    source: &mut zip::ZipArchive<Cursor<&[u8]>>,
+fn archived_file<R: Read + Seek>(
+    source: &mut zip::ZipArchive<R>,
     file: &ExportBodyFile,
 ) -> Result<Vec<u8>> {
     let mut member = source

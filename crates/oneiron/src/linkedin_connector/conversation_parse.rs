@@ -1,6 +1,7 @@
 //! Message parsers for `get_conversation` output: explicit message objects,
 //! the plain-text conversation fallback, and their timestamp and time-label
-//! readers.
+//! readers. Each parser returns every message with its sender as the output
+//! names it: an object's `sender`, or the name heading a page-text turn.
 
 use std::collections::{HashSet, VecDeque};
 
@@ -15,7 +16,7 @@ use super::verified_send::normalize_whitespace;
 pub(super) fn explicit_conversation_messages(
     thread_id: &str,
     message_values: &[Value],
-    mut emit: impl FnMut(LinkedInConversationMessage) -> bool,
+    mut emit: impl FnMut(Option<String>, LinkedInConversationMessage) -> bool,
 ) -> Result<bool> {
     let mut found = false;
     let mut seen_message_ids = HashSet::new();
@@ -42,13 +43,17 @@ pub(super) fn explicit_conversation_messages(
             object,
             &["occurred_at", "timestamp", "created_at", "sent_at"],
         )?;
+        let sender = first_string_field(object, &["sender"]).map(str::to_owned);
         found = true;
-        if !emit(LinkedInConversationMessage {
-            thread_id: thread_id.to_owned(),
-            message_id,
-            occurred_at,
-            text,
-        }) {
+        if !emit(
+            sender,
+            LinkedInConversationMessage {
+                thread_id: thread_id.to_owned(),
+                message_id,
+                occurred_at,
+                text,
+            },
+        ) {
             break;
         }
     }
@@ -58,7 +63,7 @@ pub(super) fn explicit_conversation_messages(
 pub(super) fn fallback_conversation_messages(
     thread_id: &str,
     conversation_text: &str,
-    mut emit: impl FnMut(LinkedInConversationMessage) -> bool,
+    mut emit: impl FnMut(Option<String>, LinkedInConversationMessage) -> bool,
 ) -> Result<bool> {
     let mut lines = conversation_text
         .lines()
@@ -93,11 +98,14 @@ pub(super) fn fallback_conversation_messages(
             }
             if !body.is_empty() {
                 found = true;
-                if !emit(fallback_message(
-                    thread_id,
-                    &[timestamp.as_str(), body.as_str()],
-                    Some(body.clone()),
-                )?) {
+                if !emit(
+                    Some(line.clone()),
+                    fallback_message(
+                        thread_id,
+                        &[timestamp.as_str(), body.as_str()],
+                        Some(body.clone()),
+                    )?,
+                ) {
                     break;
                 }
             }
@@ -105,11 +113,10 @@ pub(super) fn fallback_conversation_messages(
         }
 
         found = true;
-        if !emit(fallback_message(
-            thread_id,
-            &[line.as_str()],
-            Some(line.clone()),
-        )?) {
+        if !emit(
+            None,
+            fallback_message(thread_id, &[line.as_str()], Some(line.clone()))?,
+        ) {
             break;
         }
     }
@@ -183,7 +190,7 @@ fn normalize_epoch_timestamp_secs(value: u64) -> Result<u64> {
     Ok(value)
 }
 
-fn looks_like_linkedin_time(value: &str) -> bool {
+pub(super) fn looks_like_linkedin_time(value: &str) -> bool {
     let lower = value.trim().to_ascii_lowercase();
     if lower.contains(':') && (lower.ends_with("am") || lower.ends_with("pm")) {
         return true;

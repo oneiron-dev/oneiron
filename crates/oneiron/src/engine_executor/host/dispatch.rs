@@ -71,6 +71,42 @@ impl RecordingJsHost<'_, '_> {
         Ok(outcome)
     }
 
+    /// Retain a fresh decline's released reason without changing its outcome.
+    fn capture_task_refusal_output(&mut self, seq: u64, outcome: &SelfDispatchOutcome) {
+        let Some(bytes) = self.gated_write.take_task_refusal_output() else {
+            return;
+        };
+        if !matches!(outcome, SelfDispatchOutcome::TaskRefusal(refusal)
+            if refusal.declined() && !refusal.replay)
+        {
+            return;
+        }
+        let capture = || -> Result<Option<CodeRunRawOutput>> {
+            let Some(storage) = self.storage else {
+                return Ok(None);
+            };
+            let mut sink = storage.code_run_reply_spool()?;
+            sink.write(&bytes)?;
+            Ok(storage
+                .publish_code_run_reply(
+                    bridge_result_output_path(seq),
+                    sink,
+                    self.run_id,
+                    &[],
+                    None,
+                )?
+                .ok())
+        };
+        match capture() {
+            Ok(Some(output)) => self.captured.push(output),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(run = %self.run_id.to_hex(), seq, error = %error,
+                    "accepted task refusal output is unavailable");
+            }
+        }
+    }
+
     /// Registers the write receipt's already-published body as this run's result.
     fn import_write_answer(&mut self, output: CodeRunRawOutput) -> serde_json::Value {
         let name = self.next_auto_name();
@@ -221,7 +257,8 @@ impl RecordingJsHost<'_, '_> {
 
     /// A callable skill's checked answer as the guest gets it: its JSON up
     /// to the inline reply size, else its card, the answer copied whole from
-    /// the call's spool into a body of the run, never read into one value.
+    /// the call's spool into a body of the run; only the large-answer copy
+    /// here streams in frames without reading into one value.
     pub(super) fn skill_answer(
         &mut self,
         seq: u64,
@@ -279,7 +316,7 @@ impl RecordingJsHost<'_, '_> {
         runtime: &mut dyn JsCodeModeRuntime,
         parent: &StepCancellation,
     ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
-        on_callable_stack(|| {
+        let answered = on_callable_stack(|| {
             self.call_skill_on_stack(seq, started_at_ms, call, skill, runtime, parent)
         })
         .unwrap_or_else(|| {
@@ -292,7 +329,14 @@ impl RecordingJsHost<'_, '_> {
                 }),
                 None,
             ))
-        })
+        });
+        // However the call ended, before its caller goes on: a callable that
+        // ran its body again must have met every call it settled before
+        // (FIX 5878).
+        if let Some(injection) = self.injection.as_mut() {
+            injection.returned(seq);
+        }
+        answered
     }
 
     fn call_skill_on_stack(
@@ -347,6 +391,14 @@ impl RecordingJsHost<'_, '_> {
                 Err(stopped) => return Ok((stopped, None)),
             }
         };
+        // A callable running its body again runs the call it ran before: a
+        // hook that redirects it holds the entry, and the body's calls are
+        // refused (FIX 5878).
+        if hooked.as_ref().is_some_and(|hooked| hooked.1.is_some())
+            && let Some(injection) = self.injection.as_mut()
+        {
+            injection.redirected(seq);
+        }
         let Some(executor) = self.skill_executor.clone() else {
             return Ok(failed("skills_call_no_executor".to_owned()));
         };
@@ -361,6 +413,10 @@ impl RecordingJsHost<'_, '_> {
         let cause = crate::code_run::ReadWorldUnknown::CallableSkill;
         self.gated_write.read_worlds_unknown(run_id, cause);
         let (mut loaded, mut selected) = (Vec::new(), None);
+        // The stores its own calls make, fresh or reusing a recorded one
+        // (FIX 5878): a later entry that answers it whole replays none of
+        // them.
+        let stored_before = (self.captured.len(), self.replayed_stores.len());
         // The answer check holds its buffers on the run's own share (FIX
         // 10149); a host lent none checks unheld, as before.
         let memory = self.result_share.zip(self.storage).map(|(share, storage)| {
@@ -388,6 +444,32 @@ impl RecordingJsHost<'_, '_> {
         );
         self.callable_rows.0.extend(loaded);
         self.callable_depth -= 1;
+        // A pinned entry's callable (FIX 5878): where its own calls end in
+        // the entry's log, and how a later entry answers it. A body that
+        // unwound on the entry's wait runs again; one that returned past that
+        // wait (a caught wait's owner sits inside it), one the bridge halted
+        // inside, or one whose own calls stored outputs, fresh or reusing a
+        // recorded one, that a whole answer would leave unconsumed for a
+        // later store of the same bytes, holds; any other answers whole.
+        if let Some(injection) = self.injection.as_mut() {
+            let kind = if self.hard_failure.is_some() || self.left_a_gap || self.declined.is_some()
+            {
+                ProgramResumeKind::HeldCallable
+            } else if self.durable_wait.is_some() {
+                if ran.is_ok() {
+                    ProgramResumeKind::HeldCallable
+                } else {
+                    ProgramResumeKind::OpenCallable
+                }
+            } else if (self.captured.len(), self.replayed_stores.len()) != stored_before {
+                ProgramResumeKind::HeldCallable
+            } else {
+                ProgramResumeKind::Settled
+            };
+            let log_end = injection.log_len();
+            self.program_callables
+                .push(ProgramCallableSpan { seq, log_end, kind });
+        }
         // The callable's type feedback stays beside the run, however the
         // call ended (FIX 10389).
         self.keep_callable_check(seq, ran.is_ok());
@@ -517,8 +599,20 @@ impl RecordingJsHost<'_, '_> {
                 }
             }
         }
+        // A resumed pending step's calls answer from the rows its program
+        // already made, before a position is taken (FIX 7703).
+        if let Some(answered) = self.answer_from_pending_prefix(&call) {
+            return Ok(answered);
+        }
         let seq = self.next_seq;
         self.next_seq += 1;
+        if self.callable_depth == 0 {
+            self.guest_calls.push(seq);
+        }
+        // A pinned entry logs the call it issues here (FIX 5878).
+        if let Some(injection) = self.injection.as_mut() {
+            injection.issued(seq);
+        }
         let started_at_ms = self.determinism.frozen_unix_ms.saturating_add(seq);
         // ONE-1686: the speech family's order and timestamp are the BRIDGE's,
         // stamped here — on the one ordering path every `self.*` call takes —
@@ -632,6 +726,7 @@ impl RecordingJsHost<'_, '_> {
         // its row keeps them, a failure's included (FIX 9180).
         let seats = self.gated_write.take_spawn_seats();
         let (outcome, rewritten) = match dispatched.and_then(|(outcome, rewritten)| {
+            self.capture_task_refusal_output(seq, &outcome);
             self.store_large_answer(seq, outcome)
                 .map(|outcome| (outcome, rewritten))
         }) {
@@ -686,6 +781,7 @@ pub(super) fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<Sel
             outcome,
             reason_codes,
         }) => Some(SelfDispatchOutcome::Denied(SelfDeniedResult {
+            hook_notice: None,
             effect: call.effect(),
             outcome: (*outcome).to_owned(),
             reason_codes: reason_codes

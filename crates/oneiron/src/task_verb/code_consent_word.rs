@@ -56,6 +56,15 @@ pub(super) fn is_code_consent_ask_intent(intent_key: &str) -> bool {
 /// tool.
 fn choice_label(choice: CodeConsentChoice, row: &CodeConsentWaitRow) -> String {
     let Some(action) = row.binding.pending.browser_action() else {
+        if choice == CodeConsentChoice::ApproveAndStopAsking
+            && row.binding.remember_offer.is_none()
+            && let Some(offer) = &row.binding.standing_offer
+        {
+            return format!(
+                "Approve and stop asking: this call and {}",
+                offer.scope_description()
+            );
+        }
         return match choice {
             CodeConsentChoice::ApproveOnce => "Approve once: this call only",
             CodeConsentChoice::ApproveAndStopAsking => {

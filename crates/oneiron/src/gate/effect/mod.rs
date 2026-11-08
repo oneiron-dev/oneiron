@@ -23,8 +23,8 @@ pub(crate) use self::effect_contacts::{
 };
 pub(crate) use self::effect_grants::live_grant_covering_effect_in_txn;
 use self::effect_grants::{
-    channel_identity_envelope_admission_in_txn, standing_outbound_grant_for_effect,
-    touch_standing_outbound_grant_in_txn,
+    channel_identity_envelope_admission_in_txn, record_standing_outbound_grant_use_in_txn,
+    standing_outbound_grant_for_effect,
 };
 pub(crate) use self::effect_paced::{ExternalEffectCheck, check_external_effect_policy_paced};
 pub(crate) use self::effect_pair::{PairAdmission, check_external_effect_policy_pair};
@@ -85,7 +85,11 @@ pub(crate) struct ExternalEffectGovernance {
     approve_once: Option<crate::consent::ApproveOnceAuthorization>,
     approval_context: ApprovalContext,
     ask_consent: Option<crate::llm::decision::AskConsent>,
-    matched_grant: Option<(EntityId, StandingOutboundGrant)>,
+    matched_grant: Option<StandingOutboundGrant>,
+    /// Fix list row 17645: the standing grants that released the other
+    /// recipients of one message to several, each once and none of them
+    /// `matched_grant`; recorded as used when the message is admitted.
+    recipient_grants: Vec<StandingOutboundGrant>,
     /// OF-374: the sender row's envelope slot covering this send, spent only
     /// when the decision is recorded as an admitting Allow.
     envelope_reservation: Option<crate::outbound_grant::ChannelIdentityGrantReservation>,
@@ -113,7 +117,11 @@ pub(crate) struct ExternalEffectJudgment {
     approve_once: Option<crate::consent::ApproveOnceAuthorization>,
     approval_context: ApprovalContext,
     ask_consent: Option<crate::llm::decision::AskConsent>,
-    matched_grant: Option<(EntityId, StandingOutboundGrant)>,
+    matched_grant: Option<StandingOutboundGrant>,
+    /// Fix list row 17645: the standing grants that released the other
+    /// recipients of one message to several, each once and none of them
+    /// `matched_grant`; recorded as used when the message is admitted.
+    recipient_grants: Vec<StandingOutboundGrant>,
     /// OF-374: the sender row's envelope slot covering this send, spent only
     /// when the decision is recorded as an admitting Allow.
     envelope_reservation: Option<crate::outbound_grant::ChannelIdentityGrantReservation>,
@@ -138,6 +146,7 @@ impl ExternalEffectJudgment {
             approval_context: self.approval_context,
             ask_consent: self.ask_consent,
             matched_grant: self.matched_grant,
+            recipient_grants: self.recipient_grants,
             envelope_reservation: self.envelope_reservation,
             envelope_wait: self.envelope_wait,
             budget_target: self.budget_target,
@@ -235,6 +244,14 @@ pub(crate) fn code_wait_approval_digest(
 ) -> Option<crate::consent::EffectDigest> {
     effect_consent::code_wait_composed_effect(effect, binding_digest)
         .map(|composed| composed.digest())
+}
+
+/// The native action requirement offered by a consent-only code wait.
+/// This is the same requirement the external-effect consent ladder judges.
+pub(crate) fn code_wait_standing_bound(
+    effect: &ExternalEffectGateInput,
+) -> Option<crate::consent::GrantBound> {
+    external_effect_action_requirement(effect)
 }
 
 /// The pack's one-send owner tap uses the same bound digest as the gate's
