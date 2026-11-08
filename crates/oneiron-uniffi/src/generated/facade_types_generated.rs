@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1326 facade rows, 4780 generated types.
+// UniFFI census: 1326 facade rows, 4783 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1278.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
-// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
+// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), DetachRemainderReason.WithdrawalFailed.kind (an enum with more than 256 variants (ErrorKind)), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -22600,6 +22600,38 @@ pub struct SharedActExport {
     pub diary_reads: Vec<ExportDiaryRead>,
 }
 
+/// `oneiron::federation::shared_act::DetachRemainderReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DetachRemainderReason {
+    #[serde(rename = "no_issuer")]
+    NoIssuer,
+    #[serde(rename = "withdrawal_failed")]
+    WithdrawalFailed {
+        #[serde(rename = "kind")]
+        kind: crate::WireJson,
+    },
+}
+
+/// `oneiron::federation::shared_act::DetachRemainder`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DetachRemainder {
+    #[serde(rename = "grant")]
+    pub grant: String,
+    #[serde(rename = "reason")]
+    pub reason: DetachRemainderReason,
+}
+
+/// `oneiron::federation::shared_act::DetachReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DetachReport {
+    #[serde(rename = "withdrawn")]
+    pub withdrawn: Vec<String>,
+    #[serde(rename = "remaining")]
+    pub remaining: Vec<DetachRemainder>,
+}
+
 /// `oneiron::federation::shared_act::SharedActExecutionReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -22644,6 +22676,8 @@ pub struct SharedActExecutionReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub authorizer: Option<String>,
+    #[serde(rename = "detach", default, skip_serializing_if = "Option::is_none")]
+    pub detach: Option<DetachReport>,
     #[serde(rename = "completed_at")]
     pub completed_at: u64,
 }
@@ -24156,6 +24190,21 @@ pub struct MintConnectGrant {
         skip_serializing_if = "Option::is_none"
     )]
     pub expires_at: Option<u64>,
+    #[serde(
+        rename = "detach_on_member_leave",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub detach_on_member_leave: Option<String>,
+}
+
+/// `oneiron::verbs::federation::ConnectDetachBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectDetachBinding {
+    #[serde(rename = "shared_vault")]
+    pub shared_vault: String,
+    #[serde(rename = "person")]
+    pub person: String,
 }
 
 /// `oneiron::verbs::federation::ConnectGrant`.
@@ -24173,6 +24222,12 @@ pub struct ConnectGrant {
         skip_serializing_if = "Option::is_none"
     )]
     pub expires_at: Option<u64>,
+    #[serde(
+        rename = "detach_on_member_leave",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub detach_on_member_leave: Option<ConnectDetachBinding>,
 }
 
 /// `oneiron::verbs::federation::OfferConnect`.
@@ -45215,12 +45270,6 @@ pub struct CodeSnapshotIngestRequest {
     pub project_id: String,
     #[serde(rename = "pointer")]
     pub pointer: CodeRepoPointer,
-    #[serde(
-        rename = "repository",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub repository: Option<String>,
 }
 
 /// `oneiron::memory::codebase_doors::types::CodeSnapshotView`.
@@ -45240,12 +45289,6 @@ pub struct CodeSnapshotView {
     pub scope_key: String,
     #[serde(rename = "files")]
     pub files: Vec<CodeSnapshotFile>,
-    #[serde(
-        rename = "repository",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub repository: Option<String>,
     #[serde(
         rename = "capture_receipt",
         default,
@@ -46635,48 +46678,20 @@ pub struct ConnectorWitnessReadGrantRevoked {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RepoAnchorBindInput {
-    #[serde(rename = "repo", default, skip_serializing_if = "Option::is_none")]
-    pub repo: Option<String>,
-    #[serde(
-        rename = "local_folder",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub local_folder: Option<String>,
+    #[serde(rename = "repo")]
+    pub repo: String,
     #[serde(rename = "project")]
     pub project: String,
-    #[serde(rename = "anchor", default, skip_serializing_if = "Option::is_none")]
-    pub anchor: Option<String>,
-    #[serde(rename = "editable", default, skip_serializing_if = "Option::is_none")]
-    pub editable: Option<Vec<String>>,
-}
-
-/// `oneiron::verbs::git_push_grant::RepoRegistrationView`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct RepoRegistrationView {
-    #[serde(rename = "source")]
-    pub source: String,
-    #[serde(rename = "editable")]
-    pub editable: Vec<String>,
 }
 
 /// `oneiron::verbs::git_push_grant::RepoAnchorBindOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RepoAnchorBindOutput {
-    #[serde(rename = "repo", default, skip_serializing_if = "Option::is_none")]
-    pub repo: Option<String>,
+    #[serde(rename = "repo")]
+    pub repo: String,
     #[serde(rename = "anchor")]
     pub anchor: GitPushRepo,
-    #[serde(rename = "portable")]
-    pub portable: String,
-    #[serde(
-        rename = "registration",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub registration: Option<RepoRegistrationView>,
     #[serde(rename = "changed")]
     pub changed: bool,
 }
@@ -57354,12 +57369,6 @@ pub enum ConnectorCallReply {
         live_until_ms: u64,
         #[serde(rename = "reasons", default, skip_serializing_if = "Option::is_none")]
         reasons: Option<Vec<String>>,
-        #[serde(
-            rename = "budget_steering",
-            default,
-            skip_serializing_if = "Option::is_none"
-        )]
-        budget_steering: Option<Vec<String>>,
     },
 }
 
