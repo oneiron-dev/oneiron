@@ -85,6 +85,7 @@ impl Vault {
             timing.1,
             Some(path.trim_end_matches('/')),
             &contents,
+            Some(owner),
             |txn| {
                 if owner.revalidate_in_txn(self, txn)? != actor {
                     return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
