@@ -9,6 +9,7 @@ use std::ops::Bound;
 
 use heed::{RoTxn, RwTxn};
 
+use super::super::mask::REASON_KNOWN_VALUE;
 use super::{
     LiftCause, LiftCloseReason, LiftFamily, PROPOSALS, SecretLiftHistoryProposal, attempts,
     carriers, hex, prefix_end, proposal_key, records, side_rows,
@@ -17,6 +18,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::secret_record::FoundKeyAction;
+use crate::store::known_value_index::KnownValues;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 
 /// The reasons the owner's close takes (CALLS, open): what the sweep found is
@@ -170,6 +172,18 @@ pub(super) fn review(vault: &Vault) -> Result<()> {
         if !held.is_open() || settled(vault, &txn, &row_key, &held)? != Some(reason) {
             continue;
         }
+        if reason == LiftCloseReason::Answered
+            && unresolved_known_file(
+                vault,
+                &txn,
+                &row_key,
+                held.family,
+                held.cause,
+                &held.proposal.detector_reason,
+            )?
+        {
+            continue;
+        }
         close_in_txn(
             vault,
             &mut txn,
@@ -216,6 +230,45 @@ pub(super) fn reopens(held: &SecretLiftHistoryProposal) -> bool {
         held.close_reason,
         Some(LiftCloseReason::ReadClean | LiftCloseReason::Deleted)
     )
+}
+
+/// The writer's current filing may reopen an old found-key answer only
+/// when the same actual ASSET still has unresolved known-value residue.
+pub(super) fn reopens_in_txn(
+    vault: &Vault,
+    txn: &RwTxn<'_>,
+    row_key: &[u8],
+    held: &SecretLiftHistoryProposal,
+    cause: LiftCause,
+    reason: &str,
+) -> Result<bool> {
+    if reopens(held) {
+        return Ok(true);
+    }
+    Ok(held.close_reason == Some(LiftCloseReason::Answered)
+        && unresolved_known_file(vault, txn, row_key, held.family, cause, reason)?)
+}
+
+/// The same current residue that files a known-value proposal, not the
+/// record's unrelated found-key answers. Other proposal kinds read no index.
+fn unresolved_known_file(
+    vault: &Vault,
+    txn: &RwTxn<'_>,
+    row_key: &[u8],
+    family: LiftFamily,
+    cause: LiftCause,
+    reason: &str,
+) -> Result<bool> {
+    if family != LiftFamily::Records || cause != LiftCause::File || reason != REASON_KNOWN_VALUE {
+        return Ok(false);
+    }
+    let Some(key) = row_key.get(family.code().len() + 2..) else {
+        return Ok(false);
+    };
+    let Some(known) = KnownValues::shared_in_writer(&vault.store, txn)? else {
+        return Ok(false);
+    };
+    records::known_file_residue_in_txn(vault, txn, key, &known)
 }
 
 /// An open proposal its row's door now gives another cause or reason takes
