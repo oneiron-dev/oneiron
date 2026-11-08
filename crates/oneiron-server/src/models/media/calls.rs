@@ -121,7 +121,7 @@ impl MediaRuntime {
         voices: Option<&RungVoices>,
         replay: Option<MediaReplayKey>,
     ) -> LlmResult<MediaResponse> {
-        self.run_admitted_released(run, request, voices, replay, None)
+        self.run_admitted_released(run, request, voices, replay, None, None)
             .await
     }
 
@@ -132,8 +132,9 @@ impl MediaRuntime {
         voices: Option<&RungVoices>,
         replay: Option<MediaReplayKey>,
         release: MediaDispatchRelease<'_>,
+        listed: Option<&[oneiron::agent_def::AgentModel]>,
     ) -> LlmResult<MediaResponse> {
-        self.run_admitted_released_inner(run, request, voices, replay, release, None)
+        self.run_admitted_released_inner(run, request, voices, replay, release, None, listed)
             .await
     }
 
@@ -145,7 +146,7 @@ impl MediaRuntime {
         replay: Option<MediaReplayKey>,
         admitted: &AtomicBool,
     ) -> LlmResult<MediaResponse> {
-        self.run_admitted_released_inner(run, request, voices, replay, None, Some(admitted))
+        self.run_admitted_released_inner(run, request, voices, replay, None, Some(admitted), None)
             .await
     }
 
@@ -157,6 +158,7 @@ impl MediaRuntime {
         replay: Option<MediaReplayKey>,
         release: MediaDispatchRelease<'_>,
         admitted: Option<&AtomicBool>,
+        listed: Option<&[oneiron::agent_def::AgentModel]>,
     ) -> LlmResult<MediaResponse> {
         if request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
@@ -185,7 +187,7 @@ impl MediaRuntime {
                 return answer;
             }
             let kept = key.map(|_| request.clone());
-            let ladder = self.ladder(&request)?;
+            let ladder = self.ladder_for_model_list(&request, listed)?;
             match ladder
                 .media_released(run, request, None, voices, release, admitted)
                 .await?
