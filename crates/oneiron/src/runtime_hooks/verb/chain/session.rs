@@ -193,8 +193,19 @@ impl<'c> Chain<'c> {
             let mut receipt = self.receipt(run);
             let mut saved = self.saved(run, at);
             let erased = rtxn.as_ref().map_or(true, |txn| {
-                store::dependencies_erased_in_txn(self.vault, txn, &run.hook_dependencies())
-                    .unwrap_or(true)
+                // A caller a permanent erase fenced leaves the held copy as
+                // it leaves the vault's (FIX 22178).
+                store::scrub_erased_verb_actor_in_txn(
+                    self.vault,
+                    txn,
+                    &mut saved,
+                    &mut receipt,
+                    self.call.actor,
+                )
+                .and_then(|()| {
+                    store::dependencies_erased_in_txn(self.vault, txn, &run.hook_dependencies())
+                })
+                .unwrap_or(true)
             });
             if erased {
                 store::scrub_receipt_payload(&mut receipt);

@@ -75,9 +75,10 @@ impl Vault {
     /// `budget`. A host calls this on its own tick, off the request path. An
     /// error means the schedule could not be read; a sweep's own failure is a
     /// row of the report. Unless the host has asked it to stop, the pass
-    /// first runs one capped communication projector pass, whose failure is
-    /// logged and never fails a sweep. The model pack retirement sweep runs
-    /// against no model access: a host that binds model offers calls
+    /// first runs one capped communication projector pass and releases the
+    /// due watcher ticks (FIX 22180), whose failures are logged and never
+    /// fail a sweep. The model pack retirement sweep runs against no model
+    /// access: a host that binds model offers calls
     /// [`Self::housekeeping_with_access`].
     pub fn housekeeping(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
         self.housekeeping_with_access(budget, &AccessSnapshot::new())
@@ -92,10 +93,12 @@ impl Vault {
         budget: HousekeepingBudget,
         access: &AccessSnapshot,
     ) -> Result<HousekeepingReport> {
-        if !budget.deadline().stopped() {
+        let deadline = budget.deadline();
+        if !deadline.stopped() {
             self.store
                 .record_hooks
                 .run_comm_projector_housekeeping_step(self);
+            release_due_ticks(self, &deadline);
         }
         self.housekeeping_pass(Selection::Due, budget, access)
     }
@@ -137,10 +140,12 @@ impl Vault {
     /// env's owed body collection (FIX 2413), and the earliest deadline of
     /// the retained peer work (FIX 11183), and a paced verb call's window or
     /// deadline (FIX 8753), and the model pack retirement pass's next notice
-    /// mark or retirement day (FIX 22059). Cache and retention hygiene never
-    /// wake a vault. Reads one row per sweep, the schedule, the retained
-    /// work queues and the installed model packs' kept checks (FIX 20043),
-    /// so a host can ask every time it stops the vault.
+    /// mark or retirement day (FIX 22059), and the next due watcher tick on
+    /// the node that releases them (FIX 22180). Cache and retention hygiene
+    /// never wake a vault. Reads one row per sweep, the schedule, the
+    /// retained work queues, the installed model packs' kept checks (FIX
+    /// 20043) and the first due index row, so a host can ask every time it
+    /// stops the vault.
     pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
         let states = schedule::read_states(self)?;
         let noted = {
@@ -169,6 +174,13 @@ impl Vault {
         // A model pack's notice mark or retirement day (FIX 22059): the pass
         // records the move and sends the notices on the day itself.
         if let Some(at) = self.model_pack_retirement_wake_at()? {
+            owed.push((HousekeepingSweep::ModelPackRetirement, at));
+        }
+        // The next due watcher tick (FIX 22180): the host's hook runner, or
+        // its first housekeeping pass, releases it once the vault is up
+        // again. The minute carrier, the host tick's own cadence, keeps the
+        // wake within a minute of the tick's due time.
+        if let Some(at) = crate::runtime_hooks::next_tick_release_at(self)? {
             owed.push((HousekeepingSweep::ModelPackRetirement, at));
         }
         let mut earliest: Option<u64> = None;
@@ -379,6 +391,24 @@ impl Vault {
             // start marker stays, so the next pass treats the run as
             // interrupted and retries it after the backoff.
             Err(error) => SweepOutcome::Failed { kind: error.kind() },
+        }
+    }
+}
+
+/// Releases the due watcher TASKs into the tick feed on the vault's home,
+/// as each fact-hook runner pass does, one bounded release after another
+/// until none remain or `deadline` passes: a host that runs no hook runner
+/// (`--no-hooks`, no sandbox) still settles a watch TASK at its due time
+/// (FIX 22180). A failed release is logged and retried on the next pass.
+fn release_due_ticks(vault: &Vault, deadline: &Deadline) {
+    loop {
+        match crate::runtime_hooks::release_due_ticks(vault, vault.now_recorded_at()) {
+            Ok(true) if !deadline.passed() => {}
+            Ok(_) => return,
+            Err(error) => {
+                tracing::warn!(%error, "housekeeping: due watcher ticks wait for the next pass");
+                return;
+            }
         }
     }
 }

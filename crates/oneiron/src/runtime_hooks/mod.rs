@@ -69,7 +69,9 @@ pub use source::{
     ClaimChangelogPosition, FactKind, FactPosition, FactPositionHex, FactSource, SchedulePosition,
     SettledFact, SettledOutcome, SettlementKind, SettlementPosition, SurfaceInboundPosition,
 };
-pub(crate) use source::{index_task_due_in_txn, record_surface_inbound_in_txn};
+pub(crate) use source::{
+    index_task_due_in_txn, next_tick_release_at, record_surface_inbound_in_txn, release_due_ticks,
+};
 pub(crate) use store::{
     hook_receipts, hook_run_read_rows, scrub_hook_source_in_txn, sync_binding_cursor_in_txn,
 };

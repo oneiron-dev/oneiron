@@ -6,10 +6,19 @@
 //! The vault's elected home releases the due rows into the tick feed in one
 //! write: a row leaves the index and gains its feed sequence together, so
 //! each tick is released once per vault, and feed order is commit order.
-//! Hooks read the feed through their own cursors, as they read the
-//! settlement feed, so a restart neither skips nor repeats a tick. A watch
-//! TASK's tick settles it Done in the write that releases it (FIX 22121);
-//! its hooks are still offered the tick, as it was open at its due time.
+//! It releases them at each fact-hook runner pass and each housekeeping
+//! pass, hooks on or off, with a binding to take a tick or none, so a watch
+//! TASK settles at its due time wherever the vault serves; a stopped vault
+//! wakes for its earliest due row (FIX 22180). Hooks read the feed through
+//! their own cursors, as they read the settlement feed, so a restart neither
+//! skips nor repeats a tick. A watch TASK's tick settles it Done in the
+//! write that releases it (FIX 22121); the hooks bound at that release are
+//! still offered the tick, as it was open at its due time, and a hook bound
+//! after it is not (review #6784). A binding a peer enabled is bound here
+//! when this node first places its cursor.
+//! The runner prunes the rows every hook binding has passed, but an open
+//! TASK's own tick, and an erase leaves an erased TASK's rows at their
+//! sequences with no TASK in them.
 
 use std::ops::Bound;
 
@@ -35,7 +44,8 @@ const TICKS_NEXT: SideTable<(), u64, Named> = SideTable::new(&side_table::HOOKS_
 
 /// Due rows one release moves into the tick feed (CALLS, FIX 4749): an
 /// engine call that bounds one write. A longer backlog moves on the next
-/// passes, which the runner starts at once.
+/// releases: the runner starts its next pass at once, and a housekeeping
+/// pass releases again until its budget passes.
 const HOOK_TICK_RELEASE_ROWS: usize = 256;
 
 /// One TASK's place in the due index.
@@ -47,9 +57,21 @@ struct DueEntry {
     tick: Option<u64>,
 }
 
-/// One released tick.
+/// One tick feed row, at the sequence its release committed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct TickRow {
+#[serde(rename_all = "snake_case")]
+enum TickRow {
+    /// A released tick.
+    Released(ReleasedTick),
+    /// A tick whose TASK was erased: it keeps its position, so a cursor past
+    /// it neither breaks nor reads it again, and names no TASK or due time.
+    /// No reader takes it.
+    Erased,
+}
+
+/// One released tick's TASK and due time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ReleasedTick {
     #[serde(with = "crate::serialize::entity_ref")]
     task: EntityId,
     /// The TASK's due time, Unix seconds.
@@ -58,7 +80,7 @@ struct TickRow {
     recorded_at: u64,
 }
 
-impl TickRow {
+impl ReleasedTick {
     fn input_hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new_derive_key("oneiron.hook-tick.v1");
         hasher.update(self.task.as_bytes());
@@ -118,8 +140,11 @@ fn releases_here(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
 /// alone. A row whose TASK is gone, has settled, or is no longer due at that
 /// time leaves the index with no tick. A watch TASK settles Done with its
 /// tick, whether or not a hook takes it (FIX 22121). Returns whether due
-/// rows remain past the bound.
-pub(in crate::runtime_hooks) fn release_due_ticks(vault: &Vault, now: u64) -> Result<bool> {
+/// rows remain past the bound. The fact-hook runner calls it at the start of
+/// each pass and the housekeeping pass on each host tick, whatever the
+/// bindings and the hooks switch (FIX 22180); a row two releases both plan
+/// moves once.
+pub(crate) fn release_due_ticks(vault: &Vault, now: u64) -> Result<bool> {
     let (due, more) = {
         let rtxn = vault.store.env.read_txn()?;
         if !releases_here(vault, &rtxn)? {
@@ -157,11 +182,11 @@ pub(in crate::runtime_hooks) fn release_due_ticks(vault: &Vault, now: u64) -> Re
             sequence = sequence
                 .checked_add(1)
                 .ok_or(Error::ArithmeticOverflow("hook tick sequence"))?;
-            let row = TickRow {
+            let row = TickRow::Released(ReleasedTick {
                 task: *task,
                 due_at: *due_at,
                 recorded_at,
-            };
+            });
             TICKS.put(&vault.store, txn, &sequence, &row)?;
             let entry = DueEntry {
                 due_at: *due_at,
@@ -175,6 +200,23 @@ pub(in crate::runtime_hooks) fn release_due_ticks(vault: &Vault, now: u64) -> Re
         TICKS_NEXT.put(&vault.store, txn, &(), &sequence)
     })?;
     Ok(more)
+}
+
+/// When this node next releases a tick: the due time of the earliest row in
+/// the due index, Unix seconds, on the vault's home alone; `None` elsewhere
+/// and while no TASK waits. A stopped vault wakes then
+/// (`Vault::housekeeping_wake_at`, FIX 22180). A cancelled TASK's row wakes
+/// it once: that release drops the row with no tick.
+pub(crate) fn next_tick_release_at(vault: &Vault) -> Result<Option<u64>> {
+    let rtxn = vault.store.env.read_txn()?;
+    if !releases_here(vault, &rtxn)? {
+        return Ok(None);
+    }
+    let earliest = TASK_DUE
+        .iter_from(&vault.store, &rtxn, &[])?
+        .next()
+        .transpose()?;
+    Ok(earliest.map(|((due_at, _), ())| due_at))
 }
 
 /// Where a binding new to the tick feed starts: just before the earliest
@@ -201,8 +243,9 @@ pub(super) fn open_tick_start_in_txn(
     }
 }
 
-/// Ticks after `after`. A tick's actor is the engine's own principal: the
-/// clock made it, not a writer.
+/// Ticks after `after`, at most `max_entries` rows scanned. A tick's actor
+/// is the engine's own principal: the clock made it, not a writer. An erased
+/// row is scanned past, so the cursor moves over it as over a skipped fact.
 pub(super) fn ticks_after(
     vault: &Vault,
     after: Option<SchedulePosition>,
@@ -214,14 +257,20 @@ pub(super) fn ticks_after(
         .map_or(Bound::Unbounded, |position| Bound::Excluded(&position.0));
     let actor = crate::ports::storage_service_principal()?;
     let mut batch = SourceBatch::default();
-    for row in TICKS.iter_range(&vault.store, &rtxn, start, Bound::Unbounded)? {
-        if batch.entries.len() >= max_entries {
+    for (scanned, row) in TICKS
+        .iter_range(&vault.store, &rtxn, start, Bound::Unbounded)?
+        .enumerate()
+    {
+        if scanned >= max_entries {
             batch.more = true;
             break;
         }
-        let (sequence, tick) = row?;
+        let (sequence, row) = row?;
         let position = FactPosition::Schedule(SchedulePosition(sequence));
         batch.through = Some(position);
+        let TickRow::Released(tick) = row else {
+            continue;
+        };
         batch.entries.push(FactEntry {
             position,
             kind: FactKind::ScheduleTick,
@@ -250,4 +299,76 @@ pub(super) fn head_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option
         .next()
         .transpose()?
         .map(|(sequence, _)| FactPosition::Schedule(SchedulePosition(sequence))))
+}
+
+/// The tick rows at or before `floor`, the lowest cursor of every enabled
+/// fact binding, that no binding reads again, at most `max_rows`, read in
+/// `txn` for a later write to delete ([`delete_ticks_in_txn`]). The
+/// tick an open TASK's due index entry holds stays: a binding new to the
+/// feed starts before it ([`open_tick_start_in_txn`]). Every other passed
+/// row is one no binding takes again, as the runner delivers a tick only
+/// while its TASK is open at that due time. The scan passes over the kept
+/// ticks, at most one per open TASK.
+pub(super) fn passed_ticks_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    floor: SchedulePosition,
+    max_rows: usize,
+) -> Result<Vec<u64>> {
+    let mut passed = Vec::new();
+    for row in TICKS.iter_range(
+        &vault.store,
+        txn,
+        Bound::Unbounded,
+        Bound::Included(&floor.0),
+    )? {
+        if passed.len() >= max_rows {
+            break;
+        }
+        let (sequence, row) = row?;
+        if let TickRow::Released(tick) = &row
+            && TASK_DUE_REVERSE
+                .get(&vault.store, txn, &tick.task)?
+                .is_some_and(|entry| entry.tick == Some(sequence))
+        {
+            continue;
+        }
+        passed.push(sequence);
+    }
+    Ok(passed)
+}
+
+/// Deletes the tick feed rows `sequences` names, in the caller's write.
+pub(super) fn delete_ticks_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    sequences: &[u64],
+) -> Result<()> {
+    for sequence in sequences {
+        TICKS.delete(&vault.store, txn, sequence)?;
+    }
+    Ok(())
+}
+
+/// Erases `task` from the tick source in the caller's erase write: its due
+/// index rows go, and each tick feed row that names it becomes
+/// [`TickRow::Erased`] at its own sequence. A complete scan, as the other
+/// hook carriers' scrub; a row erased already stays as it is.
+pub(super) fn scrub_task_ticks_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    task: &EntityId,
+) -> Result<()> {
+    index_task_due_in_txn(&vault.store, txn, *task, None)?;
+    let mut named = Vec::new();
+    for row in TICKS.iter_from(&vault.store, txn, &[])? {
+        let (sequence, row) = row?;
+        if matches!(&row, TickRow::Released(tick) if tick.task == *task) {
+            named.push(sequence);
+        }
+    }
+    for sequence in &named {
+        TICKS.put(&vault.store, txn, sequence, &TickRow::Erased)?;
+    }
+    Ok(())
 }

@@ -1,25 +1,29 @@
 //! Fact sources and their typed positions (ARCH-0080 §4 Sources and cursors).
 //! A position is never a timestamp or the notify counter: an imported claim
-//! can carry an old time, and the notify counter is process-local. The two
-//! watcher sources (FIX 4749) live in the `schedule` and `surface_inbound`
-//! submodules.
+//! can carry an old time, and the notify counter is process-local. The
+//! engine's own hook feeds live in submodules: the settlement feed in
+//! `settlement`, and the two watcher sources (FIX 4749) in `schedule` and
+//! `surface_inbound`. Those three are the feeds the runner prunes and an
+//! erase scrubs; the claim changelog is neither.
 
 mod schedule;
+mod settlement;
 mod surface_inbound;
-
-use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::ports::{ChangeLogStore, ChangeLogStoreRead, ChangeOp, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::side_table::{self, Named, SideTable};
+use crate::skill_hub::pack_catalog::HookPhase;
 use crate::vault::RevisionRef;
 use crate::{EntityId, Error, Result, Vault};
 
-pub(crate) use schedule::index_task_due_in_txn;
-pub(super) use schedule::{TickDetails, release_due_ticks};
+use super::{filter, store};
+
+pub(super) use schedule::TickDetails;
+pub(crate) use schedule::{index_task_due_in_txn, next_tick_release_at, release_due_ticks};
+pub(crate) use settlement::{record_settlement_in_txn, record_timeout_demotion_in_txn};
 pub(super) use surface_inbound::SurfaceInboundRow;
 pub(crate) use surface_inbound::record_surface_inbound_in_txn;
 
@@ -32,10 +36,6 @@ pub(crate) use surface_inbound::record_surface_inbound_in_txn;
 // with every mutation and observed when the vault opens, so ids keep rising
 // across restarts. Key order is therefore commit order: a reader that resumes
 // after its last id never misses a row that commits later.
-/// The settlement feed: one row per settled proposal, keyed by its sequence.
-const SETTLED: SideTable<u64, SettledRow, Named> = SideTable::new(&side_table::HOOKS_SETTLED);
-/// The last settlement sequence handed out.
-const SETTLED_NEXT: SideTable<(), u64, Named> = SideTable::new(&side_table::HOOKS_SETTLED_NEXT);
 
 /// Rows a batch may scan for each entry it keeps, so a run of other entity
 /// kinds cannot make one pass unbounded.
@@ -330,95 +330,6 @@ pub(super) struct SourceBatch {
 
 pub use crate::consent::settlement_fact::{SettledFact, SettledOutcome, SettlementKind};
 
-/// The settlement feed's row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct SettledRow {
-    #[serde(with = "crate::serialize::entity_ref")]
-    proposal: EntityId,
-    outcome: SettledOutcome,
-    #[serde(with = "crate::serialize::entity_ref")]
-    settled_by: EntityId,
-    kind: SettlementKind,
-    /// BLAKE3 of the proposal's body when it settled, when it had one.
-    body_hash: Option<[u8; 32]>,
-    recorded_at: u64,
-}
-
-impl SettledRow {
-    fn input_hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("oneiron.hook-settlement.v1");
-        hasher.update(self.proposal.as_bytes());
-        hasher.update(&[self.outcome as u8, self.kind as u8]);
-        hasher.update(self.settled_by.as_bytes());
-        hasher.update(&self.body_hash.unwrap_or_default());
-        *hasher.finalize().as_bytes()
-    }
-}
-
-/// Appends one settlement to the feed, in the settling door's transaction.
-/// The sequence is allocated there, so feed order is commit order.
-pub(crate) fn record_settlement_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    fact: SettledFact,
-) -> Result<SettlementPosition> {
-    let (position, row) = prepare_settlement_in_txn(vault, txn, fact)?;
-    SETTLED.put(&vault.store, txn, &position.0, &row)?;
-    SETTLED_NEXT.put(&vault.store, txn, &(), &position.0)?;
-    Ok(position)
-}
-
-pub(super) fn prepare_settlement_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    fact: SettledFact,
-) -> Result<(SettlementPosition, SettledRow)> {
-    let last = SETTLED_NEXT.get(&vault.store, txn, &())?.unwrap_or(0);
-    let sequence = last
-        .checked_add(1)
-        .ok_or(Error::ArithmeticOverflow("hook settlement sequence"))?;
-    let body_hash = vault
-        .store
-        .port_entity_record(txn, &fact.proposal)?
-        .map(|row| *blake3::hash(&row.body).as_bytes());
-    let row = SettledRow {
-        proposal: fact.proposal,
-        outcome: fact.outcome,
-        settled_by: fact.settled_by,
-        kind: fact.kind,
-        body_hash,
-        recorded_at: vault.store.clock.now_recorded_at(),
-    };
-    Ok((SettlementPosition(sequence), row))
-}
-
-/// The actor a critical-confirm timeout demotion settles as (FIX 1093): no
-/// person answered, so the fact names the engine's own unattributed
-/// principal, the same one the demotion's changelog row carries.
-fn timeout_settled_by() -> Result<EntityId> {
-    crate::ports::storage_service_principal()
-}
-
-/// Records a critical-confirm timeout's demotion in the demoting door's
-/// transaction: a `Demoted` settlement, settled by the engine, through
-/// [`record_settlement_in_txn`].
-pub(crate) fn record_timeout_demotion_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    proposal: EntityId,
-) -> Result<SettlementPosition> {
-    record_settlement_in_txn(
-        vault,
-        txn,
-        SettledFact {
-            proposal,
-            outcome: SettledOutcome::Demoted,
-            settled_by: timeout_settled_by()?,
-            kind: SettlementKind::CriticalWriteConfirm,
-        },
-    )
-}
-
 /// Up to `max_entries` facts after `after` (exclusive) in `source`.
 pub(super) fn read_after(
     vault: &Vault,
@@ -431,9 +342,9 @@ pub(super) fn read_after(
         (FactSource::ClaimChangelog, Some(FactPosition::ClaimChangelog(position))) => {
             claim_changes_after(vault, Some(position), max_entries)
         }
-        (FactSource::Settlement, None) => settlements_after(vault, None, max_entries),
+        (FactSource::Settlement, None) => settlement::settlements_after(vault, None, max_entries),
         (FactSource::Settlement, Some(FactPosition::Settlement(position))) => {
-            settlements_after(vault, Some(position), max_entries)
+            settlement::settlements_after(vault, Some(position), max_entries)
         }
         (FactSource::Schedule, None) => schedule::ticks_after(vault, None, max_entries),
         (FactSource::Schedule, Some(FactPosition::Schedule(position))) => {
@@ -466,9 +377,11 @@ pub(super) fn read_after_in_txn(
         (FactSource::ClaimChangelog, Some(FactPosition::ClaimChangelog(position))) => {
             claim_changes_after_in_txn(vault, txn, Some(position), max_entries)
         }
-        (FactSource::Settlement, None) => settlements_after_in_txn(vault, txn, None, max_entries),
+        (FactSource::Settlement, None) => {
+            settlement::settlements_after_in_txn(vault, txn, None, max_entries)
+        }
         (FactSource::Settlement, Some(FactPosition::Settlement(position))) => {
-            settlements_after_in_txn(vault, txn, Some(position), max_entries)
+            settlement::settlements_after_in_txn(vault, txn, Some(position), max_entries)
         }
         _ => Err(Error::InvariantViolation(
             "hook cursor names another source",
@@ -572,80 +485,6 @@ pub(super) fn claim_fact_in_txn(
     }))
 }
 
-/// Settlements after `after`.
-fn settlements_after(
-    vault: &Vault,
-    after: Option<SettlementPosition>,
-    max_entries: usize,
-) -> Result<SourceBatch> {
-    let rtxn = vault.store.env.read_txn()?;
-    settlements_after_in_txn(vault, &rtxn, after, max_entries)
-}
-
-fn settlements_after_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    after: Option<SettlementPosition>,
-    max_entries: usize,
-) -> Result<SourceBatch> {
-    let start = after
-        .as_ref()
-        .map_or(Bound::Unbounded, |position| Bound::Excluded(&position.0));
-    let mut batch = SourceBatch::default();
-    for row in SETTLED.iter_range(&vault.store, txn, start, Bound::Unbounded)? {
-        if batch.entries.len() >= max_entries {
-            batch.more = true;
-            break;
-        }
-        let (sequence, settled) = row?;
-        let position = FactPosition::Settlement(SettlementPosition(sequence));
-        batch.through = Some(position);
-        batch.entries.push(settlement_fact_in_txn(
-            vault,
-            txn,
-            SettlementPosition(sequence),
-            &settled,
-        )?);
-    }
-    Ok(batch)
-}
-
-pub(super) fn settlement_fact_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    position: SettlementPosition,
-    settled: &SettledRow,
-) -> Result<FactEntry> {
-    let position = FactPosition::Settlement(position);
-    let revision = match settled.body_hash.as_ref() {
-        Some(body_hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
-            vault,
-            txn,
-            &settled.proposal,
-            body_hash,
-        )?,
-        None => None,
-    };
-    Ok(FactEntry {
-        position,
-        kind: FactKind::ProposalSettled,
-        entity: settled.proposal,
-        op: FactOp::Settle,
-        actor: settled.settled_by,
-        recorded_at: settled.recorded_at,
-        input_hash: settled.input_hash(),
-        body_hash: settled.body_hash,
-        revision,
-        settlement: Some(SettlementDetails {
-            kind: settled.kind,
-            outcome: settled.outcome,
-        }),
-        predicate: None,
-        tick: None,
-        surface: None,
-    })
-}
-
 /// The newest position in `source`, or `None` while it is empty, in the
 /// caller's snapshot, including a binding lifecycle write's own settlement
 /// head.
@@ -659,15 +498,100 @@ pub(super) fn head_in_txn(
             .store
             .port_changelog_head(txn)?
             .map(|(id, _)| FactPosition::ClaimChangelog(ClaimChangelogPosition(id))),
-        FactSource::Settlement => SETTLED
-            .iter_rev_from(&vault.store, txn, &[])?
-            .next()
-            .transpose()?
-            .map(|(sequence, _)| FactPosition::Settlement(SettlementPosition(sequence))),
+        FactSource::Settlement => settlement::head_in_txn(vault, txn)?,
         FactSource::Schedule => schedule::head_in_txn(vault, txn)?,
         FactSource::SurfaceInbound => surface_inbound::head_in_txn(vault, txn)?,
     };
     Ok(head)
+}
+
+/// Whether a fact of `kind` that a write appends to `source`, one of the
+/// engine's own hook feeds, has a reader in that write's `txn` (FIX 22141,
+/// FIX 22154): hooks are on, and an enabled fact binding whose selector
+/// takes `kind` follows `source` from an unpaused cursor. No other binding
+/// takes the fact: one with no cursor there, or a paused one, starts past it
+/// at the feed head; a disabled one takes nothing; one whose selector takes
+/// no such fact skips it. While hooks are off no fact is recorded, so a
+/// binding that kept its cursor reads none appended then, and a selector
+/// widened to take `kind` reads none appended before. It reads the switch,
+/// the cursor rows and, up to the first reader, the claims of the bindings
+/// they name: no binding list scan per fact.
+pub(super) fn has_reader_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: FactSource,
+    kind: FactKind,
+) -> Result<bool> {
+    if !vault.hooks_enabled_in_txn(txn)? {
+        return Ok(false);
+    }
+    for binding in store::unpaused_cursor_bindings_in_txn(vault, txn, source)? {
+        // A binding claim that does not read counts as a reader: the runner
+        // judges it on its pass, and the appending write never fails on a
+        // hook's claim.
+        let reads = vault
+            .pack_hook_binding_in_txn(txn, &binding)
+            .map_or(true, |row| {
+                row.is_some_and(|row| {
+                    row.enabled
+                        && row.selector.phase == HookPhase::Fact
+                        && filter::verbs_admit_kind(&row.selector.verbs, kind)
+                })
+            });
+        if reads {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The hook feed rows at or before `floor`, the lowest cursor of every
+/// enabled fact binding, that no binding reads again, at most `max_rows`,
+/// read in `txn`. The claim changelog prunes nothing.
+pub(super) fn passed_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    floor: FactPosition,
+    max_rows: usize,
+) -> Result<Vec<u64>> {
+    match floor {
+        FactPosition::Settlement(floor) => {
+            settlement::passed_settlements_in_txn(vault, txn, floor, max_rows)
+        }
+        FactPosition::Schedule(floor) => schedule::passed_ticks_in_txn(vault, txn, floor, max_rows),
+        FactPosition::SurfaceInbound(floor) => {
+            surface_inbound::passed_events_in_txn(vault, txn, floor, max_rows)
+        }
+        FactPosition::ClaimChangelog(_) => Ok(Vec::new()),
+    }
+}
+
+/// Deletes `source`'s hook feed rows `rows`, in the caller's write.
+pub(super) fn delete_feed_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    source: FactSource,
+    rows: &[u64],
+) -> Result<()> {
+    match source {
+        FactSource::Settlement => settlement::delete_settlements_in_txn(vault, txn, rows),
+        FactSource::Schedule => schedule::delete_ticks_in_txn(vault, txn, rows),
+        FactSource::SurfaceInbound => surface_inbound::delete_events_in_txn(vault, txn, rows),
+        FactSource::ClaimChangelog => Ok(()),
+    }
+}
+
+/// Erases `id` from the three hook feeds in the caller's erase write: an
+/// erased TASK's due index rows, and every settlement, tick or inbound row
+/// that names it, each kept at its sequence with nothing in it.
+pub(super) fn scrub_hook_feeds_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    settlement::scrub_settlements_in_txn(vault, txn, id)?;
+    schedule::scrub_task_ticks_in_txn(vault, txn, id)?;
+    surface_inbound::scrub_inbound_events_in_txn(vault, txn, id)
 }
 
 /// The changelog position of a binding claim's latest write, in the
