@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1405 code-mode rows (1362 host rows, 43 run rows), 4917 declarations.
-// Replies: 1213 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1406 code-mode rows (1363 host rows, 43 run rows), 4926 declarations.
+// Replies: 1213 fully typed, 192 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 116; unread shapes: none.
+// Opaque serde_json::Value leaves: 118; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -3034,6 +3034,12 @@ declare namespace Sdk {
   type RepoSymbolsRenewOutput = RepoSymbolDeclarationView;
   type RepoSymbolsReleaseInput = { work: EntityId; declaration: EntityId };
   type RepoSymbolsReleaseOutput = { work: EntityId; declaration: EntityId; task: EntityId };
+  type LlmMessageRole = "system" | "user" | "assistant" | "tool";
+  type LlmMessage = { role: LlmMessageRole; content: ContentPart[] };
+  type LlmToolSpec = { name: string; description: string; input_schema: unknown };
+  type ResponseFormat = { format: "text" } | { format: "json"; schema: unknown };
+  type RepoModelGenerateInput = { messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown>; response_format: ResponseFormat };
+  type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions; token_scores?: unknown | null };
   type RepoProposalSubmitInput = { work: EntityId; path: string; content: number[]; message: string; declaration?: EntityId | null; repair_of?: EntityId | null };
   type RepoProposalSubmitOutput = { proposal: EntityId; admission_receipt: EntityId; work: EntityId; path: string; base_green: string; base_snapshot: string; session: EntityId; provenance_claim: EntityId; declaration?: EntityId | null; status: RepoProposalStatus };
   type RepoMergeQueueEnqueueInput = { work: EntityId; proposals: EntityId[]; declaration?: EntityId | null };
@@ -3296,8 +3302,25 @@ declare namespace Sdk {
   type KeepUndo = { proposal_ref: string; kept_version: number; restored_version: number; version: number; actor: EntityId; at: number };
   type UndoneKeep = { undo: KeepUndo; version: ArtifactVersionView; reattached: number };
   type TaskCanAskRequest = { ask: TaskAskSpec };
+  type RelationshipContext = "work_deal" | "scheduling_logistics" | "campaign_outreach" | "transactional_system" | "personal_friends" | "group_space";
+  type SelectionRuleScope = { kind: "vault_default" } | { kind: "world"; world_ref: EntityId } | { kind: "relationship"; relationship_ref: EntityId } | { kind: "brief"; brief_ref: string } | { kind: "space"; space_ref: string };
+  type ChannelIdentityFace = "delegated_owner_account" | "agent_named_address" | "side_domain_address" | "house_identity" | "companion_identity" | "named_group_participant";
+  type ChannelSelectionCandidateInput = { identity_ref: EntityId; face: ChannelIdentityFace };
+  type ChannelSelectionRequest = { relationship: RelationshipContext; applicable_scopes?: SelectionRuleScope[]; candidates: ChannelSelectionCandidateInput[]; thread_ref?: string | null };
+  type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null; selection?: ChannelSelectionRequest | null; counterparty_class?: string | null };
+  type CanOutboundSchedule = { outbound_schedule: OutboundScheduleRequest };
+  type ConnectorSource = "catalog" | "builtin";
+  type MutationIntent = "preview" | "explicit_mutation";
+  type ConnectorCallRequest = { name: string; source?: ConnectorSource | null; tool: string; arguments?: unknown; mutation?: MutationIntent };
+  type CanConnectorCall = { connector_call: ConnectorCallRequest };
+  type CanEffect = CanOutboundSchedule | CanConnectorCall;
+  type CanEffectRequest = { effect: CanEffect };
+  type CanRequest = TaskCanAskRequest | CanEffectRequest;
   type TaskAskPreflightRecipient = { who: EntityId; face?: string | null; channel?: string | null; word_required: boolean };
   type TaskAskPreflight = { recipients: TaskAskPreflightRecipient[] };
+  type CanEffectVerdict = "allow" | "deny" | "would_ask" | "held";
+  type CanEffectAnswer = { verdict: CanEffectVerdict; reasons: string[]; holds: string[]; waits_for_envelope_window: boolean; rate_window_opens_at?: number | null; checked_at: number };
+  type CanAnswer = TaskAskPreflight | CanEffectAnswer;
   type TaskAskPersonKind = "word" | "companion" | "default" | "unknown";
   type TaskAskPersonEvidence = { who: EntityId; answer?: TaskAskWord | null; kind: TaskAskPersonKind; at: number; source?: EntityId | null };
   type TaskAskShort = { who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault };
@@ -3507,15 +3530,10 @@ declare namespace Sdk {
   type DeterministicFallback = { name: string; config?: unknown | null };
   type CallClass = { kind: "durable"; fallback: DeterministicFallback } | { kind: "best_effort" };
   type TierPrecedence = { per_seat?: ModelTierRef | null; vault_policy?: ModelTierRef | null; purpose_default?: ModelTierRef | null; global_default: ModelTierRef; seat?: ModelTierRef | null };
-  type ResponseFormat = { format: "text" } | { format: "json"; schema: unknown };
   type CallEnvelope = { scope?: ScopeScope; purpose: CallPurpose; class: CallClass; tier: TierPrecedence; response_format: ResponseFormat; locality: ModelLocality; seat_effort?: ReasoningEffort | null };
-  type LlmMessageRole = "system" | "user" | "assistant" | "tool";
-  type LlmMessage = { role: LlmMessageRole; content: ContentPart[] };
-  type LlmToolSpec = { name: string; description: string; input_schema: unknown };
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
   type ModelRoleInput = { kind: "generate"; request: LlmRequest } | { kind: "embed"; text: string } | { kind: "tag"; text: string };
   type ModelRoleInvoke = { role: ModelRole; input: ModelRoleInput };
-  type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions; token_scores?: unknown | null };
   type NerSpan = { message: number; start: number; end: number; label: string; confidence: number };
   type CorefLink = { span: number; antecedent: number; confidence?: number | null };
   type Vad = { valence: number; arousal: number; dominance: number };
@@ -3629,9 +3647,6 @@ declare namespace Sdk {
   type LiveVoiceAckRequest = { session_ref: string; generation: number; event_sequence: number; kind: LiveVoiceAckKind; played_samples?: number | null };
   type LiveVoiceUsageRequest = { session_ref: string; generation: number };
   type LiveVoiceUsage = { session_ref: string; utterance_id: string; generation: number; run: string; terminal: boolean; metering_enabled: boolean; settlements: RunRungSettlement[] };
-  type ConnectorSource = "catalog" | "builtin";
-  type MutationIntent = "preview" | "explicit_mutation";
-  type ConnectorCallRequest = { name: string; source?: ConnectorSource | null; tool: string; arguments?: unknown; mutation?: MutationIntent };
   type LiveVoiceToolRequest = { session_ref: string; call: ConnectorCallRequest };
   type ConnectorToolResult = { source: string; foreign: boolean; content: unknown; structured_content?: unknown | null; is_error: boolean; rpc_error?: unknown | null };
   type ConnectorQuestion = { key: string; message: string; requested_schema: unknown };
@@ -4521,17 +4536,12 @@ declare namespace Sdk {
   type ChannelIdentityBindRequest = { kind: "existing"; identity_ref: EntityId; fulfillment_mode: ChannelIdentityFulfillment; request_ref?: EntityId | null } | { kind: "delegated"; channel: string; address_or_handle: string; binding: ChannelIdentityBinding; grant: DelegatedGrant; fulfillment_mode: ChannelIdentityFulfillment; request_ref?: EntityId | null };
   type ChannelIdentityRequest = { identity_ref: EntityId; request_ref?: EntityId | null };
   type ChannelIdentityReleaseRequest = { identity_ref: EntityId; quarantine_until: number; request_ref?: EntityId | null };
-  type RelationshipContext = "work_deal" | "scheduling_logistics" | "campaign_outreach" | "transactional_system" | "personal_friends" | "group_space";
-  type SelectionRuleScope = { kind: "vault_default" } | { kind: "world"; world_ref: EntityId } | { kind: "relationship"; relationship_ref: EntityId } | { kind: "brief"; brief_ref: string } | { kind: "space"; space_ref: string };
-  type ChannelIdentityFace = "delegated_owner_account" | "agent_named_address" | "side_domain_address" | "house_identity" | "companion_identity" | "named_group_participant";
   type SelectionRuleWriterKind = "system_default" | "owner" | "agent";
   type ChannelIdentitySelectionRule = { rule_id: string; relationship: RelationshipContext; scope: SelectionRuleScope; face: ChannelIdentityFace; pinned_identity_ref?: EntityId | null; priority: number; enabled: boolean; agent_amendable: boolean; updated_at: number; updated_by?: EntityId | null; writer_kind: SelectionRuleWriterKind };
   type ChannelIdentitySelectionRuleSet = { schema_version: number; revision: number; rows: ChannelIdentitySelectionRule[] };
   type ChannelSelectionRuleInput = { rule_id: string; relationship: RelationshipContext; scope: SelectionRuleScope; face: ChannelIdentityFace; pinned_identity_ref?: EntityId | null; priority: number; enabled: boolean; agent_amendable: boolean };
   type ChannelSelectionPatchInput = { kind: "upsert"; rule: ChannelSelectionRuleInput } | { kind: "remove"; rule_id: string };
   type ChannelSelectionUpdateRequest = { expected_revision: number; patch: ChannelSelectionPatchInput };
-  type ChannelSelectionCandidateInput = { identity_ref: EntityId; face: ChannelIdentityFace };
-  type ChannelSelectionRequest = { relationship: RelationshipContext; applicable_scopes?: SelectionRuleScope[]; candidates: ChannelSelectionCandidateInput[]; thread_ref?: string | null };
   type ChannelIdentitySelectionDecision = { identity_ref: EntityId; facet_ref?: EntityId | null; face: ChannelIdentityFace; shape: ChannelIdentityShape; rule_id?: string | null; used_thread_pin: boolean };
   type ThreadMaskView = { identity_ref: EntityId; actor_ref: EntityId; facet_ref?: EntityId | null };
   type ChannelSelectionView = { revision: number; decision: ChannelIdentitySelectionDecision; mask: ThreadMaskView };
@@ -4556,7 +4566,6 @@ declare namespace Sdk {
   type DeliveryWindowLadderRung = "HumanExplicitInstant" | "Ambient" | "InterruptDegraded" | "InterruptHeld" | "MissingLocalMinute";
   type DeliveryWindowResolution = { observed: DeliveryWindowDecision; effective: DeliveryWindowDecision; matched: DeliveryWindowMatch[]; rung: DeliveryWindowLadderRung };
   type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution };
-  type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null; selection?: ChannelSelectionRequest | null; counterparty_class?: string | null };
   type SummaryPath = "canonical" | { branch: string } | { branch_span: { after: string; through: string } } | { sub_session: string };
   type SummaryScope = { conversation_ref: string; path: SummaryPath; session?: string | null; include_forks?: boolean };
   type SummaryCreateRequest = { scope?: SummaryScope | null; note_refs?: string[]; purpose?: string | null; land_on?: string | null; as_record?: boolean };
@@ -5048,8 +5057,8 @@ declare const calendar: {
   /** Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe. */
   invite(input: Sdk.CalendarInviteSurfaceInput): Promise<Sdk.OutboundIntentReceipt | StoredResult>;
 };
-/** Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything. */
-declare function can(input: Sdk.TaskCanAskRequest): Promise<Sdk.TaskAskPreflight | StoredResult>;
+/** Read-only preflight: of an ask, its recipients, faces and channels, without minting a TASK; of a scheduled send or connector call ({effect}), a dated allow, deny, would-ask or named hold, judged as the act would be, rechecked when it runs. */
+declare function can(input: Sdk.CanRequest): Promise<Sdk.CanAnswer | StoredResult>;
 /** Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work. */
 declare function cancel(input: Sdk.TaskRequest): Promise<Sdk.TaskCancelReceipt | StoredResult>;
 declare const connector: { readonly [name: string]: { readonly [tool: string]: (args?: object) => Promise<Sdk.ActAnswer<Sdk.ConnectorCallReply> | StoredResult> } } & {
@@ -7555,6 +7564,10 @@ declare const vault: Sdk.VaultHost & {
       enqueue(input: Sdk.LiveRunRequest<Sdk.RepoMergeQueueEnqueueInput>): Promise<Sdk.RepoMergeQueueEnqueueOutput | StoredResult>;
       /** Reads the merge queue the attached run's own work is pinned under, with its own entries and what each waits behind. */
       observe(input: Sdk.LiveRunRequest<Sdk.RepoMergeQueueObserveInput>): Promise<Sdk.RepoMergeQueueObserveOutput | StoredResult>;
+    };
+    model: {
+      /** Serves the supplied request content on the attached live run's registered model seat and spend line. The host retains only the actual served request's provenance on this exact credential attachment for repo proposals; a rebind inherits none. */
+      generate(input: Sdk.LiveRunRequest<Sdk.RepoModelGenerateInput>): Promise<Sdk.LlmResponse | StoredResult>;
     };
     /** Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance; without that witness it holds typed, work kept. */
     proposal_submit(input: Sdk.LiveRunRequest<Sdk.RepoProposalSubmitInput>): Promise<Sdk.RepoProposalSubmitOutput | StoredResult>;
