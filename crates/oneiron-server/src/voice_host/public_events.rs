@@ -300,6 +300,7 @@ impl Journal {
             LiveVoiceEventKind::ToolContext { .. } => false,
             LiveVoiceEventKind::Pcm { .. }
             | LiveVoiceEventKind::Safeguard { .. }
+            | LiveVoiceEventKind::Heard { .. }
             | LiveVoiceEventKind::Notice { .. }
             | LiveVoiceEventKind::Memories { .. } => event
                 .generation
