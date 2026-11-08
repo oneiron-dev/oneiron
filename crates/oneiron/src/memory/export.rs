@@ -16,6 +16,7 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::verify_actor_binding_in_txn;
 use crate::settings::ReadDestination;
+use crate::share_travel::WorldRecipientNotice;
 use crate::write_envelope::WriteActor;
 
 /// The export target. `archive` (the default) is the whole vault: one ZIP of
@@ -47,6 +48,13 @@ pub struct ExportOptions {
     /// unassigned: no recipient named.
     #[serde(default)]
     pub secrets_recipient: Option<EntityId>,
+    /// Whether a code run calls this export: set by the host's run dispatch
+    /// alone, never by a request. Such an export follows the world settings
+    /// as it did before owner ruling 1-EXPORT = B (FIX 9591): it carries no
+    /// row of a world they withhold from its destination and names none.
+    /// The owner's own call keeps every world.
+    #[serde(skip)]
+    pub in_code_run: bool,
 }
 
 /// How a server hands one export over: in its reply, or as a transfer the
@@ -80,6 +88,12 @@ pub struct MemoryExport {
     /// stands. Absent when there is none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub holder_requests: Vec<HolderExportRequest>,
+    /// Owner ruling 1-EXPORT = B: each world the owner's own export carries
+    /// that his recipient choice would keep from where it goes, named and
+    /// with why, by name alone. Absent when there is none, and on this
+    /// device.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<WorldRecipientNotice>,
 }
 
 /// One export written to the caller's file (FIX 2766): its format, length and
@@ -94,6 +108,9 @@ pub struct MemoryExportReceipt {
     /// FIX 4624(b): as [`MemoryExport::holder_requests`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub holder_requests: Vec<HolderExportRequest>,
+    /// As [`MemoryExport::notices`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<WorldRecipientNotice>,
     /// The owner's act the render carried out, on a door that records one
     /// (FIX 11596): a server keeping the archive checks its exact owner at
     /// every read. `None` from a door that records no act.
@@ -114,6 +131,10 @@ pub struct ExportTransfer {
     /// FIX 4624(b): as [`MemoryExport::holder_requests`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub holder_requests: Vec<HolderExportRequest>,
+    /// As [`MemoryExport::notices`]: the transfer's creation answer names
+    /// them; the archive it keeps is read as bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<WorldRecipientNotice>,
 }
 
 /// What `vault.export` answers (FIX 3676): the archive inline, or the
@@ -178,11 +199,12 @@ impl Memory<'_> {
 
     /// Full-vault export with the caller's authenticated owner-grade slip.
     /// HTTP passes the verifier-produced instrument, never a client option.
-    /// A caller off this device (see [`Memory::at`]) takes no device-local
-    /// world with it (DEC-0005). The receipt records the owner's act (FIX
-    /// 4626), by the slip's holder, whom the export's own snapshot
-    /// revalidates as a live owner, with the `surface` the door read from its
-    /// request, audit only.
+    /// A caller off this device (see [`Memory::at`]) takes every world with
+    /// it, its answer naming each one the owner's recipient choice would keep
+    /// from there (owner ruling 1-EXPORT = B). The receipt records the
+    /// owner's act (FIX 4626), by the slip's holder, whom the export's own
+    /// snapshot revalidates as a live owner, with the `surface` the door read
+    /// from its request, audit only.
     pub fn export_with_verified_owner(
         &self,
         opts: &ExportOptions,
@@ -333,8 +355,9 @@ impl Memory<'_> {
 impl Vault {
     /// Host-root export without inventing an actor or creating a root on read.
     /// The verifier-produced root is rechecked in the export snapshot. A
-    /// caller toward `destination` off this device takes no world withheld
-    /// from the machine it goes to with it (DEC-0005, mesh PR2b).
+    /// caller toward `destination` off this device takes every world with
+    /// it, its answer naming each one withheld from the machine it goes to
+    /// (owner ruling 1-EXPORT = B, mesh PR2b).
     ///
     /// A whole-vault export is an owner act, not a backup (FIX 2222): a
     /// self-hosted root exports as the owner it acts as, and a host root on
@@ -352,9 +375,9 @@ impl Vault {
     }
 
     /// [`Self::export_with_verified_host_owner`], beside the rows the
-    /// archive is derived from (DEC-0005): each row its snapshot read past
-    /// the caller's locality, whether the archive carries it, counts it or
-    /// folds it into another section. A refusal lists none.
+    /// archive is derived from (DEC-0005): each row its snapshot read,
+    /// whether the archive carries it, counts it or folds it into another
+    /// section. A refusal lists none.
     pub fn export_with_verified_host_owner_listing(
         &self,
         opts: &ExportOptions,
@@ -488,8 +511,9 @@ impl Vault {
     /// any credential or host action it bound), and the actor it names there
     /// must be the export's reader. The same archive and served listing as
     /// the slip path, read at the caller's own `destination`: a caller off this
-    /// device takes no device-local world with it (DEC-0005). The proof is
-    /// this request's alone, never a durable owner authorization. The
+    /// device takes every world with it, each one its destination withholds
+    /// named (owner ruling 1-EXPORT = B). The proof is this request's alone,
+    /// never a durable owner authorization. The
     /// export's receipt records the owner's act (Engine 10-19 02:4x), with
     /// the `surface` he said so from, audit only.
     pub fn export_with_authenticated_owner_listing(
@@ -698,6 +722,7 @@ fn read_back(
         archive,
         digest: receipt.digest,
         holder_requests: receipt.holder_requests,
+        notices: receipt.notices,
     })
 }
 
@@ -718,15 +743,21 @@ fn render_export_to<W: Read + Write + Seek>(
     let name = opts.format.as_deref().unwrap_or(EXPORT_TARGET_ARCHIVE);
     let include_secrets = opts.include_secrets.unwrap_or(true);
     let exporter = reader.entity_ref();
+    // The owner's own export carries every world (owner ruling 1-EXPORT =
+    // B); one a code run calls follows the world settings.
+    let owner_export = !opts.in_code_run;
     let (mut sink, mut export) = match name {
         EXPORT_TARGET_ARCHIVE => vault.export_whole_vault_with_admission(
             destination,
             include_secrets,
             reader,
+            owner_export,
             admit,
             sink,
         )?,
-        EXPORT_TARGET_OKF => vault.export_okf_with_admission(destination, reader, admit, sink)?,
+        EXPORT_TARGET_OKF => {
+            vault.export_okf_with_admission(destination, reader, owner_export, admit, sink)?
+        }
         _ => {
             return Err(MemoryError::bad_request_with(
                 format!("unknown export format {name:?}"),
@@ -755,12 +786,19 @@ fn render_export_to<W: Read + Write + Seek>(
             recipient: opts.secrets_recipient,
         },
     );
+    // The owner's notices ride his own answer alone, each naming its world
+    // by name, never by id; the co-Owners' audit row names none.
+    let notices = std::mem::take(&mut export.notices)
+        .into_iter()
+        .map(WorldRecipientNotice::in_result)
+        .collect();
     Ok((
         MemoryExportReceipt {
             format,
             bytes,
             digest,
             holder_requests,
+            notices,
             act,
         },
         export.sources,

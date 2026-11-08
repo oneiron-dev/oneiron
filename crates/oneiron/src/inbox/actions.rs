@@ -83,6 +83,9 @@ impl Memory<'_> {
             {
                 self.model_pack_revert_actions(row)
             }
+            NotificationKind::Ask if producer == crate::mail_pack::MAIL_REPLY_ASK_PRODUCER => {
+                self.mail_reply_ask_actions(row)
+            }
             _ => Vec::new(),
         }
     }

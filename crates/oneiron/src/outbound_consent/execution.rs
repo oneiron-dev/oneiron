@@ -55,6 +55,10 @@ pub struct ScopedMcpDispatchResult {
     /// instant, Unix seconds (FIX 8686): it was not sent, recorded or
     /// charged, and goes again once its windows open.
     paced_until: Option<u64>,
+    /// FIX 4747 slice 5: the agent run that made the call no longer runs on
+    /// this machine, so the call's transport never started: nothing was
+    /// sent.
+    pub agent_run_stood_down: bool,
 }
 
 impl ScopedMcpDispatchResult {
@@ -149,6 +153,7 @@ impl fmt::Debug for ScopedMcpDispatchResult {
             .field("budget_charge", &self.budget_charge)
             .field("budget_settlement_events", &self.budget_settlement_events)
             .field("paced_until", &self.paced_until)
+            .field("agent_run_stood_down", &self.agent_run_stood_down)
             .finish()
     }
 }
@@ -219,7 +224,13 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         co_actor: None,
         exclusive_route: None,
     };
-    let mut transport = ScopedResultTransport::new(sender);
+    // FIX 4747 slice 5: a call an agent run makes goes only while the run's
+    // machine holds the run.
+    let mut transport = ScopedResultTransport::new(sender).fenced(
+        vault
+            .agent_run_fence(attempt_id)
+            .map(|fence| (vault, fence)),
+    );
     let effect = crate::outbound_chokepoint::execute_outbound_effect(
         vault,
         authority,
@@ -360,6 +371,7 @@ fn dispatch_result<S>(
         budget_charge: effect.budget_charge,
         budget_settlement_events: effect.budget_settlement_events,
         paced_until: effect.paced_until,
+        agent_run_stood_down: transport.agent_run_stood_down,
     }
 }
 
@@ -535,6 +547,11 @@ pub(super) struct ScopedResultTransport<'a, S> {
     /// The body the last authorized send returned, handed on to that send's
     /// own terminal bridge only (DOOR-141 PR2), never counted or logged.
     settled_body: Option<Vec<u8>>,
+    /// FIX 4747 slice 5: the fence of the agent run that makes the call,
+    /// checked right before each transport call.
+    run_fence: Option<(&'a Vault, crate::agent_dispatch::AgentRunFence)>,
+    /// The run fence stood a call down before its transport call.
+    pub(super) agent_run_stood_down: bool,
 }
 
 impl<'a, S> ScopedResultTransport<'a, S> {
@@ -546,7 +563,19 @@ impl<'a, S> ScopedResultTransport<'a, S> {
             scrubbed_result_fields: 0,
             checked_bytes: Vec::new(),
             settled_body: None,
+            run_fence: None,
+            agent_run_stood_down: false,
         }
+    }
+
+    /// This transport, its calls guarded by the agent run fence `fence`
+    /// (FIX 4747); `None` guards nothing.
+    pub(super) fn fenced(
+        mut self,
+        fence: Option<(&'a Vault, crate::agent_dispatch::AgentRunFence)>,
+    ) -> Self {
+        self.run_fence = fence;
+        self
     }
 }
 
@@ -554,6 +583,20 @@ impl<S: OutboundResultSender> crate::outbound_chokepoint::OutboundTransport
     for ScopedResultTransport<'_, S>
 {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
+        // FIX 4747 slice 5: a stale agent run's call stands down before its
+        // transport call, as a connector send's fence stands it down.
+        if let Some((vault, fence)) = self.run_fence.as_ref()
+            && !crate::agent_dispatch::agent_run_fence_permits_effect(vault, fence)
+        {
+            self.agent_run_stood_down = true;
+            return OutboundSendOutcome::Failed(
+                crate::outbound_intent_ledger::OutboundSendFailure {
+                    kind: crate::outbound_intent_ledger::OutboundFailureKind::TransportNotStarted,
+                    code: None,
+                    secret: None,
+                },
+            );
+        }
         self.checked_bytes = call.payload().to_vec();
         let transport = self.inner.send(call);
         self.effectful_sends = self.effectful_sends.saturating_add(1);
