@@ -19,17 +19,22 @@
 //! A git exchange (OSH-3) opens with the length word [`GIT_CALL`] in place
 //! of the header's length, and runs its own steps (see `git_http`): its
 //! header, its body in chunks, the broker's acknowledgement, then the key,
-//! then a streamed reply.
+//! then a streamed reply. An LFS exchange opens with [`LFS_CALL`] and runs
+//! the same steps (see `lfs_http`), its key segment empty when it carries
+//! none; an answered batch reply has one more JSON segment between its
+//! header and its first chunk, the count of the broker's rewrites in it.
 
 pub(crate) mod dispatch;
 
 use std::io;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use zeroize::Zeroizing;
 
 use crate::git_http::GitCallHeader;
+use crate::lfs_http::LfsCallHeader;
 use crate::send::push_wiped;
 use crate::{CallHeader, Failure, Refusal, ReplyHeader};
 
@@ -60,6 +65,10 @@ pub(crate) const MAX_HEADER: usize = 64 << 10;
 /// The length word that opens a git exchange's frame in place of a model
 /// call's header length. No header is that long: [`MAX_HEADER`] bounds one.
 pub(crate) const GIT_CALL: u32 = u32::MAX - 1;
+
+/// The length word that opens an LFS exchange's frame in place of a model
+/// call's header length, as [`GIT_CALL`] opens a git exchange's.
+pub(crate) const LFS_CALL: u32 = u32::MAX - 2;
 
 pub(crate) async fn write_segment<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -196,19 +205,23 @@ pub(crate) struct ReadCall {
     pub(crate) released: bool,
 }
 
-/// One frame as read from the wire: a model call whole, or a git
-/// exchange's header, its body still to come.
+/// One frame as read from the wire: a model call whole, or a git or an
+/// LFS exchange's header, its body still to come.
 pub(crate) enum ReadFrame {
     Model(ReadCall),
     Git(GitCallHeader),
+    Lfs(LfsCallHeader),
 }
 
-/// Reads one frame: a model call whole, or a git exchange's header. Any
-/// cut, oversized or undecodable segment is [`Refusal::Frame`].
+/// Reads one frame: a model call whole, or a git or an LFS exchange's
+/// header. Any cut, oversized or undecodable segment is [`Refusal::Frame`].
 pub(crate) async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<ReadFrame, Refusal> {
     let len = read_len(reader).await.map_err(|_| Refusal::Frame)?;
     if len == GIT_CALL {
-        return read_git_header(reader).await.map(ReadFrame::Git);
+        return read_exchange_header(reader).await.map(ReadFrame::Git);
+    }
+    if len == LFS_CALL {
+        return read_exchange_header(reader).await.map(ReadFrame::Lfs);
     }
     let header = read_sized(reader, len, MAX_HEADER)
         .await
@@ -247,23 +260,27 @@ async fn read_call_rest<R: AsyncRead + Unpin>(
 }
 
 /// A frame whose call ran out of time before it had a slot: a model call
-/// read past, or a git exchange's header, its body still to come.
+/// read past, or a git or an LFS exchange's header, its body still to come.
 pub(crate) enum SkippedFrame {
     Model(CallHeader),
     Git(GitCallHeader),
+    Lfs(LfsCallHeader),
 }
 
 /// Reads one frame for a call answered without a send (FIX 8559): a model
 /// call's header, then past its body, keeping none of it, and its key into
-/// a buffer wiped as it drops; or a git exchange's header alone, since a
-/// git exchange keeps no model deadline. Any cut, oversized or undecodable
+/// a buffer wiped as it drops; or a git or an LFS exchange's header alone,
+/// since neither keeps a model deadline. Any cut, oversized or undecodable
 /// segment is [`Refusal::Frame`].
 pub(crate) async fn skip_frame<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<SkippedFrame, Refusal> {
     let len = read_len(reader).await.map_err(|_| Refusal::Frame)?;
     if len == GIT_CALL {
-        return read_git_header(reader).await.map(SkippedFrame::Git);
+        return read_exchange_header(reader).await.map(SkippedFrame::Git);
+    }
+    if len == LFS_CALL {
+        return read_exchange_header(reader).await.map(SkippedFrame::Lfs);
     }
     let header = read_sized(reader, len, MAX_HEADER)
         .await
@@ -283,8 +300,10 @@ pub(crate) async fn skip_frame<R: AsyncRead + Unpin>(
     Ok(SkippedFrame::Model(header))
 }
 
-/// Reads a git exchange's header, after its frame's opening word.
-async fn read_git_header<R: AsyncRead + Unpin>(reader: &mut R) -> Result<GitCallHeader, Refusal> {
+/// Reads a git or an LFS exchange's header, after its frame's opening word.
+async fn read_exchange_header<R: AsyncRead + Unpin, T: DeserializeOwned>(
+    reader: &mut R,
+) -> Result<T, Refusal> {
     let header = read_segment(reader, MAX_HEADER)
         .await
         .map_err(|_| Refusal::Frame)?;
