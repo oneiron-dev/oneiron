@@ -20,16 +20,30 @@ impl Shared {
 }
 
 impl Child {
-    pub(super) fn nested_spawn_seat(&self) -> Option<SpawnHostSeat> {
+    pub(super) fn nested_spawn_seat(
+        &self,
+        vault: &Vault,
+        session: Option<&OffRecordSession<'_>>,
+    ) -> Option<SpawnHostSeat> {
         if self.job.kind != ReaderJobKind::Read {
             return None;
         }
+        // The parent's destination is read on this child's own route; a route
+        // that does not bind spawns no nested reader this segment.
+        let jobs = match (session, self.session.as_ref()) {
+            (None, None) => ReaderJobs::canonical(vault),
+            (Some(session), Some((_, participant))) => {
+                ReaderJobs::for_session(session, *participant).ok()?
+            }
+            _ => return None,
+        };
         // Sampling monotonic time first cannot add the wall sample's cost
         // to the child window. left_ms has taken the parent's reserve once.
         let origin = Instant::now();
         let now = unix_millis_now();
         let clock = ReaderParentClock::until(origin + Duration::from_millis(self.left_ms(now)));
         Some(self.shared.seats.nested_seat(
+            &jobs,
             &self.job,
             clock,
             now,
