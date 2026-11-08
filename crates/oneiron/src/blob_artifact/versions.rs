@@ -800,15 +800,26 @@ impl Vault {
         let artifact = self
             .get_blob_artifact_in_txn(wtxn, artifact_id)?
             .ok_or(Error::EntityNotFound)?;
-        let fingerprint = match body.held_bytes() {
-            Some(bytes) => crate::store::blob_fingerprint::prepare_blob_artifact_birth(
+        let fingerprint = match (body.held_bytes(), body) {
+            (Some(bytes), _) => crate::store::blob_fingerprint::prepare_blob_artifact_birth(
                 &self.store,
                 wtxn,
                 artifact_id,
                 bytes,
             )?,
-            // A body file is never text: its birth reads none of its bytes.
-            None => crate::store::blob_fingerprint::prepare_binary_blob_artifact_birth(
+            // A text body file's birth reads its text from the file, as a
+            // text in its row is read (FIX 22075).
+            (None, VersionBody::Staged(staged)) if staged.is_text() => {
+                crate::store::blob_fingerprint::prepare_blob_artifact_birth(
+                    &self.store,
+                    wtxn,
+                    artifact_id,
+                    &staged.to_vec()?,
+                )?
+            }
+            // Any other body file is not text: its birth reads none of its
+            // bytes.
+            (None, _) => crate::store::blob_fingerprint::prepare_binary_blob_artifact_birth(
                 &self.store,
                 wtxn,
                 artifact_id,
