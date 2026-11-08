@@ -13,7 +13,7 @@ use crate::sync::asset_body::session::{AssetBodyLane, land_carried_body, with_ma
 use crate::sync::federation_burst::{
     FederationBurstDecision, WorkKind, admit_work, record_outcome,
 };
-use crate::sync::ingest::{Delivery, watch_births, with_delivery};
+use crate::sync::ingest::{Delivery, watch_births, with_delivery, with_placements};
 use crate::sync::selector::{
     AdmittedUpdate, FederationAdmissionRole, SyncSelector, admit_peer_window_update_as,
     encode_selector_vv_request, revalidate_admitted_facet_stamps,
@@ -628,9 +628,12 @@ impl SyncClient {
         }
         let window = self.ensure_window(window_key)?;
         let vault = std::sync::Arc::clone(&self.vault);
+        // FIX 3656: each row's carried birth placement lands with its row.
         let born = watch_births(&vault, part.births(), || {
             with_delivery(delivery, || {
-                self.import_accepted_window_update(window_key, &window, part.bytes())
+                with_placements(&vault, key, part.placements(), || {
+                    self.import_accepted_window_update(window_key, &window, part.bytes())
+                })
             })
         })?;
         part.keep_born_with(&self.vault)

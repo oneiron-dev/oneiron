@@ -267,6 +267,7 @@ impl Job<'_> {
             arm,
             &prompt,
             &self.clock,
+            self.judge.decisions().principal,
         ) {
             Generated::Answer {
                 text,

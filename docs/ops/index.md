@@ -51,7 +51,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Forked dependencies](forked-dependencies.md) — the crates pinned by `rev` to the org forks
   (sudachi, formualizer): upstream base, fork branch, our commits, and how to change one.
 - [Documents API handoff](documents-api-handoff.md) — the document engine's contract
-  (`oneiron_docedit::contract`, schema 1): ops, media types, limits, refusal codes, and what the
+  (`oneiron_docedit::contract`, schema 3): ops, media types, limits, refusal codes, and what the
   hosted documents API in oneiron-cloud owns (auth, metering, hosting, session images).
 - [Deck export gate run](deck-gate.md) — OF-510 `pptx-live-v1`: the engine half on a Linux fleet
   host, the Office half on the Mac mini, and the command that records the oracle receipt.
