@@ -45,7 +45,7 @@ use super::binding::{
     record_code_consent_admission_in_txn,
 };
 use super::settle::{
-    CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, offered_choices, original_authority_holds_in_txn,
+    CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, active_authority_holds_in_txn, offered_choices,
     settle_with_reply_in_txn,
 };
 use super::types::{
@@ -168,6 +168,7 @@ impl Memory<'_> {
             pending: CodeConsentPendingEffect::BrowserAction(action),
             hold_reasons: vec![hold.to_owned()],
             remember_offer: None,
+            standing_offer: None,
         };
         let minted = vault.with_write_txn(|txn| {
             draft.holder_settlement =
@@ -353,7 +354,7 @@ impl Vault {
                 settle_browser_in_txn(self, txn, row, unknown)?;
                 return Ok(None);
             }
-            if !original_authority_holds_in_txn(self, txn, &row.binding) {
+            if !active_authority_holds_in_txn(self, txn, &row) {
                 refuse_browser_wait_in_txn(
                     self,
                     txn,

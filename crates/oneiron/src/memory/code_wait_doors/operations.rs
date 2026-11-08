@@ -119,7 +119,7 @@ impl Memory<'_> {
 
 /// A 64-character lowercase hex digest a target names, checked against the
 /// stored wait by the engine (CALLS: resolve target).
-fn target_digest(field: &str, hex: &str) -> MemoryResult<[u8; 32]> {
+pub(super) fn target_digest(field: &str, hex: &str) -> MemoryResult<[u8; 32]> {
     blake3::Hash::from_hex(hex)
         .ok()
         .filter(|_| !hex.bytes().any(|byte| byte.is_ascii_uppercase()))
@@ -195,6 +195,8 @@ fn receipt_view(view: CodeConsentWaitView) -> Option<CodeWaitReceiptView> {
                 remembered_grant_ref: view.remembered,
                 decision_ref,
                 answered_at_ms,
+                standing_grant_ref: view.standing_grant_ref,
+                standing_receipt_ref: view.standing_receipt_ref,
             })
         }
         _ => None,
@@ -237,6 +239,7 @@ fn receipt_view(view: CodeConsentWaitView) -> Option<CodeWaitReceiptView> {
             effect_digest: bytes_to_hex_lower(&view.effect_digest),
         },
         state,
+        revision: view.revision,
         verb: view.verb,
         connector: view.connector,
         tool: view.tool,
@@ -252,10 +255,20 @@ fn receipt_view(view: CodeConsentWaitView) -> Option<CodeWaitReceiptView> {
         hold_reasons: view.hold_reasons,
         ask_ref: view.ask,
         allowed_answers: view.options.into_iter().map(wire_choice).collect(),
+        standing_offer: view.standing_offer,
         answer,
         settlement,
         consumption,
         already_answered: view.already_answered,
+        rebind_proposal: view
+            .rebind_proposal
+            .as_ref()
+            .map(super::rebind::prepared_view),
+        rebinds: view
+            .rebinds
+            .iter()
+            .map(|rebind| super::rebind::rebind_view(rebind, false))
+            .collect(),
     })
 }
 

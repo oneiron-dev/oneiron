@@ -7,7 +7,7 @@ use std::time::Duration;
 use futures_util::stream::{SplitSink, SplitStream};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::sync::client::SyncClient;
+use crate::sync::client::{IndexFetchFault, SyncClient};
 use crate::sync::loro_support::doc_version_vector;
 use crate::sync::queue::QueuedUpdate;
 use crate::sync::transport::TransportError;
@@ -143,6 +143,15 @@ impl ConvergenceSession {
         }
         self.rounds_started += 1;
         self.settle_unreadable(client);
+        self.vector_requests(client).map(Some)
+    }
+
+    /// SyncStep1 `VV_REQUEST` frames (carrying our VV) for every pending
+    /// window, outside the round budget: the caller keeps its own.
+    pub(super) fn vector_requests(
+        &self,
+        client: &mut SyncClient,
+    ) -> Result<Vec<Vec<u8>>, TransportError> {
         let mut frames = Vec::with_capacity(self.pending.len());
         for key in &self.pending {
             let window = client.ensure_window(key)?;
@@ -155,7 +164,7 @@ impl ConvergenceSession {
                 .into_result()?,
             );
         }
-        Ok(Some(frames))
+        Ok(frames)
     }
 
     /// Drops every pending window whose local doc is now VV-identical to a
@@ -222,6 +231,29 @@ impl SessionFault {
     /// This machine's own fault, told as `error`.
     pub(super) fn local(error: impl std::fmt::Display) -> Self {
         Self::Local(error.to_string())
+    }
+
+    /// The fault of applying a frame the far end sent, told as `message`, on
+    /// the side `error`'s type names (FIX 22153): [`TransportError::Storage`],
+    /// a fault of this machine's own store or a reply of its own that does
+    /// not encode (FIX 22179), is this machine's own; a frame that does not
+    /// decode or that the protocol refuses, and a refusal it carries, are the
+    /// far end's.
+    pub(super) fn of_frame(error: &TransportError, message: String) -> Self {
+        match error {
+            TransportError::Storage(_) => Self::Local(message),
+            _ => Self::Remote(message),
+        }
+    }
+
+    /// The fault of a residence index fetch, told as `message`, on the side
+    /// the fetch named ([`IndexFetchFault`], FIX 22153).
+    pub(super) fn of_index_fetch(fault: &IndexFetchFault, message: String) -> Self {
+        if fault.is_local() {
+            Self::Local(message)
+        } else {
+            Self::Remote(message)
+        }
     }
 
     /// Whether the fault is this machine's own.

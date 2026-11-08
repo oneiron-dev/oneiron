@@ -23,7 +23,10 @@ impl HostSelfDispatcher<'_> {
         if let RunCall::Bridge(effect) = call
             && let Some(code) = self.program_authority_refusal(effect.as_str())?
         {
-            return Ok(Err(AgentVerbRefusal { code }));
+            return Ok(Err(AgentVerbRefusal {
+                hook_notice: None,
+                code,
+            }));
         }
         let Some(door) = &self.agent_verbs else {
             return Ok(Ok(None));
@@ -95,6 +98,7 @@ impl HostSelfDispatcher<'_> {
         // read-world capture (FIX 6130), nor the skill bodies its producer
         // witnessed (FIX 3608).
         *self.hook_view.borrow_mut() = None;
+        *self.task_refusal_output.borrow_mut() = None;
         *self.skill_bodies.borrow_mut() = None;
         self.uncover_read_worlds();
         // A leased run's writes in this call are its own derivations (OF-540).
@@ -150,6 +154,7 @@ impl HostSelfDispatcher<'_> {
                     Err(refusal) => {
                         return Ok((
                             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                                hook_notice: None,
                                 effect: call.effect(),
                                 outcome: refusal.code,
                                 reason_codes: Vec::new(),

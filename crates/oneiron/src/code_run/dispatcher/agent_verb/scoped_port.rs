@@ -44,6 +44,7 @@ impl HostSelfDispatcher<'_> {
     ) -> Result<SelfDispatchOutcome> {
         let refused = |code: &str| {
             answered(Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: code.to_owned(),
             }))
         };
