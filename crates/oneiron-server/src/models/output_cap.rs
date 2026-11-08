@@ -5,8 +5,10 @@
 use serde_json::Value as JsonValue;
 
 /// Where a request may name its output limit: the two wire spellings and
-/// the engine's generic `max_output_tokens` param.
-const LIMIT_KEYS: [&str; 3] = ["max_tokens", "max_completion_tokens", "max_output_tokens"];
+/// the engine's generic `max_output_tokens` param. Prompt-cache warmth
+/// leaves each out of a prefix's identity (FIX 6492).
+pub(super) const LIMIT_KEYS: [&str; 3] =
+    ["max_tokens", "max_completion_tokens", "max_output_tokens"];
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct OutputCap {

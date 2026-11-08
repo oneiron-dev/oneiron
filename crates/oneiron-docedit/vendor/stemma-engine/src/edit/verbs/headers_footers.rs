@@ -38,7 +38,7 @@ use super::super::{
     EditError, MaterializationMode, ParagraphContent, apply_replace_paragraph_text,
     apply_segment_replace_paragraph, collect_anchor_inventory, extract_text_sections,
     is_identity_replacement, next_revision, normalize_expect_punctuation, paragraph_visible_text,
-    validate_block_is_editable, validate_preserved_inlines,
+    set_exact_replacement_marks, validate_block_is_editable, validate_preserved_inlines,
 };
 use crate::domain::{
     BlockNode, CanonDoc, FooterStory, HeaderFooterKind, HeaderStory, NodeId, ParagraphNode,
@@ -72,6 +72,7 @@ pub(crate) fn apply_edit(
     expect: &str,
     semantic_hash: Option<&str>,
     content: &ParagraphContent,
+    exact_marks: bool,
     revision: &RevisionInfo,
     rev_counter: &mut u32,
     mode: MaterializationMode,
@@ -156,15 +157,16 @@ pub(crate) fn apply_edit(
     let anchors = collect_anchor_inventory(para);
     validate_preserved_inlines(para, block_id, content, &anchors, step_index)?;
 
-    // Identity short-circuit: a no-op replace must not author empty changes.
-    if is_identity_replacement(para, content) {
+    // The inherited-mark identity check cannot prove exact marks over every
+    // source run. Exact requests materialize their full replacement even when
+    // the text is unchanged; ordinary edits keep their existing short-circuit.
+    if !exact_marks && is_identity_replacement(para, content) {
         return Ok(());
     }
 
-    // Lower via the body materializer. Mark-bearing content routes to the
-    // whole-paragraph segment replace; everything else to the word-level diff —
-    // identical dispatch to the body `ReplaceParagraphText` arm.
-    let needs_segment_replace = content.fragments.iter().any(|f| f.is_styled());
+    // Exact sets, including plain runs, must bypass the text-only word diff:
+    // its Equal tokens retain the source marks.
+    let needs_segment_replace = exact_marks || content.fragments.iter().any(|f| f.is_styled());
     let BlockNode::Paragraph(para_mut) = &mut blocks[idx].block else {
         unreachable!("checked paragraph above");
     };
@@ -173,6 +175,9 @@ pub(crate) fn apply_edit(
     // never itself part of a block insertion.
     if needs_segment_replace {
         apply_segment_replace_paragraph(para_mut, content, revision, None, rev_counter);
+        if exact_marks {
+            set_exact_replacement_marks(para_mut, content);
+        }
     } else {
         apply_replace_paragraph_text(para_mut, content, revision, None, rev_counter);
     }

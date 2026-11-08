@@ -71,6 +71,32 @@ impl SyncConnection {
         Ok(())
     }
 
+    /// A peer session's vector rounds after its queue replay (FIX 4748): the
+    /// same SyncStep1/SyncStep2 exchange as [`Self::run_convergence`], so
+    /// each side imports the other's writes, but it confirms nothing for the
+    /// home. The queue stays whole, and where the home session would
+    /// re-bootstrap after `MAX_CONVERGENCE_ROUNDS`, the peer session ends.
+    pub(super) async fn exchange_with_peer(
+        &self,
+        write: &mut WsSink,
+        read: &mut WsSource,
+        client: &mut SyncClient,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
+        queued: &[QueuedUpdate],
+    ) -> Result<(), String> {
+        let mut session = ConvergenceSession::from_queued(queued);
+        if self
+            .confirm_rounds(write, read, client, event_tx, &mut session, false)
+            .await?
+        {
+            return Ok(());
+        }
+        Err(format!(
+            "the peer did not come level in {MAX_CONVERGENCE_ROUNDS} rounds; the peer session \
+             ends and nothing re-bootstraps"
+        ))
+    }
+
     /// VV rounds over the session's pending windows: `true` once all of them
     /// confirm, `false` when the round budget runs out first.
     async fn confirm_rounds(
@@ -267,10 +293,9 @@ impl SyncConnection {
                                 .into_iter()
                                 .filter(|frame| !client.frame_withheld(frame))
                             {
-                                write
-                                    .send(Message::Binary(resp.into()))
+                                self.send_document_response(write, client, resp)
                                     .await
-                                    .map_err(|e| format!("Send response failed: {e}"))?;
+                                    .map_err(super::document_response::response_error)?;
                             }
                         }
                         Err(e) if strict => return Err(format!("Protocol error: {e}")),

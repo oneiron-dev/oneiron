@@ -139,6 +139,17 @@ impl IdentityTopologyOp {
         }
     }
 
+    /// Whether a parked op of this kind is ruled through the resolution door
+    /// ([`Vault::resolve_identity_proposal`](crate::Vault::resolve_identity_proposal)):
+    /// merge, split and facet (FIX 7814). A parked assert_distinct is ruled by
+    /// its own re-assertion instead. The one enumeration every reader of an
+    /// open proposal shares — participant-delete cancellation, its replicated
+    /// and folded checks, and the batch delete guard.
+    #[must_use]
+    pub(crate) const fn is_resolvable_when_parked(&self) -> bool {
+        matches!(self, Self::Merge(_) | Self::Split(_) | Self::Facet(_))
+    }
+
     /// Ids that are NOT participants but whose later materialization changes
     /// what a reconcile replay of this op records (ONE-1745).
     ///

@@ -473,9 +473,9 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
             proposal_ref,
             ..
         }) => json!({"kind": "agent_spawn", "state": "proposed_widen", "proposal": proposal_ref}),
-        SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::TargetErased) => {
-            json!({"kind": "agent_spawn", "state": "target_erased"})
-        }
+        SelfDispatchOutcome::AgentSpawn(
+            erased @ (SelfAgentSpawnResult::TargetErased | SelfAgentSpawnResult::AskerErased),
+        ) => json!({"kind": "agent_spawn", "state": erased.erasure()}),
         // The bare `ask` and `wait` answer their rows' outputs.
         SelfDispatchOutcome::TaskAsk(receipt) => json!({"output": receipt}),
         SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Pending { .. }) => return None,
@@ -500,8 +500,7 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
         SelfDispatchOutcome::ReportBlocked { receipt } => json!({"receipt": receipt.to_hex()}),
         SelfDispatchOutcome::InferenceDefaults(text) => json!({"json": text}),
         SelfDispatchOutcome::StoredReply(value) => json!({"output": value.output}),
-        SelfDispatchOutcome::Fold(text) => json!({"output": serde_json::from_str::<Value>(text)
-            .unwrap_or_else(|_| Value::String(text.clone()))}),
+        SelfDispatchOutcome::Fold(answer) => json!({"output": answer.guest_output()}),
         SelfDispatchOutcome::Context(value) => json!({"spec": value.spec}),
         SelfDispatchOutcome::WakePolicyWritten(policy) => json!({"policy": policy}),
         SelfDispatchOutcome::ReaderSpawn(receipt) => json!({"output": receipt}),
@@ -557,7 +556,12 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
         }),
         SelfCall::ConsultResult(request) => to_json(request)?,
         SelfCall::SkillsCall(skill) => json!({"skill": skill.skill.to_hex(), "args": skill.args}),
-        SelfCall::MemorySearch(search) => json!({"query": search.query, "limit": search.limit}),
+        SelfCall::MemorySearch(search) => match &search.filter {
+            Some(filter) => {
+                json!({"query": search.query, "limit": search.limit, "filter": to_json(filter)?})
+            }
+            None => json!({"query": search.query, "limit": search.limit}),
+        },
         SelfCall::MemoryWriteFixture(write) => claim_args(
             call,
             write.id,
@@ -775,6 +779,8 @@ struct BlockedArgs {
 struct SearchArgs {
     query: String,
     limit: usize,
+    #[serde(default)]
+    filter: Option<crate::memory::ReadFilterInput>,
 }
 
 #[derive(Deserialize)]
@@ -961,9 +967,15 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
             next.detail = args.detail;
             SelfCall::ReportBlocked(next)
         }
-        SelfCall::MemorySearch(_) => {
+        SelfCall::MemorySearch(search) => {
             let args: SearchArgs = decode(args)?;
-            SelfCall::MemorySearch(SelfMemorySearchCall::new(args.query, args.limit))
+            // A rewrite keeps the caller's own filter: it may narrow it,
+            // never drop it (FIX 3977).
+            SelfCall::MemorySearch(
+                SelfMemorySearchCall::new(args.query, args.limit)
+                    .with_read_filter(search.filter.clone())
+                    .with_read_filter(args.filter),
+            )
         }
         SelfCall::MemoryWriteFixture(write) => {
             let (id, candidate, occurred, learned_at) =
@@ -1037,7 +1049,7 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         }
         // A run repo row is rewritten only into its own row's input; the
         // binding is rebuilt at dispatch (FIX 6867).
-        SelfCall::Repo(call) => SelfCall::Repo(call.rewrite(args)?),
+        SelfCall::Repo(call) => SelfCall::Repo(Box::new(call.rewrite(args)?)),
         // A reader's source and finding, and a summary's members, are
         // resolved by the host before the hooks run: a rewrite would name a
         // result nothing resolved.
