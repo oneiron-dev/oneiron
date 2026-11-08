@@ -32,11 +32,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/linux.rs` | src | m | 3 fn · 14 crate-vis | — | Linux UAPI used on both sides of the seccomp listener |
 | `src/relay_protocol.rs` | src | s | 1 struct · 2 enum · 3 fn | RelayAnswer, RelayReply, RelayRequest | Bounded host/guest network transport over the no-NIC VM's private vsock |
 | `src/socket_lifetime.rs` | src | s | 3 crate-vis | — | The launcher's inventory of the socket inodes its guest still holds (FIX 5978) |
-| `src/supervisor.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | NativeFenceGuard | Host custody of the seccomp listener and all network transports |
+| `src/supervisor.rs` | src | m | 1 struct · 1 fn · 1 re-export · 6 crate-vis | NativeFenceGuard | Host custody of the seccomp listener and all network transports |
 | `src/supervisor/control.rs` | src | s | 5 crate-vis | — | The supervisor's copy of a stream socket's guest end (FIX 6788) |
+| `src/supervisor/ingress.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | LoopbackConnection | The trusted session holder's peer of a guest loopback connection |
 | `src/supervisor/lifetime.rs` | src | s | 4 crate-vis | — | A guest socket's host entry lives as long as the guest holds the socket (FIX 5978) |
-| `src/supervisor/loopback.rs` | src | m | 10 crate-vis | — | The guest's virtual loopback (FIX 6680): stream listeners a guest binds on its own loopback, inside its own… |
-| `src/supervisor/loopback/connect.rs` | src | s | 4 crate-vis | — | A connect to a full listener queue waits its turn (FIX 6785; the blocking half of FIX 8015) |
+| `src/supervisor/loopback.rs` | src | m | 11 crate-vis | — | The guest's virtual loopback (FIX 6680): stream listeners a guest binds on its own loopback, inside its own… |
+| `src/supervisor/loopback/connect.rs` | src | s | 5 crate-vis | — | A connect to a full listener queue waits its turn (FIX 6785; the blocking half of FIX 8015) |
 | `src/supervisor/loopback/options.rs` | src | s | 2 crate-vis | — | The socket options the fence keeps itself, since a socket's Unix stand-in cannot answer them: SO_ACCEPTCONN… |
 | `src/supervisor/relay_workers.rs` | src | s | 5 crate-vis | — | Bounded relay workers for a guest's datagrams (FIX 5979, FIX 6298) |
 | `src/supervisor/sockets.rs` | src | s | 1 crate-vis | — | A guest's `socket()` (FIX 5978): the guest gets one end of a fresh Unix pair, which the notification's ADDFD… |
