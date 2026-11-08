@@ -5018,9 +5018,9 @@ export type ArtifactVersionView = { version: number; content_hash: string; paren
 /** `oneiron::blob_artifact::family::ArtifactView` */
 export type ArtifactView = { artifact_id: EntityId; artifact: RecordRef; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] }
 /** `oneiron::anchored_annotation::wire::ArtifactUnitsRequest` */
-export type ArtifactUnitsRequest = { artifact_ref: string; version?: number | null }
+export type ArtifactUnitsRequest = { artifact_ref: string; version?: number | null; path?: string | null }
 /** `oneiron::anchored_annotation::wire::AnnotationLocator` */
-export type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string } | { format: "html"; part_id: string; char_start: number; char_end: number } | { format: "text"; char_start: number; char_end: number }
+export type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string } | { format: "html"; part_id: string; char_start: number; char_end: number } | { format: "text"; char_start: number; char_end: number } | { format: "code"; commit: string; path: string; file_hash: string; char_start: number; char_end: number }
 /** `oneiron::anchored_annotation::wire::ArtifactUnitView` */
 export type ArtifactUnitView = { locator: AnnotationLocator; quote?: string | null }
 /** `oneiron::anchored_annotation::wire::ArtifactUnitsView` */
