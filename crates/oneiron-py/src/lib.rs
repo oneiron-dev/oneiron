@@ -3753,6 +3753,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_sync_documents_copy_edit_review(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sync.documents.copy_edit.review")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.sync.documents.copy_edit.review", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sync_documents_copy_edit_settle(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sync.documents.copy_edit.settle")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.sync.documents.copy_edit.settle", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_sync_retained_work_wait_set(
         &self,
         py: Python<'_>,
