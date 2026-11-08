@@ -142,6 +142,14 @@ pub(in crate::calendar) fn live_prep_event(
     if header.entity_type != ENTITY_TYPE_EVENT || vault.is_deleted_shell(&event_ref)? {
         return Ok(None);
     }
+    // A pack calendar source's EVENT is its person's: no vault-owner card is
+    // built from its attendees or details (FIX 12559, MAIL-SHARE = A).
+    {
+        let txn = vault.store.env.read_txn()?;
+        if crate::source_audience::binding_in(vault, &txn, &event_ref)?.is_some() {
+            return Ok(None);
+        }
+    }
     let facts = live_event_facts(vault, &event_ref)?;
     if facts.cancelled {
         return Ok(None);

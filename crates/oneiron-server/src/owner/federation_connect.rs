@@ -9,13 +9,15 @@
 use oneiron::authority::{AuthorityKey, ConnectOffer, FederationPactGesture, ScopeOpeningKey};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::parse_hex;
-use oneiron::federation::{FederationDirectionScope, FederationPactScope};
+use oneiron::federation::{
+    ConnectMemberLeaveConsent, FederationDirectionScope, FederationPactScope,
+};
 use oneiron::policy_model::{
     ForeignWorldPrivacyDelivery, ForeignWorldPrivacyExportRequest, WorldPrivacyRequest,
 };
 pub(crate) use oneiron::task_verb::sdk::{
-    AcceptConnect, ConnectAccepted as Accepted, ConnectGrant, ConnectIdentity, MintConnectGrant,
-    Offer, OfferConnect,
+    AcceptConnect, ConnectAccepted as Accepted, ConnectDetachBinding, ConnectGrant,
+    ConnectIdentity, MintConnectGrant, Offer, OfferConnect,
 };
 use oneiron::task_verb::sdk::{
     AcceptRescopeConnect, ConnectDelivery, ConnectDisconnected, ConnectExportRequest,
@@ -92,8 +94,27 @@ pub(crate) fn identity(server: &SyncServer) -> OwnerResult<ConnectIdentity> {
     })
 }
 
+/// Parses an optional decimal shared-vault id exactly as `vault_id_decimal`
+/// spells it on the wire: ASCII digits only, then the `u64`. Zero is no vault.
+fn detach_vault_id(field: &str, value: &str) -> OwnerResult<u64> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(OwnerError::Invalid(format!(
+            "{field} must be a decimal shared vault id"
+        )));
+    }
+    let id: u64 = value
+        .parse()
+        .map_err(|_| OwnerError::Invalid(format!("{field} is past the u64 range")))?;
+    if id == 0 {
+        return Err(OwnerError::Invalid(format!("{field} must not be zero")));
+    }
+    Ok(id)
+}
+
 /// Mints the guest grant a Connect with the peer vault will govern. Inert
-/// until both owners' Connect makes its pact Active.
+/// until both owners' Connect makes its pact Active. With
+/// `detach_on_member_leave`, the owner's local release setting for one shared
+/// vault (FIX 12555).
 pub(crate) fn mint_grant(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
@@ -101,12 +122,21 @@ pub(crate) fn mint_grant(
 ) -> OwnerResult<ConnectGrant> {
     let vault = server.vault();
     let peer = hex_field("peer_vault", &request.peer_vault)?;
+    let detach_vault = request
+        .detach_on_member_leave
+        .as_deref()
+        .map(|text| detach_vault_id("detach_on_member_leave", text))
+        .transpose()?;
     let minted = vault
         .mint_connect_grant(
             owner,
             peer,
             request.authority_scope.clone(),
             request.expires_at,
+            detach_vault.map(|shared_vault_id| ConnectMemberLeaveConsent {
+                shared_vault_id,
+                member: owner,
+            }),
         )
         .map_err(|error| refused(vault, owner, error))?;
     Ok(ConnectGrant {
@@ -114,6 +144,12 @@ pub(crate) fn mint_grant(
         guest_actor: minted.guest_actor.to_hex(),
         resolved_scope: minted.resolved_scope,
         expires_at: minted.expires_at,
+        detach_on_member_leave: minted
+            .detach_on_member_leave
+            .map(|binding| ConnectDetachBinding {
+                shared_vault: binding.shared_vault_id.to_string(),
+                person: binding.person_ref.to_hex(),
+            }),
     })
 }
 

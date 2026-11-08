@@ -276,10 +276,20 @@ side_tables! {
     /// digest of its server and tool, then its admission times. Key: id16(attempt) + u64be(call
     /// seq).
     OUTBOUND_INTENT_UNAVAILABLE: VaultMeta b"outbound:intent_unavailable:v1:" Raw;
+    /// A Deferred send's remote task form question, parked for the owner (FIX 16029): its round's
+    /// generation, phase, question digest, owner Ask, field names, connector and tool, and the
+    /// request and answer sealed under the intent's own ConnectorResume subject; no plaintext.
+    /// The ledger's erase of the call, its actor or its recipient forgets it. Key: hash32 (intent
+    /// id).
+    OUTBOUND_REMOTE_TASK_INPUT: VaultMeta b"outbound:remote_task_input:v1:" Named;
     /// A Deferred send's remote task poll (FIX 11023): its next poll time, poll count and last
     /// status word; the session and credential choice stay in the settlement's handle. Key:
     /// hash32 (intent id).
     OUTBOUND_REMOTE_TASK_POLL: VaultMeta b"outbound:remote_task_poll:v1:" Named;
+    /// An MCP session a remote task's polls kept open, owed its end once its handle went before
+    /// the session ended (an erase; FIX 16028): where it is and the credential that opens it.
+    /// Key: hash32 (intent id).
+    OUTBOUND_REMOTE_TASK_SESSION_END: VaultMeta b"outbound:remote_task_session_end:v1:" Named;
     /// Deterministic receipt id -> intent id. Key: id16.
     OUTBOUND_SUPPRESSION_INDEX: VaultMeta b"outbound:suppression_index:v1:" Raw;
     /// Device-local receipt body, `rmp_serde::to_vec_named`. Key: hash32 (intent id).
@@ -708,10 +718,10 @@ side_tables! {
     CRITIC_REVIEW_CLAIM_TRUST: VaultMeta b"review:claim:v1:" Raw;
     /// Cached review verdict/triage/artifacts for a review request, keyed by a hash of the request's
     /// identity tuple. Key: hash32.
-    CRITIC_REVIEW_RESULT: VaultMeta b"review:result:v1:" Named Authored [accepts: crate::critic::review::critic_review_result_accepts_masked]
+    CRITIC_REVIEW_RESULT: VaultMeta b"review:result:v2:" Named Authored [accepts: crate::critic::review::critic_review_result_accepts_masked]
         => crate::learning::erase_review_scope_in_txn;
     /// Index from a review verdict claim id back to its CRITIC_REVIEW_RESULT row key. Key: id16.
-    CRITIC_REVIEW_RESULT_ID: VaultMeta b"review:result_id:v1:" Raw;
+    CRITIC_REVIEW_RESULT_ID: VaultMeta b"review:result_id:v2:" Raw;
     /// Claim-before-speaking receipt naming which actor may respond to one addressed turn. Key: id16
     /// (turn id).
     ROOMS_CLAIM: VaultMeta b"rooms.claim.v1/" LegacyJson;

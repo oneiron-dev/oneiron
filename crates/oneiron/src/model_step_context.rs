@@ -1,5 +1,7 @@
 //! Caller-owned model-step context and terminal outcomes.
 
+pub use crate::model_step_effect::StepEffectBinding;
+
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline};
@@ -38,6 +40,8 @@ impl DurableStepContext<'_> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StepOutcome {
     Finished {
+        /// The durable step that produced this response, not execution authority.
+        binding: StepEffectBinding,
         response: LlmResponse,
         memoized: bool,
         /// Budget legibility (ONE-1305): Some inside wake passes (when

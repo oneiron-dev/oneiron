@@ -119,9 +119,20 @@ pub(super) fn fact_within(
         return Ok(false);
     };
     let txn = vault.store.env.read_txn()?;
+    fact_within_in_txn(vault, &txn, wanted, entity, claim)
+}
+
+/// Judges a parsed fact scope in the caller's existing snapshot.
+pub(super) fn fact_within_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    wanted: HookScope,
+    entity: EntityId,
+    claim: Option<&ClaimBody>,
+) -> Result<bool> {
     match wanted {
         HookScope::World(world) => {
-            let Some(raw) = stored_raw(vault, &txn, entity)? else {
+            let Some(raw) = stored_raw(vault, txn, entity)? else {
                 return Ok(false);
             };
             let header =
@@ -130,7 +141,7 @@ pub(super) fn fact_within(
             // Base reality reads as the base world, as a read lane places it.
             Ok(crate::federation::record_scope::record_world_in(
                 &vault.store,
-                &txn,
+                txn,
                 entity,
                 header.entity_type,
                 data,
@@ -138,13 +149,13 @@ pub(super) fn fact_within(
             .is_some_and(|own| own.unwrap_or_else(crate::claim::base_world_id) == world))
         }
         HookScope::Facet(facet) => {
-            let Some(raw) = stored_raw(vault, &txn, entity)? else {
+            let Some(raw) = stored_raw(vault, txn, entity)? else {
                 return Ok(false);
             };
             crate::federation::facet_read::facets_admit_in(
                 vault,
                 &vault.store,
-                &txn,
+                txn,
                 entity,
                 &raw,
                 &ScopeAxis::Some(BTreeSet::from([ScopeId(facet)])),
@@ -156,17 +167,17 @@ pub(super) fn fact_within(
                 .filter(|own| *own != crate::claim::default_project_id());
             let own = match stamped {
                 Some(own) => Some(own),
-                None => match record_room(vault, &txn, entity)? {
-                    Some(room) => room_project(vault, &txn, room)?,
+                None => match record_room(vault, txn, entity)? {
+                    Some(room) => room_project(vault, txn, room)?,
                     None => None,
                 },
             };
             match own {
-                Some(own) => project_within(vault, &txn, own, project),
+                Some(own) => project_within(vault, txn, own, project),
                 None => Ok(false),
             }
         }
-        HookScope::Room(room) => Ok(record_room(vault, &txn, entity)? == Some(room)),
+        HookScope::Room(room) => Ok(record_room(vault, txn, entity)? == Some(room)),
     }
 }
 
