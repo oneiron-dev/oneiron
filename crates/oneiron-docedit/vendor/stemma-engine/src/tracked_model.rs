@@ -9727,8 +9727,11 @@ struct MoveDestinationDeletionPlan {
 
 /// A deletion nested in moveTo strikes the destination CLONE, not the untouched
 /// source copy. If the deletion is rejected, that restored text is still moveTo
-/// content; if the move is rejected, the destination-only deletion cascades
-/// away with the clone. Represent both transitions before the ordinary status
+/// content; if the move is rejected, the destination-only deletion moves back
+/// onto the restored source, still pending, so the editor's deletion is kept
+/// for its own answer (tests/suite/spec_mixed_move_resolution.rs
+/// rejecting_move_maps_its_destination_deletion_back_to_source). Represent both
+/// transitions before the ordinary status
 /// projector sees the inner deletion in isolation.
 fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinationDeletionPlan> {
     fn is_move_half(block: &TrackedBlock, identity: u32, inserted: bool) -> bool {
@@ -9751,6 +9754,7 @@ fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinati
     }
 
     let mut plans = Vec::new();
+    let final_paragraph = document_final_paragraph_index(blocks);
     for (destination_index, tracked) in blocks.iter().enumerate() {
         if tracked.move_id.is_none() {
             continue;
@@ -9758,8 +9762,15 @@ fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinati
         let BlockNode::Paragraph(paragraph) = &tracked.block else {
             continue;
         };
-        let Some(TrackingStatus::Inserted(move_revision)) = &paragraph.para_mark_status else {
-            continue;
+        let (move_revision, requires_exact_source) = match &paragraph.para_mark_status {
+            Some(TrackingStatus::Inserted(revision)) => (revision, false),
+            Some(TrackingStatus::Normal) if final_paragraph == Some(destination_index) => {
+                let TrackingStatus::Inserted(revision) = &tracked.status else {
+                    continue;
+                };
+                (revision, true)
+            }
+            _ => continue,
         };
         let mut original_text = String::new();
         let mut cursor = 0usize;
@@ -9825,6 +9836,10 @@ fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinati
             // These offsets address the full source, not a filtered projection.
             // Keep the existing unique-text mapping for nonaligned clones.
             if original_text != source_text {
+                // Suppressed final marks only use full-source coordinates.
+                if requires_exact_source {
+                    continue;
+                }
                 for deletion in &mut deletions {
                     deletion.source_range = None;
                 }
