@@ -88,6 +88,7 @@ pub(super) mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
 pub(super) mod model_setting_routes;
+mod oauth_authorization_routes;
 #[cfg(target_os = "linux")]
 pub(super) mod outbox_diverged_routes;
 pub(super) mod owner_key_enrollment_routes;
@@ -99,6 +100,7 @@ pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;
 pub(super) mod recovery_kit_routes;
 pub(super) mod recovery_kit_target_routes;
+mod remote_task_input_routes;
 mod removal_archive_routes;
 pub(super) mod room_thread_setting_routes;
 pub(super) mod root_routes;
@@ -178,6 +180,7 @@ fn owner_tables() -> OwnerTable {
         support_grant_routes::owner_table(),
         support_repair_routes::owner_table(),
         agent_grant_routes::owner_table(),
+        oauth_authorization_routes::owner_table(),
         uncertain_send_routes::owner_table(),
         proactivity_routes::owner_table(),
         weave_routes::owner_table(),
@@ -188,6 +191,7 @@ fn owner_tables() -> OwnerTable {
         federation_connect_routes::owner_table(),
         feedback_triage_routes::owner_table(),
         decision_ask_routes::owner_table(),
+        remote_task_input_routes::owner_table(),
         desktop_takeover_routes::owner_table(),
         browser_takeover_routes::owner_table(),
         peer_confidence_routes::owner_table(),

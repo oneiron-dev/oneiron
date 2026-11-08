@@ -5,7 +5,7 @@ use std::time::Duration;
 use oneiron::Vault;
 use oneiron::outbound::{
     EngineSendId, OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
-    SentLookup, SentLookupTarget, ServedChannelSink,
+    OutboundIntent, SentLookup, SentLookupTarget, ServedChannelSink,
 };
 use reqwest::header::HeaderValue;
 
@@ -88,6 +88,22 @@ impl<'a> CalendarChannelSink<'a> {
             ordinary: ServedChannelSink::with_client(vault, clients.ordinary.clone())
                 .with_line_push_allowance(line_push_allowance),
             client: clients.calendar.clone(),
+        }
+    }
+
+    /// Whether this machine holds what this sink sends `intent` with (FIX
+    /// 4747 slice 4), the send lease reaper's read-only check: an invite
+    /// needs the iMIP submission transport `invite` reads before its send;
+    /// every other send is the served sink's to judge
+    /// ([`ServedChannelSink::holds_channel`]).
+    pub(crate) fn holds_channel(vault: &Vault, intent: &OutboundIntent) -> bool {
+        if intent.channel == "calendar" && intent.verb == "calendar.invite" {
+            matches!(
+                oneiron::calendar::connectors::door::imip_transport(vault),
+                Ok(Some(_))
+            )
+        } else {
+            ServedChannelSink::holds_channel(vault, intent)
         }
     }
 

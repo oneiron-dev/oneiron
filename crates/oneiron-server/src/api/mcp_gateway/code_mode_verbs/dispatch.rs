@@ -80,6 +80,7 @@ impl McpCodeModeVerbs {
     /// its caller sits: what a run's search and a session read read under.
     pub(super) fn credential_lane(&self) -> Result<ScopedReadActorKey, AgentVerbRefusal> {
         let unauthenticated = || AgentVerbRefusal {
+            hook_notice: None,
             code: "mcp_auth_required".to_owned(),
         };
         // A managed vault's attested owner carries no slip: he reads with his
@@ -94,6 +95,7 @@ impl McpCodeModeVerbs {
             return crate::api::scoped_read_for_core_auth(&self.server.vault, auth)
                 .map(|read| read.actor_key().clone())
                 .map_err(|error| AgentVerbRefusal {
+                    hook_notice: None,
                     code: match error.code() {
                         crate::error::ErrorCode::Forbidden
                         | crate::error::ErrorCode::HostActionRequiresSupportGrant
@@ -115,6 +117,7 @@ impl McpCodeModeVerbs {
             .vault
             .credential_read_key(proof)
             .map_err(|error| AgentVerbRefusal {
+                hook_notice: None,
                 code: match error.kind() {
                     oneiron::ErrorKind::HostActionRequiresSupportGrant => {
                         super::tasks_response::MCP_HOST_ACTION_REFUSED
@@ -182,18 +185,18 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             ));
         let Ok((executed, kept)) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: "engine_error".to_owned(),
             }));
         };
-        let (output, listed) = match executed {
-            Ok(executed) => executed,
+        let answer = match executed {
+            Ok(answer) => answer,
             Err(error) => return refused(error),
         };
         self.served
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .extend(listed.iter().flatten().copied());
-        let answer = AgentVerbAnswer::new(output, listed);
+            .extend(answer.rows.iter().flatten().copied());
         *self
             .answer_kept
             .lock()
@@ -216,6 +219,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         self.answer_recorded();
         let Some(auth) = self.actor.auth.clone() else {
             return Ok(Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: "mcp_auth_required".to_owned(),
             }));
         };
@@ -237,6 +241,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             let _ = sender.send(answered);
         });
         let refusal = |code: &str| AgentVerbRefusal {
+            hook_notice: None,
             code: code.to_owned(),
         };
         Ok(match receiver.recv() {
@@ -260,6 +265,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
         let refused = |error: McpGatewayError| AgentVerbRefusal {
+            hook_notice: None,
             code: error.kind.to_owned(),
         };
         if let RunCall::Bridge(effect) = call
@@ -297,6 +303,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
         mcp_run_speech_gate(&self.server, &self.actor, destination).map_err(|error| {
             AgentVerbRefusal {
+                hook_notice: None,
                 code: error.kind.to_owned(),
             }
         })?;
@@ -318,6 +325,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         mcp_admit_host_verb(&self.actor, verb)
             .and_then(|()| mcp_host_verb_gate(&self.server, &self.actor, verb))
             .map_err(|error| AgentVerbRefusal {
+                hook_notice: None,
                 code: error.kind.to_owned(),
             })?;
         self.credential_lane()
@@ -349,6 +357,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         };
         crate::device_local::withholds_retained(&self.server.vault, destination, rows, &[]).map_err(
             |_| AgentVerbRefusal {
+                hook_notice: None,
                 code: "engine_error".to_owned(),
             },
         )
@@ -381,6 +390,9 @@ pub(super) fn refused<T>(error: McpGatewayError) -> oneiron::Result<Result<T, Ag
         // (FIX 3194).
         (None, Some(retry_after)) => Err(oneiron::Error::ProviderUnavailable { retry_after }),
         (None, None) => Ok(Err(AgentVerbRefusal {
+            hook_notice: error.hook_notice.as_ref().map(|_| {
+                serde_json::json!(oneiron::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY)
+            }),
             code: error.kind.to_owned(),
         })),
     }
@@ -392,7 +404,7 @@ pub(super) async fn execute_code_mode_verb(
     verb: &str,
     input: Value,
     run: McpCodeRun,
-) -> Result<(Value, Option<Vec<oneiron::EntityId>>), McpGatewayError> {
+) -> Result<AgentVerbAnswer, McpGatewayError> {
     run_code_mode_verb(server, actor, verb, input, run, mcp_admit_scoped_verb).await
 }
 
@@ -408,7 +420,7 @@ pub(super) async fn execute_step_verdict(
     // Only the verdict is read; its rows are not.
     run_code_mode_verb(server, actor, "ai.verdict", input, run, mcp_admit_step_verb)
         .await
-        .map(|(output, rows)| (output, rows.unwrap_or_default()))
+        .map(|answer| (answer.output, answer.rows.unwrap_or_default()))
 }
 
 /// How one verb call's tool binding and scope are admitted.
@@ -426,7 +438,7 @@ pub(super) async fn run_code_mode_verb(
     input: Value,
     run: McpCodeRun,
     admit: VerbAdmission,
-) -> Result<(Value, Option<Vec<oneiron::EntityId>>), McpGatewayError> {
+) -> Result<AgentVerbAnswer, McpGatewayError> {
     let surface = try_registered_surface(McpSurfaceMode::ToolFirst)
         .map_err(super::admission::mcp_surface_unavailable)?;
     let Some(McpEndpointTool::Verb(tool)) = surface.resolve(verb) else {
@@ -469,13 +481,29 @@ pub(super) async fn run_code_mode_verb(
         ),
     )
     .await;
-    let (output, ..) = match executed {
+    let (output, _, _, _, hook_notice) = match executed {
         // A retry of a call its drain already ran gets what that call
-        // returned, never a stop (FIX 21054). Nothing runs again.
+        // returned, never a stop (FIX 21054). Nothing runs again. Its saved
+        // chain's actual notice rides beside it as the content-free summary
+        // (FIX 12517).
         Err(McpGatewayError {
             hook: Some(stop), ..
         }) if matches!(*stop, VerbHookStop::Completed { .. }) => {
-            return completed_answer(server, actor, *stop, &mut served);
+            let notice = matches!(
+                *stop,
+                VerbHookStop::Completed {
+                    hook_notice: Some(true),
+                    ..
+                }
+            );
+            let (output, rows) = completed_answer(server, actor, *stop, &mut served)?;
+            let mut answer = AgentVerbAnswer::new(output, rows);
+            if notice {
+                answer.hook_notice = Some(serde_json::json!(
+                    oneiron::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY
+                ));
+            }
+            return Ok(answer);
         }
         executed => executed?,
     };
@@ -487,7 +515,11 @@ pub(super) async fn run_code_mode_verb(
     }
     // An act whose rows are unknown answers off this device only that it
     // ran (FIX 5988); a read releases as before.
-    super::served_rows::unknown_act_answer(tool.name, actor, output, served)
+    let (output, rows) = super::served_rows::unknown_act_answer(tool.name, actor, output, served)?;
+    let mut answer = AgentVerbAnswer::new(output, rows);
+    answer.hook_notice =
+        super::super::tasks_response::mcp_hook_notice(server, actor, hook_notice, &mut answer.rows);
+    Ok(answer)
 }
 
 /// The answer a guest call gets when its verb hook `stop` is Completed
@@ -505,14 +537,20 @@ fn completed_answer(
     let rows = super::served_rows::stop_release_rows(server, actor, &stop, served)
         .map(<[oneiron::EntityId]>::to_vec);
     // The drain read that answer, not this guest call (FIX 21614).
-    if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows.as_deref()) {
+    if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows.as_deref(), false) {
         let ran = oneiron::task_verb::sdk::ActAnswer::<()>::details_on_device();
         return Ok((serde_json::json!(ran), Some(Vec::new())));
     }
     match stop {
         VerbHookStop::Completed { result, .. } => {
-            let released =
-                super::super::mcp_release_listed(server, actor, rows.as_deref(), false, result)?;
+            let released = super::super::mcp_release_listed(
+                server,
+                actor,
+                rows.as_deref(),
+                false,
+                result,
+                false,
+            )?;
             Ok((released, rows))
         }
         stop => Err(super::tasks_response::mcp_hook_stop(stop)),

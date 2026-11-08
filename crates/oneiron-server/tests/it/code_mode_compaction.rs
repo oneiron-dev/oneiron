@@ -207,7 +207,11 @@ fn wait_healthy(origin: &str, server: &mut Running, log: &Path) -> Value {
         if let Ok(response) = reqwest::blocking::get(format!("{origin}/api/health"))
             && response.status().is_success()
         {
-            return response.json().unwrap();
+            let health: Value = response.json().unwrap();
+            // A server still starting answers `"starting"` (FIX 22117).
+            if health["status"] == "ok" {
+                return health;
+            }
         }
         assert!(
             Instant::now() < deadline,

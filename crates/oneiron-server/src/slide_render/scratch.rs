@@ -111,12 +111,13 @@ impl Scratch {
         self.path.clone()
     }
 
+    /// Only the standard descriptors reach the renderer's process, as the recalc runner's do (`oneiron_spawn`).
     pub(super) fn command(&self, program: &Path) -> io::Result<Command> {
         #[cfg(target_os = "linux")]
         if let Some(directory) = &self._directory {
             return bounded::command(program, directory);
         }
-        Ok(Command::new(program))
+        Ok(oneiron_spawn::command(program))
     }
 }
 

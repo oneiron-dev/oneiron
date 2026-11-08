@@ -518,8 +518,16 @@ impl RecordingJsHost<'_, '_> {
                 }
             }
         }
+        // A resumed pending step's calls answer from the rows its program
+        // already made, before a position is taken (FIX 7703).
+        if let Some(answered) = self.answer_from_pending_prefix(&call) {
+            return Ok(answered);
+        }
         let seq = self.next_seq;
         self.next_seq += 1;
+        if self.callable_depth == 0 {
+            self.guest_calls.push(seq);
+        }
         let started_at_ms = self.determinism.frozen_unix_ms.saturating_add(seq);
         // ONE-1686: the speech family's order and timestamp are the BRIDGE's,
         // stamped here — on the one ordering path every `self.*` call takes —
@@ -687,6 +695,7 @@ pub(super) fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<Sel
             outcome,
             reason_codes,
         }) => Some(SelfDispatchOutcome::Denied(SelfDeniedResult {
+            hook_notice: None,
             effect: call.effect(),
             outcome: (*outcome).to_owned(),
             reason_codes: reason_codes

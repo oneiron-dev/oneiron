@@ -313,6 +313,7 @@ impl Vault {
             },
             grants: Vec::new(),
             revoked_slips: Vec::new(),
+            detach: None,
             notify: BTreeSet::from([member]),
         })
     }
@@ -537,6 +538,7 @@ impl Vault {
             },
             grants,
             revoked_slips: Vec::new(),
+            detach: None,
             notify: BTreeSet::from([inviter]),
         })
     }
@@ -564,6 +566,7 @@ impl Vault {
                 },
                 grants: Vec::new(),
                 revoked_slips: Vec::new(),
+                detach: None,
                 notify: BTreeSet::from([inviter]),
             })
         })
@@ -600,6 +603,7 @@ impl Vault {
                     },
                     grants: Vec::new(),
                     revoked_slips: Vec::new(),
+                    detach: None,
                     notify: BTreeSet::from([invitee]),
                 })
             },

@@ -130,4 +130,32 @@ pub struct CodeProposalSettlementView {
     pub parents: Vec<EntityId>,
     pub mutation_seq: Option<u64>,
     pub resolution: Option<EntityId>,
+    /// Its `repo.proposal_admission` receipt (FIX 4338); absent for a
+    /// proposal stored before submission receipts were kept.
+    pub admission_receipt: Option<EntityId>,
+    /// The `repo.proposal_attempt_completion` receipt of each execution
+    /// attempt, in mutation seq order: applied or failed for that attempt
+    /// alone, never queue green.
+    pub attempt_receipts: Vec<EntityId>,
+    /// The failed proposal this one replaces and its link (FIX 4364).
+    pub repair_of: Option<CodeProposalReplacementView>,
+    /// The replacement submitted for this proposal, once it failed, and
+    /// its link. Read the replacement's own status and receipts apart: the
+    /// link never says this proposal was repaired or green.
+    pub replaced_by: Option<CodeProposalReplacementView>,
+}
+
+/// One stored repair link (FIX 4364): a failed proposal and the fresh
+/// proposal submitted to replace it, on its own retained base.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CodeProposalReplacementView {
+    /// The `repo.proposal_replacement` CLAIM.
+    pub receipt: EntityId,
+    /// The failed proposal.
+    pub source: EntityId,
+    /// The replacement proposal.
+    pub replacement: EntityId,
+    /// The replacement's retained pre-action fork hash: 64 lower-hex
+    /// BLAKE3, not a git commit.
+    pub replacement_base: String,
 }

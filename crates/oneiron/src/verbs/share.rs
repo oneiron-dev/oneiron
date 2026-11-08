@@ -174,6 +174,53 @@ pub fn create_share_as_caller(
     }
 }
 
+/// A link for one admitted share's recipient. The recipient's class and
+/// credential lifetime are explicit; redemption fixes only its connection key.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShareViewLinkRequest {
+    pub share_ref: String,
+    pub actor_class: String,
+    pub slip_lifetime_secs: u64,
+}
+
+/// Issues through this device's existing host-key custody on embedded handles.
+pub fn issue_share_view_link_as_caller(
+    memory: &Memory<'_>,
+    input: ShareViewLinkRequest,
+) -> MemoryResult<crate::authority::PairingLink> {
+    let issuer = memory.vault().load_host_slip_issuer()?;
+    issue_share_view_link_with_issuer(memory, &issuer, input)
+}
+
+/// The same door with the serving host's already resolved issuer.
+pub fn issue_share_view_link_with_issuer(
+    memory: &Memory<'_>,
+    issuer: &crate::authority::HostSlipIssuer,
+    input: ShareViewLinkRequest,
+) -> MemoryResult<crate::authority::PairingLink> {
+    let share = share_ref(&input.share_ref)?;
+    let class = match input.actor_class.as_str() {
+        "human" => crate::edge::EdgeActorClass::Human,
+        "agent" => crate::edge::EdgeActorClass::Agent,
+        "system" => crate::edge::EdgeActorClass::System,
+        _ => {
+            return Err(MemoryError::bad_request(
+                "actor_class must be human, agent or system",
+            ));
+        }
+    };
+    let link = memory.vault().issue_share_view_link(
+        issuer,
+        &memory.write_actor(),
+        share,
+        class,
+        input.slip_lifetime_secs,
+    )?;
+    memory.produced_from([share]);
+    Ok(link)
+}
+
 /// `vault.shares.revoke`'s input: the share to stop.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -292,7 +339,7 @@ fn follow_shared_citation(
     claim: EntityId,
     narrowing: Option<&ShareViewerScope>,
 ) -> MemoryResult<ScopedReadResult<Option<SharedBriefCitation>>> {
-    let read = memory.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
+    let read = memory.shared_brief_read_lane(share, "vault.notes.follow_citation")?;
     let frame = viewer_frame(&read)?;
     // The rows the citation is read from, listed by the reads that chose them.
     let mut listed = Vec::new();
@@ -351,7 +398,7 @@ fn render_shared_brief(
     share_id: &EntityId,
     narrowing: Option<&ShareViewerScope>,
 ) -> MemoryResult<ScopedReadResult<Option<SharedBriefView>>> {
-    let read = memory.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
+    let read = memory.shared_brief_read_lane(*share_id, "vault.shares.view")?;
     let frame = viewer_frame(&read)?;
     // The rows the view is read from, listed by the reads that chose them.
     let mut listed = Vec::new();

@@ -114,6 +114,136 @@ The same pack (FIX 13299) advances the text-overlay cursor over the
 existing hard-break and opaque-inline placeholders, matching `extract_inlines_text`.
 The non-text inline nodes themselves are preserved unchanged.
 
+The empty header/footer expect change (2026-11-05, FIX 594) touches
+`src/edit_v4.rs` only. The `edit_header` / `edit_footer` schema arms admit a
+blank `expect` when the existing `semantic_hash` is supplied. Native `expect`
+matching is substring-based, so an unguarded blank retains its prior refusal;
+the projection sends the actual story paragraph's current guard. All previously
+admitted nonblank expectations, required string fields, part-name checks and
+apply-time guard/expect checks stay unchanged. No wire shape, error code or
+default changes.
+
+The header/footer exact-run change (2026-11-05, FIX 14300 / FIX 594) touches
+`src/edit_v4.rs`, `src/edit/mod.rs` and `src/edit/verbs/headers_footers.rs`.
+The opt-in `exact_marks` edit mode treats replacement text's six marks as a set,
+including empty sets and same-text replacements. The shared segment materializer
+is unchanged: after it builds the tracked replacement, only its new Inserted
+text nodes receive exact bold/italic/underline/subscript/superscript/strike and
+explicit authored OFF values for absent marks. Deleted source runs, opaque
+anchors, unrelated run properties and revision metadata remain as built. Direct
+mode resolves the same tracked replacement after applying these marks. Ordinary
+header/footer edits without the mode retain their current inheritance, identity
+checks and word-diff dispatch. No new serializer, format reader, version constant,
+refusal, default or cap is added.
+
+The complex-script exact-run correction (2026-11-05, FIX 14300 R2) touches
+`src/edit/verbs/headers_footers.rs` only. The same new Inserted text nodes now
+set `bold_cs` / `italic_cs` and their authored flags to the requested bold /
+italic values, with explicit OFF for absence. Word uses these complex-script
+slots instead of `b` / `i` when `cs` or `rtl` is enabled. Those script selectors,
+fonts and deleted source history remain unchanged; the shared materializer and
+all ordinary edits remain unchanged.
+
+The exact-run parser registration correction (2026-11-05, FIX 14300) adds
+`exact_marks` to both header/footer entries in `src/edit_v4.rs::OP_FIELDS`.
+`deserialize_ops` checks that allowlist before deserializing the typed operation,
+so the setting must be registered there as well as on the enum. Other fields,
+tags, unknown-field checks and schema validation stay unchanged.
+
+The marked note-runs change (2026-11-05, FIX 594) adds the native
+`edit_note_runs` op (`src/edit_v4.rs`, `src/edit_v4/catalog.rs`,
+`src/edit/mod.rs`, `src/edit/verbs/footnotes.rs`) and opens the wrapper
+`SetStoryRuns` footnote/endnote arms (`docx_body/projection.rs`). The new op
+edits one paragraph within the actual footnote/endnote `w:id` story as a
+whole-paragraph tracked redline with the exact six marks, paragraph-scoped
+across multi-paragraph notes. It reuses the shared segment builder, the exact
+post-pass (moved whole from `headers_footers.rs` to a parent-private helper
+with no visibility change), the header/footer guard/expect/opaque law, and the
+shared structural-marker offset law for bookmarks, comment ranges, and foreign
+markers; the auto-number glyph stays a leading Normal run. Existing `EditNote`
+plaintext behavior is byte-unchanged. No contract schema bump, no new error,
+format, default, cap, or Loro change.
+
+The marked comment-runs change (2026-11-05, FIX 594) adds the native
+`edit_comment_runs` op (`src/edit_v4.rs`, `src/edit_v4/catalog.rs`,
+`src/edit/mod.rs`, `src/edit/verbs/comments.rs`) and opens the wrapper
+`SetStoryText`/`SetStoryRuns` comment arms (`docx_body/projection.rs`,
+`docx_body.rs`). The new op edits one paragraph within the actual comment `w:id`
+story with the exact six marks, paragraph-scoped across multi-paragraph comments,
+one op serving both plain-text and marked content. It reuses the shared segment
+builder, the parent-private exact-marks post-pass, the header/footer
+guard/expect/opaque law, and the shared structural-marker offset law (opaque
+`CommentReference` atoms excluded, already preserved); comments carry no
+auto-number glyph. The fresh tracked pair settles to Normal annotation text in
+both outer modes via a text-only settle that flips the fresh `Inserted` segment
+and drops the `Deleted` tombstone, leaving paragraph formatting/change metadata,
+`para_id`, author/date, threading/resolve sidecar, all other blocks, and body
+anchors verbatim; no `w:ins`/`w:del` is authored into comments.xml, and the
+edited comment's full content hash is recomputed. An empty replacement retains
+its Normal structural markers while removing the old text. Existing
+create/reply/delete behavior, the shared builder, and the exact-marks helper are
+byte-unchanged. No contract schema bump, no new error, format, default, cap, or
+Loro change. No Word-runtime comparison is claimed.
+
+The shared-Loro story paragraph change (2026-11-05, FIX 594) adds the engine-side
+story slice (`crates/oneiron/src/office_body/docx/stories.rs`, schema 2): scoped
+story paragraph import, three story ops, typed read, fork review entries and
+export of every changed paragraph as its full `SetStoryRuns`, reusing the native
+story verbs above with no native change. It works once this chain integrates;
+story structure/table ops and story ask pinning remain unbuilt.
+
+The story table-cell change (2026-11-05, FIX 594) adds the native
+`edit_story_cell` op (`src/edit_v4.rs`, `src/edit_v4/catalog.rs`,
+`src/edit/mod.rs`, new `src/edit/verbs/story_cells.rs`) and opens the wrapper
+`DocxChange::SetStoryCell` arm (`docx_body.rs`, `docx_body/projection.rs`). One
+strict wire op with a tagged scope object (the same shape as `DocxStoryScope`)
+serves all five story families; the existing body cell core is factored onto
+`&mut BlockNode` unchanged and reused, so the logical-grid, vMerge, effective
+structural status with same-transaction own-insert, opaque, no-op, revision and
+Direct law is identical for body and story cells. The op rewrites the cell's
+FIRST paragraph only (the body law, `apply_set_cell_text_in_place`); any later
+cell paragraphs are untouched, and a shared import caller must not treat the
+read view's joined multi-paragraph cell text as that first paragraph. Header,
+footer, and note cells land tracked; comment cells land as Normal annotation
+text in both outer modes via a text-only settle of the target paragraph only,
+with the note/comment whole-story hash recomputed. Story structure
+insert/delete stays unbuilt; no whole-594 claim. The native contract moves
+from 4 to 5 because `set_story_cell` extends the typed `docx.project` arguments;
+it serves only the current version, with no old reader or migration. Nested
+transaction and Loro versions stay unchanged. No new error, default, cap or
+Word-runtime comparison is claimed.
+
+The story cell-paragraph extension (2026-11-05, FIX 594) adds required ordered
+`DocxCell.paragraphs` from the canonical cell blocks: ids, guards, accepted inline
+text and exact target locks. It does not split the joined redline read or reuse
+lossy render segments. `edit_story_cell` and `SetStoryCell` accept an optional
+exact paragraph id inside the selected cell; absent retains FIRST-paragraph
+intent, including every body cell call. Scope and transaction-base table guards
+are unchanged. The common cell core narrows Direct settlement to the edited
+paragraph, so sibling history stays pending, and distinguishes a joined redline
+identity from a genuine edit of the accepted text. It does not change the shared
+materializer. The private cell projection helpers move whole into
+`docx_body/projection/story_cells.rs` before the parent crosses 800 lines.
+
+The same still-pending schema-2 Loro body now imports story tables as independent
+plain cell paragraphs, with scoped set/splice operations, typed reads, masked
+public views, table-level fork review and exact-selector native export. No rich
+cell marks, nested-table structure or story live-unit pinning is claimed. Native
+contract 5 and inner DOCX schema 2 are extended before this same PR lands; this
+is not an old-format reader, default or migration. A later change after they
+land requires fresh current versions. No numeric ceiling, default, dependency,
+error kind, test or runtime/Word proof is added by this extension.
+The normalized final-move deletion change (2026-11-06, FIX 13301 partial)
+touches `src/tracked_model.rs`. A document-final move destination whose pilcrow
+was normalized to Normal retains its actual move revision on the block. Its
+inner deletions use the same paired source and positional character ranges only
+when the reconstructed original text equals the full source text. Nonaligned
+normalized destinations stay unchanged; they never use substring matching.
+The existing Inserted-pilcrow path and deletion cascade stay unchanged, including
+revision identities, authors, and the final Normal pilcrow. This also covers a
+second selective resolution after an unrelated revision normalized the final
+mark. Reimported move destinations continue through the existing Inserted path.
+
 The exact move-deletion range change (2026-11-05, FIX 13300 partial) touches
 `src/tracked_model.rs`. Eligible destination clones reconstruct their original
 moved text using actual revision identities. When it equals the full paired
@@ -135,6 +265,49 @@ If no ordinary run exists, it carries the first field's explicit run properties.
 The outcome names the actual typed fields removed by that rebuild. Expected-text
 checks, grid/merge checks, first-match table selection and the retained/cut paths
 are unchanged. This is a source-level correction, not a PowerPoint fidelity proof.
+The scoped paragraph-question extension (2026-11-06, FIX 14487) carries an optional
+actual native story through `comment_create`'s strict wire schema, EditStep and
+paragraph lookup. Absent scope keeps the existing body path; present scope never
+falls back to body ids. The existing marker splice, global comment identities,
+comment body writer, reply/resolve/delete and per-part serializers are reused.
+Note anchors refresh their entire note's content hash. Comment content ranges
+return the existing UnsupportedEdit code through a new typed error because
+ISO/IEC 29500-1 section 17.13.4 makes those markers non-conformant there. Header
+and footer lookup retains exact part, band and authored-story identity; Word
+honor of file-authored header/footer ranges is not proved. The public scoped
+block reader retains the old BODY read when scope is absent. Engine judgments,
+carry/withdraw/re-ask and standing selectors keep the same actual scope, native
+version quote and live frontier. Top-level paragraphs only; cell ParagraphAsk,
+comment-story alternatives and full FIX 14487 remain open. No numeric constant,
+cap, default, schema integer, dependency, old reader, migration, test or runtime
+proof is added.
+
+The direct story-cell paragraph-question extension (2026-11-06, FIX 14487) adds
+native paragraph-id lookup inside direct cells of the exact selected story.
+It keeps BODY's original top-level lookup and the existing kind, tracked-status,
+paragraph semantic-guard, quote and marker-splice checks. Named-story reads
+append the existing native per-cell paragraph projections and their locks,
+including the enclosing table lock. Engine live-head and scoped change reads
+use those same native paragraph ids, lock and text at the whole-document pin.
+Carry and standing questions reuse the scoped reader without a new identity or
+wire shape. Marker scan, reply, removal and serialization already descend into
+table cells; their bodies are unchanged. The earlier top-level-only limit is
+therefore lifted for direct cells in named stories, not BODY or nested cells.
+Comment-content alternatives, structural history and full FIX 14487 remain open.
+No numeric constant, cap, default, schema integer, dependency, old reader,
+migration, test, compiler result or runtime/Word proof is added.
+
+
+## Nested native story-cell comment targets (FIX 14487)
+
+Named-story `CommentCreate` can resolve an imported paragraph id inside nested
+table cells. Existing top-level matches and all existing direct-cell matches keep
+their lookup priority. Deeper lookup visits native table/cell blocks in order,
+keeps the first non-Normal ancestor status, and skips vertical-merge continuation
+cells at every level. The existing block guard, quoted-range selection, visible
+text, marker insertion, comment identity, and reply/delete maintenance are
+unchanged. Body lookup stays top-level only. This is native target lookup, not a
+claim of nested ParagraphAsk inventory, live-pin, or whole FIX 14487 support.
 
 The styled structural-marker carrier change (2026-11-06, FIX 14354) touches
 `src/edit/mod.rs`. Whole-paragraph segment replacement leaves each existing
@@ -147,6 +320,28 @@ inferred from replacement prose. The same predicate now serves marker presence,
 stripping and this carrier. Native wire/schema versions and marker-free
 replacement semantics are unchanged; no Word-runtime comparison is claimed.
 
+The note/comment run marker correction (2026-11-07) repositions each retained
+Normal marker once between the old and replacement text readings, using the
+existing offset-placement helper only to plan the target positions. The planning
+copies are discarded, so accepted, rejected and unresolved output retain one
+marker identity rather than emitting both originals and replacement copies.
+The exact-marks pass still runs before any replacement text is split; the shared
+segment builder, marker offset law and note auto-number behavior are unchanged.
+The comment-cell text settle also retains structural markers from a deleted
+text segment as Normal markers, including when the replacement is empty. It
+adds no refusal and does not change any other paragraph or cell.
+
+The nested-table identity change (2026-11-07, FIX 21302) touches `src/import.rs`.
+Rows, cells and content-control-wrapped cells pass the existing body/story
+`table_counter` into nested tables instead of resetting it in each cell.
+The existing `tbl_N` mint and derived row/cell names therefore identify every
+nested table within that parse scope without colliding with an ancestor or a
+table in another cell. Each story keeps its own counter; these are not global
+identities. A later outer table can receive a different native id after an
+earlier nested table. No old-id reader, new address field or format version is
+added. Paragraph counters, XML content, tracking, formatting, materialization
+and the direct-only story-cell editing surface are unchanged. This fixes the
+native producer identity only; it does not add nested story-cell editing.
 
 ## Native deck transaction graphic ceilings (FIX 10653)
 
@@ -169,3 +364,48 @@ replacement. Existing held-media paths do not re-admit their bytes. Omitting the
 settings keeps the existing numeric defaults and the old profile/key serialization.
 An explicit setting is part of `ExportKey`, so a memo for another setting cannot
 stand in for it. The projector signature and export gate remain unchanged.
+
+
+## Nested story paragraph reads (FIX 14487, 2026-11-07)
+
+`src/docx_body/stories.rs` now appends native nested-cell paragraphs to the
+existing named-story scoped read, after every old top-level and direct-cell
+result. Each new block carries its actual paragraph id and accepted inline
+text. It is not a replacement target for the enclosing cell. The shared
+paragraph reader keeps the existing tracked, literal-prefix and inline-anchor
+locks, with tracked block/row/cell and vertical-merge continuation ancestry
+carried through every nested level. Locked descendants remain readable.
+
+The all-story read is factored without changing its results. A scoped call
+still parses once inside the caller's archive/resource context and reads all
+stories before selecting the exact scope. Missing stories stay empty; omitted
+scope still calls the unchanged body-only reader. Public types, native edit
+verbs, first-direct paragraph selection, materialization and core live-unit
+handling are unchanged. This is the native scoped-reader slice only, not whole
+nested ParagraphAsk/live-pin/projection or FIX 14487 closure. No test, compiler
+or runtime/Word result is claimed.
+
+## Nested named-story table identities and cell edits
+
+Named-story `read_docx_body` results append actual nested table blocks after all
+previous story blocks. Each table keeps its native story-local id and direct
+cell paragraph ids. The existing core story-table model imports those blocks;
+no separate path field or shadow table store is added. The body read and scoped
+paragraph read keep their previous results and ordering.
+
+Story-cell projection and transaction-base/live resolution find the actual
+nested table inside the exact named story. Old top-level ids keep priority.
+Every enclosing row/cell tracking state and vertical-merge continuation is
+checked before the existing leaf edit. A same-transaction enclosing insertion
+uses the existing plain-text insertion branch, without exempting a foreign
+tracked target cell. An absent paragraph selector still means the first direct
+paragraph. Direct and comment settlement still touch only that paragraph.
+
+This is retained source work for FIX 14487/594. It does not claim parent PRs
+merged, a production compile, Word behavior, or complete story/live-unit closure.
+
+The ideographic-space estimate change (2026-11-06, FIX 16557) touches
+`src/design_plan/capability.rs`. `Metrics::lines_in` measures a complete nonempty
+U+0020/U+3000 run through the same advance and greedy wrap at leading, trailing,
+and internal separators; other whitespace keeps its existing fallback. Advance,
+words, height, and emission are unchanged; no renderer comparison is claimed.

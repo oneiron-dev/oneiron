@@ -33,9 +33,9 @@ mod type_feedback;
 pub(crate) use self::type_feedback::{FeedbackRoute, SessionInstanceBind};
 
 #[cfg(test)]
-use super::records::{CodeRunModelHealCount, MODEL_HEAL_COUNTS};
+use super::records::CodeRunModelHealCount;
 #[cfg(test)]
-use crate::Error;
+use super::session_heal_count::session_model_heal_count;
 
 /// The session half of an executor binding (ONE-1729/P4b).
 ///
@@ -150,7 +150,6 @@ impl SessionBinding<'_> {
     /// `expected` is the replay record's own generation protocol, a separate
     /// concern from the mode-flip route: the number says "no one else
     /// appended", the route says "the room is still the room you bound".
-    #[cfg(test)]
     fn put_replay_record_if_generation(
         &self,
         record: &CodeRunReplayRecord,
@@ -175,22 +174,17 @@ impl SessionBinding<'_> {
         Ok(next_generation)
     }
 
+    /// The run's tally of `model` as its session reads it: the production
+    /// session read (FIX 4415), answered as the run's other calls are.
     #[cfg(test)]
     fn model_heal_count(&self, model: &ModelId) -> Result<CodeRunModelHealCount> {
-        let (base, overlay) = self.answered(|| {
-            self.session
-                .side_table_counter_components(&MODEL_HEAL_COUNTS, &model.as_str().to_owned())
-        })?;
-        let base = base.map_or(0, |count| count.0);
-        let overlay = overlay.map_or(0, |count| count.0);
-        let healed_turns = base
-            .checked_add(overlay)
-            .ok_or(Error::ArithmeticOverflow("code-run model heal count"))?;
+        let count = self.answered(|| session_model_heal_count(&self.session, model))?;
         Ok(CodeRunModelHealCount {
-            model_id: model.as_str().to_owned(),
-            healed_turns,
+            model_id: count.model_id,
+            healed_turns: count.healed_turns,
         })
     }
+
     /// [`Vault::inherit_code_run_result_marks`] on the room's route: the
     /// marks of every occurrence in `from` join those of `owner`'s
     /// occurrence of `output`.
@@ -251,7 +245,13 @@ impl SessionBinding<'_> {
             self.session.read_composed(|view, txn| {
                 if let Some(owner) = owner {
                     let owned = super::response_owners::response_owner_in_txn(view, txn, &owner)?;
-                    if owned.is_some_and(|o| o.erased()) {
+                    // FIX 7366: a room's owner row the vault's erase did not
+                    // reach (a sealed overlay takes no sweep) reads erased
+                    // once the actor it names is gone in the vault.
+                    let gone = owned.as_ref().and_then(|o| o.actor()).is_some_and(|actor| {
+                        super::replay_capsule::actor_gone_in_store(view.read().base(), txn, &actor)
+                    });
+                    if owned.as_ref().is_some_and(|o| o.erased()) || gone {
                         return Ok((
                             ArtifactTaintState::TaintedLive,
                             Some(super::replay_bodies::RESPONSE_ERASED.to_owned()),
@@ -651,7 +651,7 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
-    #[cfg(test)]
+    /// Compare-and-puts a replay append on the run's route, with no heal tally.
     pub(crate) fn put_code_run_replay_record_if_generation(
         &self,
         record: &CodeRunReplayRecord,
