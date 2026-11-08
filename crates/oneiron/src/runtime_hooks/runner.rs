@@ -32,7 +32,7 @@ use super::outcome::HookOutcome;
 use super::read::{self, SeenFact};
 use super::source::{self, FactEntry, FactKind, FactPosition, FactSource};
 use super::store::{
-    self, CursorRow, HookIntent, HookIntentState, HookRunRecord, HookRunRef, HookRunState, RunKey,
+    self, HookIntent, HookIntentState, HookRunRecord, HookRunRef, HookRunState, RunKey,
 };
 
 use body::receipt;
@@ -467,7 +467,7 @@ impl Pass<'_, '_> {
     }
 
     /// A binding's cursor in `source`, or where it starts when it holds none
-    /// or was re-enabled ([`source::enable_start_in_txn`]); one that holds no
+    /// or was re-enabled ([`store::enable_cursor_in_txn`]); one that holds no
     /// row at all is fresh to the source.
     fn cursor_for(&self, binding: EntityId, source: FactSource) -> Result<Option<FactPosition>> {
         let held = store::cursor(self.vault, binding, source)?;
@@ -476,11 +476,11 @@ impl Pass<'_, '_> {
         {
             return Ok(row.position());
         }
-        let start = {
+        let row = {
             let rtxn = self.vault.store.env.read_txn()?;
-            source::enable_start_in_txn(self.vault, &rtxn, &binding, source, held.is_none())?
+            store::enable_cursor_in_txn(self.vault, &rtxn, &binding, source, held.is_none())?
         };
-        let row = CursorRow::new(start, self.vault.store.clock.now_recorded_at());
+        let start = row.position();
         self.vault.with_write_txn_grouped(|txn| {
             store::put_cursor_in_txn(self.vault, txn, binding, source, &row)
         })?;
@@ -495,7 +495,7 @@ impl Pass<'_, '_> {
         binding: &PackHookBinding,
         entry: &FactEntry,
     ) -> Result<bool> {
-        if !filter::admits_entry(self.vault, &binding.selector.verbs, entry)? {
+        if !filter::admits_entry(self.vault, binding_id, &binding.selector.verbs, entry)? {
             self.report.skipped += 1;
             return Ok(false);
         }
