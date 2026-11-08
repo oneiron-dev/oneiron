@@ -709,6 +709,17 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
       readings: [{ span: 1, kind: "name", novel: true, confidence: 50 }],
     }), { inputTokens: 128, outputTokens: 32 }),
   }, {
+    // FIX 22183: the consolidation pass re-extracts the source with P2 Mira
+    // and claim C1 listed (one durable step; its two failed sends were two
+    // ladder passes of one generate, P22183-CARDINALITY). An empty reply is
+    // lawful (wire.rs contract_reply) and writes nothing; a restatement citing
+    // C1 would meet resources/write.rs "claim evidence cannot support itself".
+    id: "source-reextract", origin: "extraction", role: "extraction_teacher",
+    purpose: "consolidation re-extraction of the listed source claim",
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract", system: extractionPrompt.system },
+    response: openaiText("source-reextract", "privacy-extract", JSON.stringify({ candidates: [] }),
+      { inputTokens: 128, outputTokens: 16 }),
+  }, {
     // The extracted person's roster About producer shares the narrative origin,
     // but is not the declared source SUMMARY. R36's captured rejected bodies
     // carried this prompt with no response_format; answer separately and strictly.
