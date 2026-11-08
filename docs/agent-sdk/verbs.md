@@ -350,6 +350,7 @@ both bindings and their export-census tests in one change.
 - `vault.shared.propose_delete`
 - `vault.shared.propose_transfer`
 - `vault.shared.propose_remove_owner`
+- `vault.shared.propose_add_owner`
 - `vault.shared.execute`
 - `vault.shared.receipt`
 - `vault.shared.outcomes`
@@ -367,6 +368,7 @@ both bindings and their export-census tests in one change.
 - `vault.members.leave`
 - `vault.members.invitations`
 - `vault.members.accept`
+- `vault.members.accept_with_credential`
 - `vault.members.decline`
 - `vault.members.withdraw_invitation`
 - `vault.shared.object`
@@ -381,6 +383,8 @@ both bindings and their export-census tests in one change.
 - `vault.shared.policy.answer`
 - `vault.shared.policy.change`
 - `vault.shared.policy.changes`
+- `vault.shared.owner_change_wait.set`
+- `vault.shared.owner_change_wait.get`
 - `vault.federation.coreference.link`
 - `vault.federation.coreference.confirm`
 - `vault.federation.coreference.share_consent`
@@ -389,6 +393,8 @@ both bindings and their export-census tests in one change.
 - `vault.federation.burst.policy`
 - `vault.federation.burst.policy.set`
 - `vault.sync.quarantine.held_edits`
+- `vault.sync.documents.copy_edit.review`
+- `vault.sync.documents.copy_edit.settle`
 - `vault.sync.retained_work.wait.set`
 - `vault.federation.burst.ingress`
 - `vault.federation.burst.disposition`
@@ -396,6 +402,7 @@ both bindings and their export-census tests in one change.
 - `vault.federation.burst.review.release`
 - `vault.federation.burst.review.reject`
 - `vault.federation.burst.replay`
+- `vault.federation.status`
 - `vault.federation.connect.identity`
 - `vault.federation.connect.grants.mint`
 - `vault.federation.connect.offer`
@@ -463,6 +470,7 @@ both bindings and their export-census tests in one change.
 - `vault.records.erase_confirm`
 - `vault.records.erase_sweep`
 - `vault.outbound_calls.request.erase`
+- `vault.outbound.uncertain_send.answer`
 - `vault.research.create_child`
 - `vault.research.archive`
 - `vault.research.archive.install`
@@ -533,6 +541,8 @@ both bindings and their export-census tests in one change.
 - `vault.cleanup.decide`
 - `vault.archive.delete.preview`
 - `vault.archive.delete.confirm`
+- `vault.archive.attempt.delete.preview`
+- `vault.archive.attempt.delete.confirm`
 - `vault.usage.events.undecodable`
 - `vault.usage.events.remove_undecodable`
 - `vault.usage.repair.receipts`
@@ -566,11 +576,14 @@ both bindings and their export-census tests in one change.
 - `vault.policy.outbound.decide`
 - `vault.policy.relay.decide`
 - `vault.consent.approve_once`
+- `vault.campaign.held`
+- `vault.campaign.approve_once`
 - `vault.connectors.calls.approve_once`
 - `vault.connectors.replies.retry_failed`
 - `vault.consent.deny`
 - `vault.consent.create_standing_grant`
 - `vault.consent.create_auto_weave_grant`
+- `vault.consent.create_nightly_link_grant`
 - `vault.consent.registry`
 - `vault.consent.failure_signals_held`
 - `vault.consent.revoke`
@@ -698,9 +711,11 @@ both bindings and their export-census tests in one change.
 - `vault.code.symbols.renew`
 - `vault.code.symbols.release`
 - `vault.code.proposal_submit`
+- `vault.code.proposal_rereview`
 - `vault.code.conflict_record`
 - `vault.code.conflict_view`
 - `vault.code.proposal_resolve`
+- `vault.code.proposal_resolve_rereview`
 - `vault.code.proposal_review`
 - `vault.code.proposal_settle`
 - `vault.code.proposal_settlement`
@@ -740,9 +755,13 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.publish.approve`
 - `vault.code.origin.publish.execute`
 - `vault.code.origin.publish.cancel`
+- `vault.devices.predecessor.name`
 - `vault.code.origin.authority.get`
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`
+- `vault.code.secrets.purge.request`
+- `vault.code.secrets.purge.get`
+- `vault.code.secrets.purge.execute`
 - `vault.code.checkout.holder.bind`
 - `vault.code.checkout.bind`
 - `vault.code.checkout.claim`
@@ -765,6 +784,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.snapshots.get`
 - `vault.code.snapshots.read`
 - `vault.code.symbols.definitions`
+- `vault.code.symbols.neighbors`
 - `vault.code.merge_queue.enqueue`
 - `vault.code.merge_queue.stage`
 - `vault.code.merge_queue.observe`
@@ -796,6 +816,7 @@ both bindings and their export-census tests in one change.
 - `vault.repo.snapshots.get`
 - `vault.repo.snapshots.read`
 - `vault.repo.symbols.definitions`
+- `vault.repo.symbols.neighbors`
 - `vault.repo.views.get`
 - `vault.repo.views.read`
 - `vault.repo.merge_queue.observe`
@@ -996,6 +1017,7 @@ both bindings and their export-census tests in one change.
 - `ai.ask_image`
 - `ai.verdict`
 - `vault.graph.ask`
+- `self.skills.graph`
 - `vault.graph.admit`
 - `vault.questions.create`
 - `vault.questions.edit`
@@ -1080,6 +1102,7 @@ both bindings and their export-census tests in one change.
 - `vault.search.temporal`
 - `vault.search.bm25`
 - `vault.neighbors`
+- `vault.edges.provenance`
 - `vault.structural.put`
 - `vault.habits.checkin`
 - `vault.productivity.create`
@@ -1205,6 +1228,7 @@ both bindings and their export-census tests in one change.
 - `vault.notes.author_take`
 - `vault.notes.from_entity`
 - `vault.notes.read`
+- `vault.notes.read_indexed`
 - `vault.notes.history`
 - `vault.notes.fork`
 - `vault.notes.forks.read`
@@ -1266,3 +1290,4 @@ both bindings and their export-census tests in one change.
 - `vault.files.sources.convert`
 - `vault.sync.repo_manifests.conflict.review`
 - `vault.sync.repo_manifests.conflict.discard`
+- `vault.dreamer.follower.keyframe`

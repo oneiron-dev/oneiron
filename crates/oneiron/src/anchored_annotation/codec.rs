@@ -3,8 +3,9 @@
 
 use super::model::{
     ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_LOCATOR_TEXT_MAX_BYTES,
-    ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment, BodyAnchor, DriftMarker, FORMAT_DOCX,
-    FORMAT_HTML, FORMAT_PPTX, FORMAT_TEXT, FORMAT_XLSX, Locator, TaskBrief, ThreadState,
+    ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment, BodyAnchor, DriftMarker, FORMAT_CODE,
+    FORMAT_DOCX, FORMAT_HTML, FORMAT_PPTX, FORMAT_TEXT, FORMAT_XLSX, Locator, TaskBrief,
+    ThreadState,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
@@ -66,6 +67,12 @@ const KEY_SHAPE_ID: &str = "shape_id";
 
 const KEY_PART_ID: &str = "part_id";
 
+const KEY_COMMIT: &str = "commit";
+
+const KEY_PATH: &str = "path";
+
+const KEY_FILE_HASH: &str = "file_hash";
+
 /// Task role byte for the productivity `role` body ("role": <byte>).
 const TASK_BODY_ROLE_KEY: &str = "role";
 
@@ -94,6 +101,9 @@ pub(super) fn validate_locator_text(text: &str, context: &'static str) -> Result
             )),
             "html locator part_id" => Error::Artifact(ArtifactError::InvalidAnchor(
                 "html locator part_id is empty or too long",
+            )),
+            "code locator path" => Error::Artifact(ArtifactError::InvalidAnchor(
+                "code locator path is empty or too long",
             )),
             _ => Error::Artifact(ArtifactError::InvalidAnchor(
                 "pptx locator shape_id is empty or too long",
@@ -143,6 +153,20 @@ pub(crate) fn encode_locator(locator: &Locator) -> Value {
             (Value::from(KEY_CHAR_START), Value::from(*char_start)),
             (Value::from(KEY_CHAR_END), Value::from(*char_end)),
         ]),
+        Locator::Code {
+            commit,
+            path,
+            file_hash,
+            char_start,
+            char_end,
+        } => Value::Map(vec![
+            (Value::from(KEY_FORMAT), Value::from(FORMAT_CODE)),
+            (Value::from(KEY_COMMIT), Value::from(commit.as_str())),
+            (Value::from(KEY_PATH), Value::from(path.as_str())),
+            (Value::from(KEY_FILE_HASH), Value::from(file_hash.as_str())),
+            (Value::from(KEY_CHAR_START), Value::from(*char_start)),
+            (Value::from(KEY_CHAR_END), Value::from(*char_end)),
+        ]),
     }
 }
 
@@ -175,6 +199,14 @@ pub(crate) fn decode_locator(value: &Value) -> Result<Locator> {
             let char_start = map_u64(value, KEY_CHAR_START)?;
             let char_end = map_u64(value, KEY_CHAR_END)?;
             Locator::text(char_start, char_end)
+        }
+        FORMAT_CODE => {
+            let commit = map_str(value, KEY_COMMIT)?.to_owned();
+            let path = map_str(value, KEY_PATH)?.to_owned();
+            let file_hash = map_str(value, KEY_FILE_HASH)?.to_owned();
+            let char_start = map_u64(value, KEY_CHAR_START)?;
+            let char_end = map_u64(value, KEY_CHAR_END)?;
+            Locator::code(commit, path, file_hash, char_start, char_end)
         }
         _ => Err(Error::Artifact(ArtifactError::InvalidAnchor(
             "unknown locator format",

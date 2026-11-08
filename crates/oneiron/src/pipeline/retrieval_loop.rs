@@ -196,9 +196,9 @@ impl<'r, 'v: 'r> ReadOnlyRetrievalLoop<'r, 'v> {
                 vector,
                 phonetic,
             } => {
-                if query.trim().is_empty() || query.len() > crate::memory::caps::MAX_QUERY_BYTES {
+                if query.trim().is_empty() {
                     return Err(Error::InvalidConfig(
-                        "retrieval loop search requires a bounded nonempty query".into(),
+                        "retrieval loop search requires a nonempty query".into(),
                     ));
                 }
                 // Dense and phonetic inputs belong to these words, not the
