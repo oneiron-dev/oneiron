@@ -237,8 +237,8 @@ pub use self::offer::{
     training_offers, union_source_rows,
 };
 pub(crate) use self::offer::{
-    erase_offer_source_in_txn, live_source_rows_in, pending_training_offer_in_txn,
-    settle_training_offer_in_txn,
+    erase_offer_answer_actor_in_txn, erase_offer_source_in_txn, live_source_rows_in,
+    pending_training_offer_in_txn, settle_training_offer_in_txn,
 };
 pub(crate) use self::offer_pilot::erase_pilot_source_in_txn;
 pub use self::offer_switch::{
@@ -248,6 +248,7 @@ pub use self::offer_switch::{
 pub(crate) use self::offer_switch::{
     erase_switch_actor_in_txn, settle_staged_switch_in_txn, undo_staged_switch_in_txn,
 };
+pub(crate) use self::offer_training::erase_offer_training_actor_in_txn;
 pub use self::offer_training::{
     OfferTrainingHandoff, TrainingChoice, authorize_offer_training, check_offer_training_plan,
     offer_training_handoff, settle_training_offer, suggested_training_plan,

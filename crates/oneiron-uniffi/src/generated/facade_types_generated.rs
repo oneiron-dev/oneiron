@@ -29378,8 +29378,12 @@ pub struct OfferAnswerRecord {
     pub answer: OfferAnswer,
     #[serde(rename = "owner")]
     pub owner: String,
-    #[serde(rename = "authentication")]
-    pub authentication: String,
+    #[serde(
+        rename = "authentication",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub authentication: Option<String>,
     #[serde(rename = "offer_digest")]
     pub offer_digest: String,
     #[serde(rename = "intent", default, skip_serializing_if = "Option::is_none")]
