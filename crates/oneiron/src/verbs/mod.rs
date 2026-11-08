@@ -10,12 +10,12 @@ mod board_layout;
 mod browser;
 mod calendar;
 mod campaign_archive;
+mod campaign_enrollment;
 mod campaign_split;
 mod can;
 mod catalog_fragment;
 mod comm_widen;
 mod connector;
-mod campaign_enrollment;
 mod connector_call;
 mod connector_pack;
 mod connector_reply_retry;
@@ -101,6 +101,7 @@ mod support_grant;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
 mod trusted_contact;
+mod uncertain_send;
 mod voice_bank;
 mod weave;
 mod web_connector;
@@ -458,6 +459,7 @@ pub use self::board_layout::*;
 pub use self::browser::*;
 pub use self::calendar::*;
 pub use self::campaign_archive::*;
+pub use self::campaign_enrollment::*;
 pub use self::campaign_split::*;
 pub use self::can::*;
 pub use self::catalog_fragment::{
@@ -465,7 +467,6 @@ pub use self::catalog_fragment::{
 };
 pub use self::comm_widen::*;
 pub use self::connector::*;
-pub use self::campaign_enrollment::*;
 pub use self::connector_call::*;
 pub use self::connector_pack::*;
 pub use self::connector_reply_retry::*;
@@ -548,6 +549,7 @@ pub use self::support_grant::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
 pub use self::trusted_contact::*;
+pub use self::uncertain_send::*;
 pub use self::voice_bank::*;
 pub use self::weave::*;
 pub use self::web_connector::*;
@@ -832,6 +834,7 @@ fn a_recall_the_engine_refuses_never_embeds_its_query() {
         format: format.map(str::to_owned),
         as_of: None,
         deadline_ms: None,
+        filter: None,
     };
     let call = |deadline_ms| RecallRequest {
         effort: Some(crate::memory::RecallEffort::Call),

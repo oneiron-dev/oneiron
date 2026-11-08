@@ -31,7 +31,7 @@ pub(crate) use self::types::BEFORE_NEW_ADMISSION;
 pub(crate) use self::types::{
     AdmissionCeiling, CoActorAdmission, CoActorEffect, OutboundEffectCommand, OutboundEffectError,
     OutboundEffectResult, OutboundTransport, PreparedAuthorization, PreparedEffect,
-    frozen_call_hygiene_headers,
+    UncertainSendStep, frozen_call_hygiene_headers,
 };
 
 #[cfg(test)]

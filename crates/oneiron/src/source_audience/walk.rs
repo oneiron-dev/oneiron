@@ -130,7 +130,7 @@ pub(crate) fn withheld_from_replication_in(
     id: &EntityId,
     scope: ReplicationScope,
 ) -> Result<bool> {
-    Ok(lineage_held_in(vault, txn, id)? || withheld_by_lineage_in(vault, txn, id, scope)?)
+    LineagePass::new(vault, txn)?.withheld_from_replication(id, scope)
 }
 
 /// Whether the row `id`, or any row its words came from (every support of a
@@ -189,44 +189,132 @@ pub(crate) fn withheld_by_lineage_in(
     id: &EntityId,
     scope: ReplicationScope,
 ) -> Result<bool> {
-    let dbs = vault.store.read();
-    if !super::any_policy_in(vault, txn)? && !super::any_landed_in(vault, txn)? {
-        // No row here came from a landed one: only the row's own stamp can
-        // hold it.
-        return Ok(
-            crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, id)?
-                .is_some_and(|raw| source_marked(&raw)),
-        );
+    LineagePass::new(vault, txn)?.withheld_by_lineage(id, scope)
+}
+
+/// One replication pass over ONE read snapshot (FIX 16254, FIX 17212): a
+/// window packing or an export asks of many rows, and each verdict on a
+/// row's ancestry holds for every later row of the pass that reaches it.
+/// The verdicts are kept by what the judge asks (the policy the asking row
+/// travels under, and whether every support counts), and only those that
+/// hold whatever row asks: each settled verdict (see
+/// [`Judge::row_readable`]). A pass lives no longer than `txn`, so no
+/// verdict outlives the snapshot it was read in.
+pub(crate) struct LineagePass<'a, 't> {
+    vault: &'a Vault,
+    txn: &'a heed::RoTxn<'t>,
+    needs_lineage: bool,
+    /// [`lineage_held_in`] by row.
+    held: BTreeMap<EntityId, bool>,
+    /// The judge's verdicts by ask, then by row.
+    verdicts: BTreeMap<(Option<EntityId>, bool), BTreeMap<EntityId, bool>>,
+}
+
+impl<'a, 't> LineagePass<'a, 't> {
+    /// A pass over `txn`.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(crate) fn new(vault: &'a Vault, txn: &'a heed::RoTxn<'t>) -> Result<Self> {
+        Ok(Self {
+            vault,
+            txn,
+            needs_lineage: super::any_policy_in(vault, txn)? || super::any_landed_in(vault, txn)?,
+            held: BTreeMap::new(),
+            verdicts: BTreeMap::new(),
+        })
     }
-    // The policy the row travels under, when the lane carries one.
-    let travels_under = match scope {
-        ReplicationScope::Restricted => None,
-        ReplicationScope::FullOwnerWindow => match super::binding_in(vault, txn, id)? {
-            Some(policy) if super::replica::publishable_in(vault, txn, &policy)? => Some(policy),
-            _ => None,
-        },
-    };
-    // The read's own judge, on heap frames, asking each row's binding to be
-    // the one the row travels under.
-    let mut judge = Judge {
-        vault,
-        dbs: &dbs,
-        txn,
-        ask: Ask::Travel {
-            under: travels_under,
-            every_support: scope == ReplicationScope::Restricted,
-        },
-        policies: BTreeMap::new(),
-        rows: BTreeMap::new(),
-    };
-    let withheld = !judge.row_readable(*id, None)?;
-    // On the owner's full window a row its lineage would keep home travels
-    // with the policies that lineage reaches, when they publish (fix list
-    // row 17207).
-    if withheld && scope == ReplicationScope::FullOwnerWindow {
-        return Ok(derived_closure_in(vault, txn, id)?.is_none());
+
+    /// The snapshot every verdict of the pass is read in.
+    pub(crate) const fn txn(&self) -> &'a heed::RoTxn<'t> {
+        self.txn
     }
-    Ok(withheld)
+
+    /// [`withheld_from_replication_in`], in this pass.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(crate) fn withheld_from_replication(
+        &mut self,
+        id: &EntityId,
+        scope: ReplicationScope,
+    ) -> Result<bool> {
+        Ok(self.lineage_held(id)? || self.withheld_by_lineage(id, scope)?)
+    }
+
+    /// [`lineage_held_in`], in this pass.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(crate) fn lineage_held(&mut self, id: &EntityId) -> Result<bool> {
+        if let Some(known) = self.held.get(id) {
+            return Ok(*known);
+        }
+        let held = lineage_held_in(self.vault, self.txn, id)?;
+        self.held.insert(*id, held);
+        Ok(held)
+    }
+
+    /// [`withheld_by_lineage_in`], in this pass.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(crate) fn withheld_by_lineage(
+        &mut self,
+        id: &EntityId,
+        scope: ReplicationScope,
+    ) -> Result<bool> {
+        let (vault, txn) = (self.vault, self.txn);
+        let dbs = vault.store.read();
+        if !self.needs_lineage {
+            // No row here came from a landed one: only the row's own stamp
+            // can hold it.
+            return Ok(
+                crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, id)?
+                    .is_some_and(|raw| source_marked(&raw)),
+            );
+        }
+        // The policy the row travels under, when the lane carries one.
+        let travels_under = match scope {
+            ReplicationScope::Restricted => None,
+            ReplicationScope::FullOwnerWindow => match super::binding_in(vault, txn, id)? {
+                Some(policy) if super::replica::publishable_in(vault, txn, &policy)? => {
+                    Some(policy)
+                }
+                _ => None,
+            },
+        };
+        let every_support = scope == ReplicationScope::Restricted;
+        let ask = (travels_under, every_support);
+        // The read's own judge, on heap frames, asking each row's binding to
+        // be the one the row travels under, with this pass's verdicts for
+        // that ask.
+        let mut judge = Judge {
+            vault,
+            dbs: &dbs,
+            txn,
+            ask: Ask::Travel {
+                under: travels_under,
+                every_support,
+            },
+            policies: BTreeMap::new(),
+            rows: self.verdicts.remove(&ask).unwrap_or_default(),
+        };
+        let readable = judge.row_readable(*id, None);
+        self.verdicts.insert(ask, judge.rows);
+        let withheld = !readable?;
+        // On the owner's full window a row its lineage would keep home
+        // travels with the policies that lineage reaches, when they publish
+        // (fix list row 17207).
+        if withheld && scope == ReplicationScope::FullOwnerWindow {
+            return Ok(derived_closure_in(vault, txn, id)?.is_none());
+        }
+        Ok(withheld)
+    }
 }
 
 /// The policies the row `id` travels under on the owner's full window
@@ -382,6 +470,8 @@ struct Judge<'a, 's, 't> {
     txn: &'a heed::RoTxn<'t>,
     ask: Ask<'a>,
     policies: BTreeMap<EntityId, bool>,
+    /// The settled verdicts that hold whatever row asks. A [`LineagePass`]
+    /// keeps them across its rows (see [`Judge::row_readable`]).
     rows: BTreeMap<EntityId, bool>,
 }
 
