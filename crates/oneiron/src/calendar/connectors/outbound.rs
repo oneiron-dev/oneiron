@@ -604,6 +604,7 @@ fn finish_remote_applied_write_in_txn(
             uid: row.uid.clone(),
             last_sequence: receipt.sequence,
             content_hash,
+            source: None,
             direction,
             last_seen_at: now,
             presence: CalendarPassportPresence::Live,
