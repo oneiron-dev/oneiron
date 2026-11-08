@@ -1,15 +1,18 @@
-//! The fixed process profile of an exact publish's Git legs on a served host
-//! (ARCH-0069 OSH-3, FIX 19083).
+//! The fixed process profile of an origin mirror's Git legs on a served host:
+//! an exact publish's and an automatic mirror push plan's (ARCH-0069 OSH-3,
+//! FIX 19083).
 //!
 //! Two shapes, each built only by its validated constructor: the READ leg
-//! lists one branch, and the PUSH leg pushes one exact commit, each over
-//! plain http to the served host's own loopback mirror relay, which sends
-//! every exchange through the credential broker. The child carries no
-//! credential: the broker alone installs the mirror's. Its one header is the
-//! relay's ticket, which the environment carries and the argv never does.
-//! It follows no redirect, uses no proxy or credential helper, and keeps
-//! signing, tags, submodules and LFS transfer off, appended to the closed
-//! GitWire policy (which already keeps hooks off) and never replacing it.
+//! lists named refs (an exact publish's one branch, a plan's refs), and the
+//! PUSH leg pushes exactly what its argv names (an exact publish's one
+//! commit, a plan's one frozen batch), each over plain http to the served
+//! host's own loopback mirror relay, which sends every exchange through the
+//! credential broker. The child carries no credential: the broker alone
+//! installs the mirror's. Its one header is the relay's ticket, which the
+//! environment carries and the argv never does. It follows no redirect,
+//! uses no proxy or credential helper, and keeps signing, tags, submodules
+//! and LFS transfer off, appended to the closed GitWire policy (which
+//! already keeps hooks off) and never replacing it.
 //! The push leg lifts the captured wall-clock bound, as the import legs do
 //! (Rule 5): the relay and the broker end a send that makes no progress, and
 //! the caller's mirror hold and the process teardown still apply. The read
@@ -24,13 +27,13 @@ use oneiron_base::error::Result;
 /// Which leg a profile serves.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum OriginRelayLeg {
-    /// The read of one branch at the mirror.
+    /// A read of named refs at the mirror.
     Read,
-    /// The one exact push.
+    /// One push of exactly what its argv names.
     Push,
 }
 
-/// One exact publish leg's fixed relay profile. Its `Debug` names the leg
+/// One origin mirror leg's fixed relay profile. Its `Debug` names the leg
 /// only, never the ticket.
 #[derive(Clone, PartialEq, Eq)]
 pub struct OriginRelayEgress {
@@ -72,7 +75,7 @@ impl OriginRelayEgress {
     fn new(leg: OriginRelayLeg, relay_url: &str, ticket: &str) -> Result<Self> {
         if relay_url.strip_prefix(LOOPBACK).is_none() {
             return Err(invalid(
-                "an exact publish through the broker reaches its loopback mirror relay only",
+                "an origin mirror leg through the broker reaches its loopback mirror relay only",
             ));
         }
         loopback_relay(relay_url)?;
