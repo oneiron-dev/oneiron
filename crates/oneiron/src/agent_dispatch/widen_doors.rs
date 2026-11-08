@@ -195,6 +195,7 @@ pub(crate) fn widen_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLensItem>
             occurred_at: record.recorded_at,
             receipt_ref: None,
             payload_ref: Some(proposal_id),
+            approval_digest: None,
             concern: None,
             diary_review: None,
             sender: None,
