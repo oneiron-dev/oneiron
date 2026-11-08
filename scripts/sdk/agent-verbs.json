@@ -8791,6 +8791,21 @@
       "openapi": true
     },
     {
+      "name": "vault.consent.create_nightly_link_grant",
+      "description": "The owner lets this vault's Dreamer apply the SameAs links its nightly continuations propose; nothing is granted by default.",
+      "input": "crate::dreamer_consolidation::NightlyLinkGrantRequest",
+      "output": "crate::consent::lifecycle::ConsentActReceipt",
+      "call": "crate::dreamer_consolidation::mint_nightly_link_grant(memory.vault(), &memory.embedded_owner(\"vault.consent.create_nightly_link_grant\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.consent.registry",
       "description": "The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants.",
       "input": "crate::consent::ConsentRegistryQuery",
