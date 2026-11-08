@@ -117,6 +117,9 @@ pub enum NameOnlyReason {
     /// It has another name (a hard link), which may be outside the folder:
     /// its bytes are not read.
     Linked,
+    /// The write door's secret scan refused its text: it is held by name,
+    /// never as text (FIX 10244).
+    Refused,
 }
 
 /// Whether the vault holds a file's text, or its name only.

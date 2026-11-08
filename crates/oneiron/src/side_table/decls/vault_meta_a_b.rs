@@ -105,7 +105,7 @@ side_tables! {
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named
-        => crate::learning::erase_receipt_scope_in_txn;
+        => crate::receipt::erase_attempt_receipt_actor_in_txn;
     /// The store-order index over AUTHORITY_LOG rows (FIX 12369): the sequence a row took when
     /// first stored here, to the row's entity id, so a resumed fold range-scans only the rows
     /// stored past its continuation. Derived in the storing write transaction; runtime-tier.
@@ -335,6 +335,9 @@ side_tables! {
     /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
     BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored [accepts: crate::browser_library::browser_workflow_accepts_masked]
         => crate::browser_library::erase_workflow_actor_in_txn;
+    /// Native host allocation selection, balances and original holds. Key: ().
+    BUDGET_HOST_ACCOUNT: VaultMeta b"budget.host.account.v1\0" Named Engine
+        => crate::llm::run_admission::allocation::erase_actor_in_txn;
     /// FIX 7767: one resident's share of the host-paid allocation as the owner set it, and what
     /// its settled calls charged the allocation generation they ran on. Key: id16 (resident).
     BUDGET_RESIDENT_SHARE: VaultMeta b"budget.resident.share.v1\0" Named Engine

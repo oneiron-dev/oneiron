@@ -19,9 +19,10 @@ use crate::write_envelope::WriteActor;
 use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
     AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_BUDGET,
-    KEY_COMM, KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING,
-    KEY_DIRECT_SPAWN, KEY_LAUNCH, KEY_OBJECTIVES, KEY_ORIGIN_CONVERSATION, KEY_PLAN, KEY_PRESET,
-    KEY_PROJECT_REF, KEY_REQUESTER, KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET,
+    KEY_CALLER_ORIGIN, KEY_COMM, KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION,
+    KEY_DEPTH_REMAINING, KEY_DIRECT_SPAWN, KEY_FUNDING, KEY_LAUNCH, KEY_OBJECTIVES,
+    KEY_ORIGIN_CONVERSATION, KEY_PLAN, KEY_PRESET, KEY_PROJECT_REF, KEY_REQUESTER,
+    KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET, KEY_TASK_TYPE_PARENTS,
     KEY_TASK_TYPE_REF, KEY_TEAM, TARGET_CUSTOM, TARGET_SYSTEM,
 };
 use super::{
@@ -158,6 +159,14 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
         Value::from(KEY_TASK_TYPE_REF),
         Value::from(input.type_ref.wire_form().as_str()),
     ));
+    if let Some(parents) = &input.type_parents {
+        let json = serde_json::to_string(parents).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "task_type_parents must encode",
+            ))
+        })?;
+        entries.push((Value::from(KEY_TASK_TYPE_PARENTS), Value::from(json)));
+    }
     if let Some(budget) = input.budget {
         entries.push((Value::from(KEY_BUDGET), Value::from(budget)));
     }
@@ -216,6 +225,21 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
             ))
         })?;
         entries.push((Value::from(KEY_REQUESTER), Value::from(json)));
+    }
+    let caller_origin = serde_json::to_string(&input.caller_origin).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "caller_origin must encode",
+        ))
+    })?;
+    entries.push((Value::from(KEY_CALLER_ORIGIN), Value::from(caller_origin)));
+    // FIX 7766: the funding Grant rides only work one funds.
+    if let Some(funding) = &input.funding {
+        let json = serde_json::to_string(funding).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "funding grant binding must encode",
+            ))
+        })?;
+        entries.push((Value::from(KEY_FUNDING), Value::from(json)));
     }
     Ok(Value::Map(entries))
 }

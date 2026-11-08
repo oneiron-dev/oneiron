@@ -19,6 +19,7 @@ categories.workspace = true
 doctest = true
 
 [dependencies]
+stacker = { git = "https://github.com/rust-lang/stacker", rev = "d3ac2df79a409c681329006e9b31c96ab9c5fcae" }
 # Lower engine crates split out of this one. This crate re-exports each moved
 # module at its old `oneiron::<module>` path.
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
@@ -118,7 +119,7 @@ tree-sitter-python = "=0.25.0"
 icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }
 unicode-script = "0.5"
 loro = { workspace = true }
-tokio = { version = "1", features = ["net", "sync", "time"] }
+tokio = { version = "1", features = ["net", "rt", "sync", "time"] }
 tokio-tungstenite = { version = "0.26", optional = true }
 base64 = "0.22"
 futures-util = { version = "0.3", optional = true }
@@ -145,7 +146,7 @@ whichlang = "0.1.1"
 kamadak-exif = "0.5"
 ocrs = { version = "0.10", optional = true }
 rten = { version = "0.21", optional = true }
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "tiff", "bmp", "ico", "pnm"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "tiff", "bmp", "ico", "pnm", "ff", "dds"] }
 
 # CAL-01's UTC/IANA border uses embedded 2026c TZif data, including the
 # BC permanent-UTC-7 rule. The parser and database stay private to calendar/tz.
