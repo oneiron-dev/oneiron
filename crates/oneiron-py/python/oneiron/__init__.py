@@ -3497,6 +3497,9 @@ class Oneiron:
         @property
         def delete(self) -> "Oneiron._VaultArchiveDeleteVerbs":
             return Oneiron._VaultArchiveDeleteVerbs(self._client)
+        @property
+        def attempt(self) -> "Oneiron._VaultArchiveAttemptVerbs":
+            return Oneiron._VaultArchiveAttemptVerbs(self._client)
     class _VaultArchiveDeleteVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3506,6 +3509,21 @@ class Oneiron:
         def confirm(self, spec):
             """Deletes explicit archived records under the caller's current delete authority and returns each receipt."""
             return json.loads(_translate(lambda: self._client.vault_archive_delete_confirm(json.dumps(spec))))
+    class _VaultArchiveAttemptVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def delete(self) -> "Oneiron._VaultArchiveAttemptDeleteVerbs":
+            return Oneiron._VaultArchiveAttemptDeleteVerbs(self._client)
+    class _VaultArchiveAttemptDeleteVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def preview(self, spec):
+            """Previews one cleanup-archived completed attempt under the caller's delete authority."""
+            return json.loads(_translate(lambda: self._client.vault_archive_attempt_delete_preview(json.dumps(spec))))
+        def confirm(self, spec):
+            """Deletes the selected cleanup-archived completed attempt and returns its durable deletion receipt."""
+            return json.loads(_translate(lambda: self._client.vault_archive_attempt_delete_confirm(json.dumps(spec))))
     class _VaultUsageVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
