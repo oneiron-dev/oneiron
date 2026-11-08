@@ -20,8 +20,9 @@
 //! receipt holds one: each table keys them by a BLAKE3 hash keyed from the host issuer's secret,
 //! as pairing codes are (`slip_pairing::pairing_row_key`). A row past its expiry is dropped when
 //! a write reads it, and the engine's housekeeping sweep `oauth_expiry` drops the rest (`sweep`).
-//! A sign-in that lapses before its client holds a token takes back the owner agent grant its
-//! allow minted, in the write that drops it (`authorization`, FIX 22142).
+//! A sign-in that lapses or fails before its client holds a token takes back the owner agent grant
+//! its allow minted, in the write that drops it or revokes its new token family (`authorization`,
+//! FIX 22142, 22193).
 //!
 //! The two open doors a stranger can make write, `/oauth/register` and `/oauth/authorize`, are
 //! capped per client address and per vault by the server, under the limits named here.

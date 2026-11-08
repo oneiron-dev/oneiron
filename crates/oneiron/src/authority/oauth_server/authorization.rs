@@ -9,20 +9,21 @@
 //! collects it, so no row ever holds a code that can still be redeemed.
 //!
 //! The grant is minted before any token stands on it, so a sign-in that ends first takes it back
-//! (FIX 22142): an allowed request no page collected, a code no exchange redeemed, or a code
-//! whose exchange found its grant no longer standing (FIX 22188). The write that drops the row,
-//! a read's or the `oauth_expiry` sweep's, deletes the grant as the owner's revoke deletes it
-//! (`withdraw_agent_grant_without_act_in_txn`): the delete marks the grant withdrawn here and
-//! reaches peers with the row's erasure (FIX-LIST 5107, 10772). Beside the owner's signed mint,
-//! that marker is what the registry lists as revoked and what his later revoke answers unchanged
-//! for (FIX 22188); no owner is at hand to sign a revoke, and nothing is signed as his. When the
+//! (FIX 22142): an allowed request no page collected, a code no exchange redeemed, a code whose
+//! exchange found its grant no longer standing (FIX 22188), or a redeemed code whose new token
+//! family's first access slip did not stand (FIX 22193). The write that drops the row or revokes
+//! the family, a read's, the token endpoint's or the `oauth_expiry` sweep's, deletes the grant as
+//! the owner's revoke deletes it (`withdraw_agent_grant_without_act_in_txn`): the delete marks the
+//! grant withdrawn here and reaches peers with the row's erasure (FIX-LIST 5107, 10772). Beside
+//! the owner's signed mint, that marker is what the registry lists as revoked, what his later
+//! revoke answers unchanged for (FIX 22188), and what the authority audit pairs the mint with
+//! (FIX 22193); no owner is at hand to sign a revoke, and nothing is signed as his. When the
 //! install holds the vault's live host issuer, the host also signs the withdrawal
 //! (`SlipGrantRevoke`), as a membership change does for an owner's grant it withdraws (FIX 7135),
-//! which pairs the mint with a revoke in the authority audit too. A code an exchange redeemed
-//! keeps its grant: its family's tokens stand on it, and only the owner's revoke ends it. The
-//! client's agent principal and its ceiling stay, as the owner's revoke leaves them: every
-//! sign-in of the client shares them, and no token resolves for the agent without a standing
-//! grant.
+//! which the audit lists as the mint's revoke. A code whose family's first slip landed keeps its
+//! grant: its family's tokens stand on it, and only the owner's revoke ends it. The client's
+//! agent principal and its ceiling stay, as the owner's revoke leaves them: every sign-in of the
+//! client shares them, and no token resolves for the agent without a standing grant.
 
 use std::collections::BTreeSet;
 
@@ -420,11 +421,11 @@ impl Vault {
     }
 
     /// Takes back `grant`, the owner agent grant of a sign-in that ended before its client held
-    /// a token, in the caller's writer `txn`, the one that drops the request or code: its row
-    /// goes as the owner's revoke deletes it, marked withdrawn here, and the host's signed
-    /// withdrawal lands beside it when `issuer` is this vault's live host. With no such issuer
-    /// the marker alone keeps the withdrawal on the record (FIX 22188). `false`, with nothing
-    /// written, for a grant no longer live: the owner revoked it already.
+    /// a token, in the caller's writer `txn`, the one that drops the request or code or revokes
+    /// the token family: its row goes as the owner's revoke deletes it, marked withdrawn here, and
+    /// the host's signed withdrawal lands beside it when `issuer` is this vault's live host. With
+    /// no such issuer the marker alone keeps the withdrawal on the record (FIX 22188). `false`,
+    /// with nothing written, for a grant no longer live: the owner revoked it already.
     ///
     /// # Errors
     /// A store or fold failure, or a host withdrawal the fold did not count.
