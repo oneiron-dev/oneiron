@@ -55,7 +55,7 @@ use crate::{
     LlmMessage, LlmMessageRole, LlmRequest, ResponseFormat, TierPrecedence,
 };
 use serde_json::json;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 impl EngineNativeExecutor<'_> {
     pub async fn run(

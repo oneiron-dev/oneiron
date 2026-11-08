@@ -211,7 +211,7 @@ pub(crate) fn step_start_body_row(capsule: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// The capsule row `row` names, by its key, as `txn` holds it.
-fn capsule_in_txn(
+pub(super) fn capsule_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     row: &[u8],

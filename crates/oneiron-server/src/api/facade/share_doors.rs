@@ -79,8 +79,9 @@ pub(crate) async fn vault_notes_follow_citation(
 }
 
 /// The credential's own principal, as the facade binds a write to one. An
-/// owner-grade credential that names none is refused, as on create.
-fn principal(
+/// owner-grade credential that names none is refused, as on create. The
+/// facade runs it before these doors' pre chain too (FIX 1817).
+pub(in crate::api::facade) fn principal(
     server: &SyncServer,
     auth: &CoreAuth,
     verb: &str,

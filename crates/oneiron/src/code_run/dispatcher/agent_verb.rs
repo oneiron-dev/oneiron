@@ -13,6 +13,7 @@ use crate::EntityId;
 use crate::code_run::consent_wait::{self, CodeConsentCallSite};
 use crate::code_run::payload::{
     agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
+    self_call_request_value,
 };
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
 use crate::code_run::storage::ExecutorStorage;
@@ -310,7 +311,17 @@ impl HostSelfDispatcher<'_> {
             }
             return Ok(answered(Err(refusal)));
         }
-        if row_identity(row) != Some(call_identity(call.verb.as_str(), &call.input)) {
+        // A receipt an erase took the request words of meets the write by
+        // that request's identity alone, and answers with what it kept
+        // (FIX 6534): `response_erased` for an erased answer.
+        let recorded = if row.request_erased() {
+            row.request_identity_is(&self_call_request_value(&SelfCall::AgentVerb(
+                call.clone(),
+            ))?)?
+        } else {
+            row_identity(row) == Some(call_identity(call.verb.as_str(), &call.input))
+        };
+        if !recorded {
             return Err(Error::InvariantViolation(
                 "a resumed step changed a write it already made",
             ));

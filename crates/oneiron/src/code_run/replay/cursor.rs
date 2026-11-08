@@ -1,8 +1,10 @@
-//! The replay cursor's matching: each call it is offered meets the row at
-//! its own bridge position, by seq, effect and canonical request, before
-//! the row's stored outcome is handed back. Nothing is dispatched live. A
-//! resumed pending step meets its recorded calls by the same match (FIX
-//! 7703).
+//! The cursor that replays a code run's recorded bridge calls in order and
+//! answers each with its stored outcome, never a live host effect. Each call
+//! meets the row at its own bridge position, by seq, effect and canonical
+//! request. A resumed pending step meets its recorded calls by the same match
+//! (FIX 7703).
+
+use std::cell::Cell;
 
 use super::super::payload::{
     decode_self_dispatch_outcome, replay_denied_trap_error, replay_failed_trap_error,
@@ -11,7 +13,7 @@ use super::super::payload::{
 use super::super::spawn_replay::replay_request_match;
 use super::super::support::invalid_code_run_replay;
 use super::super::types::{SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect};
-use super::{CodeRunBridgeCall, CodeRunReplayCursor};
+use super::{CodeRunBridgeCall, CodeRunReplayCursor, CodeRunReplayRecord};
 use crate::Result;
 
 impl CodeRunBridgeCall {
@@ -62,6 +64,32 @@ impl CodeRunBridgeCall {
     /// This row's stored outcome, decoded.
     pub(crate) fn recorded_outcome(&self) -> Result<SelfDispatchOutcome> {
         decode_self_dispatch_outcome(&self.outcome)
+    }
+}
+
+/// Cursor that replays bridge calls from a stored record without invoking live host effects.
+pub struct CodeRunReplayCursor<'a> {
+    pub(super) record: &'a CodeRunReplayRecord,
+    pub(super) next: Cell<usize>,
+}
+
+impl<'a> CodeRunReplayCursor<'a> {
+    #[must_use]
+    pub const fn new(record: &'a CodeRunReplayRecord) -> Self {
+        Self {
+            record,
+            next: Cell::new(0),
+        }
+    }
+
+    #[must_use]
+    pub fn consumed(&self) -> usize {
+        self.next.get()
+    }
+
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.consumed() == self.record.bridge_calls.len()
     }
 }
 
