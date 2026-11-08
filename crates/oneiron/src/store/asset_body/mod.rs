@@ -452,6 +452,7 @@ pub(crate) fn stage_asset_body_in_txn(
             Some(OwnedBody {
                 owner: *id,
                 occurrence,
+                mark_occurrence: occurrence,
                 state: BodyState::Complete {
                     body: facts.body_ref(),
                 },
@@ -467,12 +468,14 @@ pub(crate) fn stage_asset_body_in_txn(
     }
     if crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())? {
         if let Some(superseded) = prior.as_ref().and_then(|prior| prior.state.held()) {
+            let superseded_occurrence = held_occurrence(id, superseded)?;
             publish_body_in_txn(
                 store,
                 txn,
                 &OwnedBody {
                     owner: *id,
-                    occurrence: held_occurrence(id, superseded)?,
+                    occurrence: superseded_occurrence,
+                    mark_occurrence: superseded_occurrence,
                     state: BodyState::Complete {
                         body: superseded.clone(),
                     },

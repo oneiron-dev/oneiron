@@ -322,7 +322,8 @@ pub fn filtered_window_doc_for_peer(
         Withhold::Peer(peer),
         reach,
     )?;
-    // Beside the masked births goes the text the grant's owner lets travel.
+    // Beside the masked births goes the text the grant's owner lets travel,
+    // and each TASK's and SUMMARY's birth placement (FIX 3656).
     if matches!(reach, BirthReach::OtherVault(_)) {
         carry_born_with(
             vault,
@@ -332,6 +333,7 @@ pub fn filtered_window_doc_for_peer(
             now_secs,
             Withhold::Peer(peer),
         )?;
+        super::birth_placements::carry_birth_placements(vault, &out)?;
     }
     Ok(out)
 }
@@ -457,6 +459,9 @@ pub(crate) fn guest_share_envelope_body_listing(
         now_secs,
         Withhold::Unknown,
     )?;
+    // FIX 3656: each TASK's and SUMMARY's birth placement rides beside it,
+    // under the envelope's signature.
+    super::birth_placements::carry_birth_placements(vault, &stripped)?;
     let update = stripped
         .export(ExportMode::all_updates())
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))?;

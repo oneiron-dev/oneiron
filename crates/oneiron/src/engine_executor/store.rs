@@ -337,7 +337,7 @@ impl StreamedOutputs {
         exec_run: EntityId,
         outcome: &JsCodeModeStepOutcome,
     ) -> Result<StepBodies> {
-        let (observation, console) = if outcome.done {
+        let (observation, mut console) = if outcome.done {
             (self.finish, self.console)
         } else {
             (self.console, None)
@@ -347,6 +347,14 @@ impl StreamedOutputs {
             None => storage.code_run_output_sink_for(exec_run)?,
         };
         observation.write(outcome.observation.as_bytes())?;
+        // A runtime that returned its finished step's console in the
+        // outcome instead of streaming it (FIX 6885): keep it where the
+        // streamed console would have gone.
+        if console.is_none() && !outcome.console.is_empty() {
+            let mut sink = storage.code_run_output_sink()?;
+            sink.write(outcome.console.as_bytes())?;
+            console = Some(sink);
+        }
         let mut files = self.files;
         for output in &outcome.outputs {
             let mut sink = storage.code_run_output_sink_for(exec_run)?;
