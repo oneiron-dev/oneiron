@@ -18,7 +18,7 @@ mod request;
 mod vault_reads;
 
 pub use request::CompactionRequest;
-pub(crate) use request::{ConversationBinding, WindowLog};
+pub(crate) use request::{ConversationBinding, StoredCompactionRequest, WindowLog};
 
 use super::gate::{CompactionCheck, CompactionRefusal};
 use vault_reads::snapshot_watermark;

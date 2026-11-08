@@ -46,6 +46,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     },
     // FIX 9929: a public model step's kept request and result.
     |write, txn, id| crate::llm::erase_submissions_in_txn(write, txn, id),
+    // FIX 5040: a conversation summary's check material, by the summary or a window source.
+    |write, txn, id| crate::compaction::erase_check_material_in_txn(write.store, txn, id),
     // FIX 10089: every verdict memo the erased row is a source of.
     |write, txn, id| {
         crate::store::query_memo_lifetime::erase_memos_for_source_in_txn(write.store, txn, id)
@@ -108,6 +110,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| {
         crate::outbound_intent_ledger::link_late_recipients_in_txn(write.store, txn, id)
     },
+    // FIX 15414: every mail claim re-check naming an erased TURN, MESSAGE or claim.
+    |write, txn, id| crate::mail_pack::erase_claim_recheck_ids_in_txn(write.store, txn, id),
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
     |write, txn, id| {
         crate::store::pack_hook_proposal::erase_hook_proposal_in_txn(write.store, txn, id)

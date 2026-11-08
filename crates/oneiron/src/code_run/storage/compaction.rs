@@ -15,6 +15,7 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::ManifestDbs;
+use crate::write_envelope::provenance::made_by::MadeByTrigger;
 use crate::{EntityId, Error, Result, Vault};
 
 /// One coverage row per (run id, minted SUMMARY id), in the frame [`encode`]
@@ -540,8 +541,13 @@ fn code_run_compaction_epochs_in(
     run_id: EntityId,
 ) -> Result<Vec<(CodeRunCompactionCoverage, Option<String>)>> {
     let mut rows = Vec::new();
-    for row in coverage_rows_in_txn(dbs, txn, run_id)? {
-        let text = verified_text(dbs, txn, &row)?;
+    for item in WRITTEN.iter_from(dbs, txn, run_id.as_bytes())? {
+        let ((key_run, key_summary), written) = item?;
+        let row = written.row;
+        if (key_run, key_summary) != (row.run_id, row.summary_id) || row.run_id != run_id {
+            return Err(Error::CorruptedIndex("code-run compaction coverage key"));
+        }
+        let text = verified_text(dbs, txn, &row, written.writer.as_ref())?;
         rows.push((row, text));
     }
     Ok(rows)
@@ -567,11 +573,19 @@ pub(super) fn coverage_rows_in_txn(
 
 /// The row's summary prose as a read through `dbs` may show it, `None` when
 /// withdrawn: on a room's union read, only while no record it came from is.
+/// A self-written summary's words show only while every home part its
+/// `writer` wore still reads at the revision it was read at (FIX 4817).
 fn verified_text(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     row: &CodeRunCompactionCoverage,
+    writer: Option<&CompactionExecution>,
 ) -> Result<Option<String>> {
+    if let Some(writer) = writer
+        && !crate::compaction::home_pins_stand_in(dbs, txn, writer)?
+    {
+        return Ok(None);
+    }
     let text = verify_summary(dbs, txn, row)?;
     if text.is_some() && dbs.is_union() {
         let summary = dbs
@@ -610,7 +624,7 @@ fn code_run_epoch_receipts_in(
         let Some(execution) = written.writer else {
             continue;
         };
-        let summary = verified_text(dbs, txn, &row)?;
+        let summary = verified_text(dbs, txn, &row, Some(&execution))?;
         receipts.push(CompactionLandingReceipt {
             run: run_id,
             landing: CompactionLanding::Epoch {
@@ -625,6 +639,27 @@ fn code_run_epoch_receipts_in(
         });
     }
     Ok(receipts)
+}
+
+/// The receipt of self-written epoch `summary` (FIX 4817), found through
+/// the run its birth names as its trigger. `None` for any other row, and for
+/// an epoch whose birth names no run (a Base-route run's record lives in its
+/// room): [`verified_text`] still withholds that one's words once a home
+/// part it wore is edited.
+pub(crate) fn epoch_execution_in(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    summary: &EntityId,
+) -> Result<Option<CompactionExecution>> {
+    let Some(birth) = crate::store::birth_record::row_birth_in_txn(dbs, txn, summary)? else {
+        return Ok(None);
+    };
+    let Some(MadeByTrigger::Run(run)) = birth.made_by.trigger else {
+        return Ok(None);
+    };
+    Ok(WRITTEN
+        .get(dbs, txn, &(run, *summary))?
+        .and_then(|written| written.writer))
 }
 
 impl Vault {
