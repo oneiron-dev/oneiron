@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1327 facade rows, 4789 declarations.
-Inputs: 1256 of 1327 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1156 of 1327 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1329 facade rows, 4790 declarations.
+Inputs: 1258 of 1329 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1158 of 1329 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
@@ -1646,7 +1646,11 @@ class TaskRouteOutcomeHumanFollowupBody(TypedDict):
     actor_ref: EntityId
 class TaskRouteOutcomeHumanFollowup(TypedDict):
     HumanFollowup: TaskRouteOutcomeHumanFollowupBody
-TaskRouteOutcome = TaskRouteOutcomeDreamerAttempt | TaskRouteOutcomeAgentDispatch | TaskRouteOutcomePeerSyncedOnly | TaskRouteOutcomeChildAddressed | TaskRouteOutcomeHumanFollowup
+class TaskRouteOutcomeWatchTickBody(TypedDict):
+    due_at: int
+class TaskRouteOutcomeWatchTick(TypedDict):
+    WatchTick: TaskRouteOutcomeWatchTickBody
+TaskRouteOutcome = TaskRouteOutcomeDreamerAttempt | TaskRouteOutcomeAgentDispatch | TaskRouteOutcomePeerSyncedOnly | TaskRouteOutcomeChildAddressed | TaskRouteOutcomeHumanFollowup | TaskRouteOutcomeWatchTick
 class TaskAskHandle(TypedDict):
     group_ref: EntityId
 class TaskPhaseProposed(TypedDict):
@@ -2183,6 +2187,7 @@ class TaskCreateRequest(TypedDict):
     ttl: NotRequired[TaskTtl | None]
     parent_ref: NotRequired[str | None]
     due_at: NotRequired[int | None]
+    watch: NotRequired[bool]
 class TaskCreateReceipt(TypedDict):
     task_ref: NotRequired[EntityId | None]
     proposal_ref: NotRequired[EntityId | None]
@@ -17273,6 +17278,8 @@ class SkillPackOutcomeProjection(TypedDict):
     persisted: bool
 class SkillPackCreditRequest(TypedDict):
     receipt_id: str
+class ModelResponsesStoreSettings(TypedDict):
+    responses_store: bool
 SeatPrecedence = Literal["narrow_only", "seat_override"]
 DescriptionSource = Literal["owner", "measured", "benchmarks", "vendor"]
 class SeatPolicy(TypedDict):
