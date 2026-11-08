@@ -40,6 +40,7 @@ pub mod door_types;
 mod pointer_rows;
 /// Lease-bound live process previews, separate from pinned artifact pointers.
 pub use oneiron_store::artifact_hosting::preview;
+mod cooperative;
 mod publication_sync;
 mod serving;
 // The serving descriptor of a published blob version (FIX 1195).
