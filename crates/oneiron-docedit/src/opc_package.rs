@@ -62,6 +62,14 @@ trait Source {
     fn total_len(&self) -> usize;
     /// The `len` bytes at `offset`; `None` when they run past the end.
     fn range(&self, offset: usize, len: usize) -> Result<Option<Cow<'_, [u8]>>>;
+    /// `read` over the `len` bytes at `offset` as they stream, never held
+    /// whole by the source; `None` when they run past the end.
+    fn with_range<T>(
+        &self,
+        offset: usize,
+        len: usize,
+        read: impl FnOnce(&mut dyn Read) -> Result<T>,
+    ) -> Result<Option<T>>;
 }
 
 impl Source for [u8] {
@@ -74,6 +82,18 @@ impl Source for [u8] {
             .checked_add(len)
             .and_then(|end| self.get(offset..end))
             .map(Cow::Borrowed))
+    }
+
+    fn with_range<T>(
+        &self,
+        offset: usize,
+        len: usize,
+        read: impl FnOnce(&mut dyn Read) -> Result<T>,
+    ) -> Result<Option<T>> {
+        match offset.checked_add(len).and_then(|end| self.get(offset..end)) {
+            Some(mut bytes) => read(&mut bytes).map(Some),
+            None => Ok(None),
+        }
     }
 }
 
@@ -99,6 +119,22 @@ impl<R: Read + Seek> Source for ReaderSource<'_, R> {
         let mut out = vec![0; len];
         reader.read_exact(&mut out).map_err(Error::Io)?;
         Ok(Some(Cow::Owned(out)))
+    }
+
+    fn with_range<T>(
+        &self,
+        offset: usize,
+        len: usize,
+        read: impl FnOnce(&mut dyn Read) -> Result<T>,
+    ) -> Result<Option<T>> {
+        if offset.checked_add(len).is_none_or(|end| end > self.len) {
+            return Ok(None);
+        }
+        let mut reader = self.reader.borrow_mut();
+        reader
+            .seek(SeekFrom::Start(offset as u64))
+            .map_err(Error::Io)?;
+        read(&mut (&mut **reader).take(len as u64)).map(Some)
     }
 }
 
@@ -606,7 +642,7 @@ fn read_local_entry<S: Source + ?Sized>(
             "opc local data length overflow",
         )))?;
     let record_end = if descriptor {
-        descriptor_end(bytes, data_end, entry)
+        descriptor_end(bytes, data_end, entry)?
     } else {
         data_end
     };
@@ -616,23 +652,23 @@ fn read_local_entry<S: Source + ?Sized>(
         )));
     }
     claim_local_range(local_ranges, local_offset, record_end)?;
-    let raw = bytes
-        .range(data_start, data_end - data_start)?
+    let declared_size = entry.declared_size;
+    let expected_crc = entry.crc;
+    // The payload streams from the source into its part, bounded by the
+    // declared size: a file source never holds the compressed bytes whole.
+    let data = bytes
+        .with_range(data_start, data_end - data_start, |raw| {
+            match entry.method {
+                ZIP_STORED => read_stored(raw, declared_size),
+                ZIP_DEFLATE => inflate(raw, declared_size),
+                _ => Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                    "opc entry uses an unsupported compression method",
+                ))),
+            }
+        })?
         .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
             "opc entry data truncated",
         )))?;
-    let declared_size = entry.declared_size;
-    let expected_crc = entry.crc;
-
-    let data = match entry.method {
-        ZIP_STORED => raw.to_vec(),
-        ZIP_DEFLATE => inflate(&raw, declared_size)?,
-        _ => {
-            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
-                "opc entry uses an unsupported compression method",
-            )));
-        }
-    };
 
     // Verify the produced bytes against the central-directory declaration. The
     // gate never trusts a length or checksum it did not recompute from the
@@ -656,28 +692,41 @@ fn read_local_entry<S: Source + ?Sized>(
 /// signature word can match both layouts; the shorter is taken. Anything else
 /// claims no descriptor bytes: the payload is still checked against the
 /// central CRC and size after it is read.
+///
+/// # Errors
+///
+/// The source's read errors: a word past the end is no descriptor, a read
+/// that fails is no answer.
 fn descriptor_end<S: Source + ?Sized>(
     bytes: &S,
     data_end: usize,
     entry: &CentralEntry<'_>,
-) -> usize {
-    let word = |at: usize| {
-        data_end
-            .checked_add(at)
-            .and_then(|offset| read_u32(bytes, offset).ok())
+) -> Result<usize> {
+    let word = |at: usize| -> Result<Option<u32>> {
+        let Some(offset) = data_end.checked_add(at) else {
+            return Ok(None);
+        };
+        Ok(bytes
+            .range(offset, 4)?
+            .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]])))
     };
     let declared = u32::try_from(entry.declared_size).ok();
-    if word(0) == Some(entry.crc) && word(4) == Some(entry.comp_size) && word(8) == declared {
-        data_end + 12
-    } else if word(0) == Some(DATA_DESCRIPTOR_SIGNATURE)
-        && word(4) == Some(entry.crc)
-        && word(8) == Some(entry.comp_size)
-        && word(12) == declared
-    {
-        data_end + 16
-    } else {
-        data_end
-    }
+    Ok(
+        if word(0)? == Some(entry.crc)
+            && word(4)? == Some(entry.comp_size)
+            && word(8)? == declared
+        {
+            data_end + 12
+        } else if word(0)? == Some(DATA_DESCRIPTOR_SIGNATURE)
+            && word(4)? == Some(entry.crc)
+            && word(8)? == Some(entry.comp_size)
+            && word(12)? == declared
+        {
+            data_end + 16
+        } else {
+            data_end
+        },
+    )
 }
 
 /// Claims one local record's `[start, end)` bytes for this decode. A record
@@ -701,7 +750,17 @@ fn claim_local_range(ranges: &mut BTreeMap<usize, usize>, start: usize, end: usi
     Ok(())
 }
 
-fn inflate(raw: &[u8], declared_size: u64) -> Result<Vec<u8>> {
+/// A STORED entry's bytes as they stream, at most one past its declared
+/// size, so a longer one is refused by its size check, never held whole.
+fn read_stored(raw: &mut dyn Read, declared_size: u64) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    raw.take(declared_size.saturating_add(1))
+        .read_to_end(&mut out)
+        .map_err(Error::Io)?;
+    Ok(out)
+}
+
+fn inflate(raw: &mut dyn Read, declared_size: u64) -> Result<Vec<u8>> {
     // Bound the decompressor at declared+1 bytes: a well-formed entry inflates
     // to exactly `declared_size`, so reading one extra byte is enough for the
     // caller's length check to catch a stream that expands past its declaration

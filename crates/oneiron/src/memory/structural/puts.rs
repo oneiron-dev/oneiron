@@ -249,8 +249,8 @@ impl Memory<'_> {
         // to its body file under an instance minted before the writer opens;
         // its hold outlives the commit (FIX 20812).
         let mint = self.vault.asset_body_mint([content.len()])?;
-        let (outcome, _hold) = self.with_actor_content_write_txn(|content| {
-            Ok(content.update_artifact(artifact_id, |txn, lane| {
+        let (outcome, _hold) = self.with_actor_content_write_txn(|content_txn| {
+            Ok(content_txn.update_artifact(artifact_id, |txn, lane| {
                 self.vault.append_blob_artifact_version_checked_in_txn(
                     txn,
                     &artifact_id,

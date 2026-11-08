@@ -65,6 +65,25 @@ impl<'f> BlobBodyFile<'f> {
         Ok(self.file)
     }
 
+    /// The file read from its start, checked against the body it was
+    /// measured as while it streams: a read past the measured length, or an
+    /// end at another length or BLAKE3, fails before its reader takes the
+    /// end, so a copy that publishes on a clean end never publishes other
+    /// bytes under this body's digest.
+    ///
+    /// # Errors
+    ///
+    /// The file's seek error.
+    pub(crate) fn checked_reader(&self) -> Result<CheckedBodyRead<'f>> {
+        Ok(CheckedBodyRead {
+            file: self.reader()?,
+            hasher: blake3::Hasher::new(),
+            read: 0,
+            len: self.len,
+            blake3: self.blake3,
+        })
+    }
+
     /// The whole body when it is no longer than the asset plane's inline
     /// size, which every door holds in memory as it does a slice; `None`
     /// for a longer one, which is only ever streamed.
@@ -78,7 +97,11 @@ impl<'f> BlobBodyFile<'f> {
             return Ok(None);
         }
         let mut bytes = Vec::with_capacity(usize::try_from(self.len).unwrap_or_default());
-        self.reader()?.read_to_end(&mut bytes)?;
+        // One byte past the measured length shows a file that grew, without
+        // reading what it grew by.
+        self.reader()?
+            .take(self.len.saturating_add(1))
+            .read_to_end(&mut bytes)?;
         self.check(bytes.len() as u64, *blake3::hash(&bytes).as_bytes())?;
         Ok(Some(bytes))
     }
@@ -98,6 +121,41 @@ impl<'f> BlobBodyFile<'f> {
             ))
         }
     }
+}
+
+/// [`BlobBodyFile::checked_reader`]'s reader.
+pub(crate) struct CheckedBodyRead<'f> {
+    file: &'f File,
+    hasher: blake3::Hasher,
+    read: u64,
+    len: u64,
+    blake3: [u8; 32],
+}
+
+impl Read for CheckedBodyRead<'_> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let count = self.file.read(out)?;
+        if count == 0 {
+            if self.read != self.len || *self.hasher.finalize().as_bytes() != self.blake3 {
+                return Err(changed());
+            }
+            return Ok(0);
+        }
+        self.read = self.read.saturating_add(count as u64);
+        if self.read > self.len {
+            return Err(changed());
+        }
+        self.hasher.update(&out[..count]);
+        Ok(count)
+    }
+}
+
+/// A body file that is not the body it was measured as.
+fn changed() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "a blob body file changed after it was measured",
+    )
 }
 
 /// The bytes a blob version or a waiting native output takes: a slice in
