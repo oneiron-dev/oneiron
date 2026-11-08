@@ -233,6 +233,16 @@ contract 5 and inner DOCX schema 2 are extended before this same PR lands; this
 is not an old-format reader, default or migration. A later change after they
 land requires fresh current versions. No numeric ceiling, default, dependency,
 error kind, test or runtime/Word proof is added by this extension.
+The normalized final-move deletion change (2026-11-06, FIX 13301 partial)
+touches `src/tracked_model.rs`. A document-final move destination whose pilcrow
+was normalized to Normal retains its actual move revision on the block. Its
+inner deletions use the same paired source and positional character ranges only
+when the reconstructed original text equals the full source text. Nonaligned
+normalized destinations stay unchanged; they never use substring matching.
+The existing Inserted-pilcrow path and deletion cascade stay unchanged, including
+revision identities, authors, and the final Normal pilcrow. This also covers a
+second selective resolution after an unrelated revision normalized the final
+mark. Reimported move destinations continue through the existing Inserted path.
 
 The exact move-deletion range change (2026-11-05, FIX 13300 partial) touches
 `src/tracked_model.rs`. Eligible destination clones reconstruct their original
