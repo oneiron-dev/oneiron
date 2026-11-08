@@ -241,9 +241,7 @@ impl Intake<'_> {
             (format!("mbox{}", &digest[..32]), None, Vec::new())
         };
         let date = parsed.header("date").as_deref().and_then(rfc2822_seconds);
-        let received_at = separator_seconds(&message.separator)
-            .or(date)
-            .unwrap_or(0);
+        let received_at = separator_seconds(&message.separator).or(date).unwrap_or(0);
         let addresses = |name: &str| parsed.address_header(name);
         Some(MailHeaders {
             provider_id,
@@ -262,7 +260,9 @@ impl Intake<'_> {
             date,
             received_at,
             sent_by_mailbox: labels.iter().any(|label| label == "SENT"),
-            trash_or_spam: labels.iter().any(|label| label == "TRASH" || label == "SPAM"),
+            trash_or_spam: labels
+                .iter()
+                .any(|label| label == "TRASH" || label == "SPAM"),
             draft: labels.iter().any(|label| label == "DRAFT"),
             labels,
         })
@@ -400,8 +400,11 @@ fn read_file(
         let mut reader = BufReader::with_capacity(READ_BUFFER_BYTES, entry);
         // A zipped mbox reads from its start: what an earlier call read is
         // passed over.
-        std::io::copy(&mut (&mut reader).take(progress.offset), &mut std::io::sink())
-            .map_err(|error| unreadable(&error))?;
+        std::io::copy(
+            &mut (&mut reader).take(progress.offset),
+            &mut std::io::sink(),
+        )
+        .map_err(|error| unreadable(&error))?;
         let ended = read_stream(
             MboxReader::new(reader, progress.offset),
             key,

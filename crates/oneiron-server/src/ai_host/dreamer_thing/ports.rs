@@ -169,6 +169,7 @@ impl ScopedChildPorts for ThingChildPorts {
 
 fn refusal(code: &str) -> AgentVerbRefusal {
     AgentVerbRefusal {
+        hook_notice: None,
         code: code.to_owned(),
     }
 }

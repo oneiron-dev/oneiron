@@ -541,6 +541,7 @@ pub(crate) fn scoped_child_service_admission(
     ports
         .filter(|ports| ports.serves(verb))
         .ok_or_else(|| AgentVerbRefusal {
+            hook_notice: None,
             code: SCOPED_CHILD_SERVICE_UNBOUND.to_owned(),
         })
 }
