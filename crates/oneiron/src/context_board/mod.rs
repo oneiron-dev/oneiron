@@ -21,6 +21,7 @@ pub use people::{
 pub(crate) use people::{
     PreparedAgentPerson, ensure_agent_person, ensure_agent_person_in_txn,
     ensure_seeded_agent_person_in_txn, prepare_agent_person_after_puts_in_txn,
+    seeded_agent_person_ids,
 };
 mod inbox;
 pub use inbox::assemble_inbox_section;
@@ -61,12 +62,13 @@ pub use history::{
 };
 pub(crate) use history::{fold_board_turns_in_txn, validate_board_claim};
 pub use self_brief::{
-    BriefActPosture, BriefBranchBound, BriefCeiling, BriefCeilingPosture, BriefCeilingTarget,
-    BriefClassPrecedence, BriefConnectorCeiling, BriefContextBound, BriefCredentialCeiling,
-    BriefGrant, BriefGrants, BriefParentBound, BriefParentCeiling, BriefPlacement, BriefRunCeiling,
-    BriefSkillRow, BriefWorkingHandle, BriefWorkingSet, CommunicationLimits, PlacedSelfBrief,
-    SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState, brief_credential_ceiling,
-    brief_run_ceiling,
+    BriefActPosture, BriefActionEnvelope, BriefBranchBound, BriefCeiling, BriefCeilingPosture,
+    BriefCeilingTarget, BriefClassPrecedence, BriefClassReads, BriefClassSource, BriefClassVerdict,
+    BriefClassVerdicts, BriefConnectorCeiling, BriefContextBound, BriefCredentialCeiling,
+    BriefDefaultRule, BriefGrant, BriefGrants, BriefOutboundScope, BriefParentBound,
+    BriefParentCeiling, BriefPerActCheck, BriefPlacement, BriefRunCeiling, BriefSkillRow,
+    BriefWorkingHandle, BriefWorkingSet, CommunicationLimits, PlacedSelfBrief, SelfBrief,
+    SelfBriefInput, SelfBriefSession, SelfBriefState, brief_credential_ceiling, brief_run_ceiling,
 };
 mod hook_pins;
 mod memories;

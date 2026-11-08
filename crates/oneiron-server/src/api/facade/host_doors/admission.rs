@@ -627,6 +627,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeModelHealCount
         | Row::VaultCodeSessionModelHealCount
         | Row::VaultCodeTypeDiagnostics
+        | Row::VaultCodeWaitsRebind
         | Row::VaultCodeCorrections
         | Row::VaultCodeStepEvidence
         | Row::VaultCodeExport
@@ -841,7 +842,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultOffRecordRoomsExport => {
             crate::api::facade::off_record_room_doors::off_record_room_admits(auth, verb)
         }
-        Row::VaultGuestsExportEnvelope => {
+        Row::VaultGuestsExportEnvelope | Row::VaultGuestsPropose => {
             crate::api::facade::guest_document_doors::guest_document_reader(server, auth).map(drop)
         }
         Row::ExecuteCode => {

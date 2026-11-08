@@ -479,6 +479,21 @@ impl PolicyManifestResolution {
         self.auto_checker.as_deref()
     }
 
+    /// The native checker selected by this writer's resolved source permit.
+    /// The top-level host checker remains independent and Dreamer-scoped.
+    pub(crate) fn source_auto_checker(
+        &self,
+        source: crate::claim::ClaimSource,
+        actor_ref: Option<&str>,
+    ) -> Option<crate::gate::NativeAutoChecker> {
+        if self.is_fail_closed() || self.source_trust.malformed_manifest_seen {
+            return None;
+        }
+        self.source_trust
+            .row_for_actor(source, actor_ref)?
+            .auto_checker
+    }
+
     /// The quality floor lives in a trusted, seeded POLICY_MANIFEST row.
     /// Holder overrides are nested restrict-only rows capped at the vault.
     #[must_use]

@@ -12,8 +12,11 @@ use crate::entity_id::EntityId;
 use crate::runtime_hooks::verb::{VerbAskDoor, VerbAskInstrument, VerbHookPreSnapshot};
 use crate::store::GateDecisionId;
 
+use super::rebind_types::{CodeConsentRebind, CodeConsentRebindProposal};
+use super::resume::{CodeConsentResumeRefusal, CodeConsentRunOrigin};
+
 /// The binding row's schema version.
-pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 7;
+pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 8;
 
 pub(crate) use crate::consent::code_wait_state::CodeConsentCallSite;
 pub use crate::consent::code_wait_state::{
@@ -205,6 +208,10 @@ pub(crate) struct CodeConsentBinding {
     /// The policy manifest frontier the hold was decided under.
     pub(crate) policy_frontier: [u8; 32],
     pub(crate) created_at_ms: u64,
+    /// The admitted MCP caller the run can be entered again for once the
+    /// reply is delivered (FIX 4606), as its host bound it on the run;
+    /// `None` for a run no MCP host bound one on.
+    pub(crate) origin: Option<CodeConsentRunOrigin>,
 }
 
 /// The parked step's seal (1b writes it from the executor's commit).
@@ -315,7 +322,14 @@ pub(crate) struct CodeConsentWaitRow {
     pub(crate) settlement: Option<CodeConsentSettlement>,
     #[serde(default)]
     pub(crate) consumption: Option<CodeConsentConsumption>,
+    /// Why its host refused the run's automatic re-entry for good (FIX
+    /// 4606): written once, apart from the answer, the settlement and the
+    /// consumption, and never cleared.
+    #[serde(default)]
+    pub(crate) resume_refusal: Option<CodeConsentResumeRefusal>,
     pub(crate) revision: u64,
+    pub(crate) rebind_proposal: Option<CodeConsentRebindProposal>,
+    pub(crate) rebinds: Vec<CodeConsentRebind>,
 }
 
 impl CodeConsentWaitRow {
@@ -369,6 +383,7 @@ pub struct CodeConsentWaitView {
     pub wait_id: EntityId,
     pub run_id: EntityId,
     pub state: CodeConsentWaitState,
+    pub revision: u64,
     /// The verb row the held effect is.
     pub verb: String,
     /// The catalog name and tool of the held connector call; empty for a
@@ -430,4 +445,6 @@ pub struct CodeConsentWaitView {
     pub remembered: Option<String>,
     /// This answer was not the first: the view is the first answer's.
     pub already_answered: bool,
+    pub(crate) rebind_proposal: Option<CodeConsentRebindProposal>,
+    pub(crate) rebinds: Vec<CodeConsentRebind>,
 }

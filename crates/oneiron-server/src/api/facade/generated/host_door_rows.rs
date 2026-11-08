@@ -134,6 +134,7 @@
 //! - `vault.questions.schedule`
 //! - `vault.decisions.asks.confirm_grant`
 //! - `connector.call`
+//! - `connector.call_status`
 //! - `vault.conversations.turns.create`
 //! - `vault.conversations.records.append`
 //! - `vault.batch`
@@ -471,6 +472,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultTrustedContactsConcernPropose,
     VaultGuestsShare,
     VaultGuestsExportEnvelope,
+    VaultGuestsPropose,
     VaultGuestsReshare,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
@@ -693,6 +695,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCodeCorrections,
     VaultCodeStepEvidence,
     VaultCodeTypeDiagnostics,
+    VaultCodeWaitsRebind,
     VaultCodeWaitsResolve,
     VaultCodeWaitsReceipt,
     VaultResultsStatus,
@@ -1247,6 +1250,7 @@ impl HostDoorRow {
             "vault.trusted_contacts.concern.propose" => Self::VaultTrustedContactsConcernPropose,
             "vault.guests.share" => Self::VaultGuestsShare,
             "vault.guests.export_envelope" => Self::VaultGuestsExportEnvelope,
+            "vault.guests.propose" => Self::VaultGuestsPropose,
             "vault.guests.reshare" => Self::VaultGuestsReshare,
             "vault.guests.revoke" => Self::VaultGuestsRevoke,
             "vault.guests.mint_slip" => Self::VaultGuestsMintSlip,
@@ -1481,6 +1485,7 @@ impl HostDoorRow {
             "vault.code.corrections" => Self::VaultCodeCorrections,
             "vault.code.step_evidence" => Self::VaultCodeStepEvidence,
             "vault.code.type_diagnostics" => Self::VaultCodeTypeDiagnostics,
+            "vault.code.waits.rebind" => Self::VaultCodeWaitsRebind,
             "vault.code.waits.resolve" => Self::VaultCodeWaitsResolve,
             "vault.code.waits.receipt" => Self::VaultCodeWaitsReceipt,
             "vault.results.status" => Self::VaultResultsStatus,
@@ -1903,6 +1908,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.questions.schedule"
                 | "vault.decisions.asks.confirm_grant"
                 | "connector.call"
+                | "connector.call_status"
                 | "vault.conversations.turns.create"
                 | "vault.conversations.records.append"
                 | "vault.batch"

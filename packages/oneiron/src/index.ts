@@ -1687,6 +1687,8 @@ export class Oneiron {
       share: (input: Facade.GuestDocumentShareRequest): Facade.GuestDocumentEnvelope => this.#call(() => this.#client.vaultGuestsShare(input) as Facade.GuestDocumentEnvelope),
       /** The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket. */
       export_envelope: (input: Facade.GuestDocumentShareRequest): Facade.GuestDocumentEnvelope => this.#call(() => this.#client.vaultGuestsExportEnvelope(input) as Facade.GuestDocumentEnvelope),
+      /** A Connect guest proposes one write of a record's text under its own live grant-bound credential; it lands in the owner's review inbox for that Connect and never writes the vault. */
+      propose: (input: Facade.ConnectProposeRequest): Facade.ConnectProposalLanded => this.#call(() => this.#client.vaultGuestsPropose(input) as Facade.ConnectProposalLanded),
       /** The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused. */
       reshare: (input: Facade.GuestDocumentShareRequest): Facade.GuestDocumentEnvelope => this.#call(() => this.#client.vaultGuestsReshare(input) as Facade.GuestDocumentEnvelope),
       revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),
@@ -2467,6 +2469,10 @@ export class Oneiron {
       /** Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref. */
       type_diagnostics: (input: Facade.CodeRunTypeDiagnosticsRequest): Facade.ProgramStepFeedbackRelease | null => this.#call(() => this.#client.vaultCodeTypeDiagnostics(input) as Facade.ProgramStepFeedbackRelease | null),
       waits: {
+        /** Propose the original holder's actual successor credential for one admitted, unsettled code consent wait. Stores no active authorization; a separate owner rebind act must confirm it. */
+        rebind_prepare: (input: Facade.CodeWaitRebindPrepareRequest): Facade.CodeWaitRebindPrepared => this.#call(() => this.#client.vaultCodeWaitsRebindPrepare(input) as Facade.CodeWaitRebindPrepared),
+        /** Explicitly authorize one exact holder-proposed successor as the independent authenticated owner. Only an admitted, unsettled wait continues under the same intent; its original answer, admission and delivery stay unchanged. */
+        rebind: (input: Facade.CodeWaitRebindRequest): Facade.CodeWaitRebindReceipt => this.#call(() => this.#client.vaultCodeWaitsRebind(input) as Facade.CodeWaitRebindReceipt),
         /** Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption. */
         resolve: (input: Facade.CodeWaitResolveRequest): Facade.CodeWaitReceiptView => this.#call(() => this.#client.vaultCodeWaitsResolve(input) as Facade.CodeWaitReceiptView),
         /** Read a code consent wait as its authenticated owner or current policy-admitted power holder: effect, answer, settlement and replay-consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait. */
@@ -3219,6 +3225,8 @@ export class Oneiron {
         image: (input: Facade.EsignSigningImageRequest): Facade.EsignSigningImageView => this.#call(() => this.#client.vaultEsignSigningImage(input) as Facade.EsignSigningImageView),
         /** Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes. */
         signature: (input: Facade.EsignSigningSignatureRequest): Facade.EsignSigningSignatureView => this.#call(() => this.#client.vaultEsignSigningSignature(input) as Facade.EsignSigningSignatureView),
+        /** The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields. */
+        preview: (input: Facade.EsignSigningPreviewRequest): Facade.EsignSigningPreviewView => this.#call(() => this.#client.vaultEsignSigningPreview(input) as Facade.EsignSigningPreviewView),
       },
       seal: {
         /** Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error. */
@@ -3485,7 +3493,7 @@ export class Oneiron {
         import_mbox: (input: Facade.MailMboxImportRequest): Facade.MailMboxImportReport => this.#call(() => this.#client.vaultMailSourcesImportMbox(input) as Facade.MailMboxImportReport),
         /** The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner. */
         sync: (input: Facade.MailSourceSyncRequest): Facade.MailSyncReport => this.#call(() => this.#client.vaultMailSourcesSync(input) as Facade.MailSyncReport),
-        /** The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience. */
+        /** The vault's owner searches a Google, Microsoft 365 or IMAP mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience. */
         search: (input: Facade.MailSourceSearchRequest): Facade.MailSearchReport => this.#call(() => this.#client.vaultMailSourcesSearch(input) as Facade.MailSearchReport),
       },
       threads: {
@@ -3838,7 +3846,10 @@ export class Oneiron {
       }),
     }),
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
-    outcomes: (handle: TaskAskHandle): Facade.CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as Facade.CalibrationPair[]),
+    outcomes: Object.assign((handle: TaskAskHandle): Facade.CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as Facade.CalibrationPair[]), {
+      /** Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only. */
+      route_calibration: (handle: TaskAskHandle): Facade.RouteCalibrationReport => this.#call(() => this.#client.tasksOutcomesRouteCalibration(handle) as Facade.RouteCalibrationReport),
+    }),
     /** Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay. */
     refuse: (input: Facade.LiveRunRequest<Facade.TaskRefuseInput>): Facade.TaskRefuseOutput => this.#call(() => this.#client.tasksRefuse(input) as Facade.TaskRefuseOutput),
   }
@@ -3964,8 +3975,8 @@ export class Oneiron {
   }
   /** Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal. */
   execute_code(input: Facade.ForeignCodeRunRequest): Facade.ForeignCodeRunResult { return this.#call(() => this.#client.executeCode(input) as Facade.ForeignCodeRunResult) }
-  /** Read-only ask routing or attributed partial answers. */
-  can(request: TaskCanAskRequest): TaskAskPreflight { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as TaskAskPreflight; return result }) }
+  /** Read-only ask routing, or one effect's dated allow, deny, would-ask or named hold. */
+  can(request: Facade.CanRequest): Facade.CanAnswer { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as Facade.CanAnswer; return result }) }
   /** Read-only ask routing or attributed partial answers. */
   peek(request: TaskAskHandle): TaskAskPersonEvidence[] { return this.#call(() => {  const result = JSON.parse(this.#client.peek(keyedJson(request))) as TaskAskPersonEvidence[]; return result.map(item => item) }) }
   /** Asks people or an authority a typed question and returns at admission with the ask's handle. */

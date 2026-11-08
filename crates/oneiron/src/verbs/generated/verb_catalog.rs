@@ -426,6 +426,7 @@ pub enum AgentVerb {
     VaultTrustedContactsConcernDeliver,
     VaultGuestsShare,
     VaultGuestsExportEnvelope,
+    VaultGuestsPropose,
     VaultGuestsReshare,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
@@ -732,6 +733,8 @@ pub enum AgentVerb {
     VaultCodeCorrections,
     VaultCodeStepEvidence,
     VaultCodeTypeDiagnostics,
+    VaultCodeWaitsRebindPrepare,
+    VaultCodeWaitsRebind,
     VaultCodeWaitsResolve,
     VaultCodeWaitsReceipt,
     VaultResultsStatus,
@@ -892,6 +895,7 @@ pub enum AgentVerb {
     TasksAnswerForward,
     TasksAnswerForwardStatus,
     TasksOutcomes,
+    TasksOutcomesRouteCalibration,
     VaultRoomsList,
     VaultRoomsMessages,
     VaultRoomsParticipants,
@@ -1155,6 +1159,7 @@ pub enum AgentVerb {
     VaultEsignSigningPdf,
     VaultEsignSigningImage,
     VaultEsignSigningSignature,
+    VaultEsignSigningPreview,
     VaultEsignSealGet,
     VaultConversationsCreate,
     VaultConversationsTurnsCreate,
@@ -1797,6 +1802,7 @@ impl AgentVerb {
         Self::VaultTrustedContactsConcernDeliver,
         Self::VaultGuestsShare,
         Self::VaultGuestsExportEnvelope,
+        Self::VaultGuestsPropose,
         Self::VaultGuestsReshare,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
@@ -2103,6 +2109,8 @@ impl AgentVerb {
         Self::VaultCodeCorrections,
         Self::VaultCodeStepEvidence,
         Self::VaultCodeTypeDiagnostics,
+        Self::VaultCodeWaitsRebindPrepare,
+        Self::VaultCodeWaitsRebind,
         Self::VaultCodeWaitsResolve,
         Self::VaultCodeWaitsReceipt,
         Self::VaultResultsStatus,
@@ -2263,6 +2271,7 @@ impl AgentVerb {
         Self::TasksAnswerForward,
         Self::TasksAnswerForwardStatus,
         Self::TasksOutcomes,
+        Self::TasksOutcomesRouteCalibration,
         Self::VaultRoomsList,
         Self::VaultRoomsMessages,
         Self::VaultRoomsParticipants,
@@ -2526,6 +2535,7 @@ impl AgentVerb {
         Self::VaultEsignSigningPdf,
         Self::VaultEsignSigningImage,
         Self::VaultEsignSigningSignature,
+        Self::VaultEsignSigningPreview,
         Self::VaultEsignSealGet,
         Self::VaultConversationsCreate,
         Self::VaultConversationsTurnsCreate,
@@ -3181,6 +3191,7 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernDeliver => "vault.trusted_contacts.concern.deliver",
             Self::VaultGuestsShare => "vault.guests.share",
             Self::VaultGuestsExportEnvelope => "vault.guests.export_envelope",
+            Self::VaultGuestsPropose => "vault.guests.propose",
             Self::VaultGuestsReshare => "vault.guests.reshare",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
@@ -3501,6 +3512,8 @@ impl AgentVerb {
             Self::VaultCodeCorrections => "vault.code.corrections",
             Self::VaultCodeStepEvidence => "vault.code.step_evidence",
             Self::VaultCodeTypeDiagnostics => "vault.code.type_diagnostics",
+            Self::VaultCodeWaitsRebindPrepare => "vault.code.waits.rebind_prepare",
+            Self::VaultCodeWaitsRebind => "vault.code.waits.rebind",
             Self::VaultCodeWaitsResolve => "vault.code.waits.resolve",
             Self::VaultCodeWaitsReceipt => "vault.code.waits.receipt",
             Self::VaultResultsStatus => "vault.results.status",
@@ -3661,6 +3674,7 @@ impl AgentVerb {
             Self::TasksAnswerForward => "tasks.answer.forward",
             Self::TasksAnswerForwardStatus => "tasks.answer.forward.status",
             Self::TasksOutcomes => "tasks.outcomes",
+            Self::TasksOutcomesRouteCalibration => "tasks.outcomes.route_calibration",
             Self::VaultRoomsList => "vault.rooms.list",
             Self::VaultRoomsMessages => "vault.rooms.messages",
             Self::VaultRoomsParticipants => "vault.rooms.participants",
@@ -3934,6 +3948,7 @@ impl AgentVerb {
             Self::VaultEsignSigningPdf => "vault.esign.signing.pdf",
             Self::VaultEsignSigningImage => "vault.esign.signing.image",
             Self::VaultEsignSigningSignature => "vault.esign.signing.signature",
+            Self::VaultEsignSigningPreview => "vault.esign.signing.preview",
             Self::VaultEsignSealGet => "vault.esign.seal.get",
             Self::VaultConversationsCreate => "vault.conversations.create",
             Self::VaultConversationsTurnsCreate => "vault.conversations.turns.create",
@@ -4586,6 +4601,7 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsShare
                 | Self::VaultGuestsExportEnvelope
+                | Self::VaultGuestsPropose
                 | Self::VaultGuestsReshare
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
@@ -4892,6 +4908,8 @@ impl AgentVerb {
                 | Self::VaultCodeCorrections
                 | Self::VaultCodeStepEvidence
                 | Self::VaultCodeTypeDiagnostics
+                | Self::VaultCodeWaitsRebindPrepare
+                | Self::VaultCodeWaitsRebind
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
@@ -5052,6 +5070,7 @@ impl AgentVerb {
                 | Self::TasksAnswerForward
                 | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
+                | Self::TasksOutcomesRouteCalibration
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
                 | Self::VaultRoomsParticipants
@@ -5293,6 +5312,7 @@ impl AgentVerb {
                 | Self::VaultEsignSigningPdf
                 | Self::VaultEsignSigningImage
                 | Self::VaultEsignSigningSignature
+                | Self::VaultEsignSigningPreview
                 | Self::VaultEsignSealGet
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
@@ -5986,6 +6006,7 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsShare
                 | Self::VaultGuestsExportEnvelope
+                | Self::VaultGuestsPropose
                 | Self::VaultGuestsReshare
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
@@ -6292,6 +6313,8 @@ impl AgentVerb {
                 | Self::VaultCodeCorrections
                 | Self::VaultCodeStepEvidence
                 | Self::VaultCodeTypeDiagnostics
+                | Self::VaultCodeWaitsRebindPrepare
+                | Self::VaultCodeWaitsRebind
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
@@ -6452,6 +6475,7 @@ impl AgentVerb {
                 | Self::TasksAnswerForward
                 | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
+                | Self::TasksOutcomesRouteCalibration
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
                 | Self::VaultRoomsParticipants
@@ -6693,6 +6717,7 @@ impl AgentVerb {
                 | Self::VaultEsignSigningPdf
                 | Self::VaultEsignSigningImage
                 | Self::VaultEsignSigningSignature
+                | Self::VaultEsignSigningPreview
                 | Self::VaultEsignSealGet
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
@@ -6925,6 +6950,7 @@ impl AgentVerb {
                 | Self::Wait
                 | Self::TasksAnswer
                 | Self::TasksOutcomes
+                | Self::TasksOutcomesRouteCalibration
         )
     }
     pub const fn continuable(self) -> bool {
@@ -7129,6 +7155,7 @@ impl AgentVerb {
                 | Self::VaultEsignSigningPdf
                 | Self::VaultEsignSigningImage
                 | Self::VaultEsignSigningSignature
+                | Self::VaultEsignSigningPreview
                 | Self::VaultEsignSealGet
                 | Self::VaultClaimsSeed
                 | Self::VaultSummariesRead
@@ -7544,6 +7571,7 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsShare
                 | Self::VaultGuestsExportEnvelope
+                | Self::VaultGuestsPropose
                 | Self::VaultGuestsReshare
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
@@ -7838,6 +7866,8 @@ impl AgentVerb {
                 | Self::VaultCodeCorrections
                 | Self::VaultCodeStepEvidence
                 | Self::VaultCodeTypeDiagnostics
+                | Self::VaultCodeWaitsRebindPrepare
+                | Self::VaultCodeWaitsRebind
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
@@ -7976,6 +8006,7 @@ impl AgentVerb {
                 | Self::TasksAnswerForward
                 | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
+                | Self::TasksOutcomesRouteCalibration
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
                 | Self::VaultRoomsParticipants
@@ -8849,6 +8880,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalReview
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeSecretsPropose
+                | Self::VaultCodeWaitsRebindPrepare
+                | Self::VaultCodeWaitsRebind
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
                 | Self::VaultCodeImport
@@ -9698,6 +9731,7 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernDeliver => &["spec"],
             Self::VaultGuestsShare => &["spec"],
             Self::VaultGuestsExportEnvelope => &["spec"],
+            Self::VaultGuestsPropose => &["spec"],
             Self::VaultGuestsReshare => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
@@ -10004,6 +10038,8 @@ impl AgentVerb {
             Self::VaultCodeCorrections => &["spec"],
             Self::VaultCodeStepEvidence => &["spec"],
             Self::VaultCodeTypeDiagnostics => &["spec"],
+            Self::VaultCodeWaitsRebindPrepare => &["spec"],
+            Self::VaultCodeWaitsRebind => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
             Self::VaultCodeWaitsReceipt => &["spec"],
             Self::VaultResultsStatus => &["spec"],
@@ -10164,6 +10200,7 @@ impl AgentVerb {
             Self::TasksAnswerForward => &["spec"],
             Self::TasksAnswerForwardStatus => &["spec"],
             Self::TasksOutcomes => &["spec"],
+            Self::TasksOutcomesRouteCalibration => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref", "turn_ref", "thread_ref"],
             Self::VaultRoomsParticipants => &["spec", "room_ref"],
@@ -10427,6 +10464,7 @@ impl AgentVerb {
             Self::VaultEsignSigningPdf => &["spec"],
             Self::VaultEsignSigningImage => &["spec"],
             Self::VaultEsignSigningSignature => &["spec"],
+            Self::VaultEsignSigningPreview => &["spec"],
             Self::VaultEsignSealGet => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
@@ -11070,6 +11108,7 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernDeliver => &["spec"],
             Self::VaultGuestsShare => &["spec"],
             Self::VaultGuestsExportEnvelope => &["spec"],
+            Self::VaultGuestsPropose => &["spec"],
             Self::VaultGuestsReshare => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
@@ -11376,6 +11415,8 @@ impl AgentVerb {
             Self::VaultCodeCorrections => &["spec"],
             Self::VaultCodeStepEvidence => &["spec"],
             Self::VaultCodeTypeDiagnostics => &["spec"],
+            Self::VaultCodeWaitsRebindPrepare => &["spec"],
+            Self::VaultCodeWaitsRebind => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
             Self::VaultCodeWaitsReceipt => &["spec"],
             Self::VaultResultsStatus => &["spec"],
@@ -11536,6 +11577,7 @@ impl AgentVerb {
             Self::TasksAnswerForward => &["spec"],
             Self::TasksAnswerForwardStatus => &["spec"],
             Self::TasksOutcomes => &["spec"],
+            Self::TasksOutcomesRouteCalibration => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref"],
             Self::VaultRoomsParticipants => &["spec", "room_ref"],
@@ -11799,6 +11841,7 @@ impl AgentVerb {
             Self::VaultEsignSigningPdf => &["spec"],
             Self::VaultEsignSigningImage => &["spec"],
             Self::VaultEsignSigningSignature => &["spec"],
+            Self::VaultEsignSigningPreview => &["spec"],
             Self::VaultEsignSealGet => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
@@ -13273,6 +13316,9 @@ impl AgentVerb {
             Self::VaultGuestsExportEnvelope => {
                 "The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket."
             }
+            Self::VaultGuestsPropose => {
+                "A Connect guest proposes one write of a record's text under its own live grant-bound credential; it lands in the owner's review inbox for that Connect and never writes the vault."
+            }
             Self::VaultGuestsReshare => {
                 "The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused."
             }
@@ -14175,6 +14221,12 @@ impl AgentVerb {
             Self::VaultCodeTypeDiagnostics => {
                 "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."
             }
+            Self::VaultCodeWaitsRebindPrepare => {
+                "Propose the original holder's actual successor credential for one admitted, unsettled code consent wait. Stores no active authorization; a separate owner rebind act must confirm it."
+            }
+            Self::VaultCodeWaitsRebind => {
+                "Explicitly authorize one exact holder-proposed successor as the independent authenticated owner. Only an admitted, unsettled wait continues under the same intent; its original answer, admission and delivery stay unchanged."
+            }
             Self::VaultCodeWaitsResolve => {
                 "Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption."
             }
@@ -14615,7 +14667,7 @@ impl AgentVerb {
             Self::VaultArtifactsDiscard => "Drops one waiting artifact proposal, once.",
             Self::VaultArtifactsUndo => "Undoes one Keep by appending a new version.",
             Self::Can => {
-                "Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything."
+                "Read-only preflight: of an ask, its recipients, faces and channels, without minting a TASK; of a scheduled send or connector call ({effect}), a dated allow, deny, would-ask or named hold, judged as the act would be, rechecked when it runs."
             }
             Self::Peek => {
                 "An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask."
@@ -14640,6 +14692,9 @@ impl AgentVerb {
             }
             Self::TasksOutcomes => {
                 "Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."
+            }
+            Self::TasksOutcomesRouteCalibration => {
+                "Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only."
             }
             Self::VaultRoomsList => {
                 "The caller's rooms its own grants admit; inside a room turn, only that room."
@@ -15388,6 +15443,9 @@ impl AgentVerb {
             Self::VaultEsignSigningSignature => {
                 "Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes."
             }
+            Self::VaultEsignSigningPreview => {
+                "The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields."
+            }
             Self::VaultEsignSealGet => {
                 "Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error."
             }
@@ -15897,7 +15955,7 @@ impl AgentVerb {
                 "The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."
             }
             Self::VaultMailSourcesSearch => {
-                "The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience."
+                "The vault's owner searches a Google, Microsoft 365 or IMAP mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience."
             }
             Self::VaultMailInbox => {
                 "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."

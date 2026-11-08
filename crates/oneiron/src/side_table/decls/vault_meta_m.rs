@@ -24,6 +24,16 @@ side_tables! {
     MAIL_PACK_CALENDAR_RESOURCE: VaultMeta b"mail_pack:calendar_resource:v1:" Named;
     /// One pack calendar source's pull progress, by the source. Key: id16.
     MAIL_PACK_CALENDAR_SYNC: VaultMeta b"mail_pack:calendar_sync:v1:" Named;
+    /// The re-check a kept provider delete owes the claims drawn from the message (FIX 15414):
+    /// ids only (its TURN, MESSAGE revisions and each claim a check settled), its round and
+    /// where it stands. Key: id16(source) + blake3 (32) of the provider id + u64be presence
+    /// generation.
+    MAIL_PACK_CLAIM_RECHECK: VaultMeta b"mail_pack:claim_recheck:v1:" Named;
+    /// Each id a mail claim re-check names (FIX 15414), so an erase of the TURN, a MESSAGE
+    /// revision or a settled claim reaches every re-check that names it. Key: id16(named) +
+    /// id16(source) + blake3 (32) of the provider id + u64be presence generation. Value: when the
+    /// re-check was owed.
+    MAIL_PACK_CLAIM_RECHECK_NAMED: VaultMeta b"mail_pack:claim_recheck_named:v1:" Named;
     /// The org compliance search log (FIX 12560): each change to the setting and each search made
     /// under it, recorded before the search answers. Key: u64be sequence.
     MAIL_PACK_COMPLIANCE_EVENT: VaultMeta b"mail_pack:compliance_event:v1:" Named Authored
@@ -37,6 +47,11 @@ side_tables! {
     /// A mail message's header-only revision its body superseded, owed its delete (FIX 15413).
     /// Key: id16(source) + blake3 (32) of the provider id + id16(MESSAGE).
     MAIL_PACK_HEADER_RETIREMENT: VaultMeta b"mail_pack:header_retirement:v1:" Named;
+    /// Each place the IMAP UID map names a message by an id its header block gives (fix list
+    /// row 19145), with the folder's UIDVALIDITY: a copy a later place proposing that id is
+    /// proved against. Key: id16(source) + blake3 (32) of the provider id + blake3 (32) of the
+    /// folder digest + u64be UID.
+    MAIL_PACK_IMAP_ID_PLACE: VaultMeta b"mail_pack:imap_id_place:v1:" Named;
     /// Which message each UID of an IMAP folder the mail pack read holds (fix list row 17871),
     /// with the folder's UIDVALIDITY. Key: id16(source) + blake3 (32) of the folder digest +
     /// u64be UID.
