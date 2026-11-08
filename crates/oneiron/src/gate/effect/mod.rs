@@ -154,6 +154,14 @@ pub(crate) fn code_wait_approval_digest(
         .map(|composed| composed.digest())
 }
 
+/// The native action requirement offered by a consent-only code wait.
+/// This is the same requirement the external-effect consent ladder judges.
+pub(crate) fn code_wait_standing_bound(
+    effect: &ExternalEffectGateInput,
+) -> Option<crate::consent::GrantBound> {
+    external_effect_action_requirement(effect)
+}
+
 /// The pack's one-send owner tap uses the same bound digest as the gate's
 /// native-mail cold effect. A different target or send ref is a different tap.
 pub(crate) fn native_mail_cold_approval_digest(

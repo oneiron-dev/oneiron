@@ -11,26 +11,29 @@
 //! after its bytes pass an install's checks once more.
 //!
 //! Each installed model pack's full check is kept in memory, per vault
-//! handle, beside what it read that can move (FIX 20043): the install
-//! receipt, the pin a frozen hub ref holds and the source's liveness. A role
-//! call reads those in its own transaction and reuses the kept check while
-//! they match the store; an install, update, revert or removal, or a moved
-//! freeze, changes them and the pack is checked in full again.
+//! handle, beside what it read that can move (FIX 20043, 22119): the install
+//! receipt, the pin a frozen hub ref holds, the source's liveness and stored
+//! row, and whether a scan verdict stands on its bytes. A role call reads
+//! those in its own transaction and reuses the kept check while they match
+//! the store; an install, update, revert or removal, a moved freeze, an
+//! erased verdict or a source row written in place changes them and the pack
+//! is checked in full again.
 use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
 
 use heed::{RoTxn, RwTxn};
 use oneiron_store::settings::model_pack::{ModelPack, ModelPackId};
+use serde::Deserialize;
 
 use super::{
     PackCandidateReason, PackInstallReceipt, PackInstallStatus, PackKind, PackManifest, PackSource,
     admission, invalid,
 };
 use crate::error::{Error, ErrorKind, Result};
-use crate::side_table::{self, Named, SideTable};
-use crate::skill_hub::{
-    HubFile, HubPin, HubSyncPolicy, skill_scan_verdicts_for_content_hash_in_store,
-};
+use crate::ports::EntityStoreRead;
+use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::skill::SkillContentHash;
+use crate::skill_hub::{HubFile, HubPin, HubSyncPolicy, skill_scan_verdict_stands_in_store};
 use crate::{EntityId, Vault};
 
 /// Where a model pack keeps its data.
@@ -67,11 +70,16 @@ pub struct InstalledModelPack {
 }
 
 /// What a model pack's full check reads that can move while the store holds
-/// its receipt (FIX 20043): the receipt itself, the owner's lift of a hold
-/// included, the pin its hub ref is frozen to, and whether the source it
-/// names is live. A source's bytes are fixed by its id, and the scan
-/// evidence on them is kept, a newer scan replacing an older one, so a
-/// kept check reads neither again.
+/// its receipt (FIX 20043, 22119): the receipt itself, the owner's lift of a
+/// hold included, the pin its hub ref is frozen to, whether the source it
+/// names is live, and whether a scan verdict stands on the receipt's bytes.
+/// The source row the check read is kept beside it
+/// ([`KeptModelPackCheck::source_row`]). An engine call (CALLS, FIX 22119):
+/// the key reads what the check reads, and no writer clears a kept check. A
+/// raw write passes every door, and a verdict leaves the scan ledger by
+/// erasure, a lifecycle move or a replayed row, so a clear in each writer
+/// would still miss one; the key costs a walk of the anchor's verdicts that
+/// stops at the first, and a compare of the source row in place.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ModelPackAdmissionKey {
     receipt: PackInstallReceipt,
@@ -79,6 +87,10 @@ struct ModelPackAdmissionKey {
     /// no freeze.
     frozen_pin: Option<HubPin>,
     source_live: bool,
+    /// Whether an Active scan verdict stands on the receipt's content hash,
+    /// read as the check reads the scan ledger
+    /// ([`skill_scan_verdict_stands_in_store`]).
+    scan_evidence: bool,
 }
 
 /// One model pack's last full check: what it read, and the pack it
@@ -86,33 +98,60 @@ struct ModelPackAdmissionKey {
 #[derive(Debug, Clone)]
 struct KeptModelPackCheck {
     key: ModelPackAdmissionKey,
+    /// The stored row of the source the receipt names, header and body as
+    /// the check read them; `None` when no row is stored. A source's id is
+    /// its content hash, so only a raw write changes its row in place; a
+    /// kept check is reused only while the row stored is the same bytes.
+    source_row: Option<Vec<u8>>,
     admitted: Option<ModelPack>,
+}
+
+/// The fields of a stored install receipt that say whether it installs an
+/// Active model pack, read under the table's JSON codec before the receipt
+/// is (FIX 22119): a receipt of another kind or status is passed over
+/// without its whole decode.
+#[derive(Deserialize)]
+struct ReceiptKindHeader {
+    kind: PackKind,
+    status: PackInstallStatus,
 }
 
 /// Each installed model pack's last full check, by pack name (FIX 20043).
 /// In memory only, one per vault handle: a reopened vault checks each pack
-/// in full on its first read. A check is reused only while its key matches
-/// the store, so a check kept from any transaction is never followed past a
-/// change; no timer drops one.
+/// in full on its first read. A check is reused only while its key and the
+/// source row it read match the store (FIX 22119), so a check kept from any
+/// transaction is never followed past a change; no timer drops one.
 #[derive(Debug, Default)]
 pub(crate) struct AdmittedModelPacks {
     kept: Mutex<BTreeMap<String, KeptModelPackCheck>>,
 }
 
 impl AdmittedModelPacks {
-    /// Pack `name`'s kept check when it read `key`: the pack it admitted,
-    /// or `None` when it refused it.
-    fn reuse(&self, name: &str, key: &ModelPackAdmissionKey) -> Option<Option<ModelPack>> {
+    /// Pack `name`'s kept check when it read `key` and `source_row`: the
+    /// pack it admitted, or `None` when it refused it.
+    fn reuse(
+        &self,
+        name: &str,
+        key: &ModelPackAdmissionKey,
+        source_row: Option<&[u8]>,
+    ) -> Option<Option<ModelPack>> {
         self.kept
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(name)
-            .filter(|kept| kept.key == *key)
+            .filter(|kept| kept.key == *key && kept.source_row.as_deref() == source_row)
             .map(|kept| kept.admitted.clone())
     }
 
-    /// Keeps pack `name`'s full check of `key`, in place of the one before.
-    fn keep(&self, name: &str, key: &ModelPackAdmissionKey, admitted: Option<&ModelPack>) {
+    /// Keeps pack `name`'s full check of `key` and `source_row`, in place of
+    /// the one before.
+    fn keep(
+        &self,
+        name: &str,
+        key: &ModelPackAdmissionKey,
+        source_row: Option<Vec<u8>>,
+        admitted: Option<&ModelPack>,
+    ) {
         self.kept
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -120,6 +159,7 @@ impl AdmittedModelPacks {
                 name.to_owned(),
                 KeptModelPackCheck {
                     key: key.clone(),
+                    source_row,
                     admitted: admitted.cloned(),
                 },
             );
@@ -157,38 +197,41 @@ impl Vault {
     /// from the source its receipt names. A pack that fails a check its
     /// receipt binds (a frozen ref's drift, the source's name, kind or
     /// content hash, its scan evidence, its data) is not admitted and is
-    /// left out, so no route follows it. A pack whose receipt, frozen pin
-    /// and source liveness read in `txn` match its kept check is that
-    /// check's outcome; any other is checked in full and kept (FIX 20043).
+    /// left out, so no route follows it. A pack whose receipt, frozen pin,
+    /// source liveness, scan evidence and source row read in `txn` match its
+    /// kept check is that check's outcome; any other is checked in full and
+    /// kept (FIX 20043, 22119). Each receipt's kind and status are read
+    /// before the receipt, so the receipts of other pack kinds are never
+    /// decoded whole (FIX 22119).
     pub(crate) fn installed_model_packs_in_txn(
         &self,
         txn: &RoTxn<'_>,
     ) -> Result<Vec<InstalledModelPack>> {
         let mut packs = Vec::new();
         let mut names = Vec::new();
-        for entry in admission::PACK_INSTALL.iter_from(&self.store, txn, &[])? {
-            let (name, receipt) = entry.map_err(|error| {
-                if error.kind() == ErrorKind::SideTableRow {
-                    invalid("pack install catalog corrupt")
-                } else {
-                    error
-                }
-            })?;
-            if receipt.kind != PackKind::Model || receipt.status != PackInstallStatus::Active {
+        for row in admission::PACK_INSTALL.iter_raw_from(&self.store, txn, &[])? {
+            let Some((name, receipt)) = active_model_pack_receipt(row.map_err(catalog_error)?)?
+            else {
                 continue;
-            }
-            let key = self.model_pack_admission_key_in_txn(txn, receipt)?;
-            let admitted = match self.admitted_model_packs.reuse(&name, &key) {
-                Some(admitted) => admitted,
-                None => {
-                    let admitted = self
-                        .admitted_model_pack_source_in_txn(txn, &name, &key.receipt)?
-                        .map(|(_, pack)| pack);
-                    self.admitted_model_packs
-                        .keep(&name, &key, admitted.as_ref());
-                    admitted
-                }
             };
+            let key = self.model_pack_admission_key_in_txn(txn, receipt)?;
+            let source_id = EntityId::from_hex(&key.receipt.source_id).ok();
+            let admitted =
+                match self.kept_model_pack_check_in_txn(txn, &name, &key, source_id.as_ref())? {
+                    Some(admitted) => admitted,
+                    None => {
+                        let admitted = self
+                            .admitted_model_pack_source_in_txn(txn, &name, &key.receipt)?
+                            .map(|(_, pack)| pack);
+                        let source_row = match &source_id {
+                            Some(source_id) => self.store.port_entity_raw(txn, source_id)?,
+                            None => None,
+                        };
+                        self.admitted_model_packs
+                            .keep(&name, &key, source_row, admitted.as_ref());
+                        admitted
+                    }
+                };
             if let Some(pack) = admitted {
                 packs.push(InstalledModelPack {
                     receipt: key.receipt,
@@ -202,8 +245,10 @@ impl Vault {
     }
 
     /// What `receipt`'s full check reads that can move while it stands,
-    /// read in `txn` (FIX 20043): its hub ref's row and its source's
-    /// liveness, never the source's bytes or scan evidence.
+    /// read in `txn` (FIX 20043, 22119): its hub ref's row, its source's
+    /// liveness and whether a scan verdict stands on its bytes, never the
+    /// source decoded. The source row is compared apart
+    /// ([`Self::kept_model_pack_check_in_txn`]).
     fn model_pack_admission_key_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -214,11 +259,37 @@ impl Vault {
             Ok(source_id) => self.pack_source_live_in_txn(txn, &source_id)?,
             Err(_) => false,
         };
+        let scan_evidence = match SkillContentHash::parse_hex(&receipt.content_hash) {
+            Ok(hash) => skill_scan_verdict_stands_in_store(&self.store, txn, hash)?,
+            Err(_) => false,
+        };
         Ok(ModelPackAdmissionKey {
             receipt,
             frozen_pin,
             source_live,
+            scan_evidence,
         })
+    }
+
+    /// Pack `name`'s kept check when it read `key` and the row stored now
+    /// for `source_id`, compared in place, uncopied (FIX 22119): the pack
+    /// it admitted, or `None` when it refused it; `None` outside when no
+    /// kept check matches.
+    fn kept_model_pack_check_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        name: &str,
+        key: &ModelPackAdmissionKey,
+        source_id: Option<&EntityId>,
+    ) -> Result<Option<Option<ModelPack>>> {
+        let kept = &self.admitted_model_packs;
+        let Some(source_id) = source_id else {
+            return Ok(kept.reuse(name, key, None));
+        };
+        Ok(self
+            .store
+            .port_entity_with_raw(txn, source_id, |row| Ok(kept.reuse(name, key, Some(row))))?
+            .unwrap_or_else(|| kept.reuse(name, key, None)))
     }
 
     /// The pin `receipt`'s hub ref is frozen to, when the ref's policy
@@ -279,9 +350,7 @@ impl Vault {
             return Ok(None);
         }
         // Bytes that never reached the hub door's scan ledger are refused.
-        if skill_scan_verdicts_for_content_hash_in_store(&self.store, txn, source.content_hash())?
-            .is_empty()
-        {
+        if !skill_scan_verdict_stands_in_store(&self.store, txn, source.content_hash())? {
             return Ok(None);
         }
         let Ok(pack) = read_source_model_pack(source.manifest(), source.files()) else {
@@ -443,6 +512,38 @@ impl Vault {
             )?;
         }
         Ok(())
+    }
+}
+
+/// The install receipt a stored row of the install catalog holds, under its
+/// pack name, when it installs an Active model pack; `None` for a receipt of
+/// another kind or status, which is passed over on its kind and status alone
+/// ([`ReceiptKindHeader`], FIX 22119). A row whose name, kind or status does
+/// not read fails the catalog read, as does a model pack receipt that does
+/// not.
+fn active_model_pack_receipt(
+    (key, value): (Vec<u8>, Vec<u8>),
+) -> Result<Option<(String, PackInstallReceipt)>> {
+    let name = <String as SideKey>::decode_key(&key)
+        .ok_or_else(|| invalid("pack install catalog corrupt"))?;
+    let header: ReceiptKindHeader =
+        serde_json::from_slice(&value).map_err(|_| invalid("pack install catalog corrupt"))?;
+    if header.kind != PackKind::Model || header.status != PackInstallStatus::Active {
+        return Ok(None);
+    }
+    let receipt = admission::PACK_INSTALL
+        .decode_value(&value)
+        .map_err(catalog_error)?;
+    Ok(Some((name, receipt)))
+}
+
+/// A row of the install catalog that does not read fails its read as the
+/// catalog's corruption.
+fn catalog_error(error: Error) -> Error {
+    if error.kind() == ErrorKind::SideTableRow {
+        invalid("pack install catalog corrupt")
+    } else {
+        error
     }
 }
 

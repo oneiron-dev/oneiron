@@ -140,7 +140,7 @@ pub(crate) use self::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 pub(crate) use self::verdict::{
     scan_verdict_row_risk, skill_content_anchor_entity_id,
     skill_scan_verdict_heads_for_content_hash_in_store, skill_scan_verdict_heads_sourced_in_store,
-    skill_scan_verdicts_for_content_hash_in_store,
+    skill_scan_verdict_stands_in_store, skill_scan_verdicts_for_content_hash_in_store,
 };
 
 // The flat skill_hub.rs module used to provide these names to the test module
