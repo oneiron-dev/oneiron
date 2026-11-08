@@ -582,13 +582,24 @@ pub(super) async fn mcp_endpoint(
                     let waiter = match waiter {
                         Ok(waiter) => waiter,
                         Err(error) => {
-                            return mcp_connection_refusal(
+                            // A waiter no cohort admits is told to sign in
+                            // (FIX 4902 slice C).
+                            let challenge = super::super::oauth_call::auth_challenge(
                                 &server,
                                 &headers,
-                                &request.method,
-                                &body,
-                                id,
-                                error,
+                                &connection,
+                                &error,
+                            );
+                            return super::super::oauth_call::challenged(
+                                mcp_connection_refusal(
+                                    &server,
+                                    &headers,
+                                    &request.method,
+                                    &body,
+                                    id,
+                                    error,
+                                ),
+                                challenge,
                             );
                         }
                     };
@@ -703,6 +714,12 @@ pub(super) async fn mcp_endpoint(
     let stamp =
         (!covered).then(|| mcp_connection_stamp(&server, &headers, &method, &body, &mut result));
     let failed = result.is_err();
+    // An anonymous request no cohort admitted answers 401 with its challenge
+    // (FIX 4902 slice C). An OAuth token that does not resolve never gets
+    // here: the binding door refuses it (`oauth_call::swap_oauth_access_token`).
+    let challenge = result.as_ref().err().and_then(|error| {
+        super::super::oauth_call::auth_challenge(&server, &headers, &connection, error)
+    });
     let reply = mcp_envelope(id, result);
     // A verb hook's ask holds the call: no answer is kept for its
     // invocation, so a same-id retry reaches the held call again (FIX 1435).
@@ -718,6 +735,7 @@ pub(super) async fn mcp_endpoint(
             status: 200,
             body: saved,
             release,
+            refusal_hook_notice: None,
         };
         if failed || held {
             claim.finish_failed(outcome);
@@ -725,7 +743,7 @@ pub(super) async fn mcp_endpoint(
             claim.finish(outcome);
         }
     }
-    mcp_http_reply(reply, stamp.as_ref())
+    super::super::oauth_call::challenged(mcp_http_reply(reply, stamp.as_ref()), challenge)
 }
 
 /// Whether `reply` is a tool result a verb hook's pending ask holds (FIX
