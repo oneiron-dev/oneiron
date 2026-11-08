@@ -1,4 +1,4 @@
-//! Handshake: run loop, open_sync_session, overflow check, resync markers.
+//! Handshake: run loop, open_sync_session, overflow check.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -9,16 +9,16 @@ use tokio::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::sync::client::{SyncClient, SyncEvent, SyncStatus, next_backoff};
-use crate::sync::types::{WindowKey, parse_window_key_str};
-use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
+use crate::sync::types::WindowKey;
 
 use super::peer_session::HomeReach;
 use super::server_close::ServerClose;
-use super::session::{FullResyncMarker, SessionFault};
+use super::session::SessionFault;
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
 mod acks;
 mod replay;
+mod resync_markers;
 mod upgrade;
 
 pub(super) use self::upgrade::upgrade_request;
@@ -750,67 +750,5 @@ impl SyncConnection {
         }
 
         Ok(ws_stream)
-    }
-
-    fn full_resync_markers(&self) -> Result<Vec<FullResyncMarker>, SessionFault> {
-        let vault = self.manager.vault();
-        let rtxn =
-            vault.store.env.read_txn().map_err(|e| {
-                SessionFault::Local(format!("Read full-resync markers failed: {e}"))
-            })?;
-        let keys = WINDOW_FULL_RESYNC_MARKER
-            .scan_keys(&vault.store, &rtxn, &[])
-            .map_err(|e| SessionFault::Local(format!("Read full-resync markers failed: {e}")))?;
-        let mut markers = Vec::with_capacity(keys.len());
-        for window_key in keys {
-            if parse_window_key_str(&window_key).is_none() {
-                return Err(SessionFault::Local(format!(
-                    "Invalid full-resync marker key: fr:w:{window_key}"
-                )));
-            }
-            markers.push(FullResyncMarker { window_key });
-        }
-        Ok(markers)
-    }
-
-    pub(super) fn set_full_resync_markers(
-        &self,
-        markers: &[FullResyncMarker],
-    ) -> Result<(), SessionFault> {
-        if markers.is_empty() {
-            return Ok(());
-        }
-        let vault = self.manager.vault();
-        vault
-            .with_write_txn_grouped(|wtxn| {
-                for marker in markers {
-                    WINDOW_FULL_RESYNC_MARKER.put(
-                        &vault.store,
-                        wtxn,
-                        &marker.window_key,
-                        &[1u8],
-                    )?;
-                }
-                Ok(())
-            })
-            .map_err(|e| SessionFault::Local(format!("Set full-resync markers failed: {e}")))
-    }
-
-    pub(super) fn clear_full_resync_markers(
-        &self,
-        markers: &[FullResyncMarker],
-    ) -> Result<(), SessionFault> {
-        if markers.is_empty() {
-            return Ok(());
-        }
-        let vault = self.manager.vault();
-        vault
-            .with_write_txn_grouped(|wtxn| {
-                for marker in markers {
-                    WINDOW_FULL_RESYNC_MARKER.delete(&vault.store, wtxn, &marker.window_key)?;
-                }
-                Ok(())
-            })
-            .map_err(|e| SessionFault::Local(format!("Clear full-resync markers failed: {e}")))
     }
 }
