@@ -2,8 +2,9 @@
 //! lines are assembled, one more call reads them, each as an observation
 //! with the TURNs it cites, and writes a shorter narrative of the whole
 //! Arc. Its lines lead the Arc's text; every assembled line follows as it
-//! was, so nothing the parts wrote is lost. Off by default
-//! ([`ARC_SYNOPSIS`]): the default path makes no call beyond the parts'.
+//! was, so nothing the parts wrote is lost. Off by default (the
+//! `arc_synopsis_enabled` row of the Dreamer recipe policy, FIX 12353):
+//! the default path makes no call beyond the parts'.
 //!
 //! The call reads the host's summary instruction as every Arc call does,
 //! with its kind `synopsis`. Lines that do not fit one call, a reply that
@@ -19,10 +20,6 @@ use crate::error::Result;
 use crate::model_step_context::DurableStepContext;
 use crate::scope_summary::SummaryLineSources;
 
-/// Whether an Arc composed in parts asks one synopsis call over its
-/// assembled lines before it lands (FIX 8290). Off: an Arc is its parts'
-/// lines, assembled, with no further model call.
-pub(super) const ARC_SYNOPSIS: bool = false;
 /// The call writing an Arc's synopsis.
 const KIND_SYNOPSIS: &str = "synopsis";
 

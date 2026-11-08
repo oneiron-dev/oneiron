@@ -36,8 +36,21 @@ impl RecordingJsHost<'_, '_> {
             SelfDispatchOutcome::AgentVerb(answer) => &mut answer.output,
             SelfDispatchOutcome::SkillCall(result) => &mut result.output,
             // Kept as its JSON text, framed under `output` as the others are
-            // (FIX 1190): the row keeps the card's text in its place.
-            SelfDispatchOutcome::Fold(json) | SelfDispatchOutcome::Leader(json) => {
+            // (FIX 1190): the row keeps the card's text in its place. A fold
+            // answer's card keeps the folds whose words it copies, and its
+            // body depends on their sources (FIX 18924).
+            SelfDispatchOutcome::Fold(answer) => {
+                if answer.json.len() <= RESULT_REPLY_INLINE_BYTES {
+                    return Ok(outcome);
+                }
+                let sources = answer.word_sources();
+                let card = self.store_sourced_answer(seq, &sources, |sink| {
+                    sink.write(answer.json.as_bytes())
+                })?;
+                answer.json = card.to_string();
+                return Ok(outcome);
+            }
+            SelfDispatchOutcome::Leader(json) => {
                 if json.len() <= RESULT_REPLY_INLINE_BYTES {
                     return Ok(outcome);
                 }
@@ -173,6 +186,18 @@ impl RecordingJsHost<'_, '_> {
         seq: u64,
         write: impl FnOnce(&mut BodySink) -> Result<()>,
     ) -> Result<serde_json::Value> {
+        self.store_sourced_answer(seq, &[], write)
+    }
+
+    /// [`Self::store_answer`] for an answer that copies the words of records
+    /// `sources`: its body is published as a dependent of each of them, so
+    /// a withdrawal of one reaches it (FIX 18924).
+    fn store_sourced_answer(
+        &mut self,
+        seq: u64,
+        sources: &[EntityId],
+        write: impl FnOnce(&mut BodySink) -> Result<()>,
+    ) -> Result<serde_json::Value> {
         // The card stands for the answer: no skill body it holds reaches the
         // guest (FIX 3608).
         self.held_delivery.clear();
@@ -182,7 +207,7 @@ impl RecordingJsHost<'_, '_> {
         let mut sink = storage.code_run_reply_spool()?;
         write(&mut sink)?;
         let path = bridge_result_output_path(seq);
-        let output = match storage.publish_code_run_reply(path, sink, self.run_id, None)? {
+        let output = match storage.publish_code_run_reply(path, sink, self.run_id, sources, None)? {
             Ok(output) => output,
             Err(unavailable) => return Ok(unavailable),
         };
@@ -239,11 +264,38 @@ impl RecordingJsHost<'_, '_> {
     /// (FIX 600). A cancelled skill answers `code_step_cancelled`, and the
     /// caller's step goes on. A callable's own call nests inside it: past
     /// the `[limits] callable_nest_depth` row it asks, and the call runs.
+    /// Near the stack floor, a supported target lends the call another stack
+    /// segment on this thread. Other targets retain the stack-floor refusal.
     /// A call that would start below the thread's stack floor answers
     /// `skills_call_stack_floor` instead. A call the step's own program made
     /// that answered is kept for the step's replay context (FIX 3608): what
     /// its load selected, its arguments and where its own calls end.
     pub(super) fn call_skill(
+        &mut self,
+        seq: u64,
+        started_at_ms: u64,
+        call: &SelfCall,
+        skill: SelfSkillCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+        parent: &StepCancellation,
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
+        on_callable_stack(|| {
+            self.call_skill_on_stack(seq, started_at_ms, call, skill, runtime, parent)
+        })
+        .unwrap_or_else(|| {
+            Ok((
+                SelfDispatchOutcome::Failed(SelfFailedResult {
+                    effect: SelfEffect::SkillsCall,
+                    error: "skills_call_stack_floor".to_owned(),
+                    code: None,
+                    disk_floor: None,
+                }),
+                None,
+            ))
+        })
+    }
+
+    fn call_skill_on_stack(
         &mut self,
         seq: u64,
         started_at_ms: u64,
@@ -263,10 +315,6 @@ impl RecordingJsHost<'_, '_> {
                 None,
             )
         };
-        // Each nested level keeps its host loop's frames on this thread.
-        if below_stack_floor() {
-            return Ok(failed("skills_call_stack_floor".to_owned()));
-        }
         let site = ExecutorCallSite {
             run_id: self.run_id,
             seq,
