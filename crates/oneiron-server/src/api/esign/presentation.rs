@@ -111,9 +111,10 @@ pub(super) async fn layout(
 
 /// `POST /sign/preview`: the item's fields laid out on its pinned PDF's
 /// pages. The PDF is inspected as the editor's geometry door inspects its
-/// own (FIX 12230): its bytes leased from this machine's memory and the lease
-/// grown for its parse, on a blocking thread. It uses an installed inspection
-/// worker through the same selector; hosts without one keep the native path.
+/// own (FIX 12230), on a blocking worker: its bytes, measured unread, leased
+/// from this machine's memory before the vault reads them (FIX 12304), and
+/// the lease grown for its parse. It uses an installed inspection worker
+/// through the same selector; hosts without one keep the native path.
 pub(super) async fn preview(
     State(server): State<Arc<SyncServer>>,
     SigningIngress { token, admitted }: SigningIngress,
@@ -139,44 +140,32 @@ pub(super) async fn preview(
             Err(response) => return response,
         };
     let item = request.item;
+    let Ok((page, bytes)) = server.vault.esign_preview_page_for_capability_as(
+        &token,
+        item,
+        caller,
+        verified_actor,
+        ip,
+        ua,
+    ) else {
+        return refused();
+    };
+    let vault = Arc::clone(&server.vault);
     let memory = server.memory.clone();
     let stream_decode_bytes = server.vault.esign_stream_decode_bytes();
-    let vault = Arc::clone(&server.vault);
     let inspection_server = Arc::clone(&server);
-    let (page, pages) = match tokio::task::spawn_blocking(move || {
-        let deadline = std::time::Instant::now() + super::ingress::MEMORY_WAIT;
-        let (page, bytes, lease) = match vault.esign_preview_for_capability_leased_as(
-            &token,
-            item,
-            caller,
-            verified_actor,
-            ip,
-            ua,
-            &memory,
-            deadline,
-        ) {
-            Ok(leased) => leased,
-            Err(oneiron::blob_artifact::esign::EsignLeasedReadError::Vault(_)) => {
-                return Err(refused());
-            }
-            Err(oneiron::blob_artifact::esign::EsignLeasedReadError::Refused(refusal)) => {
-                return Err(super::ingress::memory_refused(refusal));
-            }
-        };
-        match parse_lease::inspected_with_worker(
+    let pages = match tokio::task::spawn_blocking(move || {
+        parse_lease::inspected_from_vault(
             &inspection_server,
-            lease,
-            deadline,
-            &bytes,
+            &memory,
+            bytes,
             stream_decode_bytes,
-        ) {
-            Ok(pages) => Ok((page, pages)),
-            Err(response) => Err(response),
-        }
+            |admitted| vault.esign_preview_pdf_within(&token, item, admitted),
+        )
     })
     .await
     {
-        Ok(Ok(preview)) => preview,
+        Ok(Ok(pages)) => pages,
         Ok(Err(response)) => return response,
         Err(_) => return refused(),
     };
@@ -184,7 +173,7 @@ pub(super) async fn preview(
         fields: page
             .fields
             .into_iter()
-            .filter(|f| f.item as usize == item)
+            .filter(|f| f.item as usize == request.item)
             .collect(),
         values: page.values.into_iter().map(|(k, v)| (k, v.value)).collect(),
         pages,
