@@ -266,10 +266,7 @@ impl McpCallContext {
             .map_err(|_| VerbAskRefusal::CredentialUnavailable)?;
         let registry = server.mcp_registry.lock().await;
         let resolved = registry.resolve_connection(connection, now, |class, actor| {
-            server
-                .vault
-                .gate_actor_ceiling_exists(class, actor)
-                .unwrap_or(false)
+            super::actor_dispatch::mcp_actor_ceiling_admits(server, &auth, class, actor)
         });
         drop(registry);
         let mut actor = resolved.map_err(crate::credential_resume::adapter_refusal)?;
@@ -364,6 +361,8 @@ async fn rerun_saved_call(
     oneiron::runtime_hooks::verb::VerbAskRefusal,
 > {
     use oneiron::runtime_hooks::verb::{VerbAskRefusal, VerbAskResumed};
+    let share_context = super::actor_dispatch::mcp_share_view_context(context, &call.verb);
+    let context = share_context.as_ref().unwrap_or(context);
     mcp_rewrite_admit(server, &call.verb, context)(&call.verb, &call.args)
         .map_err(|_| VerbAskRefusal::ScopeRefused)?;
     let mut served = super::McpServed::default();
@@ -388,8 +387,13 @@ async fn rerun_saved_call(
             (Ok((output, _)), Some(producers)) => VerbAskResumed::RanWithProducers {
                 result: Ok(output),
                 producers,
+                hook_notice: None,
             },
-            (ran, _) => VerbAskResumed::Ran(ran.map(|(output, _)| output).map_err(mcp_saved_error)),
+            (Ok((output, _)), None) => VerbAskResumed::Ran((Ok(output), None)),
+            (Err(error), _) => {
+                let (error, hook_notice) = mcp_saved_error(error);
+                VerbAskResumed::Ran((Err(error), hook_notice))
+            }
         });
     }
     let mut board_hooks = None;
@@ -416,24 +420,35 @@ async fn rerun_saved_call(
     ))
     .await;
     match ran {
-        Err(error) => Ok(VerbAskResumed::Ran(Err(mcp_saved_error(error)))),
-        Ok((output, ..)) => {
+        Err(error) => {
+            let (error, hook_notice) = mcp_saved_error(error);
+            Ok(VerbAskResumed::Ran((Err(error), hook_notice)))
+        }
+        Ok((output, _, _, _, hook_notice)) => {
+            let hook_notice = hook_notice.is_some().then_some(true);
             // A board read answers the settlement here: the receipt its hook
             // rows owe is recorded and their blocks spent as the answer
             // returns (OF-579).
             if let Some(mut hooks) = board_hooks {
                 if let Err(error) = hooks.record_receipt(server).await {
-                    return Ok(VerbAskResumed::Ran(Err(mcp_saved_error(error))));
+                    let (error, receipt_notice) = mcp_saved_error(error);
+                    return Ok(VerbAskResumed::Ran((
+                        Err(error),
+                        hook_notice.or(receipt_notice),
+                    )));
                 }
                 hooks.spend(server);
             }
+            // The rows the answer was derived from go beside it (FIX 21054),
+            // and the chain's notice metadata beside both (FIX 12517).
             Ok(
                 match super::served_rows::saved_answer_rows(&call.verb, served) {
                     Some(producers) => VerbAskResumed::RanWithProducers {
                         result: Ok(output),
                         producers,
+                        hook_notice,
                     },
-                    None => VerbAskResumed::Ran(Ok(output)),
+                    None => VerbAskResumed::Ran((Ok(output), hook_notice)),
                 },
             )
         }
@@ -444,7 +459,8 @@ async fn rerun_saved_call(
 /// its kind as the code and its hook stop kept; an internal failure is the
 /// engine's own, which leaves the call for the next pass.
 #[cfg(feature = "code-sandbox-wasmtime")]
-fn mcp_saved_error(error: McpGatewayError) -> oneiron::MemoryError {
+fn mcp_saved_error(error: McpGatewayError) -> (oneiron::MemoryError, Option<bool>) {
+    let hook_notice = error.hook_notice.is_some().then_some(true);
     let code = if error.legal_hold.is_some() {
         oneiron::memory::MEMORY_CODE_INVALID_STATE
     } else if error.code == -32603 {
@@ -456,5 +472,5 @@ fn mcp_saved_error(error: McpGatewayError) -> oneiron::MemoryError {
     saved.hook = error.hook;
     saved.legal_hold = error.legal_hold;
     saved.reason_codes = error.reason_codes;
-    saved
+    (saved, hook_notice)
 }
