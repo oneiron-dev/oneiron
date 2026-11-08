@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 use crate::store::{DefaultPolicySeedMode, Store, VaultWriterLease};
 #[cfg(feature = "test-support")]
 use crate::temporal::TimeRange;
+use crate::work_line::{TASK_WORK_BOUND, TASK_WORK_WAIT, WorkLine};
 use std::path::Path;
 
 mod adopt;
@@ -616,6 +617,7 @@ impl Vault {
             .or_else(|| directory_identity(store.env.path()));
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
+            admitted_model_packs: Default::default(),
             vault_id,
             retrieval_trace_key: super::retrieval_trace_key::RetrievalTraceKey::resolve_at_open(
                 &store,
@@ -647,14 +649,8 @@ impl Vault {
             host_legal_captures: Default::default(),
             live_rows: Default::default(),
             attempt_activity: Default::default(),
-            task_work: crate::work_line::WorkLine::new(
-                None,
-                crate::work_line::TASK_WORK_BOUND,
-                crate::work_line::TASK_WORK_WAIT,
-            ),
-            linear_rate_line: crate::work_line::WorkLine::exclusive(
-                crate::work_line::TASK_WORK_WAIT,
-            ),
+            task_work: WorkLine::new(None, TASK_WORK_BOUND, TASK_WORK_WAIT),
+            linear_rate_line: WorkLine::exclusive(TASK_WORK_WAIT),
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
@@ -666,6 +662,8 @@ impl Vault {
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
+            executor_leases_released: std::sync::atomic::AtomicBool::new(false),
+            agent_run_fences: Default::default(),
             #[cfg(feature = "sync")]
             home_search: Default::default(),
             speculative_passes: Default::default(),

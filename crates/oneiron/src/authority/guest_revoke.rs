@@ -29,7 +29,10 @@ use crate::batch::{BatchOp, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{FederationGrantScope, decode_federation_grant_body};
+use crate::federation::{
+    DetachOutcome, DetachRemainder, DetachRemainderReason, FederationGrantScope,
+    SharedMemberDeparture, decode_federation_grant_body,
+};
 use crate::receipt::{GuestDeletionRequestStatus, GuestRevokeCourtesyTarget, GuestRevokeOutcome};
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::side_table::{self, Named, SideTable};
@@ -382,6 +385,24 @@ impl Vault {
     ) -> Result<GuestRevokeOutcome> {
         owner.revalidate_in_txn(self, txn)?;
         require_host(&*self.authority_view_readonly_in_txn(txn)?, issuer)?;
+        self.revoke_guest_grant_effect_in_txn(txn, issuer, grant_ref)
+    }
+
+    /// The guest-grant withdrawal effect (FIX 12555): the repeat answer, the
+    /// live-row and guest-purpose checks, then the unchanged withdrawal — the
+    /// pact disconnects, scope-key retirement, slip revokes, signed grant
+    /// revoke, grant withdrawal, row delete and withdrawal row. Private to
+    /// this module: the owner's revoke above and a genuine membership leave's
+    /// detach below are its only callers, and both re-prove the host in the
+    /// effect's own writer. A pending Connect-proposal cleanup landing beside
+    /// this effect belongs inside it, after the withdrawal row.
+    fn revoke_guest_grant_effect_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        grant_ref: EntityId,
+    ) -> Result<GuestRevokeOutcome> {
+        require_host(&*self.authority_view_readonly_in_txn(txn)?, issuer)?;
         if let Some(done) = WITHDRAWN.get(&self.store, txn, &grant_ref)? {
             let fold = self.authority_view_readonly_in_txn(txn)?;
             return Ok(GuestRevokeOutcome {
@@ -465,6 +486,94 @@ impl Vault {
             deletion_request: GuestDeletionRequestStatus::NotRequested,
             courtesy_targets: ended_pact_targets(&fold, grant_ref),
         })
+    }
+
+    /// Withdraws, in the departure's own writer, every live unwithdrawn
+    /// Connect guest grant the genuine leave releases (FIX 12555): the exact
+    /// binding match, inert and expired grants included, so no outstanding
+    /// offer activates after the leave. Each grant withdraws in its own
+    /// nested savepoint: one the fold refuses rolls back alone and is listed
+    /// truthfully, and the membership still progresses. With no issuer, every
+    /// bound grant is listed as refused for it. A scan failure is the
+    /// parent's storage error and propagates; no failure is ever reported as
+    /// a withdrawal.
+    pub(crate) fn detach_owner_connect_grants_in_txn(
+        &self,
+        issuer: Option<&HostSlipIssuer>,
+        departure: SharedMemberDeparture<'_, '_>,
+    ) -> Result<DetachOutcome> {
+        let (txn, vault_id, leaver) = departure.into_parts();
+        let bound = self.live_bound_connect_grants_in_txn(txn, vault_id, leaver)?;
+        if bound.is_empty() {
+            return Ok(DetachOutcome::none());
+        }
+        let mut withdrawn = Vec::new();
+        let mut revoked_slips = Vec::new();
+        let mut remaining = Vec::new();
+        for grant_ref in bound {
+            let Some(issuer) = issuer else {
+                remaining.push(DetachRemainder {
+                    grant: grant_ref.to_hex(),
+                    reason: DetachRemainderReason::NoIssuer,
+                });
+                continue;
+            };
+            let mut savepoint = self.store.env.nested_write_txn(txn)?;
+            match self.revoke_guest_grant_effect_in_txn(&mut savepoint, issuer, grant_ref) {
+                Ok(outcome) => {
+                    savepoint.commit()?;
+                    withdrawn.push(grant_ref);
+                    revoked_slips.extend(outcome.revoked_slips);
+                }
+                Err(error) => remaining.push(DetachRemainder {
+                    grant: grant_ref.to_hex(),
+                    reason: DetachRemainderReason::WithdrawalFailed { kind: error.kind() },
+                }),
+            }
+        }
+        Ok(DetachOutcome::collected(
+            withdrawn,
+            revoked_slips,
+            remaining,
+        ))
+    }
+
+    /// The live, unwithdrawn Connect guest grants `leaver`'s genuine leave of
+    /// shared vault `vault_id` releases (FIX 12555): the one selection policy
+    /// over the owner's local binding, unchanged shared property bytes. Every
+    /// grant is read; one whose body does not decode is no bound grant here.
+    fn live_bound_connect_grants_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        leaver: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let mut grants = Vec::new();
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            txn,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = id?;
+            if WITHDRAWN.get(&self.store, txn, &id)?.is_some() {
+                continue;
+            }
+            let LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+                body,
+            } = live_entity_row_in_txn(&self.store, txn, &id)?
+            else {
+                continue;
+            };
+            let Ok(grant) = decode_federation_grant_body(&body) else {
+                continue;
+            };
+            if grant.detaches_on_member_leave(vault_id, leaver) {
+                grants.push(id);
+            }
+        }
+        Ok(grants)
     }
 
     /// The live, unwithdrawn Connect guest grants whose member is `person`
