@@ -1,6 +1,7 @@
 //! Code mode's verb-table calls: the run's write origin and the receipt a write keeps.
 
 mod connector_wait;
+mod consent;
 mod receipts;
 mod scoped_port;
 mod session_write;
@@ -8,9 +9,8 @@ mod stored_answer;
 
 use serde_json::Value;
 
-use self::connector_wait::{connector_call_answer, held_call_ref};
+use self::connector_wait::connector_call_answer;
 use crate::EntityId;
-use crate::code_run::consent_wait::{self, CodeConsentCallSite};
 use crate::code_run::payload::{
     agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
     self_call_request_value,
@@ -20,7 +20,7 @@ use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
     AgentVerbRefusal, SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
-    SelfDurableWait, SelfDurableWaitReason, SelfEffect,
+    SelfEffect,
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
@@ -29,7 +29,7 @@ use crate::runtime_hooks::VerbHookStop;
 use crate::task_verb::sdk::AgentVerb;
 use serde::{Deserialize, Serialize};
 
-use super::{ExecutorCallSite, HostSelfDispatcher};
+use super::{ExecutorCallSite, ExecutorReply, HostSelfDispatcher};
 
 use self::receipts::{
     KEPT_ANSWER_REFUSED, KeptWrite, MEDIA_STEP_TRAPPED, PROVIDER_UNAVAILABLE, VERB_HOOK_HIDDEN,
@@ -168,7 +168,7 @@ impl HostSelfDispatcher<'_> {
                 {
                     self.note_program_write_uncertain(write);
                 }
-                return self.kept_write_answer(Some(&**door), *receipt, call);
+                return self.kept_write_answer(Some(&**door), *receipt, call, site);
             }
             KeptWrite::Fresh(stopped) => stopped,
         };
@@ -182,7 +182,7 @@ impl HostSelfDispatcher<'_> {
             Some(consent_site) => origin.with_code_consent(consent_site.clone()),
             None => origin,
         };
-        let outcome = match self.program_door_call(&**door, &call, &origin, invocation) {
+        let mut outcome = match self.program_door_call(&**door, &call, &origin, invocation) {
             // A held connector call parks before its receipt keeps it, so a
             // resumed step parks on the same call again: on its code consent
             // wait when one was bound to it, else on the call itself.
@@ -251,31 +251,77 @@ impl HostSelfDispatcher<'_> {
             }
             Err(error) => return Err(error),
         };
-        let mut outcome = outcome;
-        stored_answer::store(
-            &self.storage,
-            site.run_id,
-            &mut receipt,
-            &mut generation,
-            &mut outcome,
-        )?;
-        // A receipt keeps its call's answer as its record's first row.
-        receipt.bridge_calls.push(CodeRunBridgeCall::record(
-            0,
-            &SelfCall::AgentVerb(call),
-            &outcome,
-            0,
-            0,
-        )?);
-        self.put_write_receipt(
-            &receipt,
-            Some(generation),
-            program.as_ref(),
-            true,
-            site.run_id,
-        )?;
+        // Only a delivered connector reply spills here. Holds already parked;
+        // questions and self.use's outer envelope keep their existing paths.
+        let published = match (&mut outcome, site.reply_publisher) {
+            (SelfDispatchOutcome::AgentVerb(answer), Some(publisher))
+                if call.verb == AgentVerb::ConnectorCall
+                    && answer.output.get("outcome").and_then(Value::as_str)
+                        == Some("delivered") =>
+            {
+                // Every field of the answer but its output, which the
+                // publisher replaces with the stored body's card: the large
+                // reply is never cloned.
+                let output = std::mem::take(&mut answer.output);
+                let template = AgentVerbAnswer {
+                    stored_output: None,
+                    ..answer.clone()
+                };
+                answer.output = output;
+                publisher.publish(&mut answer.output, &mut |wtxn, card, reply| {
+                    let answer = SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
+                        output: card.clone(),
+                        ..template.clone()
+                    });
+                    let mut row = CodeRunBridgeCall::record(
+                        0,
+                        &SelfCall::AgentVerb(call.clone()),
+                        &answer,
+                        0,
+                        0,
+                    )?;
+                    reply.keep(&mut row.outcome)?;
+                    receipt.bridge_calls.push(row);
+                    self.put_write_receipt_in_txn(wtxn, &receipt, generation, program.as_ref())?;
+                    Ok(())
+                })?
+            }
+            _ => None,
+        };
+        // A placed body already committed its receipt in the publishing writer.
+        // Inline and unplaceable answers keep their original receipt path; a
+        // large answer of any other write is stored before its receipt (#5996).
+        if published.is_none() {
+            stored_answer::store(
+                &self.storage,
+                site.run_id,
+                &mut receipt,
+                &mut generation,
+                &mut outcome,
+            )?;
+            // A receipt keeps its call's answer as its record's first row.
+            receipt.bridge_calls.push(CodeRunBridgeCall::record(
+                0,
+                &SelfCall::AgentVerb(call),
+                &outcome,
+                0,
+                0,
+            )?);
+            self.put_write_receipt(
+                &receipt,
+                Some(generation),
+                program.as_ref(),
+                true,
+                site.run_id,
+            )?;
+        }
         // The replay row is persisted; the door releases what the answer held (FIX 10633).
         door.answer_recorded();
+        if let (Some(reply), Some(publisher), SelfDispatchOutcome::AgentVerb(answer)) =
+            (published, site.reply_publisher, &outcome)
+        {
+            publisher.adopt(reply, &answer.output)?;
+        }
         Ok(outcome)
     }
 
@@ -294,6 +340,7 @@ impl HostSelfDispatcher<'_> {
         door: Option<&dyn AgentVerbDoor>,
         receipt: CodeRunReplayRecord,
         call: SelfAgentVerbCall,
+        site: ExecutorCallSite<'_>,
     ) -> Result<SelfDispatchOutcome> {
         let Some(row) = receipt.bridge_calls.first() else {
             return Err(Error::ConcurrentWrite(
@@ -335,6 +382,12 @@ impl HostSelfDispatcher<'_> {
         }
         let mut outcome = decode_self_dispatch_outcome(&row.outcome)?;
         stored_answer::restore(&receipt, &mut outcome);
+        if let (Some(publisher), SelfDispatchOutcome::AgentVerb(answer)) =
+            (site.reply_publisher, &outcome)
+            && let Some(reply) = ExecutorReply::kept(&row.outcome, site.run_id)?
+        {
+            publisher.adopt(reply, &answer.output)?;
+        }
         Ok(outcome)
     }
 
@@ -465,74 +518,6 @@ impl HostSelfDispatcher<'_> {
                 None,
             )?;
         Ok(())
-    }
-
-    /// Where a write a code consent wait may bind sits in the run (DOOR-079
-    /// 1a): the wait id its write receipt and call identity fix, and the
-    /// step, bridge position and write ordinal, all from the executor's own
-    /// call site. `None` for a verb no code consent wait binds.
-    fn code_consent_site(
-        &self,
-        call: &SelfAgentVerbCall,
-        site: ExecutorCallSite<'_>,
-        ordinal: u64,
-        receipt_id: EntityId,
-    ) -> Result<Option<CodeConsentCallSite>> {
-        if !consent_wait::code_consent_binds(call.verb) {
-            return Ok(None);
-        }
-        let request_digest =
-            *blake3::hash(&call_identity(call.verb.as_str(), &call.input)).as_bytes();
-        Ok(Some(CodeConsentCallSite {
-            wait_id: consent_wait::code_consent_wait_id(receipt_id, &request_digest)?,
-            run_id: site.run_id,
-            run_ref: self.run_ref.clone(),
-            step_start: site.step_start,
-            bridge_seq: site.seq,
-            write_ordinal: ordinal,
-            write_receipt_id: receipt_id,
-            request_digest,
-        }))
-    }
-
-    /// A verb's answer as the run takes it, when a code consent wait may
-    /// bind it: a held call its wait was bound to parks the run on that
-    /// wait, which only its owner's answer and the effect's own gate settle.
-    /// A browser call whose press held an act its host bound to the wait at
-    /// this call's own site parks the same way (FIX 10423), whatever its
-    /// answer said. Every other answer is [`connector_call_answer`]'s.
-    fn code_consent_answer(
-        &self,
-        consent_site: Option<&CodeConsentCallSite>,
-        verb: AgentVerb,
-        outcome: SelfDispatchOutcome,
-    ) -> Result<SelfDispatchOutcome> {
-        if let Some(consent_site) = consent_site
-            && verb.is_browser()
-            && let ExecutorStorage::Canonical(vault) = &self.storage
-            && consent_wait::code_consent_binds_held_browser(vault, consent_site.wait_id)?
-        {
-            return Ok(SelfDispatchOutcome::DurableWait(SelfDurableWait {
-                wait_id: consent_site.wait_id,
-                effect: SelfEffect::AgentVerb,
-                reason: SelfDurableWaitReason::OutboundEffect,
-                prompt: Some(format!("code_consent:{}", consent_site.wait_id.to_hex())),
-            }));
-        }
-        if let (Some(consent_site), SelfDispatchOutcome::AgentVerb(answer)) =
-            (consent_site, &outcome)
-            && let Some(call_ref) = held_call_ref(verb, &answer.output)
-            && let ExecutorStorage::Canonical(vault) = &self.storage
-            && consent_wait::code_consent_binds_held_call(vault, consent_site.wait_id, call_ref)?
-        {
-            return Ok(SelfDispatchOutcome::DurableWait(SelfDurableWait {
-                wait_id: consent_site.wait_id,
-                effect: SelfEffect::AgentVerb,
-                reason: SelfDurableWaitReason::OutboundEffect,
-                prompt: Some(format!("code_consent:{}", consent_site.wait_id.to_hex())),
-            }));
-        }
-        Ok(connector_call_answer(verb, outcome))
     }
 }
 

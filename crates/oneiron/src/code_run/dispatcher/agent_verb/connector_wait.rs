@@ -41,6 +41,19 @@ pub(super) fn connector_call_answer(
 /// `connector.call` reply's, or the one inside a `self.use` answer whose
 /// operation was `connector.call`.
 pub(super) fn held_call_ref(verb: AgentVerb, output: &Value) -> Option<EntityId> {
+    let listing = match verb {
+        AgentVerb::ConnectorCall => Some(output),
+        AgentVerb::SelfUse => output.get("result"),
+        _ => return None,
+    };
+    // Delivered never parks, even when its body or enclosing answer is malformed.
+    if listing
+        .and_then(|listing| listing.get("outcome"))
+        .and_then(Value::as_str)
+        == Some("delivered")
+    {
+        return None;
+    }
     let reply = match verb {
         AgentVerb::ConnectorCall => output.clone(),
         AgentVerb::SelfUse => {
