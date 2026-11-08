@@ -80,7 +80,7 @@ mod route;
 mod url;
 use dial::Dial;
 use enrolment::EnrolmentSource;
-pub(crate) use enrolment::{EnrolmentFiles, enrol};
+pub(crate) use enrolment::{Enrolled, EnrolmentFiles, enrol, enrolment_vault_id, home_bind, join};
 pub(crate) use freeze::ReapFreeze;
 use host::Host;
 
@@ -285,9 +285,11 @@ async fn open(
     // on the listener's transport, whether the home itself rides the mesh or
     // its URL (FIX 4748); no listener here, no peer.
     let listener = mesh;
-    // Over the mesh when the home has a paired address and this host has a
-    // transport; otherwise at the home's URL.
-    let transport = host.transport(mesh).filter(|_| paired);
+    // Over the mesh when the home has a paired or enrolled (FIX 3374) address
+    // and this host has a transport; otherwise at the home's URL.
+    let transport = host
+        .transport(mesh)
+        .filter(|_| paired || mesh.is_some_and(|mesh| mesh.pins_home(home)));
     if transport.is_none() {
         direct(&url)?;
     }

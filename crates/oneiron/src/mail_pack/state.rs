@@ -164,6 +164,12 @@ pub(super) struct MailOccurrence {
     /// 17937); `None` before a listing after an expired anchor did.
     #[serde(default)]
     pub(super) listed_in: Option<u64>,
+    /// The BLAKE3 of its whole message, each line ended by CRLF, from the
+    /// first time it landed whole (the live body stage or an mbox import);
+    /// `None` until then. An IMAP copy proposing this id is this message
+    /// only when its own digest is the same (fix list row 19145).
+    #[serde(default)]
+    pub(super) content_digest: Option<[u8; 32]>,
     pub(super) landed_at: u64,
     pub(super) updated_at: u64,
 }
@@ -240,7 +246,9 @@ impl MailReplyHeaders {
 impl MailOccurrence {
     /// Forgets what the message said: its sender, subject, labels, thread
     /// key, ids and content hashes go, and only the provider id stays, as a
-    /// fence a later listing does not land again.
+    /// fence a later listing does not land again. The digest of its whole
+    /// message stays with the provider id: it proves a copy found later to
+    /// be the message forgotten, so the fence holds when the message moves.
     pub(super) fn scrub(&mut self, at: u64) {
         self.presence = MailPresence::Forgotten { at };
         self.thread_key.clear();
