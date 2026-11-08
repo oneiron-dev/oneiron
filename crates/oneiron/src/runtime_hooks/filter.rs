@@ -34,6 +34,41 @@ pub(super) fn fact_matches(
     scope_matches(vault, selector.scope.as_deref(), entry.entity, claim)
 }
 
+/// Filters a fact in the caller's existing snapshot.
+pub(super) fn fact_matches_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    selector: &HookSelector,
+    kind: FactKind,
+    entity: EntityId,
+    claim: Option<&ClaimBody>,
+    actor: HookActorClass,
+) -> Result<bool> {
+    if !selector_matches(selector, kind, claim, actor) {
+        return Ok(false);
+    }
+    let Some(scope) = selector.scope.as_deref() else {
+        return Ok(true);
+    };
+    let Some(wanted) = super::scope::HookScope::parse(scope) else {
+        return Ok(false);
+    };
+    super::scope::fact_within_in_txn(vault, txn, wanted, entity, claim)
+}
+
+fn selector_matches(
+    selector: &HookSelector,
+    kind: FactKind,
+    claim: Option<&ClaimBody>,
+    actor: HookActorClass,
+) -> bool {
+    verbs_match(
+        &selector.verbs,
+        kind,
+        claim.map(|body| body.predicate.as_str()),
+    ) && (selector.actors.is_empty() || selector.actors.contains(&actor))
+}
+
 /// Whether any selector entry could take a fact of `kind`, before anything
 /// is read.
 pub(super) fn verbs_admit_kind(verbs: &[String], kind: FactKind) -> bool {
@@ -140,14 +175,34 @@ pub(super) fn actor_class(vault: &Vault, actor: EntityId) -> Result<HookActorCla
         return Ok(HookActorClass::System);
     }
     let txn = vault.store.env.read_txn()?;
-    if crate::memory::actor_is_vault_owner_in_txn(vault, &txn, actor, EdgeActorClass::Human)
+    stored_actor_class_in_txn(vault, &txn, actor)
+}
+
+/// Classifies a fact's actor without opening a second snapshot.
+pub(super) fn actor_class_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<HookActorClass> {
+    if actor == crate::ports::storage_service_principal()? {
+        return Ok(HookActorClass::System);
+    }
+    stored_actor_class_in_txn(vault, txn, actor)
+}
+
+fn stored_actor_class_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<HookActorClass> {
+    if crate::memory::actor_is_vault_owner_in_txn(vault, txn, actor, EdgeActorClass::Human)
         .unwrap_or(false)
     {
         return Ok(HookActorClass::Human);
     }
     let entity_type = vault
         .store
-        .port_entity_record(&txn, &actor)?
+        .port_entity_record(txn, &actor)?
         .map(|row| row.entity_type);
     Ok(if entity_type == Some(ENTITY_TYPE_MACHINE) {
         HookActorClass::System

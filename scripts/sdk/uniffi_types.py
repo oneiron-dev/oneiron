@@ -45,6 +45,7 @@ WIRE_LEAVES = {
     'tuple': 'a tuple',
     'union': 'an untyped union',
     'never': 'an enum with no variants',
+    'large_enum': 'an enum with more than 256 variants ({name})',
     'unknown': 'a shape the inventory could not read',
     'inline': 'an inline {name}',
 }
@@ -282,6 +283,8 @@ class UniffiTypes:
             # A newtype, alias or handwritten codec: its wire value, inline.
             return self.rt(ir, inner, decl['name'])
         if meta is not None and not meta['variants']: return self.leaf(decl['name'], WIRE_LEAVES['never'])
+        if meta is not None and len(meta['variants']) > 256:
+            return self.leaf(where, WIRE_LEAVES['large_enum'].format(name=decl['name']))
         mkey = (key, repr(args))
         if mkey in self.mirrors: return self.mirrors[mkey]
         name = self.allocate(decl['name'] + ''.join(self.mangle(a) for a in args))

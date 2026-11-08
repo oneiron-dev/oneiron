@@ -330,6 +330,9 @@ pub(super) struct SourceBatch {
 
 pub use crate::consent::settlement_fact::{SettledFact, SettledOutcome, SettlementKind};
 
+use settlement::settlements_after_in_txn;
+pub(super) use settlement::{SettledRow, prepare_settlement_in_txn, settlement_fact_in_txn};
+
 /// Up to `max_entries` facts after `after` (exclusive) in `source`.
 pub(super) fn read_after(
     vault: &Vault,
@@ -362,6 +365,31 @@ pub(super) fn read_after(
     }
 }
 
+/// [`read_after`] in the caller's snapshot.
+pub(super) fn read_after_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: FactSource,
+    after: Option<FactPosition>,
+    max_entries: usize,
+) -> Result<SourceBatch> {
+    match (source, after) {
+        (FactSource::ClaimChangelog, None) => {
+            claim_changes_after_in_txn(vault, txn, None, max_entries)
+        }
+        (FactSource::ClaimChangelog, Some(FactPosition::ClaimChangelog(position))) => {
+            claim_changes_after_in_txn(vault, txn, Some(position), max_entries)
+        }
+        (FactSource::Settlement, None) => settlements_after_in_txn(vault, txn, None, max_entries),
+        (FactSource::Settlement, Some(FactPosition::Settlement(position))) => {
+            settlements_after_in_txn(vault, txn, Some(position), max_entries)
+        }
+        _ => Err(Error::InvariantViolation(
+            "hook cursor names another source",
+        )),
+    }
+}
+
 /// Claim writes after `after`: Create and Update land a claim, Supersede
 /// closes one. Other entity kinds and other ops are scanned past.
 fn claim_changes_after(
@@ -370,11 +398,20 @@ fn claim_changes_after(
     max_entries: usize,
 ) -> Result<SourceBatch> {
     let rtxn = vault.store.env.read_txn()?;
+    claim_changes_after_in_txn(vault, &rtxn, after, max_entries)
+}
+
+fn claim_changes_after_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    after: Option<ClaimChangelogPosition>,
+    max_entries: usize,
+) -> Result<SourceBatch> {
     let budget = max_entries.saturating_mul(SCAN_PER_ENTRY).max(1);
     let mut batch = SourceBatch::default();
     for (scanned, row) in vault
         .store
-        .port_changelog_after(&rtxn, after.map(|position| position.0))?
+        .port_changelog_after(txn, after.map(|position| position.0))?
         .enumerate()
     {
         if scanned >= budget || batch.entries.len() >= max_entries {
@@ -387,55 +424,66 @@ fn claim_changes_after(
         }
         let position = FactPosition::ClaimChangelog(ClaimChangelogPosition(id));
         batch.through = Some(position);
-        let (kind, op) = match change.op {
-            ChangeOp::Create => (FactKind::ClaimLanded, FactOp::Create),
-            ChangeOp::Update => (FactKind::ClaimLanded, FactOp::Update),
-            ChangeOp::Supersede => (FactKind::ClaimSuperseded, FactOp::Supersede),
-            _ => continue,
-        };
-        let Some(record) = vault.store.port_entity_record(&rtxn, &change.entity)? else {
-            continue;
-        };
-        if record.entity_type != ENTITY_TYPE_CLAIM {
-            continue;
+        if let Some(entry) = claim_fact_in_txn(vault, txn, &change)? {
+            batch.entries.push(entry);
         }
-        let revision = crate::vault::entity_revision::revision_for_body_hash_in_txn(
-            vault,
-            &rtxn,
-            &change.entity,
-            &change.input_hash,
-        )?;
-        let historical = match revision {
-            Some(revision) => crate::vault::entity_revision::read_entity_revision_in_txn(
-                vault,
-                &rtxn,
-                &change.entity,
-                crate::vault::ReadMode::Pinned(revision),
-            )?,
-            None => None,
-        };
-        let predicate = historical
-            .as_deref()
-            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
-            .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
-            .map(|body| body.predicate);
-        batch.entries.push(FactEntry {
-            position,
-            kind,
-            entity: change.entity,
-            op,
-            actor: change.actor_principal,
-            recorded_at: change.recorded_at,
-            input_hash: change.input_hash,
-            body_hash: Some(change.input_hash),
-            revision,
-            settlement: None,
-            predicate,
-            tick: None,
-            surface: None,
-        });
     }
     Ok(batch)
+}
+
+pub(super) fn claim_fact_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    change: &crate::ports::ChangeLogRecord,
+) -> Result<Option<FactEntry>> {
+    let position = FactPosition::ClaimChangelog(ClaimChangelogPosition(change.id));
+    let (kind, op) = match change.op {
+        ChangeOp::Create => (FactKind::ClaimLanded, FactOp::Create),
+        ChangeOp::Update => (FactKind::ClaimLanded, FactOp::Update),
+        ChangeOp::Supersede => (FactKind::ClaimSuperseded, FactOp::Supersede),
+        _ => return Ok(None),
+    };
+    let Some(record) = vault.store.port_entity_record(txn, &change.entity)? else {
+        return Ok(None);
+    };
+    if record.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let revision = crate::vault::entity_revision::revision_for_body_hash_in_txn(
+        vault,
+        txn,
+        &change.entity,
+        &change.input_hash,
+    )?;
+    let historical = match revision {
+        Some(revision) => crate::vault::entity_revision::read_entity_revision_in_txn(
+            vault,
+            txn,
+            &change.entity,
+            crate::vault::ReadMode::Pinned(revision),
+        )?,
+        None => None,
+    };
+    let predicate = historical
+        .as_deref()
+        .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
+        .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+        .map(|body| body.predicate);
+    Ok(Some(FactEntry {
+        position,
+        kind,
+        entity: change.entity,
+        op,
+        actor: change.actor_principal,
+        recorded_at: change.recorded_at,
+        input_hash: change.input_hash,
+        body_hash: Some(change.input_hash),
+        revision,
+        settlement: None,
+        predicate,
+        tick: None,
+        surface: None,
+    }))
 }
 
 /// The newest position in `source`, or `None` while it is empty, in the

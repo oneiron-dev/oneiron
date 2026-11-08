@@ -95,6 +95,36 @@ impl std::fmt::Debug for LaneBound {
 }
 
 impl ResolvedContextProjection {
+    /// The parent projection a spawned child that outlived its root
+    /// (REVIEW-6638) resolves under on a machine that took it over and
+    /// holds no row of its settled parent: the `layers` and the
+    /// `memory_sections` and `chat_sections` refs that parent projected,
+    /// frozen into the child's run TASK at its promotion, and nothing else.
+    ///
+    /// Engine call (CALLS, FIX 4747): it is the one projection built from a
+    /// stored copy, and only ever as a parent. The child still resolves its
+    /// own descriptor against it as on the machine it left: a `Default`
+    /// inherits exactly these sections and a `Scoped` or `Recent` request
+    /// intersects its live read with them, so the child never reads past
+    /// what its parent handed it, where resolving it with no parent would
+    /// scan fresh at the default limit and WIDEN. Its sections are its
+    /// bound (no member's lane left any out of them here).
+    pub(crate) fn from_frozen_bound(
+        layers: Vec<String>,
+        memory_sections: Vec<String>,
+        chat_sections: Vec<String>,
+    ) -> Self {
+        Self {
+            layers,
+            memory_sections,
+            chat_sections,
+            briefing: None,
+            sibling_result_refs: Vec::new(),
+            workflow_output_refs: Vec::new(),
+            pre_lane: None,
+        }
+    }
+
     /// The distinct memory domains this projection actually reached.
     #[must_use]
     pub fn memory_domains(&self) -> Vec<&str> {
