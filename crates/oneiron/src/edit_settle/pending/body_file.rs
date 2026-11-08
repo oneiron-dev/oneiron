@@ -16,6 +16,7 @@
 use std::io::{Cursor, Read};
 
 use crate::Vault;
+use crate::blob_artifact::BlobContent;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::provenance::body::{BodyLocation, BodyRef};
@@ -50,35 +51,49 @@ impl StagedPendingBody {
 }
 
 impl Vault {
-    /// Writes `bytes` as a published body file when they are past the
+    /// Writes `content` as a published body file when it is past the
     /// inline size and `mint` is given ([`Vault::asset_body_mint`] gives one
     /// for exactly those bytes); `None` otherwise, and the bytes wait in
     /// their row. The instance comes from `mint`, taken before the writer
-    /// the file serves opened, so this runs before that writer or in it.
+    /// the file serves opened, so this runs before that writer or in it. A
+    /// body file an ingress door measured streams from that file (FIX 22074).
     ///
     /// # Errors
     ///
     /// Custody and filesystem errors; nothing is left behind but debris the
-    /// collector takes.
+    /// collector takes. A body file past the inline size with no mint is an
+    /// [`Error::InvariantViolation`]: its bytes never wait in a row.
     pub(super) fn stage_pending_output_body(
         &self,
-        bytes: &[u8],
+        content: BlobContent<'_>,
         mint: Option<&BodyMint>,
     ) -> Result<Option<StagedPendingBody>> {
-        let Some(mint) = mint else {
-            return Ok(None);
-        };
-        let len = bytes.len() as u64;
+        let len = content.len();
         if len <= ASSET_INLINE_BODY_BYTES {
             return Ok(None);
         }
-        let digest = *blake3::hash(bytes).as_bytes();
+        let Some(mint) = mint else {
+            return match content {
+                BlobContent::Bytes(_) => Ok(None),
+                BlobContent::File(_) => Err(Error::InvariantViolation(
+                    "a native output body file past the inline size waits in a file",
+                )),
+            };
+        };
+        let digest = content.blake3();
         // Pinned before it is published: the collector leaves it be until
         // the writer that names it is done.
         let pin = self.pin_result_body(digest);
         let dir = self.store.body_dir()?;
         let instance = mint.mint()?;
-        let key = dir.import_sealing(&digest, len, &mut Cursor::new(bytes), false, instance)?;
+        let key = match content {
+            BlobContent::Bytes(bytes) => {
+                dir.import_sealing(&digest, len, &mut Cursor::new(bytes), false, instance)?
+            }
+            BlobContent::File(file) => {
+                dir.import_sealing(&digest, len, &mut file.reader()?, false, instance)?
+            }
+        };
         Ok(Some(StagedPendingBody {
             body: BodyRef {
                 blake3: digest,

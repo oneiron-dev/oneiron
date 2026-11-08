@@ -15,6 +15,7 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 use super::body::{BlobArtifactBody, decode_blob_artifact_body, encode_blob_artifact_body};
+use super::body_file::{BlobBodyFile, BlobContent};
 use super::made_by::bind_version_made_by;
 use super::provenance::{BlobVersionProvenance, validate_provenance};
 use super::store_keys::{BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN};
@@ -270,15 +271,88 @@ impl Vault {
     where
         E: From<Error>,
     {
+        self.append_blob_artifact_content_checked(
+            artifact_id,
+            fork_parent,
+            BlobContent::Bytes(bytes),
+            provenance,
+            made_by,
+            reader,
+            actor,
+            occurred,
+            learned_at,
+        )
+    }
+
+    /// [`Self::append_blob_artifact_version_checked`] of a body file an
+    /// ingress door decoded before any writer opened (FIX 22074): a body no
+    /// longer than the asset plane's inline size is read once and appended
+    /// as a slice; a longer one is staged from the file inside the writer,
+    /// and waits in its own body file when it is proposed, never held whole.
+    ///
+    /// # Errors
+    ///
+    /// The slice door's errors, the file's read errors, and
+    /// [`Error::InvariantViolation`] when the file changes under the door.
+    #[expect(clippy::too_many_arguments)]
+    pub fn append_blob_artifact_version_checked_file<'reader, E>(
+        &self,
+        artifact_id: &EntityId,
+        fork_parent: Option<u64>,
+        body: &BlobBodyFile<'_>,
+        provenance: &BlobVersionProvenance,
+        made_by: Option<&MadeBy>,
+        reader: impl FnOnce() -> std::result::Result<Option<MadeByReader<'reader>>, E>,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> std::result::Result<BlobArtifactAppendOutcome, E>
+    where
+        E: From<Error>,
+    {
+        let inline = body.inline_bytes()?;
+        let content = match &inline {
+            Some(bytes) => BlobContent::Bytes(bytes),
+            None => BlobContent::File(body),
+        };
+        self.append_blob_artifact_content_checked(
+            artifact_id,
+            fork_parent,
+            content,
+            provenance,
+            made_by,
+            reader,
+            actor,
+            occurred,
+            learned_at,
+        )
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn append_blob_artifact_content_checked<'reader, E>(
+        &self,
+        artifact_id: &EntityId,
+        fork_parent: Option<u64>,
+        content: BlobContent<'_>,
+        provenance: &BlobVersionProvenance,
+        made_by: Option<&MadeBy>,
+        reader: impl FnOnce() -> std::result::Result<Option<MadeByReader<'reader>>, E>,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> std::result::Result<BlobArtifactAppendOutcome, E>
+    where
+        E: From<Error>,
+    {
         // A landing version past the inline size goes to its body file under
         // an instance minted before the writer opens (FIX 20812).
-        let mint = self.asset_body_mint([bytes.len() as u64])?;
+        let mint = self.asset_body_mint([content.len()])?;
         let (version, fork_base, _hold) = self.with_write_txn_grouped(|wtxn| {
             self.decide_blob_artifact_append_in_txn(
                 wtxn,
                 artifact_id,
                 fork_parent,
-                bytes,
+                content,
                 mint.as_ref(),
                 provenance,
                 made_by,
@@ -296,7 +370,7 @@ impl Vault {
             .get_blob_artifact(artifact_id)?
             .ok_or(Error::EntityNotFound)?;
         let output =
-            checked::direct_append_output(body, bytes, provenance, made_by, actor, learned_at);
+            checked::direct_append_output(body, content, provenance, made_by, actor, learned_at);
         let reader = if made_by.is_some_and(|named| {
             named.process.actor != actor.entity_ref()
                 || !named.inputs.is_empty()
@@ -309,6 +383,7 @@ impl Vault {
         self.propose_native_output_with_write_grant(
             artifact_id,
             &output,
+            content,
             reader,
             actor,
             learned_at,
@@ -410,6 +485,74 @@ impl Vault {
                 learned_at,
             )
         })
+    }
+
+    /// [`Self::append_blob_artifact_version`], or with `made_by`
+    /// [`Self::append_blob_artifact_version_made_by`] on the head, of a body
+    /// file an ingress door decoded before any writer opened (FIX 22074): a
+    /// body no longer than the asset plane's inline size is read once and
+    /// appended as a slice; a longer one is staged from the file inside the
+    /// writer, under an instance minted before it opened, never held whole.
+    ///
+    /// # Errors
+    ///
+    /// The slice doors' errors, the file's read errors, and
+    /// [`Error::InvariantViolation`] when the file changes under the door.
+    #[expect(clippy::too_many_arguments)]
+    pub fn append_blob_artifact_version_file(
+        &self,
+        artifact_id: &EntityId,
+        body: &BlobBodyFile<'_>,
+        provenance: &BlobVersionProvenance,
+        made_by: Option<&MadeBy>,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<BlobArtifactVersion> {
+        if let Some(bytes) = body.inline_bytes()? {
+            return match made_by {
+                Some(made_by) => self.append_blob_artifact_version_made_by(
+                    artifact_id,
+                    None,
+                    &bytes,
+                    provenance,
+                    made_by,
+                    actor,
+                    occurred,
+                    learned_at,
+                ),
+                None => self.append_blob_artifact_version(
+                    artifact_id,
+                    &bytes,
+                    provenance,
+                    actor,
+                    occurred,
+                    learned_at,
+                ),
+            };
+        }
+        let mint = self.asset_body_mint([body.len()])?;
+        let (version, _hold) = self.with_write_txn_grouped(|wtxn| {
+            let staged = self.stage_blob_body_in_txn(wtxn, &mut body.reader()?, mint.as_ref())?;
+            body.check(staged.facts().len, staged.facts().blake3)?;
+            let version = self.append_blob_artifact_version_body_in_txn(
+                wtxn,
+                artifact_id,
+                VersionBody::Staged(&staged),
+                provenance,
+                actor,
+                occurred,
+                learned_at,
+                None,
+                None,
+                made_by,
+                false,
+                true,
+                crate::core_write::CoreWriteLaneRef::Unbound,
+            )?;
+            Ok((version, staged.into_hold()))
+        })?;
+        Ok(version)
     }
 
     /// Transaction-composable body of [`Vault::append_blob_artifact_version_made_by`].

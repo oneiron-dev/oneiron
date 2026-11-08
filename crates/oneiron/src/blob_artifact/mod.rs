@@ -29,6 +29,7 @@
 //! resolves storage for another tenant, even when byte-identical.
 
 mod body;
+mod body_file;
 pub use oneiron_store::blob_artifact::body_tags;
 mod born_from;
 pub(crate) mod checkpoint;
@@ -61,6 +62,8 @@ pub use self::body::{
     BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody, decode_blob_artifact_body,
     encode_blob_artifact_body,
 };
+pub use self::body_file::BlobBodyFile;
+pub(crate) use self::body_file::BlobContent;
 pub use self::born_from::{BornFromArtifact, BornFromSource};
 pub(crate) use self::born_from::{
     agent_run_artifacts_with_prefix_in_txn, archive_born_from_table, artifacts_born_from_in_txn,
