@@ -101,7 +101,8 @@ pub(super) fn facade_invoke_concern_move(
             Ok((output, wake))
         },
     )?;
-    let output = super::drained_still_admitted(&server.vault, call.auth(), producers, output);
+    let output =
+        super::drained_still_admitted(&server.vault, call.auth(), producers, output, false);
     Ok((output, wake))
 }
 
@@ -183,11 +184,14 @@ pub(super) fn facade_invoke_in_turn(
             }
         })
     })?;
+    let owner_whole_vault_export =
+        super::export_transfer::owner_whole_vault_export_admitted(server, call.auth(), verb);
     Ok(super::drained_still_admitted(
         &server.vault,
         call.auth(),
         producers,
         output,
+        owner_whole_vault_export,
     ))
 }
 

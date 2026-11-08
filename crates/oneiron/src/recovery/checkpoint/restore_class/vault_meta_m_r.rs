@@ -20,9 +20,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MAIL_PACK_CALENDAR_SYNC, CONTENT),
     (&t::MAIL_PACK_COMPLIANCE_EVENT, LIVE),
     (&t::MAIL_PACK_COMPLIANCE_SETTING, LIVE),
+    // An owed forget stands with the rows it still owes, as the image holds them.
+    (&t::MAIL_PACK_FORGET_OWED, CONTENT),
     // An owed header retirement stands with the revision it names, as the
     // image holds it (FIX 15413).
     (&t::MAIL_PACK_HEADER_RETIREMENT, CONTENT),
+    // A UID names one message for as long as its UIDVALIDITY stands.
+    (&t::MAIL_PACK_IMAP_UID, CONTENT),
     (&t::MAIL_PACK_MBOX_IMPORT, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE_ROW, CONTENT),
@@ -32,6 +36,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MAIL_PACK_SOURCE, LIVE),
     (&t::MAIL_PACK_SOURCE_INDEX, LIVE),
     (&t::MAIL_PACK_SYNC, CONTENT),
+    // A thread's epoch stands with the conversations it named.
+    (&t::MAIL_PACK_THREAD_EPOCH, CONTENT),
     (&t::ENTITY_TEXT_INDEXED_IDLE_DELAY_MS, CONTENT),
     // FIX 9970: a turn's unpersisted-wake label stands with the turn as the
     // image holds it, as the wakes its landing did record do.
@@ -134,7 +140,15 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OUTBOUND_INTENT_PARTY, LIVE),
     (&t::OUTBOUND_INTENT_PARTY_OF, LIVE),
     (&t::OUTBOUND_INTENT_LATE_RECIPIENT, LIVE),
+    // A parked task question stands with the live send and its live custody
+    // key (FIX 16029): live state replaces the image's; absent stays absent.
+    // Its owner Ask restores as content (DECISION_ASK), so the poller's pass
+    // (`forget_ended_remote_task_inputs`) reconciles the two: an Ask of a
+    // question no row holds is withdrawn, and a waiting row's missing Ask is
+    // queued again, each Ask checked by its typed identity, never its number.
+    (&t::OUTBOUND_REMOTE_TASK_INPUT, LIVE),
     (&t::OUTBOUND_REMOTE_TASK_POLL, LIVE),
+    (&t::OUTBOUND_REMOTE_TASK_SESSION_END, LIVE),
     (&t::OUTBOUND_INTENT_UNAVAILABLE, LIVE),
     (&t::OUTBOUND_SUPPRESSION_INDEX, LIVE),
     (&t::OUTBOUND_SUPPRESSION_RECEIPT, LIVE),
@@ -186,6 +200,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PORTS_DEPENDENT_WALK_CHECK, LIVE),
     (&t::PORTS_DEPENDENT_WALK_POLICY, LIVE),
     (&t::PORTS_DEPENDENT_WALK_SETTLED, CONTENT),
+    (&t::PORTS_DOCUMENT_MUTATION_HEAD, CONTENT),
     (&t::PORTS_ID_FLOOR, LIVE),
     (&t::PORTS_STALE, CONTENT),
     (&t::PORTS_TOMBSTONE, CONTENT),

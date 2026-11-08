@@ -4,14 +4,19 @@
 //! commit with it. On a stretch on record the record lands in base, so the
 //! same writer runs the full replay fence first (FIX 9180, FIX 11392): a
 //! copy read before an erase writes back its erased form, exactly as on the
-//! owned path. An overlay row stays the room's own.
+//! owned path. An overlay row stays the room's own: it takes the fold-answer
+//! fence through the room's composed view before its put (FIX 18924), on
+//! the owned put as on the append, and lands erased in that writer when the
+//! actor of its run is gone in the vault (FIX 7366).
 
 use std::borrow::Cow;
 
+use super::super::overlay_erase::fence_overlay_replay_in_txn;
 use super::super::records::{
     MODEL_HEAL_COUNTS, REPLAY_RECORDS, next_additive_heal_count, replay_generation_matches,
 };
 use super::super::response_erase::fence_replay_in_txn;
+use super::super::response_owners::stamp_response_owner_in_txn;
 use super::*;
 use crate::side_table::RoutedDbs;
 
@@ -38,8 +43,9 @@ impl SessionBinding<'_> {
     /// writer after the generation check. It is given the composed view and
     /// the route's write. On base it runs before the replay fence, as the
     /// owned path's prepared seam does (FIX 6592): a body published there is
-    /// one the fence releases in that writer. An overlay row takes no fence,
-    /// so with a heal tally `prepare` runs after the record's put.
+    /// one the fence releases in that writer. An overlay row takes no replay
+    /// fence, only the room's gone-actor one (FIX 7366), so with a heal tally
+    /// `prepare` runs after the record's put.
     ///
     /// # Errors
     ///
@@ -69,6 +75,13 @@ impl SessionBinding<'_> {
                     also(txn, write)
                 });
         }
+        // A fold answer whose words a withdrawal took keeps none in the
+        // room's row either (FIX 18924).
+        let fenced = self.composed_fold_answers(Cow::Borrowed(record))?;
+        let record: &CodeRunReplayRecord = &fenced;
+        // An overlay record of a run whose actor is gone lands erased, in
+        // the same writer (FIX 7366).
+        let run_id = record.run_id;
         match healed_model {
             Some(model) => self
                 .session
@@ -82,6 +95,13 @@ impl SessionBinding<'_> {
                     &model.as_str().to_owned(),
                     next_additive_heal_count,
                     |txn, write| {
+                        // The helper put `record`; its erased form, when it
+                        // is one, replaces it in the same segment.
+                        let fenced =
+                            fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
+                        if let Cow::Owned(erased) = fenced {
+                            REPLAY_RECORDS.put(&write, txn, &run_id, &erased)?;
+                        }
                         prepare(txn, write, write)?;
                         also(txn, write)
                     },
@@ -93,10 +113,66 @@ impl SessionBinding<'_> {
                     let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
                     replay_generation_matches(current.as_ref(), expected)?;
                     prepare(txn, read, write)?;
-                    REPLAY_RECORDS.put(&write, txn, &record.run_id, record)?;
+                    let record =
+                        fence_overlay_replay_in_txn(&write, txn, Cow::Borrowed(record), None)?;
+                    REPLAY_RECORDS.put(&write, txn, &run_id, &record)?;
                     also(txn, write)
                 }),
         }
+    }
+
+    /// [`Self::put_replay_record_if_generation_with_heal`] with no heal, as
+    /// `actor`'s run `run`. On an on-record stretch the record lands in base,
+    /// so the same transaction fences it and stamps its owner there, as the
+    /// vault's put does (FIX 5718, 7429): an erase of `actor` finds the run
+    /// by its owner row, and a write after that erase stays erased. An
+    /// overlay row stamps its owner in the overlay, in the same writer, so
+    /// the room's waits know whose run it is (FIX 6586). It also takes the
+    /// fold-answer fence through the room's composed view before its put
+    /// (FIX 18924): a withdrawn fold's answer never lands in the room's row;
+    /// and it lands erased when `actor` is gone in the vault (FIX 7366).
+    pub(in crate::code_run::storage) fn put_owned_replay_record_if_generation(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        run: EntityId,
+        actor: EntityId,
+    ) -> Result<CodeRunReplayGeneration> {
+        use crate::side_table::RoutedDbs;
+        REPLAY_RECORDS.encode_value(record)?;
+        let next_generation = record.generation()?;
+        let fenced = match self.route.target() {
+            RouteTarget::Base => Cow::Borrowed(record),
+            RouteTarget::Overlay | RouteTarget::Discard => {
+                self.composed_fold_answers(Cow::Borrowed(record))?
+            }
+        };
+        let overlay_record: &CodeRunReplayRecord = &fenced;
+        self.answered(|| {
+            self.session
+                .routed_side_txn(&self.route, |wtxn, read, write| {
+                    let current = REPLAY_RECORDS.get(&read, wtxn, &record.run_id)?;
+                    replay_generation_matches(current.as_ref(), expected)?;
+                    match write {
+                        RoutedDbs::Base(vault) => {
+                            stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)?;
+                            let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
+                            REPLAY_RECORDS.put(vault, wtxn, &record.run_id, &record)
+                        }
+                        RoutedDbs::Session(_) => {
+                            stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
+                            let record = fence_overlay_replay_in_txn(
+                                &write,
+                                wtxn,
+                                Cow::Borrowed(overlay_record),
+                                Some((run, actor)),
+                            )?;
+                            REPLAY_RECORDS.put(&write, wtxn, &record.run_id, &record)
+                        }
+                    }
+                })
+        })?;
+        Ok(next_generation)
     }
 
     /// Appends a resumed record to base and retires the full keys that its

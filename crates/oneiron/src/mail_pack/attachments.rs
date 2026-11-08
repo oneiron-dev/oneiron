@@ -134,7 +134,10 @@ impl Memory<'_> {
             let mut found = None;
             for occurrence in OCCURRENCES.iter_from(&vault.store, &txn, source.as_bytes())? {
                 let (_, occurrence) = occurrence?;
-                if occurrence.turn == turn {
+                // A forgotten message's attachments are gone with it.
+                if occurrence.turn == turn
+                    && !matches!(occurrence.presence, MailPresence::Forgotten { .. })
+                {
                     found = Some(occurrence);
                     break;
                 }

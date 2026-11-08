@@ -20,6 +20,21 @@ fn refusal(verb: &str, error: OwnerError) -> MemoryError {
     }
 }
 
+pub(crate) async fn vault_federation_status(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: EmptyRequest,
+) -> Listed<FederationStatus> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.federation.status",
+        move |server, owner| Ok(server.vault().federation_status_as_owner(owner)?),
+        |_| Vec::new(),
+    )
+    .await
+}
+
 pub(crate) async fn vault_federation_connect_identity(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

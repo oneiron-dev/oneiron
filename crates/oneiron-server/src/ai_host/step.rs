@@ -43,7 +43,7 @@ use oneiron::{
 
 use super::CHAT_ROLE;
 use super::live_lease::{self, LiveLease};
-use super::payer_funding::{PayerFault, requires_payer, scope_funding};
+use super::payer_funding::{PayerFault, attempt_grant_funding, requires_payer, scope_run_funding};
 use crate::models::{ModelCallBinding, ModelRuntime};
 use crate::server::SyncServer;
 
@@ -532,10 +532,7 @@ impl StepRunner {
             && let Some(answer) = &saved.transcript.answer
         {
             stamp_executor(vault, attempt, &answer.rung);
-            let binding = ModelCallBinding {
-                rung: answer.rung.clone(),
-                route: answer.route.clone(),
-            };
+            let binding = ModelCallBinding::saved(answer.rung.clone(), answer.route.clone());
             let no_record = no_record_at_arrival
                 || room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
             record_workflow_response(
@@ -773,9 +770,13 @@ impl StepRunner {
         // cannot bill holds the step on the owners' payer-needed ask: it
         // parks as this try (FIX 805), and once they say yes it bills the
         // vault. Nothing went out, so taken up it replays only what the
-        // earlier tries spent.
-        let payer = match scope_funding(vault, lease.as_ref(), payer_required) {
-            Ok(payer) => payer,
+        // earlier tries spent. Work an owner's agent Grant funds (FIX 7766)
+        // binds that Grant here too, its spend root's or its unmetered
+        // dispatch's: each host-paid call holds only on its wallet.
+        let funded = scope_run_funding(vault, lease.as_ref(), payer_required)
+            .and_then(|(payer, _)| Ok((payer, attempt_grant_funding(vault, attempt.id)?)));
+        let (payer, funding) = match funded {
+            Ok(funded) => funded,
             Err(fault) => {
                 let held = matches!(fault, PayerFault::Needed { .. });
                 if held && continuation.is_none() {
@@ -863,7 +864,7 @@ impl StepRunner {
         };
         let run = self
             .models
-            .funded_run(run_id, guard.clone(), payer)
+            .grant_funded_run(run_id, guard.clone(), payer, funding)
             .sourced(sources.clone());
         let run = run.with_work_context({
             let mut context = run.work_context();
@@ -893,23 +894,19 @@ impl StepRunner {
             context.parent = parent;
             context
         });
-        // The admitted request is the step's replay capsule (FIX 3028),
-        // finalized with the rung that answers it. A capture that fails
-        // leaves none and never fails the step.
-        let capture_completed = continuation
-            .as_ref()
-            .is_some_and(|saved| saved.progress.cursor.capture_completed);
-        let capture = |request: &LlmRequest| {
-            if capture_completed {
-                return None;
-            }
+        // Each admitted request is a replay capsule of the step (FIX 3028),
+        // one per model round (FIX 7013), finalized with the rung that
+        // answers it. The tool rounds' cursor says which round already has
+        // one. A capture that fails leaves none and never fails the step.
+        let capture = |request: &LlmRequest, round: u64| {
             oneiron::code_run::capture_workflow_step(
                 vault,
                 attempt.id,
                 attempt.attempt_count,
                 actor,
                 request,
-                sources,
+                sources.clone(),
+                round,
             )
         };
         let may_send = || {
@@ -986,7 +983,7 @@ impl StepRunner {
                 &mut save,
             ),
             None => {
-                let staged = capture(&request);
+                let staged = capture(&request, 0);
                 let final_request = request.clone();
                 runtime
                     .block_on(ladder.generate_recorded_while(&run, request, None, &may_send))
