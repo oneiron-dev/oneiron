@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1361 code-mode rows (1319 host rows, 42 run rows), 4793 declarations.
-// Replies: 1169 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1360 code-mode rows (1318 host rows, 42 run rows), 4791 declarations.
+// Replies: 1168 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -315,7 +315,7 @@ declare namespace Sdk {
   type TaskBoardStatus = "running" | "scheduled" | "queued" | "done" | "failed";
   type TaskKind = "standard" | "consult" | "reconciliation";
   type TaskTerminalDisposition = "completed" | "rejected" | "failed" | "expired" | "abandoned" | "cancelled";
-  type ConnectorSendTaskOutcome = "delivered" | "failed" | "ambiguous" | "owner_declined_resend";
+  type ConnectorSendTaskOutcome = "delivered" | "failed" | "ambiguous";
   type LadderTerminalDisposition = "approved" | "overridden" | "rejected" | "failed" | "escalated" | "countered" | "abandoned";
   type CancelRejectionPathology = { attempt_id: string; rejections: number; threshold: number; last_status?: string | null };
   type CommReach = "parent" | "subtree" | "project" | "vault";
@@ -578,7 +578,8 @@ declare namespace Sdk {
   type QueryAffect = { valence: number; arousal: number; dominance: number };
   type RetrievalTurn = { turn_id: number[]; episode_id: number[]; turn_idx: number };
   type RecallTelemetry = { capture_trace?: boolean; turn?: RetrievalTurn | null };
-  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; token_budget?: number | null; reader_agent_ref?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null };
+  type ReadFilterInput = { entity_types?: string[] | null; max_sensitivity_band?: number | null; include_stale?: boolean | null; min_confidence?: number | null; min_salience?: number | null };
+  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; token_budget?: number | null; reader_agent_ref?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null; filter?: ReadFilterInput | null };
   type InputKind = "text" | "image" | "audio";
   type EmbeddingMatchEvidence = { space: string; embedding_kind: InputKind; query_kind: InputKind; score: number; floor: number; strong: number; matched: boolean };
   type VerdictBasis = "calibrated_model" | "deterministic_fallback";
@@ -797,7 +798,7 @@ declare namespace Sdk {
   type ServedAssetForm = "image" | "audio" | "thumbnail" | "asset_text" | "ask";
   type AssetResolved = { asset_ref: string; form: ServedAssetForm; mime_type?: string | null; bytes_b64?: string | null; text?: string | null; asset_text_ref?: string | null; handle?: string | null; receipt_refs: string[] };
   type VectorSearchLane = "ordinary" | "voice_hot";
-  type VectorSearchRequest = { space?: string | null; query_kind?: InputKind | null; query: number[]; kinds?: InputKind[]; limit: number; lane?: VectorSearchLane };
+  type VectorSearchRequest = { space?: string | null; query_kind?: InputKind | null; query: number[]; kinds?: InputKind[]; limit: number; lane?: VectorSearchLane; filter?: ReadFilterInput | null };
   type VectorSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; embedding_matches: EmbeddingMatchEvidence[] };
   type VectorRefinement = { stored_dimensions: number; candidate_dimensions: number; query_dimensions: number; score_dimensions: number; full_dimension_rescore: boolean };
   type VectorSearchResult = { hits: VectorSearchHit[]; lane: VectorSearchLane; effective_limit: number; limit_clamped: boolean; refinement?: VectorRefinement | null };
@@ -1671,7 +1672,7 @@ declare namespace Sdk {
   type OffRecordSessionRequest = { session_ref: string };
   type OffRecordWitnessRequest = { session_ref: string; turn: WitnessTurn; summary?: string | null };
   type OffRecordClosed = { session_ref: string; turns_dropped: number; context_receipts_dropped: number; emit_receipts_dropped: number; emit_receipts_kept: number; promoted_turns_kept: number };
-  type OffRecordRecallRequest = { session_ref: string; query: string; limit: number };
+  type OffRecordRecallRequest = { session_ref: string; query: string; limit: number; filter?: ReadFilterInput | null };
   type CreateNoteRequest = { kind: string; markdown: string };
   type OffRecordNoteRequest = { session_ref: string; note: CreateNoteRequest; evidence_turn_refs?: string[] };
   type OffRecordArtifactSaveRequest = { session_ref: string; artifact_ref: string };
@@ -1742,9 +1743,6 @@ declare namespace Sdk {
   type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null; erase_complete_at?: number | null; final_ref?: string | null; custody?: RecordEraseCustody | null };
   type OutboundCallRequestEraseRequest = { attempt: EntityId; call_seq: number };
   type OutboundCallRequestErased = { erased: boolean };
-  type UncertainSendAnswer = { task_ref: EntityId; resend: boolean };
-  type UncertainSendAnswerOutcome = "resend_released" | "declined" | "already_settled";
-  type UncertainSendAnswered = { task_ref: EntityId; resend: boolean; outcome: UncertainSendAnswerOutcome };
   type ResearchChildWire = { root: EntityId; parent: EntityId; agent: EntityId; intent_key: string; briefing: string };
   type ResearchChildReceipt = { root: EntityId; parent: EntityId; child: EntityId };
   type ResearchArchiveWire = { root: EntityId };
@@ -3892,10 +3890,10 @@ declare namespace Sdk {
   type CalendarOccurrenceView = { event_ref: string; master_ref: string; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
   type CalendarOccurrencesPage = { occurrences: CalendarOccurrenceView[]; complete: boolean; resume_from?: number | null };
   type CalendarInstanceMoveRequest = { system: string; source_blob_ref: string; source_version: number; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
-  type CalendarReadRequest = { event_ref: string };
+  type CalendarReadRequest = { event_ref: string; filter?: ReadFilterInput | null };
   type CalendarEventView = { origin: string; event_ref: string; name?: string | null; start_utc?: number | null; end_utc?: number | null; calendar_systems: string[]; blocks_time: boolean };
   type CalendarSel = { system?: string | null };
-  type CalendarSearchPageRequest = { calendars: CalendarSel[]; range?: CalendarRangeDto | null; text?: string | null; limit: number; deadline_ms?: number | null; resume_from?: number | null };
+  type CalendarSearchPageRequest = { calendars: CalendarSel[]; range?: CalendarRangeDto | null; text?: string | null; limit: number; deadline_ms?: number | null; resume_from?: number | null; filter?: ReadFilterInput | null };
   type CalendarSearchPage = { events: CalendarEventView[]; complete: boolean; resume_from?: number | null };
   type CalendarFreebusyPageRequest = { calendars: CalendarSel[]; range: CalendarRangeDto; deadline_ms?: number | null; resume_from?: number | null };
   type CalendarFreebusyIntervalDto = { start_utc: number; end_utc: number };
@@ -3916,13 +3914,13 @@ declare namespace Sdk {
   type CalendarOutcomePolicy = { grace_secs: number };
   type TranscriptFileDropInput = { source_blob_ref: string; decoded_text: string; arrived_at_ms: number; event_ref?: string | null };
   type TranscriptIngestOutcome = { outcome: "session"; session_ref: EntityId; turn_refs: EntityId[]; wake_turn_refs: EntityId[]; extraction_enqueued: boolean } | { outcome: "retry_open_session"; open_session_ref: EntityId } | { outcome: "hook_pending"; session_ref: EntityId; ask: EntityId } | { outcome: "queued"; attempt_ref: string } | { outcome: "note_fallback"; note_ref: EntityId };
-  type ClaimListFilter = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number };
+  type ClaimListFilter = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number; filter?: ReadFilterInput | null };
   type ClaimDemoteActionInput = { kind: "decay"; new_claim_of_weight: number } | { kind: "weaken"; new_confidence: number } | { kind: "stale" };
   type ClaimDemoteRequest = { claim_ref: string; action: ClaimDemoteActionInput };
   type ClaimDemoteView = { claim_ref: string; short_ref?: string | null; rung: string; stale: boolean; receipt_ref: string };
-  type ReadFilterInput = { entity_types?: string[] | null; max_sensitivity_band?: number | null; include_stale?: boolean | null; min_confidence?: number | null; min_salience?: number | null };
   type ClaimFilteredListRequest = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number; filter?: ReadFilterInput | null };
   type ClaimFilteredReadRequest = { claim_ref: string; filter?: ReadFilterInput | null };
+  type ClaimHistoryRequest = { claim_ref: string; filter?: ReadFilterInput | null };
   type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete";
   type SafeDeleteRequest = { entity_ref: string; reason: SafeDeleteReason };
   type CriticalWriteConfirmPendingRequest = { pending_operation: string };
@@ -3935,11 +3933,11 @@ declare namespace Sdk {
   type CriticalWriteConfirmReceiptRequest = { confirm_id: string };
   type ReceiptsRequest = { limit?: number | null };
   type PendingWrite = { claim_ref: string; decision_ref: string; created_at: number; reason_codes: string[]; dreamer_run_id?: string | null };
-  type HydrateRequest = { refs: string[] };
-  type EntityRequest = { entity_ref: string };
-  type ResolveRecordRefRequest = { reference: string };
+  type HydrateRequest = { refs: string[]; filter?: ReadFilterInput | null };
+  type EntityRequest = { entity_ref: string; filter?: ReadFilterInput | null };
+  type ResolveRecordRefRequest = { reference: string; filter?: ReadFilterInput | null };
   type RecordRefPreview = { record: RecordRef; revision?: string | null; snippet?: string | null };
-  type RecordLinksRequest = { text?: string | null; texts?: string[] | null; turn_ref?: string | null; after?: string | null; limit?: number | null };
+  type RecordLinksRequest = { text?: string | null; texts?: string[] | null; turn_ref?: string | null; after?: string | null; limit?: number | null; filter?: ReadFilterInput | null };
   type ProseSpan = { kind: "plain"; start: number; end: number; start_utf16: number; end_utf16: number; text: string } | { kind: "link"; start: number; end: number; start_utf16: number; end_utf16: number; label: string; record: RecordRef; narrowing: ScopedReadReceipt };
   type LinkedText = { message_id?: string | null; spans: ProseSpan[] };
   type RecordLinks = { texts: LinkedText[]; narrowing?: ScopedReadReceipt | null; next_after?: string | null };
@@ -3949,19 +3947,19 @@ declare namespace Sdk {
   type HybridPprQuery = { seeds: string[]; depth: number };
   type HybridTemporalQuery = { start: number; end: number };
   type HybridRankReplay = { now: number; blend_weights: RetrievalBlendWeights };
-  type HybridSearchRequest = { query?: string | null; query_vector?: number[] | null; phonetic_codes?: string[]; ppr?: HybridPprQuery | null; temporal?: HybridTemporalQuery | null; replay?: HybridRankReplay | null; limit: number };
+  type HybridSearchRequest = { query?: string | null; query_vector?: number[] | null; phonetic_codes?: string[]; ppr?: HybridPprQuery | null; temporal?: HybridTemporalQuery | null; replay?: HybridRankReplay | null; limit: number; filter?: ReadFilterInput | null };
   type HybridSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; access_factor?: number | null; components: RetrievalScoreComponent[] };
   type TemporalAnchorMode = "occurred" | "learned" | "both" | "auto";
   type TemporalSearchRange = { start: number; end: number };
-  type TemporalSearchRequest = { start: number; end: number; sigma_secs: number; anchor_mode?: TemporalAnchorMode; learned_start?: number | null; learned_end?: number | null; adaptive?: boolean; occurred_range?: TemporalSearchRange | null; learned_range?: TemporalSearchRange | null; limit: number };
+  type TemporalSearchRequest = { start: number; end: number; sigma_secs: number; anchor_mode?: TemporalAnchorMode; learned_start?: number | null; learned_end?: number | null; adaptive?: boolean; occurred_range?: TemporalSearchRange | null; learned_range?: TemporalSearchRange | null; limit: number; filter?: ReadFilterInput | null };
   type TemporalSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; occurred_start: number; occurred_end: number; learned_at: number };
   type TemporalSearchReport = { sigma_secs: number; rounds: number };
   type TemporalSearchResult = { hits: TemporalSearchHit[]; widening?: TemporalSearchReport | null };
-  type QueryBm25Request = { query: string; limit: number };
+  type QueryBm25Request = { query: string; limit: number; filter?: ReadFilterInput | null };
   type LexicalHit = { short_id: string; kind: string; score: number; snippet?: string | null; record?: RecordRef | null };
   type Bm25Search = { value: LexicalHit[]; narrowing: ScopedReadReceipt; residence?: RecallResidence | null };
   type NeighborOpts = { edge_kind?: string | null; min_weight?: number | null; limit: number };
-  type NeighborsRequest = { entity_ref: string; opts: NeighborOpts };
+  type NeighborsRequest = { entity_ref: string; opts: NeighborOpts; filter?: ReadFilterInput | null };
   type NeighborHit = { short_id: string; kind: string; edge_kind: string; weight: number; direction: string; record?: RecordRef | null };
   type EdgeProvenanceRequest = { source_ref: string; edge_kind: string; target_ref: string; filter?: ReadFilterInput | null };
   type EdgeProvenanceActorClass = "human" | "agent" | "system";
@@ -4730,7 +4728,7 @@ declare namespace Sdk {
   type WorldSealedInput = "off" | "my_machines" | "cloud_and_my_machines";
   type WorldPrivacySetInput = { world: string; read: WorldReadInput; sealed: WorldSealedInput; models?: string[] | null; seen?: string | null };
   type WorldPrivacySetOutput = { kind: "applied"; receipt: string } | { kind: "proposed"; proposal: string; wait: TaskAskHandle; grant_omitted?: string | null } | { kind: "asked"; ask: string; ask_seq?: number | null; wait: TaskAskHandle; grant_omitted?: string | null };
-  type MemorySearchInput = { query: string; limit?: number | null };
+  type MemorySearchInput = { query: string; limit?: number | null; filter?: ReadFilterInput | null };
   type MemorySearchHit = { id: EntityId; score: number };
   type SessionHookPhase = "pre" | "post";
   type SessionHookState = { kind: "applied"; outcome: string } | { kind: "refused"; outcome: string; reason?: string | null; fail_safe?: string | null } | { kind: "unavailable"; reason: string; consequence: string } | { kind: "unread"; reason: string };
@@ -5794,7 +5792,7 @@ declare const vault: Sdk.VaultHost & {
     /** Demotes one active claim by one rung through the caller credential: decay its claim_of weight, weaken it to a successor at lower confidence, or mark it stale in place so retrieval stops surfacing it. */
     demote(input: Sdk.ClaimDemoteRequest): Promise<Sdk.ClaimDemoteView | StoredResult>;
     /** The supersession timeline of one claim, oldest first, with the read's narrowing receipt. */
-    history(input: Sdk.ClaimRefRequest): Promise<Sdk.ScopedReadResult<Sdk.ClaimView[]> | StoredResult>;
+    history(input: Sdk.ClaimHistoryRequest): Promise<Sdk.ScopedReadResult<Sdk.ClaimView[]> | StoredResult>;
     /** Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt. */
     list(input: Sdk.ClaimListFilter): Promise<Sdk.ScopedReadResult<Sdk.ClaimView[]> | StoredResult>;
     /** Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt. */
@@ -6925,7 +6923,7 @@ declare const vault: Sdk.VaultHost & {
     react(input: Sdk.MessageReactionRequest): Promise<Sdk.MessageReactionReceipt | StoredResult>;
   };
   model_pack: {
-    /** Reverts a model pack change, its notice's one tap: pins the pack before it, installed or kept by a same-name update, while the change is the vault's last and that pack is served at its bytes; else answers why and changes nothing. */
+    /** Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing. */
     revert(input: Sdk.ModelPackRevertRequest): Promise<Sdk.ModelPackRevert | StoredResult>;
   };
   models: {
@@ -7097,12 +7095,6 @@ declare const vault: Sdk.VaultHost & {
     configure(input: Sdk.OrgAdminConfigureRequest): Promise<Sdk.OrgAdminConfigured | StoredResult>;
     /** The caller reads only the organization's fixed named Admin powers that their own credential carries. */
     powers(input: Sdk.OrgAdminPowersRequest): Promise<Sdk.OrgAdminPowers | StoredResult>;
-  };
-  outbound: {
-    uncertain_send: {
-      /** The owner answers the ask on a scheduled send that may have gone out and that the provider cannot confirm: send it once more, or leave it unsent. */
-      answer(input: Sdk.UncertainSendAnswer): Promise<Sdk.UncertainSendAnswered | StoredResult>;
-    };
   };
   outbound_calls: {
     request: {

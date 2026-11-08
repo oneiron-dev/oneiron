@@ -6025,7 +6025,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.claims.history",
-                crate::code_run::vault_read::request_schema::<ClaimRefRequest>(),
+                crate::code_run::vault_read::request_schema::<ClaimHistoryRequest>(),
             ),
             (
                 "vault.delete",
@@ -28117,7 +28117,7 @@ fn validate_input_vault_claims_read_filtered(value: &serde_json::Value) -> Memor
 }
 #[inline(never)]
 fn validate_input_vault_claims_history(value: &serde_json::Value) -> MemoryResult<()> {
-    let _input: ClaimRefRequest = decode(value.clone())?;
+    let _input: ClaimHistoryRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -49947,9 +49947,11 @@ pub fn vault_claims_read_filtered(
 }
 pub fn vault_claims_history(
     memory: &Memory<'_>,
-    input: ClaimRefRequest,
+    input: ClaimHistoryRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>> {
-    memory.claim_history(&input.claim_ref)
+    memory
+        .with_read_filter(input.filter.as_ref())
+        .claim_history(&input.claim_ref)
 }
 pub fn vault_delete(
     memory: &Memory<'_>,
@@ -50012,13 +50014,17 @@ pub fn vault_hydrate(
     memory: &Memory<'_>,
     input: HydrateRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::EntityView>>> {
-    memory.hydrate(&input.refs)
+    memory
+        .with_read_filter(input.filter.as_ref())
+        .hydrate(&input.refs)
 }
 pub fn vault_get(
     memory: &Memory<'_>,
     input: EntityRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::memory::EntityView>>> {
-    memory.get_entity(&input.entity_ref)
+    memory
+        .with_read_filter(input.filter.as_ref())
+        .get_entity(&input.entity_ref)
 }
 pub fn vault_refs_resolve(
     memory: &Memory<'_>,
@@ -50070,7 +50076,9 @@ pub fn vault_neighbors(
     input: NeighborsRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::NeighborHit>>> {
     crate::memory::caps::check_limit_nonzero(input.opts.limit)?;
-    memory.neighbors(&input.entity_ref, &input.opts)
+    memory
+        .with_read_filter(input.filter.as_ref())
+        .neighbors(&input.entity_ref, &input.opts)
 }
 pub fn vault_edges_provenance(
     memory: &Memory<'_>,
