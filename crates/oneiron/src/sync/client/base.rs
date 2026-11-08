@@ -91,6 +91,15 @@ pub struct SyncClient {
     /// sequence and bound to the raw row's BLAKE3. Only Durable retires a row;
     /// Held answers the exchange while its row remains queued.
     pub(crate) residence_acks: HashMap<u64, ResidenceReceipt>,
+    /// The windows whose promotion the home granted on this connection
+    /// (`PROMOTION_GRANTED`). The durable `rp:w:` marker is this device's
+    /// promotion, not the home's grant on this socket (FIX 20202). Cleared at
+    /// every connect.
+    pub(crate) promotions_granted: HashSet<WindowKey>,
+    /// The windows whose home replacement installed here on this connection
+    /// since a per-window re-bootstrap last asked for one (FIX 20202). Cleared
+    /// at every connect.
+    pub(crate) replacements_installed: HashSet<WindowKey>,
     /// This connection's window pad envelopes: sends held for their
     /// receipts, envelopes still coming in (FIX 7107).
     pub(crate) window_pads: Mutex<super::window_pads::WindowPadLedger>,
@@ -238,6 +247,8 @@ impl SyncClient {
             deferred_sealed_updates: Vec::new(),
             root_bootstrapped: false,
             residence_acks: HashMap::new(),
+            promotions_granted: HashSet::new(),
+            replacements_installed: HashSet::new(),
             window_pads: Mutex::default(),
             document_parts: Mutex::default(),
             ephemeral_store,
@@ -537,6 +548,27 @@ impl SyncClient {
             .sync_state_get(&format!("rp:w:{key}"))
             .map_err(|e| TransportError::Storage(e.to_string()))?
             .is_some())
+    }
+
+    /// Whether the home granted window `key`'s promotion on this connection:
+    /// its `PROMOTION_GRANTED` came in since the connect began (FIX 20202).
+    pub(crate) fn promotion_granted_on_connection(&self, key: &WindowKey) -> bool {
+        self.promotions_granted.contains(key)
+    }
+
+    /// Whether the home's replacement of window `key` installed here since
+    /// [`Self::expect_window_replacement`] last named it (FIX 20202).
+    pub(crate) fn window_replacement_installed(&self, key: &WindowKey) -> bool {
+        self.replacements_installed.contains(key)
+    }
+
+    /// Starts a per-window re-bootstrap of `key` (FIX 20202): forgets that the
+    /// window was replaced on this connection and the home's last witnessed
+    /// vector of it, so only the replacement asked for next, and the exchange
+    /// after it, can prove it.
+    pub(crate) fn expect_window_replacement(&mut self, key: &WindowKey) {
+        self.replacements_installed.remove(key);
+        self.server_vvs.remove(key.as_str());
     }
 
     /// Returns the list of window keys from the root doc (set by server).
