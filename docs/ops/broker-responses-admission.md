@@ -35,6 +35,13 @@ calls until restart. Transient connection failures do not latch the provider.
 Buffered chat produces one terminal stream event; it does not add chat SSE.
 There are no new configured rungs, limits, price rules or compatibility readers.
 
+## Body sizes
+
+The existing 512 MiB bound applies to both a Responses create and its admitted
+whole turn. It does not cap ordinary chunked broker requests or streamed HTTP
+replies. Ordinary traffic keeps the existing 16 MiB single-segment/buffered-reply
+geometry and 1 MiB chunks; allocation failures and deadlines still end a call.
+
 ## Deployment
 
 Ship the matching server and broker together for the Responses protocol version

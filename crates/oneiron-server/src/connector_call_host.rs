@@ -124,6 +124,12 @@ mod wire {
     pub(super) const REQUEST_STATE: &str = "requestState";
     /// The key the one question of a stream request takes.
     pub(super) const STREAM_KEY: &str = "0";
+    /// A message's metadata member.
+    pub(super) const META: &str = "_meta";
+    /// The metadata key that ties a message to its task (MCP 2025-11-25
+    /// tasks), an object whose `taskId` names the task.
+    pub(super) const RELATED_TASK: &str = "io.modelcontextprotocol/related-task";
+    pub(super) const TASK_ID: &str = "taskId";
 }
 
 /// The generic connector call's send on this host.
@@ -444,6 +450,17 @@ fn elicitation_capability(revision: &str) -> Option<Value> {
     }
 }
 
+/// The client capabilities an `initialize` declares: elicitation alone,
+/// as `elicitation` (from [`elicitation_capability`]) names it, or none. A
+/// send and the renewal of its task's session both declare through here
+/// (FIX 16029), so a renewed session declares what the send's did.
+fn client_capabilities(elicitation: Option<&Value>) -> Value {
+    match elicitation {
+        Some(capability) => json!({ "elicitation": capability }),
+        None => json!({}),
+    }
+}
+
 /// How a revision carries a connector's questions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Intake {
@@ -620,10 +637,11 @@ impl<'a> Exchange<'a> {
     /// The client capabilities `initialize` declares: elicitation alone,
     /// when this send declares it.
     fn capabilities(&self) -> Value {
-        match &self.elicitation {
-            Some(declared) => json!({ "elicitation": declared.capability }),
-            None => json!({}),
-        }
+        client_capabilities(
+            self.elicitation
+                .as_ref()
+                .map(|declared| &declared.capability),
+        )
     }
 
     /// Rechecks the issuer before a session sends with its kept credential.
@@ -896,6 +914,11 @@ impl<'a> Exchange<'a> {
                         .map(str::to_owned),
                     protocol: open.protocol.to_str().unwrap_or_default().to_owned(),
                     credential: RemoteTaskCredential::Route,
+                    // FIX 16029: every capability a send declares names
+                    // form mode, so a send that declared one declared form
+                    // elicitation; the task's renewed sessions declare it
+                    // again, and its form questions are parked for the owner.
+                    form_elicitation: self.elicitation.is_some(),
                 });
             }
             return Sent::deferred(handle, body);

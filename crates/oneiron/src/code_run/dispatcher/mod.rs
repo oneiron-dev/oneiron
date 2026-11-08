@@ -56,7 +56,7 @@ use crate::off_record::OffRecordSession;
 use crate::vault::VaultId;
 use crate::{ClaimSource, Vault, WriteActor};
 
-use self::admission::gate_rejection;
+use self::admission::{admit_recorded_answer, gate_rejection};
 pub(crate) use self::agent_verb::recorded_call as recorded_verb_call;
 pub(crate) use self::agent_verb::write_receipt_may_have_run;
 pub(crate) use self::coordination::agent_attempt_run_ref;
@@ -134,14 +134,10 @@ pub struct HostSelfDispatcher<'a> {
     pub(super) pre_hooked_fold: Option<crate::code_run::actions::PreHookedFold>,
     /// The calls a verb hook's ask parked, as the run's history shows them,
     /// with the invocation each ask waits under and the ask's handle, which
-    /// the same call names as the pause it resumes (FIX 5526).
-    pub(super) parked_hooks: RefCell<
-        Vec<(
-            verb_hooks::ParkedCall,
-            crate::runtime_hooks::InvocationId,
-            Option<EntityId>,
-        )>,
-    >,
+    /// the same call names as the pause it resumes (FIX 5526). Each keeps
+    /// the row that parked it, so a call whose row an erase took the words
+    /// of is still known (FIX 6534).
+    pub(super) parked_hooks: RefCell<Vec<verb_hooks::ParkedHook>>,
     /// The seat the host lent the run to spawn reader children under, if
     /// any (ARCH-0079 #reader-forks).
     pub(super) reader_spawn: Option<crate::code_run::SpawnHostSeat>,
