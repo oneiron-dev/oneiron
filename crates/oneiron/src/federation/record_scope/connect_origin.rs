@@ -109,12 +109,15 @@ fn file_facts(
     }
 }
 
+/// The carried row of the ASSET or caption `id` and its birth incarnation,
+/// when the carrier `doc` holds the stored bytes, they read here, and its
+/// carried birth is the stored one.
 fn current_row(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     doc: &LoroDoc,
     id: EntityId,
-) -> Result<Option<(Vec<u8>, EntityId, [u8; 32])>> {
+) -> Result<Option<(Vec<u8>, [u8; 32])>> {
     let key = id.to_hex();
     let Some(raw) = map_get_bytes(&doc.get_map("entities"), &key) else {
         return Ok(None);
@@ -127,15 +130,6 @@ fn current_row(
         ENTITY_TYPE_ASSET | ENTITY_TYPE_ASSET_TEXT
     ) || vault.store.port_entity_raw(txn, &id)?.as_deref() != Some(raw.as_slice())
         || !crate::ports::raw_readable_in_txn(&vault.store, txn, &id, &raw)?
-    {
-        return Ok(None);
-    }
-    let Some(facet) = birth_facet(&vault.store, txn, id)? else {
-        return Ok(None);
-    };
-    let facets = BTreeSet::from([facet]);
-    if related_in_doc(doc, id, EdgeKind::FacetOf) != facets
-        || related_in_store(vault, txn, id, EdgeKind::FacetOf)? != facets
     {
         return Ok(None);
     }
@@ -152,7 +146,21 @@ fn current_row(
     if incarnation(&carried)? != born {
         return Ok(None);
     }
-    Ok(Some((raw, facet, born)))
+    Ok(Some((raw, born)))
+}
+
+/// The facet the source's row `id` was born under: its one stored `FacetOf`
+/// target. A guest export never carries that edge, because the FACET row
+/// sits in base reality, which the window does not read. So the position
+/// names the facet, and the window signature covers it (FIX 22223).
+fn source_facet(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<Option<EntityId>> {
+    let Some(facet) = birth_facet(&vault.store, txn, id)? else {
+        return Ok(None);
+    };
+    Ok(
+        (related_in_store(vault, txn, id, EdgeKind::FacetOf)? == BTreeSet::from([facet]))
+            .then_some(facet),
+    )
 }
 
 fn source_position(
@@ -163,7 +171,10 @@ fn source_position(
     grant: &FederationGrant,
     ceilings: &[&ScopeAxis<ScopeId>],
 ) -> Result<Option<OriginPosition>> {
-    let Some((raw, facet, born)) = current_row(vault, txn, doc, id)? else {
+    let Some((raw, born)) = current_row(vault, txn, doc, id)? else {
+        return Ok(None);
+    };
+    let Some(facet) = source_facet(vault, txn, id)? else {
         return Ok(None);
     };
     let kind = raw[0];
@@ -404,11 +415,16 @@ pub(crate) fn import_connect_positions(
                 else {
                     continue;
                 };
-                let Some((raw, facet, born)) = current_row(vault, txn, &doc, *id)? else {
+                let Some((raw, born)) = current_row(vault, txn, &doc, *id)? else {
                     continue;
                 };
+                // The carrier holds no `FacetOf` edge (see `source_facet`);
+                // a stored one must name the signed facet.
+                let facet = position.facet;
                 if raw[0] != kind
-                    || facet != position.facet
+                    || related_in_store(vault, txn, *id, EdgeKind::FacetOf)?
+                        .iter()
+                        .any(|stored| *stored != facet)
                     || born != position.incarnation
                     || *blake3::hash(&raw).as_bytes() != position.carrier
                     || file_facts(vault, txn, &doc, *id, &raw)? != Some(position.file.clone())

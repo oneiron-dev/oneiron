@@ -13,13 +13,18 @@ one read snapshot. The witness binds:
 
 - the full metadata header, and the body or file manifest;
 - the masking-safe birth process, time and input hash;
-- the stored scope and the one birth facet;
+- the stored scope and the one birth facet. A guest export never carries
+  the row's `FacetOf` edge, because the FACET row sits in base reality, which
+  the window does not read. So the position names the facet, and the window
+  signature covers it;
 - for a caption, its exact `DerivedFrom` set. Every source must be a live
   ASSET under the same facet.
 
 An ASSET takes its worlds from its live `InWorld` edges, and a caption takes
 the worlds all its sources share (FIX 22223). The witness holds each row at
-the worlds that both the grant and the window's world read. The position
+the worlds that both the grant and the window's world read. The text fence
+holds each source of a caption there too, so a caption whose source ASSET is
+in two worlds still leaves in the window's one. The position
 carries the one world the row has there. A row that is only in base reality
 carries no position, because no Connect grant names base reality. A witness
 never infers a position from peer-provided edges, and never turns an
@@ -30,8 +35,9 @@ unstamped row into a local birth.
 Only the verified Connect branch that imports at once calls the receiver
 importer. In its writer, the importer checks these again: the current pact,
 the pinned source key, the epoch and the unchanged live local grant. It
-compares the signed carriers, birth incarnations, facets and source set with
-the current rows. A file ASSET also needs its exact bound reference, its
+compares the signed carriers, birth incarnations and source set with the
+current rows. A `FacetOf` edge the receiver stores for the row must name the
+signed facet. A file ASSET also needs its exact bound reference, its
 complete current descriptor and a successful streaming check of the resident
 file.
 
