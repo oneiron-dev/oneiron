@@ -1,6 +1,9 @@
 //! Atomic send-receipt retry and terminal settlement.
 
-use super::connector_task::{ConnectorSendTaskOutcome, project_connector_send_task_outcome_in_txn};
+use super::connector_task::{
+    ConnectorSendTaskOutcome, project_connector_send_task_outcome_in_txn,
+    renew_send_executor_lease_in_txn,
+};
 use super::executor::CONNECTOR_TASK_EXECUTOR_LEASE_OWNER;
 use crate::Vault;
 use crate::attempt_queue::{AttemptQueue, CompleteAttempt, FailAttempt, RetryAttempt};
@@ -35,6 +38,8 @@ pub(super) fn persist_failed_send_receipt_and_retry(
 }
 
 /// Same atomic retry contract for a possibly-delivered, idempotent send.
+/// The writer that re-arms also renews this machine's send executor lease
+/// through `retry_at` (FIX 4747 slice 4), so a park keeps its lease.
 #[expect(clippy::too_many_arguments)]
 pub(super) fn persist_send_receipt_and_retry(
     vault: &Vault,
@@ -84,6 +89,7 @@ pub(super) fn persist_send_receipt_and_retry(
                 now,
             },
         )?;
+        renew_send_executor_lease_in_txn(vault, wtxn, task_ref, retry_at, now)?;
         Ok(true)
     })
 }
@@ -431,6 +437,56 @@ pub(super) fn reconcile_connector_task(
             .map_err(|_| Error::InvariantViolation("outbound terminal resolution sync failed"))?;
     }
     Ok(terminal)
+}
+
+/// The owner answered a TASK's uncertain send with no resend (FIX 4747):
+/// this machine's own row of the logical send stops with his word
+/// (Abandoned, `OwnerStopped`, keeping that it may have gone out) and the
+/// attempt completes, in one writer. Nothing is sent, and the TASK keeps the
+/// outcome his answer gave it.
+pub(super) fn stop_owner_declined_send(
+    vault: &Vault,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task: &super::connector_task::ConnectorSendTask,
+    now: u64,
+) -> Result<(), Error> {
+    use crate::outbound_intent_ledger::{
+        ConnectorIntentBinding, IntentEscalationReason, reconcile_connector_intent_in_txn,
+    };
+    let logical_ref = super::executor::connector_logical_send_intent_ref(task);
+    let attempt_id = super::dispatch_attempt_id::outbound_dispatch_attempt_id(&logical_ref)
+        .map_err(|_| Error::InvariantViolation("invalid connector logical send ref"))?;
+    let binding = ConnectorIntentBinding {
+        intent: &task.intent,
+        actor_ref: task.actor_ref,
+        actor_class: task.actor_class.gate_actor_class(),
+        counterparty_ref: task.counterparty_ref.as_deref(),
+        originating_session_ref: task.originating_session_ref.as_deref(),
+        calendar_invite: task.calendar_invite.as_ref(),
+    };
+    vault.with_write_txn_grouped(|wtxn| {
+        reconcile_connector_intent_in_txn(
+            vault,
+            wtxn,
+            attempt_id,
+            &binding,
+            Some(IntentEscalationReason::OwnerStopped),
+            now,
+        )
+        .map_err(|_| Error::InvariantViolation("connector TASK frozen ledger binding mismatch"))?;
+        AttemptQueue::new(vault).complete_in_txn(
+            wtxn,
+            CompleteAttempt {
+                id: attempt.id,
+                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                now,
+            },
+        )?;
+        Ok(())
+    })?;
+    crate::outbound_intent_ledger::force_sync(vault)
+        .map_err(|_| Error::InvariantViolation("outbound terminal resolution sync failed"))
 }
 
 /// Settles, in `wtxn`, a TASK whose interrupt's ambient alternative stopped

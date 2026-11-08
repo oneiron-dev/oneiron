@@ -101,7 +101,7 @@ pub(super) fn record_dispatched_check_in(
     check: DispatchedCheck<'_>,
 ) -> MemoryResult<()> {
     let mut launch = match load_launch(vault, txn, check.launch_ref)? {
-        Some(launch) if launch.payload != check.payload => return Err(reused_cut()),
+        Some(launch) if !launch.payload.same_intent(&check.payload) => return Err(reused_cut()),
         Some(launch) => launch,
         None => {
             let governed = policy_in(vault, txn, &ConsultFanOutScope::default())?;

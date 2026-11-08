@@ -23,9 +23,11 @@ pub(crate) mod checkpoint;
 mod edit;
 mod lift;
 mod receipt_actor;
+mod replay;
 pub(crate) use self::lift::{CodeDocumentRows, code_document_texts_in_txn};
 use self::receipt_actor::ReceiptActor;
 pub(crate) use self::receipt_actor::{erase_head_actor_in_txn, erase_ingress_actor_in_txn};
+use self::replay::ReceiptCustody;
 
 /// Immutable tested snapshot of a code document at one exact operation
 /// frontier: key is the document id then the op-fold hash, raw-concatenated.
@@ -88,6 +90,13 @@ pub(super) struct ReceiptRow {
     pub(super) metadata_edit: Option<CodeFileMetadataEdit>,
     pub(super) before: CodeDocumentFrontier,
     pub(super) after: CodeDocumentFrontier,
+    /// The custody record each handle of a masked edit's replacement names,
+    /// with its rotation generation at landing (FIX 21363): what a retry
+    /// that offers the value again proves the same secret by. Ids and
+    /// counters, never a value's fingerprint (KS-3). An edit that landed as
+    /// offered names none and encodes as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    custody: Vec<ReceiptCustody>,
 }
 
 /// The Loro commit message of one operation. It binds the ingress identity,
@@ -306,7 +315,10 @@ impl Vault {
     }
 
     /// A durable ingress identity prevents replay after a process death from
-    /// appending the same edit twice. Reusing an identity with other bytes refuses.
+    /// appending the same edit twice. Reusing an identity with other bytes refuses;
+    /// a retry of an edit that landed masked offers the value again, and
+    /// replays while each record its handles name stands as it landed
+    /// (FIX 21363).
     pub fn apply_code_file_edit_once(
         &self,
         operation: EntityId,
@@ -334,12 +346,13 @@ impl Vault {
                 || receipt.session_id != session.session_id
                 || receipt.actor != Some(actor)
                 || receipt.provenance != session.provenance
-                // A masked edit's receipt holds its handles, never the
-                // value: a replay offering the value again is not proved the
-                // same edit (a rotated custody record names a new value
-                // under the same handle), so it refuses (FIX 2372).
-                || receipt.edit != *edit
                 || receipt.metadata_edit.as_ref() != metadata
+                // A masked edit's receipt holds its handles, never the
+                // value: a retry offering the value again is proved the same
+                // edit by its custody binding (FIX 21363). Its re-admission
+                // is a plan that writes nothing, and this writer drops
+                // uncommitted either way.
+                || !self.replays_code_edit_in_txn(&mut txn, &row, edit)?
             {
                 return Err(invalid());
             }
@@ -347,6 +360,18 @@ impl Vault {
             self.refresh_code_document(session)?;
             return Ok(receipt);
         }
+        // A native edit passes the registered repository's retained
+        // whitelist, a rename's both names among it (FIX 4299).
+        let paths = [Some(edit.path.as_str()), edit.new_path.as_deref()]
+            .into_iter()
+            .chain(
+                metadata
+                    .map(|change| [Some(change.path.as_str()), change.new_path.as_deref()])
+                    .into_iter()
+                    .flatten(),
+            )
+            .flatten();
+        self.require_registered_edit_in_txn(&txn, None, &session.repo, paths)?;
         let old_doc = session.doc.clone();
         let result = (|| {
             let receipt = self
@@ -395,9 +420,11 @@ impl Vault {
                     || receipt.session_id != item.session.session_id
                     || receipt.actor != Some(item.actor)
                     || receipt.provenance != item.session.provenance
-                    || receipt.edit != item.edit
                     || receipt.metadata_edit != item.metadata_edit
                     || receipt.before.text_hash != hash(item.expected_text.as_bytes())
+                    // The caller's writer commits: the proof of a masked
+                    // edit writes nothing in it (FIX 21363).
+                    || !self.replays_code_edit_in_txn(txn, &row, &item.edit)?
                 {
                     return Err(invalid());
                 }
