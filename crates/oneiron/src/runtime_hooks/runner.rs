@@ -2,7 +2,9 @@
 //! its bindings' cursors, filters in Rust, runs each matching body once per
 //! run key, and commits the run's memo, its run index row, local outcomes,
 //! receipt, intents and cursor in one write. Delivery is at least once, in
-//! commit order, per hook and per source.
+//! commit order, per hook and per source. Due watcher TASKs tick on the
+//! runner's own wake: a pass releases them into the tick feed, and the
+//! [`HOOK_RUNNER_TICK`] re-read bounds how late a tick runs (FIX 4749).
 
 mod body;
 mod evaluation;
@@ -407,6 +409,17 @@ impl Pass<'_, '_> {
         for (id, _) in bindings {
             cursors.push(self.cursor_for(*id, source)?);
         }
+        // Due watcher TASKs tick here, once a binding here can take a tick,
+        // and after every cursor above is placed: a binding met for the
+        // first time starts before the ticks this pass releases (FIX 4749).
+        if source == FactSource::Schedule
+            && bindings.iter().any(|(_, binding)| {
+                filter::verbs_admit_kind(&binding.selector.verbs, FactKind::ScheduleTick)
+            })
+        {
+            let now = self.vault.store.clock.now_recorded_at();
+            self.report.more |= source::release_due_ticks(self.vault, now)?;
+        }
         let lowest = cursors.iter().copied().min().flatten();
         let batch = source::read_after(self.vault, source, lowest, max_entries)?;
         self.report.entries_read += batch.entries.len();
@@ -454,7 +467,8 @@ impl Pass<'_, '_> {
 
     /// A binding's cursor in `source`. A new binding starts where its binding
     /// claim was last written, a re-enabled one where it was re-enabled. The
-    /// settlement feed holds no such mark, so there both start at its head.
+    /// settlement, tick and inbound feeds hold no such mark, so there both
+    /// start at the feed's head.
     fn cursor_for(&self, binding: EntityId, source: FactSource) -> Result<Option<FactPosition>> {
         if let Some(row) = store::cursor(self.vault, binding, source)?
             && !row.paused
@@ -466,7 +480,9 @@ impl Pass<'_, '_> {
                 Some(position) => Some(position),
                 None => source::head(self.vault, source)?,
             },
-            FactSource::Settlement => source::head(self.vault, source)?,
+            FactSource::Settlement | FactSource::Schedule | FactSource::SurfaceInbound => {
+                source::head(self.vault, source)?
+            }
         };
         let row = CursorRow::new(start, self.vault.store.clock.now_recorded_at());
         self.vault.with_write_txn_grouped(|txn| {
@@ -512,8 +528,7 @@ impl Pass<'_, '_> {
         if !filter::fact_matches(
             self.vault,
             &binding.selector,
-            entry.kind,
-            entry.entity,
+            entry,
             seen.claim.as_ref(),
             actor,
         )? {
@@ -719,7 +734,9 @@ impl Pass<'_, '_> {
 }
 
 /// The input a body sees as `input`. `now` is Unix milliseconds from the
-/// vault clock; `recorded_at` is the fact's own, in seconds.
+/// vault clock; `recorded_at` is the fact's own, in seconds. A tick adds
+/// `tick` (its TASK and due time, seconds), an inbound surface event adds
+/// `surface` (its ids and tokens).
 pub(super) fn input_json(
     binding_id: EntityId,
     binding: &PackHookBinding,
@@ -756,6 +773,23 @@ pub(super) fn input_json(
         input["fact"]["settlement"] = json!({
             "kind": settlement.kind,
             "outcome": settlement.outcome,
+        });
+    }
+    if let Some(tick) = entry.tick {
+        input["tick"] = json!({
+            "task": entry.entity.to_hex(),
+            "due_at": tick.due_at,
+        });
+    }
+    if let Some(surface) = &entry.surface {
+        input["surface"] = json!({
+            "connector": surface.connector,
+            "channel": surface.channel,
+            "action": surface.action,
+            "receiving_identity": surface.receiving_identity.to_hex(),
+            "actor": surface.actor.to_hex(),
+            "attempt": hex_lower(&surface.attempt),
+            "received_at": surface.received_at,
         });
     }
     serde_json::to_string(&input).map_err(|_| Error::InvariantViolation("hook input encode"))
