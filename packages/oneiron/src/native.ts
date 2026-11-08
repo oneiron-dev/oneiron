@@ -753,7 +753,9 @@ vaultCodeSecretsGet(input: unknown): unknown
 vaultCodeSecretsPropose(input: unknown): unknown
 executeCode(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultCodeSessionModelHealCount(input: unknown): unknown
 vaultCodeCorrections(input: unknown): unknown
+vaultCodeStepEvidence(input: unknown): unknown
 vaultCodeTypeDiagnostics(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
 vaultCodeWaitsReceipt(input: unknown): unknown
@@ -836,6 +838,8 @@ vaultAgentsDreamingGet(input: unknown): unknown
 vaultAgentsDreamingSet(input: unknown): unknown
 vaultAgentsGrantsMint(input: unknown): unknown
 vaultAgentsGrantsRevoke(input: unknown): unknown
+vaultAgentsVerbClassesGet(input: unknown): unknown
+vaultAgentsVerbClassesConfigure(input: unknown): unknown
 vaultRepoGitPushMint(input: unknown): unknown
 vaultRepoGitPushRevoke(input: unknown): unknown
 vaultConnectorsReadGrantsGrant(input: unknown): unknown

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1325 facade rows, 4768 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1277.
+// UniFFI census: 1329 facade rows, 4788 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1281.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -2021,10 +2021,6 @@ pub struct HealthReviewReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub exact_measured: Option<f64>,
-    #[serde(rename = "diagnostics")]
-    pub diagnostics: Vec<String>,
-    #[serde(rename = "evidence")]
-    pub evidence: Vec<String>,
     #[serde(
         rename = "observed_brief",
         default,
@@ -7210,6 +7206,28 @@ pub struct SpendPayer {
     pub at_ms: u64,
 }
 
+/// `oneiron_contracts::wallet::WalletRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WalletRef {
+    #[serde(rename = "issuer")]
+    pub issuer: String,
+    #[serde(rename = "id")]
+    pub id: String,
+}
+
+/// `oneiron::agent_dispatch::spend_record::GrantSpendBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GrantSpendBinding {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "mint_act")]
+    pub mint_act: String,
+    #[serde(rename = "wallet_ref")]
+    pub wallet_ref: WalletRef,
+}
+
 /// `oneiron::agent_dispatch::spend_record::SpendScope`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -7262,6 +7280,8 @@ pub struct SpendScope {
     pub exploration_attempt: Option<AttemptId>,
     #[serde(rename = "payer", default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<SpendPayer>,
+    #[serde(rename = "funding", default, skip_serializing_if = "Option::is_none")]
+    pub funding: Option<GrantSpendBinding>,
 }
 
 /// `oneiron::agent_dispatch::spend_record::SpendSignal`.
@@ -7860,6 +7880,12 @@ pub struct OpenSpendLeaseRequest {
     pub unit: String,
     #[serde(rename = "shown_at_ms")]
     pub shown_at_ms: u64,
+    #[serde(
+        rename = "funding_grant_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub funding_grant_ref: Option<String>,
 }
 
 /// `oneiron::agent_dispatch::budget_doors::SpendScopeRequest`.
@@ -35065,6 +35091,18 @@ pub struct ConsentRegistryAgentGrant {
         skip_serializing_if = "Option::is_none"
     )]
     pub repo_bounds: Option<RepoAccessBounds>,
+    #[serde(
+        rename = "verb_classes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub verb_classes: Option<Vec<String>>,
+    #[serde(
+        rename = "wallet_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub wallet_ref: Option<WalletRef>,
     #[serde(rename = "confers")]
     pub confers: bool,
 }
@@ -41559,6 +41597,31 @@ pub struct CodeRunModelHealCountView {
     pub healed_turns: u64,
 }
 
+/// `oneiron::memory::code_run_doors::types::CodeRunSessionModelHealCountRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunSessionModelHealCountRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "model_id")]
+    pub model_id: String,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunSessionModelHealCountView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRunSessionModelHealCountView {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "model_id")]
+    pub model_id: String,
+    #[serde(rename = "canonical_healed_turns")]
+    pub canonical_healed_turns: u64,
+    #[serde(rename = "session_healed_turns")]
+    pub session_healed_turns: u64,
+    #[serde(rename = "healed_turns")]
+    pub healed_turns: u64,
+}
+
 /// `oneiron::memory::code_run_doors::types::CodeRunCorrectionsRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -41667,6 +41730,87 @@ pub struct CodeRunCorrectionsView {
     pub policy: CodeRunCorrectionPolicy,
     #[serde(rename = "records")]
     pub records: Vec<CodeRunCorrection>,
+    #[serde(
+        rename = "next_after_step",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_after_step: Option<u64>,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunStepEvidenceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunStepEvidenceRequest {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(
+        rename = "after_step",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub after_step: Option<u64>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunStepBody`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRunStepBody {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+    #[serde(rename = "withheld")]
+    pub withheld: bool,
+    #[serde(rename = "text")]
+    pub text: String,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunStepEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRunStepEvidence {
+    #[serde(rename = "step")]
+    pub step: u64,
+    #[serde(
+        rename = "state_hash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub state_hash: Option<String>,
+    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<CodeRunStepBody>,
+    #[serde(
+        rename = "executed_js",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub executed_js: Option<CodeRunStepBody>,
+    #[serde(
+        rename = "observation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub observation: Option<CodeRunStepBody>,
+    #[serde(rename = "console", default, skip_serializing_if = "Option::is_none")]
+    pub console: Option<CodeRunStepBody>,
+    #[serde(rename = "corrections")]
+    pub corrections: Vec<CodeRunCorrection>,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunStepEvidenceView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRunStepEvidenceView {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "completed_steps")]
+    pub completed_steps: u64,
+    #[serde(rename = "policy")]
+    pub policy: CodeRunCorrectionPolicy,
+    #[serde(rename = "steps")]
+    pub steps: Vec<CodeRunStepEvidence>,
     #[serde(
         rename = "next_after_step",
         default,
@@ -45071,6 +45215,12 @@ pub struct CodeSnapshotIngestRequest {
     pub project_id: String,
     #[serde(rename = "pointer")]
     pub pointer: CodeRepoPointer,
+    #[serde(
+        rename = "repository",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub repository: Option<String>,
 }
 
 /// `oneiron::memory::codebase_doors::types::CodeSnapshotView`.
@@ -45090,6 +45240,12 @@ pub struct CodeSnapshotView {
     pub scope_key: String,
     #[serde(rename = "files")]
     pub files: Vec<CodeSnapshotFile>,
+    #[serde(
+        rename = "repository",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub repository: Option<String>,
     #[serde(
         rename = "capture_receipt",
         default,
@@ -46207,6 +46363,18 @@ pub struct AgentGrantMintRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub repo_bounds: Option<RepoAccessBounds>,
+    #[serde(
+        rename = "verb_classes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub verb_classes: Option<Vec<String>>,
+    #[serde(
+        rename = "wallet_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub wallet_ref: Option<WalletRef>,
 }
 
 /// `oneiron::verbs::agent_grant::AgentGrantView`.
@@ -46233,6 +46401,18 @@ pub struct AgentGrantView {
         skip_serializing_if = "Option::is_none"
     )]
     pub repo_bounds: Option<RepoAccessBounds>,
+    #[serde(
+        rename = "verb_classes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub verb_classes: Option<Vec<String>>,
+    #[serde(
+        rename = "wallet_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub wallet_ref: Option<WalletRef>,
     #[serde(rename = "confers")]
     pub confers: bool,
     #[serde(rename = "revoke_command")]
@@ -46271,6 +46451,46 @@ pub struct AgentGrantRevoked {
     pub agent: Option<String>,
     #[serde(rename = "act_ref", default, skip_serializing_if = "Option::is_none")]
     pub act_ref: Option<String>,
+}
+
+/// `oneiron::gate::policy_manifest_doors::agent_verb_classes::AgentVerbClassRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentVerbClassRow {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "verbs")]
+    pub verbs: Vec<String>,
+}
+
+/// `oneiron::gate::policy_manifest_doors::agent_verb_classes::AgentVerbClassesView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgentVerbClassesView {
+    #[serde(rename = "manifest_ref")]
+    pub manifest_ref: String,
+    #[serde(rename = "body_hash")]
+    pub body_hash: String,
+    #[serde(rename = "classes")]
+    pub classes: Vec<AgentVerbClassRow>,
+}
+
+/// `oneiron::gate::policy_manifest_doors::agent_verb_classes::AgentVerbClassesConfigureRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentVerbClassesConfigureRequest {
+    #[serde(rename = "expected_body_hash")]
+    pub expected_body_hash: String,
+    #[serde(rename = "classes")]
+    pub classes: Vec<AgentVerbClassRow>,
+}
+
+/// `oneiron::gate::policy_manifest_doors::agent_verb_classes::AgentVerbClassesReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgentVerbClassesReceipt {
+    #[serde(rename = "configuration")]
+    pub configuration: AgentVerbClassesView,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
 }
 
 /// `oneiron_authority::federation::git_push::GitPushRepo`.
@@ -46415,20 +46635,48 @@ pub struct ConnectorWitnessReadGrantRevoked {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RepoAnchorBindInput {
-    #[serde(rename = "repo")]
-    pub repo: String,
+    #[serde(rename = "repo", default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    #[serde(
+        rename = "local_folder",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub local_folder: Option<String>,
     #[serde(rename = "project")]
     pub project: String,
+    #[serde(rename = "anchor", default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    #[serde(rename = "editable", default, skip_serializing_if = "Option::is_none")]
+    pub editable: Option<Vec<String>>,
+}
+
+/// `oneiron::verbs::git_push_grant::RepoRegistrationView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RepoRegistrationView {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "editable")]
+    pub editable: Vec<String>,
 }
 
 /// `oneiron::verbs::git_push_grant::RepoAnchorBindOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RepoAnchorBindOutput {
-    #[serde(rename = "repo")]
-    pub repo: String,
+    #[serde(rename = "repo", default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
     #[serde(rename = "anchor")]
     pub anchor: GitPushRepo,
+    #[serde(rename = "portable")]
+    pub portable: String,
+    #[serde(
+        rename = "registration",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub registration: Option<RepoRegistrationView>,
     #[serde(rename = "changed")]
     pub changed: bool,
 }
@@ -57106,6 +57354,12 @@ pub enum ConnectorCallReply {
         live_until_ms: u64,
         #[serde(rename = "reasons", default, skip_serializing_if = "Option::is_none")]
         reasons: Option<Vec<String>>,
+        #[serde(
+            rename = "budget_steering",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        budget_steering: Option<Vec<String>>,
     },
 }
 
@@ -64270,11 +64524,115 @@ pub struct DocxBlockView {
     pub cells: Vec<DocxCellView>,
 }
 
+/// `oneiron_docedit::docx_body::stories::DocxHeaderFooterBand`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DocxHeaderFooterBand {
+    #[serde(rename = "default")]
+    Default,
+    #[serde(rename = "first")]
+    First,
+    #[serde(rename = "even")]
+    Even,
+}
+
+/// `oneiron_docedit::docx_body::stories::DocxStoryScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum DocxStoryScope {
+    #[serde(rename = "header")]
+    Header {
+        #[serde(rename = "part_name")]
+        part_name: String,
+        #[serde(rename = "band")]
+        band: DocxHeaderFooterBand,
+    },
+    #[serde(rename = "footer")]
+    Footer {
+        #[serde(rename = "part_name")]
+        part_name: String,
+        #[serde(rename = "band")]
+        band: DocxHeaderFooterBand,
+    },
+    #[serde(rename = "footnote")]
+    Footnote {
+        #[serde(rename = "id")]
+        id: String,
+    },
+    #[serde(rename = "endnote")]
+    Endnote {
+        #[serde(rename = "id")]
+        id: String,
+    },
+    #[serde(rename = "comment")]
+    Comment {
+        #[serde(rename = "id")]
+        id: String,
+    },
+}
+
+/// `oneiron::office_body::verbs::DocxStoryParagraphView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DocxStoryParagraphView {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "locked")]
+    pub locked: bool,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "runs")]
+    pub runs: Vec<DocxRun>,
+}
+
+/// `oneiron::office_body::verbs::DocxStoryCellParagraphView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DocxStoryCellParagraphView {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "locked")]
+    pub locked: bool,
+    #[serde(rename = "text")]
+    pub text: String,
+}
+
+/// `oneiron::office_body::verbs::DocxStoryCellView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DocxStoryCellView {
+    #[serde(rename = "row")]
+    pub row: u64,
+    #[serde(rename = "col")]
+    pub col: u64,
+    #[serde(rename = "paragraphs")]
+    pub paragraphs: Vec<DocxStoryCellParagraphView>,
+}
+
+/// `oneiron::office_body::verbs::DocxStoryTableView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DocxStoryTableView {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "cells")]
+    pub cells: Vec<DocxStoryCellView>,
+}
+
+/// `oneiron::office_body::verbs::DocxStoryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DocxStoryView {
+    #[serde(rename = "scope")]
+    pub scope: DocxStoryScope,
+    #[serde(rename = "paragraphs")]
+    pub paragraphs: Vec<DocxStoryParagraphView>,
+    #[serde(rename = "tables")]
+    pub tables: Vec<DocxStoryTableView>,
+}
+
 /// `oneiron::office_body::verbs::DocxBodyView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DocxBodyView {
     #[serde(rename = "blocks")]
     pub blocks: Vec<DocxBlockView>,
+    #[serde(rename = "stories")]
+    pub stories: Vec<DocxStoryView>,
 }
 
 /// `oneiron_docedit::xlsx_body::model::XlsxValue`.
@@ -65572,6 +65930,77 @@ pub enum DocxBodyOp {
         #[serde(rename = "on")]
         on: bool,
     },
+    #[serde(rename = "set_story_cell_paragraph")]
+    SetStoryCellParagraph {
+        #[serde(rename = "scope")]
+        scope: DocxStoryScope,
+        #[serde(rename = "block")]
+        block: String,
+        #[serde(rename = "row")]
+        row: u64,
+        #[serde(rename = "col")]
+        col: u64,
+        #[serde(rename = "paragraph")]
+        paragraph: String,
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "splice_story_cell_paragraph")]
+    SpliceStoryCellParagraph {
+        #[serde(rename = "scope")]
+        scope: DocxStoryScope,
+        #[serde(rename = "block")]
+        block: String,
+        #[serde(rename = "row")]
+        row: u64,
+        #[serde(rename = "col")]
+        col: u64,
+        #[serde(rename = "paragraph")]
+        paragraph: String,
+        #[serde(rename = "at")]
+        at: u64,
+        #[serde(rename = "delete")]
+        delete: u64,
+        #[serde(rename = "insert")]
+        insert: String,
+    },
+    #[serde(rename = "set_story_text")]
+    SetStoryText {
+        #[serde(rename = "scope")]
+        scope: DocxStoryScope,
+        #[serde(rename = "block")]
+        block: String,
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "splice_story")]
+    SpliceStory {
+        #[serde(rename = "scope")]
+        scope: DocxStoryScope,
+        #[serde(rename = "block")]
+        block: String,
+        #[serde(rename = "at")]
+        at: u64,
+        #[serde(rename = "delete")]
+        delete: u64,
+        #[serde(rename = "insert")]
+        insert: String,
+    },
+    #[serde(rename = "mark_story")]
+    MarkStory {
+        #[serde(rename = "scope")]
+        scope: DocxStoryScope,
+        #[serde(rename = "block")]
+        block: String,
+        #[serde(rename = "at")]
+        at: u64,
+        #[serde(rename = "len")]
+        len: u64,
+        #[serde(rename = "mark")]
+        mark: DocxMark,
+        #[serde(rename = "on")]
+        on: bool,
+    },
 }
 
 /// `oneiron::office_body::xlsx::XlsxBodyOp`.
@@ -66232,6 +66661,8 @@ pub struct BlockChange {
     pub block: String,
     #[serde(rename = "kind")]
     pub kind: ChangeKind,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<DocxStoryScope>,
 }
 
 /// `oneiron::office_body::fork::ConflictKind`.
@@ -66254,6 +66685,8 @@ pub struct BodyConflict {
     pub block: String,
     #[serde(rename = "kind")]
     pub kind: ConflictKind,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<DocxStoryScope>,
 }
 
 /// `oneiron::office_body::fork::OfficeBodyDiff`.
