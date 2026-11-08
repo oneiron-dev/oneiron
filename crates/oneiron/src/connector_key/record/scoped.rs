@@ -4,7 +4,7 @@ use crate::connector_key::charter::parse_charter_verb;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-use super::invalid_body;
+use super::{ConnectorKeyRecord, invalid_body};
 
 /// Canonicalizes an ordinary outbound connector/channel key (duplicate of the
 /// private `outbound.rs::normalize_key` on the shared string space).
@@ -172,6 +172,18 @@ impl ScopedCapabilityProvenance {
     pub(crate) fn ordinary_channel(&self) -> String {
         format!("mcp:{}", self.server)
     }
+}
+
+/// The MCP server name a key's brief lines carry. An ordinary key with no
+/// catalog entry has none, and gets no line.
+pub(crate) fn brief_server_name(key: &ConnectorKeyRecord) -> Option<String> {
+    key.catalog
+        .as_ref()
+        .map(|entry| entry.name.clone())
+        .or_else(|| {
+            ScopedCapabilityProvenance::parse_owner_capability_key(&key.connector)
+                .map(|capability| capability.server().to_owned())
+        })
 }
 
 /// A compiled never-list entry MUST be one of the TWO disjoint canonical rules

@@ -190,7 +190,7 @@ pub(super) fn validate_public_raw_put(
 }
 
 pub(super) fn validate_authored_note_body(author: &EntityId, data: &[u8]) -> Result<()> {
-    let body = crate::store::note_body::decode_note_body_using(
+    let body = crate::store::note_body::decode_note_core_using(
         data,
         crate::store::note_body::NoteKind::wire,
     )?;

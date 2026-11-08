@@ -95,10 +95,12 @@ pub(crate) use self::meter::{
     charge_effector_budgets_pooled, fire_settled_effector_debits_in_txn,
     preflight_effector_budgets_pooled, reconcile_connector_spend_in_txn,
     release_effector_debits_in_txn, reserve_connector_spend_in_txn, restore_effector_debits_in_txn,
-    set_effector_debits_reserved_in_txn, shares_budget_pool,
+    set_effector_debits_reserved_in_txn, shares_budget_pool, spend_overrun_in_txn,
+    tool_spend_price_in_txn,
 };
 pub(crate) use self::record::{
-    ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
+    ScopedCapabilityProvenance, brief_server_name, canonical_scoped_server_segment,
+    normalize_connector_key,
 };
 pub(crate) use self::slate::{
     erase_grant_slate_holder_narrows_in_txn, read_connector_slate_in_txn,
@@ -109,7 +111,9 @@ pub(crate) use self::tool_remember::{
     ConnectorToolRememberContext, connector_tool_connection_in_txn,
     connector_tool_remember_bound_in_txn, connector_tool_remembered_in_txn,
 };
-pub(crate) use self::txn::{governing_connector_key, suspend_connector_key_in_txn};
+pub(crate) use self::txn::{
+    governing_connector_key, governing_keys_for_actor_in_txn, suspend_connector_key_in_txn,
+};
 
 // Crate-visible paths whose only live consumers are the test modules of sibling
 // modules; gated so the non-test build carries no unused re-export.
