@@ -129,10 +129,10 @@ impl ConversationCompactionUnavailable {
 /// driver's backend. `None` for a flight the cheap writer writes as the
 /// agent: a row on the retained turns, or a row on `auto` whose live prefix
 /// is cold here (FIX 6029). Why none can be bound, for a row that selects
-/// the live fork. Called before the answer is sent, so the rung is the one
-/// its walk takes now. `sources` is every row the answer's request was read
-/// from, `None` when not all were witnessed: then no fork is captured
-/// (FIX 9463).
+/// the live fork. Called once the answer ended, so the rung is the one that
+/// answered it (FIX 4933), never the one its walk would take now. `sources`
+/// is every row the answer's request was read from, `None` when not all
+/// were witnessed: then no fork is captured (FIX 9463).
 pub fn capture_conversation_fork(
     driver: &CompactionDriver,
     live: &LlmRequest,
