@@ -730,9 +730,11 @@ vaultCodeSymbolsDeclare(input: unknown): unknown
 vaultCodeSymbolsRenew(input: unknown): unknown
 vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
+vaultCodeProposalRereview(input: unknown): unknown
 vaultCodeConflictRecord(input: unknown): unknown
 vaultCodeConflictView(input: unknown): unknown
 vaultCodeProposalResolve(input: unknown): unknown
+vaultCodeProposalResolveRereview(input: unknown): unknown
 vaultCodeProposalReview(input: unknown): unknown
 vaultCodeProposalSettle(input: unknown): unknown
 vaultCodeProposalSettlement(input: unknown): unknown
@@ -772,6 +774,7 @@ vaultCodeOriginPublishGet(input: unknown): unknown
 vaultCodeOriginPublishApprove(input: unknown): unknown
 vaultCodeOriginPublishExecute(input: unknown): unknown
 vaultCodeOriginPublishCancel(input: unknown): unknown
+vaultDevicesPredecessorName(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
