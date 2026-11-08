@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1404 code-mode rows (1361 host rows, 43 run rows), 4914 declarations.
-// Replies: 1212 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1393 code-mode rows (1350 host rows, 43 run rows), 4878 declarations.
+// Replies: 1201 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -288,22 +288,6 @@ declare namespace Sdk {
   type GrantAnswer = "approve" | "deny";
   type GrantAnswerRequest = { request: EntityId; answer: GrantAnswer };
   type GrantAnswered = { request: EntityId; principal_ref: EntityId; capability: string; scope: GrantRequestedScope; status: AccessRequestStatus; addressed_to?: EntityId | null; grant_ref?: EntityId | null; excess_request?: EntityId | null; decided_by?: EntityId | null; decided_at?: number | null };
-  type DigestReadRequest = { id: string };
-  type DigestPrivateSource = { root: string; turn: string };
-  type DigestProposal = { claim_ref: string; revision: number[]; summary: string; private_sources?: DigestPrivateSource[]; unverified?: boolean };
-  type JudgeAskReason = "revision_disagreement" | "uncertainty" | "rubric_recheck" | "rubric_regrade";
-  type JudgeRegrade = { label: number[]; rubric: number[] };
-  type JudgeAsk = { id: number[]; skill: string; responsible: string; campaign: string; evidence: string; reason: JudgeAskReason; option_a: string; option_b: string; delivered_at?: number | null; regrade?: JudgeRegrade | null };
-  type EvalSeat = "companion" | "decision" | "extraction_tagger" | "embedder" | "router" | { named: string };
-  type EvalLabelAsk = { id: EntityId; seat: EvalSeat; case: EntityId; decision: string; responsible: EntityId; option_a: string; option_b: string; minutes: number; asked_at: number; delivered_at?: number | null; chosen?: string | null; answered_at?: number | null };
-  type DigestOffer = { offer: string; digest: string; summary: string };
-  type DigestCleanup = { decisions: string[]; archived: number; skipped: number; proposals: string[]; proposed: number; view: string };
-  type DigestNoteTombstones = { proposals: string[]; view: string };
-  type DigestAppliedItem = { target: string; kind: string; facet: string; applied_at: number; receipt_ref: string };
-  type DigestApplied = { items: DigestAppliedItem[]; view: string };
-  type DigestDrafterItem = { event: string; kind: string; versions: string[]; reason?: string | null; at: number };
-  type DigestDrafter = { items: DigestDrafterItem[]; nights?: Record<string, number>; through: string; view: string };
-  type ProactivityDigestView = { id: number[]; created_at: number; recipient: string | null; urgent: boolean; groups: Record<string, DigestProposal[]>; judge_asks: JudgeAsk[]; eval_label_asks: EvalLabelAsk[]; offers?: DigestOffer[]; cleanup?: DigestCleanup | null; note_tombstones?: DigestNoteTombstones | null; applied?: DigestApplied | null; drafter?: DigestDrafter | null; health_cards?: ConcernCardSummary[]; rendered: string; voice_style: string };
   type PersonaSnapshotPreviewRequest = { subject: EntityId };
   type PersonaSnapshotPreviewRow = { row_id: string; kind: string; text: string; provenance_refs: string[]; attribution?: string | null; struck: boolean };
   type PersonaSnapshotPreview = { subject: EntityId; stamp: string; identity_line: string; rows: PersonaSnapshotPreviewRow[]; compiled_at: string; stale_after_secs: number };
@@ -1049,6 +1033,21 @@ declare namespace Sdk {
   type WeaveDigestFeedback = { preferred_cadence?: WeaveDigestCadence | null; lead_section?: WeaveSectionKind | null; keep_current?: boolean };
   type WeaveDigestRendered = { scheduled_for: number; rendered_at: number; narrowing: ScopedReadReceipt };
   type ProactivityDigestRequest = { id?: string | null };
+  type DigestPrivateSource = { root: string; turn: string };
+  type DigestProposal = { claim_ref: string; revision: number[]; summary: string; private_sources?: DigestPrivateSource[]; unverified?: boolean };
+  type JudgeAskReason = "revision_disagreement" | "uncertainty" | "rubric_recheck" | "rubric_regrade";
+  type JudgeRegrade = { label: number[]; rubric: number[] };
+  type JudgeAsk = { id: number[]; skill: string; responsible: string; campaign: string; evidence: string; reason: JudgeAskReason; option_a: string; option_b: string; delivered_at?: number | null; regrade?: JudgeRegrade | null };
+  type EvalSeat = "companion" | "decision" | "extraction_tagger" | "embedder" | "router" | { named: string };
+  type EvalLabelAsk = { id: EntityId; seat: EvalSeat; case: EntityId; decision: string; responsible: EntityId; option_a: string; option_b: string; minutes: number; asked_at: number; delivered_at?: number | null; chosen?: string | null; answered_at?: number | null };
+  type DigestOffer = { offer: string; digest: string; summary: string };
+  type DigestCleanup = { decisions: string[]; archived: number; skipped: number; proposals: string[]; proposed: number; view: string };
+  type DigestNoteTombstones = { proposals: string[]; view: string };
+  type DigestAppliedItem = { target: string; kind: string; facet: string; applied_at: number; receipt_ref: string };
+  type DigestApplied = { items: DigestAppliedItem[]; view: string };
+  type DigestDrafterItem = { event: string; kind: string; versions: string[]; reason?: string | null; at: number };
+  type DigestDrafter = { items: DigestDrafterItem[]; nights?: Record<string, number>; through: string; view: string };
+  type ProactivityDigestView = { id: number[]; created_at: number; recipient: string | null; urgent: boolean; groups: Record<string, DigestProposal[]>; judge_asks: JudgeAsk[]; eval_label_asks: EvalLabelAsk[]; offers?: DigestOffer[]; cleanup?: DigestCleanup | null; note_tombstones?: DigestNoteTombstones | null; applied?: DigestApplied | null; drafter?: DigestDrafter | null; health_cards?: ConcernCardSummary[]; rendered: string; voice_style: string };
   type InboxLensRequest = { identity?: string | null; agent?: string | null; limit?: number | null; before_impact?: number | null; before_at?: number | null; before_id?: string | null };
   type InboxLensKind = "conversation" | "waiting_on_you" | "coordination_update" | "concern" | "digest";
   type InboxLensPile = "conversations" | "waiting_on_you" | "updates";
@@ -1229,8 +1228,7 @@ declare namespace Sdk {
   type HookReplayCompare = "same" | "differs" | "incomplete";
   type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; recorded_outcome_json?: string | null; compare: HookReplayCompare; from_memo: boolean; reads_live: boolean } | { status: "withheld"; reason: string } | { status: "missing_history"; reason: string };
   type HookReplayRow = { case: HookReplayCase; result: HookReplayOutcome };
-  type HubHookGoldenRun = { index: number; verb: string; ran: boolean; passed: boolean };
-  type HubHookReplay = { hook: string; entries: HookReplayRow[]; unreplayed: boolean; golden: HubHookGoldenRun[] };
+  type HubHookReplay = { hook: string; entries: HookReplayRow[]; unreplayed: boolean };
   type HubHookQualificationReceipt = { put: PackPutReceipt; replays: HubHookReplay[] };
   type PackTextFile = { path: string; text: string };
   type PackBytesFile = { path: string; content_base64: string };
@@ -1438,7 +1436,7 @@ declare namespace Sdk {
   type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { owner_added: { owner: string } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_invited: { invitation: string; member: string; role: FederationGrantRole; expires_at: number } } | { invitation_accepted: { invitation: string; member: string; role: FederationGrantRole } } | { invitation_declined: { invitation: string; member: string } } | { invitation_withdrawn: { invitation: string; member: string } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } } | { record_erased: { record: string; redaction?: string | null } };
   type ExportDiaryRead = { agent: string; diaries: number; reason: string };
   type SharedActExport = { member: string; records: number; digest: string; diary_reads: ExportDiaryRead[] };
-  type ErrorKind = "storage" | "verb_hook_stopped" | "io" | "dimension_mismatch" | "invalid_vector" | "invalid_edge_weight" | "invalid_vad" | "embedding_model_changed" | "hnsw_config_changed" | "storage_abi_version_changed" | "storage_schema_version_changed" | "db_manifest_mismatch" | "vault_root_preflight" | "map_full" | "invalid_config" | "invalid_temporal_expression" | "entity_not_found" | "access_grant_already_exists" | "outbound_grant_already_exists" | "connector_key_already_exists" | "channel_identity_already_exists" | "counterparty_contact_already_exists" | "concurrent_write" | "arithmetic_overflow" | "invariant_violation" | "invalid_key" | "invalid_federation_grant_body" | "invalid_authority_log_body" | "authority_refused" | "checkpoint_policy_refused" | "checkpoint_policy_revision_stale" | "world_recipient_limit" | "world_placement_unverifiable" | "invalid_access_grant_body" | "invalid_outbound_grant_body" | "invalid_connector_key_body" | "connector_charter_compile" | "connector_charter_approval_mismatch" | "connector_charter_missing" | "invalid_channel_identity_body" | "workspace_mailbox_autonomy_not_ready" | "work_companion_required" | "invalid_counterparty_contact_body" | "invalid_comm_record_body" | "invalid_diagnostic_body" | "invalid_disclosure_scope" | "disclosure_clamp_violation" | "invalid_consent_bound" | "invalid_consent_grant_row" | "invalid_consent_effect_facts" | "consent_owner_not_authenticated" | "consent_unauthenticated_actor" | "consent_guest_not_recorded" | "consent_catastrophe_not_rememberable" | "consent_grant_not_found" | "consent_grant_revoked" | "consent_approve_once_spent" | "invalid_task_body" | "ask_dependency_pending" | "corrupted_index" | "context_pack_validation" | "index_overflow" | "missing_posting_entry" | "invalid_entity_type" | "invalid_facet" | "invalid_relationship" | "invalid_facet_of_edge" | "facet_stamp_immutable" | "invalid_claim_body" | "invalid_psych_profile_body" | "invalid_persona_snapshot" | "persona_snapshot_consent_stale" | "invalid_code_artifact_body" | "invalid_blob_artifact_body" | "invalid_lfs_object" | "invalid_note_body" | "invalid_witness_message_body" | "invalid_anchor" | "annotation_thread_not_found" | "invalid_edit_manifest" | "edit_roundtrip_failed" | "live_deck_refused" | "memory_floor_refused" | "edit_proposal_already_settled" | "edit_proposal_stale" | "settle_not_authorized" | "invalid_skill_body" | "skill_edit_gate_retry" | "skill_content_anchor_type_mismatch" | "skill_package_unavailable" | "invalid_agent_def_body" | "invalid_embedding_setup_body" | "embedding_setup_dependency_pending" | "agent_definition_not_found" | "agent_definition_disabled" | "seeded_agent_definition_conflict" | "agent_not_dispatchable" | "invalid_agent_dispatch_input" | "model_pin_unavailable" | "invalid_recovery_artifact" | "body_key_custody_unavailable" | "known_value_history_unavailable" | "recovery_artifact_quarantine_exhausted" | "invalid_codebase_snapshot_body" | "hosted_media_hash_match_known_match" | "invalid_code_symbol_manifest_body" | "invalid_repo_mutation_record" | "repo_mutation_failed" | "repo_mutation_recovery_diverged" | "invalid_predicate" | "reserved_predicate" | "source_not_trusted_for_auto" | "gate_write_rejected" | "share_create_paced" | "family_requires_auto_grant" | "actor_lacks_claim_authority" | "guest_claim_withheld" | "gate_consent_stale" | "maintenance_kind_not_writable" | "structural_kind_zone_violation" | "structural_kind_collision" | "invalid_structural_kind_registration" | "invalid_attempt_queue_record" | "invalid_attempt_queue_transition" | "surface_event_correlation_kind_collision" | "entity_type_immutable" | "invalid_time_range" | "edge_not_found" | "provenance_on_structural_edge" | "actor_class_mismatch" | "invalid_provenance_body" | "invalid_model_substrate" | "emit_adjacent_receipt_required" | "claim_already_closed" | "write_verb_target_stale" | "claim_self_supersession" | "provenance_claim_lifecycle" | "not_a_provenance_claim" | "provenance_claim_already_closed" | "provenance_claim_id_in_use" | "provenance_subject_mismatch" | "provenance_self_supersession" | "provenance_precedence_violation" | "edge_is_provenanced" | "cycle_detected" | "child_of_cardinality" | "incompatible_analyzer" | "bm25_field_schema_changed" | "invalid_rank_profile" | "analyzer_asset_missing" | "analyzer_error" | "indexed_text_too_large" | "upstream_tool_failure" | "retrieval_stage_cut" | "provider_unavailable" | "durable_step_trapped" | "agent_run_executor_moved" | "refused" | "legal_hold" | "crdt_decode_error" | "window_not_found" | "window_busy" | "live_document_waited_out" | "sync_protocol_error" | "sync_engine_error" | "held_facet_stamps_full" | "invalid_redaction_receipt_body" | "kill_switch_disabled" | "off_record_session_already_exists" | "off_record_session_not_found" | "off_record_session_closing" | "off_record_overlay_full" | "off_record_overlay_lease_closed" | "off_record_promote_unauthenticated" | "off_record_tainted_base_write" | "off_record_witness_door_rejected" | "off_record_guest_turn_ref_rejected" | "off_record_talk_only" | "off_record_turn_not_in_journal" | "off_record_promote_author_missing" | "off_record_not_in_room" | "off_record_saving_stopped" | "off_record_copy_conflict" | "redaction_receipt_divergence" | "receipt_attestation_invalid" | "receipt_lease_unknown" | "receipt_lease_revoked" | "identity_topology_rejected" | "identity_topology_unarmed" | "identity_proposal_amendment_out_of_scope" | "delta_capture_unavailable" | "invalid_identity_topology_event_body" | "reserved_edge_kind" | "identity_topology_event_divergence" | "authority_log_append_only_violation" | "authority_log_store_key_mismatch" | "authority_log_signer_pending" | "authority_log_full" | "authority_history_required" | "authority_clock_corrupt" | "seal_standing_unverifiable" | "hold_target_erased" | "invalid_secret_custody_body" | "secret_name_in_use" | "secret_custody_not_active" | "credential_leaf_unreadable" | "credential_custody_unavailable" | "secret_binding_denied" | "manifest_widens_floor" | "secret_tier_denied" | "secret_door_policy_refused" | "sealed_file_withheld" | "masked_copy_withheld" | "secret_ref_not_found" | "secret_wider_than_manifest" | "secret_manifest_not_found" | "secret_lease_not_found" | "secret_lease_not_active" | "secret_lease_path_not_declared" | "secret_lease_path_conflict" | "secret_lease_path_refused" | "secret_lease_receipt_write_failed" | "invalid_secret_lease_body" | "secret_grant_stale" | "secret_grant_target_mismatch" | "secret_grant_spent" | "secret_host_delivery_refused" | "secret_grant_cleanup_kept" | "invalid_secret_rotation_body" | "tainted_artifact_stale" | "world_key_refused" | "keystore_unavailable" | "unverified_kit_restore" | "kit_confirmation_stale" | "micro_vm_backend_unavailable" | "micro_vm_backend_error" | "sandbox_proposal_disk_floor" | "micro_vm_overlay_error" | "micro_vm_credential_destination_denied" | "code_step_cancelled" | "response_erased" | "relay_attestation_invalid_service_identity" | "relay_attestation_class_mismatch" | "relay_attestation_edge_service_conflict" | "relay_hosted_legal_policy_invalid" | "policy_manifest_invalid" | "code_emission_missing_dreamer_run_id" | "code_review_context_required" | "code_review_unsupported_operation" | "code_review_missing_reviewer_run_id" | "code_review_run_id_not_distinct" | "code_review_missing_artifact_refs" | "code_review_authoring_run_id_mismatch" | "code_blast_radius_missing_touched_symbols" | "code_blast_radius_unknown_symbol" | "relay_vault_receipt_untrusted" | "policy_verdict_not_in_force" | "code_memory_invalid_anchor" | "code_memory_invalid_anchor_transfer" | "code_memory_blocks_cycle" | "code_memory_blocks_actor_denied" | "code_memory_blocks_source_untrusted" | "code_memory_always_on_invalid" | "code_memory_limit_exceeded" | "compaction_packet_rejected" | "git_http_invalid_repo_name" | "git_http_repo_not_found" | "git_http_serve_failed" | "git_http_exchange_idle" | "git_http_repository_busy" | "lfs_read_room_waited_out" | "receive_pack_door_rejected" | "git_push_capability_required" | "receive_pack_landing_refused" | "origin_publication_beyond_owner" | "vault_cleanup_restore_not_archived" | "vault_cleanup_archive_marker_undecodable" | "vault_cleanup_proposal_not_found" | "vault_cleanup_wake_trigger_rejected" | "vault_read" | "invalid_project_body" | "invalid_project_room_body" | "project_dependency_pending" | "project_revision_collision" | "project_revision_write" | "identity_unsettled" | "project_history_over_budget" | "project_authority_unresolved" | "invalid_conversation_body" | "conversation_state" | "conversation_denied" | "message_stream_recovery_failed" | "key_value_write_requires_owned_door" | "stream_already_active" | "stream_not_active" | "stream_limit" | "dag_parent_outside_conversation" | "head_advance_off_trunk" | "invalid_conversation_dag" | "invalid_scope_summary" | "invalid_pairing_scope" | "overlay_limit" | "cooperative_deletion_requires_terminal_pact" | "invalid_cooperative_deletion_request" | "write_concurrent_with_revocation" | "pack_kind_name_collision" | "pack_kind_not_installed" | "invalid_pack_byte_map" | "invalid_suppression_receipt_body" | "suppression_receipt_divergence" | "pack_predicate_name_collision" | "dreamer_actor_immutable" | "pack_install_rule_blocked" | "resident_owner_dependency_pending" | "invalid_machine_claim_proof" | "machine_claim_history_incomplete" | "remote_machine_history_pending" | "engine_identities_not_provisioned" | "side_table_row" | "side_table_key_undeclared" | "scoped_read_owner_not_live" | "embedding_transform_changed" | "archived_vault" | "host_action_requires_support_grant" | "vault_served_elsewhere";
+  type ErrorKind = "storage" | "verb_hook_stopped" | "io" | "dimension_mismatch" | "invalid_vector" | "invalid_edge_weight" | "invalid_vad" | "embedding_model_changed" | "hnsw_config_changed" | "storage_abi_version_changed" | "storage_schema_version_changed" | "db_manifest_mismatch" | "vault_root_preflight" | "map_full" | "invalid_config" | "invalid_temporal_expression" | "entity_not_found" | "access_grant_already_exists" | "outbound_grant_already_exists" | "connector_key_already_exists" | "channel_identity_already_exists" | "counterparty_contact_already_exists" | "concurrent_write" | "arithmetic_overflow" | "invariant_violation" | "invalid_key" | "invalid_federation_grant_body" | "invalid_authority_log_body" | "authority_refused" | "checkpoint_policy_refused" | "checkpoint_policy_revision_stale" | "world_recipient_limit" | "world_placement_unverifiable" | "invalid_access_grant_body" | "invalid_outbound_grant_body" | "invalid_connector_key_body" | "connector_charter_compile" | "connector_charter_approval_mismatch" | "connector_charter_missing" | "invalid_channel_identity_body" | "workspace_mailbox_autonomy_not_ready" | "work_companion_required" | "invalid_counterparty_contact_body" | "invalid_comm_record_body" | "invalid_diagnostic_body" | "invalid_disclosure_scope" | "disclosure_clamp_violation" | "invalid_consent_bound" | "invalid_consent_grant_row" | "invalid_consent_effect_facts" | "consent_owner_not_authenticated" | "consent_unauthenticated_actor" | "consent_guest_not_recorded" | "consent_catastrophe_not_rememberable" | "consent_grant_not_found" | "consent_grant_revoked" | "consent_approve_once_spent" | "invalid_task_body" | "ask_dependency_pending" | "corrupted_index" | "context_pack_validation" | "index_overflow" | "missing_posting_entry" | "invalid_entity_type" | "invalid_facet" | "invalid_relationship" | "invalid_facet_of_edge" | "facet_stamp_immutable" | "invalid_claim_body" | "invalid_psych_profile_body" | "invalid_persona_snapshot" | "persona_snapshot_consent_stale" | "invalid_code_artifact_body" | "invalid_blob_artifact_body" | "invalid_lfs_object" | "invalid_note_body" | "invalid_witness_message_body" | "invalid_anchor" | "annotation_thread_not_found" | "invalid_edit_manifest" | "edit_roundtrip_failed" | "live_deck_refused" | "memory_floor_refused" | "edit_proposal_already_settled" | "edit_proposal_stale" | "settle_not_authorized" | "invalid_skill_body" | "skill_edit_gate_retry" | "skill_content_anchor_type_mismatch" | "skill_package_unavailable" | "invalid_agent_def_body" | "invalid_embedding_setup_body" | "embedding_setup_dependency_pending" | "agent_definition_not_found" | "agent_definition_disabled" | "seeded_agent_definition_conflict" | "agent_not_dispatchable" | "invalid_agent_dispatch_input" | "model_pin_unavailable" | "invalid_recovery_artifact" | "body_key_custody_unavailable" | "known_value_history_unavailable" | "recovery_artifact_quarantine_exhausted" | "invalid_codebase_snapshot_body" | "hosted_media_hash_match_known_match" | "invalid_code_symbol_manifest_body" | "invalid_repo_mutation_record" | "repo_mutation_failed" | "repo_mutation_recovery_diverged" | "invalid_predicate" | "reserved_predicate" | "source_not_trusted_for_auto" | "gate_write_rejected" | "share_create_paced" | "family_requires_auto_grant" | "actor_lacks_claim_authority" | "guest_claim_withheld" | "gate_consent_stale" | "maintenance_kind_not_writable" | "structural_kind_zone_violation" | "structural_kind_collision" | "invalid_structural_kind_registration" | "invalid_attempt_queue_record" | "invalid_attempt_queue_transition" | "surface_event_correlation_kind_collision" | "entity_type_immutable" | "invalid_time_range" | "edge_not_found" | "provenance_on_structural_edge" | "actor_class_mismatch" | "invalid_provenance_body" | "invalid_model_substrate" | "emit_adjacent_receipt_required" | "claim_already_closed" | "write_verb_target_stale" | "claim_self_supersession" | "provenance_claim_lifecycle" | "not_a_provenance_claim" | "provenance_claim_already_closed" | "provenance_claim_id_in_use" | "provenance_subject_mismatch" | "provenance_self_supersession" | "provenance_precedence_violation" | "edge_is_provenanced" | "cycle_detected" | "child_of_cardinality" | "incompatible_analyzer" | "bm25_field_schema_changed" | "invalid_rank_profile" | "analyzer_asset_missing" | "analyzer_error" | "indexed_text_too_large" | "upstream_tool_failure" | "retrieval_stage_cut" | "provider_unavailable" | "durable_step_trapped" | "agent_run_executor_moved" | "refused" | "legal_hold" | "crdt_decode_error" | "window_not_found" | "window_busy" | "live_document_waited_out" | "sync_protocol_error" | "sync_engine_error" | "held_facet_stamps_full" | "invalid_redaction_receipt_body" | "kill_switch_disabled" | "off_record_session_already_exists" | "off_record_session_not_found" | "off_record_session_closing" | "off_record_overlay_full" | "off_record_overlay_lease_closed" | "off_record_promote_unauthenticated" | "off_record_tainted_base_write" | "off_record_witness_door_rejected" | "off_record_guest_turn_ref_rejected" | "off_record_talk_only" | "off_record_turn_not_in_journal" | "off_record_promote_author_missing" | "off_record_not_in_room" | "off_record_saving_stopped" | "off_record_copy_conflict" | "redaction_receipt_divergence" | "receipt_attestation_invalid" | "receipt_lease_unknown" | "receipt_lease_revoked" | "identity_topology_rejected" | "identity_topology_unarmed" | "identity_proposal_amendment_out_of_scope" | "delta_capture_unavailable" | "invalid_identity_topology_event_body" | "reserved_edge_kind" | "identity_topology_event_divergence" | "authority_log_append_only_violation" | "authority_log_store_key_mismatch" | "authority_log_signer_pending" | "authority_log_full" | "authority_history_required" | "authority_clock_corrupt" | "seal_standing_unverifiable" | "hold_target_erased" | "invalid_secret_custody_body" | "secret_name_in_use" | "secret_custody_not_active" | "credential_leaf_unreadable" | "credential_custody_unavailable" | "secret_binding_denied" | "manifest_widens_floor" | "secret_tier_denied" | "secret_door_policy_refused" | "sealed_file_withheld" | "masked_copy_withheld" | "secret_ref_not_found" | "secret_wider_than_manifest" | "secret_manifest_not_found" | "secret_lease_not_found" | "secret_lease_not_active" | "secret_lease_path_not_declared" | "secret_lease_path_conflict" | "secret_lease_path_refused" | "secret_lease_receipt_write_failed" | "invalid_secret_lease_body" | "secret_grant_stale" | "secret_grant_target_mismatch" | "secret_grant_spent" | "secret_host_delivery_refused" | "secret_grant_cleanup_kept" | "invalid_secret_rotation_body" | "tainted_artifact_stale" | "world_key_refused" | "keystore_unavailable" | "unverified_kit_restore" | "kit_confirmation_stale" | "micro_vm_backend_unavailable" | "micro_vm_backend_error" | "sandbox_proposal_disk_floor" | "micro_vm_overlay_error" | "micro_vm_credential_destination_denied" | "code_step_cancelled" | "response_erased" | "relay_attestation_invalid_service_identity" | "relay_attestation_class_mismatch" | "relay_attestation_edge_service_conflict" | "relay_hosted_legal_policy_invalid" | "policy_manifest_invalid" | "code_emission_missing_dreamer_run_id" | "code_review_context_required" | "code_review_unsupported_operation" | "code_review_missing_reviewer_run_id" | "code_review_run_id_not_distinct" | "code_review_missing_artifact_refs" | "code_review_authoring_run_id_mismatch" | "code_blast_radius_missing_touched_symbols" | "code_blast_radius_unknown_symbol" | "relay_vault_receipt_untrusted" | "policy_verdict_not_in_force" | "code_memory_invalid_anchor" | "code_memory_invalid_anchor_transfer" | "code_memory_blocks_cycle" | "code_memory_blocks_actor_denied" | "code_memory_blocks_source_untrusted" | "code_memory_always_on_invalid" | "code_memory_limit_exceeded" | "compaction_packet_rejected" | "git_http_invalid_repo_name" | "git_http_repo_not_found" | "git_http_serve_failed" | "git_http_exchange_idle" | "git_http_repository_busy" | "lfs_read_room_waited_out" | "receive_pack_door_rejected" | "git_push_capability_required" | "receive_pack_landing_refused" | "origin_publication_beyond_owner" | "vault_cleanup_restore_not_archived" | "vault_cleanup_archive_marker_undecodable" | "vault_cleanup_proposal_not_found" | "vault_cleanup_wake_trigger_rejected" | "vault_read" | "invalid_project_body" | "invalid_project_room_body" | "project_dependency_pending" | "project_revision_collision" | "project_revision_write" | "identity_unsettled" | "project_history_over_budget" | "project_authority_unresolved" | "invalid_conversation_body" | "conversation_state" | "conversation_denied" | "message_stream_recovery_failed" | "key_value_write_requires_owned_door" | "stream_already_active" | "stream_not_active" | "stream_limit" | "dag_parent_outside_conversation" | "head_advance_off_trunk" | "invalid_conversation_dag" | "invalid_scope_summary" | "invalid_pairing_scope" | "overlay_limit" | "cooperative_deletion_requires_terminal_pact" | "invalid_cooperative_deletion_request" | "write_concurrent_with_revocation" | "pack_kind_name_collision" | "pack_kind_not_installed" | "invalid_pack_byte_map" | "invalid_suppression_receipt_body" | "suppression_receipt_divergence" | "pack_predicate_name_collision" | "dreamer_actor_immutable" | "pack_install_rule_blocked" | "resident_owner_dependency_pending" | "invalid_machine_claim_proof" | "machine_claim_history_incomplete" | "remote_machine_history_pending" | "engine_identities_not_provisioned" | "side_table_row" | "side_table_key_undeclared" | "scoped_read_owner_not_live" | "embedding_transform_changed" | "archived_vault" | "host_action_requires_support_grant" | "storage_id_mismatch" | "vault_served_elsewhere";
   type DetachRemainderReason = "no_issuer" | { withdrawal_failed: { kind: ErrorKind } };
   type DetachRemainder = { grant: string; reason: DetachRemainderReason };
   type DetachReport = { withdrawn: string[]; remaining: DetachRemainder[] };
@@ -1521,7 +1519,7 @@ declare namespace Sdk {
   type FederationBurstOutcome = "allow" | "isolate-and-propose" | "defer";
   type FederationBurstPolicy = { baseline?: FederationBurstBaseline | null; unusual_rate: FederationBurstOutcome; unusual_streak: FederationBurstOutcome };
   type FederationBurstPolicySetRequest = { peer: FederationBurstPeerRequest; policy: FederationBurstPolicy };
-  type QuarantineContainer = "entities" | "edges" | "tombstones" | "leases";
+  type QuarantineContainer = "entities" | "edges" | "tombstones" | "leases" | "office_proposals" | "typed_body_rows";
   type SyncHeldEditEvidence = { window_key: string; container: QuarantineContainer; crdt_key_hash: string; crdt_key_len: number; reason_code: string; payload_hash: string; quarantined_at: number };
   type RepoCopyEditReviewRequest = { source: string };
   type RepoCopyEditReviewView = { source: string; cause: string; submitted: string; revision: string };
@@ -1614,6 +1612,8 @@ declare namespace Sdk {
   type GuestShareEnvelopeBody = { scope: FederationGrantScope; member_ref: EntityId; selector: number[]; window_key: string; update: number[] };
   type GuestShareEnvelope = { body: GuestShareEnvelopeBody; signature: number[] };
   type GuestDocumentEnvelope = { context: GuestDocumentContext; envelope: GuestShareEnvelope; signer: string; signature: number[]; travel_receipt?: GuestWindowTravelNote | null };
+  type ConnectProposeRequest = { grant_ref: EntityId; world_ref: EntityId; entity_ref: EntityId; update: number[] };
+  type ConnectProposalLanded = { proposal_ref: EntityId; grant_ref: EntityId; entity_ref: EntityId; proposed_at: number };
   type GuestRevokeRequest = { grant_ref: EntityId; peer?: string | null };
   type GuestPactStanding = "unpacted" | "active" | "suspended" | "promoted" | "disconnected" | "dissolved";
   type NotRecallable = boolean;
@@ -2283,7 +2283,7 @@ declare namespace Sdk {
   type PolicySource = "user_stated" | "observed" | "inferred" | "generated" | "imported" | "tool_output";
   type SensitivityName = "public" | "private" | "internal" | "sensitive" | "restricted";
   type SensitivityBand = number | SensitivityName;
-  type SourceTrustRow = { actor_ref?: string | null; max_auto_sensitivity?: SensitivityBand | null; auto?: boolean | null; auto_checker?: string | null; receipted?: boolean; warned?: boolean };
+  type SourceTrustRow = { actor_ref?: string | null; max_auto_sensitivity?: SensitivityBand | null; auto?: boolean | null; receipted?: boolean; warned?: boolean };
   type SourceTrust = SourceTrustRow | SourceTrustRow[] | boolean | SensitivityBand;
   type PolicySignature = { alg: string; key_id?: string | null; sig: string };
   type SlideReviewPrecedence = "nested_narrowing" | "holder_override_capped_at_vault";
@@ -2531,23 +2531,12 @@ declare namespace Sdk {
   type HookRegenBindingRequest = { binding: EntityId };
   type HookContractStamp = { verb_table: string; sandbox: string };
   type HookGoldenDiff = { cases: number; changed: string[]; execution_failed: string[]; withheld: string[]; missing_history: string[] };
-  type HookGoldenFingerprint = { cases: Record<string, string>; execution_failed: Record<string, string>; withheld: string[]; missing_history: string[] };
-  type HookGoldenManifest = { runs: string[]; last_good: HookGoldenFingerprint; candidate: HookGoldenFingerprint };
   type HookRegenFailurePhase = "intent" | "generate" | "validate" | "golden_replay";
   type HookRegenFailure = { phase: HookRegenFailurePhase; message: string };
-  type HookRegenOutcome = { outcome: "auto_adopt"; candidate: string; target: HookContractStamp; diff: HookGoldenDiff; golden: HookGoldenManifest } | { outcome: "needs_human_stamp"; candidate: string; target: HookContractStamp; diff: HookGoldenDiff; golden: HookGoldenManifest } | { outcome: "rolled_back"; failure: HookRegenFailure; target: HookContractStamp };
-  type HookRegenPrior = { body: string; body_hash: string; stamp: HookContractStamp };
-  type HookRegenRecord = { body_hash: string; stamp: HookContractStamp; intent?: string | null; pending?: HookRegenOutcome | null; previous?: HookRegenPrior | null; declined?: HookContractStamp | null };
+  type HookRegenOutcome = { outcome: "auto_adopt"; candidate: string; target: HookContractStamp; diff: HookGoldenDiff } | { outcome: "needs_human_stamp"; candidate: string; target: HookContractStamp; diff: HookGoldenDiff } | { outcome: "rolled_back"; failure: HookRegenFailure };
+  type HookRegenRecord = { body_hash: string; stamp: HookContractStamp; intent?: string | null; pending?: HookRegenOutcome | null };
   type HookRegenView = { record: HookRegenRecord; candidate_hash?: string | null };
-  type HookRegenHistoryRequest = { binding: EntityId; before?: number | null; limit?: number | null };
-  type HookRegenActor = { by: "engine" } | { by: "owner"; actor: string } | { by: "agent"; agent: string };
-  type HookRegenDecision = "auto_adopt" | "needs_human_stamp" | "rolled_back";
-  type HookRegenEvent = { event: "decided"; decision: HookRegenDecision; candidate_hash?: string | null; target: HookContractStamp; diff?: HookGoldenDiff | null; golden?: HookGoldenManifest | null; failure?: HookRegenFailure | null } | { event: "adopted"; candidate_hash: string; target: HookContractStamp; stamped: boolean; rebound?: string | null } | { event: "cancelled"; candidate_hash?: string | null; declined: HookContractStamp } | { event: "reverted"; from_hash: string; to_hash: string; declined: HookContractStamp; rebound?: string | null };
-  type HookRegenReceipt = { sequence: number; binding: string; recorded_at: number; actor: HookRegenActor; body_hash: string; event: HookRegenEvent };
-  type HookRegenRevertRequest = { binding: EntityId; adopted_hash: string };
   type HookRegenAdoptRequest = { binding: EntityId; candidate_hash: string };
-  type HookRegenCancelRequest = { binding: EntityId; candidate_hash?: string | null };
-  type HookRegenCancel = { candidate_hash?: string | null; declined: HookContractStamp };
   type ArtifactPointerChannel = "published" | "preview";
   type CodebaseForkHash = number[];
   type ArtifactExportRef = { ForkHash: CodebaseForkHash } | { BlobVersion: { artifact_id: EntityId; version: number } };
@@ -2701,10 +2690,6 @@ declare namespace Sdk {
   type CodeRunStepEvidenceView = { run_ref: string; completed_steps: number; policy: CodeRunCorrectionPolicy; steps: CodeRunStepEvidence[]; next_after_step?: number | null };
   type CodeRunTypeDiagnosticsRequest = { check_ref: string; session_ref?: string | null };
   type CodeWaitTarget = { run_id: EntityId; wait_id: EntityId; generation: number; step_hash: string; effect_digest: string };
-  type CodeWaitRebindPrepareRequest = { target: CodeWaitTarget; revision: number };
-  type CodeWaitRebindPrepared = { target: CodeWaitTarget; proposal_ref: EntityId; revision: number; predecessor: string; successor: string };
-  type CodeWaitRebindRequest = { target: CodeWaitTarget; revision: number; proposal_ref: EntityId };
-  type CodeWaitRebindReceipt = { target: CodeWaitTarget; proposal_ref: EntityId; prepared_revision: number; predecessor: string; successor: string; binding_digest: string; effect_digest: string; previous_effect_digest: string; intent_id: string; original_approval_ref: string; previous_marker_ref: string; prior_rebind_ref?: string | null; owner_ref: EntityId; authentication_ref: string; receipt_ref: string; confirmed_at_ms: number; already_rebound: boolean };
   type CodeWaitChoice = "approve_once" | "approve_and_stop_asking" | "deny";
   type CodeWaitRememberScope = "connection" | "asking_lineage";
   type CodeWaitResolveRequest = { target: CodeWaitTarget; answer: CodeWaitChoice; remember_scope?: CodeWaitRememberScope | null; word_ref: EntityId };
@@ -2716,7 +2701,7 @@ declare namespace Sdk {
   type CodeWaitLedgerLinks = { prior_ref?: string | null; word_ref?: EntityId | null; facts_digest: string };
   type CodeWaitSettlementView = { receipt_ref: string; outcome: CodeWaitSettleOutcome; reason_codes: string[]; settled_at_ms: number; ledger?: CodeWaitLedgerLinks | null };
   type CodeWaitConsumptionView = { receipt_ref: string; step: number; resumed_path: string; result_handle: string; consumed_at_ms: number; ledger?: CodeWaitLedgerLinks | null };
-  type CodeWaitReceiptView = { target: CodeWaitTarget; state: CodeWaitState; revision: number; verb: string; connector: string; tool: string; browser?: CodeWaitBrowserAction | null; hold_reasons: string[]; ask_ref?: EntityId | null; allowed_answers: CodeWaitChoice[]; standing_offer?: CodeConsentStandingOffer | null; answer?: CodeWaitAnswerView | null; settlement?: CodeWaitSettlementView | null; consumption?: CodeWaitConsumptionView | null; already_answered: boolean; rebind_proposal?: CodeWaitRebindPrepared | null; rebinds: CodeWaitRebindReceipt[] };
+  type CodeWaitReceiptView = { target: CodeWaitTarget; state: CodeWaitState; verb: string; connector: string; tool: string; browser?: CodeWaitBrowserAction | null; hold_reasons: string[]; ask_ref?: EntityId | null; allowed_answers: CodeWaitChoice[]; standing_offer?: CodeConsentStandingOffer | null; answer?: CodeWaitAnswerView | null; settlement?: CodeWaitSettlementView | null; consumption?: CodeWaitConsumptionView | null; already_answered: boolean };
   type CodeWaitReceiptRequest = { run_id: EntityId; wait_id: EntityId };
   type ResultRunRequest = { run_id: EntityId };
   type ResultEffectRecord = { seq: number; effect: string; action_digest?: string | null; started_at_ms: number; finished_at_ms: number };
@@ -2840,9 +2825,9 @@ declare namespace Sdk {
   type OriginPublishRequestInput = { repo: string; ref_name: string; commit: string; force?: OriginPublishForce; idempotency_key?: string | null; expires_at?: number | null; code_repo?: EntityId | null };
   type OriginPublishRemote = { state: "absent" } | { state: "at"; commit: string };
   type OriginPublishState = "pending" | "approved" | "dispatching" | "published" | "observed_published" | "refused" | "cancelled" | "expired";
-  type EdgeActorClass = "human" | "agent" | "system";
+  type OriginPublishActorClass = "human" | "agent" | "system";
   type OriginPublishAuthority = { kind: "owner" } | { kind: "grant"; grant: EntityId };
-  type OriginPublishAct = { actor?: EntityId | null; class: EdgeActorClass; authority: OriginPublishAuthority; at: number };
+  type OriginPublishAct = { actor?: EntityId | null; class: OriginPublishActorClass; authority: OriginPublishAuthority; at: number };
   type OriginPublishRefusalReason = "destination_changed" | "remote_moved" | "rejected" | "outcome_unknown" | "authority_changed" | "objects_missing" | "marked_live_secret" | "secret_history_unknown";
   type OriginPublishRefusal = { reason: OriginPublishRefusalReason; observed?: OriginPublishRemote | null; changed_fields: string[]; detail?: string | null };
   type OriginPublishRequestView = { request_id: EntityId; repo: string; repo_id: EntityId; destination: OriginPublishDestination; ref_name: string; commit: string; expected_remote: OriginPublishRemote; force: OriginPublishForce; code_repo?: EntityId | null; idempotency_key?: string | null; expires_at?: number | null; review: OriginPublishReview; state: OriginPublishState; requested: OriginPublishAct; approved?: OriginPublishAct | null; dispatched?: OriginPublishAct | null; refusal?: OriginPublishRefusal | null; created_at: number; finished_at?: number | null; broker_isolation?: BrokerIsolation | null };
@@ -2959,7 +2944,7 @@ declare namespace Sdk {
   type QueueReviewPolicySetRequest = { policy?: QueueReviewPolicyInput | null };
   type MergeQueueGreenExportRequest = { repo: EntityId; served_repo: string; checkout: string; epoch: number; ref_name: string; expected_old_oid?: string | null; endpoint: string };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
-  type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string; notices?: WorldRecipientNotice[] };
+  type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
   type AgentSkillInput = { skill_id: string; min_version?: string | null };
   type AgentMcpInput = { key: string; min_version?: string | null };
   type AgentScopeInput = { kind: "all" } | { kind: "base" } | { kind: "world"; world: EntityId };
@@ -3173,7 +3158,7 @@ declare namespace Sdk {
   type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: DecisionQuestion; units: ArtifactAskUnits; reversibility?: Reversibility | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: MadeBy | null };
   type UnitAbstention = { unit: unknown; decision?: TypedDecision | null; judged_live?: LivePin | null };
   type UnitRefusal = { unit: unknown; reason: string; judged_live?: LivePin | null };
-  type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[]; next_sheet_row?: number | null };
+  type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] };
   type ArtifactAdmitSubmit = { ask: ArtifactAskSubmit; decisions: TypedDecision[] };
   type CriticBinding = { lens_id: string; lens_ref: string; actor_ref: string; actor_class: number };
   type CriticReviewSubmit = { target_ref: string; kind: string; session_ref: string; run_ref: string; type_node: string; type_tree_version: number; axis: string; auto_resolve_threshold: number; catalog: unknown; critics: CriticBinding[]; spawn_attempt_ref?: string | null; project_ref?: string | null };
@@ -3316,19 +3301,7 @@ declare namespace Sdk {
   type AskForwardReceipt = { state: "pending"; intent_ref: EntityId } | { state: "answered"; intent_ref: EntityId; answer: TaskAskAnswer } | { state: "voided"; intent_ref: EntityId; generation: number };
   type TaskAnswerForwardStatusRequest = { intent_ref: EntityId };
   type OutcomeLabel = { answer: string; fact: string; fact_value_hash: number[]; label: boolean; noise_weight: number; occurred_at: number };
-  type DecisionRoute = { kind: "rule" } | { kind: "direct"; rung: DecisionRung } | { kind: "stepped_up"; rung: DecisionRung } | { kind: "step_unfinished"; rung: DecisionRung } | { kind: "person" } | { kind: "unrouted" };
-  type RoutingPolicy = { band_version: number; think_row?: number | null; person_row?: number | null; rule?: HostRuleRef | null };
-  type CalibrationPair = { prediction: DecisionAnswer; probability: number; outcome: OutcomeLabel; question_version: number; route: DecisionRoute; policy?: RoutingPolicy | null; providers: ProviderPin[] };
-  type RouteGroupKey = { question_version: number; route: DecisionRoute; policy?: RoutingPolicy | null; providers: ProviderPin[] };
-  type CalibrationMetrics = { brier_score: number; calibration_error: number };
-  type CalibrationPairRef = { answer: string; fact: string };
-  type MapKnot = { raw: number; fitted: number };
-  type RouteCalibrationMap = { question: string; key: RouteGroupKey; fit: CalibrationPairRef[]; knots: MapKnot[] };
-  type AcceptanceAtCut = { cut: number; raw: number; accepted: number; coverage: number; accepted_error?: number | null };
-  type RouteFitRefusal = { kind: "too_few_fit_pairs"; needed: number } | { kind: "weightless_fit" };
-  type RouteFit = { state: "fitted"; map: RouteCalibrationMap; fitted?: CalibrationMetrics | null; acceptance: AcceptanceAtCut[] } | { state: "refused"; reason: RouteFitRefusal };
-  type RouteCalibrationGroup = { key: RouteGroupKey; fit_pairs: number; check_pairs: number; raw?: CalibrationMetrics | null; fit: RouteFit };
-  type RouteCalibrationReport = { question: string; groups: RouteCalibrationGroup[] };
+  type CalibrationPair = { prediction: DecisionAnswer; probability: number; outcome: OutcomeLabel };
   type RoomOriginCard = { room: string; thread: string; message: string; at: number };
   type ProjectRoom = { schema_version: number; kind: string; project_id: string; memberIds: string[]; claims_scope_ref: string; origin?: RoomOriginCard | null };
   type RoomEntry = { id: string; room: ProjectRoom };
@@ -3752,8 +3725,9 @@ declare namespace Sdk {
   type DecisionQuestionInput = { text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
   type QuestionDefinitionInput = QuestionDefinition<DecisionQuestionInput>;
   type QuestionCreateRequest = { definition: QuestionDefinitionInput };
+  type QuestionAskerClass = "human" | "agent" | "system";
   type FrozenReadLane = { credential?: number[] | null; authority?: Scope | null; records?: string[]; worlds?: ScopeAxis<ScopeId> | null; room_facets?: EntityId | null; withheld?: string[] };
-  type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number; asker_class?: EdgeActorClass | null; read_lane: FrozenReadLane };
+  type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number; asker_class?: QuestionAskerClass | null; read_lane: FrozenReadLane };
   type QuestionEditRequest = { id: EntityId; expected_version: number; definition: QuestionDefinitionInput };
   type QuestionPauseRequest = { id: EntityId; paused: boolean };
   type QuestionPaused = { id: EntityId; paused: boolean };
@@ -3771,7 +3745,7 @@ declare namespace Sdk {
   type QuestionAnswersRequest = { id: EntityId; cursor?: string | null; page_size?: number | null };
   type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" } | { state: "details_omitted" };
   type ArtifactUnitReceipt = { status: "abstained"; unit: unknown; decision?: TypedDecision | null; judged_live?: LivePin | null } | { status: "refused"; unit: unknown; reason: string; judged_live?: LivePin | null } | { status: "omitted" };
-  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null; details_omitted?: boolean; units?: ArtifactUnitReceipt[]; next_sheet_row?: number | null };
+  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null; details_omitted?: boolean; units?: ArtifactUnitReceipt[] };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
   type QuestionAnswersPage = { answers: QuestionAnswer[]; next_cursor?: string | null };
   type QuestionAnswersReply = QuestionAnswer[] | QuestionAnswersPage;
@@ -3807,7 +3781,7 @@ declare namespace Sdk {
   type ConnectorSchemaRequest = { name: string; source?: ConnectorSource | null; tool: string };
   type ConnectorSchemaReply = { source: string; foreign: boolean; input_schema?: unknown | null; destructive?: boolean | null; reasons?: string[] };
   type ConnectorCallStatusRequest = { call_ref: string };
-  type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[]; approval_digest?: string | null } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply } | { state: "awaiting_input"; call_ref: string; name: string; tool: string; generation: number; asked: number; uncertain?: boolean; reply: ActAnswer<ConnectorCallReply> };
+  type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[]; approval_digest?: string | null } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply } | { state: "awaiting_input"; call_ref: string; name: string; tool: string; generation: number; asked: number; uncertain?: boolean; reply: ConnectorCallReply };
   type OpenInput = { url: string };
   type DestinationRefusal = { reason: string; message: string };
   type TakeoverRecord = { by: string; asked?: string | null; taken_at_ms: number; returned_at_ms: number; inputs: number; refusal?: DestinationRefusal | null };
@@ -4145,12 +4119,6 @@ declare namespace Sdk {
   type EsignSigningImageView = { image_ref: string };
   type EsignSigningSignatureRequest = { token: string; image_ref: string };
   type EsignSigningSignatureView = { image_ref: string; image_base64: string };
-  type EsignSigningPreviewRequest = { token: string; item: number };
-  type PageGeometry = { crop: number[]; rotation: number; user_unit: number };
-  type PdfFieldRect = { x: number; y: number; width: number; height: number };
-  type FieldMark = { kind: "text"; value: string; x: number; y: number; size: number } | { kind: "rectangle"; x: number; y: number; width: number; height: number } | { kind: "line"; x1: number; y1: number; x2: number; y2: number } | { kind: "signature"; image_ref: string; rect: PdfFieldRect };
-  type FieldLayout = { presentation: FieldPresentation; rect: PdfFieldRect; marks: FieldMark[] };
-  type EsignSigningPreviewView = { pages: PageGeometry[]; fields: FieldLayout[] };
   type EsignSealGetRequest = { document_ref: string };
   type EsignSealAttemptView = { attempt_ref: string; kind: string; state: string; dedupe_key?: string | null; lease_owner?: string | null; attempt_count: number; created_at: number; updated_at: number; last_error?: string | null };
   type EsignSealedItemView = { original_artifact: string; original_version: number; sealed_artifact: string; sealed_version: number; sha256: string; profile: SealProfileEvidence; active_content: SealActiveContentFacts };
@@ -4292,17 +4260,15 @@ declare namespace Sdk {
   type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
   type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type HeldDeckId = { node: number; native_id?: number | null; creation_id?: string | null };
-  type OfficeRecalcFailure = { code: string; detail: string };
   type OfficeRecalcZone = { utc_offset_minutes: number; iana_timezone?: string | null };
-  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; rebind_frontier?: number[] | null; held_ids?: HeldDeckId[] | null; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; recalc_failure?: OfficeRecalcFailure | null; recalc_zone?: OfficeRecalcZone | null; effects: string[] };
+  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; rebind_frontier?: number[] | null; held_ids?: HeldDeckId[] | null; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; recalc_zone?: OfficeRecalcZone | null; effects: string[] };
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
   type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
-  type XlsxCellRecalc = "cached_after_failure";
-  type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null; recalc?: XlsxCellRecalc | null };
+  type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
   type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[]; tables: XlsxTable[]; visibility: XlsxSheetVisibility; rows?: XlsxLines[]; columns?: XlsxLines[] };
   type XlsxName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
   type XlsxBook = { date1904: boolean; sheets: XlsxSheet[]; names: XlsxName[]; styles: XlsxStyle[] };
-  type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null; recalc_failure?: OfficeRecalcFailure | null };
+  type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null };
   type NodeMove = { node: NodeId; old_parent?: NodeId | null; new_parent?: NodeId | null; old_index?: number | null; new_index?: number | null; cross_slide: boolean };
   type OpaqueChange = { part: string; base?: number[] | null; proposal?: number[] | null };
   type SeriesField = "name" | "values" | "family" | "plot" | "x" | "bubble_size" | "bubble_3d" | "categories" | "order" | "existence";
@@ -4750,8 +4716,6 @@ declare namespace Sdk {
   type MailMboxImportReport = { source_ref: string; landed: number; same: number; refused: number; refusal_reasons?: string[]; skipped: number; read_total: number; done: boolean };
   type MailSourceSyncRequest = { source_ref: string; bodies?: number | null };
   type MailSyncReport = { source_ref: string; landed: number; same: number; refused: number; refusal_reasons?: string[]; kept_deleted: number; forgotten: number; anchor_expired: boolean; copy_done: boolean; attachments_stored?: number };
-  type MailSourceSearchRequest = { source_ref: string; query: string; page?: string | null; limit?: number | null };
-  type MailSearchReport = { source_ref: string; found: number; landed: number; same: number; skipped: number; next_page?: string | null };
   type MailInboxRequest = { source_ref?: string | null; include_source_deleted?: boolean; cursor?: string | null; limit?: number | null };
   type MailStage = "headers" | "body";
   type MailPresence = "present" | { source_deleted: { at: number } } | { forgotten: { at: number } };
@@ -5343,14 +5307,6 @@ declare namespace self {
   };
   /** Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled. */
   const history: (input: Sdk.FoldHistoryRequest) => Promise<Sdk.FoldHistory | StoredResult>;
-  const hooks: {
-    regen: {
-      /** Adopt the identical-fingerprint regen pending on a hook this agent authored, named by its candidate_hash, through the agent's own put of the local pack; the hook stays the agent's. A diff waits for the owner. */
-      adopt(input: Sdk.HookRegenAdoptRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
-      /** Read the regen record of a hook this agent authored: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash its adopt names. Changes nothing. */
-      get(input: Sdk.HookRegenBindingRequest): Promise<Sdk.HookRegenView | null | StoredResult>;
-    };
-  };
   const identity: {
     /** The owner answers an identity choice with supporting evidence refs; the original mention and verified owner resolution provenance are retained atomically. */
     answer(input: Sdk.IdentityAnswerEvidenceRequest): Promise<Sdk.IdentitySettled | StoredResult>;
@@ -5499,10 +5455,7 @@ declare const tasks: {
   /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway, and may bind an agent TASK to a library program (`context.workflow`). */
   create(input: Sdk.TaskCreateRequest): Promise<Sdk.TaskCreateReceipt | StoredResult>;
   /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
-  outcomes: ((input: Sdk.TaskAskHandle) => Promise<Sdk.CalibrationPair[] | StoredResult>) & {
-    /** Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only. */
-    route_calibration(input: Sdk.TaskAskHandle): Promise<Sdk.RouteCalibrationReport | StoredResult>;
-  };
+  outcomes(input: Sdk.TaskAskHandle): Promise<Sdk.CalibrationPair[] | StoredResult>;
   /** Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written. */
   redo(input: Sdk.TaskRedo): Promise<Sdk.TaskCallReceipt | StoredResult>;
   refuse(input: Sdk.TaskRefuseInput): Promise<Sdk.TaskRefuseOutput | StoredResult>;
@@ -6250,10 +6203,6 @@ declare const vault: Sdk.VaultHost & {
       read(input: Sdk.CodeViewReadRequest): Promise<Sdk.CodeViewFileBytes | StoredResult>;
     };
     waits: {
-      /** Explicitly authorize one exact holder-proposed successor as the independent authenticated owner. Only an admitted, unsettled wait continues under the same intent; its original answer, admission and delivery stay unchanged. */
-      rebind(input: Sdk.CodeWaitRebindRequest): Promise<Sdk.CodeWaitRebindReceipt | StoredResult>;
-      /** Propose the original holder's actual successor credential for one admitted, unsettled code consent wait. Stores no active authorization; a separate owner rebind act must confirm it. */
-      rebind_prepare(input: Sdk.CodeWaitRebindPrepareRequest): Promise<Sdk.CodeWaitRebindPrepared | StoredResult>;
       /** Read a code consent wait as its authenticated owner or current policy-admitted power holder: effect, answer, settlement and replay-consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait. */
       receipt(input: Sdk.CodeWaitReceiptRequest): Promise<Sdk.CodeWaitReceiptView | null | StoredResult>;
       /** Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption. */
@@ -6340,7 +6289,7 @@ declare const vault: Sdk.VaultHost & {
     subscriptions: {
       /** An agent's connector event subscriptions, standing and revoked, for the owner. */
       list(input: Sdk.ChannelSubscriptionsRequest): Promise<Sdk.ChannelSubscriptions | StoredResult>;
-      /** The owner subscribes an agent to the messages a built-in channel (slack, line or threaded email) routes to it, so each one wakes the agent to answer. */
+      /** The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer. */
       put(input: Sdk.ChannelSubscriptionRequest): Promise<Sdk.ChannelMessageSubscription | StoredResult>;
       /** The owner stops one connector event subscription; the agent's key for the channel stays. */
       revoke(input: Sdk.ChannelSubscriptionRevokeRequest): Promise<Sdk.ChannelSubscriptionRevoked | StoredResult>;
@@ -6637,8 +6586,6 @@ declare const vault: Sdk.VaultHost & {
       image(input: Sdk.EsignSigningImageRequest): Promise<Sdk.EsignSigningImageView | StoredResult>;
       /** One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing. */
       pdf(input: Sdk.EsignSigningPdfRequest): Promise<Sdk.EsignSigningPdfView | StoredResult>;
-      /** The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields. */
-      preview(input: Sdk.EsignSigningPreviewRequest): Promise<Sdk.EsignSigningPreviewView | StoredResult>;
       /** Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes. */
       signature(input: Sdk.EsignSigningSignatureRequest): Promise<Sdk.EsignSigningSignatureView | StoredResult>;
     };
@@ -6847,6 +6794,8 @@ declare const vault: Sdk.VaultHost & {
     export_envelope(input: Sdk.GuestDocumentShareRequest): Promise<Sdk.GuestDocumentEnvelope | StoredResult>;
     /** The owner mints an Ask or active Connect guest capability slip bound to its live grant and the public key generated by the guest on their own device, with an optional signed comm cap (below vault, owners only). */
     mint_slip(input: Sdk.GuestSlipMintRequest): Promise<Sdk.GuestSlipMinted | StoredResult>;
+    /** A Connect guest proposes one write of a record's text under its own live grant-bound credential; it lands in the owner's review inbox for that Connect and never writes the vault. */
+    propose(input: Sdk.ConnectProposeRequest): Promise<Sdk.ConnectProposalLanded | StoredResult>;
     /** The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused. */
     reshare(input: Sdk.GuestDocumentShareRequest): Promise<Sdk.GuestDocumentEnvelope | StoredResult>;
     revoke(input: Sdk.GuestRevokeRequest): Promise<Sdk.GuestRevokeResponse | StoredResult>;
@@ -6863,18 +6812,10 @@ declare const vault: Sdk.VaultHost & {
     regen: {
       /** Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record. */
       adopt(input: Sdk.HookRegenAdoptRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
-      /** Set aside, as the authenticated owner, the regen decision waiting on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. The hook keeps its body; its contract is declined until it moves again. */
-      cancel(input: Sdk.HookRegenCancelRequest): Promise<Sdk.HookRegenCancel | StoredResult>;
       /** List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen. */
       due(input: Sdk.EmptyRequest): Promise<Sdk.EntityId[] | StoredResult>;
       /** Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing. */
       get(input: Sdk.HookRegenBindingRequest): Promise<Sdk.HookRegenView | null | StoredResult>;
-      /** Read, as the authenticated owner, one hook binding's regen receipts newest first, across its rebinds: each decision with its golden manifest, and each adoption, cancel and revert. Changes nothing. */
-      history(input: Sdk.HookRegenHistoryRequest): Promise<Sdk.HookRegenReceipt[] | StoredResult>;
-      /** Revert, as the authenticated owner, the last regen adoption on one hook binding, named by the adopted body hash: the body it replaced installs again through the owner's pack put. Answers the put receipt. */
-      revert(input: Sdk.HookRegenRevertRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
-      /** Run, as the authenticated owner, one hook binding's intent again against this engine's contract on the serving host's model seat; the golden replay decides and the decision waits on the record. Enacts nothing. */
-      run(input: Sdk.HookRegenBindingRequest): Promise<Sdk.HookRegenView | null | StoredResult>;
     };
     /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest. */
     replay(input: Sdk.HooksReplayRequest): Promise<Sdk.HooksReplayPage | StoredResult>;
@@ -7038,8 +6979,6 @@ declare const vault: Sdk.VaultHost & {
         /** Sets a group address's members, by an Owner or Admin: a member removed reads none of the group's mail from then on. */
         set(input: Sdk.MailSourceMembersRequest): Promise<Sdk.MailSourceView | StoredResult>;
       };
-      /** The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience. */
-      search(input: Sdk.MailSourceSearchRequest): Promise<Sdk.MailSearchReport | StoredResult>;
       settings: {
         /** Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address. */
         set(input: Sdk.MailSourceSettingsRequest): Promise<Sdk.MailSourceView | StoredResult>;
@@ -7439,10 +7378,7 @@ declare const vault: Sdk.VaultHost & {
   };
   proactivity: {
     /** Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator. */
-    digest: ((input: Sdk.ProactivityDigestRequest) => Promise<Sdk.ProactivityDigestView | null | StoredResult>) & {
-      /** Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant. */
-      get(input: Sdk.DigestReadRequest): Promise<Sdk.ProactivityDigestView | null | StoredResult>;
-    };
+    digest(input: Sdk.ProactivityDigestRequest): Promise<Sdk.ProactivityDigestView | null | StoredResult>;
   };
   productivity: {
     /** Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write. */
