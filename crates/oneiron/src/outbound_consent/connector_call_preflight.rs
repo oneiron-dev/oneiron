@@ -119,9 +119,15 @@ impl Vault {
         let at = crate::ports::job_recorded_at_in_txn(&self.store, &txn)?;
         let judgment =
             crate::outbound_chokepoint::judge_new_effect_in_txn(self, &txn, &effect, at)?;
-        Ok(CanEffectAnswer::judged(
-            crate::gate::preflight_answer(&judgment),
-            at,
-        ))
+        // A scoped call's admission paces at a full count-bound window and
+        // reserves its tool's declared price before it charges.
+        let budget = crate::gate::PreflightBudget {
+            send_like: effect.budget_class.is_send(),
+            paces: true,
+            priced_tool: Some(&effect.tool),
+        };
+        let preflight =
+            crate::gate::preflight_answer_in_txn(&self.store, &txn, &judgment, budget, at)?;
+        Ok(CanEffectAnswer::judged(preflight, at))
     }
 }

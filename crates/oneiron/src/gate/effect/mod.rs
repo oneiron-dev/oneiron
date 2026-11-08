@@ -29,7 +29,9 @@ use self::effect_grants::{
 pub(crate) use self::effect_paced::{ExternalEffectCheck, check_external_effect_policy_paced};
 pub(crate) use self::effect_pair::{PairAdmission, check_external_effect_policy_pair};
 pub(crate) use self::evaluate::{evaluate_external_effect_policy, judge_external_effect_in_txn};
-pub(crate) use self::preflight::{ExternalEffectPreflight, PreflightVerdict, preflight_answer};
+pub(crate) use self::preflight::{
+    ExternalEffectPreflight, PreflightBudget, PreflightVerdict, preflight_answer_in_txn,
+};
 pub(crate) use self::record::{
     check_external_effect_policy, record_external_effect_policy, record_held_external_effect_policy,
 };
@@ -167,6 +169,13 @@ impl ExternalEffectJudgment {
     #[must_use]
     pub(crate) const fn press_supplies_authority(&self) -> bool {
         self.press_supplies_authority
+    }
+
+    /// The governing key an admitted effect would be charged to, if any;
+    /// the judgment selects it and charges nothing.
+    #[must_use]
+    pub(crate) const fn budget_target(&self) -> Option<&ExternalEffectBudgetTarget> {
+        self.budget_target.as_ref()
     }
 }
 

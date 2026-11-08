@@ -39,6 +39,7 @@ pub use self::row::{
 };
 pub(crate) use self::spend_reserve::{
     SpendReserve, reconcile_connector_spend_in_txn, reserve_connector_spend_in_txn,
+    spend_overrun_in_txn, tool_spend_price_in_txn,
 };
 
 /// vault_meta usage rows: key id (16 bytes) ++ row source tag u8 ++ row

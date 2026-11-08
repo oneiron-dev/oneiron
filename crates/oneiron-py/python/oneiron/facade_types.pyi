@@ -16411,6 +16411,7 @@ class CanEffectAnswer(TypedDict):
     reasons: list[str]
     holds: list[str]
     waits_for_envelope_window: bool
+    rate_window_opens_at: NotRequired[int | None]
     checked_at: int
 CanAnswer = TaskAskPreflight | CanEffectAnswer
 TaskAskPersonKind = Literal["word", "companion", "default", "unknown"]
