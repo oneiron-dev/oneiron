@@ -283,14 +283,11 @@ impl PolicyManifestResolution {
             }
         }
         let mut verdicts = Vec::new();
-        for id in crate::outbound_grant::standing_outbound_grant_ids_for_principal(
+        // The actor's standing outbound grants are consent rows (FIX 11874);
+        // a revoked row is no line.
+        for grant in crate::outbound_grant::standing_outbound_grants_for_principal_in_txn(
             store, txn, &actor_ref,
         )? {
-            let Some(grant) =
-                crate::outbound_grant::standing_outbound_grant_in_txn(store, txn, &id)?
-            else {
-                continue;
-            };
             if !grant.is_active_under_policy(&frontier) {
                 continue;
             }
@@ -304,7 +301,7 @@ impl PolicyManifestResolution {
             verdicts.push(worded_line(
                 class,
                 BriefClassSource::OutboundGrant {
-                    grant: id,
+                    grant: grant.id,
                     scope: BriefOutboundScope::of_grant_scope(&grant.scope),
                 },
                 line_codes,
