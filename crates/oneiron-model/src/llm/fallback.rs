@@ -78,7 +78,9 @@ impl FallbackRegistry {
             })?;
         if message.content.is_empty()
             || message.content.iter().all(|p| match p {
-                ContentPart::Text { text, signature } => text.trim().is_empty() && signature.is_none(),
+                ContentPart::Text { text, signature } => {
+                    text.trim().is_empty() && signature.is_none()
+                }
                 ContentPart::Reasoning {
                     text,
                     signature,

@@ -188,11 +188,17 @@ fn lens_request(
         messages: vec![
             LlmMessage {
                 role: LlmMessageRole::System,
-                content: vec![ContentPart::Text { text: instruction, signature: None }],
+                content: vec![ContentPart::Text {
+                    text: instruction,
+                    signature: None,
+                }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text, signature: None }],
+                content: vec![ContentPart::Text {
+                    text,
+                    signature: None,
+                }],
             },
         ],
         tools: Vec::new(),

@@ -4,15 +4,18 @@
 //! feed order is commit order, and a provider's re-delivery, which admits
 //! nothing new, appends nothing; nor does an event no fact binding reads
 //! (FIX 22141). A row keeps ids and tokens only, never provider text: a
-//! hook that wants more reads it under its own grant. The runner prunes the
-//! rows every hook binding has passed, and an erase leaves a row that names
-//! an erased entity at its sequence with no ids or tokens in it.
+//! hook that wants more reads it under its own grant. The runner and each
+//! housekeeping pass prune the rows every hook binding has passed (FIX
+//! 22180), and an erase leaves a row that names an erased entity at its
+//! sequence with no ids or tokens in it.
 
+use std::collections::BTreeSet;
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
+use crate::runtime_hooks::store::source_erased_in_txn;
 use crate::side_table::{self, Named, SideTable};
 use crate::surface_event::{SurfaceEvent, SurfaceEventAction, SurfaceInteractionKind};
 use crate::{EntityId, Error, Result, Vault};
@@ -83,7 +86,8 @@ impl SurfaceInboundRow {
 /// admitting write. An event whose identity or actor is no entity id is one
 /// no hook's grant can place, and one admitted with no reader
 /// ([`super::has_reader_in_txn`]) is one no hook reads, so either appends
-/// nothing.
+/// nothing. Nor does one whose identity or actor a permanent erase fenced:
+/// the erase's scrub would have emptied it (FIX 22191).
 pub(crate) fn record_surface_inbound_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -102,6 +106,11 @@ pub(crate) fn record_surface_inbound_in_txn(
         FactSource::SurfaceInbound,
         FactKind::SurfaceInbound,
     )? {
+        return Ok(());
+    }
+    if source_erased_in_txn(vault, txn, &receiving_identity)?
+        || source_erased_in_txn(vault, txn, &actor)?
+    {
         return Ok(());
     }
     let last = SURFACE_INBOUND_NEXT
@@ -234,14 +243,15 @@ pub(super) fn delete_events_in_txn(
     Ok(())
 }
 
-/// Erases `id` from the inbound feed in the caller's erase write: each row
-/// whose receiving identity or actor is `id` becomes
-/// [`InboundFeedRow::Erased`] at its own sequence. A complete scan, as the
-/// other hook carriers' scrub; a row erased already stays as it is.
+/// Erases `ids` from the inbound feed in the caller's erase write: each row
+/// whose receiving identity or actor is one of them becomes
+/// [`InboundFeedRow::Erased`] at its own sequence. One complete scan for
+/// all of them, as the other hook carriers' scrub; a row erased already
+/// stays as it is.
 pub(super) fn scrub_inbound_events_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
+    ids: &BTreeSet<EntityId>,
 ) -> Result<()> {
     let mut named = Vec::new();
     for row in SURFACE_INBOUND.iter_from(&vault.store, txn, &[])? {
@@ -249,7 +259,7 @@ pub(super) fn scrub_inbound_events_in_txn(
         if matches!(
             &row,
             InboundFeedRow::Admitted(event)
-                if event.receiving_identity == *id || event.actor == *id
+                if ids.contains(&event.receiving_identity) || ids.contains(&event.actor)
         ) {
             named.push(sequence);
         }

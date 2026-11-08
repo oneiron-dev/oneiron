@@ -3,9 +3,9 @@
 //! run key, and commits the run's memo, its run index row, local outcomes,
 //! receipt, intents and cursor in one write. Delivery is at least once, in
 //! commit order, per hook and per source. Due watcher TASKs tick on the
-//! runner's own wake: a pass on the vault's home releases them into the tick
-//! feed, and the [`HOOK_RUNNER_TICK`] re-read bounds how late a tick runs
-//! (FIX 4749).
+//! runner's own wake: each pass on the vault's home releases them into the
+//! tick feed, hooks on or off, with a binding to take a tick or none, and the
+//! [`HOOK_RUNNER_TICK`] re-read bounds how late a tick runs (FIX 4749, 22180).
 
 mod body;
 mod commit;
@@ -31,9 +31,10 @@ use super::filter;
 use super::grant::{self, HookGrant};
 use super::read::{self, SeenFact};
 use super::source::{self, FactEntry, FactKind, FactPosition, FactSource};
-use super::store::{self, CursorRow, HookRunState, RunKey};
+use super::store::{self, HookRunState, RunKey};
 
 pub(super) use body::{Verdict, ask_verdict, judge, verdict_context};
+pub(crate) use hook_feeds::prune_hook_feeds;
 use retained::RetainedPass;
 
 /// Entries one pass reads from each source: the in-memory cap. A source with
@@ -73,7 +74,7 @@ impl std::fmt::Debug for FactHookRunner {
 /// What one pass did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HookPassReport {
-    /// `hooks.enabled` is off; the pass read nothing.
+    /// `hooks.enabled` is off; the pass released due ticks and read nothing.
     pub disabled: bool,
     pub entries_read: usize,
     pub runs: usize,
@@ -86,7 +87,7 @@ pub struct HookPassReport {
     pub intents_refused: usize,
     /// Owner checks raised for cycles and deep chains.
     pub checks: usize,
-    /// A source held more entries than this pass read.
+    /// A source held more entries than this pass read, or due ticks remain.
     pub more: bool,
 }
 
@@ -147,8 +148,9 @@ impl FactHookRunner {
     }
 
     /// One pass over every source for every enabled fact binding, in
-    /// priority order (higher first, ties by body hash). With no binding it
-    /// reads nothing.
+    /// priority order (higher first, ties by body hash). With hooks off or no
+    /// binding it runs no hook, and still releases the due watcher ticks (FIX
+    /// 22180) and prunes the hook feeds (FIX 22178).
     pub fn run_pass(
         &self,
         vault: &Vault,
@@ -179,9 +181,19 @@ impl FactHookRunner {
         mut retained: Option<RetainedPass<'_>>,
     ) -> Result<HookPassReport> {
         let mut report = HookPassReport::default();
+        // Due watcher TASKs tick first, hooks on or off and with or without a
+        // binding to take a tick, as a watch TASK settles with it (FIX 22180).
+        // A binding whose cursor this node first places below is bound after
+        // these ticks: it runs an open TASK's (`open_tick_start_in_txn`), and
+        // never a watch TASK's they settled (`enabled_before_tick_in_txn`).
+        let now = vault.store.clock.now_recorded_at();
+        match source::release_due_ticks(vault, now) {
+            Ok(more) => report.more = more,
+            Err(error) => tracing::warn!(%error, "due watcher ticks wait for the next pass"),
+        }
         if !vault.hooks_enabled()? {
             report.disabled = true;
-            return Ok(report);
+            return hook_feeds::prune_hook_feeds(vault, max_entries).map(|()| report);
         }
         // Calls a settled verb hook ask made ready run here, the first pass
         // at start included: outside any write, at hook depth 0. A failed
@@ -415,9 +427,6 @@ impl Pass<'_, '_> {
         for (id, _) in bindings {
             cursors.push(self.cursor_for(*id, source)?);
         }
-        // Due ticks release after every cursor above is placed: a binding
-        // met for the first time starts before them (FIX 4749).
-        self.release_ticks(source, bindings)?;
         let lowest = cursors.iter().copied().min().flatten();
         let batch = source::read_after(self.vault, source, lowest, max_entries)?;
         self.report.entries_read += batch.entries.len();
@@ -464,7 +473,7 @@ impl Pass<'_, '_> {
     }
 
     /// A binding's cursor in `source`, or where it starts when it holds none
-    /// or was re-enabled ([`source::enable_start_in_txn`]); one that holds no
+    /// or was re-enabled ([`store::enable_cursor_in_txn`]); one that holds no
     /// row at all is fresh to the source.
     fn cursor_for(&self, binding: EntityId, source: FactSource) -> Result<Option<FactPosition>> {
         let held = store::cursor(self.vault, binding, source)?;
@@ -473,11 +482,11 @@ impl Pass<'_, '_> {
         {
             return Ok(row.position());
         }
-        let start = {
+        let row = {
             let rtxn = self.vault.store.env.read_txn()?;
-            source::enable_start_in_txn(self.vault, &rtxn, &binding, source, held.is_none())?
+            store::enable_cursor_in_txn(self.vault, &rtxn, &binding, source, held.is_none())?
         };
-        let row = CursorRow::new(start, self.vault.store.clock.now_recorded_at());
+        let start = row.position();
         self.vault.with_write_txn_grouped(|txn| {
             store::put_cursor_in_txn(self.vault, txn, binding, source, &row)
         })?;
@@ -492,7 +501,7 @@ impl Pass<'_, '_> {
         binding: &PackHookBinding,
         entry: &FactEntry,
     ) -> Result<bool> {
-        if !filter::admits_entry(self.vault, &binding.selector.verbs, entry)? {
+        if !filter::admits_entry(self.vault, binding_id, &binding.selector.verbs, entry)? {
             self.report.skipped += 1;
             return Ok(false);
         }

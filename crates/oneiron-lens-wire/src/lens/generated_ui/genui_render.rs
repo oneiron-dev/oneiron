@@ -416,7 +416,10 @@ impl GeneratedUiSegment {
                 "generated-ui segment serialization failed: {error}"
             ))
         })?;
-        Ok(ContentPart::Text { text, signature: None })
+        Ok(ContentPart::Text {
+            text,
+            signature: None,
+        })
     }
 }
 

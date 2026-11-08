@@ -13,10 +13,12 @@
 //! reads run on the task-work turn the calling operation holds
 //! ([`author_memory`]).
 
+mod erase;
 mod outcome;
 pub(super) mod session;
 mod wait;
 
+pub(in crate::runtime_hooks) use erase::scrub_erased_asks_in_txn;
 use outcome::completed;
 pub(super) use outcome::{SavedOutcome, saved_producers};
 pub use wait::VerbHookWaitStatus;
@@ -28,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::receipt::{ActionInputs, call_reads_world, json_entity_refs};
+use crate::runtime_hooks::store;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{HookActorClass, PackHookBinding};
 use crate::task_verb::{
@@ -290,6 +293,10 @@ fn resume_from(
             reason: reason.to_owned(),
         }))
     };
+    // Saved args naming a row erased since never run (FIX 22240).
+    if store::args_erased(vault, &row.args)? {
+        return skipped(erase::ERASED_ARGS);
+    }
     let status = author_memory(vault, row.author, row.author_class, turn)
         .tasks_ask_status(TaskAskHandle { group_ref: row.ask });
     let result = match status {
@@ -409,6 +416,13 @@ pub(super) fn open(
     write: &dyn Fn(&mut heed::RwTxn<'_>) -> Result<()>,
 ) -> Result<std::result::Result<VerbHookStop, String>> {
     let (binding_id, binding) = hook;
+    let saved_args = serde_json::to_string(args)
+        .map_err(|_| Error::InvariantViolation("verb hook ask args encode"))?;
+    // Args naming an erased row are never saved: the call would run on that
+    // row, or show it, on its resume (FIX 22240).
+    if store::args_erased(vault, &saved_args)? {
+        return Ok(Err(erase::ERASED_ARGS.to_owned()));
+    }
     let mut what = TaskAskQuestion::new(ConsultPayloadRef::Claim(binding_id));
     what.label = Some(label.to_owned());
     for (option, text) in [
@@ -446,8 +460,7 @@ pub(super) fn open(
             class: call.class,
             scope: call.scope.clone(),
             domain: call.domain,
-            args: serde_json::to_string(args)
-                .map_err(|_| Error::InvariantViolation("verb hook ask args encode"))?,
+            args: saved_args.clone(),
             inputs,
             position: u32::try_from(position).unwrap_or(u32::MAX),
             binding: binding_id,
@@ -473,6 +486,9 @@ pub(super) fn open(
     // The row, its credential's witness pinned beside it when the host keeps
     // one, or the authority a plain call is asked under read in this write.
     let save = |txn: &mut heed::RwTxn<'_>, ask: EntityId| -> Result<()> {
+        if store::erased_by_args_in_txn(vault, txn, &saved_args)?.is_some() {
+            return Err(Error::EntityNotFound);
+        }
         let resume = credential::retain_in_txn(vault, txn, key, ask, resume, witness.as_ref())?;
         let resume = super::plain_resume::retain_in_txn(vault, txn, call, resume);
         ASKS.put(&vault.store, txn, &key, &row(ask, resume)?)

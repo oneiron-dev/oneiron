@@ -4872,7 +4872,7 @@
      "path": "src/authority/machine_profile/mod.rs",
      "purpose": "Folds `MachineProfile` entries into each physical machine's standing",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 2,
       "fn": 15,
       "struct": 4
@@ -68922,7 +68922,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HookBlock",
@@ -68932,7 +68932,7 @@
      "path": "src/runtime_hooks/block.rs",
      "purpose": "Hook blocks (ARCH-0080 §11): the timed pins an AddBlock outcome leaves for a recipient's next board deliveries",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -69034,7 +69034,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HookCheck",
@@ -69044,7 +69044,7 @@
      "path": "src/runtime_hooks/lineage.rs",
      "purpose": "Causal lineage and the cycle check (ARCH-0080 §4 Lineage and loops)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -69057,7 +69057,7 @@
      "path": "src/runtime_hooks/mod.rs",
      "purpose": "Runtime hooks (ARCH-0080)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "mod": 3,
       "re-export": 12
      }
@@ -69259,7 +69259,7 @@
      "purpose": "The fact-hook runner (ARCH-0080 §4 Delivery)",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 4,
       "struct": 2,
       "type": 1
@@ -69300,9 +69300,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/runner/hook_feeds.rs",
-     "purpose": "The runner's work on the engine's own hook feeds: a pass releases the due watcher TASKs into the tick feed…",
+     "purpose": "The prune of the engine's own hook feeds: the settlement, tick and inbound rows every binding has passed…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -69371,7 +69371,7 @@
      "path": "src/runtime_hooks/source/schedule.rs",
      "purpose": "The `schedule.tick` source (ARCH-0080 §4 Watchers; FIX 4749)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -69395,23 +69395,43 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/store.rs",
-     "purpose": "The runner's durable rows: cursors, the run memo, saved intents, the Hook receipts and the run index…",
+     "purpose": "The runner's durable rows: cursors ([`cursor`](mod@cursor)), the run memo, saved intents, the Hook receipts…",
      "surface": {
-      "crate-vis": 42
+      "crate-vis": 34
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/runtime_hooks/store/cursor.rs",
+     "purpose": "The hook cursor rows: per fact binding and source, the last position delivered to that binding, whether it…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/runtime_hooks/store/erase.rs",
      "purpose": "Source-erasure teardown for retained hook payloads",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/store/erase/kept.rs",
+     "purpose": "A permanent erase in a session's own store of hook records (FIX 22240)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -69422,8 +69442,18 @@
      "purpose": "A pre-hook's Ask (ARCH-0080 §3 Ask)",
      "surface": {
       "const": 2,
-      "crate-vis": 29,
+      "crate-vis": 30,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/ask/erase.rs",
+     "purpose": "A stopped call's saved args after a permanent erase (FIX 22240): a call whose saved args name an erased row…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -69475,7 +69505,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/verb/chain.rs",
@@ -69515,13 +69545,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/verb/chain/storage.rs",
      "purpose": "A chain's records (ARCH-0080 §6): the one vault write that commits its receipts, saved runs, blocks and…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/chain/tail.rs",
+     "purpose": "A chain's receipt tail (FIX 1429, FIX 5429): the newest receipts of the caller's whole family, and in a room…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -69572,7 +69612,7 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 19,
       "fn": 13,
       "re-export": 10,
       "struct": 2,
@@ -69580,15 +69620,26 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/verb/paced.rs",
      "purpose": "A verb call a count-bound budget window paced, held in its caller's fair line until its turn (FIX 8753…",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
-      "fn": 8
+      "crate-vis": 11,
+      "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/paced/end.rs",
+     "purpose": "How a held call ends without its turn: its deadline passes ([`Vault::expire_paced_verb_calls`]), or a…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -69685,13 +69736,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/verb/storage.rs",
      "purpose": "Where one verb hook chain reads content and keeps its records (WILL L11-01 S01-2c): the vault, or a…",
      "surface": {
       "crate-vis": 36
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/storage/held.rs",
+     "purpose": "A session-only call's held runs (WILL L11-01 S01-2c): what its chains hold for the call to keep, and the…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -99195,9 +99256,9 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 64,
+     "files": 70,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Runtime hooks (ARCH-0080)"
     },
@@ -99622,9 +99683,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 238,
+   "over_bar": 234,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7104,
+   "source_files": 7110,
    "test_files": 895
   },
   "oneiron-android": {

@@ -21,6 +21,13 @@
 //! the owner's work. Sweeps that need authority only a host holds are listed
 //! in every report with the reason they did not run.
 //!
+//! Every pass but a support holder's one-sweep repair, unless the host
+//! asked it to stop, first releases the due watcher ticks and prunes the
+//! hook feeds once, by the fact-hook runner's rule (FIX 22180): a host that
+//! runs no runner still settles a watch TASK at its due time and keeps the
+//! feeds bounded, and `oneiron maintain` settles a stopped vault's due watch
+//! TASKs.
+//!
 //! A host that stops a vault between uses asks [`Vault::housekeeping_wake_at`]
 //! when it must run the vault again for a retirement that comes due, a model
 //! pack's notice mark or retirement-day move included (FIX 22059).
@@ -78,10 +85,11 @@ impl Vault {
     /// `budget`. A host calls this on its own tick, off the request path. An
     /// error means the schedule could not be read; a sweep's own failure is a
     /// row of the report. Unless the host has asked it to stop, the pass
-    /// first runs one capped communication projector pass, whose failure is
-    /// logged and never fails a sweep. The model pack retirement sweep runs
-    /// against no model access: a host that binds model offers calls
-    /// [`Self::housekeeping_with_access`].
+    /// first runs one capped communication projector pass, then releases
+    /// the due watcher ticks and prunes the hook feeds once (FIX 22180),
+    /// whose failures are logged and never fail a sweep. The model pack
+    /// retirement sweep runs against no model access: a host that binds
+    /// model offers calls [`Self::housekeeping_with_access`].
     pub fn housekeeping(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
         self.housekeeping_with_access(budget, &AccessSnapshot::new())
     }
@@ -95,19 +103,24 @@ impl Vault {
         budget: HousekeepingBudget,
         access: &AccessSnapshot,
     ) -> Result<HousekeepingReport> {
-        if !budget.deadline().stopped() {
+        let deadline = budget.deadline();
+        if !deadline.stopped() {
             self.store
                 .record_hooks
                 .run_comm_projector_housekeeping_step(self);
         }
+        release_ticks_and_prune_hook_feeds(self, &deadline);
         self.housekeeping_pass(Selection::Due, budget, access)
     }
 
     /// Runs every engine sweep now, due or not, and reschedules each from
-    /// now: the owner's "run housekeeping now". The model pack retirement
-    /// sweep runs against no model access: a host that holds model offers,
-    /// `serve` or `oneiron maintain` with the offers its config and the
-    /// vault's mesh discovery rows bind, calls
+    /// now: the owner's "run housekeeping now". Unless the host has asked it
+    /// to stop, it first releases the due watcher ticks and prunes the hook
+    /// feeds once, as [`Self::housekeeping`] does, so `oneiron maintain`
+    /// settles a stopped vault's due watch TASKs (FIX 22180). The model pack
+    /// retirement sweep runs against no model access: a host that holds model
+    /// offers, `serve` or `oneiron maintain` with the offers its config and
+    /// the vault's mesh discovery rows bind, calls
     /// [`Self::housekeeping_all_with_access`] (FIX 22059, 22189).
     pub fn housekeeping_all(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
         self.housekeeping_all_with_access(budget, &AccessSnapshot::new())
@@ -120,6 +133,7 @@ impl Vault {
         budget: HousekeepingBudget,
         access: &AccessSnapshot,
     ) -> Result<HousekeepingReport> {
+        release_ticks_and_prune_hook_feeds(self, &budget.deadline());
         self.housekeeping_pass(Selection::All, budget, access)
     }
 
@@ -142,11 +156,12 @@ impl Vault {
     /// the retained peer work (FIX 11183), and a paced verb call's window or
     /// deadline (FIX 8753), and the first day to come on which the model
     /// pack retirement pass owes work, a notice mark with no notice recorded
-    /// or a retirement-day move (FIX 22059). Cache and retention hygiene
+    /// or a retirement-day move (FIX 22059), and the next due watcher tick on
+    /// the node that releases them (FIX 22180). Cache and retention hygiene
     /// never wake a vault. Reads one row per sweep, the schedule, the
-    /// retained work queues, and the installed model packs' kept checks
-    /// (FIX 20043) and notice records, so a host can ask every time it stops
-    /// the vault.
+    /// retained work queues, the installed model packs' kept checks (FIX
+    /// 20043) and notice records, and the first due index row, so a host can
+    /// ask every time it stops the vault.
     pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
         let states = schedule::read_states(self)?;
         let noted = {
@@ -175,6 +190,13 @@ impl Vault {
         // A model pack's notice mark or retirement day (FIX 22059): the pass
         // records the move and sends the notices on the day itself.
         if let Some(at) = self.model_pack_retirement_wake_at()? {
+            owed.push((HousekeepingSweep::ModelPackRetirement, at));
+        }
+        // The next due watcher tick (FIX 22180): the host's hook runner, or
+        // its first housekeeping pass, releases it once the vault is up
+        // again. The minute carrier, the host tick's own cadence, keeps the
+        // wake within a minute of the tick's due time.
+        if let Some(at) = crate::runtime_hooks::next_tick_release_at(self)? {
             owed.push((HousekeepingSweep::ModelPackRetirement, at));
         }
         let mut earliest: Option<u64> = None;
@@ -386,5 +408,41 @@ impl Vault {
             // interrupted and retries it after the backoff.
             Err(error) => SweepOutcome::Failed { kind: error.kind() },
         }
+    }
+}
+
+/// The hook feed step of a housekeeping pass, the host tick's and the
+/// owner's alike (FIX 22180), unless the host asked the pass to stop. It
+/// releases the due watcher TASKs into the tick feed on the vault's home, as
+/// each fact-hook runner pass does, one bounded release after another until
+/// none remain or `deadline` passes, then prunes the hook feeds once by the
+/// runner's rule, at most `HOOK_PASS_ENTRIES` rows a feed: a host that runs
+/// no hook runner (`--no-hooks`, no sandbox, a sandbox that failed to load)
+/// still settles a watch TASK at its due time and drops the ticks no binding
+/// reads again, and `oneiron maintain` settles a stopped vault's due watch
+/// TASKs. Beside a live runner, a row two releases both plan moves once, and
+/// a row two prunes both plan goes once (`prune_hook_feeds`). A failed
+/// release or prune is logged and retried on the next pass.
+fn release_ticks_and_prune_hook_feeds(vault: &Vault, deadline: &Deadline) {
+    if deadline.stopped() {
+        return;
+    }
+    loop {
+        match crate::runtime_hooks::release_due_ticks(vault, vault.now_recorded_at()) {
+            Ok(true) if !deadline.passed() => {}
+            Ok(_) => break,
+            Err(error) => {
+                tracing::warn!(%error, "housekeeping: due watcher ticks wait for the next pass");
+                break;
+            }
+        }
+    }
+    if deadline.stopped() {
+        return;
+    }
+    if let Err(error) =
+        crate::runtime_hooks::prune_hook_feeds(vault, crate::runtime_hooks::HOOK_PASS_ENTRIES)
+    {
+        tracing::warn!(%error, "housekeeping: passed hook feed rows wait for the next pass");
     }
 }

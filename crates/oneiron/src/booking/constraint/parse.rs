@@ -207,7 +207,10 @@ fn constraint_parse_llm_request(
 fn system_message(text: String) -> LlmMessage {
     LlmMessage {
         role: LlmMessageRole::System,
-        content: vec![ContentPart::Text { text, signature: None }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     }
 }
 

@@ -99,8 +99,9 @@ impl Emitted {
                 },
             ),
             Event::TextDelta { part_id, text } | Event::ReasoningDelta { part_id, text } => {
-                if let Some(Shown::Text { text: shown, .. } | Shown::Reasoning { text: shown, .. }) =
-                    self.parts.get_mut(part_id)
+                if let Some(
+                    Shown::Text { text: shown, .. } | Shown::Reasoning { text: shown, .. },
+                ) = self.parts.get_mut(part_id)
                 {
                     shown.push_str(text);
                 }
@@ -109,7 +110,10 @@ impl Emitted {
                 part_id,
                 signature: Some(signature),
             } => {
-                if let Some(Shown::Text { signature: shown, .. }) = self.parts.get_mut(part_id) {
+                if let Some(Shown::Text {
+                    signature: shown, ..
+                }) = self.parts.get_mut(part_id)
+                {
                     *shown = Some(signature.clone());
                 }
             }

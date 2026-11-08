@@ -605,7 +605,10 @@ fn judge_call(
     let mut request = judge_shell(model, schema, locality, keyless, paid);
     request.messages.push(LlmMessage {
         role: LlmMessageRole::User,
-        content: vec![ContentPart::Text { text: input, signature: None }],
+        content: vec![ContentPart::Text {
+            text: input,
+            signature: None,
+        }],
     });
     Ok(request)
 }
