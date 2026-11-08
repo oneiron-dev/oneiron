@@ -29,8 +29,8 @@ use serde_json::{Map, Value};
 
 use super::FacadeApiError;
 use crate::api::body_spool::{
-    self, Base64FileSink, BodySpool, BulkMember, HeadFail, SinkRefusal, SpoolPolicy, SpooledField,
-    TextFileSink, Unspooled,
+    self, Base64FileSink, BodySpool, BulkMember, HeadFail, SinkRefusal, SpoolFailed, SpoolPolicy,
+    SpooledField, TextFileSink, Unspooled,
 };
 use crate::server::SyncServer;
 
@@ -139,10 +139,10 @@ pub(super) async fn read_receipt_body(
                 refused: None,
             }
         }
-        Err(refused) => ReceiptBody {
+        Err((refused, body_digest)) => ReceiptBody {
             bytes: Bytes::new(),
             request: None,
-            digest: oneiron::receipt::call_bytes_digest(&[]),
+            digest: body_digest.unwrap_or_else(|| oneiron::receipt::call_bytes_digest(&[])),
             refused: Some(refused),
         },
     }
@@ -177,12 +177,13 @@ enum Spooled {
 }
 
 /// Spools `body`, at most the facade's request bound of it, counted as it
-/// arrives, and reads it on the spool's worker.
+/// arrives, and reads it on the spool's worker. A refusal after the whole
+/// body arrived names the body's digest.
 async fn spool(
     server: &SyncServer,
     headers: &HeaderMap,
     body: Body,
-) -> Result<Spooled, FacadeApiError> {
+) -> Result<Spooled, (FacadeApiError, Option<String>)> {
     let limit = u64::try_from(crate::api::request_floor::request_floor(server)).unwrap_or(u64::MAX);
     let declared = body_spool::declared_length(headers);
     if declared.is_some_and(|declared| declared > limit) {
@@ -202,18 +203,38 @@ async fn spool(
     if over.load(Ordering::Relaxed) {
         return Ok(Spooled::Whole(Bytes::new()));
     }
-    match read.and_then(|read| read) {
-        Ok(spooled) => Ok(spooled),
+    match read {
+        Ok(Ok(spooled)) => Ok(spooled),
+        Ok(Err(failed)) => Err((
+            FacadeApiError::from(read_refusal(failed.unspooled)),
+            failed.body_digest,
+        )),
         // A body that did not arrive whole reaches the route empty, as before.
         Err(Unspooled::Failed) => Ok(Spooled::Whole(Bytes::new())),
-        Err(unspooled) => Err(FacadeApiError::from(unspooled.refusal())),
+        Err(unspooled) => Err((FacadeApiError::from(unspooled.refusal()), None)),
     }
+}
+
+/// The refusal of a whole body whose spool did not read: the room or memory
+/// it lacked, or the spool's own failure.
+fn read_refusal(unspooled: Unspooled) -> crate::error::ApiError {
+    match unspooled {
+        Unspooled::Failed => {
+            crate::error::ApiError::internal_server_error("the request body's spool did not read")
+        }
+        unspooled => unspooled.refusal(),
+    }
+}
+
+/// Reads the spool ([`read_spool_in`]); a failure names the body's digest.
+fn read_spool(vault: &oneiron::Vault, mut spool: BodySpool) -> Result<Spooled, SpoolFailed> {
+    read_spool_in(vault, &mut spool).map_err(|unspooled| spool.failed(unspooled))
 }
 
 /// Reads the spool: the content to its file and the rest as JSON when the
 /// body is one object with one base64 content string longer than an entity
 /// ref; else the body whole.
-fn read_spool(vault: &oneiron::Vault, mut spool: BodySpool) -> Result<Spooled, Unspooled> {
+fn read_spool_in(vault: &oneiron::Vault, spool: &mut BodySpool) -> Result<Spooled, Unspooled> {
     let file = vault
         .archive_spool_file()
         .map_err(body_spool::create_failed)?;
@@ -262,7 +283,7 @@ fn read_spool(vault: &oneiron::Vault, mut spool: BodySpool) -> Result<Spooled, U
             Err(_) => {}
         }
     }
-    read_whole(&mut spool)
+    read_whole(spool)
 }
 
 /// The digest of the body as it arrived: its members' canonical JSON with
