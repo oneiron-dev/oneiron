@@ -550,7 +550,9 @@ fn withdraw_words_in_txn(
 /// Past the dependent walk's batch, a row that is no epoch summary takes the
 /// stale mark alone, which every read honours: its words leave a fold's
 /// ledger at the reads' fence and the run's next ledger write, as before.
-/// No count refuses the walk (rule 5).
+/// The recorded fold answers that copied them go before this returns (FIX
+/// 18924): no answer waits for a callback the walk passed by. No count
+/// refuses the walk (rule 5).
 pub(super) fn withdraw_source_chain_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
@@ -559,6 +561,7 @@ pub(super) fn withdraw_source_chain_in_txn(
 ) -> Result<()> {
     let store = write.store;
     let mut budget = super::dependent_walk::policy_in(store, txn)?.batch;
+    let mut passed_by = false;
     while let Some(next) = pending.pop() {
         let epoch = epoch_summary_in(store, txn, &next)?;
         if !epoch && outlives_withdrawal_in(store, txn, &next)? {
@@ -584,7 +587,12 @@ pub(super) fn withdraw_source_chain_in_txn(
             budget -= 1;
             crate::scope_summary::scrub_withdrawn_copy_in_txn(store, txn, &next)?;
             crate::compaction::scrub_withdrawn_fold_summary_in_txn(store, txn, &next)?;
+        } else {
+            passed_by = true;
         }
+    }
+    if passed_by {
+        crate::code_run::retire_fold_answers_in_txn(store, txn, None)?;
     }
     Ok(())
 }
@@ -680,7 +688,14 @@ pub(crate) fn invalidate_source_in_txn(
     let store = write.store;
     crate::feedback::intake::forget_report_cluster_member_in_txn(store, txn, document, door)?;
     crate::claim::invalidate_weave_digest_source_in_txn(store, txn, document)?;
-    super::dependent_walk::begin_in_txn(write, txn, document, door)
+    super::dependent_walk::begin_in_txn(write, txn, document, door)?;
+    // Past the walk's first batch its mark withdraws each fold it has not
+    // reached yet: the recorded answers that copied their words go now, not
+    // at the batch that reaches each fold (FIX 18924).
+    if super::dependent_walk::any_pending_walk(store, txn)? {
+        crate::code_run::retire_fold_answers_in_txn(store, txn, None)?;
+    }
+    Ok(())
 }
 /// Withdraws one dependent for `worlds`; an EVENT that
 /// outlives its source stays. The withdrawn row stays withdrawn: its family
