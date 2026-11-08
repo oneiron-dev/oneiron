@@ -5,7 +5,7 @@
 //! cross it the same way (FIX 22153).
 
 use super::TransportError;
-use crate::error::{Error, StoreError, SyncEngineContext, SyncError};
+use crate::error::{Error, SecretError, StoreError, SyncEngineContext, SyncError};
 
 /// Whether `error` is a window admission's fault reading this vault's own
 /// state (FIX 5850), told by its typed engine context, never by its text.
@@ -23,8 +23,8 @@ pub(crate) fn is_window_admission_read_fault(error: &Error) -> bool {
 /// (FIX 5926, FIX 22153): its store, disk or map, a local writer that moved
 /// under it, its own index, its config, a store that does not open as this
 /// build expects, a window it cannot find or holds busy, a live document
-/// slot it waited for past the deadline, or a window admission's read of
-/// its own state.
+/// slot it waited for past the deadline, its own keystore or credential
+/// custody that cannot open, or a window admission's read of its own state.
 pub(crate) fn is_own_vault_fault(error: &Error) -> bool {
     is_window_admission_read_fault(error)
         || matches!(
@@ -44,6 +44,8 @@ pub(crate) fn is_own_vault_fault(error: &Error) -> bool {
                 | Error::Sync(SyncError::WindowNotFound { .. })
                 | Error::Sync(SyncError::WindowBusy { .. })
                 | Error::Sync(SyncError::LiveDocumentWaitedOut)
+                | Error::Secret(SecretError::KeystoreUnavailable(_))
+                | Error::Secret(SecretError::CredentialCustodyUnavailable { .. })
         )
 }
 
