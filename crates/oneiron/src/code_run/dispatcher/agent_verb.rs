@@ -256,15 +256,19 @@ impl HostSelfDispatcher<'_> {
                     && answer.output.get("outcome").and_then(Value::as_str)
                         == Some("delivered") =>
             {
-                let (rows, observations, hooks) =
-                    (&answer.rows, &answer.observations, &answer.hooks);
+                // Every field of the answer but its output, which the
+                // publisher replaces with the stored body's card: the large
+                // reply is never cloned.
+                let output = std::mem::take(&mut answer.output);
+                let template = AgentVerbAnswer {
+                    stored_output: None,
+                    ..answer.clone()
+                };
+                answer.output = output;
                 publisher.publish(&mut answer.output, &mut |wtxn, card, reply| {
                     let answer = SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
                         output: card.clone(),
-                        rows: rows.clone(),
-                        observations: observations.clone(),
-                        hooks: hooks.clone(),
-                        stored_output: None,
+                        ..template.clone()
                     });
                     let mut row = CodeRunBridgeCall::record(
                         0,
