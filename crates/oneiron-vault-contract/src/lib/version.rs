@@ -248,16 +248,17 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// address are the supervisor's; the engine defaults none. No `Ping` field is
 /// added and this version stays 3.
 ///
-/// VM managed profile (FIX 6809): the config drive's five typed files,
-/// `/config/organization-owner`, `/config/member-vault`,
-/// `/config/failure-signal-export`, `/config/failure-signal-training` and
-/// `/config/fast-dims`
+/// VM managed profile (FIX 6809; FIX 13707): the config drive's seven typed
+/// files, `/config/organization-owner`, `/config/member-vault`,
+/// `/config/failure-signal-export`, `/config/failure-signal-training`,
+/// `/config/fast-dims`, `/config/privacy-posture` and
+/// `/config/checkpoint-host-opt-out`
 /// ([`VM_GUEST_ORGANIZATION_OWNER_FILE`](crate::vm::VM_GUEST_ORGANIZATION_OWNER_FILE)
-/// and its four siblings), which `oneiron-vm-init` reads before the vault's
+/// and its six siblings), which `oneiron-vm-init` reads before the vault's
 /// key goes in and passes to an open's or a cold restore's engine as its
 /// managed-profile flags, carry a build floor, at the engine revision they
 /// merged in, proven by the image manifest's required
-/// `vm_managed_profile_revision` 1
+/// `vm_managed_profile_revision` 2
 /// ([`VM_MANAGED_PROFILE_REVISION`](crate::vm::VM_MANAGED_PROFILE_REVISION)).
 /// An image before the floor ignores the files, so its vault would start
 /// without its tenancy or its owner's choices: a supervisor checks the
@@ -388,9 +389,7 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// every answer repeats it with the other six fields. A `held` answer
 /// requires `visibility`
 /// ([`RelayHoldVisibility`](crate::relay_delete::RelayHoldVisibility):
-/// `visible` or `silent_only`); the relay answers a silent-only one with a
-/// neutral `completion_pending` that names no hold, and a visible one with
-/// `held_until_release`. A relay's deferred-delete intent requires its
+/// `visible`), and the relay answers it with `held_until_release`. A relay's deferred-delete intent requires its
 /// generation too. The supervisor binds a locker and forwards a relay's
 /// retirements only to an engine boot that proved revision 2; a relay
 /// binary, broker or engine before the floor is not mixed with one after it.
@@ -560,6 +559,23 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// field: engine, supervisor and vault-VM readers use this shape together at
 /// or after that floor. New fields are required, no reader without them is
 /// kept, and this version stays 3.
+///
+/// Checkpoint host-order recipients (FIX 11543): managed serve accepts the
+/// supervisor-only `--checkpoint-host-holds-recipient-fd`, one public ONHB
+/// bundle and its full-bundle fingerprint followed by EOF. A vault VM carries
+/// the same optional recipient in its provision prelude and exact echoed
+/// reply at provision revision 2; the fscrypt key's raw frame is unchanged.
+/// Host profiles require `checkpoint_host_holds_recipient`, `null` when none
+/// is available. The bootstrap passes a usable recipient on a private pipe
+/// for both open and restore starts. Missing or unusable recipients never
+/// veto startup; checkpoints truthfully report `recipient_missing` instead.
+/// The managed engine, host library, bootstrap and rebuilt image move together
+/// at the engine revision this merges in. Its image manifest advertises
+/// `provision_revision = 2`; revision 1 has no reader kept. The supervisor
+/// passes the new argv flag only to engines at or after this build floor.
+/// This version stays 3; outbox, restore and guest protocol revisions do not
+/// change. An older pinned release recipe remains evidence of its older
+/// build, not a claim that its image gained revision 2 without being rebuilt.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

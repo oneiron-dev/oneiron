@@ -1,46 +1,14 @@
-//! The container walk and rebuild with their frames on the heap (FIX 8031,
-//! 7943): each container's frame held here rather than on the thread's
-//! stack, so a file of distinct nested containers is read whole at any depth
-//! without running that stack out. No depth or count bound holds (rule 5);
-//! a container met inside itself is a cycle, and the bounded read's byte
-//! floor is its budget's. Every read comes here: the write door's, the
-//! release and serving doors' and the retained repository read.
-//!
-//! A container's members are read one level at a time through its reader,
-//! then walked in order, each handed to the visitor before anything under
-//! it. A member ahead of every container at its level is handed over as its
-//! reader yields it, so an archive of plain files is still held one member
-//! at a time. A reader that stops partway leaves the members it read before
-//! its stop to be walked first, so the keys they hold are still seen; then
-//! its stop is the walk's. Each container is entered before its members are
-//! read and left after them, so the cycle guard knows exactly the containers
-//! the walk is inside, and a walk that stops leaves each it entered.
-//!
-//! The rebuild reads, the same way, the members a place lies under, builds
-//! each from the bottom up, then has the container's reader read it again
-//! and encode it around those members, handed back at their steps in order.
-//! What it does at each place is its leaf transform's
-//! ([`RetainedLeafTransform`]): masking fills the place's spans, a serving
-//! copy's text member taking each key's handle text (FIX 7944), and a
-//! projection edit replays a member's edit onto its original (FIX 7608
-//! 2b-ii), over this one traversal and these readers.
+//! Core half of `batch::secret_scan::container::retained_iterative`: its store-layer items live in `oneiron_store::batch::secret_scan::container::retained_iterative` and are
+//! re-exported here; the items below stay in the engine.
+
+pub(crate) use oneiron_store::batch::secret_scan::container::retained_iterative::*;
 
 use super::{
-    Budget, Kind, Stop, Walked, archive, classify, gzip, over_budget, pdf, tar, writes_handles, xz,
+    Budget, Kind, ReadProgress, Stop, Walked, archive, classify_with_pacing, gzip, over_budget,
+    pdf, sevenz, tar, writes_handles, xz,
 };
 use crate::error::Error;
 use crate::file_secret_marks::{KeyPlaces, MemberStep, PlaceHandles, filled, filled_with};
-
-/// What the walk does next, the last frame first.
-enum Frame {
-    /// A member to hand to the visitor, then to walk when it is a container.
-    Member(MemberStep, Vec<u8>),
-    /// The stop a container's reader met after the members framed above it.
-    Stopped(Stop),
-    /// A container whose members are walked: the walk leaves it, and its
-    /// step leaves the path (the file's own container has none).
-    Leave,
-}
 
 /// Every member under `bytes`, depth first in each container's order,
 /// handed to `visit` with its path.
@@ -71,6 +39,7 @@ fn walk_frames(
     while let Some(frame) = frames.pop() {
         match frame {
             Frame::Member(step, member) => {
+                budget.pacing.checkpoint(ReadProgress::Member)?;
                 path.push(step);
                 visit(path.as_slice(), member.as_slice())?;
                 if !enter(&member, &mut path, budget, visit, frames)? {
@@ -99,15 +68,16 @@ fn enter(
     visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
     frames: &mut Vec<Frame>,
 ) -> Walked<bool> {
-    let Some(container) = classify(bytes) else {
+    let Some(container) = classify_with_pacing(bytes, &budget.pacing) else {
         return Ok(false);
     };
     budget.enter_container(bytes)?;
     frames.push(Frame::Leave);
     let mut held: Vec<Frame> = Vec::new();
     let mut visitor_stopped = false;
-    let mut each = |step: MemberStep, member: &[u8], _: &mut Budget| -> Walked<()> {
-        if !held.is_empty() || classify(member).is_some() {
+    let mut each = |step: MemberStep, member: &[u8], budget: &mut Budget| -> Walked<()> {
+        budget.pacing.checkpoint(ReadProgress::Member)?;
+        if !held.is_empty() || classify_with_pacing(member, &budget.pacing).is_some() {
             held.push(Frame::Member(step, member.to_vec()));
             return Ok(());
         }
@@ -148,63 +118,6 @@ enum Opened {
     Open(Open),
 }
 
-/// What the retained rebuild does at each place it builds: the place's own
-/// transform, and which members it goes down into.
-pub(super) trait RetainedLeafTransform {
-    /// `bytes`, the place at `path`, once transformed.
-    fn transform(&mut self, path: &[MemberStep], bytes: Vec<u8>) -> Walked<Vec<u8>>;
-    /// Whether a place lies strictly under `path`.
-    fn descends(&self, path: &[MemberStep]) -> bool;
-    /// Whether `path` is a place or lies on the way to one.
-    fn reaches(&self, path: &[MemberStep]) -> bool;
-}
-
-/// Masking's transform: each place's spans filled, or in a text member
-/// replaced by the handle text `handles` gives a key (FIX 7944), `met`
-/// counting the places met.
-struct FillPlaces<'p> {
-    places: &'p KeyPlaces,
-    handles: Option<&'p PlaceHandles>,
-    met: usize,
-}
-
-impl RetainedLeafTransform for FillPlaces<'_> {
-    fn transform(&mut self, path: &[MemberStep], bytes: Vec<u8>) -> Walked<Vec<u8>> {
-        let mut spans: Vec<((u64, u64), Option<&str>)> = Vec::new();
-        for (index, (at, at_spans)) in self.places.iter().enumerate() {
-            if at.as_slice() != path {
-                continue;
-            }
-            let texts = self.handles.and_then(|handles| handles.get(index));
-            spans.extend(at_spans.iter().enumerate().map(|(key, span)| {
-                let text = texts
-                    .and_then(|texts| texts.get(key))
-                    .and_then(Option::as_deref);
-                (*span, text)
-            }));
-            self.met += 1;
-        }
-        if spans.is_empty() {
-            return Ok(bytes);
-        }
-        spans.sort_unstable_by_key(|(span, _)| *span);
-        if self.handles.is_some() && writes_handles(path, &bytes) {
-            return filled_with(&bytes, &spans).map_err(Stop::Fail);
-        }
-        filled(&bytes, spans.into_iter().map(|(span, _)| span)).map_err(Stop::Fail)
-    }
-
-    fn descends(&self, path: &[MemberStep]) -> bool {
-        self.places
-            .iter()
-            .any(|(at, _)| at.len() > path.len() && at.starts_with(path))
-    }
-
-    fn reaches(&self, path: &[MemberStep]) -> bool {
-        self.places.iter().any(|(at, _)| at.starts_with(path))
-    }
-}
-
 /// `bytes` with each key `places` names overwritten, every container on the
 /// way rebuilt by its own reader; a key in a text member takes its handle
 /// text from `handles` when given. `met` counts the places met.
@@ -219,6 +132,7 @@ pub(super) fn rebuild(
         places,
         handles,
         met: 0,
+        pacing: budget.pacing.clone(),
     };
     let rebuilt = rebuild_with(bytes, &mut fill, budget);
     *met += fill.met;
@@ -254,6 +168,7 @@ fn rebuild_open(
         Opened::Open(file) => open.push(file),
     }
     while let Some(top) = open.last_mut() {
+        budget.pacing.checkpoint(ReadProgress::Member)?;
         if let Some((step, member)) = top.pending.pop() {
             path.push(step);
             match start(&member, &mut path, leaf, budget)? {
@@ -298,11 +213,12 @@ fn start(
     if !leaf.descends(path.as_slice()) {
         return Ok(Opened::Built(copy));
     }
-    let container =
-        classify(bytes).ok_or(Stop::Fail(Error::CorruptedIndex("masked file member path")))?;
+    let container = classify_with_pacing(bytes, &budget.pacing)
+        .ok_or(Stop::Fail(Error::CorruptedIndex("masked file member path")))?;
     budget.enter_container(bytes)?;
     let mut pending: Vec<(MemberStep, Vec<u8>)> = Vec::new();
-    let mut each = |step: MemberStep, member: &[u8], _: &mut Budget| -> Walked<()> {
+    let mut each = |step: MemberStep, member: &[u8], budget: &mut Budget| -> Walked<()> {
+        budget.pacing.checkpoint(ReadProgress::Member)?;
         path.push(step);
         if leaf.reaches(path.as_slice()) {
             pending.push((step, member.to_vec()));
@@ -356,36 +272,9 @@ fn reader_rebuilt(
         // FIX 2471: a tar or xz container is rebuilt around its masked members.
         Kind::Tar => tar::rebuilt(bytes, budget, each),
         Kind::Xz => xz::rebuilt(bytes, budget, each),
+        // FIX 11575: a 7z archive is rebuilt around its masked members.
+        Kind::SevenZip => sevenz::rebuilt(bytes, budget, each),
         Kind::Pdf => pdf::rebuilt(bytes, budget, each),
-    }
-}
-
-/// The serving rebuild's transform (FIX 12279): transform nothing, enter
-/// every container. `transform` sees each place's bytes before `descends`
-/// is asked, so it records the paths that read as containers; every live
-/// member is then built (a container rebuilt by its own reader, anything
-/// else kept whole), so the bytes no reader shows are left out at every
-/// level, not the root alone. A member inside hidden bytes is never read
-/// as a live member, so it is dropped with them, never rebuilt.
-#[derive(Default)]
-struct RebuildAll {
-    containers: Vec<Vec<MemberStep>>,
-}
-
-impl RetainedLeafTransform for RebuildAll {
-    fn transform(&mut self, path: &[MemberStep], bytes: Vec<u8>) -> Walked<Vec<u8>> {
-        if classify(&bytes).is_some() {
-            self.containers.push(path.to_vec());
-        }
-        Ok(bytes)
-    }
-
-    fn descends(&self, path: &[MemberStep]) -> bool {
-        self.containers.iter().any(|at| at.as_slice() == path)
-    }
-
-    fn reaches(&self, _path: &[MemberStep]) -> bool {
-        true
     }
 }
 
@@ -398,7 +287,11 @@ impl RetainedLeafTransform for RebuildAll {
 /// and unrebuilt nested bytes are never in it: a member the walk did not
 /// build is in no copy at all, the walk having stopped instead.
 pub(super) fn rebuild_tree(bytes: &[u8], budget: &mut Budget) -> Walked<Vec<u8>> {
-    rebuild_with(bytes, &mut RebuildAll::default(), budget)
+    let mut leaf = RebuildAll {
+        pacing: budget.pacing.clone(),
+        ..RebuildAll::default()
+    };
+    rebuild_with(bytes, &mut leaf, budget)
 }
 
 /// Hands each member `container`'s reader reads in `bytes` to `each`.
@@ -414,6 +307,8 @@ fn members(
         // FIX 2471: a tar's files and an xz payload are members.
         Kind::Tar => tar::members(bytes, budget, each),
         Kind::Xz => xz::members(bytes, budget, each),
+        // FIX 11575: a 7z archive's entries with data are members.
+        Kind::SevenZip => sevenz::members(bytes, budget, each),
         Kind::Pdf => pdf::members(bytes, budget, each),
     }
 }

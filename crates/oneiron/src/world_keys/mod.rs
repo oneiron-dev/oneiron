@@ -41,6 +41,7 @@ mod root;
 mod root_doors;
 mod root_issue;
 mod root_work;
+mod sealed_update;
 mod session;
 mod side_row;
 mod state;
@@ -55,16 +56,22 @@ mod tests;
 pub(crate) use self::bundle::BundleCarry;
 #[cfg(feature = "sync")]
 pub(crate) use self::bundle::PadEraseSubject;
+#[cfg(feature = "sync")]
+pub(crate) use self::bundle::publication_grant_requests;
 pub use self::bundle::{
     OpenedBundleSection, OpenedKeyPads, OpenedVaultBundle, SEALED_BUNDLE_KEEP,
     SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, SealedBundleGeneration,
-    SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, WorldCapsuleImport,
-    retired_bundle_generations, sealed_bundle_slot,
+    SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, UnmergedSection,
+    UnmergedStage, WorldCapsuleImport, retired_bundle_generations, sealed_bundle_slot,
 };
 #[cfg(feature = "sync")]
 pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant, SealedPublicationGrant};
 #[cfg(feature = "sync")]
+pub(crate) use self::content::purge_world_mirrors_in_txn;
+#[cfg(feature = "sync")]
 pub(crate) use self::content_landed::unland_window_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use self::content_window::{any_mirror_in, rewrite_mirrors_in_txn};
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
 pub use self::kit::{
@@ -79,7 +86,7 @@ pub use self::owner_work::{
     ExecutorObservation, LatestRead, OwnerWorkCancelNote, OwnerWorkCancelState,
     OwnerWorkDiagnostics, OwnerWorkDrain, OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned,
     PublicationDiagnostics, PublishAttemptView, PublishObserved, PublishReach, ReassertDiagnostics,
-    ReassertKey, ReassertKeyState, ReassertUnread, RelayObservation,
+    ReassertKey, ReassertKeyState, ReassertUnread, RelayObservation, UnmergedUploadView,
 };
 pub(crate) use self::pad_custody::world_pad_recipients_in_txn;
 #[allow(unused_imports, reason = "02A2 wires the projection (L02, L03)")]
@@ -136,6 +143,10 @@ pub use self::root::{
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
 pub use self::root_issue::PreparedRoot;
 pub use self::root_work::{RootMaterial, RootSecret, RootWorkDone};
+pub(crate) use self::sealed_update::{
+    OpenedWorldUpdate, SEALED_UPDATE_PART_BYTES, SealedUpdateKind, open_world_update,
+    seal_world_message,
+};
 pub use self::session::WorldKeyFrontierCheck;
 pub(crate) use self::session::{CountersignStage, WorldKeySession};
 pub(crate) use self::side_row::{WorldSideRowBinding, open_side_row, seal_side_row};

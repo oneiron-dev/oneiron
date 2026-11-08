@@ -150,6 +150,7 @@ fn validate_terminal(
                 call_id,
                 name,
                 input,
+                ..
             } => call_id.trim().is_empty() || name.trim().is_empty() || !input.is_object(),
             // Tool results are history from a tool, never an assistant generation.
             oneiron::ContentPart::ToolResult { .. } => true,
@@ -213,7 +214,7 @@ impl CheckedStream<'_> {
                 self.parts.get(part_id) != Some(&StreamPart::Reasoning)
             }
             Event::TextEnd { part_id } => return self.end(part_id, StreamPart::Text),
-            Event::ReasoningEnd { part_id } => return self.end(part_id, StreamPart::Reasoning),
+            Event::ReasoningEnd { part_id, .. } => return self.end(part_id, StreamPart::Reasoning),
             Event::ToolCallStart {
                 part_id,
                 call_id,
@@ -239,6 +240,7 @@ impl CheckedStream<'_> {
                 call_id,
                 name,
                 input,
+                ..
             } => {
                 if !input.is_object() || call_id.trim().is_empty() || name.trim().is_empty() {
                     true

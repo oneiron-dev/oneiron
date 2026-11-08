@@ -5,9 +5,11 @@
 
 use super::super::core_engine_error;
 use super::super::parse_entity_id_param;
+use super::tasks_budget::TasksRowBudget;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::server::SyncServer;
+use crate::server::self_brief_custody::BriefResidence;
 use oneiron::EntityId;
 use oneiron::context_board::BoardFrameError;
 use oneiron::context_board::BoardSection;
@@ -39,7 +41,8 @@ pub(crate) struct ContextBoardRoomControls {
 }
 
 /// Where the ROOM rows this board rendered sit in the room's whole stream
-/// (FIX 9746, 9747): its members by actor id, then its rules by claim id.
+/// (FIX 9746, 9747): its members in the room record's order (FIX 10567),
+/// then its rules by claim id.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ContextBoardRoomPage {
     /// Members on the room's whole roster.
@@ -73,11 +76,29 @@ pub(crate) struct ContextBoardRenderBudget {
     floor_exceeds_cap: bool,
     /// The shed ranks applied, in order.
     applied_shed: Vec<String>,
+    /// Concrete TASK-row projection budget, when the request or the TASKS
+    /// share set one. Pre-frame projection after pins/tags, not final
+    /// delivered cost.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(inline)]
+    tasks: Option<TasksRowBudget>,
+    /// The sections the actor's board layout folded to one line, by key.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    folded: Vec<String>,
+    /// The sections a layout share fitted, by key.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    fitted: Vec<String>,
 }
 
 impl ContextBoardRenderBudget {
-    pub(super) fn of(render: &oneiron::context_board::BoardRender) -> Self {
+    pub(super) fn of(
+        render: &oneiron::context_board::BoardRender,
+        tasks: Option<TasksRowBudget>,
+        laid_out: &oneiron::context_board::LaidOutBoard,
+    ) -> Self {
         Self {
+            folded: laid_out.folded.clone(),
+            fitted: laid_out.fitted.clone(),
             budget_tok: render.metadata.budget_tok,
             rendered_tok: render.metadata.rendered_tok,
             floor_exceeds_cap: render.metadata.floor_exceeds_cap,
@@ -87,6 +108,7 @@ impl ContextBoardRenderBudget {
                 .iter()
                 .map(|rank| rank.as_str().to_owned())
                 .collect(),
+            tasks,
         }
     }
 }
@@ -189,6 +211,9 @@ pub(super) struct BoardParts {
     pub(super) you: Option<String>,
     pub(super) worlds: Vec<String>,
     pub(super) tasks: Vec<String>,
+    /// Concrete TASK-row projection budget, when the caller asked for one.
+    /// Post hook/tag, pre whole-frame; the response carries it beside TASKS.
+    pub(super) tasks_budget: Option<TasksRowBudget>,
     pub(super) room: Option<Vec<String>>,
     /// Where the ROOM rows sit in the room's whole stream.
     pub(super) room_page: Option<ContextBoardRoomPage>,
@@ -196,15 +221,25 @@ pub(super) struct BoardParts {
     /// The task intents, worlds, room, room rules and project the board
     /// named: rows a keyed replay re-admits.
     pub(super) named: Vec<EntityId>,
+    /// Whether every named row reference was a valid entity id.
+    pub(super) named_complete: bool,
     /// The hook blocks whose task rows TASKS tagged.
     pub(super) hook_blocks: std::collections::BTreeSet<EntityId>,
     /// The rows each INBOX row kept rests on (FIX 8145): every identity of
     /// the caller's that admitted it, and each row it names that the read
     /// read. A keyed replay re-admits each; none is a board document.
     pub(super) inbox: Vec<EntityId>,
+    /// What the layout's MEMORIES `who` filter read to choose its rows: the
+    /// writers it kept rows by and the group it resolved. A keyed replay
+    /// re-admits each.
+    pub(super) memories_filter: Vec<EntityId>,
 }
 
-/// Assembles every section the board renders for this caller.
+/// Assembles every section the board renders for this caller, under the
+/// board layout `layout` (BOARD-LAYOUT) of `layout_actor` and the board cap
+/// `cap_tok`. `tasks_budget_tok` is this render's explicit TASK-row
+/// allotment, when the caller asked for one; it wins over the layout's
+/// TASKS share. Project/fanout lead rows ride outside it.
 pub(super) fn board_parts(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -215,9 +250,15 @@ pub(super) fn board_parts(
     reads: &SessionReadSet,
     people: &PeopleView<'_>,
     hook_pins: &[oneiron::context_board::HookPin],
+    tasks_budget_tok: Option<usize>,
+    layout: &super::BoardLayoutSelection,
+    cap_tok: usize,
 ) -> Result<BoardParts, ApiError> {
+    let layout_actor = layout.actor;
+    let layout = &layout.layout;
     let vault: &oneiron::Vault = &server.vault;
     let mut named = Vec::new();
+    let mut named_complete = true;
 
     // WORLDS: the tiers the caller's planner reads, over the WORLD bodies
     // its read admits.
@@ -248,10 +289,13 @@ pub(super) fn board_parts(
     let presences = oneiron::context_board::WorldPresence::read_admitted(read, &allowed)
         .map_err(|error| core_engine_error("board worlds failed", error))?;
     named.extend(presences.iter().map(|world| world.id));
-    let worlds =
-        oneiron::context_board::WorldsSection::project(&presences, &authority, BOARD_WORLDS_CAP)
-            .board_section()
-            .map_err(board_frame_error)?;
+    let worlds = oneiron::context_board::WorldsSection::project(
+        &presences,
+        &authority,
+        layout.row_allotment("worlds", cap_tok, BOARD_WORLDS_CAP),
+    )
+    .board_section()
+    .map_err(board_frame_error)?;
     let scope = oneiron::context_board::world_set_scope(&authority.active_set);
 
     let memory = targets.actor.map(|(actor, class)| {
@@ -283,7 +327,7 @@ pub(super) fn board_parts(
     };
     let room_section = room
         .as_ref()
-        .map(|room| room.board_section(people))
+        .map(|room| room.board_section_laid_out(people, layout, cap_tok))
         .transpose()
         .map_err(board_frame_error)?;
     let room_page = room.as_ref().map(|page| ContextBoardRoomPage {
@@ -295,17 +339,21 @@ pub(super) fn board_parts(
     let room = room.map(|page| page.section);
     if let Some(room) = &room {
         named.push(room.room);
-        named.extend(
-            room.claims
-                .iter()
-                .filter_map(|claim| EntityId::from_hex(&claim.claim_ref).ok()),
+        super::source_rows::extend_source_rows(
+            &mut named,
+            &mut named_complete,
+            room.claims.iter().map(|claim| claim.claim_ref.as_str()),
         );
     }
+
+    // The TASKS token allotment: the request's explicit one, else the
+    // layout's TASKS share of the cap; neither means the 100-row default.
+    let tasks_budget = tasks_budget_tok.or_else(|| layout.share_tok("tasks", cap_tok));
 
     // TASKS: each task's `who` and `fits:` by handle, the caller's live
     // children on the task they realize, and the project view as its first
     // detail row. The `you:` line rides the frame, under the legend.
-    let (mut tasks, you) = match &memory {
+    let (mut tasks, you, tasks_summary) = match &memory {
         Some(memory) => {
             let mut rows = readable_task_rows(auth, read, memory)?;
             let (children, forks) = match targets.actor() {
@@ -331,9 +379,26 @@ pub(super) fn board_parts(
             })
             .map_err(|error| core_engine_error("board children failed", error))?;
             let you = oneiron::context_board::render_you_line(&forks, &rows.intents);
-            let mut tasks = rows.render();
+            // The fold line counts every admitted row; the filter and the
+            // share narrow only what the section lists (BOARD-LAYOUT).
+            let summary = rows.fold_summary(layout_actor);
+            let filtered = layout
+                .filter("tasks")
+                .map(|filter| {
+                    super::filter_task_rows(vault, read, people, layout_actor, filter, &rows)
+                })
+                .transpose()
+                .map_err(|error| core_engine_error("board tasks filter failed", error))?;
+            let shown = filtered.as_ref().unwrap_or(&rows);
+            let mut tasks = match tasks_budget {
+                None => shown.render(),
+                Some(budget) => shown.render_with_token_budget(budget),
+            };
+            if let Some(fold) = layout.fold("tasks") {
+                tasks.keep_rows_open(&rows, &fold.keep);
+            }
             tasks.pin_hook_tasks(&rows.intents, hook_pins);
-            (tasks, you)
+            (tasks, you, Some(summary))
         }
         None => (
             oneiron::context_board::TasksSection {
@@ -341,15 +406,19 @@ pub(super) fn board_parts(
                 overflow: None,
             },
             None,
+            None,
         ),
     };
     let hook_blocks = tasks.tag_hook_pins(hook_pins);
-    named.extend(
+    let tasks_budget = tasks_budget.map(|budget_tok| TasksRowBudget::of(&tasks, budget_tok));
+    super::source_rows::extend_source_rows(
+        &mut named,
+        &mut named_complete,
         tasks
             .rows
             .iter()
             .filter(|row| row.is_intent)
-            .filter_map(|row| EntityId::from_hex(&row.id).ok()),
+            .map(|row| row.id.as_str()),
     );
     let project =
         match (targets.project, &room) {
@@ -385,10 +454,22 @@ pub(super) fn board_parts(
         let launches = memory
             .pending_task_fanout_launches()
             .map_err(|error| board_memory_error("board fan-outs failed", "tasks", error))?;
-        lead.extend(oneiron::context_board::fanout_action_rows(&launches));
+        lead.extend(oneiron::context_board::fanout_action_rows_for(
+            &launches, layout, cap_tok,
+        ));
     }
-    let tasks_section =
+    let mut tasks_section =
         oneiron::context_board::assemble_tasks_section(&tasks, lead).map_err(board_frame_error)?;
+    if let Some(summary) = tasks_summary {
+        tasks_section = tasks_section.with_fold_summary(summary);
+    }
+    // A task a hook block pins stays shown through any fold or share.
+    tasks_section = tasks_section.with_hook_pinned_ids(
+        hook_pins
+            .iter()
+            .flat_map(|pin| pin.refs.iter().copied())
+            .collect(),
+    );
 
     // SKILLS, with the learning view on each found skill row and the agent
     // definitions the capability channel found.
@@ -408,9 +489,31 @@ pub(super) fn board_parts(
         Some(actor) => {
             let mut rows = Vec::new();
             let slice = vault
-                .agent_inbox_board_slice(actor, BOARD_INBOX_CAP, vault.now_recorded_at())
+                .agent_inbox_board_slice(
+                    actor,
+                    layout.row_allotment("inbox", cap_tok, BOARD_INBOX_CAP),
+                    vault.now_recorded_at(),
+                )
                 .map_err(|error| core_engine_error("board inbox failed", error))?;
             let later = slice.later;
+            // The layout's INBOX filter (BOARD-LAYOUT) narrows the rows by
+            // sender; the fold line still counts every admitted row.
+            let inbox_who = layout
+                .filter("inbox")
+                .and_then(|filter| filter.who.as_ref());
+            let inbox_members = match inbox_who.and_then(|who| who.group()) {
+                Some(group)
+                    if read
+                        .is_entity_readable(&group)
+                        .map_err(|error| core_engine_error("board inbox failed", error))? =>
+                {
+                    vault
+                        .board_filter_group_members(group)
+                        .map_err(|error| core_engine_error("board inbox failed", error))?
+                }
+                _ => BTreeSet::new(),
+            };
+            let mut admitted = 0_usize;
             for (mut item, state) in slice.rows {
                 let mut admitting = Vec::new();
                 for participant in item
@@ -437,33 +540,92 @@ pub(super) fn board_parts(
                 if !admitting.is_empty() {
                     // FIX 9745: the sender renders only while the caller's
                     // read reads it; otherwise the row names no sender.
-                    if let Some(sender) = item.sender {
-                        if read
-                            .is_ref_readable(&sender)
-                            .map_err(|error| core_engine_error("board inbox failed", error))?
+                    let sender = match item.sender {
+                        Some(sender)
+                            if read.is_ref_readable(&sender).map_err(|error| {
+                                core_engine_error("board inbox failed", error)
+                            })? =>
                         {
-                            inbox_sources.push(sender);
-                        } else {
-                            item.sender = None;
+                            Some(sender)
                         }
+                        _ => None,
+                    };
+                    admitted += 1;
+                    if inbox_who.is_some_and(|who| {
+                        !who.matches(sender, layout_actor, &inbox_members, |id| {
+                            people.kind(id).map(super::person_class)
+                        })
+                    }) {
+                        // Filtered off the list, the row still counts on the
+                        // fold line, so a keyed replay re-admits its sources.
+                        inbox_sources.extend(admitting);
+                        continue;
+                    }
+                    match sender {
+                        Some(sender) => inbox_sources.push(sender),
+                        None => item.sender = None,
                     }
                     inbox_sources.extend(admitting);
                     inbox_sources.extend(inbox_named_sources(read, &item, actor)?);
                     rows.push((item, state));
                 }
             }
-            oneiron::context_board::assemble_inbox_section(actor, &rows, later, people)
-                .map_err(board_frame_error)?
+            let section =
+                oneiron::context_board::assemble_inbox_section(actor, &rows, later, people)
+                    .map_err(board_frame_error)?;
+            match (section, inbox_who) {
+                (section, None) => section,
+                // A filter that leaves no row listed still shows the section
+                // and its live count (BOARD-LAYOUT).
+                (section, Some(_)) => {
+                    let section = match section {
+                        Some(section) => Some(section),
+                        None if admitted > 0 => Some(
+                            BoardSection::new(
+                                "INBOX",
+                                Vec::new(),
+                                vec![format!("count: 0 filtered: {admitted}")],
+                                vec![format!("count: 0 filtered: {admitted}")],
+                                oneiron::context_board::SectionPolicy {
+                                    pinned: false,
+                                    shed_rank: Some(
+                                        oneiron::context_board::ShedRank::TasksToCounts,
+                                    ),
+                                },
+                            )
+                            .map_err(board_frame_error)?,
+                        ),
+                        None => None,
+                    };
+                    section.map(|section| {
+                        section.with_fold_summary(
+                            oneiron::context_board::FoldSummary::total(admitted + later)
+                                .count("later", later),
+                        )
+                    })
+                }
+            }
         }
         None => None,
     };
 
     let mut sections = vec![worlds.clone()];
+    let mut memories_filter = Vec::new();
     if let Some(memories) = memories {
-        sections.extend(
-            oneiron::context_board::assemble_memories_sections(memories)
-                .map_err(board_frame_error)?,
-        );
+        let assembled = oneiron::context_board::assemble_memories_sections(memories)
+            .map_err(board_frame_error)?;
+        let (filtered, read_sources) = super::filter_memories_sections(
+            vault,
+            read,
+            people,
+            layout_actor,
+            layout,
+            memories,
+            assembled,
+        )
+        .map_err(|error| core_engine_error("board memories filter failed", error))?;
+        sections.extend(filtered);
+        memories_filter = read_sources;
     }
     sections.push(tasks_section.clone());
     sections.push(skills_section);
@@ -475,13 +637,21 @@ pub(super) fn board_parts(
         sections,
         you,
         worlds: worlds.detail_rows().to_vec(),
-        tasks: tasks_section.detail_rows().to_vec(),
+        tasks: tasks_section
+            .pinned_rows()
+            .iter()
+            .chain(tasks_section.detail_rows())
+            .cloned()
+            .collect(),
+        tasks_budget,
         room: room_section.map(|room| room.pinned_rows().to_vec()),
         room_page,
         skills: std::iter::once(skills.loaded).chain(skills.found).collect(),
         named,
+        named_complete,
         hook_blocks,
         inbox: inbox_sources,
+        memories_filter,
     })
 }
 
@@ -559,6 +729,7 @@ pub(super) async fn board_people(
     auth: &CoreAuth,
     read: &oneiron::claim::ScopedRead<'_>,
     session_id: Option<&str>,
+    people_budget_tok: Option<usize>,
 ) -> Result<(oneiron::context_board::People, BTreeSet<EntityId>), ApiError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -587,16 +758,18 @@ pub(super) async fn board_people(
         .and_then(|actor| EntityId::from_hex(actor).ok())
         .zip(session_id.map(str::to_owned));
     let resident = match run_key {
-        Some(key) => match server.self_brief_sessions.lock().await.get(&key) {
-            Some(run) if run.emitted_epoch == Some(run.epoch) => {
-                run.render.resident_people().clone()
+        Some(key) => match server.self_brief_sessions.lock().await.residence(&key) {
+            BriefResidence::Acknowledged(resident) => resident,
+            BriefResidence::Pending { pinned } => {
+                people
+                    .residence_within(
+                        &pinned,
+                        people_budget_tok
+                            .unwrap_or(oneiron::context_board::PEOPLE_PREFIX_BUDGET_TOK),
+                    )
+                    .resident
             }
-            Some(run) => {
-                let mut pinned = vec![run.state.self_ref, run.state.principal];
-                pinned.extend(run.state.cast.iter().copied());
-                people.residence(&pinned).resident
-            }
-            None => BTreeSet::new(),
+            BriefResidence::Absent => BTreeSet::new(),
         },
         None => BTreeSet::new(),
     };

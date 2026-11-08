@@ -9,6 +9,7 @@ pub mod admission;
 mod authority_audit;
 mod brief_share;
 mod call;
+mod content;
 mod context_emit;
 mod decision_asks;
 mod direct_dispatch;
@@ -24,6 +25,7 @@ mod kernel;
 mod ledgers;
 mod lens;
 mod off_device;
+pub(crate) use off_device::served_form_rows;
 mod pack_attribution;
 mod projection;
 pub mod prompt_stamp;
@@ -45,7 +47,7 @@ pub use self::authority_audit::{
     AUTHORITY_AUDIT_COLD_ROWS_IGNORE_KIND_FILTER, AUTHORITY_AUDIT_DEFAULT_LIMIT,
     AUTHORITY_AUDIT_MAX_LIMIT, AUTHORITY_AUDIT_SCAN_PER_ROW, AuthorityAuditEventKind,
     AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditQuery, AuthorityAuditRow,
-    ColdAuthorityAuditRow, authority_audit_embedded,
+    ColdAuthorityAuditRow, PendingMembershipExecutionRow, authority_audit_embedded,
 };
 pub(crate) use self::call::unread_call_receipt_actor_in_txn;
 pub use self::call::{
@@ -54,11 +56,13 @@ pub use self::call::{
     CallTransport, ERASED_CALL_IDENTITY, MAX_ACTION_INPUT_ENTITIES, MAX_CALL_RECEIPT_SERVED,
     call_bytes_digest, call_json_digest, call_reads_world, call_refusal_digest, json_entity_refs,
 };
+pub(crate) use self::content::ReceiptContent;
 pub use self::context_emit::ContextEmitReceipt;
 pub use self::decision_asks::{
     DecisionAskAnswerRequest, DecisionAskClimbRequest, DecisionAskConfirmGrantRequest,
 };
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
+pub(crate) use self::field_set::FIELD_ATTEMPT_CALLER;
 pub use self::field_set::{
     ContextReceiptFields, FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEARNING_DECIDED_BY,
     FIELD_LEARNING_PATTERN, FIELD_LEARNING_TEAM_REF, FIELD_LEASE_GENERATION,
@@ -98,12 +102,12 @@ pub use self::projection::{
 };
 pub use self::questions::{
     AI_VERDICT_DEADLINE_MS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined,
-    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage,
-    QuestionAnswersReply, QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest,
-    QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionOutcomes,
+    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAdmitRequest, QuestionAnswer,
+    QuestionAnswersPage, QuestionAnswersReply, QuestionAnswersRequest, QuestionBackfillRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionOutcomes,
     QuestionOutcomesProjectRequest, QuestionOutcomesProjected, QuestionOutcomesRequest,
-    QuestionPauseRequest, QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
-    QuestionScheduleRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionPrepareRequest, QuestionPrepared,
+    QuestionPreparedSource, QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
 };
 pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, receipt_creations_not_proven,
@@ -113,6 +117,7 @@ pub use self::served_form::{AudioPull, PixelPull, ServedForm, ServedRung};
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 pub use self::share_doors::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 
+pub(crate) use self::direct_dispatch::latest_direct_dispatch_receipt_in_txn;
 pub(crate) use self::direct_dispatch::record as record_direct_dispatch_receipt;
 pub(crate) use self::dispatch_observation::{
     DispatchObservationKey, append_dispatch_observation_in_txn, read_dispatch_observation,
@@ -139,8 +144,8 @@ pub(crate) use self::ledgers::durable_send_receipts_lenient;
 #[cfg(test)]
 pub(crate) use self::ledgers::persist_send_receipt;
 pub(crate) use self::ledgers::{
-    SendReceiptOutcome, delivered_send_receipt_for_task, durable_send_receipts,
-    stamp_attempt_pack_receipt_in_txn,
+    SendReceiptOutcome, attempt_calling_principal_in_txn, delivered_send_receipt_for_task,
+    durable_send_receipts, erase_attempt_receipt_actor_in_txn, stamp_attempt_pack_receipt_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::ledgers::{

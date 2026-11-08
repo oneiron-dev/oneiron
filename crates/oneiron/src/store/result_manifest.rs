@@ -1,49 +1,10 @@
-//! Result-body manifests, occurrence identifiers and their format bounds.
+//! Core half of `store::result_manifest`: its store-layer items live in `oneiron_store::result_manifest` and are
+//! re-exported here; the items below stay in the engine.
+
+pub use oneiron_store::result_manifest::*;
 
 use crate::error::ArtifactError;
 use crate::{EntityId, Error, Result};
-
-pub const CODE_RUN_REPLAY_HASH_LEN: usize = 32;
-pub(crate) const CODE_RUN_OUTPUT_HANDLE_PREFIX: &str = "code-run-output:blake3:";
-pub(crate) const CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES: usize = 1024;
-
-/// The preview text of a body withheld without a specific reason.
-pub(crate) const CODE_RUN_OUTPUT_PREVIEW_WITHHELD: &str = "[preview withheld]";
-
-/// Compact preview stored in a replay record beside a raw output handle.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct CodeRunOutputPreview {
-    pub codec: String,
-    pub text: String,
-    pub truncated: bool,
-}
-
-/// What a result body holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CodeRunOutputKind {
-    /// The whole body is UTF-8.
-    Text,
-    /// Anything else, kept byte for byte.
-    Binary,
-}
-
-impl CodeRunOutputKind {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Text => "text",
-            Self::Binary => "binary",
-        }
-    }
-
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "text" => Some(Self::Text),
-            "binary" => Some(Self::Binary),
-            _ => None,
-        }
-    }
-}
 
 /// One result occurrence's manifest (OF-597): what the body is, measured
 /// as it was written. The body is stored once by its content handle, inline
@@ -66,6 +27,10 @@ pub struct CodeRunRawOutput {
     /// Every row this occurrence's bytes were produced from; `None` when
     /// any constituent is unknown (FIX 7104).
     pub input_rows: Option<Vec<EntityId>>,
+    /// The bridge sequence where the producing executor step began. This
+    /// is occurrence metadata, not authority; non-executor producers carry
+    /// no coordinate.
+    pub producing_step_start: Option<u64>,
     pub preview: CodeRunOutputPreview,
 }
 
@@ -109,6 +74,7 @@ impl CodeRunRawOutput {
             lines: facts.lines,
             complete,
             input_rows: None,
+            producing_step_start: None,
             // A body the secret scan marked shows no preview: the view is
             // redacted, the stored body never rewritten.
             preview: CodeRunOutputPreview {
@@ -137,6 +103,7 @@ impl CodeRunRawOutput {
             lines: 0,
             complete: true,
             input_rows: None,
+            producing_step_start: None,
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
                 text: String::new(),
@@ -159,7 +126,8 @@ impl CodeRunRawOutput {
 /// bind, as its authority does, never the bytes it shares with another. An
 /// owned output's occurrence is its owner and path, the id its body
 /// descriptor carries; an unowned body (a context output) has no occurrence
-/// beyond its content.
+/// beyond its content. A raw hold (`ResultOccurrence::raw`) is a descriptor
+/// id only: its marks stay on the owner and path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ResultOccurrence(EntityId);
 
@@ -181,6 +149,26 @@ impl ResultOccurrence {
         Ok(Self(EntityId::derive(
             b"oneiron:code-run-output-occurrence:v1",
             &[owner.as_bytes().as_slice(), path.as_bytes()],
+        )?))
+    }
+
+    /// The raw hold of the bytes `digest` names that run `owner` put at
+    /// `path` where its owner/path occurrence cannot take them (FIX 7364,
+    /// FIX 7430). It is a descriptor id, so an erase of the owner reaches
+    /// the bytes. The same owner, path and bytes give the same hold; other
+    /// bytes give another.
+    pub(crate) fn raw(
+        owner: EntityId,
+        path: &str,
+        digest: &[u8; CODE_RUN_REPLAY_HASH_LEN],
+    ) -> Result<Self> {
+        Ok(Self(EntityId::derive(
+            b"oneiron:code-run-output-raw-hold:v1",
+            &[
+                owner.as_bytes().as_slice(),
+                path.as_bytes(),
+                digest.as_slice(),
+            ],
         )?))
     }
 
@@ -209,17 +197,6 @@ impl ResultOccurrence {
             .ok_or(Error::CorruptedIndex("code-run result mark key"))?;
         Ok((handle, Self(EntityId::from_hex(occurrence)?)))
     }
-}
-
-pub(crate) fn validate_text(value: &str, max_bytes: usize, field: &'static str) -> Result<()> {
-    if value.trim().is_empty() || value.len() > max_bytes {
-        return Err(invalid_code_run_replay(field));
-    }
-    Ok(())
-}
-
-pub(crate) fn invalid_code_run_replay(message: &'static str) -> Error {
-    Error::Artifact(ArtifactError::InvalidCodeArtifactBody(message))
 }
 
 /// What result bodies staged inside one write transaction spill into,

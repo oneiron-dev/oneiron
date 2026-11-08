@@ -15,6 +15,8 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Key custody beside your backups](key-custody.md) — the custody head and keyless log each
   backup leaves beside it, the residence and hosted members, the anchor (`custody_anchor_root`,
   `custody_anchor_url`, `/v1/owner/custody-anchor`), the status names, and what a restore says.
+- [Sign in with ChatGPT authorize plans](siwc-authorize-plan.md) — current open-source SIWC request fields; URL-only, not a token exchange or completed login.
+- [Local Sign in with ChatGPT](siwc-local-login.md): explicit callback, verified exchange, protected per-account file, configured Responses inference, rotating refresh and explicit local clear/revoke.
 - [Run the server, with or without models](run-with-models.md) — `[models]` config keys
   (HIGH, MID, DETAILED), provider kinds and env vars, what the Dreamer needs to start, chat
   streaming, the saved-workflow pump, and swapping a model in one edit.
@@ -22,6 +24,8 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   executor support for Coach host jobs and heals, with normal wake admission and settlement.
 - [Shared proactivity-policy proposals](proactivity-policy.md) — nightly cadence
   proposals, exact owner review and confirmation, and atomic run-tray approval.
+- [Case-backed Coach prompt drafts](coach-prompt-repair-artifacts.md) — optional
+  host authors, Proposed prompt artifacts and the boundary before execution.
 - [Oneironer workers](oneironer-workers.md) — the managed MLX worker and the native Core ML worker beside Candle: placement, activation, fallback, the Core ML cold compile, restart and down reasons, shutdown, receipts
 - [Legal-hold clone implementation map](legal-hold-clone-map.md) — planned per-order legal custody, normal user erase, and the remaining implementation slices; MAP only, not a shipped clone.
 - [Known-CSAM hosted media response](known-csam-hosted-media.md)
@@ -47,7 +51,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Forked dependencies](forked-dependencies.md) — the crates pinned by `rev` to the org forks
   (sudachi, formualizer): upstream base, fork branch, our commits, and how to change one.
 - [Documents API handoff](documents-api-handoff.md) — the document engine's contract
-  (`oneiron_docedit::contract`, schema 1): ops, media types, limits, refusal codes, and what the
+  (`oneiron_docedit::contract`, schema 3): ops, media types, limits, refusal codes, and what the
   hosted documents API in oneiron-cloud owns (auth, metering, hosting, session images).
 - [Deck export gate run](deck-gate.md) — OF-510 `pptx-live-v1`: the engine half on a Linux fleet
   host, the Office half on the Mac mini, and the command that records the oracle receipt.

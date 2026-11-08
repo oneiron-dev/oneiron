@@ -11,6 +11,8 @@ use crate::store::consolidation_scope::DreamerConsolidationScope;
 use crate::{EdgeActorClass, EntityId, Error};
 use serde::{Deserialize, Serialize};
 
+mod attachments;
+
 /// Extract from these witnessed TURNs using the host's configured extraction
 /// role/model and the existing inference, selection and promotion gates.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -166,65 +168,78 @@ impl Memory<'_> {
             .ok_or_else(|| MemoryError::not_found("extraction job no longer exists"))?;
         let ids = crate::dreamer_consolidation::nightly_merge::extraction_outputs(self.vault, id)?;
         let reads: Vec<_> = ids.into_iter().map(PointRead::id).collect();
-        let mut claims = Vec::new();
-        for row in lane.read(&reads, None)?.value.into_iter().flatten() {
-            let Some(bytes) = row.body.as_deref() else {
-                continue;
-            };
-            let body = crate::claim::decode_claim_body(bytes, true)?;
-            if crate::batch::export::claim_reads_as_secret(&body) {
-                continue;
-            }
-            let candidate_evidence = match body.evidence.as_ref() {
-                Some(rmpv::Value::Map(entries)) => entries.iter().find_map(|(key, value)| {
-                    (key.as_str()
-                        == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY))
-                    .then_some(value)
-                }),
-                _ => None,
-            };
-            let citations = candidate_evidence
-                .filter(|value| {
-                    matches!(value, rmpv::Value::Map(fields)
-                    if fields.iter().any(|(key, _)| key.as_str() == Some("locators")))
-                })
-                .map(decode_verified_citations)
-                .transpose()?
-                .unwrap_or_default();
-            let sources = citations
-                .into_iter()
-                .map(|(locator, hash, messages)| SignalExtractionSource {
-                    source_ref: locator.source_id.to_hex(),
-                    claim_ref: locator.claim_id.map(|id| id.to_hex()),
-                    byte_range: locator.byte_range,
-                    content_hash: crate::entity_id::bytes_to_hex_lower(&hash),
-                    messages: messages
-                        .into_iter()
-                        .map(|message| SignalExtractionMessage {
-                            message_ref: message.message.to_hex(),
-                            byte_range: (message.start, message.end),
-                            revision: crate::entity_id::bytes_to_hex_lower(&message.revision),
+        let projected = lane
+            .read_projected(&reads, None, |txn, rows| {
+                let mut accepted = Vec::new();
+                for row in rows.into_iter().flatten() {
+                    let Some(bytes) = row.body.as_deref() else {
+                        continue;
+                    };
+                    let body = crate::claim::decode_claim_body(bytes, true)?;
+                    if crate::batch::export::claim_reads_as_secret(&body) {
+                        continue;
+                    }
+                    let candidate_evidence = match body.evidence.as_ref() {
+                        Some(rmpv::Value::Map(entries)) => entries.iter().find_map(|(key, value)| {
+                            (key.as_str()
+                                == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY))
+                            .then_some(value)
+                        }),
+                        _ => None,
+                    };
+                    let mut citations = candidate_evidence
+                        .filter(|value| {
+                            matches!(value, rmpv::Value::Map(fields)
+                            if fields.iter().any(|(key, _)| key.as_str() == Some("locators")))
                         })
-                        .collect(),
-                })
-                .collect::<Vec<_>>();
-            let source_ids = sources
-                .iter()
-                .flat_map(|source| {
-                    std::iter::once(source.source_ref.as_str()).chain(
-                        source
-                            .messages
-                            .iter()
-                            .map(|message| message.message_ref.as_str()),
-                    )
-                })
-                .map(EntityId::from_hex)
-                .collect::<crate::Result<Vec<_>>>()?;
-            if !lane.all_refs_readable(&source_ids)? {
-                continue;
-            }
-            self.produced_from(source_ids);
-            self.produced_from([row.id]);
+                        .map(decode_verified_citations)
+                        .transpose()?
+                        .unwrap_or_default();
+                    let source_ids = citations
+                        .iter()
+                        .flat_map(|(locator, _, messages)| {
+                            std::iter::once(locator.source_id)
+                                .chain(messages.iter().map(|message| message.message))
+                        })
+                        .collect::<Vec<_>>();
+                    let policy = lane.live_policy_manifest_in(txn)?;
+                    let mut sources_readable = true;
+                    for source in &source_ids {
+                        if !lane.is_ref_readable_with_policy_in(txn, &policy, source)? {
+                            sources_readable = false;
+                            break;
+                        }
+                    }
+                    if !sources_readable {
+                        continue;
+                    }
+                    self.produced_from(source_ids);
+                    self.produced_from([row.id]);
+                    attachments::append(self, &lane, txn, row.id, &mut citations);
+                    let sources = citations
+                        .into_iter()
+                        .map(|(locator, hash, messages)| SignalExtractionSource {
+                            source_ref: locator.source_id.to_hex(),
+                            claim_ref: locator.claim_id.map(|id| id.to_hex()),
+                            byte_range: locator.byte_range,
+                            content_hash: crate::entity_id::bytes_to_hex_lower(&hash),
+                            messages: messages
+                                .into_iter()
+                                .map(|message| SignalExtractionMessage {
+                                    message_ref: message.message.to_hex(),
+                                    byte_range: (message.start, message.end),
+                                    revision: crate::entity_id::bytes_to_hex_lower(&message.revision),
+                                })
+                                .collect(),
+                        })
+                        .collect::<Vec<_>>();
+                    accepted.push((row, body, sources));
+                }
+                Ok::<_, MemoryError>(accepted)
+            })?
+            .value;
+        let mut claims = Vec::new();
+        for (row, body, sources) in projected {
             let hint_reads: Vec<_> = self
                 .vault
                 .claims_for_subject(&row.id)?
@@ -237,10 +252,10 @@ impl Memory<'_> {
                     continue;
                 };
                 let hint_body = crate::claim::decode_claim_body(bytes, true)?;
-                if hint_body.predicate != crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
+                let Some(value) = crate::claim::canonical_lexical_query_hint(&hint.id, &hint_body)?
+                else {
                     continue;
-                }
-                let value = crate::claim::decode_lexical_query_hint_value(&hint_body.value)?;
+                };
                 if value.target != row.id || hint_body.source != Some(ClaimSource::Generated) {
                     continue;
                 }

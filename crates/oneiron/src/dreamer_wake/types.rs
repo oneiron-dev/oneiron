@@ -14,6 +14,7 @@ use crate::dreamer_runner::DreamerAttemptProgressProducer;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerConsolidationScope, DreamerParkCause};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::settings::ReadDestination;
 #[cfg(feature = "sync")]
 use crate::sync::EphemeralStore;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
@@ -73,6 +74,13 @@ pub struct RunWakePass {
     /// Exact caller attenuation for this wake. It is prepared once at the
     /// root, never inferred from a decorated executor's optional metadata.
     pub host_scope: Option<oneiron_model::llm::Scope>,
+    /// Where every leg of this pass's executors sends what it reads, as
+    /// the vended executors state it ([`DreamerAttemptExecutor::destination_bound`],
+    /// FIX 12735): the wake lists its sources, and each NOTE review its
+    /// entities, for it. Read once the executors are vended, never before.
+    /// `None` when an executor states no bound: the pass lists for a
+    /// destination nobody proved, as every pass did before.
+    pub destination_bound: Option<ReadDestination>,
 }
 
 /// Why the pass stopped.
@@ -269,17 +277,19 @@ impl WakeAttemptMeter {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The terminal steps a settlement of [`Self::charged_units`] pays
-    /// for, each once: those the tally spent before an error, then the
-    /// leading noted line steps whose units fit in the line's charge, so no
-    /// step is pinned paid beyond what the settlement charges (FIX 6100).
-    pub(crate) fn step_receipts(&self) -> Vec<[u8; 32]> {
-        let mut paid = self.lock_spent_before_error().1.clone();
+    /// Captures one settlement's units and paid-step receipts together.
+    /// The same line reading bounds the paid prefix, and error spend stays
+    /// paired with the receipts recorded beside it.
+    pub(crate) fn settlement(&self) -> (u64, Vec<[u8; 32]>) {
+        let spent = self.lock_spent_before_error();
         let steps = self
             .terminal_steps
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let mut left = self.line_units();
+        let line_units = self.line_units();
+        let charged = line_units.saturating_add(spent.0);
+        let mut paid = spent.1.clone();
+        let mut left = line_units;
         for &(hash, units) in &*steps {
             let Some(rest) = left.checked_sub(units) else {
                 break;
@@ -289,7 +299,7 @@ impl WakeAttemptMeter {
                 paid.push(hash);
             }
         }
-        paid
+        (charged, paid)
     }
 }
 
@@ -488,6 +498,15 @@ pub trait DreamerAttemptExecutor {
     /// of host-job support: `execute` must handle heals before opting in.
     fn runs_coach_heals(&self) -> bool {
         false
+    }
+
+    /// Where every model call this vended executor makes sends its input,
+    /// every fallback included (FIX 12735): each of its legs holds its
+    /// sends inside it and fails closed rather than go past it, so the pass
+    /// lists its sources for it. `None`, the default, states no bound, and
+    /// the pass lists for a destination nobody proved.
+    fn destination_bound(&self) -> Option<ReadDestination> {
+        None
     }
 }
 

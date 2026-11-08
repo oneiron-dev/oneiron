@@ -76,7 +76,8 @@ impl GraphFsResolver<'_, '_> {
             if self.read_live_into(*id, &mut receipt)?.is_none() {
                 continue;
             }
-            if !builder.try_push(GraphFsEntry::file(id.to_hex(), None)) {
+            let entry = GraphFsEntry::file(id.to_hex(), None);
+            if !builder.try_push_after(entry, scope.seal(id)) {
                 next_cursor = last_listed.map(|id| scope.seal(&id));
                 break;
             }
@@ -94,7 +95,7 @@ impl GraphFsResolver<'_, '_> {
     /// device-local world keeps: such a claim takes no place in the run, never
     /// fills it and never ends it, so neither the page nor its cursor hints at
     /// one (DEC-0005).
-    fn device_admitted_run(
+    pub(super) fn device_admitted_run(
         &self,
         after: Option<EntityId>,
         fetch: usize,

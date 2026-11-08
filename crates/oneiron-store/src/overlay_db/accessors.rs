@@ -29,6 +29,21 @@ struct ComposedOverlay {
     keyspace: OverlayKeyspace,
 }
 
+impl ComposedOverlay {
+    /// The view a read composes now (FIX 10004): a writer's own segment as
+    /// it stands, when this accessor was captured inside it; else the
+    /// captured snapshot ([`SessionOverlay::read_view`]).
+    fn view(&self) -> Result<Arc<OverlaySnapshot>> {
+        self.live.read_view(&self.snapshot)
+    }
+
+    /// [`Self::view`] for a question with no error to answer: the captured
+    /// snapshot when the writer's view cannot be leased.
+    fn view_or_captured(&self) -> Arc<OverlaySnapshot> {
+        self.view().unwrap_or_else(|_| Arc::clone(&self.snapshot))
+    }
+}
+
 pub struct OverlayDb {
     base: Database<Bytes, Bytes>,
     overlay: Option<ComposedOverlay>,
@@ -71,11 +86,19 @@ impl OverlayDb {
         Ok(Self::composed(self.base, overlay, snapshot, keyspace))
     }
 
+    /// The room snapshot this accessor reads, shared by every accessor of
+    /// its composed store view. Canonical accessors have no room snapshot.
+    pub fn overlay_snapshot(&self) -> Option<&OverlaySnapshot> {
+        self.overlay
+            .as_ref()
+            .map(|overlay| overlay.snapshot.as_ref())
+    }
+
     /// What this accessor's room stages over base, from the snapshot its
     /// reads compose; `None` for the vault's own accessor.
     pub fn staged_rows(&self) -> Option<crate::session_overlay::StagedRows> {
         let overlay = self.overlay.as_ref()?;
-        Some(overlay.snapshot.staged_rows(overlay.keyspace))
+        Some(overlay.view_or_captured().staged_rows(overlay.keyspace))
     }
 
     /// Whether this accessor's room stages a row of its own at `key` (not a
@@ -84,7 +107,9 @@ impl OverlayDb {
     pub fn stages_row(&self, key: &[u8]) -> bool {
         self.overlay.as_ref().is_some_and(|overlay| {
             matches!(
-                overlay.snapshot.lookup_single(overlay.keyspace, key),
+                overlay
+                    .view_or_captured()
+                    .lookup_single(overlay.keyspace, key),
                 SnapshotLookup::Present(_)
             )
         })
@@ -95,7 +120,9 @@ impl OverlayDb {
     pub fn hides(&self, key: &[u8]) -> bool {
         self.overlay.as_ref().is_some_and(|overlay| {
             matches!(
-                overlay.snapshot.lookup_single(overlay.keyspace, key),
+                overlay
+                    .view_or_captured()
+                    .lookup_single(overlay.keyspace, key),
                 SnapshotLookup::Tombstone
             )
         })
@@ -144,7 +171,7 @@ impl OverlayDb {
                 .transpose()
                 .map(|row| row.map(|(_, value)| value));
         }
-        match overlay.snapshot.lookup_single(overlay.keyspace, key) {
+        match overlay.view()?.lookup_single(overlay.keyspace, key) {
             SnapshotLookup::Passthrough => Ok(self.base.get(txn, key)?.map(Cow::Borrowed)),
             SnapshotLookup::Tombstone => Ok(None),
             SnapshotLookup::Present(value) => Ok(Some(Cow::Owned(value))),
@@ -262,12 +289,13 @@ impl OverlayDb {
         let Some(overlay) = &self.overlay else {
             return Ok(OverlayIter::Base(self.base.iter(txn)?));
         };
-        let plan = overlay.snapshot.merge_plan(overlay.keyspace, |_| true);
+        let view = overlay.view()?;
+        let plan = view.merge_plan(overlay.keyspace, |_| true);
         Ok(OverlayIter::Merged(Box::new(MergedRows::new(
             Some(self.base.iter(txn)?),
             plan,
             Direction::Forward,
-            overlay.snapshot.clone(),
+            view,
         ))))
     }
 
@@ -279,15 +307,14 @@ impl OverlayDb {
         let Some(overlay) = &self.overlay else {
             return Ok(OverlayPrefix::Base(self.base.prefix_iter(txn, prefix)?));
         };
-        let plan = overlay
-            .snapshot
-            .merge_plan(overlay.keyspace, |key| key.starts_with(prefix));
+        let view = overlay.view()?;
+        let plan = view.merge_plan(overlay.keyspace, |key| key.starts_with(prefix));
         Ok(OverlayPrefix::Merged(Box::new(MergedPrefixRows::new(
             MergedRows::new(
                 Some(self.base.prefix_iter(txn, prefix)?),
                 plan,
                 Direction::Forward,
-                overlay.snapshot.clone(),
+                view,
             ),
         ))))
     }
@@ -299,14 +326,13 @@ impl OverlayDb {
         let Some(overlay) = &self.overlay else {
             return Ok(OverlayRange::Base(self.base.range(txn, range)?));
         };
-        let plan = overlay
-            .snapshot
-            .merge_plan(overlay.keyspace, |key| key_in_range(key, range));
+        let view = overlay.view()?;
+        let plan = view.merge_plan(overlay.keyspace, |key| key_in_range(key, range));
         Ok(OverlayRange::Merged(Box::new(MergedRows::new(
             Some(self.base.range(txn, range)?),
             plan,
             Direction::Forward,
-            overlay.snapshot.clone(),
+            view,
         ))))
     }
 
@@ -321,14 +347,13 @@ impl OverlayDb {
         let Some(overlay) = &self.overlay else {
             return Ok(OverlayRevRange::Base(self.base.rev_range(txn, range)?));
         };
-        let plan = overlay
-            .snapshot
-            .merge_plan(overlay.keyspace, |key| key_in_range(key, range));
+        let view = overlay.view()?;
+        let plan = view.merge_plan(overlay.keyspace, |key| key_in_range(key, range));
         Ok(OverlayRevRange::Merged(Box::new(MergedRows::new(
             Some(self.base.rev_range(txn, range)?),
             plan,
             Direction::Reverse,
-            overlay.snapshot.clone(),
+            view,
         ))))
     }
 
@@ -343,14 +368,13 @@ impl OverlayDb {
                 .get_duplicates(txn, key)?
                 .map(OverlayDupValues::Base));
         };
-        let plan = overlay
-            .snapshot
-            .merge_plan(overlay.keyspace, |candidate| candidate == key);
+        let view = overlay.view()?;
+        let plan = view.merge_plan(overlay.keyspace, |candidate| candidate == key);
         let mut merged = MergedRows::new(
             self.base.get_duplicates(txn, key)?,
             plan,
             Direction::Forward,
-            overlay.snapshot.clone(),
+            view,
         );
         let Some(first) = merged.next() else {
             return Ok(None);
@@ -404,7 +428,7 @@ impl OverlayStrDb {
             return Ok(self.base.get(txn, key)?.map(Cow::Borrowed));
         };
         match overlay
-            .snapshot
+            .view()?
             .lookup_single(overlay.keyspace, key.as_bytes())
         {
             SnapshotLookup::Passthrough => Ok(self.base.get(txn, key)?.map(Cow::Borrowed)),
@@ -442,12 +466,13 @@ impl OverlayStrDb {
         let Some(overlay) = &self.overlay else {
             return Ok(OverlayStrIter::Base(self.base.iter(txn)?));
         };
-        let plan = overlay.snapshot.merge_plan(overlay.keyspace, |_| true);
+        let view = overlay.view()?;
+        let plan = view.merge_plan(overlay.keyspace, |_| true);
         Ok(OverlayStrIter::Merged(Box::new(StrMergedRows::new(
             self.base.iter(txn)?,
             plan,
             Direction::Forward,
-            overlay.snapshot.clone(),
+            view,
         ))))
     }
 
@@ -459,14 +484,13 @@ impl OverlayStrDb {
         let Some(overlay) = &self.overlay else {
             return Ok(OverlayStrPrefix::Base(self.base.prefix_iter(txn, prefix)?));
         };
-        let plan = overlay
-            .snapshot
-            .merge_plan(overlay.keyspace, |key| key.starts_with(prefix.as_bytes()));
+        let view = overlay.view()?;
+        let plan = view.merge_plan(overlay.keyspace, |key| key.starts_with(prefix.as_bytes()));
         Ok(OverlayStrPrefix::Merged(Box::new(StrMergedRows::new(
             self.base.prefix_iter(txn, prefix)?,
             plan,
             Direction::Forward,
-            overlay.snapshot.clone(),
+            view,
         ))))
     }
 
@@ -485,14 +509,13 @@ impl OverlayStrDb {
         let Some(overlay) = &self.overlay else {
             return Ok(OverlayRange::Base(base.range(txn, range)?));
         };
-        let plan = overlay
-            .snapshot
-            .merge_plan(overlay.keyspace, |key| key_in_range(key, range));
+        let view = overlay.view()?;
+        let plan = view.merge_plan(overlay.keyspace, |key| key_in_range(key, range));
         Ok(OverlayRange::Merged(Box::new(MergedRows::new(
             Some(base.range(txn, range)?),
             plan,
             Direction::Forward,
-            overlay.snapshot.clone(),
+            view,
         ))))
     }
 }

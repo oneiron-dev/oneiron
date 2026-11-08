@@ -31,18 +31,30 @@
 //! - Queue overflow (`SyncQueue::is_full`) triggers the same re-bootstrap:
 //!   docs dropped + queue cleared between reconnect attempts, so the next
 //!   connection re-runs Phase 1-3 from scratch.
+//!
+//! While the home is down (FIX 4748, `peer_session`): once the dials to
+//! the home have failed unanswered for
+//! [`crate::sync::peer_route::HOME_DOWN_AFTER_SECS`], and a peer dialer is
+//! set, the sessions go to this vault's other machines over the mesh. A peer
+//! session runs the same exchange but confirms nothing (no queue clear, no
+//! re-bootstrap; where a home session would re-bootstrap it ends), takes no
+//! home role, and ends once a probe finds the home answering; the home
+//! session then replays the queue whole.
 
 mod batch_admission;
 mod converge;
 mod directives;
+mod document_response;
 mod handshake;
 mod home_handoff;
 mod home_search;
 mod node_batch;
 mod note_reads;
+mod peer_session;
 mod residence_mode;
 mod server_close;
 mod session;
+mod shared_leave;
 mod steady;
 mod topology;
 
@@ -200,7 +212,7 @@ impl SyncConnection {
     /// Publishes the count of valid run-buffer updates an explicit leave arm
     /// discards unqueued (OF-158), then clears that buffer as the explicit
     /// owner discard. After an arm's single-try `queue_on_exit`, a Pause
-    /// writes nothing; an admitted flush drains the buffer, so this adds 0.
+    /// writes nothing; an admitted flush leaves only failed queue writes.
     /// A leave that interrupts a send publishes its owned buffer directly,
     /// without another queue admission. Additive (`fetch_add`, never a
     /// storing overwrite) plus the
@@ -221,39 +233,52 @@ impl SyncConnection {
 
     /// Ends this lane for good before a leave discards its queue, once its
     /// loop has stopped and queued what it buffered.
-    async fn stop_for_leave(&self) {
+    /// Stops the lane for a confirmed leave: no new connect starts once
+    /// `left` is set, and this waits for the running loop to end. Returns
+    /// whether the lane actually stopped: a loop still importing past the
+    /// quiesce timeout must refuse confirmation and retry, never purge
+    /// under a live writer.
+    async fn stop_for_leave(&self) -> bool {
         self.left.send_replace(true);
         let mut running = self.running.subscribe();
         // A loop that does not stop in time may queue its last buffer after
         // the discard.
-        let _ = tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running)).await;
+        tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running))
+            .await
+            .is_ok()
     }
 
-    /// Asks the sync server for this member's own leave notices with the
-    /// lane's slip, revoked or not (`POST /v1/shared/left-notices`), and
-    /// confirms the first one this env verifies that ends `member`'s
-    /// membership in `vault_id`, the vault's deletion included
-    /// ([`crate::sync::shared_leave::VerifiedLeaveNotice`]). The request
-    /// names the heads this env's authority fold stands at, so the home
-    /// sends beside its notices only the signed handoff past them (FIX 2053).
-    /// The lane ends for good before the leave discards its queue. `None`
-    /// while no verified notice says so. A refused or failed request is an
-    /// error, never a leave.
-    pub async fn check_shared_leave(
+    /// This member's own leave notices and their continuity, asked of the
+    /// sync server with the lane's slip, revoked or not (`POST
+    /// /v1/shared/left-notices`), naming `heads` as where this env's
+    /// authority chain stands; naming none asks for the whole delegation
+    /// chain. A refused request, or an answer that does not decode, one
+    /// without a continuity included, is an error.
+    async fn left_notices(
         &self,
-        vault_id: u64,
-        member: &str,
-    ) -> Result<Option<crate::sync::shared_leave::SharedLeaveReceipt>, crate::sync::TransportError>
-    {
+        heads: &[String],
+    ) -> Result<
+        (
+            Vec<crate::federation::SignedSharedActOutcome>,
+            crate::authority::LeaveNoticeContinuity,
+        ),
+        crate::sync::TransportError,
+    > {
         use crate::sync::TransportError;
 
         #[derive(serde::Deserialize)]
         struct LeftNotices {
             notices: Vec<crate::federation::SignedSharedActOutcome>,
-            /// The signed rows, hex, that hand the root on from where this
-            /// env's chain stands to the key that signed the notices, and
-            /// the rows they stand on, parents first.
-            handoff: Vec<String>,
+            continuity: Continuity,
+        }
+
+        /// The authority vault, 64 hex, and the leave-notice delegations,
+        /// hex, on the home's root chain to the key that signed the notices
+        /// (FIX 7932).
+        #[derive(serde::Deserialize)]
+        struct Continuity {
+            authority_vault_id: String,
+            delegations: Vec<String>,
         }
 
         let Some(credential) = self.config.client_config.transport_credential.as_ref() else {
@@ -273,18 +298,10 @@ impl SyncConnection {
             .map_err(|_| TransportError::InvalidPayload("the sync server URL does not parse"))?;
         url.set_path(LEFT_NOTICES_PATH);
         url.set_query(None);
+        shared_leave::require_credential_transport(&url)?;
         let headers = credential
             .left_notice_headers(crate::unix_seconds_now())
             .map_err(TransportError::InvalidPayload)?;
-        // Where this env's authority chain stands (FIX 2053).
-        let heads: Vec<String> = self
-            .manager
-            .vault()
-            .leave_notice_heads()
-            .map_err(|e| TransportError::Storage(e.to_string()))?
-            .iter()
-            .map(|head| crate::entity_id::bytes_to_hex_lower(head))
-            .collect();
         // FIX 6969: a redirect is answered, never followed with the slip
         // headers; the status check below refuses a redirect answer.
         let client = reqwest::Client::builder()
@@ -318,37 +335,116 @@ impl SyncConnection {
                 .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
                 .collect()
         };
-        let handoff = answer
-            .handoff
+        let undecoded =
+            || TransportError::InvalidPayload("the leave notice continuity does not decode");
+        let authority_vault_id = unhex(&answer.continuity.authority_vault_id)
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .ok_or_else(undecoded)?;
+        let delegations = answer
+            .continuity
+            .delegations
             .iter()
-            .map(|row| unhex(row))
+            .map(|delegation| unhex(delegation))
             .collect::<Option<Vec<_>>>()
-            .ok_or(TransportError::InvalidPayload(
-                "the leave notice handoff does not decode",
-            ))?;
-        // The home signs every notice (FIX 2053). One this env does not
-        // verify against the home root it already trusts, or that root's
-        // successor the handoff names, changes nothing.
-        let mut confirmed = None;
-        for signed in &answer.notices {
-            if let Some(notice) = crate::sync::shared_leave::VerifiedLeaveNotice::verify(
-                self.manager.vault(),
-                vault_id,
-                member,
-                signed,
-                &handoff,
-            )
-            .map_err(|e| TransportError::Storage(e.to_string()))?
-                && notice.kind().is_some()
-            {
-                confirmed = Some(notice);
-                break;
-            }
-        }
-        let Some(notice) = confirmed else {
+            .ok_or_else(undecoded)?;
+        Ok((
+            answer.notices,
+            crate::authority::LeaveNoticeContinuity {
+                authority_vault_id,
+                delegations,
+            },
+        ))
+    }
+
+    /// Asks the sync server for this member's own leave notices with the
+    /// lane's slip, revoked or not (`POST /v1/shared/left-notices`), and
+    /// confirms the first one this env verifies that ends `member`'s
+    /// membership in `vault_id`, the vault's deletion included
+    /// ([`crate::sync::shared_leave::VerifiedLeaveNotice`]). The request
+    /// names the heads this env's authority fold stands at, so the home
+    /// sends beside its notices only the leave-notice delegations past them
+    /// (FIX 7932). Where those do not reach the notices' signer from a root
+    /// this env trusts, so a leave notice is pending
+    /// ([`crate::sync::shared_leave::LeaveNoticeCheck`]), it asks once more
+    /// naming no head, and the home sends its whole delegation chain, never
+    /// an authority row. A notice still pending confirms and purges nothing:
+    /// the home keeps it, and the next round asks again.
+    /// The lane ends for good before the leave discards its queue. `None`
+    /// while no verified notice says so. A refused or failed request is an
+    /// error, never a leave.
+    pub async fn check_shared_leave(
+        &self,
+        vault_id: u64,
+        member: &str,
+    ) -> Result<Option<crate::sync::shared_leave::SharedLeaveReceipt>, crate::sync::TransportError>
+    {
+        let Some(notice) = self.fetch_shared_leave_notice(vault_id, member).await? else {
             return Ok(None);
         };
-        self.stop_for_leave().await;
+        self.confirm_shared_leave_notice(&notice).await.map(Some)
+    }
+
+    async fn fetch_shared_leave_notice(
+        &self,
+        vault_id: u64,
+        member: &str,
+    ) -> Result<Option<crate::sync::shared_leave::VerifiedLeaveNotice>, crate::sync::TransportError>
+    {
+        use crate::sync::TransportError;
+        use crate::sync::shared_leave::{LeaveNoticeCheck, first_verified_leave};
+
+        // Where this env's authority chain stands (FIX 2053).
+        let heads: Vec<String> = self
+            .manager
+            .vault()
+            .leave_notice_heads()
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+            .iter()
+            .map(|head| crate::entity_id::bytes_to_hex_lower(head))
+            .collect();
+        // The home signs every notice (FIX 2053). One this env does not
+        // verify against the home root it already trusts, or a successor
+        // that root delegated leave-notice verification on to, changes
+        // nothing.
+        let judge = |notices: &[crate::federation::SignedSharedActOutcome],
+                     continuity: &crate::authority::LeaveNoticeContinuity| {
+            first_verified_leave(self.manager.vault(), vault_id, member, notices, continuity)
+                .map_err(|e| TransportError::Storage(e.to_string()))
+        };
+        let (notices, continuity) = self.left_notices(&heads).await?;
+        let mut check = judge(&notices, &continuity)?;
+        if matches!(check, LeaveNoticeCheck::Pending) && !heads.is_empty() {
+            // The delegations past this env's heads do not reach the signer:
+            // the whole delegation chain (FIX 7932).
+            let (notices, continuity) = self.left_notices(&[]).await?;
+            check = judge(&notices, &continuity)?;
+        }
+        let notice = match check {
+            LeaveNoticeCheck::Verified(notice) => notice,
+            LeaveNoticeCheck::Pending => {
+                tracing::warn!(
+                    vault_id = vault_id,
+                    "a leave notice waits on a delegation from a root this env trusts \
+                     to its signer; nothing is confirmed or purged, and the next round asks again"
+                );
+                return Ok(None);
+            }
+            LeaveNoticeCheck::Refused => return Ok(None),
+        };
+        Ok(Some(notice))
+    }
+
+    async fn confirm_shared_leave_notice(
+        &self,
+        notice: &crate::sync::shared_leave::VerifiedLeaveNotice,
+    ) -> Result<crate::sync::shared_leave::SharedLeaveReceipt, crate::sync::TransportError> {
+        use crate::sync::TransportError;
+
+        if !self.stop_for_leave().await {
+            return Err(TransportError::Storage(
+                "the sync lane did not quiesce for the leave; retry next round".to_owned(),
+            ));
+        }
         // Bind after the wait, with no await before confirmation: cancellation
         // while waiting must not strand this count on an unconfirmed notice.
         // Keep this owner on a failed transaction so its retry keeps the count.
@@ -356,11 +452,10 @@ impl SyncConnection {
             .leave_unqueued_receipt
             .get_or_init(|| notice.outcome().receipt_id.clone())
             == &notice.outcome().receipt_id;
-        // Published before `running=false` when the wait succeeded: the leave
-        // arms publish before any `Close`/cleanup await, and the final slot
-        // before `running=false`. 0 when every flush was admitted. When the
-        // 10s wait expired before publish, the count is missed and the receipt
-        // undercounts (FIX 12816, NOT fixed here).
+        // Published before `running=false`: the leave arms publish before any
+        // `Close`/cleanup await, and the final slot before `running=false`.
+        // A failed quiesce returned above, before binding or confirmation.
+        // 0 when every flush was admitted.
         let unqueued = if owns_unqueued {
             self.leave_unqueued
                 .load(std::sync::atomic::Ordering::Acquire)
@@ -369,10 +464,9 @@ impl SyncConnection {
         };
         crate::sync::shared_leave::confirm_verified_shared_leave(
             self.manager.vault(),
-            &notice,
+            notice,
             unqueued,
         )
-        .map(Some)
         .map_err(|e| TransportError::Storage(e.to_string()))
     }
 
@@ -659,6 +753,18 @@ impl SyncConnection {
         client.search_resident(query, limit).await
     }
 
+    /// One page of a home search, the first with no `cursor` (FIX 9258):
+    /// [`crate::sync::SyncClient::search_resident_page`].
+    pub async fn search_resident_page(
+        &self,
+        query: &str,
+        limit: usize,
+        cursor: Option<&crate::sync::residence::ResidenceSearchCursor>,
+    ) -> Result<crate::sync::ResidenceSearchPage, crate::sync::TransportError> {
+        let client = self.client()?;
+        client.search_resident_page(query, limit, cursor).await
+    }
+
     /// Clear the queued updates whose bytes the home has durably
     /// acknowledged, window by window. In each window only the contiguous
     /// acknowledged rows clear: a different digest fails the clear, and a
@@ -720,22 +826,25 @@ impl SyncConnection {
     }
 }
 
-/// Flush all buffered local updates to the persistent offline queue.
-/// Logs errors but does not fail — best-effort during disconnect/shutdown.
+/// Flush buffered local updates to the persistent offline queue.
+/// Logs errors and keeps failed updates in the buffer; shutdown stays best-effort.
 fn flush_to_queue(queue: &SyncQueue, buffer: &mut Vec<LocalUpdate>) {
-    for local_update in buffer.drain(..) {
+    buffer.retain(|local_update| {
         if parse_window_key_str(&local_update.window_key).is_none() {
             tracing::error!(
                 "Rejected invalid local update window key during queue flush: {}",
                 local_update.window_key
             );
-            continue;
+            return false;
         }
-        let queue_result = queue.push(&local_update.window_key, &local_update.update_bytes);
-        if let Err(e) = queue_result {
-            tracing::error!("Failed to persist update to offline queue: {e}");
+        match queue.push(&local_update.window_key, &local_update.update_bytes) {
+            Ok(_) => false,
+            Err(e) => {
+                tracing::error!("Failed to persist update to offline queue: {e}");
+                true
+            }
         }
-    }
+    });
 }
 
 /// Reason the steady-state loop exited.
@@ -751,6 +860,9 @@ enum LoopExit {
     /// The residence mode changed (FIX 8869): what was buffered is queued,
     /// and the next connect sends the new mode's hello.
     Renegotiate,
+    /// A peer session's probe found the home answering (FIX 4748): what was
+    /// buffered is queued, and the next connect is the home's.
+    HomeReturned,
 }
 
 #[cfg(test)]

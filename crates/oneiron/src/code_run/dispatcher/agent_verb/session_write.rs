@@ -18,16 +18,38 @@
 //! - it stages through the run's captured route, never a fresh one, in one
 //!   segment that compares the receipt, stages the rows and keeps the
 //!   answer, so a room row never stands without its receipt;
-//! - a write the room or the door refuses stages nothing and keeps no
-//!   receipt, as a write refused before its door ran keeps none.
+//! - a write the room or the door refuses stages nothing, and keeps its
+//!   refusal on its receipt, as the canonical path keeps a door's refusal
+//!   (FIX 5299). Once the write's segment rolled back, a second segment of
+//!   the same captured route keeps the exact refusal the guest read. A
+//!   resumed step gets that refusal back and asks nothing again. A refusal
+//!   whose receipt cannot be kept is the run's error, never the guest's
+//!   refusal. A room on record keeps no such write and no receipt;
+//! - it runs inside its row's verb hooks, in the room (FIX 5426), as a
+//!   forwarded read does: the pre chain on the call's own input before it is
+//!   prepared, the write prepared on the args every rewrite left, and the
+//!   post chain over the staged answer. The receipt keeps the caller's view
+//!   of the answer and what each hook did, settled once the post chain ran
+//!   (`settle_session_write_view`). A kept write is never made again and
+//!   runs no hook again, so a hook's ask is never entered twice: it answers
+//!   the kept view, and a view never settled reads withheld. What each hook
+//!   did rides the answer (FIX 5425); the run's record keeps the staged
+//!   answer, never a hook's changed view, as for every hooked call. A stop
+//!   in the pre chain keeps on the receipt what the canonical path keeps
+//!   (FIX 18654): a hidden result is the write's kept answer, and any other
+//!   stop keeps the never-ran mark (`VERB_HOOK_STOPPED`) and goes to the
+//!   dispatcher. A resumed step makes a never-ran write again under the
+//!   mark's generation, as the canonical path does. A mark whose receipt
+//!   cannot be kept is the run's error.
 //!
 //! Its rows ride no turn of the room (`SESSION_WRITES_RIDE_NO_TURN`, CALLS-7,
 //! unchanged). Nothing here asks where the caller or the vault runs.
 
 use std::cell::Cell;
 
+use crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD;
 use crate::code_run::replay::{CodeRunDeterminism, CodeRunReplayRecord};
-use crate::code_run::storage::ExecutorStorage;
+use crate::code_run::storage::{ExecutorStorage, KeptCallerView, kept_caller_view};
 use crate::code_run::types::{
     AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbRefusal, SelfAgentVerbCall,
     SelfDispatchOutcome, SessionWriteAdmission,
@@ -35,17 +57,20 @@ use crate::code_run::types::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{HostWriteOrigin, MemoryError};
+use crate::runtime_hooks::VerbHookStop;
 use crate::session_overlay::RouteTarget;
 use crate::task_verb::sdk::AgentVerb;
 
 use super::super::{ExecutorCallSite, HostSelfDispatcher};
-use super::{KeptWrite, answered};
+use super::{KeptWrite, VERB_HOOK_HIDDEN, VERB_HOOK_STOPPED, answered, never_ran_mark};
 
 impl HostSelfDispatcher<'_> {
     /// `call`, a `vault.notes.create` or `vault.claims.upsert` call of a run
     /// bound to an off-record session, staged in its room: its kept answer
     /// when the step already made it, else admitted, prepared and staged
-    /// with its receipt in one segment of the run's captured route.
+    /// with its receipt in one segment of the run's captured route. A
+    /// refusal is kept on the same receipt (FIX 5299), and so is a hook
+    /// stop's canonical mark (FIX 18654).
     pub(super) fn dispatch_session_write(
         &self,
         call: SelfAgentVerbCall,
@@ -67,7 +92,7 @@ impl HostSelfDispatcher<'_> {
         let receipt = match site {
             Some(site) => match self.session_write_identity(site)? {
                 (_, KeptWrite::Ran(kept)) => {
-                    return self.kept_write_answer(self.agent_verbs.as_deref(), *kept, call);
+                    return self.kept_session_write_answer(*kept, call);
                 }
                 (id, KeptWrite::Fresh(stopped)) => Some((
                     CodeRunReplayRecord::new(id, CodeRunDeterminism::new(0, [0; 32])),
@@ -76,32 +101,68 @@ impl HostSelfDispatcher<'_> {
             },
             None => None,
         };
+        // FIX 5299: a refused write keeps its refusal on its receipt, in a
+        // second segment of the captured route once its own rolled back. A
+        // hook's stop keeps its mark the same way (FIX 18654). A refusal or
+        // mark whose receipt is not kept so is the run's error.
+        let refuse = |refused: SelfDispatchOutcome| -> Result<SelfDispatchOutcome> {
+            if let Some((receipt, stopped)) = &receipt {
+                binding.keep_session_write_refusal(&call, (receipt, *stopped), &refused)?;
+            }
+            Ok(refused)
+        };
         let admission = match self.session_write_admission(call.verb) {
             Ok(admission) => admission,
-            Err(refused) => return Ok(answered(Err(refused))),
+            Err(refused) => return refuse(answered(Err(refused))),
         };
         let origin =
             HostWriteOrigin::new(self.agent_verb_envelope(call.verb, site.map(|site| site.seq))?)
                 .with_model_provider(self.model_provider())
                 .with_bound_run(self.bound_run);
-        let reader = admission
+        let key = admission
             .as_ref()
             .and_then(SessionWriteAdmission::key)
-            .map(|key| binding.session.read_context(&binding.route, key.clone()))
+            .cloned();
+        let reader = key
+            .clone()
+            .map(|key| binding.session.read_context(&binding.route, key))
             .transpose()?;
+        // The row's verb hooks, in the room, before the write is prepared: a
+        // stop is the answer, and a rewrite is what the write prepares.
+        let (pre, mut hooks) = match self.session_write_pre(&call, key, site) {
+            Ok(entered) => entered,
+            // FIX 18654: a stop keeps on the receipt what the canonical path
+            // keeps. A hidden result is the write's kept answer.
+            Err(Error::VerbHook(stop)) if matches!(*stop, VerbHookStop::Hidden { .. }) => {
+                return refuse(answered(Err(AgentVerbRefusal {
+                    code: VERB_HOOK_HIDDEN.to_owned(),
+                })));
+            }
+            // A skip or an ask stopped the write before it ran: the receipt
+            // keeps the never-ran mark, and the stop goes to the dispatcher.
+            Err(Error::VerbHook(stop)) => {
+                refuse(never_ran_mark(VERB_HOOK_STOPPED))?;
+                return Err(Error::VerbHook(stop));
+            }
+            Err(error) => return Err(error),
+        };
         let stage = match binding.session.prepare_session_write(
             &binding.route,
             self.actor,
             origin,
             call.verb,
-            &call.input,
+            &pre.args,
             reader.as_ref(),
         ) {
             Some(Ok(stage)) => stage,
             Some(Err(refused)) => {
-                return Ok(answered(Err(AgentVerbRefusal { code: refused.code })));
+                self.session_write_keep(call.verb.as_str(), pre)?;
+                return refuse(answered(Err(AgentVerbRefusal { code: refused.code })));
             }
-            None => return Ok(session_bound()),
+            None => {
+                self.session_write_keep(call.verb.as_str(), pre)?;
+                return refuse(session_bound());
+            }
         };
         // The door's ceiling, checked again in the transaction that lands
         // the write: a caller whose credential stopped holding since it was
@@ -121,20 +182,90 @@ impl HostSelfDispatcher<'_> {
                         "the door's caller no longer holds this write",
                     ));
                 }
-                Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(
-                    stage(wtxn, apply)?,
-                    Some(Vec::new()),
-                )))
+                Ok(SelfDispatchOutcome::AgentVerb(
+                    AgentVerbAnswer::new(stage(wtxn, apply)?, Some(Vec::new()))
+                        .with_hooks(hooks.clone()),
+                ))
             },
         )?;
-        Ok(match written {
+        let outcome = match written {
             Ok(outcome) => outcome,
             // Nothing staged: the refusal reaches the guest as its code, the
-            // room's as its Memory code.
-            Err(refused) => answered(Err(ceiling.take().unwrap_or_else(|| AgentVerbRefusal {
-                code: MemoryError::from(refused).code,
-            }))),
-        })
+            // room's as its Memory code, the pre chain's records are kept,
+            // and the receipt keeps the refusal.
+            Err(refused) => {
+                self.session_write_keep(call.verb.as_str(), pre)?;
+                return refuse(answered(Err(ceiling.take().unwrap_or_else(|| {
+                    AgentVerbRefusal {
+                        code: MemoryError::from(refused).code,
+                    }
+                }))));
+            }
+        };
+        let SelfDispatchOutcome::AgentVerb(mut answer) = outcome else {
+            return Ok(outcome);
+        };
+        // The post chain over the staged answer, in the room: the caller
+        // reads its view, and the run's record keeps the staged answer.
+        let (view, post) =
+            self.session_write_post(call.verb.as_str(), pre, answer.output.clone())?;
+        hooks.extend(post);
+        answer.hooks = hooks;
+        let caller_view = (view != answer.output).then(|| {
+            let mut shown = answer.clone();
+            shown.output = view;
+            shown.guest_reply()
+        });
+        // The receipt keeps the caller's view for a resumed step. One not
+        // kept stays pending, and a resumed step then reads it withheld.
+        if let Some((receipt, _)) = &receipt
+            && let Err(error) = binding.settle_session_write_view(
+                receipt.run_id,
+                &call,
+                &answer,
+                caller_view.as_ref(),
+            )
+        {
+            tracing::warn!(verb = call.verb.as_str(), %error, "a room write's caller view was not kept");
+        }
+        if let Some(reply) = caller_view {
+            *self.hook_view.borrow_mut() = Some(reply);
+        }
+        Ok(SelfDispatchOutcome::AgentVerb(answer))
+    }
+
+    /// A room write the step already made: its kept answer, read again as
+    /// the door rules, with the caller's view and hook dispositions its
+    /// receipt keeps. The write is never made again and no hook runs again.
+    /// A view whose post chain never settled answers the output withheld:
+    /// a post hook may have hidden part of it. A kept refusal (FIX 5299)
+    /// answers as it was kept: no post chain runs over a refusal.
+    fn kept_session_write_answer(
+        &self,
+        kept: CodeRunReplayRecord,
+        call: SelfAgentVerbCall,
+    ) -> Result<SelfDispatchOutcome> {
+        let view = match kept.bridge_calls.first() {
+            Some(row) => kept_caller_view(&row.outcome)?,
+            None => KeptCallerView::Unchanged,
+        };
+        let outcome = self.kept_write_answer(self.agent_verbs.as_deref(), kept, call)?;
+        let SelfDispatchOutcome::AgentVerb(answer) = &outcome else {
+            return Ok(outcome);
+        };
+        let reply = match view {
+            KeptCallerView::Unchanged => None,
+            KeptCallerView::Changed(reply) => Some(reply),
+            KeptCallerView::Pending => {
+                let mut shown = answer.clone();
+                shown.output = serde_json::Value::from(CODE_RUN_OUTPUT_PREVIEW_WITHHELD);
+                Some(shown.guest_reply())
+            }
+        };
+        if let Some(reply) = reply {
+            *self.hook_view.borrow_mut() = Some(reply);
+        }
+        Ok(outcome)
     }
 
     /// CALLS-5 `session_write_identity`: a room write's receipt is the run's

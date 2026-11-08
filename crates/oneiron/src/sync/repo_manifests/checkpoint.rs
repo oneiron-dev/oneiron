@@ -4,7 +4,7 @@
 //! pointers, and no actor, so it seals whole under its CODE entity.
 #![allow(
     dead_code,
-    reason = "KS7-3b's Loro projection drives this; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
+    reason = "KS7-3b's Loro projection drives this (CHECKPOINT_PAYLOADS_ENABLED, on since KS7-6)"
 )]
 
 use std::collections::BTreeMap;
@@ -44,9 +44,11 @@ pub(in crate::sync) fn key_class(key: &str) -> KeyClass {
 /// Checks joinable manifest heads against their portable-id keys and CODE
 /// entities, using current and retained historical values from one capture.
 /// Only content-addressed part values enter the lookup, so a malformed old
-/// value cannot hide a correct part. Missing or memory-deferred joins keep
-/// their current placement; a proved mismatch keeps the window whole under
-/// the existing `Undecodable` fallback. Malformed heads remain `entry()`'s.
+/// value cannot hide a correct part. A head that cannot join (a part not
+/// landed, or a join held for memory) proves no binding, so it keeps the
+/// window whole when it names a part the capture holds (FIX 10278); a
+/// proved mismatch does too, under the existing `Undecodable` fallback.
+/// Malformed heads remain `entry()`'s.
 pub(in crate::sync) fn binding_refusal(
     entries: &[(&str, &[u8])],
 ) -> Option<(OwnerRef, SyncUnclassified)> {
@@ -64,6 +66,14 @@ pub(in crate::sync) fn binding_refusal(
             continue;
         };
         let Some(joined) = join_parts_from(&head.body, |part| parts.get(part).copied()) else {
+            // Its holder would still take each part it names that is here.
+            if head
+                .body
+                .keys()
+                .any(|part| parts.contains_key(part.as_str()))
+            {
+                return Some((OwnerRef::entity(&head.code), SyncUnclassified::Undecodable));
+            }
             continue;
         };
         let Some(manifest) = RepoManifest::decode(&joined) else {

@@ -189,7 +189,7 @@ impl Restore<'_> {
     async fn run(&self) -> Result<Restored, (Cold, bool)> {
         self.recheck().await.map_err(|cold| (cold, false))?;
         let bytes = self.record.plaintext_bytes;
-        let ledger = super::super::device_ledger(self.worker_id);
+        let ledger = self.place.ledger.clone();
         if fits_host(bytes).await != Some(true) || !device_room(ledger.as_deref(), bytes) {
             return Err((COLD, false));
         }
@@ -260,7 +260,7 @@ impl Restore<'_> {
         };
         let place = self.place;
         let imported = session_import(
-            &place.socket,
+            &place.launch,
             &place.epoch,
             &body,
             region.get(),
@@ -335,12 +335,19 @@ impl Restore<'_> {
         let created: SessionCreated = send(self.place, SessionOp::Create, &body, None)
             .await
             .ok()?;
-        let session = Session {
+        let target = SessionTarget {
+            handle: created.handle,
+            binding: self.key.binding(),
+        };
+        let mut session = Session {
             key: self.key.clone(),
             handle: created.handle,
             generation: created.generation,
             published: None,
             residency: SessionResidency::default(),
+            // No residency report was observed for it yet: its row starts
+            // unreported, never a fabricated default.
+            owner: registry::mint_owner(self.place, self.key.anchor.vault, target, None),
             pending: None,
             stale: None,
             path: Vec::new(),
@@ -356,7 +363,9 @@ impl Restore<'_> {
                 worker.sessions.insert(self.key.binding(), session);
                 None
             } else {
-                Some(worker.owe(self.key.anchor.vault, session.target(), session.residency))
+                // The cold path still owns this pin until a restore is admitted.
+                session.lease = None;
+                Some(worker.owe_session(session))
             }
         };
         if let Some((target, at)) = refused {
@@ -383,7 +392,7 @@ impl Restore<'_> {
             })?;
         session.published = Some(checkpoint.clone());
         session.generation = published.generation;
-        session.residency = published.residency;
+        session.observe(published.residency);
         session.path = self.path.to_vec();
         session.phase = Phase::Ready;
         session.restored = Some(checkpoint.frontier_tokens);

@@ -206,24 +206,22 @@ fn watch_stop(
     gate: Arc<Gate>,
     connection: Arc<Mutex<Option<File>>>,
 ) -> std::io::Result<()> {
-    std::thread::Builder::new()
-        .name("vm-outbox-stop".into())
-        .spawn(move || {
-            let mut signal = 0;
-            // SAFETY: `stops` was filled by sigemptyset and sigaddset, and
-            // sigwait writes only to `signal`.
-            unsafe { libc::sigwait(&raw const stops, &raw mut signal) };
-            gate.drain();
-            if let Some(stream) = connection
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .as_ref()
-            {
-                // SAFETY: shutdown takes no pointers; the descriptor is a
-                // socket the slot holds open.
-                unsafe { libc::shutdown(stream.as_raw_fd(), libc::SHUT_RDWR) };
-            }
-        })?;
+    crate::engine_thread("vm-outbox-stop".into()).spawn(move || {
+        let mut signal = 0;
+        // SAFETY: `stops` was filled by sigemptyset and sigaddset, and
+        // sigwait writes only to `signal`.
+        unsafe { libc::sigwait(&raw const stops, &raw mut signal) };
+        gate.drain();
+        if let Some(stream) = connection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
+            // SAFETY: shutdown takes no pointers; the descriptor is a
+            // socket the slot holds open.
+            unsafe { libc::shutdown(stream.as_raw_fd(), libc::SHUT_RDWR) };
+        }
+    })?;
     Ok(())
 }
 

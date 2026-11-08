@@ -8,11 +8,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-/// Maximum `interlocutors.third_parties` entries per context-pack request.
-/// Each party can trigger vault reads during resolution, so the block is
-/// capped like the crate's other request-controlled collections.
-pub(crate) const MAX_INTERLOCUTOR_THIRD_PARTIES: usize = 32;
-
 /// Edge expansion depth controls for context-pack assembly.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextPackDepthControls {
@@ -292,6 +287,12 @@ pub(crate) struct CoreContextPackRequest {
     /// Signals per page, 1..=1000.
     #[serde(default)]
     pub(super) signals_limit: Option<usize>,
+    /// Optional signal read/filter/page budget, in milliseconds (1..=60000).
+    /// Starts when the signal read begins, after pack assembly. Expiry returns
+    /// 408 DEADLINE_EXCEEDED with no partial page or advanced cursor. Omitted,
+    /// the complete feed is read without a signal deadline.
+    #[serde(default)]
+    pub(super) signals_deadline_ms: Option<u64>,
     /// The PERSON whose messages' signals are read. Required for an owner
     /// credential without a bound person; a delegated credential may only
     /// name its own bound person.

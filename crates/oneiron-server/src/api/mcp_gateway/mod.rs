@@ -4,6 +4,7 @@
 mod actions;
 mod actor_dispatch;
 mod admission;
+mod admission_intent;
 mod board_observations;
 mod board_setup;
 mod booking_call;
@@ -11,7 +12,9 @@ mod call_meta;
 mod claimed_release;
 mod client_surface;
 mod clock_repair_call;
+mod code_mode_self_brief;
 mod code_mode_verbs;
+mod code_run_resume;
 mod device_release;
 mod envelope;
 mod exec_board_verbs;
@@ -21,6 +24,7 @@ mod owner_call;
 mod person_call;
 pub(crate) use self::person_call::person_socket_admits;
 mod question_answers_result;
+mod read_result;
 mod served_rows;
 pub(crate) mod skill_execution;
 mod stream_reads;
@@ -37,19 +41,23 @@ pub(crate) use self::actor_dispatch::{
 };
 pub(crate) use self::admission::mcp_admit_scoped_call;
 use self::admission::{
-    mcp_credential_reads, mcp_scope_covers_entity, mcp_scoped_tasks_section,
+    mcp_credential_reads, mcp_scope_covers_entity, mcp_scoped_task_rows, mcp_scoped_tasks_section,
     mcp_validated_call_args,
 };
-pub(crate) use self::board_observations::run_session_reads;
-pub(crate) use self::board_setup::{McpBoardOmissions, execute_mcp_setup, ride_run_carrier};
+pub(crate) use self::board_observations::{mcp_session_reads, run_session_reads};
+pub(crate) use self::board_setup::{
+    McpBoardOmissions, execute_mcp_setup, mcp_brief_pins, ride_run_carrier,
+    run_brief_people_budget, run_brief_pins,
+};
 use self::board_setup::{
     McpBoardState, McpCarrierPolicy, mcp_board_frame_error, mcp_board_verb_error,
     mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,
     mcp_resolve_page,
 };
 pub(crate) use self::code_mode_verbs::{
-    ReaderChildDoor, RunGuests, VerdictAsker, count_hook_decisions,
+    ReaderChildDoor, RunGuests, VerdictAsker, code_mode_line, count_hook_decisions,
 };
+pub(crate) use self::code_run_resume::{McpCodeRunContinuations, reenter_ready_mcp_code_runs};
 // L09's resident_pump `run_bound` calls the strict preflight (CUA E4).
 pub(crate) use self::code_mode_verbs::{WorkflowPreflight, preflight_task_workflow};
 #[cfg(test)]
@@ -58,14 +66,15 @@ use self::device_release::{mcp_release_listed, mcp_release_result};
 use self::envelope::mcp_request_id;
 pub(crate) use self::envelope::{
     MCP_CREDENTIAL_HEADER, McpCallContext, McpGatewayError, McpToolCallParams, mcp_gateway,
-    mcp_tool_first_gateway,
+    mcp_method_not_allowed, mcp_tool_first_gateway,
 };
 pub(crate) use self::exec_board_verbs::{
-    deliver_run_board_hooks, drop_run_board, execute_mcp_execute_code, execute_mcp_read_result,
-    execute_run_board_verb, execute_run_board_verb_in_session,
+    deliver_run_board_hooks, drop_run_board, execute_mcp_execute_code, execute_run_board_verb,
+    execute_run_board_verb_in_session,
 };
 use self::exec_board_verbs::{execute_mcp_board_verb, mcp_verb_family_error};
 pub(crate) use self::owner_call::resolve_mcp_caller;
+pub(crate) use self::read_result::execute_mcp_read_result;
 use self::served_rows::McpServed;
 pub(crate) use self::stream_reads::{mcp_stream_reads_task, mcp_stream_task_row};
 // Test-only surface: `api/tests.rs` names these bare through the `api` glob,

@@ -42,7 +42,51 @@ impl Vault {
             grant: ConsentGrant::ApproveOnce(effect_digest),
         };
         self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
+        crate::batch::queue_consent_answer(self, wtxn);
         Ok(receipt)
+    }
+
+    /// Acts only on a real sealed code wait and the holder's own answer word.
+    /// The digest and policy proof are read here, never supplied by a caller.
+    pub(crate) fn act_on_code_consent_wait_as_holder_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        holder: &AuthenticatedOwner,
+        input: &crate::code_run::CodeConsentAnswerInput,
+    ) -> Result<Option<super::super::code_settlement::CodeConsentHolderDecision>> {
+        let Some((policy, effect_digest)) =
+            crate::code_run::prove_code_consent_holder_act_in_txn(self, txn, holder, input)?
+        else {
+            return Ok(None);
+        };
+        let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
+        let receipt = match input.choice {
+            crate::code_run::CodeConsentChoice::Deny => ConsentReceipt::Denied {
+                decision_id,
+                effect_digest,
+            },
+            crate::code_run::CodeConsentChoice::ApproveOnce => {
+                self.claim_approve_once_in_txn(txn, &effect_digest, decision_id)?;
+                ConsentReceipt::Approved {
+                    decision_id,
+                    grant: ConsentGrant::ApproveOnce(effect_digest),
+                }
+            }
+            crate::code_run::CodeConsentChoice::ApproveAndStopAsking => {
+                return Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
+                    "effect settlement power does not change a connector setting",
+                )));
+            }
+        };
+        let attribution = policy.attribution();
+        self.append_code_consent_holder_receipt_in_txn(txn, &attribution, &receipt)?;
+        crate::batch::queue_consent_answer(self, txn);
+        Ok(Some(
+            super::super::code_settlement::CodeConsentHolderDecision {
+                receipt,
+                attribution,
+            },
+        ))
     }
 
     /// The ONLY persistence door for a standing consent grant.
@@ -101,11 +145,15 @@ impl Vault {
             wtxn,
             &grant_ref,
         )?;
+        // Nor may an open widening filed over the predecessor revoke it
+        // (FIX 9740).
+        super::super::widen::forget_widen_predecessor_in_txn(self, wtxn, &grant_ref)?;
         // Re-minting an identical bound is the owner re-affirming it; the row
         // is idempotent, and the receipt is still written so the act is
         // audit-visible.
         GRANTS.put(&self.store, wtxn, &grant_ref, &row)?;
         self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
+        crate::batch::queue_consent_answer(self, wtxn);
         Ok(receipt)
     }
 
@@ -119,6 +167,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let receipt = self.deny_consent_in_txn(&mut wtxn, owner, effect_digest)?;
         wtxn.commit()?;
+        self.notify_consent_answer();
         Ok(receipt)
     }
 
@@ -137,6 +186,7 @@ impl Vault {
         // an owner signal, so it takes the owner tier like every receipt.
         owner.revalidate_in_txn(self, &*wtxn)?;
         self.append_consent_gate_decision_in_txn(wtxn, &owner.stamp(), &receipt, None)?;
+        crate::batch::queue_consent_answer(self, wtxn);
         Ok(receipt)
     }
 

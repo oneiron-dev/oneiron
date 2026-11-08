@@ -1,5 +1,5 @@
-//! `self.team.start` and `self.team.record` (OF-540): a pattern-skill run's
-//! own team, bound to the running agent attempt. The team rules are
+//! `self.team.start`, `self.team.record` and `self.team.vote` (OF-540): a
+//! pattern-skill run's own team, bound to the running agent attempt. The team rules are
 //! [`crate::team::run`]'s; this binds them to the run. Members spawn as the
 //! run's children through the one code-mode spawn door, each with the team's
 //! stamp, so a replayed start finds the same children.
@@ -10,6 +10,7 @@ use crate::autoreason_campaign::authoring::tournament_start_check;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::{
     SelfAgentSpawnCall, SelfAgentSpawnResult, SelfDispatchOutcome, SelfEffect, SelfFailedResult,
+    SelfTeamResult,
 };
 use crate::context_projection::ContextSpec;
 use crate::entity_id::bytes_to_hex_lower;
@@ -20,13 +21,14 @@ use crate::team::{
     SelfTeamCall, TeamMemberAnswer, TeamRecordInput, TeamRunAnswer, TeamRunBinding, TeamStartInput,
 };
 
-type Answered = std::result::Result<TeamRunAnswer, &'static str>;
+type Answered = std::result::Result<SelfTeamResult, &'static str>;
 
 impl HostSelfDispatcher<'_> {
     pub(super) fn dispatch_team(&self, call: SelfTeamCall) -> Result<SelfDispatchOutcome> {
         let answered = match call {
             SelfTeamCall::Start(input) => self.team_start(input)?,
             SelfTeamCall::Record(input) => self.team_record(&input)?,
+            SelfTeamCall::Vote(input) => self.team_vote(&input)?,
         };
         Ok(match answered {
             Ok(answer) => SelfDispatchOutcome::Team(answer),
@@ -52,7 +54,10 @@ impl HostSelfDispatcher<'_> {
         if let ExecutorStorage::Canonical(vault) = &self.storage
             && let Some(answer) = planned_start(vault, leader, &input, stamp.pattern)?
         {
-            return Ok(Ok(answer));
+            return Ok(Ok(SelfTeamResult {
+                answer,
+                source_rows: None,
+            }));
         }
         // A tournament team joins its own campaign's run, checked before any
         // member spawns. An off-record run can't show its campaign.
@@ -118,7 +123,7 @@ impl HostSelfDispatcher<'_> {
         }
         self.keep_team_start(&observed)?;
         // Widenings asked and none launched: no team runs yet.
-        Ok(Ok(if observed.members.is_empty() {
+        let answer = if observed.members.is_empty() {
             TeamRunAnswer::ProposedWiden {
                 team_ref: stamp.team_ref,
                 pattern: stamp.pattern,
@@ -130,6 +135,11 @@ impl HostSelfDispatcher<'_> {
                 pattern: stamp.pattern,
                 members,
             }
+        };
+        Ok(Ok(SelfTeamResult {
+            answer,
+            // The same native receipt facts `keep_team_start` publishes.
+            source_rows: Some(Vec::new()),
         }))
     }
 
@@ -159,6 +169,28 @@ impl HostSelfDispatcher<'_> {
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             return Ok(Err("team_off_record"));
         };
-        record_led_team(vault, leader, input, crate::unix_seconds_now())
+        record_led_team(vault, leader, input, crate::unix_seconds_now()).map(|answered| {
+            answered.map(|answer| SelfTeamResult {
+                answer,
+                source_rows: None,
+            })
+        })
+    }
+
+    fn team_vote(&self, input: &crate::team::TeamVoteInput) -> Result<Answered> {
+        let Some(caller) = self.agent_parent else {
+            return Ok(Err("team_unbound"));
+        };
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Ok(Err("team_off_record"));
+        };
+        crate::team::ballot::record_vote(vault, caller, input, crate::unix_seconds_now()).map(
+            |answered| {
+                answered.map(|answer| SelfTeamResult {
+                    answer,
+                    source_rows: Some(Vec::new()),
+                })
+            },
+        )
     }
 }

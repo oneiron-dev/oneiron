@@ -44,8 +44,23 @@ impl OpenedOwnerRows {
         })
     }
 
+    /// The row an actor-keyed part at `at` lands: its own key and value, out
+    /// of the actor part naming it; `None` when that actor did not open.
+    ///
+    /// # Errors
+    ///
+    /// An actor part that does not read as the row it names.
+    pub(crate) fn actor_keyed_row(&self, at: &RowLocator) -> Result<Option<(RowLocator, Vec<u8>)>> {
+        let actors: Vec<&ActorPart> = self
+            .actor_parts
+            .iter()
+            .filter(|actor| &actor.content_locator == at)
+            .collect();
+        actor_keyed_row(at, &actors)
+    }
+
     /// The parts an owner that did not open holds up.
-    fn held_up(&self) -> BTreeSet<&RowLocator> {
+    pub(crate) fn held_up(&self) -> BTreeSet<&RowLocator> {
         self.dependencies
             .iter()
             .filter(|dependency| self.unavailable.contains(&dependency.on))
@@ -161,7 +176,7 @@ fn in_part_table(
 
 /// An actor-keyed row's own key and value, out of the actor part naming its
 /// placeholder; `None` when that actor did not open.
-fn actor_keyed_row(
+pub(crate) fn actor_keyed_row(
     at: &RowLocator,
     actors: &[&ActorPart],
 ) -> Result<Option<(RowLocator, Vec<u8>)>> {

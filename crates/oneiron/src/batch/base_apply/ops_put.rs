@@ -1,6 +1,8 @@
 //! Base-apply Put arm: validated puts with births and projections.
 
-use super::validation::{birth_stamp_target, consume_preflight_decisions, validate_put_type};
+use super::validation::{
+    birth_stamp_target, consume_preflight_decisions, source_free_text_birth, validate_put_type,
+};
 use super::*;
 use crate::error::RegistryError;
 use crate::store::ppr_cache_invalidation as ppr;
@@ -57,13 +59,15 @@ pub(super) fn apply_put_arm(
         put_options.storage.asset_file = Some(file);
     }
     let sources = state.text_births.get(&id).map(Vec::as_slice);
+    let source_free =
+        source_free_text_birth(entity_type, &id, sources, &state.derived_from_edge_sources);
     if let Some(facet) = birth_stamp_target(
         store,
         wtxn,
         id,
         entity_type,
         replicated,
-        (state.birth_mask, sources),
+        (state.birth_mask, sources, source_free),
         &data,
     )? {
         let owner = crate::vault::embedded_owner_actor_id()?;
@@ -113,6 +117,13 @@ pub(super) fn apply_put_arm(
             oneiron_contracts::affect::Vad::NEUTRAL,
             None,
         )?;
+        // FIX 8741: the same transaction records that this text was born
+        // source-free, so a read tells it from a text whose sources are gone.
+        if source_free {
+            crate::federation::record_scope::asset_text::stamp_source_free_birth(
+                store, wtxn, id, facet,
+            )?;
+        }
         ppr::invalidate_ppr_for_edge(store, wtxn, &id, &facet)?;
         state.had_graph_mutation = true;
     }
@@ -146,7 +157,12 @@ pub(super) fn apply_put_arm(
     let rewritten = text_row && stored_entity_type(store, wtxn, &id)?.is_some();
     let born_turn = entity_type == crate::registry::ENTITY_TYPE_TURN && !rewritten;
     let applied = apply_put_beside(
-        store,
+        &crate::secret_custody::CustodyWrite {
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+        },
         wtxn,
         PutRequest {
             row: PutRow {
@@ -270,8 +286,17 @@ pub(super) fn apply_put_arm(
         && !(allow_maintenance && allow_reserved_predicate)
         && !applied.is_lexical_query_hint_claim
     {
-        let deleted =
-            delete_lexical_query_hint_claims_for_target(store, wtxn, &id, &HashSet::new())?;
+        let deleted = delete_lexical_query_hint_claims_for_target(
+            &crate::secret_custody::CustodyWrite {
+                store,
+                config,
+                analyzer,
+                text_index_trusted,
+            },
+            wtxn,
+            &id,
+            &HashSet::new(),
+        )?;
         for (deleted_id, neighbors) in &deleted.deleted {
             state.pending_embedding_tokens_written.remove(deleted_id);
             #[cfg(feature = "sync")]

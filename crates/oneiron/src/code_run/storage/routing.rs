@@ -1,7 +1,5 @@
 //! Where one run's reads and writes land: the canonical vault or a bound off-record session.
 
-use std::borrow::Cow;
-
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::memory::{MessageResultAttachment, WitnessAssertions, WitnessReceipt};
 use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
@@ -16,10 +14,8 @@ use super::super::replay::{
 use super::super::support::invalid_code_run_replay;
 use super::records::{
     RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output_sourced,
-    load_whole_body, read_body_row_range, replay_generation_matches,
+    load_whole_body, read_body_row_range,
 };
-use super::response_erase::fence_replay_in_txn;
-use super::response_owners::stamp_response_owner_in_txn;
 use super::speech_identity::{
     ResultSpeech, canonical_witness_executor_turn_sourced, executor_speech_message_id_for_run,
     executor_speech_turn_id,
@@ -30,6 +26,7 @@ use crate::secret_rotation::ArtifactTaintState;
 use crate::store::{BODY_KEYS, BodySink, body_key_row_in_txn};
 
 mod bodies;
+mod output_progress;
 mod replay;
 mod type_feedback;
 
@@ -141,7 +138,7 @@ impl SessionBinding<'_> {
     }
 
     fn get_replay_record(&self, run_id: &EntityId) -> Result<Option<CodeRunReplayRecord>> {
-        self.answered(|| self.session.side_table_get(&REPLAY_RECORDS, run_id))
+        self.composed_replay_record(run_id)
     }
 
     /// Compare-and-set against the SAME composed view it will update, in the
@@ -174,50 +171,6 @@ impl SessionBinding<'_> {
         REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
         self.answered(|| self.put_replay_routed(record, expected, healed_model, |_, _| Ok(())))?;
-        Ok(next_generation)
-    }
-
-    /// [`Self::put_replay_record_if_generation_with_heal`] with no heal, as
-    /// `actor`'s run `run`. On an on-record stretch the record lands in base,
-    /// so the same transaction fences it and stamps its owner there, as the
-    /// vault's put does (FIX 5718, 7429): an erase of `actor` finds the run
-    /// by its owner row, and a write after that erase stays erased. An
-    /// overlay row stamps its owner in the overlay, in the same writer, so
-    /// the room's waits know whose run it is (FIX 6586).
-    pub(super) fn put_owned_replay_record_if_generation(
-        &self,
-        record: &CodeRunReplayRecord,
-        expected: Option<CodeRunReplayGeneration>,
-        run: EntityId,
-        actor: EntityId,
-    ) -> Result<CodeRunReplayGeneration> {
-        use crate::side_table::RoutedDbs;
-        REPLAY_RECORDS.encode_value(record)?;
-        let next_generation = record.generation()?;
-        self.answered(|| {
-            self.session
-                .routed_side_txn(&self.route, |wtxn, read, write| {
-                    let current = REPLAY_RECORDS.get(&read, wtxn, &record.run_id)?;
-                    replay_generation_matches(current.as_ref(), expected)?;
-                    match write {
-                        RoutedDbs::Base(vault) => {
-                            stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)?;
-                            let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
-                            REPLAY_RECORDS.put(vault, wtxn, &record.run_id, &record)
-                        }
-                        RoutedDbs::Session(_) => {
-                            stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
-                            let record = super::overlay_erase::fence_overlay_replay_in_txn(
-                                &write,
-                                wtxn,
-                                Cow::Borrowed(record),
-                                Some((run, actor)),
-                            )?;
-                            REPLAY_RECORDS.put(&write, wtxn, &record.run_id, &record)
-                        }
-                    }
-                })
-        })?;
         Ok(next_generation)
     }
 
@@ -625,6 +578,16 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// Where `witness_executor_message` lands the run's speech: on
+    /// canonical storage the run's own derived conversation, on session
+    /// storage the session's room. Its door admits the speech by it.
+    pub(crate) const fn speech_destination(&self) -> crate::code_run::RunSpeechDestination {
+        match self {
+            Self::Canonical(_) => crate::code_run::RunSpeechDestination::OwnRunConversation,
+            Self::Session(_) => crate::code_run::RunSpeechDestination::SessionRoom,
+        }
+    }
+
     /// `request` is the model request the run's executor bound before the
     /// call, host-owned; the report keeps it for its code fix (FIX 2343), and
     /// its run's read worlds as `read_worlds` seals its ledger (FIX 6130).
@@ -892,13 +855,37 @@ impl<'a> ExecutorStorage<'a> {
         owner: EntityId,
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<CodeRunRawOutput> {
+        self.publish_code_run_output_produced(path, sink, complete, owner, input_rows, None)
+    }
+
+    /// Carries the producer's native step coordinate along the same route
+    /// as the occurrence's bytes and source rows.
+    pub(crate) fn publish_code_run_output_produced(
+        &self,
+        path: String,
+        sink: BodySink,
+        complete: bool,
+        owner: EntityId,
+        input_rows: Option<Vec<EntityId>>,
+        producing_step_start: Option<u64>,
+    ) -> Result<CodeRunRawOutput> {
         match self {
-            Self::Canonical(vault) => {
-                vault.publish_code_run_output_sourced(path, sink, complete, Some(owner), input_rows)
-            }
-            Self::Session(binding) => {
-                binding.publish_output_sourced(path, sink, complete, owner, input_rows)
-            }
+            Self::Canonical(vault) => vault.publish_code_run_output_produced(
+                path,
+                sink,
+                complete,
+                Some(owner),
+                input_rows,
+                producing_step_start,
+            ),
+            Self::Session(binding) => binding.publish_output_produced(
+                path,
+                sink,
+                complete,
+                owner,
+                input_rows,
+                producing_step_start,
+            ),
         }
     }
 
@@ -907,6 +894,14 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.limit_watch(),
             Self::Session(binding) => binding.session.limit_watch(),
+        }
+    }
+
+    /// Wall milliseconds from the owning vault's injected clock.
+    pub(crate) fn now_recorded_ms(&self) -> u64 {
+        match self {
+            Self::Canonical(vault) => vault.now_recorded_ms(),
+            Self::Session(binding) => binding.session.now_recorded_ms(),
         }
     }
 

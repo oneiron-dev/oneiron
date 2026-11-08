@@ -78,6 +78,10 @@ pub struct ForkRecord {
     pub read_refs: Vec<String>,
     /// The SUMMARY editor memo this generation read, not a new memo.
     pub keep: Option<String>,
+    /// The delta receipt id this rework answered (FIX 11967): its merge
+    /// anchors the routing outcome. `None` when no amendment stood behind
+    /// the fork.
+    pub delta_receipt: Option<String>,
 }
 
 /// One review bundle, never inferred from author or time proximity.
@@ -360,12 +364,33 @@ impl Vault {
         authorization: &DocAuthorization<'_>,
         at: u64,
     ) -> Result<ProposalBundle> {
+        self.open_text_proposal_with_outcome(proposal, requests, authorization, at, None)
+    }
+
+    /// Opens a text rework answering the passed delta receipt, when one exists.
+    pub fn open_text_proposal_with_outcome(
+        &self,
+        proposal: &EntityId,
+        requests: &[ForkRequest],
+        authorization: &DocAuthorization<'_>,
+        at: u64,
+        delta_receipt: Option<&str>,
+    ) -> Result<ProposalBundle> {
         let mut registry = self
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
         let (out, landed) = self.with_write_txn_grouped(|txn| {
-            open_proposal_in_txn(self, txn, proposal, requests, authorization, at, &[])
+            open_proposal_in_txn(
+                self,
+                txn,
+                proposal,
+                requests,
+                authorization,
+                at,
+                &[],
+                delta_receipt,
+            )
         })?;
         registry.clear();
         drop(registry);
@@ -456,6 +481,7 @@ pub(super) fn open_proposal_in_txn(
     authorization: &DocAuthorization<'_>,
     at: u64,
     sources: &[EntityId],
+    delta_receipt: Option<&str>,
 ) -> Result<(ProposalBundle, Vec<LandedProse>)> {
     // No count bounds a proposal or its operations (FIX 9844): the whole
     // ordered set lands or retains in this one transaction.
@@ -480,6 +506,9 @@ pub(super) fn open_proposal_in_txn(
         // A shared vault's role and record scope, in this writer, for a fork
         // retained for review as for one a grant lands (FIX 9846).
         vault.authorize_shared_content_write_in_txn(txn, req.entity, &req.actor)?;
+        if let Some(refusal) = vault.store.use_restricted_in_txn(txn, &req.entity)? {
+            return Err(refusal);
+        }
         let h = storage::head(&vault.store, txn, &req.entity)?;
         let live = storage::load(&vault.store, txn, &h)?;
         let mut fork = live.fork(&req.base)?;
@@ -530,6 +559,7 @@ pub(super) fn open_proposal_in_txn(
             ForkStatus::Pending,
             at,
             &lineage,
+            delta_receipt,
         )?;
         if req.rewrite.is_none() && covered(vault, txn, authorization, &req.entity, req.actor)? {
             settle_one(vault, txn, &id.to_hex(), SettleVerb::Merge, req.actor, at)?;
@@ -563,6 +593,7 @@ pub(super) fn retain_fork(
     status: ForkStatus,
     at: u64,
     opener_lineage: &[[u8; 32]],
+    delta_receipt: Option<&str>,
 ) -> Result<()> {
     let key = proposal.to_hex();
     let mut bundle = match ENTITY_DOC_PROPOSAL_BUNDLE.get(&vault.store, txn, &key)? {
@@ -591,6 +622,7 @@ pub(super) fn retain_fork(
         status,
         read_refs: Vec::new(),
         keep: None,
+        delta_receipt: delta_receipt.map(str::to_owned),
     };
     ENTITY_DOC_FORK.put(&vault.store, txn, &id.to_hex(), &record)?;
     // A fork is its own shallow document, not a second complete history copy.
@@ -645,6 +677,11 @@ fn settle_one(
         }));
     }
     let entity = EntityId::from_hex(&record.entity)?;
+    if verb != SettleVerb::Reject {
+        if let Some(refusal) = vault.store.use_restricted_in_txn(txn, &entity)? {
+            return Err(refusal);
+        }
+    }
     let mut h = storage::head(&vault.store, txn, &entity)?;
     let live = storage::load(&vault.store, txn, &h)?;
     let before = live.frontier();
@@ -694,7 +731,12 @@ fn settle_one(
                 DocumentRow::ShallowSince,
             )?;
             h.document = record.fork.clone();
-            storage::move_pointer(&vault.store, txn, &entity, &h.document)?;
+            storage::move_pointer(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                txn,
+                &entity,
+                &h.document,
+            )?;
             storage::persist(vault, txn, &entity, &mut h, &live, None)?;
             if let Some(floor) = floor {
                 vault.store.port_document_shallow_since_put(
@@ -705,6 +747,15 @@ fn settle_one(
             }
             storage::drop_document(&vault.store, txn, &old_document)?;
             record.status = ForkStatus::Switched;
+            // The switched head reaches a loaded window once this writer
+            // commits, as any MESSAGE write does; a rollback mirrors nothing
+            // (FIX 5132). Only a build with sync mirrors.
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(
+                vault,
+                txn,
+                std::collections::BTreeSet::from([entity]),
+            );
             live.frontier()
         }
     };
@@ -731,6 +782,18 @@ fn settle_one(
         &before,
         &after,
     )?;
+    if verb == SettleVerb::Merge
+        && let Some(stamp) = record.delta_receipt.as_deref()
+    {
+        crate::edit_distance::routing::put_routing_outcome_in_txn(
+            vault,
+            txn,
+            stamp,
+            crate::edit_distance::routing::OUTCOME_MERGED,
+            at,
+            actor,
+        )?;
+    }
     Ok(())
 }
 

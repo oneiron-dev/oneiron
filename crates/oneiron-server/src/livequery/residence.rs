@@ -9,10 +9,12 @@ mod bundle_access;
 mod bundle_commit;
 mod bundles;
 mod checkpoint_roots;
+mod claim_vectors;
 mod custody;
 mod home_handoff;
 mod index;
 mod machine_history;
+mod media_vectors;
 mod pad_custody;
 mod pad_objects;
 mod pad_refill;
@@ -58,7 +60,9 @@ use crate::server::SyncServer;
 
 /// The residence calls a socket may make with only its machine proof.
 pub(super) fn machine_method(method: &str) -> bool {
-    method == "residence.pad.fetch" || home_handoff::machine_method(method)
+    method == "residence.claim.vector"
+        || method == "residence.pad.fetch"
+        || home_handoff::machine_method(method)
 }
 
 pub(super) fn run_machine(
@@ -67,7 +71,9 @@ pub(super) fn run_machine(
     method: &str,
     params: Value,
 ) -> Result<Answer, AppError> {
-    if method == "residence.pad.fetch" {
+    if method == "residence.claim.vector" {
+        claim_vectors::read(server, peer, params)
+    } else if method == "residence.pad.fetch" {
         pad_custody::pad_fetch_keys(server, peer, params)
     } else {
         home_handoff::run_machine(server, peer, method, params)
@@ -434,8 +440,10 @@ pub(super) fn run(
     touch_stage: &mut Option<ResidenceTouchStage>,
 ) -> Result<super::RpcReply, crate::protocol::ProtocolError> {
     let call = super::RpcCall::of(&request);
-    // A forwarded search's verified caller, whom its receipt names (FIX 3550).
+    // A forwarded search's verified caller, whom its receipt names (FIX 3550),
+    // and whether it sits off the carrying device (FIX 11991).
     let mut attribution = None;
+    let mut off_carrier = false;
     let result = (|| {
         auth.require(CoreScope::Read)?;
         if !auth.credential_is_live(server.vault.as_ref()) {
@@ -455,7 +463,11 @@ pub(super) fn run(
                 request.params,
                 budgets,
                 &mut attribution,
+                &mut off_carrier,
             ),
+            "residence.media_vectors" => {
+                media_vectors::media_vectors(server, auth, peer, request.params)
+            }
             "residence.bundle.turn" => bundle_turn(server, auth, peer, request.params),
             "residence.bundle.put" => bundle_put(server, auth, peer, request.params),
             "residence.bundle.commit" => {
@@ -513,6 +525,7 @@ pub(super) fn run(
         request.request_id,
         result,
     )
+    .map(|reply| reply.released_off_carrier(off_carrier))
 }
 
 fn operation_budgets(server: &SyncServer) -> Result<ResidenceOperationBudgets, AppError> {

@@ -20,7 +20,8 @@ use crate::{EntityId, Error, ModelId, Result, Vault};
 
 use super::super::codec::validate_raw_output;
 use super::super::replay::{
-    CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, ResultOccurrence,
+    CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding,
+    ResultOccurrence,
 };
 use super::super::support::invalid_code_run_replay;
 use super::replay_bodies::RESPONSE_ERASED;
@@ -29,14 +30,15 @@ use super::response_erase::{fence_replay_in_txn, response_erased_in_txn};
 mod admitted;
 mod bodies;
 
-pub(crate) use self::admitted::ReplyBody;
+pub(crate) use self::admitted::{ReplyAdmission, ReplyBody, ReplySpool};
 pub(crate) use self::bodies::{
     FinishedOutput, StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
-    code_run_body_row_key, code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
+    code_run_body_in_file_in_txn, code_run_body_row_key, code_run_inline_body_of_row,
+    lift_code_run_file_hold_in_txn, retire_unlanded_inline_body_keys_in_txn,
 };
 pub(super) use self::bodies::{
     body_drifted, finish_output, finish_output_sourced, load_whole_body, open_body_file,
-    owned_body, raw_put_publishes_descriptor, read_body_row_range,
+    owned_body, raw_put_descriptor_in_txn, read_body_row_range,
 };
 
 /// The replay record of one run, keyed by run id.
@@ -302,6 +304,28 @@ impl Vault {
         REPLAY_RECORDS.decode_value(raw).map(Some)
     }
 
+    /// The result names run `run_id`'s replay record binds now, each with
+    /// its content handle and occurrence path exactly, and nothing else of
+    /// the record. A binding grants nothing. `None` when no record is held.
+    pub fn code_run_result_bindings(
+        &self,
+        run_id: &EntityId,
+    ) -> Result<Option<Vec<CodeRunResultBinding>>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.code_run_result_bindings_in_txn(&rtxn, run_id)
+    }
+
+    /// [`Self::code_run_result_bindings`] in the caller's snapshot.
+    pub(crate) fn code_run_result_bindings_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        run_id: &EntityId,
+    ) -> Result<Option<Vec<CodeRunResultBinding>>> {
+        Ok(self
+            .get_code_run_replay_record_in_txn(rtxn, run_id)?
+            .map(|record| record.bindings))
+    }
+
     /// The taint refs and secret-scan reason of the occurrence of `output`
     /// that `owner` holds. With no owner the read names the bytes alone,
     /// which hold no authority of their own, so it carries the marks of
@@ -371,8 +395,8 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let (refs, secret) = self.result_marks_in_txn(&rtxn, owner, output)?;
         if secret.is_some()
-            || self.result_erased_in_txn(&rtxn, owner)?
-            || self.unowned_output_withdrawn_in_txn(&rtxn, owner, output)?
+            || self.result_erased_in_txn(&rtxn, owner, output)?
+            || self.output_withdrawn_in_txn(&rtxn, owner, output)?
         {
             return Ok(ArtifactTaintState::TaintedLive);
         }
@@ -388,7 +412,9 @@ impl Vault {
         output: &CodeRunRawOutput,
     ) -> Result<Option<String>> {
         let rtxn = self.store.env.read_txn()?;
-        if self.result_erased_in_txn(&rtxn, owner)? {
+        if self.result_erased_in_txn(&rtxn, owner, output)?
+            || (owner.is_some() && self.output_withdrawn_in_txn(&rtxn, owner, output)?)
+        {
             return Ok(Some(RESPONSE_ERASED.to_owned()));
         }
         Ok(self.result_marks_in_txn(&rtxn, owner, output)?.1)
@@ -397,35 +423,50 @@ impl Vault {
     /// Whether run `owner`'s results read as erased (FIX 5718): an erase of
     /// the run's actor took its replies, so every read of one is withheld
     /// as a marked body's is, naming `response_erased`, whoever else holds
-    /// the same bytes. A result no run holds is read as its bytes are.
+    /// the same bytes. An exact canonical native receipt keeps its original
+    /// standing; source withdrawal and marks are still checked independently.
+    /// A result no run holds is read as its bytes are.
     fn result_erased_in_txn(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        owner: Option<EntityId>,
-    ) -> Result<bool> {
-        match owner {
-            Some(owner) => response_erased_in_txn(&self.store, rtxn, &owner),
-            None => Ok(false),
-        }
-    }
-
-    /// Whether the occurrence of `output`'s bytes alone reads as withdrawn,
-    /// for a read with no `owner` (FIX 10447): a row the bytes were recorded
-    /// as derived from ([`Self::record_unowned_output_sources_in_txn`]) is
-    /// erased or withdrawn, or the walk from one has reached it. The
-    /// occurrence names no row, so it carries no body flag of its own; the
-    /// gate a filed compaction step's response reads through judges the
-    /// rest. A result a run holds is read by its own marks.
-    fn unowned_output_withdrawn_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         owner: Option<EntityId>,
         output: &CodeRunRawOutput,
     ) -> Result<bool> {
-        if owner.is_some() {
+        let Some(owner) = owner else {
+            return Ok(false);
+        };
+        if !response_erased_in_txn(&self.store, rtxn, &owner)? {
             return Ok(false);
         }
-        let occurrence = ResultOccurrence::of(None, output)?.id();
+        Ok(!REPLAY_RECORDS
+            .get_lenient(&self.store, rtxn, &owner)?
+            .is_some_and(|record| {
+                record.run_id == owner && record.output_is_retained_receipt(output)
+            }))
+    }
+
+    /// The standing of this run's exact output occurrence, without applying
+    /// a secret gate to a host's existing explicit raw read.
+    pub(crate) fn code_run_output_withdrawn(
+        &self,
+        owner: EntityId,
+        output: &CodeRunRawOutput,
+    ) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        self.output_withdrawn_in_txn(&txn, Some(owner), output)
+    }
+
+    /// Whether this exact occurrence reads as withdrawn. With no owner,
+    /// this is the bytes' own derived occurrence (FIX 10447); with an owner,
+    /// it is only that run's path, retired by a source erase (FIX 9348).
+    /// Shared bytes and another owner's occurrence keep their own standing.
+    fn output_withdrawn_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        owner: Option<EntityId>,
+        output: &CodeRunRawOutput,
+    ) -> Result<bool> {
+        let occurrence = ResultOccurrence::of(owner, output)?.id();
         Ok(!crate::ports::body_readable_in_txn(
             &self.store,
             rtxn,
@@ -439,7 +480,7 @@ impl Vault {
     /// as a dependent of each of its input rows in the dependency index, in
     /// the publishing transaction (FIX 10447): erasing one walks to it, as to
     /// a fold's words, and every read of the bytes alone then reads it
-    /// withdrawn ([`Self::unowned_output_withdrawn_in_txn`]). A row already
+    /// withdrawn ([`Self::output_withdrawn_in_txn`]). A row already
     /// erased or withdrawn has run its walk, so the occurrence is born
     /// withdrawn, as an epoch summary minted after the erasure is, and takes
     /// no dependency row on it. An id no entity row holds and no deletion
@@ -588,8 +629,8 @@ impl Vault {
 
     /// Why the occurrence of `output` that `owner` holds is withheld from a
     /// view leaving the vault: an erase of the run's actor took it (FIX
-    /// 5718), the secret scan marked it, or it carries taint refs, live or
-    /// stale alike. Another occurrence of the same bytes neither withholds
+    /// 5718), a source erase withdrew its exact owned occurrence (FIX 9348),
+    /// the secret scan marked it, or it carries taint refs, live or stale alike. Another occurrence of the same bytes neither withholds
     /// nor clears it.
     pub(crate) fn code_run_result_withheld_in_txn(
         &self,
@@ -597,7 +638,9 @@ impl Vault {
         owner: Option<EntityId>,
         output: &CodeRunRawOutput,
     ) -> Result<Option<&'static str>> {
-        if self.result_erased_in_txn(rtxn, owner)? {
+        if self.result_erased_in_txn(rtxn, owner, output)?
+            || (owner.is_some() && self.output_withdrawn_in_txn(rtxn, owner, output)?)
+        {
             return Ok(Some(RESPONSE_ERASED));
         }
         let (refs, secret) = self.result_marks_in_txn(rtxn, owner, output)?;

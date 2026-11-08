@@ -1,12 +1,18 @@
 //! Per-store clock and id source. No process-global clock or counter.
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StoreError};
 use crate::store::{DetachedWrite, StoreCore};
+use std::fs::{File, TryLockError};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 pub(crate) use oneiron_store::store_clock::AUTHORIZATION_LEASE_SECS;
 use oneiron_store::store_clock::lease_journal;
 pub use oneiron_store::store_clock::{Clock, IdGen, StoreClock};
+
+mod recording_plan;
+pub(crate) use recording_plan::{PreparedRecordingClock, RecordingClockProjection};
 
 impl crate::Vault {
     /// Sample this vault's injected, nondecreasing policy/recording clock.
@@ -42,21 +48,8 @@ fn clock_floor_and_lease_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<(u64, u64)> {
-    let Some(bytes) = store.vault_meta().get(txn, CLOCK_FLOOR)? else {
-        return Ok((0, 0));
-    };
-    let half = |at: usize| -> Result<u64> {
-        bytes
-            .get(at..at + 8)
-            .and_then(|part| part.try_into().ok())
-            .map(u64::from_be_bytes)
-            .ok_or(Error::CorruptedIndex("recorded clock floor"))
-    };
-    match bytes.len() {
-        8 => Ok((half(0)?, 0)),
-        16 => Ok((half(0)?, half(8)?)),
-        _ => Err(Error::CorruptedIndex("recorded clock floor")),
-    }
+    let bytes = store.vault_meta().get(txn, CLOCK_FLOOR)?;
+    recording_plan::decode_clock_floor(bytes.as_deref())
 }
 
 fn put_clock_floor_in_txn(
@@ -65,9 +58,7 @@ fn put_clock_floor_in_txn(
     floor: u64,
     lease: u64,
 ) -> Result<()> {
-    let mut bytes = [0u8; 16];
-    bytes[..8].copy_from_slice(&floor.to_be_bytes());
-    bytes[8..].copy_from_slice(&lease.to_be_bytes());
+    let bytes = recording_plan::encode_clock_floor(floor, lease);
     store.vault_meta().put(txn, CLOCK_FLOOR, &bytes)?;
     Ok(())
 }
@@ -123,6 +114,14 @@ impl crate::store::Store {
         let clock = crate::store::ManifestDbs::clock(self);
         if let Some(now) = clock.leased_now() {
             return Ok(now);
+        }
+        // Past the lease, a decision holds this vault's swap gate shared, in
+        // any process, and waits while a restore swap holds it; a handle
+        // whose directory a swap moved aside judges nothing past its lease
+        // (FIX 12772; REVIEW-5620).
+        let _pass = pass_swap_gate(self.canonical_root())?;
+        if !self.sits_at_its_path()? {
+            return Err(Error::Store(StoreError::ArchivedVault));
         }
         let journal = if self.opened_with_writer_lease() {
             clock.lease_journal()
@@ -239,6 +238,76 @@ impl crate::store::Store {
         lease_journal::truncate_after_replay(&journal);
         Ok(())
     }
+
+    /// Closes this vault's authorization decisions past its committed lease
+    /// for a restore swap, in every process that holds it open (FIX 12772;
+    /// REVIEW-5620): a decision under the lease judges at most the lease and
+    /// goes on; one past it waits from now until the returned hold drops,
+    /// and those already past it are waited for, up to `deadline`. So the
+    /// time the replacement carries, read after this, is past every decision
+    /// any handle on this vault takes before the exchange. `None` when those
+    /// in flight do not end by `deadline`.
+    pub(crate) fn close_authorization_for_swap(
+        &self,
+        deadline: Instant,
+    ) -> Result<Option<AuthorizationSwapHold>> {
+        let gate = open_swap_gate(self.canonical_root()).map_err(Error::Io)?;
+        loop {
+            match gate.try_lock() {
+                Ok(()) => return Ok(Some(AuthorizationSwapHold { _gate: gate })),
+                Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(SWAP_GATE_POLL);
+                }
+                Err(TryLockError::WouldBlock) => return Ok(None),
+                Err(TryLockError::Error(error)) => return Err(Error::Io(error)),
+            }
+        }
+    }
+
+    /// The latest authorization time this vault has committed or may have
+    /// taken, read in `txn` under its writer (FIX 12772): its committed clock
+    /// floor and lease, the bound its lease journal holds, the latest time
+    /// this handle judged or observed, and its clock now. A restore's
+    /// replacement carries it before the swap that puts it in this vault's
+    /// place ([`Self::carry_authorization_high`]).
+    pub(crate) fn authorization_high_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<u64> {
+        let (floor, lease) = clock_floor_and_lease_in_txn(self, txn)?;
+        let journaled = lease_journal::journaled_bound(self.canonical_root())?;
+        let clock = crate::store::ManifestDbs::clock(self);
+        Ok(floor
+            .max(lease)
+            .max(journaled)
+            .max(clock.judged())
+            .max(clock.observed_floor())
+            .max(clock.peek_recorded_at()))
+    }
+
+    /// Carries `high`, the latest authorization time of the vault this store
+    /// was restored to replace, into this store before the swap (FIX 12772;
+    /// REVIEW-4484 Astra R2 P1-3): a bound covering it, `high` plus the
+    /// lease, appended and synced in this store's own lease journal, which
+    /// its next owned open replays into its committed clock floor, and
+    /// observed by this handle's clock now. So the replacement never judges
+    /// below a time the vault it replaces took, a wall stepped back
+    /// included, and the lease the bound adds covers a decision that vault
+    /// takes between this carry and the exchange. A journal that does not
+    /// take it refuses, and the swap moves nothing.
+    pub(crate) fn carry_authorization_high(&self, high: u64) -> Result<()> {
+        let clock = crate::store::ManifestDbs::clock(self);
+        let journal = match clock.lease_journal() {
+            Some(journal) => journal,
+            None => lease_journal::replay_at_open(self.canonical_root())?.0,
+        };
+        if !journal.cover(high) {
+            return Err(Error::InvalidConfig(
+                "the replacement's clock lease journal did not take the authorization time of \
+                 the vault it replaces; nothing moved, try the swap again"
+                    .into(),
+            ));
+        }
+        clock.observe_floor(high)?;
+        Ok(())
+    }
 }
 
 /// A lapsed lease's renewal, in its group's transaction (FIX 12023): the
@@ -267,6 +336,38 @@ fn renew_authorization_lease_in_txn(core: &StoreCore, txn: &mut heed::RwTxn<'_>)
     Ok(leased)
 }
 
+/// The file in a vault's root every handle on it, in any process, locks
+/// shared around a decision past the lease, and a restore swap locks
+/// exclusively from before it reads the vault's authorization time until its
+/// exchange is done (FIX 12772). The lock lives on the open file, so it goes
+/// with the handle's close or crash; nothing is registered in memory.
+const SWAP_GATE_FILE: &str = "clock-swap.lock";
+/// How often a swap looks again for the gate while decisions hold it.
+const SWAP_GATE_POLL: Duration = Duration::from_millis(10);
+
+fn open_swap_gate(root: &Path) -> std::io::Result<File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(root.join(SWAP_GATE_FILE))
+}
+
+/// A decision's shared hold on its vault's swap gate, once no swap holds it.
+/// A gate that does not open or lock refuses the decision.
+fn pass_swap_gate(root: &Path) -> Result<File> {
+    let gate = open_swap_gate(root).map_err(Error::Io)?;
+    gate.lock_shared().map_err(Error::Io)?;
+    Ok(gate)
+}
+
+/// A restore swap's exclusive hold on its vault's swap gate: decisions past
+/// the lease, in any process, wait until it drops
+/// ([`crate::store::Store::close_authorization_for_swap`]).
+pub(crate) struct AuthorizationSwapHold {
+    _gate: File,
+}
+
 pub(crate) const ID_FLOOR: &[u8] = b"ports:id_floor:v1";
 pub(crate) const CLOCK_FLOOR: &[u8] = b"ports:clock_floor:v1";
 pub(crate) fn recorded_at_in_txn(
@@ -285,12 +386,7 @@ pub(crate) fn observe_clock_floor_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
 ) -> Result<u64> {
-    let (persisted, lease) = clock_floor_and_lease_in_txn(store, txn)?;
-    let now = store.clock().observe_leased_floor(persisted, lease)?;
-    if now != persisted {
-        put_clock_floor_in_txn(store, txn, now, lease)?;
-    }
-    Ok(now)
+    recording_plan::observe_clock_floor_in_txn(store, txn)
 }
 
 /// Persists the floor of the ids this store has allocated, in the caller's
@@ -301,20 +397,5 @@ pub(crate) fn persist_id_floor_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
 ) -> Result<()> {
-    let id_floor = match store.vault_meta().get(txn, ID_FLOOR)? {
-        Some(bytes) => u128::from_be_bytes(
-            bytes
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("id source floor"))?,
-        ),
-        None => 0,
-    };
-    let observed_id_floor = store.clock().observe_id_floor(id_floor)?;
-    if observed_id_floor != id_floor {
-        store
-            .vault_meta()
-            .put(txn, ID_FLOOR, &observed_id_floor.to_be_bytes())?;
-    }
-    Ok(())
+    recording_plan::persist_id_floor_in_txn(store, txn)
 }

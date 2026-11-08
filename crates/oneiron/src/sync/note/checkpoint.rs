@@ -6,7 +6,8 @@
 //! the copy names no one, and an actor that does not open leaves it so. An
 //! undecided fork whose opener does not open goes, and so does a bundle's
 //! waiting fork, taking the bundle's explainer with it, as the erase takes
-//! them ([`ACTOR_ERASE_PENDING_NOTE_FORK`]).
+//! them ([`ACTOR_ERASE_PENDING_NOTE_FORK`]). A fork the stored value already
+//! named no one in had no opener split out, and stays as it was (FIX 10282).
 #![allow(
     dead_code,
     reason = "KS7-3b's Loro projection drives this; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
@@ -80,9 +81,14 @@ fn workflow(note: EntityId, actor: Option<EntityId>, no_one: Option<Vec<u8>>) ->
     ))
 }
 
-/// Moves a record's actor out, leaving no one.
+/// Moves a record's local actor out, leaving no one. An imported actor is
+/// source provenance and stays (FIX 7777).
 fn take_actor(slot: &mut NoteActor) -> Option<EntityId> {
-    std::mem::replace(slot, NoteActor::Erased).id()
+    let NoteActor::Actor(id) = *slot else {
+        return None;
+    };
+    *slot = NoteActor::Erased;
+    Some(id)
 }
 
 /// A proposal document's text, its NOTE's; the format marker is structure.
@@ -189,20 +195,27 @@ fn put_one(slot: &mut NoteActor, opened: &[(&str, EntityId)]) -> Result<()> {
     Ok(())
 }
 
-/// Whether an undecided fork whose opener did not open goes.
-fn fork_goes(fork: &NoteFork) -> bool {
-    fork.actor == NoteActor::Erased
+/// Whether an undecided fork whose opener was split out (`unopened`) and
+/// did not open goes. One the stored value already named no one in stays.
+fn fork_goes(fork: &NoteFork, unopened: bool) -> bool {
+    unopened
+        && fork.actor == NoteActor::Erased
         && !fork.decided
         && ACTOR_ERASE_PENDING_NOTE_FORK == PendingNoteForkErase::Delete
 }
 
 /// The NOTE record `no_one` of the map `map` with each of `opened` back:
-/// `None` for a fork that goes, or a bundle left with no member.
+/// `None` for a fork that goes, or a bundle left with no member. `holes`
+/// is every field the split took out: only a fork whose opener is one of
+/// them and did not open goes (FIX 10282).
 pub(in crate::sync) fn fill(
     map: &str,
     no_one: &[u8],
     opened: &[(&str, EntityId)],
+    holes: &BTreeSet<&str>,
 ) -> Result<Option<Vec<u8>>> {
+    let unopened =
+        |field: &str| holes.contains(field) && !opened.iter().any(|(put, _)| *put == field);
     match map {
         "head_move_receipts" => {
             let mut wrapper: CanonicalHeadMove = unpack(no_one)?;
@@ -214,7 +227,7 @@ pub(in crate::sync) fn fill(
         "note_forks" => {
             let mut row: NoteFork = unpack(no_one)?;
             put_one(&mut row.actor, opened)?;
-            if fork_goes(&row) {
+            if fork_goes(&row, unopened(ACTOR)) {
                 return Ok(None);
             }
             pack(&row).map(Some)
@@ -240,7 +253,10 @@ pub(in crate::sync) fn fill(
             }
             let waiting = row.waiting.len();
             if ACTOR_ERASE_PENDING_NOTE_FORK == PendingNoteForkErase::Delete {
-                row.waiting.retain(|fork| fork.actor != NoteActor::Erased);
+                row.waiting.retain(|fork| {
+                    fork.actor != NoteActor::Erased
+                        || !unopened(format!("{WAITING}{}", fork.fork.to_hex()).as_str())
+                });
             }
             if row.waiting.len() != waiting {
                 if row.waiting.is_empty() && row.landed.is_empty() {

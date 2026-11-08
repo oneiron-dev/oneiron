@@ -1,28 +1,11 @@
-//! Pending gate-consent record and index-state types, ABI-pinned versions, msgpack codecs, and validation.
+//! Core half of `store::pending_gate_consent::records`: its store-layer items live in `oneiron_store::pending_gate_consent::records` and are
+//! re-exported here; the items below stay in the engine.
 
-use serde::{Deserialize, Serialize};
-
-use crate::error::{Error, Result};
+pub(crate) use oneiron_store::pending_gate_consent::records::*;
 
 use super::{GATE_DIFF_HANDLE_MAX_LEN, GateDecisionId};
-
-/// Body version of one pending gate-consent tray row.
-///
-/// Pinned to the same numeric value the decision ledger happens to carry
-/// today, because that is the value already on disk — this names it rather
-/// than changing it. The two families are stored, indexed and swept
-/// separately, so borrowing [`GATE_DECISION_LEDGER_VERSION`] here would make
-/// the NEXT decision-ledger bump decode every stored pending row as corrupt.
-///
-/// Receipt-family ABI-pin rule: changing this requires a
-/// [`STORAGE_ABI_VERSION`] bump.
-pub(crate) const PENDING_GATE_CONSENT_VERSION: u8 = 0;
-
-/// Receipt-family ABI-pin rule: changing this requires a
-/// [`STORAGE_ABI_VERSION`] bump.
-pub(in crate::store) const PENDING_GATE_CONSENT_INDEX_STATE_VERSION: u8 = 1;
-
-pub(super) const OWNER_ANSWER_OBLIGATION_VERSION: u8 = 0;
+use crate::error::{Error, Result};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingGateConsentRecord {
@@ -40,6 +23,13 @@ pub struct PendingGateConsentRecord {
     /// where the writer had no claim body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predicate: Option<String>,
+    /// The deadline a locally attached critical confirm froze when the gate
+    /// attached it (FIX 8760): its creation time plus the policy's
+    /// `critical_confirm_lifetime_seconds` then. The binding, its signed
+    /// action, the listing, the sweep and an answer read it, so a later
+    /// policy edit never moves it. `None` on every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
 }
 
 /// Internal RCPT-1 deletion state for one run-scoped pending-consent row.
@@ -145,6 +135,14 @@ pub(super) fn vet_pending_gate_consent_record(record: &PendingGateConsentRecord)
     }
     if let Some(dreamer_run_id) = record.dreamer_run_id.as_deref()
         && dreamer_run_id.trim().is_empty()
+    {
+        return Err(Error::CorruptedIndex("pending gate consent"));
+    }
+    // A frozen deadline comes after its row's creation: the lifetime is
+    // positive.
+    if record
+        .expires_at
+        .is_some_and(|expires_at| expires_at <= record.created_at)
     {
         return Err(Error::CorruptedIndex("pending gate consent"));
     }

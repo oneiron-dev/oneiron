@@ -1,8 +1,10 @@
 //! Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes.
 
 use super::admission::{enforce_step_failure_policy, verify_booking_effect};
+use super::authority_standing::{frozen_grant_stop, withdrawn_owner};
 use super::types::{
-    OutboundEffectResult, OutboundTransport, PreparedAuthorization, PreparedEffect,
+    OutboundEffectCommand, OutboundEffectResult, OutboundTransport, PreparedAuthorization,
+    PreparedEffect,
 };
 use crate::Vault;
 use crate::connector_key::{self, ConnectorKeyStatus, SlateDisposition};
@@ -188,13 +190,13 @@ fn send_pending_with_gate<T: OutboundTransport>(
     // validation behavior; connector text never opts a row into this branch.
     let requires_frozen_call_validation =
         record.capability_provenance().is_some() || record.resolved_endpoint.is_some();
+    // A grant no longer active stops the send as a grant that no longer
+    // stands (FIX 11591); every other rejection stays the binding's own.
     if requires_frozen_call_validation
-        && !matches!(
-            authority.validate_frozen_call_grant(vault, &call)?,
-            FrozenCallValidation::Valid
-        )
+        && let FrozenCallValidation::Rejected(rejected) =
+            authority.validate_frozen_call_grant(vault, &call)?
     {
-        let reason = IntentEscalationReason::BindingInvalid;
+        let reason = frozen_grant_stop(rejected);
         let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
         return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
@@ -262,14 +264,29 @@ fn send_pending_with_gate<T: OutboundTransport>(
         let posting_gate =
             vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
         // FIX 6424 part 2a: or the press a pinned family kept for this row.
-        let retry = record.admitted_approval.or_else(|| {
-            crate::outbound_intent_ledger::pinned_retry_approval(
-                vault,
-                &wtxn,
-                record.id,
-                &prepared.gate,
-            )
-        });
+        let family = prepared
+            .gate
+            .provenance
+            .approval_target
+            .as_ref()
+            .and_then(gate::ApprovalTarget::pinned_family);
+        let ordinary_target = family
+            == Some(crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate)
+            || (family
+                == Some(crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch)
+                && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &record)?.is_some());
+        let retry = if ordinary_target {
+            super::ordinary_slate::retry_approval_in_txn(vault, &wtxn, &record, &prepared.gate)?
+        } else {
+            record.admitted_approval.or_else(|| {
+                crate::outbound_intent_ledger::pinned_retry_approval(
+                    vault,
+                    &wtxn,
+                    record.id,
+                    &prepared.gate,
+                )
+            })
+        };
         let governance = gate::evaluate_external_effect_policy(
             &vault.store,
             &mut wtxn,
@@ -285,6 +302,14 @@ fn send_pending_with_gate<T: OutboundTransport>(
         if governance.outcome() != GateOutcome::Allow {
             let (decision_id, decision) =
                 gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
+            if ordinary_target
+                && decision
+                    .receipt_reasons()
+                    .iter()
+                    .any(|reason| *reason == crate::outbound_consent::SLATE_ALWAYS_ASK_REASON)
+            {
+                super::ordinary_slate::queue_owner_ask_in_txn(vault, &mut wtxn, &record)?;
+            }
             wtxn.commit().map_err(Error::from)?;
             let mut result =
                 gate_rejection(record.id, decision_id, decision).held_by(&posting_gate);
@@ -320,14 +345,19 @@ fn send_pending_with_gate<T: OutboundTransport>(
         enforce_step_failure_policy(vault, &txn, &policy, record.payload(), Some(actor))?;
     }
 
+    // FIX 11591: the owner whose word admitted this send is asked again at
+    // the last in-process boundary. One no longer a live owner stops it,
+    // keeping what it knew of its delivery; a read that fails keeps the path.
+    if let Some(reason) = withdrawn_owner(vault, &record) {
+        let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+        return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
+    }
     // F2 is checked again at the last in-process boundary before transport.
     if requires_frozen_call_validation
-        && !matches!(
-            authority.validate_frozen_call_grant(vault, &call)?,
-            FrozenCallValidation::Valid
-        )
+        && let FrozenCallValidation::Rejected(rejected) =
+            authority.validate_frozen_call_grant(vault, &call)?
     {
-        let reason = IntentEscalationReason::BindingInvalid;
+        let reason = frozen_grant_stop(rejected);
         let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
         return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
@@ -577,8 +607,8 @@ pub(super) fn recovery_governance(
             return Ok(RecoveryGovernance::Block("charter_never_list"));
         }
     }
-    // Every keyed row meets its tool's never-allow setting, including an
-    // ordinary connector send. Approve-once remains scoped-call specific.
+    // Every keyed row meets never-allow. Always-ask also reaches ordinary
+    // dispatches whose native frozen target and owner release can be rebuilt.
     match connector_key::connector_tool_setting_in_txn(
         &vault.store,
         &txn,
@@ -588,6 +618,11 @@ pub(super) fn recovery_governance(
     )? {
         SlateDisposition::NeverAllow => return Ok(RecoveryGovernance::NeverAllow),
         SlateDisposition::AlwaysAsk if record.capability_provenance().is_some() => {
+            return Ok(RecoveryGovernance::AlwaysAsk);
+        }
+        SlateDisposition::AlwaysAsk
+            if super::ordinary_slate::candidate_in_txn(vault, &txn, record)?.is_some() =>
+        {
             return Ok(RecoveryGovernance::AlwaysAsk);
         }
         SlateDisposition::Auto | SlateDisposition::AlwaysAllow | SlateDisposition::AlwaysAsk => {}
@@ -601,19 +636,94 @@ pub(super) fn effect_result(
     replayed: bool,
     escalation_reason: Option<IntentEscalationReason>,
 ) -> OutboundEffectResult {
+    settled_result(
+        crate::outbound_intent_ledger::IntentResolution::from_record(record)
+            .expect("validated outbound intent has a resolution"),
+        record.id,
+        record.state,
+        send_outcome,
+        replayed,
+        escalation_reason,
+    )
+}
+
+/// The replay of a New or Park `command` whose call a restore kept only the
+/// accounting of (KS7-5, FIX 12117), read in `txn`: [`accounting_result`]
+/// under `intent_id`, or `None` for every other call.
+///
+/// # Errors
+///
+/// An accounting row that does not read; storage faults.
+pub(super) fn accounting_replay_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    command: &OutboundEffectCommand,
+    intent_id: IntentId,
+) -> Result<Option<OutboundEffectResult>, IntentLedgerError> {
+    let (OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared)) = command
+    else {
+        return Ok(None);
+    };
+    let accounting = crate::outbound_intent_ledger::checkpoint::call_accounting_in_txn(
+        vault,
+        txn,
+        prepared.attempt_id,
+        prepared.call_seq,
+    )?;
+    Ok(accounting.map(|accounting| accounting_result(intent_id, &accounting)))
+}
+
+/// The replay of call `intent_id`, which a restore kept only the accounting
+/// of (KS7-5, FIX 12117), as the owner's erase left it: acked, or stopped
+/// for its reason with whether it may have crossed the wire. A Done or
+/// Abandoned row replays the same way; nothing is gated, sent or charged.
+/// A suppressed semantic duplicate replays suppressed, without the receipt
+/// the restore did not keep.
+fn accounting_result(
+    intent_id: IntentId,
+    accounting: &crate::outbound_intent_ledger::CallAccounting,
+) -> OutboundEffectResult {
+    let (send_outcome, escalation_reason) = match accounting.recorded_outcome {
+        Some(RecordedOutboundOutcome::Acked) => (Some(OutboundSendOutcome::Acked), None),
+        Some(RecordedOutboundOutcome::Deferred) => (Some(OutboundSendOutcome::Deferred), None),
+        Some(RecordedOutboundOutcome::Abandoned(reason)) => (None, Some(reason)),
+        Some(RecordedOutboundOutcome::DefiniteNonDelivery) | None => (None, None),
+    };
+    let mut result = settled_result(
+        crate::outbound_intent_ledger::IntentResolution::from_accounting(accounting)
+            .expect("validated outbound call accounting has a resolution"),
+        intent_id,
+        accounting.state,
+        send_outcome,
+        true,
+        escalation_reason,
+    );
+    if escalation_reason == Some(IntentEscalationReason::DedupeSuppressed) {
+        result.gate_outcome = Some("allow".to_owned());
+        result.gate_reason_codes.push("gate.allow".to_owned());
+        result.dedupe_suppressed = true;
+    }
+    result
+}
+
+fn settled_result(
+    resolution: crate::outbound_intent_ledger::IntentResolution,
+    intent_id: IntentId,
+    state: IntentState,
+    send_outcome: Option<OutboundSendOutcome>,
+    replayed: bool,
+    escalation_reason: Option<IntentEscalationReason>,
+) -> OutboundEffectResult {
     OutboundEffectResult {
-        resolution: Some(
-            crate::outbound_intent_ledger::IntentResolution::from_record(record)
-                .expect("validated outbound intent has a resolution"),
-        ),
+        resolution: Some(resolution),
         dispatch: IntentDispatchResult {
             class: OutboundCallClass::Effectful,
-            intent_id: Some(record.id),
-            state: Some(record.state),
+            intent_id: Some(intent_id),
+            state: Some(state),
             send_outcome,
             replayed,
             escalation: escalation_reason.map(|reason| IntentEscalation {
-                intent_id: Some(record.id),
+                intent_id: Some(intent_id),
                 reason,
             }),
         },

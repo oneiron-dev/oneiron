@@ -22,8 +22,11 @@
 
 mod agent_run;
 mod attenuation;
+mod brief;
 pub mod budget_doors;
 mod budget_hold;
+mod caller_origin;
+pub use caller_origin::CallerOrigin;
 mod codec;
 mod comm;
 pub(crate) use self::comm::{
@@ -34,7 +37,7 @@ pub use self::comm::{CommReach, comm_prompt_block};
 mod comm_widen;
 pub(crate) use self::comm_widen::{
     CommWidenDecision, CommWidenQuestion, CommWidenRecipient, CommWidenRequest, CommWidenState,
-    comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn,
+    comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn, effective_comm_in_txn,
     erase_comm_widen_actor_in_txn, put_comm_widen_in,
 };
 mod context;
@@ -94,6 +97,18 @@ mod workflow;
 mod workflow_host;
 mod workflow_pump;
 mod workflow_record;
+pub(crate) use workflow::tool_wait::checkpoint as workflow_tool_checkpoint;
+pub use workflow::tool_wait::{
+    WorkflowToolAnswer, WorkflowToolCheckpointWriter, WorkflowToolContinuation, WorkflowToolCursor,
+    WorkflowToolProgress, WorkflowToolTranscript, WorkflowToolWait,
+};
+pub(crate) use workflow::tool_wait::{
+    accepts_masked as workflow_tool_checkpoint_accepts_masked,
+    erase_actor_in_txn as erase_workflow_tool_actor_in_txn,
+    erase_source_in_txn as erase_workflow_tool_source_in_txn,
+    requeue_failure_in_txn as requeue_workflow_tool_failure_in_txn,
+    settle_payloads_in_txn as settle_workflow_tool_payloads_in_txn,
+};
 
 pub use workflow_record::{WorkflowDispatchStatus, WorkflowProgress, WorkflowStepResult};
 
@@ -199,7 +214,10 @@ use crate::failure_ladder::HealerCase;
 use rmpv::Value;
 
 pub use agent_run::AgentRun;
-pub use resident::{ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode};
+pub use resident::{
+    ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode, resident_attempt_reviews_diary,
+    resident_attempt_wakes_for_room,
+};
 
 #[cfg(test)]
 mod resident_tests;

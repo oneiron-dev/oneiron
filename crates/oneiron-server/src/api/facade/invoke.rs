@@ -38,7 +38,7 @@ pub(super) fn facade_invoke_concern_move(
     value: serde_json::Value,
     producers: &oneiron::memory::ProducerRows,
 ) -> Result<(serde_json::Value, bool), FacadeApiError> {
-    crate::server::blocking(
+    let (output, wake) = crate::server::blocking(
         move || -> Result<(serde_json::Value, bool), FacadeApiError> {
             const VERB: &str = "self.inbox.concern.move";
             let auth = call.auth();
@@ -100,7 +100,9 @@ pub(super) fn facade_invoke_concern_move(
             };
             Ok((output, wake))
         },
-    )
+    )?;
+    let output = super::drained_still_admitted(&server.vault, call.auth(), producers, output);
+    Ok((output, wake))
 }
 
 /// [`facade_invoke`] on the task-work turn the dispatch awaited for the call
@@ -125,7 +127,7 @@ pub(super) fn facade_invoke_in_turn(
     producers: &oneiron::memory::ProducerRows,
     turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    crate::server::blocking(move || -> Result<serde_json::Value, FacadeApiError> {
+    let output = crate::server::blocking(move || -> Result<serde_json::Value, FacadeApiError> {
         let auth = call.auth();
         let memory = facade_invocation(
             credential_memory(&server.vault, Some(auth), actor, class)
@@ -139,6 +141,14 @@ pub(super) fn facade_invoke_in_turn(
         };
         let memory = facade_task_decisions(server, verb, memory)?;
         let memory = facade_rewrites_admitted(server, auth, &value, memory);
+        let memory = if matches!(verb, "vault.artifacts.view" | "vault.artifacts.export") {
+            match super::owner_binding::facade_owner(server, auth, verb).ok() {
+                Some(owner) => memory.with_owner_authorship(&owner),
+                None => memory,
+            }
+        } else {
+            memory
+        };
         // Settlement's run of the call enters its boundary here as the drain's.
         let _drain = call.drain().map(VerbAskDrainPermit::enter);
         Ok(match call.room_turn()? {
@@ -172,7 +182,13 @@ pub(super) fn facade_invoke_in_turn(
                 }
             }
         })
-    })
+    })?;
+    Ok(super::drained_still_admitted(
+        &server.vault,
+        call.auth(),
+        producers,
+        output,
+    ))
 }
 
 /// These doors act only on the caller's presented proof, never on host-root fallback authority.

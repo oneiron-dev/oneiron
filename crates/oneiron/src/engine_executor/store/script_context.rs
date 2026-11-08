@@ -49,6 +49,12 @@ pub(in crate::engine_executor) fn load_script_context(
     ))
 }
 
+/// `text` with every known custody value replaced by its handle, as a model
+/// view of a stored program shows it.
+pub(crate) fn mask_known_text(storage: &ExecutorStorage<'_>, text: &str) -> Result<String> {
+    masked_prefix(storage, text.as_bytes(), true, None).map(|(text, _)| text)
+}
+
 fn masked_prefix(
     storage: &ExecutorStorage<'_>,
     raw: &[u8],

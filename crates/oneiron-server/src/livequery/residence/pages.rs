@@ -37,7 +37,9 @@ fn search_changed() -> AppError {
 
 /// One page of a search served in pages, with the cursor of the next. A
 /// forwarded search's verified caller is written to `attribution`, as for
-/// a search of one call (FIX 3550).
+/// a search of one call (FIX 3550), and `off_carrier` says whether it sits
+/// off the carrying device: every page is its own call, so each page's
+/// reply carries the rule its send judges again (FIX 11991).
 pub(super) fn search_pages(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -45,6 +47,7 @@ pub(super) fn search_pages(
     input: SearchRequest,
     budgets: ResidenceOperationBudgets,
     attribution: &mut Option<ForwardedAttribution>,
+    off_carrier: &mut bool,
 ) -> Result<Answer, AppError> {
     let selector_wire = base64::engine::general_purpose::STANDARD
         .decode(&input.selector)
@@ -57,6 +60,9 @@ pub(super) fn search_pages(
     *attribution = forwarded
         .as_ref()
         .map(|forwarded| ForwardedAttribution::of(&forwarded.caller));
+    *off_carrier = forwarded
+        .as_ref()
+        .is_some_and(|forwarded| forwarded.locality == oneiron::claim::CallerLocality::OffDevice);
     let admission = match &forwarded {
         Some(caller) => caller.admission(server, peer, &selector)?,
         None => admitted(server, auth, peer, &selector)?,
@@ -84,7 +90,7 @@ pub(super) fn search_pages(
     // until it holds the request or every match.
     let mut window = input.limit.max(oneiron::memory::caps::MAX_SEARCH_LIMIT);
     let hits = loop {
-        let (candidates, ranked) = home_search_page_candidates(
+        let (candidates, exhausted) = home_search_page_candidates(
             &server.vault,
             actor.clone(),
             &input.query,
@@ -113,7 +119,7 @@ pub(super) fn search_pages(
                 }
             }
         }
-        if hits.len() == input.limit || ranked < window {
+        if hits.len() == input.limit || exhausted {
             break hits;
         }
         window = window.saturating_mul(2);

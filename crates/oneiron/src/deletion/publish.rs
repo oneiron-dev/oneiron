@@ -416,6 +416,13 @@ impl Vault {
         // FIX 10466: the host's live snapshot copies that may depend on an
         // erased id go too, whatever the build's features.
         self.inference_snapshots_erased(ids);
+        // FIX 14976: an erase that reached a drafter returned its binding to
+        // stock in its own transaction; the serving host now drops the
+        // plaintext and restarts its worker with stock.
+        if !ids.is_empty() {
+            self.verb_hook_bindings_changed();
+            self.notify_drafter_serving();
+        }
         // FIX 7366: a live room's overlay rows of a gone actor's code runs
         // take their erased form too; the vault writer is released here.
         crate::code_run::erase_gone_actors_in_live_overlays(self, ids);

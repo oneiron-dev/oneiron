@@ -114,6 +114,11 @@ impl Memory<'_> {
             Landing::Base { held, .. } => *held,
             Landing::Overlay { .. } => None,
         };
+        let held_hint_lane = if held.is_some() && assertion_lane.is_none() {
+            self.read_lane_if_granted(ClaimReadStatus::Recorded)?
+        } else {
+            None
+        };
         let sink = match landing {
             Landing::Base { route, .. } => WitnessSink::Base(self.base_sink(&plan, route)?),
             Landing::Overlay {
@@ -130,33 +135,40 @@ impl Memory<'_> {
         // out of its transaction. A message an exact retry finds stored lands
         // nothing and owes no second prose receipt.
         let mut lands_new: Vec<bool> = Vec::new();
-        let write = WitnessWrite {
-            plan: &plan,
-            sink: &sink,
-            held,
-            door,
-            room_speech,
-            quote_key: quote_key.as_ref(),
-            assertion_lane: assertion_lane.as_ref(),
-            refused: &refused,
-            unproven: &unproven,
-            silent,
-            saver: saver.as_ref(),
-            terminal,
-        };
         before_txn();
 
-        let landed = self.with_witness_write_txn_as(callback, admit, room_speech, |wtxn| {
-            self.land_witness_in_txn(wtxn, &write, prepare, effect, &mut lands_new)
-        });
+        let answer = self.with_witness_write_txn_as_after_commit(
+            callback,
+            admit,
+            room_speech,
+            |wtxn| {
+                let landed = {
+                    let write = WitnessWrite {
+                        plan: &plan,
+                        sink: &sink,
+                        held,
+                        door,
+                        room_speech,
+                        quote_key: quote_key.as_ref(),
+                        assertion_lane: assertion_lane.as_ref(),
+                        held_hint_lane: assertion_lane.as_ref().or(held_hint_lane.as_ref()),
+                        refused: &refused,
+                        unproven: &unproven,
+                        silent,
+                        saver: saver.as_ref(),
+                        terminal,
+                    };
+                    self.land_witness_in_txn(wtxn, &write, prepare, effect, &mut lands_new)
+                }?;
+                Ok((landed, sink))
+            },
+            |(landed, sink)| self.answer_landed_witness(landed, &plan, sink, on_record_session),
+        );
         // A refused assertion is receipted only now, on its own write, once
         // the turn's writer has aborted.
         if let Some(pointer) = refused.take() {
             return Err(self.settle_refused_assertion(&pointer));
         }
-        let landed = landed?;
-
-        let answer = self.answer_landed_witness(landed, &plan, sink, on_record_session);
         if answer.is_ok() {
             let landed_prose =
                 crate::gate::record_references::landed_witness_prose(unlinked_prose, &lands_new);

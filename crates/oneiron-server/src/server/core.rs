@@ -1,5 +1,5 @@
 //! Core server state: the `SyncServer` struct, construction, and shared helpers.
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -30,6 +30,7 @@ use super::{
 };
 
 mod construction;
+mod mcp;
 pub(super) mod pattern_workflow;
 mod usage;
 
@@ -42,15 +43,6 @@ pub(crate) enum BroadcastPayload {
     LocalDocs(Vec<oneiron::EntityId>),
     /// A producer lost notifications before they reached this channel.
     Resync { missed: u64 },
-}
-
-/// One host-resolved agent run and the prefix this session actually emitted.
-/// The host advances the epoch only after a real fold; an HTTP request cannot.
-pub(crate) struct HostSelfBriefSession {
-    pub(crate) state: oneiron::context_board::SelfBriefState,
-    pub(crate) render: oneiron::context_board::SelfBriefSession,
-    pub(crate) epoch: u64,
-    pub(crate) emitted_epoch: Option<u64>,
 }
 
 /// One piece of task work's turn on a vault ([`SyncServer::admit_task_work`]).
@@ -107,6 +99,10 @@ pub struct SyncServer {
     /// deck and slide render takes its turn here, round robin across the
     /// callers it is for, the host's own wakes behind them.
     pub(crate) renderer_turns: crate::admission::Admission<oneiron::EntityId>,
+    /// The context-pack input line, round robin across authenticated callers.
+    pub(crate) context_reads: crate::admission::Admission<String>,
+    /// The operator's renderer scratch source, resolved once with shared disk claims.
+    pub(crate) renderer_scratch: crate::slide_render::RendererScratch,
     /// OF-520 questions retrieval queries past `config.limits` raised.
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
@@ -139,8 +135,14 @@ pub struct SyncServer {
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
     /// The presence hub's charge on `retained`.
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
+    /// Authenticated booking calls per actor this minute (FIX 128-131),
+    /// measured against their `[limits]` rows; never a window.
+    pub(crate) booking_calls: super::booking_calls::AuthenticatedBookingCalls,
     /// The wakes of removed holders' archive delivery sessions (FIX 3396).
     pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
+    /// Dedicated shared environments retained for leave checks and their own
+    /// housekeeping (FIX 2051, FIX 11136); installed once at serve startup.
+    pub(crate) shared_envs: std::sync::OnceLock<crate::shared_envs::SharedEnvRegistry>,
     /// The live sockets of proven machines and the custody carrier leaf-key
     /// requests relayed between them, in memory only (FIX 11785).
     pub(crate) leaf_keys: crate::handler::LeafKeyRelay,
@@ -155,10 +157,15 @@ pub struct SyncServer {
     pub(crate) model_streams: crate::api::ModelStreams,
     /// Whole-vault exports kept for their callers to read (FIX 3676).
     pub(crate) export_transfers: crate::api::ExportTransfers,
+    /// Each client address's unanswered pairing redemptions (FIX 12477).
+    pub(crate) pairing_backoff: crate::api::PairingRedeemBackoff,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
     pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
+    /// The `execute_code` runs parked on a durable wait, each entered again
+    /// once its reply is delivered (FIX 4606).
+    pub(crate) mcp_code_run_continuations: crate::api::McpCodeRunContinuations,
     /// Runs the reader children code runs spawn, on the code host once one
     /// is bound, and keeps their clock (ARCH-0079 #reader-forks).
     pub(crate) reader_runner: Arc<super::ReaderRunner>,
@@ -168,6 +175,10 @@ pub struct SyncServer {
     /// The T1 secret destinations each run host registered for its runs
     /// (DOOR-124): the `self.secrets.*` doors deliver into them.
     pub(crate) secret_destinations: crate::runtime::SecretDestinations,
+    /// The credential-helper registrations each seat run's host made for it
+    /// (FIX 10624 step 2): `POST /v1/seat/credential-helper` answers into
+    /// them.
+    pub(crate) seat_helpers: crate::runtime::SeatHelperRuns,
     /// This vault's model byte budgets (FIX 9321, FIX 9323): its media-reply
     /// line and its mesh staging budget, one set its runtime's adapters and
     /// every mesh site share.
@@ -189,6 +200,7 @@ pub struct SyncServer {
     /// The `[desktop]` guest each code run starts for its own desktop verbs.
     /// `None` answers every desktop call `browser_unbound`.
     pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
+    pub(crate) artifact_backend: Option<Arc<crate::runtime::ArtifactBackendHost>>,
     /// The run desktops bound now, for the owner's takeover (CUA-001).
     pub(crate) desktop_seats: Arc<super::DesktopSeats>,
     /// The run browsers bound now, for the owner's takeover (CUA-001).
@@ -197,9 +209,11 @@ pub struct SyncServer {
     pub(crate) web_fetcher: std::sync::OnceLock<Arc<oneiron::web_fetch::WebFetcher>>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Arc<Mutex<crate::api::MemoriesCursorStore>>,
-    /// Host-resolved run briefs, keyed by authenticated actor and session.
-    pub(crate) self_brief_sessions:
-        Mutex<BTreeMap<(oneiron::EntityId, String), HostSelfBriefSession>>,
+    /// Host-resolved run briefs, keyed by authenticated actor and session,
+    /// and their prefix custody: the one owner every host stages, delivers,
+    /// reads and closes them through. The host's live runs share it, to
+    /// close a pumped run's brief as the run retires (FIX 17594 D3).
+    pub(crate) self_brief_sessions: Arc<super::self_brief_custody::SelfBriefCustody>,
     /// ONE-207: the optional deep-retrieval host.
     ///
     /// `None` on every server [`SyncServer::new`] builds, and that is the
@@ -216,6 +230,8 @@ pub struct SyncServer {
     /// the same pair seat factories read, so runs created after attach see
     /// the serving embedder without a rebind.
     pub(crate) model_slots: Arc<SharedModelSlots>,
+    /// Custody-backed candidates, beside the incumbent's immutable slot.
+    pub(crate) trained_embedders: super::trained_embedding::TrainedEmbedders,
     /// The nonsecret file/vault facts an open-vault first-run setup must match.
     pub(crate) model_setup: Option<ModelSetupConfig>,
     /// Plain/embedded worker admission and late-worker handles, installed before
@@ -287,6 +303,10 @@ pub struct SyncServer {
     /// The port of the artifact-only listener on the API's host, set by the
     /// serve path once it is bound. `None` where none serves.
     artifact_port: Option<u16>,
+    /// Where the API listener is bound, set by the serve path once it is
+    /// bound (FIX 10624 step 2): the origin a seat CLI's credential helper
+    /// calls back on. `None` where no API listener of this process serves.
+    api_addr: Option<std::net::SocketAddr>,
     /// Managed serve's artifact origin on a unix socket of its own
     /// (`--artifact-http-socket`), which has no port to advertise.
     artifact_socket: bool,
@@ -324,11 +344,20 @@ fn live_rows(
 }
 
 impl SyncServer {
+    /// The most bytes one WebSocket message this server reads may reassemble
+    /// to (ABC transport row T25): its request floor,
+    /// `limits.request_body_bytes`, set at every upgrade in place of
+    /// tungstenite's implicit 64 MiB. A frame keeps its own bound.
+    pub(crate) fn socket_message_bytes(&self) -> usize {
+        usize::try_from(self.config.limits.request_body_bytes).unwrap_or(usize::MAX)
+    }
+
     // ─── Device-lease registry (ONE-1140, OD-3) ──────────────────────────
 
     /// Install an already resolved run snapshot from the trusted host. The
     /// HTTP request never supplies scope, class verdicts, or budget. Advancing
-    /// `epoch` happens only when the host has completed a real fold.
+    /// `epoch` happens only when the host has completed a real fold. The
+    /// installation goes through the server's one self-brief custody owner.
     pub async fn install_self_brief_session(
         &self,
         actor: oneiron::EntityId,
@@ -336,51 +365,11 @@ impl SyncServer {
         epoch: u64,
         state: oneiron::context_board::SelfBriefState,
     ) -> oneiron::Result<()> {
-        if state.self_ref != actor || session_id.is_empty() {
-            return Err(oneiron::Error::InvariantViolation(
-                "self brief actor or session mismatch",
-            ));
-        }
-        let mut runs = self.self_brief_sessions.lock().await;
-        let entry = runs
-            .entry((actor, session_id))
-            .or_insert_with(|| HostSelfBriefSession {
-                state: state.clone(),
-                render: oneiron::context_board::SelfBriefSession::default(),
-                epoch,
-                emitted_epoch: None,
-            });
-        if epoch < entry.epoch {
-            return Err(oneiron::Error::InvariantViolation("stale self brief epoch"));
-        }
-        entry.state = state;
-        entry.epoch = epoch;
+        self.self_brief_sessions
+            .lock()
+            .await
+            .install(actor, session_id, epoch, state)?;
         Ok(())
-    }
-
-    /// Bind a readiness-verified QuickJS provider before exposing this vault's
-    /// routes, running at most `runs` at once. Missing components or providers
-    /// keep execute_code unadvertised.
-    #[cfg(feature = "code-sandbox-wasmtime")]
-    #[must_use]
-    pub fn with_mcp_quickjs_provider(
-        mut self,
-        provider: crate::mcp::McpQuickJsProvider,
-        runs: crate::mcp::CodeRunLimits,
-    ) -> Self {
-        let provider = provider.with_run_receipts(self.run_receipts());
-        let host: Arc<dyn crate::mcp::McpCodeExecutionHost> = Arc::new(
-            crate::mcp::McpEngineNativeCodeHost::new(
-                Arc::new(provider),
-                runs,
-                Arc::clone(self.wire_telemetry.limit_questions()),
-            )
-            .with_reader_seats(self.reader_runner.seats()),
-        );
-        // Reader children run on the same provider and pool.
-        self.reader_runner.bind_host(Arc::clone(&host));
-        self.mcp_code_host = Some(host);
-        self
     }
 
     /// Installs the node-side account API key verifier a host built
@@ -412,6 +401,19 @@ impl SyncServer {
         &self.browser_readiness
     }
 
+    /// Installs the host-owned published backend execution profile.
+    #[must_use]
+    pub fn with_artifact_backend(
+        mut self,
+        profile: Option<crate::config::ArtifactBackendConfig>,
+    ) -> anyhow::Result<Self> {
+        self.artifact_backend = profile
+            .map(crate::runtime::ArtifactBackendHost::new)
+            .transpose()?
+            .map(Arc::new);
+        Ok(self)
+    }
+
     /// Gives code runs a desktop guest, from the `[desktop]` section.
     #[must_use]
     pub fn with_desktop_guest(mut self, guest: Option<oneiron_browser::DesktopGuest>) -> Self {
@@ -421,24 +423,6 @@ impl SyncServer {
 
     pub(crate) fn desktop_guest(&self) -> Option<&oneiron_browser::DesktopGuest> {
         self.desktop_guest.as_ref()
-    }
-
-    pub(crate) fn code_execution_host(&self) -> Option<&Arc<dyn crate::mcp::McpCodeExecutionHost>> {
-        self.mcp_code_host
-            .as_ref()
-            .filter(|host| host.production_runtime_available())
-    }
-
-    /// The surface `mode` registers on this server, or the verb row that
-    /// keeps it from registering: callers answer that as a typed error.
-    pub(crate) fn mcp_surface(
-        &self,
-        mode: crate::mcp::McpSurfaceMode,
-    ) -> Result<crate::mcp::McpRegisteredSurface, crate::mcp::McpSurfaceConstructionError> {
-        crate::mcp::McpRegisteredSurface::register_with_execution(
-            mode,
-            self.code_execution_host().is_some(),
-        )
     }
 
     /// Attaches the ONE-207 deep-retrieval host.
@@ -478,10 +462,11 @@ impl SyncServer {
         meter: oneiron::BudgetGuard,
     ) -> Self {
         self.decision_read = Some((door, meter));
-        self.decisions = self
-            .decisions
-            .clone()
-            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
+        self.decisions = self.decisions.clone().with_house_read(
+            self.decision_read.as_ref(),
+            self.house_read_admission(),
+            &self.vault,
+        );
         self
     }
 
@@ -534,10 +519,11 @@ impl SyncServer {
             self.decision_read = Some((door, raw.meter().clone()));
         }
         // The house read fills the ladder's escalation rung.
-        self.decisions = self
-            .decisions
-            .clone()
-            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
+        self.decisions = self.decisions.clone().with_house_read(
+            self.decision_read.as_ref(),
+            self.house_read_admission(),
+            &self.vault,
+        );
         // A planned team's pattern skill runs on its generative seat.
         self.pattern_launch_runner = pattern_workflow::bind(Arc::clone(&self.vault), ai.clone());
         self.ai = ai;
@@ -724,6 +710,29 @@ impl SyncServer {
         self.artifact_port
     }
 
+    /// Records that the API listener is bound at `addr` (FIX 10624 step 2).
+    #[must_use]
+    pub fn with_api_listener(mut self, addr: std::net::SocketAddr) -> Self {
+        self.api_addr = Some(addr);
+        self
+    }
+
+    /// The loopback origin this device's own callers reach the API on: the
+    /// bound port on loopback, when the listener is bound to loopback or to
+    /// every address. `None` when no listener is recorded or it listens on
+    /// one other address alone.
+    pub(crate) fn loopback_api_origin(&self) -> Option<String> {
+        let addr = self.api_addr?;
+        let ip = addr.ip();
+        if ip.is_loopback() {
+            Some(format!("http://{addr}"))
+        } else if ip.is_unspecified() {
+            Some(format!("http://127.0.0.1:{}", addr.port()))
+        } else {
+            None
+        }
+    }
+
     /// Records that the artifact-only router serves this server's `/a/` on a
     /// unix socket of its own (managed serve, OF-356). As with a port, the
     /// API's own `/a/` then sandboxes code bundles.
@@ -743,6 +752,38 @@ impl SyncServer {
     /// assert sync_state durability).
     pub fn vault(&self) -> &Arc<oneiron::Vault> {
         &self.vault
+    }
+
+    /// Installs this serve's dedicated shared environments once. A second
+    /// installation is a startup bug, logged without replacing the first.
+    pub(crate) fn install_shared_envs(&self, registry: crate::shared_envs::SharedEnvRegistry) {
+        if self.shared_envs.set(registry).is_err() {
+            tracing::warn!("shared environments were installed twice; keeping the first registry");
+        }
+    }
+
+    /// Every retained shared environment handle, active and left alike, for
+    /// the existing housekeeping task to walk sequentially (FIX 11136).
+    pub(crate) fn shared_vault_handles(&self) -> Vec<Arc<oneiron::Vault>> {
+        self.shared_envs
+            .get()
+            .map_or_else(Vec::new, |registry| registry.vault_handles())
+    }
+
+    /// The earliest wake any retained shared environment asks for, so a
+    /// managed host does not sleep through a left env's owed collection.
+    pub(crate) fn shared_housekeeping_wake_at(&self) -> Option<u64> {
+        self.shared_envs
+            .get()
+            .and_then(|registry| registry.housekeeping_wake_at())
+    }
+
+    /// Drops shared lanes before their vault handles. Active leave checks
+    /// and housekeeping passes retain their own Arcs and finish first.
+    pub(crate) async fn stop_shared_envs(&self) {
+        if let Some(registry) = self.shared_envs.get() {
+            registry.stop().await;
+        }
     }
 
     /// `caller`'s turn to run one piece of task work on this vault (`can`,

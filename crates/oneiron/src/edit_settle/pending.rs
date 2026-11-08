@@ -52,6 +52,12 @@ pub use view::{PendingProposalKind, PendingProposalView};
 pub(super) const PENDING: SideTable<(EntityId, [u8; 32]), PendingRow, Named> =
     SideTable::new(&side_table::EDIT_SETTLE_PENDING_PROPOSAL);
 
+/// The delta receipt id a Selected Keep answered (FIX 11706): the same key
+/// as its pending row, so the undo door anchors the routing outcome.
+/// Key: id16 + hash32 (blake3 of the proposal ref).
+pub(super) const LINK: SideTable<(EntityId, [u8; 32]), String, Named> =
+    SideTable::new(&side_table::EDIT_SETTLE_KEEP_LINK);
+
 /// The most report text one native output may carry.
 pub const NATIVE_OUTPUT_REPORT_MAX_BYTES: usize = 1 << 20;
 
@@ -83,6 +89,11 @@ pub(super) struct PendingRow {
     /// A deck export's projection, which its Keep rebinds the deck to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     deck: Option<DeckExportHold>,
+    /// The delta receipt id this rework answered (FIX 11967): its Keep
+    /// carries the stamp onto the keep link, and the committed rework's
+    /// settle carries it onto the receipt. `None` when no amendment stood
+    /// behind the proposal.
+    pub(super) delta_receipt: Option<String>,
 }
 
 /// A deck export waiting for Keep (FIX 2700): what its Keep needs to bind
@@ -229,6 +240,7 @@ impl Vault {
         reader: Option<MadeByReader<'_>>,
         actor: WriteActor,
         retained_at: u64,
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         self.retain_edit_proposal_with_reads(
             artifact_id,
@@ -237,6 +249,7 @@ impl Vault {
             reader,
             (actor, retained_at),
             &[],
+            delta_receipt,
         )
     }
 
@@ -251,9 +264,17 @@ impl Vault {
         reader: Option<MadeByReader<'_>>,
         (actor, retained_at): (WriteActor, u64),
         read_rows: &[EntityId],
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         let kind = self.get_entity_type(&actor.entity_ref())?;
-        let row = edit_pending_row(proposal, made_by, (actor, kind), retained_at, read_rows)?;
+        let row = edit_pending_row(
+            proposal,
+            made_by,
+            (actor, kind),
+            retained_at,
+            read_rows,
+            delta_receipt,
+        )?;
         self.put_pending(artifact_id, &row, reader)
     }
 
@@ -273,6 +294,7 @@ impl Vault {
         lane: Option<&crate::claim::ScopedRead<'_>>,
         actor: WriteActor,
         retained_at: u64,
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         self.retain_edit_proposal_with_reads_in_txn(
             wtxn,
@@ -282,6 +304,7 @@ impl Vault {
             lane,
             (actor, retained_at),
             &[],
+            delta_receipt,
         )
     }
 
@@ -297,6 +320,7 @@ impl Vault {
         lane: Option<&crate::claim::ScopedRead<'_>>,
         (actor, retained_at): (WriteActor, u64),
         read_rows: &[EntityId],
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         match (lane, made_by) {
             (Some(lane), Some(made_by)) => {
@@ -307,7 +331,14 @@ impl Vault {
             }
         }
         let kind = self.get_entity_type_in_txn(wtxn, &actor.entity_ref())?;
-        let row = edit_pending_row(proposal, made_by, (actor, kind), retained_at, read_rows)?;
+        let row = edit_pending_row(
+            proposal,
+            made_by,
+            (actor, kind),
+            retained_at,
+            read_rows,
+            delta_receipt,
+        )?;
         self.put_pending_in_txn(wtxn, artifact_id, &row)?;
         Ok(row.view(*artifact_id))
     }
@@ -335,6 +366,7 @@ impl Vault {
         reader: Option<MadeByReader<'_>>,
         actor: WriteActor,
         retained_at: u64,
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         self.propose_native_output_with_reads(
             artifact_id,
@@ -342,6 +374,7 @@ impl Vault {
             reader,
             (actor, retained_at),
             &[],
+            delta_receipt,
         )
     }
 
@@ -355,6 +388,7 @@ impl Vault {
         reader: Option<MadeByReader<'_>>,
         (actor, retained_at): (WriteActor, u64),
         read_rows: &[EntityId],
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         self.propose_output(
             artifact_id,
@@ -365,6 +399,7 @@ impl Vault {
             None,
             false,
             read_rows,
+            delta_receipt,
         )
     }
 
@@ -379,6 +414,7 @@ impl Vault {
         actor: WriteActor,
         retained_at: u64,
         fork_base: Option<(u64, [u8; 32])>,
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         self.propose_output(
             artifact_id,
@@ -389,6 +425,7 @@ impl Vault {
             fork_base,
             true,
             &[],
+            delta_receipt,
         )
     }
 
@@ -403,6 +440,7 @@ impl Vault {
         (actor, retained_at): (WriteActor, u64),
         base: (u64, [u8; 32]),
         hold: DeckExportHold,
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         self.propose_output(
             artifact_id,
@@ -413,6 +451,7 @@ impl Vault {
             None,
             false,
             &[],
+            delta_receipt,
         )
     }
 
@@ -426,6 +465,7 @@ impl Vault {
         base_override: Option<(u64, [u8; 32])>,
         authorize_content_write: bool,
         read_rows: &[EntityId],
+        delta_receipt: Option<&str>,
     ) -> Result<PendingProposalView> {
         let body = self
             .get_blob_artifact(artifact_id)?
@@ -450,6 +490,7 @@ impl Vault {
             base_override.is_some(),
             deck.map(|(_, hold)| hold),
             report,
+            delta_receipt,
         );
         row.read_rows.extend_from_slice(read_rows);
         row.read_rows.sort_unstable();
@@ -515,26 +556,8 @@ impl Vault {
             .pending_row(artifact_id, proposal_ref)?
             .ok_or(Error::EntityNotFound)?;
         let outcome = if let Some(proposal) = row.edit_proposal()? {
-            // A held answer whose units changed under it lands what is
-            // untouched and withdraws the rest (ARCH-0075 §4).
-            match self.split_typed_answers(
-                artifact_id,
-                &proposal,
-                row.retained_by,
-                row.made_by.as_ref(),
-                true,
-            )? {
-                Some(split) => self.keep_split(
-                    artifact_id,
-                    &proposal,
-                    split,
-                    row.made_by.as_ref(),
-                    consent,
-                    actor,
-                    occurred,
-                    learned_at,
-                )?,
-                None => self.settle_select_edit_proposal_made_by(
+            if proposal.sheet_answers.is_some() {
+                self.settle_select_edit_proposal_made_by(
                     artifact_id,
                     &proposal,
                     row.made_by.as_ref(),
@@ -542,7 +565,40 @@ impl Vault {
                     actor,
                     occurred,
                     learned_at,
-                )?,
+                    row.delta_receipt.as_deref(),
+                )?
+            } else {
+                // A held answer whose units changed under it lands what is
+                // untouched and withdraws the rest (ARCH-0075 §4).
+                match self.split_typed_answers(
+                    artifact_id,
+                    &proposal,
+                    row.retained_by,
+                    row.made_by.as_ref(),
+                    true,
+                )? {
+                    Some(split) => self.keep_split(
+                        artifact_id,
+                        &proposal,
+                        split,
+                        row.made_by.as_ref(),
+                        consent,
+                        actor,
+                        occurred,
+                        learned_at,
+                        row.delta_receipt.as_deref(),
+                    )?,
+                    None => self.settle_select_edit_proposal_made_by(
+                        artifact_id,
+                        &proposal,
+                        row.made_by.as_ref(),
+                        consent,
+                        actor,
+                        occurred,
+                        learned_at,
+                        row.delta_receipt.as_deref(),
+                    )?,
+                }
             }
         } else {
             self.keep_native_output(artifact_id, &row, consent, actor, occurred, learned_at)?
@@ -680,6 +736,9 @@ impl Vault {
                 grant_ref,
             );
             RECORD.put(&self.store, wtxn, &key, &record)?;
+            if let Some(stamp) = row.delta_receipt.as_deref() {
+                LINK.put(&self.store, wtxn, &key, &stamp.to_owned())?;
+            }
             let reconciliation = VersionReconciliation::of(fork_parent, head.as_ref());
             Ok((version, record, reconciliation))
         })?;
@@ -752,6 +811,9 @@ impl Vault {
                 "a proposal already waits under this ref",
             )));
         }
+        if super::artifact_retention_deleted_in_txn(&self.store, wtxn, artifact_id)? {
+            return Err(Error::EntityNotFound);
+        }
         PENDING.put(&self.store, wtxn, &key, row)
     }
 
@@ -790,6 +852,7 @@ fn edit_pending_row(
     (actor, kind): (WriteActor, Option<u8>),
     retained_at: u64,
     read_rows: &[EntityId],
+    delta_receipt: Option<&str>,
 ) -> Result<PendingRow> {
     if !proposal.validation.ok || proposal.new_bytes.is_empty() {
         return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
@@ -813,6 +876,7 @@ fn edit_pending_row(
             rows
         },
         deck: None,
+        delta_receipt: delta_receipt.map(str::to_owned),
         body: PendingBody::Edit {
             format: proposal.format,
             manifest: proposal.manifest.to_msgpack()?,
@@ -834,4 +898,15 @@ pub(super) fn validate_pending_ref(proposal_ref: &str) -> Result<()> {
         )));
     }
     crate::batch::secret_scan::scan_metadata_field(proposal_ref)
+}
+
+pub(super) fn purge_artifact_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    artifact_id: &EntityId,
+) -> Result<()> {
+    for key in PENDING.scan_keys(store, txn, artifact_id.as_bytes())? {
+        PENDING.delete(store, txn, &key)?;
+    }
+    Ok(())
 }

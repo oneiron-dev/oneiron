@@ -27,6 +27,7 @@ pub use inference_admission::{
     AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,
     InferencePolicySnapshot,
 };
+pub use oneiron_model::llm::BudgetCheckpoint;
 pub use oneiron_model::llm::{
     ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault,
     SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane,
@@ -45,6 +46,7 @@ pub(crate) use oneiron_model::llm::{
 };
 pub mod catalog_doors;
 pub mod manifest;
+pub mod model_pack;
 pub mod model_stream;
 pub mod model_trials;
 pub mod registry;
@@ -60,19 +62,21 @@ pub use step::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
     DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
-    DurableStepContext, DurableStepError, DurableStepResult, PeerResultWaitBinding, ReplyCheck,
-    StepOutcome, StepProgression, TrapRef, call_as_step, call_as_step_checked,
-    call_as_step_with_fallbacks, consume_trap_signal, open_trap, reconcile_peer_result_signals,
-    register_peer_result_wait, register_wait, send_peer_result_signal, send_trap_signal,
-    trap_for_durable_wait, trap_park_owner, validate_json_schema,
+    DurableStepContext, DurableStepError, DurableStepResult, MediaStepOutcome,
+    PeerResultWaitBinding, ReplyCheck, StepOutcome, StepProgression, TrapRef, call_as_step,
+    call_as_step_checked, call_as_step_with_fallbacks, call_media_as_step, consume_trap_signal,
+    open_trap, reconcile_peer_result_signals, register_peer_result_wait, register_wait,
+    send_peer_result_signal, send_trap_signal, trap_for_durable_wait, trap_park_owner,
+    validate_json_schema,
 };
 pub(crate) use step::{
     StepEffectBinding, TrapBrokenPark, TrapConsumePrecheck, consume_step_wait_in_txn,
-    deindex_dreamer_step_claim, forget_step_memo, forget_step_memo_in_txn,
-    index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
-    retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn,
-    trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
-    verified_step_effector_eligible_in_txn, wake_trap_in_txn,
+    deindex_dreamer_step_claim, erase_detached_step_actor_in_txn, forget_step_memo,
+    forget_step_memo_in_txn, index_dreamer_step_claim_for_put, open_step_wait_in_txn,
+    register_detached_step_in_txn, retire_peer_wait_binding_for_trap_in_txn,
+    signal_step_wait_in_txn, trap_consume_precheck_in_txn,
+    verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,
+    wake_trap_in_txn,
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{

@@ -368,7 +368,8 @@ pub(super) fn convert(
 
 /// Re-projects one cell and writes its head: a new superseding claim when the
 /// estimate moved, nothing when one head already says it, and a retraction of
-/// every head when the window has left no own runs.
+/// every head when the window has left no own runs. A hard-deleted subject is
+/// passed over without projecting a new head.
 pub(crate) fn project_cell_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -378,6 +379,13 @@ pub(crate) fn project_cell_in_txn(
     let row = CELL
         .get(&vault.store, wtxn, digest)?
         .ok_or(Error::CorruptedIndex("learning cell"))?;
+    if vault.local_hard_delete_marker_exists_in_txn(wtxn, &row.cell.subject)? {
+        tracing::warn!(
+            subject = %row.cell.subject.to_hex(),
+            "a learning cell was not projected: its subject was hard-deleted"
+        );
+        return Ok(None);
+    }
     let (estimate, tally, cited, frozen) =
         fold_cell_with_snapshot_in_txn(vault, wtxn, &row, digest, now)?;
     let heads = active_heads_in_txn(vault, wtxn, &row.cell)?;
@@ -514,10 +522,38 @@ pub(crate) fn active_heads_in_txn(
     txn: &heed::RoTxn<'_>,
     cell: &LearningCell,
 ) -> Result<Vec<(EntityId, ClaimBody, u64)>> {
+    active_heads_with_claims_in_txn(vault, txn, cell, |id| vault.get_claim_in_txn(txn, id))
+}
+
+/// The same heads with every enumerated claim and each history carrier the
+/// targeted claim reads consulted, including claims later filtered out.
+pub(crate) fn active_heads_with_sources_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cell: &LearningCell,
+) -> Result<(Vec<(EntityId, ClaimBody, u64)>, Vec<EntityId>)> {
+    let mut sources = Vec::new();
+    let heads = active_heads_with_claims_in_txn(vault, txn, cell, |id| {
+        sources.push(*id);
+        let (body, carriers) = vault.get_claim_with_sources_in_txn(txn, id)?;
+        sources.extend(carriers);
+        Ok(body)
+    })?;
+    sources.sort_unstable();
+    sources.dedup();
+    Ok((heads, sources))
+}
+
+fn active_heads_with_claims_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cell: &LearningCell,
+    mut read_claim: impl FnMut(&EntityId) -> Result<Option<ClaimBody>>,
+) -> Result<Vec<(EntityId, ClaimBody, u64)>> {
     let predicate = cell.predicate.as_str();
     let mut rows = Vec::new();
     for id in vault.claims_for_subject_in_txn(txn, &cell.subject)? {
-        let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
+        let Some(body) = read_claim(&id)? else {
             continue;
         };
         if body.predicate != predicate

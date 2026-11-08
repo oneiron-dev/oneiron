@@ -59,6 +59,38 @@ impl ResolvedRetrievalFilter {
     pub(crate) fn read_scope(&self) -> Scope {
         read_scope(self.entity_types.as_ref(), self.max_sensitivity_band)
     }
+
+    /// The rows this filter reads and the rows `other` reads, as one
+    /// prefilter (FIX 7528): kinds joined, the higher band, staleness if
+    /// either reads it, the lower minima. A deny-all side adds nothing. It
+    /// is a candidate envelope, never an authorization: each row it lets
+    /// through must still pass one whole alternative's own check. Both sides
+    /// retrieve under the same key, so this filter's credential is kept.
+    #[must_use]
+    pub(crate) fn union_envelope(&self, other: &Self) -> Self {
+        if other.deny_all {
+            return self.clone();
+        }
+        if self.deny_all {
+            return Self {
+                credential: self.credential.clone(),
+                ..other.clone()
+            };
+        }
+        let entity_types = match (&self.entity_types, &other.entity_types) {
+            (Some(left), Some(right)) => Some(left.union(right).copied().collect()),
+            _ => None,
+        };
+        Self {
+            entity_types,
+            max_sensitivity_band: self.max_sensitivity_band.max(other.max_sensitivity_band),
+            include_stale: self.include_stale || other.include_stale,
+            min_confidence: self.min_confidence.min(other.min_confidence),
+            min_salience: self.min_salience.min(other.min_salience),
+            deny_all: false,
+            credential: self.credential.clone(),
+        }
+    }
 }
 
 /// Retrieval's kinds (`None` is every registered type) and sensitivity band
@@ -99,13 +131,10 @@ impl PolicyManifestResolution {
         )
     }
 
-    /// Whether every floor-counted read grant keeps a world, facet, or
-    /// audience boundary. Grants are alternatives: one broad grant leaves
-    /// these axes open. This inspects no rows or per-row selector values.
-    pub(crate) fn scoped_read_grants_have_nonretrieval_bound(
-        &self,
-        actor: &ScopedReadActorKey,
-    ) -> bool {
+    /// Whether every floor-counted read grant has a static boundary. Each
+    /// alternative is judged whole: a union of projections can look broad
+    /// even when no single grant is. This inspects no rows.
+    pub(crate) fn scoped_read_grants_all_bounded(&self, actor: &ScopedReadActorKey) -> bool {
         if actor.vault_owner_ref().is_some() {
             return false;
         }
@@ -115,13 +144,34 @@ impl PolicyManifestResolution {
                 && scoped_read_actor_matches(grant, actor)
                 && !grant.receipt_required
                 && grant.budget.is_none()
-                && RetrievalPolicyFloor::from_grant(grant).is_some()
         }) {
+            let Some(floor) = RetrievalPolicyFloor::from_grant(grant) else {
+                continue;
+            };
             saw_grant = true;
             let scope = &grant.authority_scope;
-            if scope.worlds == ScopeAxis::All
+            // Other selectors belong to the matcher; unknown keys also admit
+            // nothing. Neither case is a wholly broad alternative.
+            let matcher_bound = match grant.scope.as_ref() {
+                Some(Value::Map(entries)) => entries.iter().any(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        Some(
+                            "entity_types"
+                                | "max_sensitivity_band"
+                                | "include_stale"
+                                | "min_confidence"
+                                | "min_salience"
+                        )
+                    )
+                }),
+                _ => false,
+            };
+            if !floor.has_grant_scope_bound(None)
+                && scope.worlds == ScopeAxis::All
                 && scope.facets == ScopeAxis::All
                 && scope.audience == ScopeAxis::All
+                && !matcher_bound
             {
                 return false;
             }

@@ -68,6 +68,7 @@ impl InferencePolicySnapshot {
         store: &Store,
         txn: &heed::RoTxn<'_>,
         role: Option<ModelRole>,
+        host: &HostInferenceBinding,
         request: &mut LlmRequest,
     ) -> Result<Self> {
         let defaults = defaults::read_effective_defaults(store, txn)?;
@@ -95,7 +96,11 @@ impl InferencePolicySnapshot {
         }
         // Installed catalog rows are stored rows: the pack install activates them.
         let registry = registry::read_model_registry_row(store, txn, &request.model)?;
+        // A raw call takes its row's locality, except on the host's
+        // supervised native transport (I2-LOCAL): that row names the
+        // provider's own-server endpoint, and `bind` checks it as that.
         if role.is_none()
+            && !matches!(host, HostInferenceBinding::SupervisedNativeLocal { .. })
             && let Some(row) = &registry
         {
             request.envelope.locality = row.catalog.locality;
@@ -135,6 +140,10 @@ impl InferencePolicySnapshot {
             return Err(invalid("no model binding for inference default locality"));
         }
         let selected = &request.model;
+        let native = matches!(
+            host.binding,
+            HostInferenceBinding::SupervisedNativeLocal { .. }
+        );
         let locality = match &host.binding {
             HostInferenceBinding::Registered => {
                 self.registry
@@ -146,21 +155,35 @@ impl InferencePolicySnapshot {
             HostInferenceBinding::Advertised {
                 model, locality, ..
             } if model == selected => *locality,
-            HostInferenceBinding::Advertised { .. } => {
+            HostInferenceBinding::SupervisedNativeLocal { model, .. } if model == selected => {
+                ModelLocality::OnDevice
+            }
+            HostInferenceBinding::Advertised { .. }
+            | HostInferenceBinding::SupervisedNativeLocal { .. } => {
                 return Err(invalid("host backend model differs from selected route"));
             }
         };
         if locality != request.envelope.locality {
             return Err(invalid("model locality differs from bound transport"));
         }
-        if let Some(row) = &self.registry
-            && row.catalog.locality != locality
-        {
-            return Err(invalid("registry locality differs from host transport"));
+        if let Some(row) = &self.registry {
+            // The supervised native view of a model registers as the
+            // own-server endpoint it is also served at: that row, and only
+            // that one, agrees with it (I2-LOCAL).
+            let agrees = if native {
+                native_view_of(row)
+            } else {
+                row.catalog.locality == locality
+            };
+            if !agrees {
+                return Err(invalid("registry locality differs from host transport"));
+            }
         }
-        // A local lease must be backed by a registered Local transport, not
-        // by caller JSON or an unverified host label.
+        // A local lease must be backed by a registered Local transport, or by
+        // the host's supervised native transport, not by caller JSON or an
+        // unverified host label.
         if locality == ModelLocality::OnDevice
+            && !native
             && !self.registry.as_ref().is_some_and(|row| {
                 row.wire == ModelWireFormat::Local
                     && row.catalog.locality == ModelLocality::OnDevice
@@ -178,6 +201,19 @@ impl InferencePolicySnapshot {
 }
 fn invalid(reason: &'static str) -> Error {
     Error::InvalidConfig(reason.into())
+}
+
+/// Whether `row` is the registered form of a model the host also serves over
+/// its supervised native transport (I2-LOCAL): the same model id, registered
+/// as its provider's own-server endpoint over an OpenAI-compatible or
+/// own-server wire. A third-party row, or one that says another transport
+/// runs it on device (a Local in-process wire), contradicts that transport.
+fn native_view_of(row: &ModelRegistryRow) -> bool {
+    row.catalog.locality == ModelLocality::OwnServer
+        && matches!(
+            row.wire,
+            ModelWireFormat::OpenaiCompat | ModelWireFormat::OwnServer
+        )
 }
 
 /// The same final-request predicate for role-bound calls and raw HTTP calls,
@@ -216,7 +252,8 @@ impl Vault {
     ) -> Result<AuthorizedInference> {
         let mut request = request;
         let txn = self.store.env.read_txn()?;
-        let snapshot = InferencePolicySnapshot::load(&self.store, &txn, role, &mut request)?;
+        let snapshot =
+            InferencePolicySnapshot::load(&self.store, &txn, role, &host.binding, &mut request)?;
         let binding = snapshot.bind(&request, host)?;
         drop(txn); // Host code may read the vault; never call it under an LMDB reader.
         admit_extraction(&snapshot, &request, &binding, host)?;

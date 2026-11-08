@@ -39,7 +39,7 @@ after sending; the host's owned-VM shutdown/watchdog remains authoritative.
 The wire protocol is strict JSON behind a 4-byte big-endian length. `start`
 requires `source` in addition to the host's version, vm_id, tier, pids, and
 component_bytes fields. Only `foreign` and `untrusted` tiers are accepted.
-Both peers use shared `GUEST_PROTOCOL_VERSION = 2`; there is no old-wire reader.
+Both peers use shared `GUEST_PROTOCOL_VERSION = 3`; there is no old-wire reader.
 After component chunks, each seed arrives as `file_open` (path, byte length),
 nonempty `file_chunk` frames and `file_close`. Empty files use open/close only.
 The declared length must match exactly. Chunks write directly to fresh,
@@ -49,13 +49,15 @@ A source file uses one request regardless of byte length. File chunks and
 source closes are not requests. A partial or malformed seed fails before any
 component executes; callers discard its scratch state.
 
-Limits: 8 MiB frames; 64 MiB components in sequential nonempty chunks; 1 MiB
-source text, step-result JSON and individual file chunks. Snapshot and proposed
+Limits: 8 MiB encoded frames; 64 MiB components in sequential nonempty chunks;
+1 MiB source text and individual file chunks. Step-result JSON has no separate
+whole-result size check; its encoded frame must still fit. Snapshot and proposed
 files have no whole-file wire size bound. Canonical path/tree checks remain in
 the shared sandbox contract, including 4096-byte virtual paths. Source and
 outbound request budgets are 16384 (outbound reserves result and finish slots).
-Host calls have a 16383-call ceiling and cumulative read/random output is
-limited to 16 MiB; whole-file `read-file` still refuses above 1 MiB.
+Host calls have a 16383-call ceiling. Workspace files are read to EOF.
+Random-byte outputs use fallible native allocation with no separate per-call
+byte ceiling. There is no cumulative read/random-output byte ceiling.
 The runtime caps each store to one 64 MiB memory, eight tables, 10000 table
 elements, 32 instances, and 100000000 fuel. The host wall-clock watchdog bounds
 compilation, credential I/O, and VM execution.
@@ -84,9 +86,20 @@ duplicates and conflicting file/directory paths. Proposals do not mutate the
 seeded workspace or the original host tree. Claim-candidate proposals fail the
 entire step with `Error::UnsupportedClaimCandidate`.
 
+Each outbound `write_chunk` waits for a successful `receipt` before sending the
+next chunk, without spending a logical request or host-call slot. If a host
+proposal append reaches the existing typed disk floor, that chunk instead
+receives `failure` with the native `SANDBOX_PROPOSAL_DISK_FLOOR` code and the
+original detail. The existing proposal-chunk reply returns that reason to the
+component and poisons the run, even if the component catches the error. Other
+transport failures keep their existing generic errors. The host drops the open
+and pending proposals before waiting for one terminal frame under the original
+execution deadline/cancellation, then returns the original typed floor error;
+it does not dispatch that frame or publish any proposals.
+
 Deploying this wire change requires matching rebuilt guest executables/rootfs
 images and artifact pins for both Firecracker and fenced-container agents, plus
-release contract metadata for protocol v2. Existing release pins still describe
+release contract metadata for protocol v3. Existing release pins still describe
 their older engine revision; no replacement artifact is published here.
 
 ## Local conformance tools (not VM or JavaScript evidence)
@@ -128,3 +141,32 @@ The protocol and CLI tests run unprivileged on Linux or macOS. On macOS they
 verify that production startup refuses; they do not compile or exercise Linux
 PID-1 mount and privilege setup. Native image/boot acceptance requires Linux
 and the provisioned Firecracker/KVM stack.
+
+## Native OCI sessions
+
+The `oneiron.native_session=1` boot path uses its own native Start exchange on
+vsock port 52; it does not change the component protocol above. Host and guest
+must be updated together. Start carries command, pids, tmpfs budget, reconnect
+window, bridge token, explicit non-root uid/gid, and a directory archive's byte
+length and BLAKE3 digest. The archive follows Start, outside its 64 KiB JSON
+frame. After it is verified and mounted, the guest starts the fenced command and
+sends the original one-byte readiness response. Only then does port 52 become
+command stdio. Control remains on port 53, egress on port 54, and there is no NIC.
+
+Native read-only mounts are caller-selected directories, not host device mounts.
+The host copies regular files, directories and symlink metadata through anchored
+file descriptors; it never follows descendant symlinks to gather host files.
+The guest extracts to private scratch under its caller-budgeted `/tmp`, verifies
+the full digest, and binds each requested directory read-only/nosuid/nodev. An
+OverlayFS root view provides missing target directories while preserving the
+pinned image and system mounts. PID 1 pivots into that view, detaches the old root,
+and remounts the new root read-only before execution. Mount targets and absolute
+symlinks therefore resolve inside the guest, not on the host. Native rootfs images
+need the same OverlayFS-capable kernel and system mount directories as the
+component path, plus `/usr/local/bin/oneiron-fence` and the selected command.
+No archive tool is invoked inside or outside the guest.
+
+The native privilege drop uses Start's exact uid/gid with the original cgroup,
+rlimit, no-new-privileges and supplementary-group setup. Component execution
+continues to use its existing fixed identity. These are source contracts, not a
+native boot, compiler or runtime acceptance result.

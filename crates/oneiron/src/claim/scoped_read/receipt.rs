@@ -30,7 +30,7 @@ impl ScopedRead<'_> {
     ) -> ScopedReadReceipt {
         let floor = policy.retrieval_floor_for_actor(Some(&self.actor_key));
         let grant_scope = floor.has_grant_scope_bound(self.actor_key.authority_scope())
-            || policy.scoped_read_grants_have_nonretrieval_bound(&self.actor_key);
+            || policy.scoped_read_grants_all_bounded(&self.actor_key);
         let actor_ceiling = ReadScope {
             entity_types: floor.allowed_entity_types,
             max_sensitivity_band: floor.max_sensitivity_band,
@@ -85,6 +85,20 @@ impl ScopedRead<'_> {
     ) -> crate::Result<ScopedReadReceipt> {
         let (applied, policy) = self.resolve_retrieval_filter(requested)?;
         Ok(self.receipt_for(requested, &policy, &applied, suppressed))
+    }
+
+    /// [`Self::read_receipt`] for a search (FIX 7528): its applied scope is
+    /// the candidates the search ranks, the key's own rows and those each of
+    /// its own live Grants reads (`SearchPlan::candidates`), so a search
+    /// whose key reads nothing by itself still runs when a Grant reads some
+    /// rows. It reports, never authorizes: every row still takes the row gate.
+    pub(crate) fn search_receipt(
+        &self,
+        requested: Option<&RetrievalFilter>,
+        suppressed: usize,
+    ) -> crate::Result<ScopedReadReceipt> {
+        let plan = self.search_plan(requested)?;
+        Ok(self.receipt_for(requested, &plan.policy, &plan.candidates, suppressed))
     }
 
     /// The receipt for a scan that already holds its transaction: the

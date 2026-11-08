@@ -4,9 +4,11 @@
 //! budget accounting, durable intent state, and transport.
 
 mod admission;
+mod authority_standing;
 mod budget;
 mod connector_slate;
 pub(crate) mod dedupe;
+mod ordinary_slate;
 mod replay;
 mod types;
 
