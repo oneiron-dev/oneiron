@@ -177,9 +177,7 @@ impl SyncClient {
         // A home that may not read the window's world is not told its name
         // (FIX 922 item 11).
         if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
-            return Err(TransportError::Storage(
-                "home may not read this world".into(),
-            ));
+            return Err(TransportError::world_unreadable_by_home());
         }
         self.hydrate_promoted_pads(&mut rpc, window, &selector, item)
             .await;
@@ -192,9 +190,7 @@ impl SyncClient {
             return Err(TransportError::home_offline());
         };
         if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
-            return Err(TransportError::Storage(
-                "home may not read this world".into(),
-            ));
+            return Err(TransportError::world_unreadable_by_home());
         }
         let reply: PromotionReply = serde_json::from_value(
             rpc.request(
