@@ -44,20 +44,37 @@ impl SyncServer {
         self
     }
 
+    /// The guard a managed node checks every outbound fetch with, `None` on a
+    /// self-hosted node: the web fetcher's, and the OAuth server's fetch of a
+    /// client ID metadata document (FIX 4902). The managed switch every
+    /// hosted-only rule reads is set only by managed boot, which alone passes
+    /// the operator's private origins.
+    pub(crate) fn hosted_egress_guard(&self) -> Option<Arc<HostedEgressGuard>> {
+        self.managed_issuer.is_some().then(|| {
+            Arc::new(HostedEgressGuard::new(
+                node_addresses,
+                self.config.hosted_private_origins.clone(),
+            ))
+        })
+    }
+
+    /// The guard for a fetch of a URL an outside, unauthenticated party
+    /// names (an OAuth client's metadata document, FIX 4902), on every node:
+    /// it refuses this node's own addresses and every private network, with
+    /// no origin excepted. The managed node's `hosted_private_origins` are the
+    /// owner's own web fetcher's exceptions, never an outside caller's
+    /// (review #6478).
+    pub(crate) fn untrusted_url_egress_guard(&self) -> Arc<HostedEgressGuard> {
+        Arc::new(HostedEgressGuard::new(node_addresses, BTreeSet::new()))
+    }
+
     /// Called off the async runtime. The default rung is a credential-free
     /// native GET, with the host's headless browser after it on a managed
     /// node with a `[browser]` guest (FIX 7122); a host that supplies a
     /// ladder keeps that exact ladder. On a managed node every ladder, a
     /// supplied one included, carries the hosted egress guard.
     pub(crate) fn web_fetcher(&self) -> MemoryResult<Arc<WebFetcher>> {
-        // The managed switch every hosted-only rule reads: set only by
-        // managed boot, which alone passes the operator's private origins.
-        let guard = self.managed_issuer.is_some().then(|| {
-            Arc::new(HostedEgressGuard::new(
-                node_addresses,
-                self.config.hosted_private_origins.clone(),
-            ))
-        });
+        let guard = self.hosted_egress_guard();
         let fetcher = match self.web_fetcher.get() {
             Some(fetcher) => Arc::clone(fetcher),
             None => {

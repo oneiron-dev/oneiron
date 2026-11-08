@@ -28,6 +28,37 @@ fn unprofiled_install(fold: &AuthorityFold, machine: Option<crate::EntityId>) ->
 }
 
 impl Vault {
+    /// Whether this outstanding share-view link names this holder without
+    /// requiring a resident entity. This is transport preflight only;
+    /// redemption rechecks the link and live share with the holder's signature
+    /// in the transaction that mints the credential and consumes the code.
+    pub fn share_view_pairing_allows_holder(
+        &self,
+        issuer: &HostSlipIssuer,
+        code: &str,
+        holder_ref: &str,
+    ) -> Result<bool> {
+        let holder = canonical_id(holder_ref)?;
+        let txn = self.store.env.read_txn()?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let row_key = pairing_row_key(issuer, code)?;
+        let Some(pending) = PAIRING_PENDING.get(&self.store, &txn, &row_key)? else {
+            return Ok(false);
+        };
+        let Some(share) = pending.share_ref else {
+            return Ok(false);
+        };
+        if now >= pending.expires_at
+            || pending.host_key != issuer.binding_key()
+            || pending.machine.is_some()
+            || pending.principal.org_ref.is_some()
+            || pending.principal.holder_ref.as_deref() != Some(holder_ref)
+        {
+            return Ok(false);
+        }
+        Ok(crate::share::live_share_for_holder_in_txn(self, &txn, &share, &holder, now)?.is_some())
+    }
+
     /// No prior bearer is required. The link is the one-use enrollment grant;
     /// the binding signature proves possession of the receiving connection key.
     /// Consuming the link and appending SlipMint are one LMDB transaction.
@@ -202,12 +233,21 @@ impl Vault {
         let slip_lifetime_secs = pending.slip_lifetime_secs.min(ceiling.initial_owner_secs);
         // A live owner's own device gets their residence grant, named in the
         // slip so the device's selector can name it (FIX 3134).
-        let grant_ref = self.own_device_grant_for_holder_in_txn(
-            &mut txn,
-            holder_ref,
-            pending.principal.actor_class.as_deref(),
-            now,
-        )?;
+        if let Some(share) = pending.share_ref {
+            let holder = canonical_id(holder_ref)?;
+            crate::share::live_share_for_holder_in_txn(self, &txn, &share, &holder, now)?
+                .ok_or_else(invalid_authority)?;
+        }
+        let grant_ref = if pending.share_ref.is_some() {
+            None
+        } else {
+            self.own_device_grant_for_holder_in_txn(
+                &mut txn,
+                holder_ref,
+                pending.principal.actor_class.as_deref(),
+                now,
+            )?
+        };
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let claims = SlipClaims {
@@ -227,6 +267,7 @@ impl Vault {
             org_ref: pending.principal.org_ref,
             grant_ref: grant_ref.map(|id| id.to_hex()),
             invitation_ref: None,
+            share_ref: pending.share_ref.map(|id| id.to_hex()),
             delegation: None,
             comm: pending.principal.comm,
             trusted_contact: None,
