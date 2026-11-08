@@ -254,6 +254,28 @@ impl OwnerHost {
         })
     }
 
+    /// [`Self::take`] for the host operator (FIX 11432): serialized with every
+    /// other backup of this vault, and refused for a shared vault its Owners
+    /// deleted, read again once the lock is held, in the image's own landing
+    /// and before its prune ([`backup::take_unless_deleted`]). No owner is
+    /// rechecked: the operator is none.
+    pub(crate) fn take_unless_deleted(&self, vault: &oneiron::Vault) -> OwnerResult<BackupOutcome> {
+        let _one_at_a_time = self.one_at_a_time();
+        let (plan, _) = self.effective_plan(vault)?;
+        match backup::take_unless_deleted(vault, &plan) {
+            Ok(Some(outcome)) => Ok(outcome),
+            Ok(None) => Err(OwnerError::Refused(
+                "this shared vault was deleted: its existing backups are kept until their \
+                 retention ends, and no new one is taken"
+                    .to_owned(),
+            )),
+            Err(error) => Err(match error.downcast::<oneiron::Error>() {
+                Ok(engine) => OwnerError::from(engine),
+                Err(error) => OwnerError::Host(error),
+            }),
+        }
+    }
+
     /// Rehearses one of this vault's backups by its listed file name, the
     /// newest by default; never a caller-built path. The backup lock is held
     /// from choosing the file until the rehearsal has read it, so retention
