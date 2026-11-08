@@ -27,3 +27,52 @@ This provider alone does not complete the N-API codebase-snapshot boundary.
 That caller must separately ask and serve the manifest-file limit, obtain its
 required concurrency admission, reserve before marshaling, and retain/grow the
 same lease through all DTO, path, content and core-vector allocations.
+
+## Native e-sign preparation
+
+A hosted sealer without a selected first-party prepare organ uses the trusted
+native renderer with its host's optional machine floor. A host without a floor
+keeps the existing native fallback, and ordinary offline preparation APIs stay
+unadmitted. Third-party prepared bytes are never substituted for trusted bytes;
+the first-party organ path and its work limits are unchanged.
+
+The native path cannot wait for capacity while its caller holds source
+inputs: concurrent preparations could otherwise keep each other's required
+room pinned. `MachineFloor::try_lease` forwards through `OrganFloor` to the
+same native process line. It uses the existing floor, live-memory/fallback fit
+and FIFO rules; the decision and charge share the line's lock. A queued waiter
+is never bypassed. If a booking would wait, no reservation or ticket is made.
+The existing retryable preparation status uses the new diagnostic code
+`memory_unavailable`, letting the caller unwind its inputs before retrying. Busy memory is not a fabricated deadline or
+a permanent physical-floor refusal. Other organ/frame wait paths are unchanged.
+
+Each parse attempt draws only from its already-reserved complete pool. A
+shortfall cancels that attempt internally and unwinds its buffers and stages;
+its pool lease is dropped too, before the next nonblocking booking. The next
+attempt requests a fresh pool of exactly the observed required size. No parsed
+buffer, decoded cache or previous pool reservation is held across that booking.
+There is no speculative growth, synthetic deadline or claim of materialization.
+
+Before booking, the existing native `check_irreducible_peak` predicate checks
+the caller's `pinned_buffer_bytes` plus the required complete pool. The seal
+producer supplies actual allocated capacities of every original PDF buffer,
+every distinct raster RGBA buffer, and prior sealed output buffers still held
+by that operation. The current original is included once, not added again as a
+slice length. The required Rust field has no invented fallback footprint.
+State/event/container/allocator and other private heap remain outside this
+witness; it is not whole-heap accounting or a global no-hang certificate. The
+predicate neither reserves nor creates a new limit. Real floor/deadline refusals return the existing retryable preparation
+failure, never a malformed input. Each attempt uses the already-replayed audit;
+it does not replay that audit or send an organ call again.
+
+The shared preparation body admits preflight parsing and source stream decodes.
+Within one attempt, cached page streams retain their admission through the
+cache's lifetime and each distinct stream decodes once. An unwound attempt's
+cache is discarded; a retry repeats the pure parse and source decoding. Form/pattern buffers, Type 3 glyph aggregates and page-content
+concatenations reserve before growth, including a new allocation while the old
+one lives. Temporary stages release only after their buffers drop, returning room to
+that attempt's pool; the machine lease lasts through the attempt. Reservations
+remain pending: this inspection interface supplies no materialization notice.
+This is not whole-heap accounting: input bytes, content-operation parsing, output
+objects, field rendering, audit strings and encoded output are not covered by
+this boundary. The existing per-stream codec bound and PDF format bounds remain.

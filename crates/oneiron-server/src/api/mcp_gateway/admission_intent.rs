@@ -138,6 +138,27 @@ pub(super) async fn observed<T>(
     let vault = Arc::clone(server.vault());
     let (who, class) = (actor.actor_ref, actor.actor_class);
     let resumed = actor.drain.is_some();
+    // A paced call the drain already ran answers its saved outcome to the
+    // same caller's retry from its row, before an admission intent starts
+    // again: that intent is settled, and the effect never runs twice (FIX
+    // 19034, as the facade's FIX 8753 guard).
+    if !resumed && oneiron::runtime_hooks::verb::is_paced_verb(&intent.verb) {
+        let (lookup, caller, verb) = (Arc::clone(server), actor.clone(), intent.verb.clone());
+        let ended = crate::api::clock_ingress::run_blocking(move || {
+            super::tasks_response::mcp_paced_lookup_memory(&lookup, &caller, invocation)
+                .ended_paced_verb_reply_listed(&verb)
+        })
+        .await
+        .ok()
+        .flatten();
+        // The row answers the reply read here, so a line expiry between the
+        // two reads can never run the effect again.
+        if let Some(reply) = ended {
+            return super::verb_hooks::ENDED_PACED_REPLY
+                .scope(std::cell::RefCell::new(Some(reply)), call)
+                .await;
+        }
+    }
     let started = crate::api::clock_ingress::run_blocking(move || {
         let McpIntent {
             verb,

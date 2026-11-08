@@ -201,6 +201,7 @@ impl Vault {
             osv,
             occurred,
             at,
+            &mut super::SkillImportRows::default(),
         )?;
         Ok(ClawHubImportReply::Imported {
             entity,
@@ -231,7 +232,14 @@ impl Vault {
         let fetch = self.hub_ref_fetch(&pinned_tracking(source.clone())?, None)?;
         let osv = Some(super::osv::hub_advisory_query(fetch.kind()));
         self.import_marketplace_skill_with_query(
-            &fetch, &source, &publisher, &*fit, osv, occurred, at,
+            &fetch,
+            &source,
+            &publisher,
+            &*fit,
+            osv,
+            occurred,
+            at,
+            &mut super::SkillImportRows::default(),
         )
     }
 
@@ -239,7 +247,9 @@ impl Vault {
     /// it asked for (FIX 10202): the package is fetched once, its declared id
     /// and the requested version are checked before the publisher is
     /// admitted or a candidate is born, and the import commits that same
-    /// package. A mismatch writes nothing.
+    /// package. A mismatch writes nothing. `rows` notes the hub once its row
+    /// is read and the stored skill a content dedup answers, landed or
+    /// refused (FIX 11699).
     #[expect(
         clippy::too_many_arguments,
         reason = "the owner door's inputs plus the skill identity the caller asked for"
@@ -253,11 +263,16 @@ impl Vault {
         publisher: &str,
         skill_id: &str,
         version: Option<&str>,
+        rows: &mut super::SkillImportRows,
     ) -> Result<EntityId> {
         // The owner is checked before any host path is read.
         self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         let source = HubRef::new(hub, folder, pin)?;
-        let fetch = self.hub_ref_fetch(&pinned_tracking(source.clone())?, None)?;
+        let tracked = pinned_tracking(source.clone())?;
+        // [`Self::hub_ref_fetch`], with the hub's read noted first.
+        let row = self.skill_hub_record(&hub);
+        rows.hub_read(hub, &row);
+        let fetch = super::ref_sync::configured_ref_fetch(hub, &row?, &tracked, None)?;
         let package = fetch.fetch_package(&source)?;
         // The door reads the record from the package's files, so the check
         // does too.
@@ -281,6 +296,7 @@ impl Vault {
             osv,
             occurred,
             at,
+            rows,
         )
     }
 
