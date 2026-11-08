@@ -18,6 +18,7 @@ mod import_types;
 mod operations;
 mod preview;
 mod publish;
+mod secret_purge;
 mod setup;
 mod types;
 mod workbench;
@@ -29,9 +30,15 @@ pub use crate::origin::export_preview::{
     CodeExportPreviewAnswer, CodeExportPreviewBlockReason, CodeExportPreviewBlocker,
     CodeExportPreviewHold, CodeExportPreviewRequest, CodeExportSide,
 };
+pub use crate::origin::secret_purge::{
+    RepoSecretPurgeIdRequest, RepoSecretPurgeKeepRoot, RepoSecretPurgeOutstanding,
+    RepoSecretPurgePlan, RepoSecretPurgeReceipt, RepoSecretPurgeRefMove, RepoSecretPurgeRefOutcome,
+    RepoSecretPurgeRequest, RepoSecretPurgeState, RepoSecretPurgeView,
+};
 pub use crate::repo_mutation::external_import::{
-    ExternalImportDoor, ExternalImportLookup, ExternalImportPhase, ExternalImportReceipt,
-    ExternalImportRequest, ExternalImportSource, ExternalImportStatus,
+    ExternalImportDoor, ExternalImportLfsRoute, ExternalImportLfsTransfer, ExternalImportLookup,
+    ExternalImportPhase, ExternalImportReceipt, ExternalImportRequest, ExternalImportSource,
+    ExternalImportStatus,
 };
 pub use external_import::ExternalImportProof;
 pub use import_types::*;
