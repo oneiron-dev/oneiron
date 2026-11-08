@@ -120,6 +120,9 @@ impl KeptRemovalCopy {
                 archive,
                 digest,
                 holder_requests: self.holder_requests,
+                // A removal's records archive follows the world settings, so
+                // it names no world it carried past them.
+                notices: Vec::new(),
             },
         }
     }

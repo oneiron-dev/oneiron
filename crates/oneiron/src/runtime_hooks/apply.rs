@@ -316,7 +316,8 @@ fn land(
 /// hook's original input payload AND as the typed `TaskCreateSpec::due_at`
 /// annotation (FIX685): a due/deadline stamp, never TTL expiry and never a
 /// not-before wait. The standard TASK it lands then ticks once on
-/// `schedule.tick` after that time (FIX 4749).
+/// `schedule.tick` after that time (FIX 4749). `watch` makes it a watch
+/// TASK, which queues no work and which its tick settles (FIX 22121).
 fn enqueue_task(
     vault: &Vault,
     memory: &Memory<'_>,
@@ -341,7 +342,8 @@ fn enqueue_task(
         Some(task.title.clone()),
         None,
         None,
-    );
+    )
+    .with_watch(task.watch);
     if let Some(assignee) = task.assignee.as_deref() {
         spec = spec.with_assignee(assignee_for(vault, assignee)?);
     }

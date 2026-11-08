@@ -3942,9 +3942,21 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.session_model_heal_count",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_run_doors::CodeRunSessionModelHealCountRequest,
+                >(),
+            ),
+            (
                 "vault.code.corrections",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_run_doors::CodeRunCorrectionsRequest,
+                >(),
+            ),
+            (
+                "vault.code.step_evidence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_run_doors::CodeRunStepEvidenceRequest,
                 >(),
             ),
             (
@@ -4435,6 +4447,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.agents.grants.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::AgentGrantRevokeRequest,
+                >(),
+            ),
+            (
+                "vault.agents.verb_classes.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.agents.verb_classes.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_manifest_doors::AgentVerbClassesConfigureRequest,
                 >(),
             ),
             (
@@ -5195,6 +5217,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.skills.outcomes.get",
                 crate::code_run::vault_read::request_schema::<SkillPackCreditRequest>(),
+            ),
+            (
+                "vault.settings.models.responses_store.read",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.settings.models.responses_store.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ModelResponsesStoreSettings,
+                >(),
             ),
             (
                 "vault.models.manifest.read",
@@ -7137,6 +7170,29 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.mail.reply.draft",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailReplyDraftRequest,
+                >(),
+            ),
+            (
+                "vault.mail.reply.drafts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailReplyDraftsRequest,
+                >(),
+            ),
+            (
+                "vault.mail.reply.discard",
+                crate::code_run::vault_read::request_schema::<crate::mail_pack::MailReplyDraftRef>(
+                ),
+            ),
+            (
+                "vault.mail.reply.approve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailReplyApproveRequest,
+                >(),
+            ),
+            (
                 "vault.mail.compliance.setting",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -7155,6 +7211,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::mail_pack::MailSourceRef>(),
             ),
             (
+                "vault.mail.sources.import_mbox",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailMboxImportRequest,
+                >(),
+            ),
+            (
+                "vault.mail.sources.sync",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailSourceSyncRequest,
+                >(),
+            ),
+            (
                 "vault.mail.inbox",
                 crate::code_run::vault_read::request_schema::<crate::mail_pack::MailInboxRequest>(),
             ),
@@ -7162,6 +7230,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.mail.threads.read",
                 crate::code_run::vault_read::request_schema::<crate::mail_pack::MailThreadRequest>(
                 ),
+            ),
+            (
+                "vault.mail.attachments.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailAttachmentOpenRequest,
+                >(),
             ),
             (
                 "vault.mail.compliance.search",
@@ -8138,7 +8212,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.secrets.propose",
     "execute_code",
     "vault.code.model_heal_count",
+    "vault.code.session_model_heal_count",
     "vault.code.corrections",
+    "vault.code.step_evidence",
     "vault.code.type_diagnostics",
     "vault.code.waits.resolve",
     "vault.code.waits.receipt",
@@ -8202,6 +8278,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.dreaming.set",
     "vault.agents.grants.mint",
     "vault.agents.grants.revoke",
+    "vault.agents.verb_classes.get",
+    "vault.agents.verb_classes.configure",
     "vault.repo.git_push.mint",
     "vault.repo.git_push.revoke",
     "vault.connectors.read_grants.grant",
@@ -8255,6 +8333,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.create_deck",
     "vault.artifacts.inspect_deck",
     "vault.artifacts.propose_deck",
+    "vault.settings.models.responses_store.read",
+    "vault.settings.models.responses_store.set",
     "vault.models.manifest.read",
     "vault.models.manifest.replace",
     "vault.settings.web_connector",
@@ -10128,8 +10208,14 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
         >(),
+        "vault.code.session_model_heal_count" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_run_doors::CodeRunSessionModelHealCountView,
+        >(),
         "vault.code.corrections" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunCorrectionsView,
+        >(),
+        "vault.code.step_evidence" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::code_run_doors::CodeRunStepEvidenceView>,
         >(),
         "vault.code.type_diagnostics" => crate::code_run::vault_read::request_schema::<
             Option<crate::code_run::ProgramStepFeedbackRelease>,
@@ -10326,6 +10412,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.agents.grants.revoke" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AgentGrantRevoked,
         >(),
+        "vault.agents.verb_classes.get" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::AgentVerbClassesView,
+        >(),
+        "vault.agents.verb_classes.configure" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::AgentVerbClassesReceipt,
+        >(),
         "vault.repo.git_push.mint" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::GitPushGrantMintOutput,
         >(),
@@ -10485,6 +10577,16 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.artifacts.propose_deck" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::DeckProposeOutcome,
         >(),
+        "vault.settings.models.responses_store.read" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::ModelResponsesStoreSettings,
+            >()
+        }
+        "vault.settings.models.responses_store.set" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::ModelResponsesStoreSettings,
+            >()
+        }
         "vault.models.manifest.read" => crate::code_run::vault_read::request_schema::<
             Option<crate::llm::manifest::ModelManifest>,
         >(),
@@ -11915,6 +12017,10 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert(
                 "due_at".to_owned(),
                 schema.pointer("/properties/due_at")?.clone(),
+            );
+            properties.insert(
+                "watch".to_owned(),
+                schema.pointer("/properties/watch")?.clone(),
             );
             &["spec"]
         }
@@ -16397,7 +16503,21 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.session_model_heal_count" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.corrections" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.step_evidence" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -16966,6 +17086,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.agents.grants.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agents.verb_classes.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agents.verb_classes.configure" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -17931,6 +18065,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.skills.outcomes.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.models.responses_store.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.models.responses_store.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20304,6 +20452,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.mail.reply.draft" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.reply.drafts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.reply.discard" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.reply.approve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.mail.compliance.setting" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20332,6 +20508,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.mail.sources.import_mbox" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.sources.sync" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.mail.inbox" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20340,6 +20530,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.mail.threads.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mail.attachments.open" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21633,7 +21830,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.secrets.propose" => validate_input_vault_code_secrets_propose(value)?,
         "execute_code" => validate_input_execute_code(value)?,
         "vault.code.model_heal_count" => validate_input_vault_code_model_heal_count(value)?,
+        "vault.code.session_model_heal_count" => {
+            validate_input_vault_code_session_model_heal_count(value)?
+        }
         "vault.code.corrections" => validate_input_vault_code_corrections(value)?,
+        "vault.code.step_evidence" => validate_input_vault_code_step_evidence(value)?,
         "vault.code.type_diagnostics" => validate_input_vault_code_type_diagnostics(value)?,
         "vault.code.waits.resolve" => validate_input_vault_code_waits_resolve(value)?,
         "vault.code.waits.receipt" => validate_input_vault_code_waits_receipt(value)?,
@@ -21746,6 +21947,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.agents.dreaming.set" => validate_input_vault_agents_dreaming_set(value)?,
         "vault.agents.grants.mint" => validate_input_vault_agents_grants_mint(value)?,
         "vault.agents.grants.revoke" => validate_input_vault_agents_grants_revoke(value)?,
+        "vault.agents.verb_classes.get" => validate_input_vault_agents_verb_classes_get(value)?,
+        "vault.agents.verb_classes.configure" => {
+            validate_input_vault_agents_verb_classes_configure(value)?
+        }
         "vault.repo.git_push.mint" => validate_input_vault_repo_git_push_mint(value)?,
         "vault.repo.git_push.revoke" => validate_input_vault_repo_git_push_revoke(value)?,
         "vault.connectors.read_grants.grant" => {
@@ -21897,6 +22102,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.skills.pack_receipt" => validate_input_vault_skills_pack_receipt(value)?,
         "vault.skills.outcomes.project" => validate_input_vault_skills_outcomes_project(value)?,
         "vault.skills.outcomes.get" => validate_input_vault_skills_outcomes_get(value)?,
+        "vault.settings.models.responses_store.read" => {
+            validate_input_vault_settings_models_responses_store_read(value)?
+        }
+        "vault.settings.models.responses_store.set" => {
+            validate_input_vault_settings_models_responses_store_set(value)?
+        }
         "vault.models.manifest.read" => validate_input_vault_models_manifest_read(value)?,
         "vault.models.manifest.replace" => validate_input_vault_models_manifest_replace(value)?,
         "vault.settings.web_connector" => validate_input_vault_settings_web_connector(value)?,
@@ -22358,12 +22569,19 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.mail.threads.share" => validate_input_vault_mail_threads_share(value)?,
         "vault.mail.threads.unshare" => validate_input_vault_mail_threads_unshare(value)?,
+        "vault.mail.reply.draft" => validate_input_vault_mail_reply_draft(value)?,
+        "vault.mail.reply.drafts" => validate_input_vault_mail_reply_drafts(value)?,
+        "vault.mail.reply.discard" => validate_input_vault_mail_reply_discard(value)?,
+        "vault.mail.reply.approve" => validate_input_vault_mail_reply_approve(value)?,
         "vault.mail.compliance.setting" => validate_input_vault_mail_compliance_setting(value)?,
         "vault.mail.compliance.set" => validate_input_vault_mail_compliance_set(value)?,
         "vault.mail.compliance.log" => validate_input_vault_mail_compliance_log(value)?,
         "vault.mail.sources.sync_status" => validate_input_vault_mail_sources_sync_status(value)?,
+        "vault.mail.sources.import_mbox" => validate_input_vault_mail_sources_import_mbox(value)?,
+        "vault.mail.sources.sync" => validate_input_vault_mail_sources_sync(value)?,
         "vault.mail.inbox" => validate_input_vault_mail_inbox(value)?,
         "vault.mail.threads.read" => validate_input_vault_mail_threads_read(value)?,
+        "vault.mail.attachments.open" => validate_input_vault_mail_attachments_open(value)?,
         "vault.mail.compliance.search" => validate_input_vault_mail_compliance_search(value)?,
         "vault.files.sources.convert" => validate_input_vault_files_sources_convert(value)?,
         #[cfg(feature = "sync")]
@@ -26318,8 +26536,21 @@ fn validate_input_vault_code_model_heal_count(value: &serde_json::Value) -> Memo
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_code_session_model_heal_count(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::memory::code_run_doors::CodeRunSessionModelHealCountRequest =
+        decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_code_corrections(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::code_run_doors::CodeRunCorrectionsRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_code_step_evidence(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::code_run_doors::CodeRunStepEvidenceRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -26752,6 +26983,19 @@ fn validate_input_vault_agents_grants_mint(value: &serde_json::Value) -> MemoryR
 #[inline(never)]
 fn validate_input_vault_agents_grants_revoke(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::AgentGrantRevokeRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_agents_verb_classes_get(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: EmptyRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_agents_verb_classes_configure(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::policy_manifest_doors::AgentVerbClassesConfigureRequest =
+        decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -27465,6 +27709,20 @@ fn validate_input_vault_skills_outcomes_project(value: &serde_json::Value) -> Me
 #[inline(never)]
 fn validate_input_vault_skills_outcomes_get(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: SkillPackCreditRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_settings_models_responses_store_read(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_settings_models_responses_store_set(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::ModelResponsesStoreSettings = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -29368,6 +29626,26 @@ fn validate_input_vault_mail_threads_unshare(value: &serde_json::Value) -> Memor
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_mail_reply_draft(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::mail_pack::MailReplyDraftRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_mail_reply_drafts(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::mail_pack::MailReplyDraftsRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_mail_reply_discard(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::mail_pack::MailReplyDraftRef = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_mail_reply_approve(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::mail_pack::MailReplyApproveRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_mail_compliance_setting(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: EmptyRequest = decode(value.clone())?;
     Ok(())
@@ -29388,6 +29666,16 @@ fn validate_input_vault_mail_sources_sync_status(value: &serde_json::Value) -> M
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_mail_sources_import_mbox(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::mail_pack::MailMboxImportRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_mail_sources_sync(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::mail_pack::MailSourceSyncRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_mail_inbox(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::mail_pack::MailInboxRequest = decode(value.clone())?;
     Ok(())
@@ -29395,6 +29683,11 @@ fn validate_input_vault_mail_inbox(value: &serde_json::Value) -> MemoryResult<()
 #[inline(never)]
 fn validate_input_vault_mail_threads_read(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::mail_pack::MailThreadRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_mail_attachments_open(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::mail_pack::MailAttachmentOpenRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -30792,7 +31085,11 @@ pub fn invoke(
         "vault.code.secrets.propose" => invoke_vault_code_secrets_propose(memory, value),
         "execute_code" => invoke_execute_code(memory, value),
         "vault.code.model_heal_count" => invoke_vault_code_model_heal_count(memory, value),
+        "vault.code.session_model_heal_count" => {
+            invoke_vault_code_session_model_heal_count(memory, value)
+        }
         "vault.code.corrections" => invoke_vault_code_corrections(memory, value),
+        "vault.code.step_evidence" => invoke_vault_code_step_evidence(memory, value),
         "vault.code.type_diagnostics" => invoke_vault_code_type_diagnostics(memory, value),
         "vault.code.waits.resolve" => invoke_vault_code_waits_resolve(memory, value),
         "vault.code.waits.receipt" => invoke_vault_code_waits_receipt(memory, value),
@@ -30905,6 +31202,10 @@ pub fn invoke(
         "vault.agents.dreaming.set" => invoke_vault_agents_dreaming_set(memory, value),
         "vault.agents.grants.mint" => invoke_vault_agents_grants_mint(memory, value),
         "vault.agents.grants.revoke" => invoke_vault_agents_grants_revoke(memory, value),
+        "vault.agents.verb_classes.get" => invoke_vault_agents_verb_classes_get(memory, value),
+        "vault.agents.verb_classes.configure" => {
+            invoke_vault_agents_verb_classes_configure(memory, value)
+        }
         "vault.repo.git_push.mint" => invoke_vault_repo_git_push_mint(memory, value),
         "vault.repo.git_push.revoke" => invoke_vault_repo_git_push_revoke(memory, value),
         "vault.connectors.read_grants.grant" => {
@@ -31056,6 +31357,12 @@ pub fn invoke(
         "vault.skills.pack_receipt" => invoke_vault_skills_pack_receipt(memory, value),
         "vault.skills.outcomes.project" => invoke_vault_skills_outcomes_project(memory, value),
         "vault.skills.outcomes.get" => invoke_vault_skills_outcomes_get(memory, value),
+        "vault.settings.models.responses_store.read" => {
+            invoke_vault_settings_models_responses_store_read(memory, value)
+        }
+        "vault.settings.models.responses_store.set" => {
+            invoke_vault_settings_models_responses_store_set(memory, value)
+        }
         "vault.models.manifest.read" => invoke_vault_models_manifest_read(memory, value),
         "vault.models.manifest.replace" => invoke_vault_models_manifest_replace(memory, value),
         "vault.settings.web_connector" => invoke_vault_settings_web_connector(memory, value),
@@ -31495,12 +31802,19 @@ pub fn invoke(
         }
         "vault.mail.threads.share" => invoke_vault_mail_threads_share(memory, value),
         "vault.mail.threads.unshare" => invoke_vault_mail_threads_unshare(memory, value),
+        "vault.mail.reply.draft" => invoke_vault_mail_reply_draft(memory, value),
+        "vault.mail.reply.drafts" => invoke_vault_mail_reply_drafts(memory, value),
+        "vault.mail.reply.discard" => invoke_vault_mail_reply_discard(memory, value),
+        "vault.mail.reply.approve" => invoke_vault_mail_reply_approve(memory, value),
         "vault.mail.compliance.setting" => invoke_vault_mail_compliance_setting(memory, value),
         "vault.mail.compliance.set" => invoke_vault_mail_compliance_set(memory, value),
         "vault.mail.compliance.log" => invoke_vault_mail_compliance_log(memory, value),
         "vault.mail.sources.sync_status" => invoke_vault_mail_sources_sync_status(memory, value),
+        "vault.mail.sources.import_mbox" => invoke_vault_mail_sources_import_mbox(memory, value),
+        "vault.mail.sources.sync" => invoke_vault_mail_sources_sync(memory, value),
         "vault.mail.inbox" => invoke_vault_mail_inbox(memory, value),
         "vault.mail.threads.read" => invoke_vault_mail_threads_read(memory, value),
+        "vault.mail.attachments.open" => invoke_vault_mail_attachments_open(memory, value),
         "vault.mail.compliance.search" => invoke_vault_mail_compliance_search(memory, value),
         "vault.files.sources.convert" => invoke_vault_files_sources_convert(memory, value),
         #[cfg(feature = "sync")]
@@ -36742,11 +37056,25 @@ fn invoke_vault_code_model_heal_count(
     encode(vault_code_model_heal_count(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_code_session_model_heal_count(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_session_model_heal_count(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_code_corrections(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_code_corrections(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_code_step_evidence(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_step_evidence(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_code_type_diagnostics(
@@ -37333,6 +37661,20 @@ fn invoke_vault_agents_grants_revoke(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_agents_grants_revoke(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_agents_verb_classes_get(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_agents_verb_classes_get(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_agents_verb_classes_configure(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_agents_verb_classes_configure(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_repo_git_push_mint(
@@ -38255,6 +38597,26 @@ fn invoke_vault_skills_outcomes_get(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_skills_outcomes_get(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_settings_models_responses_store_read(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_settings_models_responses_store_read(
+        memory,
+        decode(value)?,
+    )?)
+}
+#[inline(never)]
+fn invoke_vault_settings_models_responses_store_set(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_settings_models_responses_store_set(
+        memory,
+        decode(value)?,
+    )?)
 }
 #[inline(never)]
 fn invoke_vault_models_manifest_read(
@@ -40675,6 +41037,34 @@ fn invoke_vault_mail_threads_unshare(
     encode(vault_mail_threads_unshare(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_mail_reply_draft(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_mail_reply_draft(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_mail_reply_drafts(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_mail_reply_drafts(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_mail_reply_discard(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_mail_reply_discard(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_mail_reply_approve(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_mail_reply_approve(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_mail_compliance_setting(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -40703,6 +41093,20 @@ fn invoke_vault_mail_sources_sync_status(
     encode(vault_mail_sources_sync_status(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_mail_sources_import_mbox(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_mail_sources_import_mbox(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_mail_sources_sync(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_mail_sources_sync(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_mail_inbox(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -40715,6 +41119,13 @@ fn invoke_vault_mail_threads_read(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_mail_threads_read(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_mail_attachments_open(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_mail_attachments_open(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_mail_compliance_search(
@@ -47306,11 +47717,26 @@ pub fn vault_code_model_heal_count(
         input,
     )
 }
+pub fn vault_code_session_model_heal_count(
+    memory: &Memory<'_>,
+    input: crate::memory::code_run_doors::CodeRunSessionModelHealCountRequest,
+) -> MemoryResult<crate::memory::code_run_doors::CodeRunSessionModelHealCountView> {
+    memory.code_run_session_model_heal_count_as(
+        &memory.embedded_owner("vault.code.session_model_heal_count")?,
+        input,
+    )
+}
 pub fn vault_code_corrections(
     memory: &Memory<'_>,
     input: crate::memory::code_run_doors::CodeRunCorrectionsRequest,
 ) -> MemoryResult<crate::memory::code_run_doors::CodeRunCorrectionsView> {
     memory.code_run_corrections_as(&memory.embedded_owner("vault.code.corrections")?, input)
+}
+pub fn vault_code_step_evidence(
+    memory: &Memory<'_>,
+    input: crate::memory::code_run_doors::CodeRunStepEvidenceRequest,
+) -> MemoryResult<Option<crate::memory::code_run_doors::CodeRunStepEvidenceView>> {
+    memory.code_run_step_evidence_as(&memory.embedded_owner("vault.code.step_evidence")?, input)
 }
 pub fn vault_code_type_diagnostics(
     memory: &Memory<'_>,
@@ -47960,6 +48386,27 @@ pub fn vault_agents_grants_revoke(
         crate::authority::ActSurface::ThisInstall,
         input,
     )
+}
+pub fn vault_agents_verb_classes_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::policy_manifest_doors::AgentVerbClassesView> {
+    crate::policy_manifest_doors::agent_verb_classes_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.verb_classes.get")?,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_agents_verb_classes_configure(
+    memory: &Memory<'_>,
+    input: crate::policy_manifest_doors::AgentVerbClassesConfigureRequest,
+) -> MemoryResult<crate::policy_manifest_doors::AgentVerbClassesReceipt> {
+    crate::policy_manifest_doors::configure_agent_verb_classes_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.verb_classes.configure")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_repo_git_push_mint(
     memory: &Memory<'_>,
@@ -49064,6 +49511,18 @@ pub fn vault_skills_outcomes_get(
         &memory.embedded_owner("vault.skills.outcomes.get")?,
         &input,
     )
+}
+pub fn vault_settings_models_responses_store_read(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::ModelResponsesStoreSettings> {
+    crate::task_verb::sdk::host_only(memory, "vault.settings.models.responses_store.read", &input)
+}
+pub fn vault_settings_models_responses_store_set(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ModelResponsesStoreSettings,
+) -> MemoryResult<crate::task_verb::sdk::ModelResponsesStoreSettings> {
+    crate::task_verb::sdk::host_only(memory, "vault.settings.models.responses_store.set", &input)
 }
 pub fn vault_models_manifest_read(
     memory: &Memory<'_>,
@@ -52048,6 +52507,30 @@ pub fn vault_mail_threads_unshare(
 ) -> MemoryResult<crate::mail_pack::MailThreadShareReceipt> {
     memory.mail_threads_unshare(&input)
 }
+pub fn vault_mail_reply_draft(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailReplyDraftRequest,
+) -> MemoryResult<crate::mail_pack::MailReplyDraftView> {
+    memory.mail_reply_draft(&input)
+}
+pub fn vault_mail_reply_drafts(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailReplyDraftsRequest,
+) -> MemoryResult<crate::mail_pack::MailReplyDraftPage> {
+    memory.mail_reply_drafts(&input)
+}
+pub fn vault_mail_reply_discard(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailReplyDraftRef,
+) -> MemoryResult<crate::mail_pack::MailReplyDraftView> {
+    memory.mail_reply_discard(&input)
+}
+pub fn vault_mail_reply_approve(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailReplyApproveRequest,
+) -> MemoryResult<crate::mail_pack::MailReplyDraftView> {
+    memory.mail_reply_approve(&input)
+}
 pub fn vault_mail_compliance_setting(
     memory: &Memory<'_>,
     _input: EmptyRequest,
@@ -52072,6 +52555,18 @@ pub fn vault_mail_sources_sync_status(
 ) -> MemoryResult<crate::mail_pack::MailSyncStatusView> {
     memory.mail_sources_sync_status(&input)
 }
+pub fn vault_mail_sources_import_mbox(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailMboxImportRequest,
+) -> MemoryResult<crate::mail_pack::MailMboxImportReport> {
+    memory.mail_sources_import_mbox(&input)
+}
+pub fn vault_mail_sources_sync(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailSourceSyncRequest,
+) -> MemoryResult<crate::mail_pack::MailSyncReport> {
+    memory.mail_sources_sync(&input)
+}
 pub fn vault_mail_inbox(
     memory: &Memory<'_>,
     input: crate::mail_pack::MailInboxRequest,
@@ -52083,6 +52578,12 @@ pub fn vault_mail_threads_read(
     input: crate::mail_pack::MailThreadRequest,
 ) -> MemoryResult<crate::mail_pack::MailThreadView> {
     memory.mail_thread(&input)
+}
+pub fn vault_mail_attachments_open(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailAttachmentOpenRequest,
+) -> MemoryResult<crate::mail_pack::MailAttachmentView> {
+    memory.mail_attachments_open(&input)
 }
 pub fn vault_mail_compliance_search(
     memory: &Memory<'_>,
