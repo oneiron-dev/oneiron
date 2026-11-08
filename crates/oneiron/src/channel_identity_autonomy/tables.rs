@@ -4,5 +4,6 @@
 crate::side_table::side_tables! {
     /// Channel-identity autonomy modes, envelopes, graduation evidence and posting heads. Key:
     /// predicate `:` + subject.
-    CHANNEL_IDENTITY_AUTONOMY: VaultMeta b"channel_identity_autonomy:v1:" Raw;
+    CHANNEL_IDENTITY_AUTONOMY: VaultMeta b"channel_identity_autonomy:v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
 }

@@ -25,9 +25,29 @@
 //! An `Authored` entry may name `[accepts: path]`, its owner's
 //! [`MaskedAccepts`](super::MaskedAccepts) (FIX 2680): the typed check the historical lift sweep
 //! runs over a masked copy of a row, in place of its shape check.
+//!
+//! Every entry then says what a checkpoint does with its rows, in three fields a row cannot
+//! leave out (the macro does not read a row without them):
+//! - `[restore: ..]`, its [`RestoreClass`]: `content`, `live`, `refuse "what"`,
+//!   `refuse_image_entities "what"`, `not_imaged` for a derived or runtime table, or `none` for a
+//!   canonical table with no class yet;
+//! - `[family: ..]`, its payload family: `unclassified`, `not_imaged`, `structure`,
+//!   `owner GETTER`, `dispatch CLIENT`, `sealed CUSTODY_KIND`, `mixed CARRIER`, or `unregistered`
+//!   while it has none;
+//! - `[tier: ..]`, its [`StorageTier`]: `canonical`, `derived` or `runtime`. A key range in another
+//!   tier follows as `, runtime for b"bytes after the prefix"`; one table has such ranges,
+//!   `BOOKING_ANTI_ABUSE`, whose rate counters and slot-list caches are runtime.
+//!
+//! A key no table declares is canonical (`recovery::checkpoint::storage_tier`).
+//!
+//! `none` and `unregistered` mark gaps (FIX-LIST rows 22408-22423), which a fix closes in the
+//! owner's own row.
 
 use super::RefStep::{Field, Json};
-use super::{ActorScrub, CodecName, RefPath, SideDb, SidePayload, SideTableDecl};
+use super::{
+    ActorScrub, CodecName, RefPath, RestoreClass, SideDb, SidePayload, SideTableDecl, StorageTier,
+};
+use crate::store::checkpoint_payload::rows::{Class, Client};
 
 // The catalogue before the rows moved (slice 1), pinned below until the move settles.
 mod snapshot;
@@ -36,7 +56,9 @@ mod snapshot;
 /// that invokes it. Only the crate's build script lists them, in [`CATALOGUE`], so a row lives in
 /// its owner module's `tables.rs` (or in a file included here) and nowhere else.
 macro_rules! side_tables {
-    ($($(#[$doc:meta])* $name:ident: $db:ident $prefix:literal $codec:ident $($payload:ident)? $([refs: $refs:expr])? $([accepts: $accepts:path])? $(=> $scrub:path)?;)+) => {
+    ($($(#[$doc:meta])* $name:ident: $db:ident $prefix:literal $codec:ident $($payload:ident)? $([refs: $refs:expr])? $([accepts: $accepts:path])?
+        [restore: $($restore:tt)+] [family: $($family:tt)+] [tier: $tier:ident $(, $key_tier:ident for $key:literal)*]
+        $(=> $scrub:path)?;)+) => {
         $(
             $(#[$doc])*
             pub(crate) static $name: $crate::side_table::SideTableDecl = $crate::side_table::SideTableDecl {
@@ -48,11 +70,93 @@ macro_rules! side_tables {
                 references: $crate::side_table::side_references!($($refs)?),
                 actor: $crate::side_table::side_actor!($($scrub)?),
                 accepts: $crate::side_table::side_accepts!($($accepts)?),
+                restore: $crate::side_table::side_restore!($($restore)+),
+                family: $crate::side_table::side_family!($($family)+),
+                tier: $crate::side_table::side_tier!($tier),
+                key_tiers: &[$(($key, $crate::side_table::side_tier!($key_tier))),*],
             };
         )+
     };
 }
 pub(crate) use side_tables;
+
+/// An entry's restore class, from its `[restore: ..]`.
+macro_rules! side_restore {
+    (content) => {
+        $crate::side_table::RestoreClass::Content
+    };
+    (live) => {
+        $crate::side_table::RestoreClass::Live
+    };
+    (refuse $what:literal) => {
+        $crate::side_table::RestoreClass::Refuse($what)
+    };
+    (refuse_image_entities $what:literal) => {
+        $crate::side_table::RestoreClass::RefuseImageEntities($what)
+    };
+    (not_imaged) => {
+        $crate::side_table::RestoreClass::NotImaged
+    };
+    (none) => {
+        $crate::side_table::RestoreClass::None
+    };
+}
+pub(crate) use side_restore;
+
+/// An entry's payload family, from its `[family: ..]`: none while it is `unregistered`.
+macro_rules! side_family {
+    (unregistered) => {
+        ::core::option::Option::None
+    };
+    (unclassified) => {
+        Some($crate::store::checkpoint_payload::rows::Class::Unclassified)
+    };
+    (not_imaged) => {
+        Some($crate::store::checkpoint_payload::rows::Class::NotImaged)
+    };
+    (structure) => {
+        Some($crate::store::checkpoint_payload::rows::Class::Structure)
+    };
+    (owner $getter:ident) => {
+        Some($crate::store::checkpoint_payload::rows::Class::Owner(
+            $crate::store::checkpoint_payload::rows::Getter::$getter,
+        ))
+    };
+    (dispatch $client:ident) => {
+        Some($crate::store::checkpoint_payload::rows::Class::Other(
+            $crate::store::checkpoint_payload::rows::Client::Dispatch(
+                $crate::store::checkpoint_payload::rows::OtherClient::$client,
+            ),
+        ))
+    };
+    (sealed $kind:ident) => {
+        Some($crate::store::checkpoint_payload::rows::Class::Other(
+            $crate::store::checkpoint_payload::rows::Client::Sealed(
+                $crate::store::CustodyKind::$kind,
+            ),
+        ))
+    };
+    (mixed $carrier:ident) => {
+        Some($crate::store::checkpoint_payload::rows::Class::Mixed(
+            $crate::store::checkpoint_payload::rows::Carrier::$carrier,
+        ))
+    };
+}
+pub(crate) use side_family;
+
+/// An entry's storage tier, from its `[tier: ..]`.
+macro_rules! side_tier {
+    (canonical) => {
+        $crate::side_table::StorageTier::Canonical
+    };
+    (derived) => {
+        $crate::side_table::StorageTier::Derived
+    };
+    (runtime) => {
+        $crate::side_table::StorageTier::Runtime
+    };
+}
+pub(crate) use side_tier;
 
 /// An entry's class: [`SidePayload::Unclassed`] when it names none.
 macro_rules! side_payload {
@@ -232,15 +336,27 @@ pub(crate) fn actor_scrubs() -> impl Iterator<Item = (&'static SideTableDecl, Ac
 
 /// The declared table whose prefix `key` falls under, in `db`, or `None` when
 /// no declared prefix matches. Declared prefixes are disjoint within one
-/// database (`assert_disjoint`), so at most one table can match; this is the
-/// production door a caller-chosen key (a host's `sync_state` row) is checked
-/// against before it is allowed to write, over the same [`CATALOGUE`] the
-/// disjointness check walks at compile time. Gated with its only callers
-/// (the generic host doors, `sync`-only) so a featureless build does not
-/// carry an unused production function.
-#[cfg(feature = "sync")]
+/// database (`assert_disjoint`), so at most one table can match: the last
+/// [`CATALOGUE`] entry at or before `(db, key)`, which is sorted by database
+/// and prefix. This is the production door a caller-chosen key (a host's
+/// `sync_state` row) is checked against before it is allowed to write, and
+/// the storage tier of every side-table row a checkpoint reads.
 pub(crate) fn declared_for(db: SideDb, key: &[u8]) -> Option<&'static SideTableDecl> {
-    declared().find(|decl| decl.db == db && key.starts_with(decl.prefix))
+    let below = CATALOGUE.partition_point(|decl| {
+        (catalogue_rank(decl.db), decl.prefix) <= (catalogue_rank(db), key)
+    });
+    below
+        .checked_sub(1)
+        .map(|index| CATALOGUE[index])
+        .filter(|decl| decl.db == db && key.starts_with(decl.prefix))
+}
+
+/// A database's place in [`CATALOGUE`]'s order, as the build script sorts it: `sync_state` first.
+const fn catalogue_rank(db: SideDb) -> u8 {
+    match db {
+        SideDb::SyncState => 0,
+        SideDb::VaultMeta => 1,
+    }
 }
 
 /// Whether `prefix` (in `db`) overlaps a declared table: either it extends a
@@ -258,11 +374,16 @@ pub(crate) fn declared_overlaps(db: SideDb, prefix: &[u8]) -> bool {
     })
 }
 
-// A declaration list with an overlap does not compile.
+// A declaration list with an overlap, or out of database and prefix order, does not compile.
 const _: () = assert_disjoint(&CATALOGUE);
 
-// The written catalogue is the one before the rows moved into their owner modules, entry for entry:
-// a lost, added, reordered or changed row does not compile.
+// A canonical table with no restore class, other than one marked `none`, or a derived or runtime
+// table with one, does not compile.
+const _: () = assert_restore_tiers(&CATALOGUE);
+
+// The written catalogue is the one before the rows moved into their owner modules, entry for entry,
+// with the restore class, payload family and tier each listing gave it: a lost, added, reordered
+// or changed row does not compile.
 const _: () = assert_snapshot(&snapshot::SNAPSHOT, &CATALOGUE);
 
 // The session overlay keeps these tables' rows outside a room's byte budget by
@@ -290,6 +411,7 @@ const _: () = {
     );
 };
 
+/// The list runs by database, `sync_state` first ([`declared_for`] searches it in that order).
 /// Within one database, the declared prefixes in list order must be strictly ascending and no
 /// prefix may be a byte prefix of its successor. In a sorted list a prefix of any later entry is
 /// a prefix of its immediate successor, so the adjacent check covers every pair.
@@ -299,6 +421,12 @@ const fn assert_disjoint(catalogue: &[&SideTableDecl]) {
     while index < catalogue.len() {
         let current = catalogue[index];
         assert!(!current.prefix.is_empty(), "a declared prefix is empty");
+        if let Some(before) = previous {
+            assert!(
+                catalogue_rank(before.db) <= catalogue_rank(current.db),
+                "the declared tables are out of database order"
+            );
+        }
         if let Some(before) = previous
             && before.db as u8 == current.db as u8
         {
@@ -316,18 +444,46 @@ const fn assert_disjoint(catalogue: &[&SideTableDecl]) {
     }
 }
 
-/// `catalogue` is `snapshot`, entry for entry: name, database, prefix, codec and payload.
-const fn assert_snapshot(
-    snapshot: &[(&str, SideDb, &[u8], CodecName, SidePayload)],
-    catalogue: &[&SideTableDecl],
-) {
+/// A table is `not_imaged` exactly when its tier is derived or runtime: no image carries its rows,
+/// so no restore class applies to them, and every canonical table names one (or `none`).
+const fn assert_restore_tiers(catalogue: &[&SideTableDecl]) {
+    let mut index = 0;
+    while index < catalogue.len() {
+        let decl = catalogue[index];
+        let canonical = decl.tier as u8 == StorageTier::Canonical as u8;
+        let not_imaged = matches!(decl.restore, RestoreClass::NotImaged);
+        assert!(
+            canonical != not_imaged,
+            "a canonical table is not_imaged, or a derived or runtime table has a restore class"
+        );
+        index += 1;
+    }
+}
+
+/// One snapshot entry: name, database, prefix, codec, payload, restore class, payload family,
+/// tier and key-range tiers.
+type SnapshotEntry = (
+    &'static str,
+    SideDb,
+    &'static [u8],
+    CodecName,
+    SidePayload,
+    RestoreClass,
+    Option<Class>,
+    StorageTier,
+    &'static [(&'static [u8], StorageTier)],
+);
+
+/// `catalogue` is `snapshot`, entry for entry: name, database, prefix, codec, payload, restore
+/// class, payload family, tier and key-range tiers.
+const fn assert_snapshot(snapshot: &[SnapshotEntry], catalogue: &[&SideTableDecl]) {
     assert!(
         snapshot.len() == catalogue.len(),
         "the catalogue's table count differs from the snapshot's"
     );
     let mut index = 0;
     while index < snapshot.len() {
-        let (name, db, prefix, codec, payload) = snapshot[index];
+        let (name, db, prefix, codec, payload, restore, family, tier, key_tiers) = snapshot[index];
         let decl = catalogue[index];
         assert!(
             same_bytes(name.as_bytes(), decl.name.as_bytes())
@@ -337,8 +493,66 @@ const fn assert_snapshot(
                 && payload as u8 == decl.payload as u8,
             "the catalogue differs from the snapshot taken before the rows moved"
         );
+        assert!(
+            same_restore(restore, decl.restore)
+                && same_family(family, decl.family)
+                && tier as u8 == decl.tier as u8
+                && same_key_tiers(key_tiers, decl.key_tiers),
+            "a table's restore class, payload family or tier differs from the snapshot of the lists"
+        );
         index += 1;
     }
+}
+
+const fn same_restore(left: RestoreClass, right: RestoreClass) -> bool {
+    match (left, right) {
+        (RestoreClass::Content, RestoreClass::Content)
+        | (RestoreClass::Live, RestoreClass::Live)
+        | (RestoreClass::NotImaged, RestoreClass::NotImaged)
+        | (RestoreClass::None, RestoreClass::None) => true,
+        (RestoreClass::Refuse(left_what), RestoreClass::Refuse(right_what))
+        | (
+            RestoreClass::RefuseImageEntities(left_what),
+            RestoreClass::RefuseImageEntities(right_what),
+        ) => same_bytes(left_what.as_bytes(), right_what.as_bytes()),
+        _ => false,
+    }
+}
+
+const fn same_family(left: Option<Class>, right: Option<Class>) -> bool {
+    let (left_class, left_member) = family_code(left);
+    let (right_class, right_member) = family_code(right);
+    left_class == right_class && left_member == right_member
+}
+
+/// A payload family as two numbers: its class, and the getter, client, custody kind or carrier
+/// it names, by tag.
+const fn family_code(family: Option<Class>) -> (u8, u8) {
+    match family {
+        None => (0, 0),
+        Some(Class::Unclassified) => (1, 0),
+        Some(Class::NotImaged) => (2, 0),
+        Some(Class::Structure) => (3, 0),
+        Some(Class::Owner(getter)) => (4, getter.tag()),
+        Some(Class::Other(Client::Dispatch(client))) => (5, client as u8),
+        Some(Class::Other(Client::Sealed(kind))) => (6, kind.tag()),
+        Some(Class::Mixed(carrier)) => (7, carrier.tag()),
+    }
+}
+
+const fn same_key_tiers(left: &[(&[u8], StorageTier)], right: &[(&[u8], StorageTier)]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < left.len() {
+        if !same_bytes(left[index].0, right[index].0) || left[index].1 as u8 != right[index].1 as u8
+        {
+            return false;
+        }
+        index += 1;
+    }
+    true
 }
 
 const fn starts_with(bytes: &[u8], prefix: &[u8]) -> bool {
