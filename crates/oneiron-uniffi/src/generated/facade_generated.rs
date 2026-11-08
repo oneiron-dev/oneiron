@@ -4167,6 +4167,11 @@ export_facade! {
     let output = client.vault_repo_symbols_release(&input)?;
     crate::codec::lift_record("vault.repo.symbols.release", &output)
 };
+"vault.repo.model.generate" => fn vault_repo_model_generate(&self, input: LiveRunRequestRepoModelGenerateInput) -> LlmResponse = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::RepoModelGenerateInput> = crate::codec::lower_record("vault.repo.model.generate", input)?;
+    let output = client.vault_repo_model_generate(&input)?;
+    crate::codec::lift_record("vault.repo.model.generate", &output)
+};
 "vault.repo.proposal_submit" => fn vault_repo_proposal_submit(&self, input: LiveRunRequestRepoProposalSubmitInput) -> RepoProposalSubmitOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoProposalSubmitInput> = crate::codec::lower_record("vault.repo.proposal_submit", input)?;
     let output = client.vault_repo_proposal_submit(&input)?;
