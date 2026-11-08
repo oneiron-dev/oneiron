@@ -23,9 +23,6 @@ pub const MIRROR_PUSH_MAX_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 /// Refspecs one push child carries; more refs go in further pushes.
 pub const MIRROR_PUSH_REFSPECS: usize = 256;
 
-/// Rejected refs named in a failure.
-const MIRROR_PUSH_NAMED_REJECTIONS: usize = 8;
-
 /// The credential one mirror push carries. Its `Debug` names nothing.
 #[derive(Clone, PartialEq, Eq)]
 pub struct MirrorEgress {
@@ -46,19 +43,6 @@ impl std::fmt::Debug for MirrorEgress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("MirrorEgress(..)")
     }
-}
-
-/// The refs a `push --porcelain` run names as rejected (`!` lines), up to
-/// [`MIRROR_PUSH_NAMED_REJECTIONS`].
-pub fn rejected_refs(stdout: &[u8]) -> Vec<String> {
-    String::from_utf8_lossy(stdout)
-        .lines()
-        .filter_map(|line| line.strip_prefix("!\t"))
-        .filter_map(|rest| rest.split('\t').next())
-        .filter_map(|spec| spec.rsplit(':').next())
-        .take(MIRROR_PUSH_NAMED_REJECTIONS)
-        .map(str::to_owned)
-        .collect()
 }
 
 /// Appends the outbound profile to the closed GitWire policy, never replacing

@@ -45,7 +45,6 @@
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
-use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -58,8 +57,10 @@ use crate::cli::{McpArgs, McpSurface};
 mod bridge_auth;
 mod call_meta;
 mod link;
+mod wake;
 
 use call_meta::{ClientSession, with_invocation};
+use wake::WakePump;
 
 /// How many requests may be in flight at once. A client that sends more
 /// waits for the oldest to finish rather than spawning without bound; each
@@ -184,56 +185,6 @@ fn pending_answer_invocation(answer: &Value) -> Option<&str> {
         .and_then(|hook| hook.get("invocation"))
         .and_then(Value::as_str)
         .filter(|id| oneiron::runtime_hooks::InvocationId::parse_hex(id).is_some())
-}
-
-/// Poll cadence and request bound for this small handoff, independent of
-/// the potentially much longer deadline of an agent's tool call.
-const WAKE_POLL_INTERVAL: Duration = Duration::from_secs(1);
-const WAKE_POLL_TIMEOUT: Duration = Duration::from_secs(8);
-
-struct WakePump(tokio::task::JoinHandle<()>);
-
-impl WakePump {
-    fn start(bridge: Arc<Bridge>, path: &Path) -> anyhow::Result<Self> {
-        let instance = crate::wake_adapters::Instance::load(path)?;
-        let runtime = tokio::runtime::Handle::try_current()?;
-        Ok(Self(runtime.spawn(async move {
-            let mut failed = false;
-            loop {
-                let polling = Arc::clone(&bridge);
-                let key = instance.key.clone();
-                let polled = tokio::task::spawn_blocking(move || polling.wakes(&key)).await;
-                match polled {
-                    Ok(Ok(delivery)) => {
-                        failed = false;
-                        instance.deliver(delivery, &bridge.named_env).await;
-                    }
-                    Ok(Err(refusal)) => {
-                        if !failed {
-                            eprintln!(
-                                "oneiron wake: {}",
-                                refusal.rpc_error(&Value::Null, &bridge.auth)
-                            );
-                        }
-                        failed = true;
-                    }
-                    Err(error) => {
-                        if !failed {
-                            eprintln!("oneiron wake poll did not finish: {error}");
-                        }
-                        failed = true;
-                    }
-                }
-                tokio::time::sleep(WAKE_POLL_INTERVAL).await;
-            }
-        })))
-    }
-}
-
-impl Drop for WakePump {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
 }
 
 pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
@@ -655,31 +606,6 @@ impl Bridge {
         )
     }
 
-    /// One host instance's wake handoff, never forwarded to MCP stdout.
-    fn wakes(
-        &self,
-        instance_key: &str,
-    ) -> Result<crate::wake_adapters::board_stream::BoardDelivery, Refusal> {
-        let id = json!("oneiron-wake-adapter");
-        let body = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "oneiron/wakes",
-            "params": { "instance_key": instance_key },
-        });
-        let until = Instant::now() + self.deadline.min(WAKE_POLL_TIMEOUT);
-        // The wake poll's own cap is inside the global deadline; its error
-        // keeps naming that one, as before.
-        let answer = self
-            .post(body.to_string().into_bytes(), until, self.deadline, None)?
-            .answer_to(&id)?;
-        let Some(delivery) = answer.get("result").cloned() else {
-            return Err(Refusal::Refused(answer));
-        };
-        serde_json::from_value(delivery)
-            .map_err(|error| Refusal::Server(format!("invalid wake handoff: {error}"), answer))
-    }
-
     fn post(
         &self,
         body: Vec<u8>,
@@ -768,6 +694,16 @@ impl Bridge {
     }
 }
 
+fn reply_body_text(body: Vec<u8>) -> String {
+    match String::from_utf8(body) {
+        Ok(text) => text,
+        Err(error) => {
+            let body = error.into_bytes();
+            String::from_utf8_lossy(&body).into_owned()
+        }
+    }
+}
+
 /// What the server sent back for one request.
 struct Reply {
     /// The HTTP status, when there was one.
@@ -780,8 +716,10 @@ impl Reply {
     /// it came with; anything else is the bridge's error for that request, so
     /// the client is never handed a line that answers nothing it sent.
     fn answer_to(self, id: &Value) -> Result<Value, Refusal> {
-        let body = serde_json::from_slice::<Value>(&self.body)
-            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&self.body).into_owned()));
+        let body = match serde_json::from_slice::<Value>(&self.body) {
+            Ok(body) => body,
+            Err(_) => Value::String(reply_body_text(self.body)),
+        };
         let answers = body.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
             && body.get("id") == Some(id)
             && match (body.get("result"), body.get("error")) {
@@ -848,14 +786,14 @@ enum Refusal {
 impl Refusal {
     /// The JSON-RPC error for request `id`; an auth refusal's advice is
     /// `auth`'s own.
-    fn rpc_error(&self, id: &Value, auth: &bridge_auth::Auth) -> String {
+    fn rpc_error(self, id: &Value, auth: &bridge_auth::Auth) -> String {
         match self {
             Self::Auth(body) => rpc_error(
                 id,
                 -32001,
                 "mcp_auth_required",
                 auth.refused_advice(),
-                Some(body.clone()),
+                Some(body),
             ),
             Self::Refused(answer) => match answer.get("error") {
                 Some(error) => json!({ "jsonrpc": "2.0", "id": id, "error": error }).to_string(),
@@ -864,11 +802,11 @@ impl Refusal {
                     -32000,
                     "server_error",
                     "the server's /mcp initialize held no result, so no endpoint was picked; pass --surface to name one",
-                    Some(answer.clone()),
+                    Some(answer),
                 ),
             },
             Self::Server(message, body) => {
-                rpc_error(id, -32000, "server_error", message, Some(body.clone()))
+                rpc_error(id, -32000, "server_error", &message, Some(body))
             }
             Self::Unreachable(message) => rpc_error(
                 id,
@@ -911,14 +849,19 @@ fn rpc_error(
     message: &str,
     server_error: Option<Value>,
 ) -> String {
-    let mut data = json!({ "kind": kind, "error_code": kind, "human_message": message });
-    if let (Some(server_error), Some(data)) = (server_error, data.as_object_mut()) {
-        data.insert("server_error".to_owned(), server_error);
-    }
-    json!({
+    let mut response = json!({
         "jsonrpc": "2.0",
         "id": id,
-        "error": { "code": code, "message": message, "data": data },
-    })
-    .to_string()
+        "error": {
+            "code": code,
+            "message": message,
+            "data": { "kind": kind, "error_code": kind, "human_message": message },
+        },
+    });
+    if let (Some(server_error), Some(data)) =
+        (server_error, response["error"]["data"].as_object_mut())
+    {
+        data.insert("server_error".to_owned(), server_error);
+    }
+    response.to_string()
 }
