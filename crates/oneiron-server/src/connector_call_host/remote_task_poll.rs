@@ -515,7 +515,9 @@ fn answer_task_input(
                     return Ok(None);
                 }
             }
-            Ok(StreamEvent::Answer(message, bytes)) => return Ok(Some(settled_by(message, bytes))),
+            Ok(StreamEvent::Answer(message, bytes)) => {
+                return Ok(Some(settled_by(message, bytes.into())));
+            }
             Ok(StreamEvent::End) | Err(()) => return Ok(None),
         }
     }
@@ -733,14 +735,14 @@ fn declared_elicitation(poll: &RemoteTaskPoll) -> Option<Value> {
 /// `tools/call` would have answered (MCP 2025-11-25 tasks), so a result is a
 /// completed send and an error one whose delivery the connector has not
 /// shown. The answer is wiped here.
-fn settled_by(message: Value, bytes: Vec<u8>) -> RemoteTaskEnd {
+fn settled_by(message: Value, bytes: RawOutboundBody) -> RemoteTaskEnd {
     let end = if message.get("error").is_some() {
         RemoteTaskEnd::Unconfirmed
     } else {
         RemoteTaskEnd::Completed
     };
     zeroize_json(message);
-    drop(zeroize::Zeroizing::new(bytes));
+    drop(bytes);
     end
 }
 
