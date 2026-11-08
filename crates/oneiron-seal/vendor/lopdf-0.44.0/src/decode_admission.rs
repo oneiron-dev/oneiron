@@ -17,8 +17,24 @@ use std::mem::size_of;
 
 use thiserror::Error;
 
+/// The native position held while a controlled reader waits for its owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadProgress {
+    Xref { offset: usize },
+    Object { id: Option<(u32, u16)>, offset: usize },
+    Stream { id: (u32, u16) },
+}
+
 /// Asked before a decode allocates.
 pub trait DecodeAdmission: Send + Sync {
+    /// Optional cooperative checkpoint. A pause returns Ok only after resume;
+    /// errors remain terminal admissions, never suspend signals.
+    fn checkpoint(&self, _at: ReadProgress) -> Result<(), DecodeAdmissionError> { Ok(()) }
+
+    /// Controlled reads keep their entire native stack on one worker.
+    /// Other admissions retain the usual parallel-loading choice.
+    fn sequential(&self) -> bool { false }
+
     /// Admit one allocation of `bytes` bytes, made right after this returns
     /// `Ok`. An allocation that replaces a smaller one is admitted at its full
     /// size while the old one is still alive, and the old one's bytes come

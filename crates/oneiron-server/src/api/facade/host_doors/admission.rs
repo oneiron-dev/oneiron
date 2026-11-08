@@ -371,8 +371,6 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultWritesCriticalConfirmClear
         | Row::VaultWritesCriticalConfirmDecline
         | Row::VaultWritesCriticalConfirmReceipt
-        | Row::VaultClaimsReview
-        | Row::VaultClaimsSettle
         | Row::VaultPacksSectionsGrant
         | Row::VaultPacksSectionsRevoke
         | Row::VaultPacksSectionsSuggestionsGet
@@ -596,9 +594,11 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeSymbolsRenew
         | Row::VaultCodeSymbolsRelease
         | Row::VaultCodeProposalSubmit
+        | Row::VaultCodeProposalRereview
         | Row::VaultCodeConflictRecord
         | Row::VaultCodeConflictView
         | Row::VaultCodeProposalResolve
+        | Row::VaultCodeProposalResolveRereview
         | Row::VaultCodeProposalReview
         | Row::VaultCodeProposalSettle
         | Row::VaultCodeProposalSettlement
@@ -626,6 +626,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeOriginMirrorPush
         | Row::VaultCodeOriginAuthorityGet
         | Row::VaultCodeOriginAuthoritySet
+        | Row::VaultDevicesPredecessorName
         | Row::VaultCodeOriginPublications
         | Row::VaultCodeSecretsPurgeRequest
         | Row::VaultCodeSecretsPurgeGet
@@ -706,6 +707,9 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultStepUpPasskeysReset
         | Row::VaultOutboundCallsRequestErase
         | Row::VaultOutboundUncertainSendAnswer => owner_proof(auth, server, verb).map(drop),
+        Row::VaultClaimsReview | Row::VaultClaimsSettle => {
+            crate::api::facade::claim_settle_doors::settler_admits(server, auth, verb)
+        }
         Row::VaultSharedProposeDelete
         | Row::VaultSharedProposeTransfer
         | Row::VaultSharedProposeRemoveOwner

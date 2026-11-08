@@ -202,6 +202,7 @@ pub(crate) use super::graduation_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::checkout_doors::*;
+pub(crate) use super::device_succession_doors::*;
 pub(crate) use super::origin_doors::*;
 // The exact publish doors (FIX 6866): the owner, or one Grant's holder.
 pub(crate) use super::origin_publish_doors::*;

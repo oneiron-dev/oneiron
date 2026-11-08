@@ -445,6 +445,7 @@ pub(crate) fn report_leased_task_in_txn(
                 TaskReportBody::Done {
                     result_ref,
                     confession: None,
+                    confession_structured: None,
                 },
             )
         }
