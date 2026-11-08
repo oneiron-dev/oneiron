@@ -22,7 +22,7 @@ use super::wire_encode::{consult_payload_value, task_assignee_value};
 use crate::error::RecordError;
 
 pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Value {
-    Value::Map(vec![
+    let mut entries = vec![
         (Value::from("spec"), spec.spec.clone()),
         (
             Value::from("label"),
@@ -79,7 +79,13 @@ pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Val
                 .map_or(Value::Nil, |parent| Value::from(parent.to_hex())),
         ),
         (Value::from("created_at"), Value::from(now)),
-    ])
+    ];
+    // FIX 22121: a watch create parks as one, so its approval lands a watch
+    // TASK; elided otherwise, so an ordinary proposal keeps its bytes.
+    if spec.watch {
+        entries.push((Value::from("watch"), Value::from(true)));
+    }
+    Value::Map(entries)
 }
 
 pub(crate) use crate::store::task_body_checks::{
@@ -97,9 +103,40 @@ pub(super) struct ValidatedTaskCreate {
     /// through validation unchanged: a past stamp is an overdue display,
     /// never a born-expired refusal (that rule is `ttl`'s alone).
     pub(super) due_at: Option<u64>,
+    /// FIX 22121: a watch TASK, admitted only with a due time and on the
+    /// Dreamer's lane; its route queues no work.
+    pub(super) watch: bool,
     pub(super) spec: Value,
     /// OF-543: the one placed type stamp; always settled before the write.
     pub(super) type_ref: crate::task_type::TaskTypeRef,
+}
+
+impl ValidatedTaskCreate {
+    /// An engine-internal minter's shape (a wave plan's TASK, a
+    /// reconciliation): no consult and no TTL, no due annotation (FIX685),
+    /// so never a watch (FIX 22121).
+    pub(super) fn engine_internal(
+        kind: TaskKind,
+        assignee: Option<TaskAssignee>,
+        spec: Value,
+        type_ref: crate::task_type::TaskTypeRef,
+    ) -> Self {
+        Self {
+            kind,
+            assignee,
+            consult: None,
+            ttl: None,
+            due_at: None,
+            watch: false,
+            spec,
+            type_ref,
+        }
+    }
+
+    /// The due time a watch TASK waits for (FIX 22121); `None` for any other.
+    pub(super) const fn watch_due_at(&self) -> Option<u64> {
+        if self.watch { self.due_at } else { None }
+    }
 }
 
 /// Refuses a blank TASK label: a present label must carry a non-whitespace
@@ -137,6 +174,7 @@ pub(super) fn validate_task_create_in(
     if let Some(label) = spec.label.as_deref() {
         check_task_label(label)?;
     }
+    super::watch_task::reject_unfit_watch(spec)?;
     if let Some(parent_ref) = spec.parent_ref {
         check_task_parent_in(vault, txn, parent_ref)?;
     }
@@ -157,6 +195,8 @@ pub(super) fn validate_task_create_in(
     let tree = crate::agent_dispatch::load_team_type_tree_in_txn(vault, txn, project)?;
     let type_ref =
         crate::task_type::ensure_type_ref(&tree, spec.type_ref.as_ref(), &placement_request, None);
+    // A watch is a standard TASK (FIX 22121): a consult naming one is no
+    // legal shape.
     match (
         spec.kind.unwrap_or(TaskKind::Standard),
         &spec.consult,
@@ -173,7 +213,7 @@ pub(super) fn validate_task_create_in(
                 | TaskAssignee::Dreamer),
             ),
             Some(ttl),
-        ) if spec.spec == Value::Nil => {
+        ) if spec.spec == Value::Nil && !spec.watch => {
             if ttl.deadline_at <= now {
                 return Err(MemoryError::bad_request(
                     "a consult deadline must be in the future",
@@ -192,6 +232,7 @@ pub(super) fn validate_task_create_in(
                 consult: Some(payload.clone()),
                 ttl: Some(*ttl),
                 due_at: spec.due_at,
+                watch: false,
                 spec: Value::Nil,
                 type_ref,
             })
@@ -218,6 +259,7 @@ pub(super) fn validate_task_create_in(
                 consult: None,
                 ttl: *ttl,
                 due_at: spec.due_at,
+                watch: spec.watch,
                 spec: spec.spec.clone(),
                 type_ref,
             })

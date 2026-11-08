@@ -7,7 +7,9 @@
 //! write: a row leaves the index and gains its feed sequence together, so
 //! each tick is released once per vault, and feed order is commit order.
 //! Hooks read the feed through their own cursors, as they read the
-//! settlement feed, so a restart neither skips nor repeats a tick.
+//! settlement feed, so a restart neither skips nor repeats a tick. A watch
+//! TASK's tick settles it Done in the write that releases it (FIX 22121);
+//! its hooks are still offered the tick, as it was open at its due time.
 
 use std::ops::Bound;
 
@@ -114,8 +116,9 @@ fn releases_here(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
 /// Moves the due rows at or before `now` (Unix seconds) into the tick feed,
 /// in due order, at most [`HOOK_TICK_RELEASE_ROWS`], on the vault's home
 /// alone. A row whose TASK is gone, has settled, or is no longer due at that
-/// time leaves the index with no tick. Returns whether due rows remain past
-/// the bound.
+/// time leaves the index with no tick. A watch TASK settles Done with its
+/// tick, whether or not a hook takes it (FIX 22121). Returns whether due
+/// rows remain past the bound.
 pub(in crate::runtime_hooks) fn release_due_ticks(vault: &Vault, now: u64) -> Result<bool> {
     let (due, more) = {
         let rtxn = vault.store.env.read_txn()?;
@@ -165,6 +168,9 @@ pub(in crate::runtime_hooks) fn release_due_ticks(vault: &Vault, now: u64) -> Re
                 tick: Some(sequence),
             };
             TASK_DUE_REVERSE.put(&vault.store, txn, task, &entry)?;
+            // Its tick is a watch TASK's whole work (FIX 22121): it settles
+            // here, after the row above, which its settled body then drops.
+            crate::task_verb::settle_watch_task_in_txn(vault, txn, *task, recorded_at)?;
         }
         TICKS_NEXT.put(&vault.store, txn, &(), &sequence)
     })?;
