@@ -109,7 +109,7 @@ impl SyncClient {
                             document_sub_tags::ACK,
                             &doc.version_vector().map_err(storage)?,
                         )
-                        .into_result()?,
+                        .into_own_frame()?,
                     ];
                     let pending = self
                         .manager
@@ -234,7 +234,7 @@ impl SyncClient {
                         document_sub_tags::ACK,
                         &doc.version_vector().map_err(storage)?,
                     )
-                    .into_result()?,
+                    .into_own_frame()?,
                 ];
                 // Text a device-only world keeps here, or a federation peer may
                 // not read now, stays journaled; each reply loop asks again
@@ -310,13 +310,13 @@ impl SyncClient {
         if let Some(ack) = reply.ack {
             out.push(
                 transport::encode_document(stream.wire, document_sub_tags::ACK, &ack)
-                    .into_result()?,
+                    .into_own_frame()?,
             );
         }
         if let Some(update) = reply.update {
             let update =
                 transport::encode_document(stream.wire, document_sub_tags::UPDATE, &update)
-                    .into_result()?;
+                    .into_own_frame()?;
             if !self.frame_withheld(&update) {
                 out.push(update);
             }

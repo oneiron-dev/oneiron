@@ -7,6 +7,7 @@ use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::rpc::RpcFault;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::sync::client::SyncResidenceMode;
 use crate::sync::residence::WindowIndexEntry;
@@ -27,14 +28,23 @@ pub struct ResidenceIndexWindow {
 #[derive(Debug)]
 pub(crate) enum IndexFetchFault {
     /// The home's: no socket to it, its refusal, or a reply that breaks the
-    /// index's paging contract.
+    /// RPC's or the index's paging contract.
     Remote(TransportError),
     /// This machine's own: its lane mode, residence policy or selector, its
-    /// own encode, or a read or write of its store.
+    /// actor session, its endpoint and upgrade, its own encode, or a read or
+    /// write of its store (FIX 22179).
     Local(TransportError),
 }
 
 impl IndexFetchFault {
+    /// The fault of a residence RPC, on the side the RPC named (FIX 22179).
+    fn of_rpc(fault: RpcFault) -> Self {
+        match fault {
+            RpcFault::Remote(error) => Self::Remote(error),
+            RpcFault::Local(error) => Self::Local(error),
+        }
+    }
+
     /// Whether the fault is this machine's own.
     pub(crate) const fn is_local(&self) -> bool {
         matches!(self, Self::Local(_))
@@ -75,9 +85,9 @@ impl SyncClient {
 
     /// [`Self::fetch_current_index`], its fault told by the side it is on
     /// (FIX 22153): a home session counts only the home's against the home.
-    /// The residence socket's opening and each call on it are the home's,
-    /// though a fault of this machine's own inside them (its endpoint, its
-    /// signing, its bind's or request's encode) can fail them too.
+    /// The residence socket's opening and each call on it fail on the side
+    /// the RPC names (FIX 22179): its endpoint, its signing, its actor
+    /// session and its bind's or request's encode are this machine's own.
     pub(crate) async fn fetch_current_index_by_side(
         &self,
         now_secs: u64,
@@ -94,14 +104,9 @@ impl SyncClient {
         let selector_bytes =
             encode_sync_selector(selector).map_err(|_| IndexFetchFault::Local(refused()))?;
         let selector = base64::engine::general_purpose::STANDARD.encode(selector_bytes);
-        // The socket binds the host's actor session: none here is this
-        // machine's own fault, told before the socket opens.
-        if self.config.note_session.is_none() {
-            return Err(IndexFetchFault::Local(refused()));
-        }
-        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets)
+        let Some(mut rpc) = ResidenceRpc::connect_by_side(&self.vault, &self.config, budgets)
             .await
-            .map_err(IndexFetchFault::Remote)?
+            .map_err(IndexFetchFault::of_rpc)?
         else {
             return Err(IndexFetchFault::Remote(TransportError::Storage(
                 "home node offline".into(),
@@ -143,7 +148,7 @@ impl SyncClient {
                         tokio::task::yield_now().await;
                     }
                     let value = match rpc
-                        .request(
+                        .request_by_side(
                             "residence.index",
                             json!({
                                 "window": key, "selector": selector, "after": cursor,
@@ -153,8 +158,8 @@ impl SyncClient {
                         .await
                     {
                         Ok(value) => value,
-                        Err(TransportError::IndexRevisionChanged) => break,
-                        Err(error) => return Err(IndexFetchFault::Remote(error)),
+                        Err(RpcFault::Remote(TransportError::IndexRevisionChanged)) => break,
+                        Err(fault) => return Err(IndexFetchFault::of_rpc(fault)),
                     };
                     let reply: IndexReply = serde_json::from_value(value)
                         .map_err(|_| IndexFetchFault::Remote(refused()))?;

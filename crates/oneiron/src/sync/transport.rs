@@ -294,6 +294,14 @@ impl EncodedFrame {
         self.0
     }
 
+    /// [`Self::into_result`] for a frame of this machine's own, such as its
+    /// reply to a frame the far end sent (FIX 22179): an encode that fails
+    /// is this machine's own fault ([`TransportError::own_encode`]), never
+    /// the far end's oversized or malformed frame.
+    pub(crate) fn into_own_frame(self) -> Result<Vec<u8>, TransportError> {
+        self.0.map_err(TransportError::own_encode)
+    }
+
     fn valid_frame(&self) -> &Vec<u8> {
         self.0
             .as_ref()

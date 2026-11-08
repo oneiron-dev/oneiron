@@ -2,7 +2,8 @@
 //! a fault reading this device's own store is [`TransportError::Storage`],
 //! retried as the storage failure it is; every other admission error stays
 //! the refusal of the peer's bytes. The far end's bytes that fail to apply
-//! cross it the same way (FIX 22153).
+//! cross it the same way (FIX 22153); a frame of this machine's own that does
+//! not encode is its own fault (FIX 22179).
 
 use super::TransportError;
 use crate::error::{Error, SecretError, StoreError, SyncEngineContext, SyncError};
@@ -70,6 +71,18 @@ impl TransportError {
             Self::Storage(error.to_string())
         } else {
             Self::InvalidPayload(refusal)
+        }
+    }
+
+    /// The transport error of a frame of this machine's own that failed to
+    /// encode with `error` (FIX 22179): this machine's own fault, as
+    /// [`Self::Storage`], never the far end's oversized or malformed frame
+    /// that [`Self::FrameTooLarge`] and the other variants tell.
+    pub(crate) fn own_encode(error: Self) -> Self {
+        if matches!(error, Self::Storage(_)) {
+            error
+        } else {
+            Self::Storage(format!("own frame encode: {error}"))
         }
     }
 }
