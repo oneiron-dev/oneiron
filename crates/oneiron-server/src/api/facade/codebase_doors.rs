@@ -97,3 +97,18 @@ pub(crate) async fn vault_code_symbols_definitions(
     )
     .await
 }
+
+/// The owner's credential-bound one-hop symbol relation read.
+pub(crate) async fn vault_code_symbols_neighbors(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeSnapshotNeighborsRequest,
+) -> Listed<CodeSnapshotNeighborsView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.symbols.neighbors",
+        move |memory, owner| memory.code_snapshot_neighbors_as(owner, input),
+    )
+    .await
+}

@@ -64,7 +64,7 @@ pub(super) fn validate_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Re
         }
         previous_symbol = Some(symbol);
     }
-    Ok(())
+    super::relations::validate_relations(manifest)
 }
 
 pub(super) fn scan_code_symbol_manifest_metadata(manifest: &CodeSymbolManifest) -> Result<()> {
