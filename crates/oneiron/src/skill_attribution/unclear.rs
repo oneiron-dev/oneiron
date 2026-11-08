@@ -62,6 +62,10 @@ pub struct UnclearContext {
     pub scope: Option<String>,
     /// The project the outcome ran in, where it recorded one.
     pub project: Option<EntityId>,
+    /// The world the judged run or the quoted document stood in, where it
+    /// recorded one world (FIX 22064); base reality is explicit, as
+    /// `base_world_id`.
+    pub world: Option<EntityId>,
     /// The task type the outcome ran as, where it recorded one.
     pub type_ref: Option<TypeRef>,
     /// The terminal pack receipt of the attempt the outcome is about: an
@@ -78,12 +82,17 @@ pub struct UnclearContext {
 }
 
 impl UnclearContext {
-    /// Every entity the context names.
+    /// Every entity the context names; base reality is no entity.
     fn entities(&self) -> impl Iterator<Item = &EntityId> {
         self.actor
             .iter()
             .chain(&self.skill)
             .chain(&self.project)
+            .chain(
+                self.world
+                    .iter()
+                    .filter(|world| **world != crate::claim::base_world_id()),
+            )
             .chain(&self.sources)
     }
 
@@ -132,6 +141,7 @@ struct StoredContext {
     skill: Option<String>,
     scope: Option<String>,
     project: Option<String>,
+    world: Option<String>,
     type_ref: Option<TypeRef>,
     attempt_receipt: Option<String>,
     judge_revision: Option<String>,
@@ -146,6 +156,7 @@ impl StoredContext {
             skill: context.skill.map(|id| id.to_hex()),
             scope: context.scope.clone(),
             project: context.project.map(|id| id.to_hex()),
+            world: context.world.map(|id| id.to_hex()),
             type_ref: context.type_ref.clone(),
             attempt_receipt: context.attempt_receipt.clone(),
             judge_revision: context.judge_revision.clone(),
@@ -162,6 +173,7 @@ impl StoredContext {
             skill: self.skill.as_deref().map(entity).transpose()?,
             scope: self.scope,
             project: self.project.as_deref().map(entity).transpose()?,
+            world: self.world.as_deref().map(entity).transpose()?,
             type_ref: self.type_ref,
             attempt_receipt: self.attempt_receipt,
             judge_revision: self.judge_revision,
