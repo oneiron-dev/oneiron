@@ -90,6 +90,22 @@ impl BodySpool {
         self.with_reader_admitted(memory, |reader| json::scan_object_head(reader, bulk, head))
     }
 
+    /// Streams the bulk string nested under `path` to its sink and the
+    /// object, that string empty, to its head file, under the combined
+    /// working-buffer lease (FIX 22074): the source span of each step's
+    /// object, outermost first.
+    pub(in crate::api) fn member_path_head_admitted(
+        &mut self,
+        path: &[&'static str],
+        bulk: &mut BulkMember<'_>,
+        head: &mut TextFileSink,
+        memory: &mut crate::machine::MemoryLease,
+    ) -> Result<Vec<(u64, u64)>, HeadFail> {
+        self.with_reader_admitted(memory, |reader| {
+            json::scan_member_path(reader, path, bulk, head)
+        })
+    }
+
     /// The declared string members, using reader room admitted with the text sink.
     pub(super) fn string_object_admitted<const N: usize>(
         &mut self,
@@ -117,6 +133,12 @@ impl BodySpool {
     pub(super) fn into_room(self) -> Option<Arc<DiskClaim>> {
         self.room
     }
+
+    /// The spool's file, kept past the spool for a reader of its original
+    /// bytes (FIX 22074); any room it held on the disk floor is given back.
+    pub(in crate::api) fn into_file(self) -> File {
+        self.file
+    }
 }
 
 impl BodySpool {
@@ -132,6 +154,41 @@ impl BodySpool {
 }
 
 impl SpooledField {
+    /// The field's file, kept past the field.
+    pub(in crate::api) fn into_file(self) -> File {
+        self.into_parts().0
+    }
+
+    /// Writes the field's bytes to `hasher` as the JSON string of their
+    /// standard base64, quotes and all, read from the file's start (FIX
+    /// 22074): the canonical text of the base64 string they were decoded
+    /// from, since standard base64 decodes only its one spelling.
+    pub(in crate::api) fn write_base64_json(&self, hasher: &mut blake3::Hasher) -> io::Result<()> {
+        let (mut file, _) = self.file();
+        file.seek(SeekFrom::Start(0))?;
+        hasher.update(b"\"");
+        {
+            let mut text = base64::write::EncoderWriter::new(
+                &mut *hasher,
+                &base64::engine::general_purpose::STANDARD,
+            );
+            io::copy(&mut file, &mut text)?;
+            text.finish()?;
+        }
+        hasher.update(b"\"");
+        file.seek(SeekFrom::Start(0))?;
+        Ok(())
+    }
+
+    /// The length of the JSON string [`Self::write_base64_json`] writes.
+    pub(in crate::api) fn base64_json_len(&self) -> u64 {
+        self.file()
+            .1
+            .div_ceil(3)
+            .saturating_mul(4)
+            .saturating_add(2)
+    }
+
     /// Decodes a rewound field under an already-admitted reader lease.
     pub(super) fn json_admitted<T: serde::de::DeserializeOwned>(
         &self,

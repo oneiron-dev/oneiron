@@ -48,6 +48,7 @@ pub(crate) fn mcp_row_hooks_pre<'a>(
     actor: &'a McpCallContext,
     memory: &Memory<'_>,
     input: Value,
+    held_content: Option<std::fs::File>,
 ) -> impl Future<Output = Result<VerbHookPre, McpGatewayError>> + Send + use<'a> {
     let admitted = mcp_hooks_admitted(server, tool, actor, memory);
     let invocation = memory.invocation();
@@ -72,6 +73,7 @@ pub(crate) fn mcp_row_hooks_pre<'a>(
             credential,
             drain: actor.drain.clone(),
             session: session.map_err(mcp_facade_error)?,
+            held_content,
         };
         crate::api::facade::row_hooks_pre_with(
             server,

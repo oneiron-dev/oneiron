@@ -253,7 +253,7 @@ fn mcp_routes(server: Arc<SyncServer>) -> Router {
         )
         .route(
             crate::cli::McpSurface::ToolFirst.path(),
-            post(crate::api::mcp_tool_first_gateway)
+            post(crate::api::mcp_tool_first_socket_gateway)
                 .get(crate::api::mcp_method_not_allowed)
                 .delete(crate::api::mcp_method_not_allowed),
         )

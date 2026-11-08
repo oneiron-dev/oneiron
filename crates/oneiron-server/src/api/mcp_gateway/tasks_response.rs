@@ -123,7 +123,8 @@ pub(crate) async fn execute_mcp_generated_verb(
     args: McpVerbToolArgs,
     actor: &McpCallContext,
 ) -> Result<Value, McpGatewayError> {
-    let argument_digest = crate::mcp::mcp_page_argument_digest(&args.payload);
+    // Held content counts as it arrived (FIX 22074).
+    let argument_digest = args.page_argument_digest();
     // Every continuable READ producer, and only those: a mutating or one-row
     // verb refuses a cursor at the pre-dispatch door below. A `describe` card is
     // a read whose lines are an enumerable set, so it continues under the same
