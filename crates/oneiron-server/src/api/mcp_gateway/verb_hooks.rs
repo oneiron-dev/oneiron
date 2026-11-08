@@ -139,6 +139,13 @@ pub(super) fn mcp_verb_ask_door(
         })
 }
 
+tokio::task_local! {
+    /// The saved answer of a paced call the drain already ended, as the MCP
+    /// admission door read it for this retry before it skipped a new intent
+    /// (FIX 19034). The row answers it, never a second read of the line.
+    pub(super) static ENDED_PACED_REPLY: std::cell::RefCell<Option<oneiron::memory::MemoryResult<Value>>>;
+}
+
 /// What a retry of a call its budget window paced meets at the MCP row
 /// door, before its hooks or its row run again (FIX 19034): still held, or
 /// the saved answer of the drain's turn, the caller's view after every post
@@ -150,7 +157,13 @@ pub(crate) fn mcp_row_paced_reply(
     actor: &McpCallContext,
     memory: &Memory<'_>,
 ) -> Result<Option<Value>, McpGatewayError> {
-    let Some(reply) = memory.paced_verb_reply(tool) else {
+    // The answer the admission door already read for this retry comes
+    // first: the line's expiry may have removed the row since (FIX 19034).
+    let captured = ENDED_PACED_REPLY
+        .try_with(|slot| slot.borrow_mut().take())
+        .ok()
+        .flatten();
+    let Some(reply) = captured.or_else(|| memory.paced_verb_reply(tool)) else {
         return Ok(None);
     };
     mcp_hooks_admitted(server, tool, actor, memory)?;

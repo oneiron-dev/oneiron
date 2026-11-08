@@ -147,12 +147,16 @@ pub(super) async fn observed<T>(
         let ended = crate::api::clock_ingress::run_blocking(move || {
             super::tasks_response::mcp_paced_lookup_memory(&lookup, &caller, invocation)
                 .ended_paced_verb_reply(&verb)
-                .is_some()
         })
         .await
-        .unwrap_or(false);
-        if ended {
-            return call.await;
+        .ok()
+        .flatten();
+        // The row answers the reply read here, so a line expiry between the
+        // two reads can never run the effect again.
+        if let Some(reply) = ended {
+            return super::verb_hooks::ENDED_PACED_REPLY
+                .scope(std::cell::RefCell::new(Some(reply)), call)
+                .await;
         }
     }
     let started = crate::api::clock_ingress::run_blocking(move || {
