@@ -5083,8 +5083,12 @@ export type ArtifactVersionView = { version: number; content_hash: string; paren
 export type ArtifactView = { artifact_id: EntityId; artifact: RecordRef; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] }
 /** `oneiron::anchored_annotation::wire::ArtifactUnitsRequest` */
 export type ArtifactUnitsRequest = { artifact_ref: string; version?: number | null; path?: string | null }
+/** `oneiron_docedit::docx_body::stories::DocxHeaderFooterBand` */
+export type DocxHeaderFooterBand = "default" | "first" | "even"
+/** `oneiron_docedit::docx_body::stories::DocxStoryScope` */
+export type DocxStoryScope = { kind: "header"; part_name: string; band: DocxHeaderFooterBand } | { kind: "footer"; part_name: string; band: DocxHeaderFooterBand } | { kind: "footnote"; id: string } | { kind: "endnote"; id: string } | { kind: "comment"; id: string }
 /** `oneiron::anchored_annotation::wire::AnnotationLocator` */
-export type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string } | { format: "html"; part_id: string; char_start: number; char_end: number } | { format: "text"; char_start: number; char_end: number } | { format: "code"; commit: string; path: string; file_hash: string; char_start: number; char_end: number }
+export type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "docx_story"; scope: DocxStoryScope; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string } | { format: "html"; part_id: string; char_start: number; char_end: number } | { format: "text"; char_start: number; char_end: number } | { format: "code"; commit: string; path: string; file_hash: string; char_start: number; char_end: number }
 /** `oneiron::anchored_annotation::wire::ArtifactUnitView` */
 export type ArtifactUnitView = { locator: AnnotationLocator; quote?: string | null }
 /** `oneiron::anchored_annotation::wire::ArtifactUnitsView` */
@@ -6252,7 +6256,7 @@ export type SlideReviewOutcome = { proposed?: PendingProposalView | null; judgme
 /** `oneiron::blob_artifact::verbs::FolderItemInput` */
 export type FolderItemInput = { artifact_ref: string; row: number }
 /** `oneiron::blob_artifact::verbs::ArtifactAskUnits` */
-export type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: SlideReviewLabels } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null }
+export type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; scope?: DocxStoryScope | null; author: string; labels: SlideReviewLabels } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null }
 /** `oneiron::blob_artifact::verbs::ArtifactAskSubmit` */
 export type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: DecisionQuestion; units: ArtifactAskUnits; reversibility?: Reversibility | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: MadeBy | null }
 /** `oneiron::edit_roundtrip::artifact_question::UnitAbstention` */
@@ -6486,7 +6490,7 @@ export type NativeOutputRequest = { artifact_ref: string; run_ref: string; name:
 /** `oneiron::blob_artifact::family::VersionReconciliation` */
 export type VersionReconciliation = { base_version: number; kept_head: ArtifactVersionView }
 /** `oneiron::edit_roundtrip::paragraph_review::ParagraphJudgment` */
-export type ParagraphJudgment = { block: string; text_hash: string; decision: TypedDecision; answer_contract: AnswerContract; comment: string; author: string; labels: SlideReviewLabels; frontier: string; judged_version?: number | null; judged_live?: LivePin | null }
+export type ParagraphJudgment = { block: string; scope?: DocxStoryScope | null; text_hash: string; decision: TypedDecision; answer_contract: AnswerContract; comment: string; author: string; labels: SlideReviewLabels; frontier: string; judged_version?: number | null; judged_live?: LivePin | null }
 /** `oneiron::edit_settle::records::PptxReviewIdentity` */
 export type PptxReviewIdentity = { thread_id: EntityId; asked_by: EntityId; answered_by: EntityId; export_author_guid: string; export_author_name: string }
 /** `oneiron::edit_settle::records::SettledReview` */
@@ -8057,10 +8061,6 @@ export type DocxRun = { text: string; marks?: DocxMark[] }
 export type DocxCellView = { row: number; col: number; text: string }
 /** `oneiron::office_body::verbs::DocxBlockView` */
 export type DocxBlockView = { id: string; kind: BodyBlockKind; role?: string | null; imported: boolean; locked: boolean; text: string; runs: DocxRun[]; cells: DocxCellView[] }
-/** `oneiron_docedit::docx_body::stories::DocxHeaderFooterBand` */
-export type DocxHeaderFooterBand = "default" | "first" | "even"
-/** `oneiron_docedit::docx_body::stories::DocxStoryScope` */
-export type DocxStoryScope = { kind: "header"; part_name: string; band: DocxHeaderFooterBand } | { kind: "footer"; part_name: string; band: DocxHeaderFooterBand } | { kind: "footnote"; id: string } | { kind: "endnote"; id: string } | { kind: "comment"; id: string }
 /** `oneiron::office_body::verbs::DocxStoryParagraphView` */
 export type DocxStoryParagraphView = { id: string; locked: boolean; text: string; runs: DocxRun[] }
 /** `oneiron::office_body::verbs::DocxStoryCellParagraphView` */
