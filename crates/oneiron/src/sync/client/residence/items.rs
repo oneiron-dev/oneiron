@@ -160,12 +160,10 @@ impl SyncClient {
             return Err(TransportError::home_offline());
         };
         // A home that may not read the window's world is not told its name,
-        // the selector or the item (FIX 922 item 11): the touch fails as
-        // with no home.
+        // the selector or the item (FIX 922 item 11): the touch is refused,
+        // this machine's own policy, never a storage fault (FIX 22217).
         if !home_reads_window(&self.vault, rpc.home, window) {
-            return Err(TransportError::Storage(
-                "home may not read this world".into(),
-            ));
+            return Err(TransportError::world_unreadable_by_home());
         }
         let touch = json!({
             "window": window.as_str(), "selector": selector, "entityId": item.to_hex()

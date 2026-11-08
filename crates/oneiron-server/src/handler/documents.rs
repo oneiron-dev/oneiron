@@ -887,7 +887,11 @@ pub(super) fn retry_later(
 /// The notice of one document, to queue again.
 pub(super) fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
     match doc.kind {
-        document_sub_tags::STATE | document_sub_tags::UPDATE | document_sub_tags::NOTE_RECEIPT => {
+        document_sub_tags::STATE
+        | document_sub_tags::UPDATE
+        | document_sub_tags::NOTE_RECEIPT
+        | document_sub_tags::NOTE_FORK_STATE
+        | document_sub_tags::NOTE_FORK_SET => {
             transport::encode_unsplit_document(doc.entity, doc.kind, doc.payload).ok()
         }
         _ => transport::encode_document(doc.entity, doc.kind, doc.payload)
