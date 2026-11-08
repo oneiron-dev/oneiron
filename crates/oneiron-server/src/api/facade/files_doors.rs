@@ -10,7 +10,7 @@
 //! this install's Files world.
 //!
 //! Each lists its rows (`host_door_lists`): the Files world its answer names,
-//! and the notes and forks a ledger read names. The sources and their ledger
+//! and the notes, forks and kept-original artifacts a ledger read names. The sources and their ledger
 //! are side tables, which hold no row.
 
 use std::path::Path;
@@ -246,12 +246,12 @@ pub(crate) async fn vault_files_sources_files(
             let files = sdk::files_source_files_as(vault, owner, input)?;
             let rows = world
                 .into_iter()
-                .chain(
-                    files
-                        .files
-                        .iter()
-                        .flat_map(|file| file.note.into_iter().chain(file.fork)),
-                )
+                .chain(files.files.iter().flat_map(|file| {
+                    file.note
+                        .into_iter()
+                        .chain(file.fork)
+                        .chain(file.original.as_ref().map(|original| original.artifact))
+                }))
                 .collect();
             Ok((files, rows))
         },

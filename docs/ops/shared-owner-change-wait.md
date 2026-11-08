@@ -24,6 +24,14 @@ and goes through the holder manifest writer, like the shared-act table
 writes. No new table, no new restore class, no new role or co-approval: one
 live Owner sets one number.
 
+## Served doors
+
+`vault.shared.owner_change_wait.set` lets one live Owner set whole days over
+HTTP, MCP or the SDK and answers the effective wait in seconds;
+`vault.shared.owner_change_wait.get` reads it for the owner. The scalar stays
+store-global: the get takes no vault, and the set's vault only gates Owner
+membership.
+
 ## Start-time precedence
 
 The generic pending-act start resolves the scalar once and applies it after
