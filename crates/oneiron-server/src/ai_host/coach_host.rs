@@ -496,7 +496,12 @@ impl SessionActorDistiller for HostDistiller<'_> {
                 }
                 let text = utterance.text.as_deref().unwrap_or_default();
                 sitting_bytes = sitting_bytes.saturating_add(text.len());
-                said.push(serde_json::json!({ "speaker": utterance.speaker, "text": text }));
+                said.push(serde_json::json!({
+                    "speaker": utterance.speaker,
+                    "text": text,
+                    "import_source": turn.import_source,
+                    "source_speaker_label": turn.source_speaker_label,
+                }));
             }
             turns.push(said);
         }

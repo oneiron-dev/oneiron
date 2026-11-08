@@ -40,7 +40,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::gmail::{address_list, reads_google_mail, rfc2822_seconds};
+use super::gmail::{reads_google_mail, rfc2822_seconds};
 use super::imap::{
     content_id, digest_variant_id, gmail_id, imap_account_on_gmail, imap_id_mapped, whole_digest,
 };
@@ -267,8 +267,10 @@ struct Intake<'v> {
 }
 
 impl Intake<'_> {
-    /// A message's headers, its labels Takeout's; `None` for one its
-    /// source names by a Gmail id it does not carry.
+    /// A message's headers, its labels Takeout's and its address headers
+    /// read from its raw header block, each mailbox apart, as a reply's
+    /// recipients take them (fix list row 20520); `None` for one its source
+    /// names by a Gmail id it does not carry.
     fn headers(&self, message: &MboxMessage, parsed: &MimeMessage<'_>) -> Option<MailHeaders> {
         let rfc_message_id = parsed.header("message-id").filter(|id| !id.is_empty());
         let takeout = || {
@@ -304,12 +306,7 @@ impl Intake<'_> {
         };
         let date = parsed.header("date").as_deref().and_then(rfc2822_seconds);
         let received_at = separator_seconds(&message.separator).or(date).unwrap_or(0);
-        let addresses = |name: &str| {
-            parsed
-                .header(name)
-                .map(|value| address_list(&value))
-                .unwrap_or_default()
-        };
+        let addresses = |name: &str| parsed.address_header(name);
         Some(MailHeaders {
             provider_id,
             thread_id,
@@ -319,7 +316,7 @@ impl Intake<'_> {
                 .header("references")
                 .map(|value| value.split_whitespace().map(str::to_owned).collect())
                 .unwrap_or_default(),
-            from: parsed.header("from").filter(|from| !from.is_empty()),
+            from: Some(parsed.address_header("from").join(", ")).filter(|from| !from.is_empty()),
             to: addresses("to"),
             cc: addresses("cc"),
             reply_to: addresses("reply-to"),

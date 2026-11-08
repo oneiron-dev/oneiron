@@ -10,13 +10,12 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 
 use super::rest::refused;
+use super::tls_stream::{DeadlineStream, TlsRefusals, TlsStream, connect_tcp, tls_client};
 use crate::error::Result;
 
 /// The largest literal read: one whole message.
@@ -25,8 +24,6 @@ const MAX_LITERAL_BYTES: usize = 48 * 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 /// The most one command reads, all its responses together.
 const MAX_COMMAND_BYTES: usize = 192 * 1024 * 1024;
-/// How long one read or write may wait.
-const IO_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long connecting, the TLS handshake and the greeting may take.
 const CONNECT_DEADLINE: Duration = Duration::from_secs(90);
 /// How long one command may take, its answer read whole.
@@ -34,44 +31,14 @@ const COMMAND_DEADLINE: Duration = Duration::from_secs(300);
 /// The largest UID, UIDVALIDITY or UIDNEXT: IMAP numbers are 32-bit.
 pub(super) const MAX_IMAP_NUMBER: u64 = u32::MAX as u64;
 
-/// A TCP stream whose every read and write ends by its deadline: a server
-/// that drips bytes, or never ends a command, times out with it.
-struct DeadlineStream {
-    tcp: TcpStream,
-    deadline: Instant,
-}
-
-impl DeadlineStream {
-    fn remaining(&self) -> std::io::Result<Duration> {
-        let left = self.deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err(std::io::Error::from(std::io::ErrorKind::TimedOut));
-        }
-        Ok(left.min(IO_TIMEOUT))
-    }
-}
-
-impl Read for DeadlineStream {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let left = self.remaining()?;
-        self.tcp.set_read_timeout(Some(left))?;
-        self.tcp.read(buf)
-    }
-}
-
-impl Write for DeadlineStream {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let left = self.remaining()?;
-        self.tcp.set_write_timeout(Some(left))?;
-        self.tcp.write(buf)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.tcp.flush()
-    }
-}
-
-type TlsStream = rustls::StreamOwned<rustls::ClientConnection, DeadlineStream>;
+/// The words the IMAP client gives the TLS stack's failures.
+const IMAP_TLS: TlsRefusals = TlsRefusals {
+    no_roots: "imap_tls_no_platform_roots",
+    setup: "imap_tls_setup_failed",
+    host: "imap_host_invalid",
+    unresolved: "imap_host_unresolved",
+    connect: "imap_connect_failed",
+};
 
 /// One parsed element of a response.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,17 +143,6 @@ pub(super) struct ImapSession {
 
 fn malformed() -> crate::Error {
     refused("imap_response_malformed")
-}
-
-/// The platform's trust roots, as rustls takes them.
-fn platform_roots() -> Result<rustls::RootCertStore> {
-    let mut roots = rustls::RootCertStore::empty();
-    let (added, _) =
-        roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
-    if added == 0 {
-        return Err(refused("imap_tls_no_platform_roots"));
-    }
-    Ok(roots)
 }
 
 /// The deepest list nesting a response may have.
@@ -434,30 +390,9 @@ impl ImapSession {
     /// untrusted certificate included), a server that does not upgrade to
     /// TLS when asked, or a server that is not IMAP4rev1.
     pub(super) fn connect(host: &str, port: u16, starttls: bool) -> Result<Self> {
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let config = rustls::ClientConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()
-            .map_err(|_| refused("imap_tls_setup_failed"))?
-            .with_root_certificates(platform_roots()?)
-            .with_no_client_auth();
-        let name = rustls::pki_types::ServerName::try_from(host.to_owned())
-            .map_err(|_| refused("imap_host_invalid"))?;
-        let tls = rustls::ClientConnection::new(Arc::new(config), name)
-            .map_err(|_| refused("imap_tls_setup_failed"))?;
+        let tls = tls_client(host, &IMAP_TLS)?;
         let deadline = Instant::now() + CONNECT_DEADLINE;
-        let mut addresses = (host, port)
-            .to_socket_addrs()
-            .map_err(|_| refused("imap_host_unresolved"))?;
-        let tcp = addresses
-            .find_map(|address| {
-                let left = deadline.saturating_duration_since(Instant::now());
-                if left.is_zero() {
-                    return None;
-                }
-                TcpStream::connect_timeout(&address, left.min(IO_TIMEOUT)).ok()
-            })
-            .ok_or_else(|| refused("imap_connect_failed"))?;
-        let mut stream = DeadlineStream { tcp, deadline };
+        let mut stream = connect_tcp(host, port, deadline, &IMAP_TLS)?;
         if starttls {
             stream = start_tls(stream)?;
         }

@@ -44,8 +44,32 @@ sends nothing. The mailbox's owner reviews it (`vault.mail.reply.drafts`) and
 it goes out only when they approve that exact revision
 (`vault.mail.reply.approve`, theirs alone, never yours). Redrafting under the
 same key makes a new revision that needs its own approval; discard a draft
-you no longer want (`vault.mail.reply.discard`). For now a reply sends from a
-Google personal mailbox granted `gmail.send`, to one recipient, in plain text.
+you no longer want (`vault.mail.reply.discard`). You may add `body_html`, the
+same reply as simple HTML (paragraphs, links, lists, quotes, emphasis); it
+sends beside the plain text, which must still read as the whole reply. An
+image, style or script is refused.
+
+A reply goes to the message's `Reply-To`, else its sender. For a Google
+mailbox, these addresses and the message's To and Cc are read from the message
+at Gmail each time you draft; if that read fails, the draft is refused, so
+draft it again. Set `reply_all` to
+send it to the message's own To and Cc too, in their roles, and name more
+people in `cc` (bare addresses). Every address the mailbox owns is left out:
+its own, the ones its provider proves at each sync (Gmail's verified send-as
+addresses, Microsoft 365's proxy addresses), and for an IMAP mailbox the list
+its owner sets with `own_addresses` in `vault.mail.sources.settings.set`. Each
+address goes once. At most 50 recipients in all; more is refused, never
+cut. A list's address is one recipient: it is not expanded. A message whose
+To or Cc names a group with members (`Friends: a@x, b@y;`) is refused for
+reply-all; reply without it and name the people you mean in `cc`. Reply-all
+to a message the mailbox has not synced since its recipients were kept is
+refused; sync it again. Every recipient goes in the one message the owner approves:
+the drafts door shows each To and Cc, and if the vault holds any one of them
+back (a STOP, a blocked contact), the whole reply is held, never sent to the
+rest. No attachment yet. It leaves from the person's own mailbox: a Google
+mailbox granted `gmail.send`, an IMAP mailbox whose credential names its
+submission server, or a Microsoft 365 mailbox whose token may send mail. A
+group address does not send replies yet.
 
 ## Calendars
 

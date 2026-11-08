@@ -93,7 +93,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::credential::WireReads;
-use super::gmail::{address_list, rfc2822_seconds};
+use super::gmail::rfc2822_seconds;
 use super::imap_client::{
     Fetched, FolderStatus, ImapSession, Item, ListedFolder, decode_mailbox_name, range_set,
     ranges_hold, uid_set,
@@ -258,6 +258,103 @@ struct ImapCredential {
     password: Option<String>,
     #[serde(default)]
     access_token: Option<String>,
+    /// Where the mailbox submits mail: what its drafted replies are sent
+    /// through (fix list row 17872).
+    #[serde(default)]
+    submission: Option<SubmissionConfig>,
+}
+
+/// The submission server (RFC 6409) of an IMAP mailbox: the same account,
+/// its own host.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubmissionConfig {
+    host: String,
+    #[serde(default)]
+    port: Option<u16>,
+    /// `tls` (port 465) or `starttls` (port 587, the default).
+    #[serde(default)]
+    security: Option<ImapSecurity>,
+}
+
+/// The submission account an IMAP source's credential names, checked as
+/// its read is checked: the source's own account.
+pub(super) struct SubmissionAccount {
+    pub(super) host: String,
+    pub(super) port: u16,
+    pub(super) security: super::smtp_client::SmtpSecurity,
+    pub(super) username: String,
+    pub(super) password: Option<String>,
+    pub(super) access_token: Option<String>,
+}
+
+/// `host` as a server name the credential may name: letters, digits, dots
+/// and hyphens, lower case.
+fn server_name(host: &str, reason: &'static str) -> Result<String> {
+    let host = host.trim().to_ascii_lowercase();
+    if host.is_empty()
+        || host.len() > 253
+        || !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return Err(refused(reason));
+    }
+    Ok(host)
+}
+
+/// Whether `source` names the account `username` at `host`: its user
+/// exactly, as a server may tell case apart, and its host.
+fn names_account(source: &MailSyncSource, username: &str, host: &str) -> bool {
+    source
+        .provider_account
+        .rsplit_once('@')
+        .is_some_and(|(user, named)| user == username && named.eq_ignore_ascii_case(host))
+}
+
+/// The submission account of the IMAP source `source`, from its custody
+/// record `secret`.
+///
+/// # Errors
+///
+/// A record that does not read, names another account, names no
+/// submission server, or holds neither a password nor a token.
+pub(super) fn submission_account(
+    source: &MailSyncSource,
+    secret: &[u8],
+) -> Result<SubmissionAccount> {
+    use super::smtp_client::SmtpSecurity;
+    let stored: ImapCredential =
+        serde_json::from_slice(secret).map_err(|_| refused("imap_credential_unreadable"))?;
+    let imap_host = server_name(&stored.host, "imap_credential_host_invalid")?;
+    if !names_account(source, &stored.username, &imap_host) {
+        return Err(refused("imap_credential_reads_another_account"));
+    }
+    let submission = stored
+        .submission
+        .ok_or_else(|| refused("imap_submission_not_configured"))?;
+    let host = server_name(&submission.host, "smtp_host_invalid")?;
+    let security = match submission.security {
+        Some(ImapSecurity::Tls) => SmtpSecurity::Tls,
+        Some(ImapSecurity::Starttls) => SmtpSecurity::Starttls,
+        None if submission.port == Some(465) => SmtpSecurity::Tls,
+        None => SmtpSecurity::Starttls,
+    };
+    let port = submission.port.unwrap_or(match security {
+        SmtpSecurity::Tls => 465,
+        SmtpSecurity::Starttls => 587,
+    });
+    if stored.password.is_none() && stored.access_token.is_none() {
+        return Err(refused("imap_credential_holds_no_secret"));
+    }
+    Ok(SubmissionAccount {
+        host,
+        port,
+        security,
+        username: stored.username,
+        password: stored.password,
+        access_token: stored.access_token,
+    })
 }
 
 /// What a folder is for.
@@ -958,7 +1055,13 @@ fn read_of<'f>(fetched: &'f Fetched, section: &str) -> Option<MessageRead<'f>> {
 }
 
 /// The headers of the message `provider_id` from its header block (or the
-/// whole message), read in `folder`.
+/// whole message), read in `folder`. The read names the message, never this
+/// function ([`ImapMailWire::resolved_ids`]): by its Gmail id or `EMAILID`
+/// where the server names messages so, else by its `Message-ID`'s header id
+/// ([`content_id`]) as its proof settles it, or by its place ([`place_id`])
+/// when it has no `Message-ID`. Its address headers are read from the raw
+/// header block, each mailbox apart before any encoded word is decoded, as a
+/// reply's recipients take them (fix list row 20520).
 fn headers_of(
     read: &MessageRead<'_>,
     provider_id: String,
@@ -967,12 +1070,7 @@ fn headers_of(
 ) -> MailHeaders {
     let parsed = MimeMessage::parse(read.raw);
     let rfc_message_id = parsed.header("message-id").filter(|id| !id.is_empty());
-    let addresses = |name: &str| {
-        parsed
-            .header(name)
-            .map(|value| address_list(&value))
-            .unwrap_or_default()
-    };
+    let addresses = |name: &str| parsed.address_header(name);
     let date = parsed.header("date").as_deref().and_then(rfc2822_seconds);
     let flagged = |flag: &str| read.flags.iter().any(|held| held == flag);
     MailHeaders {
@@ -983,7 +1081,7 @@ fn headers_of(
             .header("references")
             .map(|value| value.split_whitespace().map(str::to_owned).collect())
             .unwrap_or_default(),
-        from: parsed.header("from").filter(|from| !from.is_empty()),
+        from: Some(parsed.address_header("from").join(", ")).filter(|from| !from.is_empty()),
         to: addresses("to"),
         cc: addresses("cc"),
         reply_to: addresses("reply-to"),
@@ -2483,22 +2581,9 @@ fn open_session(
 ) -> Result<OpenSession> {
     let stored: ImapCredential =
         serde_json::from_slice(secret).map_err(|_| refused("imap_credential_unreadable"))?;
-    let host = stored.host.trim().to_ascii_lowercase();
-    if host.is_empty()
-        || host.len() > 253
-        || !host
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
-    {
-        return Err(refused("imap_credential_host_invalid"));
-    }
-    // The credential reads the account the source names, and no other: its
-    // user exactly, as a server may tell case apart, and its host.
-    let reads_account = source
-        .provider_account
-        .rsplit_once('@')
-        .is_some_and(|(user, named)| user == stored.username && named.eq_ignore_ascii_case(&host));
-    if !reads_account {
+    let host = server_name(&stored.host, "imap_credential_host_invalid")?;
+    // The credential reads the account the source names, and no other.
+    if !names_account(source, &stored.username, &host) {
         return Err(refused("imap_credential_reads_another_account"));
     }
     let starttls = stored

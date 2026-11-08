@@ -25,7 +25,10 @@ use super::provider_delete::{
     ProviderDeleteOutcome, apply_provider_delete, restore_from_provider_trash, resume_owed_forgets,
     update_labels,
 };
-use super::source::{MailCopySetting, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
+use super::source::{
+    MailCopySetting, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES,
+    proven_own_address_set,
+};
 use super::state::{
     MailOccurrence, MailPresence, MailRelist, MailSyncState, OCCURRENCES, SYNC, bodies_waiting_in,
     occurrence_key,
@@ -570,6 +573,42 @@ impl Step<'_> {
         Ok(())
     }
 
+    /// The mailbox's own addresses as its provider proves them now (fix
+    /// list row 20400), written to the source in a commit of their own
+    /// when they changed, at most once per
+    /// [`OWN_ADDRESSES_REFRESH_SECS`](super::state::OWN_ADDRESSES_REFRESH_SECS)
+    /// of answers. A provider that proves none, or a read it refuses (a
+    /// missing scope) or that fails, keeps the stored set for this step:
+    /// never the step's failure.
+    fn refresh_own_addresses(&mut self) -> Result<()> {
+        if self.state()?.own_addresses_read_at.is_some_and(|read| {
+            self.at.saturating_sub(read) < super::state::OWN_ADDRESSES_REFRESH_SECS
+        }) {
+            return Ok(());
+        }
+        let Ok(Some(proven)) = self.wire.own_addresses(&self.wire_source) else {
+            return Ok(());
+        };
+        let at = self.at;
+        self.write_state(|state| state.own_addresses_read_at = Some(at))?;
+        let own = proven_own_address_set(&self.row.address, &proven);
+        if own == self.row.own_addresses {
+            return Ok(());
+        }
+        let (vault, source) = (self.vault, self.source);
+        vault.with_write_txn_grouped(|txn| {
+            if let Some(mut row) = SOURCES.get(&vault.store, txn, &source)?
+                && row.own_addresses != own
+            {
+                row.own_addresses.clone_from(&own);
+                SOURCES.put(&vault.store, txn, &source, &row)?;
+            }
+            Ok(())
+        })?;
+        self.row.own_addresses = own;
+        Ok(())
+    }
+
     /// Fills in up to `limit` bodies, newest first. A message the provider no
     /// longer holds, or now holds as trash or spam, is deleted at the
     /// provider; a body the write door refuses leaves the message landed by
@@ -727,6 +766,7 @@ impl Vault {
                 budget.attachments,
             )?;
             step.report.attachments_stored += stored;
+            step.refresh_own_addresses()?;
             Ok(())
         })();
         let error = outcome
