@@ -45,7 +45,8 @@ impl Memory<'_> {
         Ok(self
             .vault
             .scoped_read(self.in_room_turn(key)?)
-            .with_claim_status(claims))
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
     }
 
     /// Opens only a bound brief view. A view-only slip cannot enter any
@@ -95,7 +96,8 @@ impl Memory<'_> {
         Ok(self
             .vault
             .scoped_read(self.in_room_turn(key)?)
-            .with_claim_status(claims))
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
     }
 
     /// The queue-exhaust Owner's reader, retaining this handle's actual
@@ -121,7 +123,8 @@ impl Memory<'_> {
         Ok(self
             .vault
             .scoped_read(self.in_room_turn(key)?)
-            .with_claim_status(claims))
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
     }
 
     /// [`Self::read_lane`], or `None` exactly when this handle's bound
@@ -157,7 +160,12 @@ impl Memory<'_> {
             }
         };
         let key = self.in_room_turn(key.for_destination(&self.destination))?;
-        Ok(Some(self.vault.scoped_read(key).with_claim_status(claims)))
+        Ok(Some(
+            self.vault
+                .scoped_read(key)
+                .with_claim_status(claims)
+                .with_read_filter(self.read_filter.as_ref()),
+        ))
     }
 
     /// The key every read verb on this handle reads under: its proof's, its
@@ -195,6 +203,16 @@ impl Memory<'_> {
             MemoryError::bad_request("bound actor cannot be used as a scoped read key")
         })?;
         self.in_room_turn(key.for_destination(&self.destination))
+    }
+
+    /// The current credential's read key, when this handle carries one.
+    /// Native callers without a credential keep their existing identity
+    /// reader instead of acquiring a new credential requirement.
+    pub fn proof_backed_read_key(&self) -> MemoryResult<Option<ScopedReadActorKey>> {
+        if self.read_proof.is_none() {
+            return Ok(None);
+        }
+        self.read_key().map(Some)
     }
 
     /// The bound actor's own read, without a bound room turn's ceiling: what
