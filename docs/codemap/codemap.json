@@ -40008,7 +40008,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -40052,6 +40052,16 @@
      "purpose": "Scope of the projector's original-head-bound scoped touch source",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/record_scope/connect_origin.rs",
+     "purpose": "Origin positions covered by the existing peer-host Connect signature",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -52981,8 +52991,8 @@
      "path": "src/memory/locality.rs",
      "purpose": "Where a [`Memory`] caller sits, and the rows its reads derive an answer from, for a host that judges that…",
      "surface": {
-      "crate-vis": 6,
-      "fn": 6,
+      "crate-vis": 7,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -69477,15 +69487,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/verb/paced.rs",
      "purpose": "A verb call a count-bound budget window paced, held in its caller's fair line until its turn (FIX 8753…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
-      "fn": 5
+      "crate-vis": 10,
+      "fn": 8
      }
     },
     {
@@ -82278,12 +82288,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/connect.rs",
      "purpose": "Public Connect delivery/rejoin over the production guest admission path",
      "surface": {
+      "crate-vis": 6,
       "fn": 3,
       "re-export": 1
      }
@@ -82388,7 +82399,7 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 8
      }
     },
@@ -98538,7 +98549,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 85,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99504,9 +99515,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 233,
+   "over_bar": 234,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7094,
+   "source_files": 7095,
    "test_files": 895
   },
   "oneiron-android": {
@@ -122555,7 +122566,7 @@
      "path": "src/api/facade/identity.rs",
      "purpose": "Who a facade call acts as: its actor, its invocation id and the owner's authorship",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -124537,7 +124548,7 @@
      "path": "src/api/mcp_gateway/tasks_response.rs",
      "purpose": "Tasks verb and response shaping",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 18
      }
     },
     {
@@ -124577,7 +124588,7 @@
      "path": "src/api/mcp_gateway/verb_hooks.rs",
      "purpose": "The verb-hook boundary of an MCP row (ARCH-0080 §3), as the generated dispatch crosses it: the row door's…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 8
      }
     },
     {
