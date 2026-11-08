@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_util::StreamExt;
 use oneiron::attempt_queue::ManifestEntry;
-use oneiron::compaction::ChatLog;
+use oneiron::compaction::{ChatLog, ConversationCompactionUnavailable};
 use oneiron::conversation::{
     ChatBreakpoint, ChatBreakpointRung, ChatBreakpointUserTurn, forget_chat_breakpoint,
     forget_superseded_chat_breakpoints, keep_chat_breakpoint,
@@ -28,15 +28,20 @@ use oneiron::{
     EntityId, LlmError, LlmResult, LlmStream, LlmStreamEvent, RetryableLlmError, Vault, WriteActor,
 };
 
-use super::hex;
-use crate::api::ai::chat::AnswerStream;
+use super::{AnswerBreakpoint, AnswerStream, BreakpointLog, TurnMeter, hex};
+use crate::ai_host::{AiHandle, ChatBreakpointCall};
 use crate::api::ai::chat::model_call::Recorder;
-use crate::models::RoleCall;
+use crate::models::{AnsweringRung, RoleCall};
 
 /// What the reply keeps once it is saved, and whether its own captured
 /// call answered it.
 pub(in crate::api::ai::chat) struct PendingSeed {
     slot: Arc<SeedSlot>,
+    breakpoint: AnswerBreakpoint,
+    admitted: Option<RoleCall>,
+    message: EntityId,
+    meter: TurnMeter,
+    sources: Option<Vec<EntityId>>,
 }
 
 /// One reply generation's seed, as its stream's legs share it.
@@ -55,24 +60,54 @@ struct SeedSlot {
 }
 
 impl PendingSeed {
-    /// `seed`, for the reply `handle` writes; nothing is kept yet.
+    /// Holds the answer's breakpoint until its terminal names the answering
+    /// rung. A provisional seed is kept before dispatch for crash recovery.
     pub(super) fn new(
         vault: &Arc<Vault>,
         handle: &AnswerStream,
-        seed: Option<ChatBreakpoint>,
+        breakpoint: AnswerBreakpoint,
+        admitted: &RoleCall,
+        meter: TurnMeter,
+        sources: Option<Vec<EntityId>>,
     ) -> Self {
-        let handle = match handle {
+        let seed = match &breakpoint.source {
+            Some(source) => Some(source.clone()),
+            None if breakpoint.recalled => None,
+            None => breakpoint.log.as_ref().and_then(|log| {
+                capture_seed(
+                    breakpoint.mode.agent(),
+                    breakpoint.reader,
+                    log.log(),
+                    breakpoint.instructions_digest.clone(),
+                    breakpoint.craft.clone(),
+                    breakpoint.user_turn.clone(),
+                    admitted,
+                )
+            }),
+        };
+        let stream_handle = match handle {
             AnswerStream::Recorded(handle) => Some(*handle),
             AnswerStream::Session { .. } => None,
         };
+        let admitted = matches!(&breakpoint.log, Some(BreakpointLog::Compact(_))).then(|| {
+            RoleCall {
+                request: admitted.request.clone(),
+                ladder: Arc::clone(&admitted.ladder),
+            }
+        });
         Self {
             slot: Arc::new(SeedSlot {
                 vault: Arc::clone(vault),
-                handle,
+                handle: stream_handle,
                 seed,
                 live: AtomicBool::new(true),
                 kept: AtomicBool::new(false),
             }),
+            breakpoint,
+            admitted,
+            message: handle.correlation_id(),
+            meter,
+            sources,
         }
     }
 
@@ -215,6 +250,46 @@ pub(super) fn capture_seed(
             provider: rung.provider,
             position: rung.position,
             wire_model: rung.wire_model,
+        },
+        instructions_digest,
+        sources: log.sources.clone(),
+        summaries: log.summaries.clone(),
+        user_turn,
+        craft_entries: craft,
+    })
+}
+
+/// The seed a chat turn's reply keeps from the rung that actually answered
+/// it (FIX 4933), carrying the same user-turn binding as the provisional
+/// seed (FIX 5033).
+fn capture_answering_seed(
+    agent: EntityId,
+    reader: WriteActor,
+    log: &ChatLog,
+    instructions_digest: Option<String>,
+    craft: Vec<ManifestEntry>,
+    user_turn: Option<ChatBreakpointUserTurn>,
+    answering: &AnsweringRung,
+) -> Option<ChatBreakpoint> {
+    if !log.pinned {
+        return None;
+    }
+    let AnsweringRung { rung, request } = answering;
+    let digest = request.canonical_hash().ok()?;
+    Some(ChatBreakpoint {
+        agent,
+        reader: reader.entity_ref(),
+        reader_class: reader.actor_class() as u8,
+        conversation: log.conversation,
+        branch: log.branch,
+        session: log.session,
+        request: serde_json::to_string(&**request).ok()?,
+        request_digest: hex(&digest),
+        rung: ChatBreakpointRung {
+            offer_digest: oneiron::code_run::live_fork_offer_digest(&rung.offer)?,
+            provider: rung.provider.clone(),
+            position: rung.position,
+            wire_model: rung.wire_model.clone(),
         },
         instructions_digest,
         sources: log.sources.clone(),
@@ -371,41 +446,101 @@ fn first_or_today(
 }
 
 /// Confirms the saved reply's breakpoint once its terminal is written (FIX
-/// 5028), when its own captured call answered it and `saved` is its own
-/// generation's receipt. A seed kept before its call was sent stands
-/// confirmed, or stays gone where an erase took it with its conversation's
-/// words since, and the generations it superseded go (FIX 5033); one whose
-/// early keep failed is kept now, as is a native session stream's, on the
-/// receipt its terminal retained, and its keep forgets them. A reply its call
-/// did not answer, or that saved no receipt, keeps none. A breakpoint that
-/// is not kept leaves the reply's actions to run as they always did.
+/// 5028), rebinds it to the rung that answered (FIX 4933), and queues the
+/// answer's compaction flight on that same rung. A seed kept before dispatch
+/// is replaced by the answering rung's seed; one whose early keep failed is
+/// kept now, as is a native session stream's. A reply its call did not answer,
+/// or that saved no receipt, keeps none.
 pub(in crate::api::ai::chat) fn keep(
+    ai: &AiHandle,
+    vault: &Arc<Vault>,
     pending: Option<PendingSeed>,
     saved: Option<&MessageStreamReceipt>,
+    answering: Option<AnsweringRung>,
 ) {
-    let Some(PendingSeed { slot }) = pending else {
+    let Some(PendingSeed {
+        slot,
+        breakpoint,
+        admitted,
+        message,
+        meter,
+        sources,
+    }) = pending
+    else {
         return;
+    };
+    let AnswerBreakpoint {
+        mode,
+        log,
+        locality,
+        reader,
+        instructions_digest,
+        source,
+        recalled,
+        craft,
+        user_turn,
+    } = breakpoint;
+    let seed = match source {
+        Some(source) => Some(source),
+        None if recalled => None,
+        None => log.as_ref().and_then(|log| {
+            capture_answering_seed(
+                mode.agent(),
+                reader,
+                log.log(),
+                instructions_digest,
+                craft,
+                user_turn,
+                answering.as_ref()?,
+            )
+        }),
     };
     let own = saved.filter(|receipt| {
         slot.handle.is_none_or(|handle| {
             receipt.message_id == handle.message_id() && receipt.generation == handle.generation()
         })
     });
-    let Some(receipt) = own.filter(|_| slot.live.load(Ordering::Acquire)) else {
+    let confirmed = own.filter(|_| slot.live.load(Ordering::Acquire));
+    if let (Some(seed), Some(receipt)) = (seed, confirmed) {
+        if slot.kept.load(Ordering::Acquire) && slot.seed.as_ref() == Some(&seed) {
+            slot.forget_superseded();
+        } else if slot.kept.load(Ordering::Acquire) && !slot.withdraw() {
+            tracing::warn!("a chat reply's provisional breakpoint was not replaced");
+        } else {
+            let kept = crate::server::blocking(|| {
+                keep_chat_breakpoint(vault, receipt.message_id, receipt.generation, seed)
+            });
+            match kept {
+                Ok(()) => {
+                    slot.kept.store(true, Ordering::Release);
+                    slot.forget_superseded();
+                }
+                Err(error) => {
+                    tracing::warn!(kind = ?error.kind(), "a chat reply's breakpoint was not kept");
+                }
+            }
+        }
+    } else {
         slot.withdraw();
-        return;
-    };
-    if slot.kept.load(Ordering::Acquire) {
-        slot.forget_superseded();
-        return;
     }
-    let Some(seed) = slot.seed.clone() else {
-        return;
-    };
-    let kept = crate::server::blocking(|| {
-        keep_chat_breakpoint(&slot.vault, receipt.message_id, receipt.generation, seed)
-    });
-    if let Err(error) = kept {
-        tracing::warn!(kind = ?error.kind(), "a chat reply's breakpoint was not kept");
+    if let (Some(BreakpointLog::Compact(log)), Some(admitted)) = (log, admitted) {
+        let call = ChatBreakpointCall {
+            vault: Arc::clone(vault),
+            mode,
+            log,
+            locality,
+            payer: meter.payer,
+            funding: meter.funding,
+            budget_units: meter.budget_units,
+            message,
+            sources,
+        };
+        match crate::server::blocking(|| ai.enter_chat_breakpoint(call, &admitted, answering)) {
+            Ok(()) | Err(ConversationCompactionUnavailable::Quiet) => {}
+            Err(why) => tracing::info!(
+                reason = why.as_str(),
+                "a chat turn's own compaction is unavailable; its log stays raw"
+            ),
+        }
     }
 }
