@@ -260,6 +260,63 @@ pub(super) fn record(
         &verdicts.evidence,
         runtime_identity,
     )?;
+    record_with_derivation(
+        run,
+        derivation,
+        input,
+        reads,
+        verdicts,
+        verdict,
+        duration_ms,
+        now,
+    )
+}
+
+pub(super) fn record_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    run: &Run<'_>,
+    input: &str,
+    reads: Vec<HookReadPin>,
+    verdicts: VerdictPins,
+    verdict: &Verdict,
+    duration_ms: u64,
+    now: u64,
+    runtime_identity: Option<String>,
+) -> Result<HookRunRecord> {
+    let derivation = HookRunDerivation::new_in_txn(
+        vault,
+        txn,
+        run.binding_id,
+        run.binding,
+        run.grant,
+        run.entry,
+        &reads,
+        &verdicts.evidence,
+        runtime_identity,
+    )?;
+    record_with_derivation(
+        run,
+        derivation,
+        input,
+        reads,
+        verdicts,
+        verdict,
+        duration_ms,
+        now,
+    )
+}
+
+fn record_with_derivation(
+    run: &Run<'_>,
+    derivation: HookRunDerivation,
+    input: &str,
+    reads: Vec<HookReadPin>,
+    verdicts: VerdictPins,
+    verdict: &Verdict,
+    duration_ms: u64,
+    now: u64,
+) -> Result<HookRunRecord> {
     let mut memo = HookRunRecord {
         derivation,
         binding: run.binding_id,

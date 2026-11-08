@@ -18,6 +18,7 @@ mod prior;
 mod restated;
 mod root;
 pub(super) use nightly_link_grant::require_nightly_link_write;
+pub use nightly_link_grant::{NightlyLinkGrantRequest, mint_nightly_link_grant};
 pub(super) use pins::{BranchPins, OwnedPins};
 pub(super) use prior::standing;
 use root::ResourceOrigin;
@@ -491,7 +492,10 @@ impl<'a> BranchResources<'a> {
             if facts.world != scope.world
                 || facts.facet != scope.facet
                 || scope.relationship.as_ref().is_some_and(|bound| {
-                    !facts.rel.as_ref().is_some_and(|rel| rel.is_subset(bound))
+                    !facts
+                        .rel
+                        .as_ref()
+                        .is_some_and(|rel| rel.iter().all(|id| bound.contains(id)))
                 })
                 || candidate.supersedes.is_some()
                 || !candidate.provenance_chain.is_empty()

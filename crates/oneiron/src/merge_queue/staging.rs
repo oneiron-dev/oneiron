@@ -55,7 +55,11 @@ impl MergeQueue<'_> {
 
     /// The one batch formation. `admit` is the batch writer's first act: it
     /// answers the run order the batch keeps (FIX 6867), none for an owner
-    /// or trusted batch, or a refusal, which writes nothing.
+    /// or trusted batch, or a refusal, which writes nothing. Acceptance then
+    /// judges every changed path, a rename's new name among them, against
+    /// the retained whitelist of a registered repository in this queue's
+    /// folder (FIX 4299); a batch it accepts is never revoked by a later
+    /// whitelist change.
     pub(super) fn enqueue_checked<R>(
         &self,
         proposals: Vec<MergeProposal>,
@@ -67,7 +71,29 @@ impl MergeQueue<'_> {
         self.require_clean(self.repo.repo_root())?;
         validate_proposals(&proposals, &queue.pointers.green)?;
         let mut batch = self.queued_batch(&mut queue, proposals)?;
-        if let Err(refused) = self.save_checked(&queue, &mut batch, admit)? {
+        let locator = self.repo.repo_ref().locator();
+        let changed: Vec<String> = batch
+            .proposals
+            .iter()
+            .flat_map(|proposal| &proposal.files)
+            .flat_map(|file| {
+                let renamed = file
+                    .metadata_edit
+                    .as_ref()
+                    .and_then(|edit| edit.new_path.clone());
+                std::iter::once(file.path.clone()).chain(renamed)
+            })
+            .collect();
+        let saved = self.save_checked(&queue, &mut batch, |txn| {
+            let accepted = admit(txn)?;
+            if accepted.is_ok() {
+                let paths = changed.iter().map(String::as_str);
+                self.vault
+                    .require_registered_edit_in_txn(txn, None, &locator, paths)?;
+            }
+            Ok(accepted)
+        })?;
+        if let Err(refused) = saved {
             return Ok(Err(refused));
         }
         Ok(Ok(batch))

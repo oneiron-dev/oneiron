@@ -1,0 +1,162 @@
+//! The `surface.inbound` source (ARCH-0080 §4 Watchers; FIX 4749): one row
+//! per inbound connector SurfaceEvent (OF-247), appended in the write that
+//! admits the event to its attempt queue. The sequence is drawn there, so
+//! feed order is commit order, and a provider's re-delivery, which admits
+//! nothing new, appends nothing. A row keeps ids and tokens only, never
+//! provider text: a hook that wants more reads it under its own grant.
+
+use std::ops::Bound;
+
+use serde::{Deserialize, Serialize};
+
+use crate::attempt_queue::AttemptId;
+use crate::side_table::{self, Named, SideTable};
+use crate::surface_event::{SurfaceEvent, SurfaceEventAction, SurfaceInteractionKind};
+use crate::{EntityId, Error, Result, Vault};
+
+use super::{FactEntry, FactKind, FactOp, FactPosition, SourceBatch, SurfaceInboundPosition};
+
+/// The inbound feed: one row per admitted surface event, by its sequence.
+const SURFACE_INBOUND: SideTable<u64, SurfaceInboundRow, Named> =
+    SideTable::new(&side_table::HOOKS_SURFACE_INBOUND);
+/// The last inbound sequence handed out.
+const SURFACE_INBOUND_NEXT: SideTable<(), u64, Named> =
+    SideTable::new(&side_table::HOOKS_SURFACE_INBOUND_NEXT);
+
+/// One admitted inbound event, as the feed keeps it and its hook reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(in crate::runtime_hooks) struct SurfaceInboundRow {
+    /// The attempt that carries the event to its connector wake.
+    pub(in crate::runtime_hooks) attempt: [u8; 16],
+    /// The normalized connector key: what a `surface.inbound:<glob>`
+    /// selector reads.
+    pub(in crate::runtime_hooks) connector: String,
+    /// The provider channel key the event arrived on.
+    pub(in crate::runtime_hooks) channel: String,
+    /// `message`, or the interaction kind.
+    pub(in crate::runtime_hooks) action: String,
+    /// The ChannelIdentity the event addressed: the fact's entity.
+    #[serde(with = "crate::serialize::entity_ref")]
+    pub(in crate::runtime_hooks) receiving_identity: EntityId,
+    /// The actor that identity routed the event to.
+    #[serde(with = "crate::serialize::entity_ref")]
+    pub(in crate::runtime_hooks) actor: EntityId,
+    /// The provider's receive time, Unix seconds.
+    pub(in crate::runtime_hooks) received_at: u64,
+    /// When the admission committed, Unix seconds.
+    pub(in crate::runtime_hooks) recorded_at: u64,
+}
+
+impl SurfaceInboundRow {
+    fn input_hash(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new_derive_key("oneiron.hook-surface-inbound.v1");
+        hasher.update(&self.attempt);
+        hasher.update(self.receiving_identity.as_bytes());
+        hasher.update(self.actor.as_bytes());
+        for token in [&self.connector, &self.channel, &self.action] {
+            hasher.update(&(token.len() as u64).to_be_bytes());
+            hasher.update(token.as_bytes());
+        }
+        hasher.update(&self.received_at.to_be_bytes());
+        *hasher.finalize().as_bytes()
+    }
+}
+
+/// Appends `event`, which `attempt` now carries, to the inbound feed in the
+/// admitting write. An event whose identity or actor is no entity id is one
+/// no hook's grant can place, so it appends nothing.
+pub(crate) fn record_surface_inbound_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    event: &SurfaceEvent,
+) -> Result<()> {
+    let (Ok(receiving_identity), Ok(actor)) = (
+        EntityId::from_hex(&event.receiving_identity_ref),
+        EntityId::from_hex(&event.actor_ref),
+    ) else {
+        return Ok(());
+    };
+    let last = SURFACE_INBOUND_NEXT
+        .get(&vault.store, txn, &())?
+        .unwrap_or(0);
+    let sequence = last
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("hook surface inbound sequence"))?;
+    let row = SurfaceInboundRow {
+        attempt: *attempt.as_bytes(),
+        connector: crate::connector_key::normalize_connector_key(&event.channel),
+        channel: event.channel.clone(),
+        action: action_token(&event.action).to_owned(),
+        receiving_identity,
+        actor,
+        received_at: event.received_at,
+        recorded_at: vault.store.clock.now_recorded_at(),
+    };
+    SURFACE_INBOUND.put(&vault.store, txn, &sequence, &row)?;
+    SURFACE_INBOUND_NEXT.put(&vault.store, txn, &(), &sequence)
+}
+
+/// The action token a hook's input carries.
+fn action_token(action: &SurfaceEventAction) -> &'static str {
+    match action {
+        SurfaceEventAction::Message => "message",
+        SurfaceEventAction::Interaction { interaction, .. } => match interaction {
+            SurfaceInteractionKind::Reaction => "reaction",
+            SurfaceInteractionKind::CardCompletion => "card_completion",
+            SurfaceInteractionKind::Dwell => "dwell",
+            SurfaceInteractionKind::Tap => "tap",
+            SurfaceInteractionKind::OptOut => "opt_out",
+        },
+    }
+}
+
+/// Inbound events after `after`. The fact's entity is the identity the event
+/// addressed, so a hook sees only events whose identity its grant reads; its
+/// actor is the engine's own principal, as no writer made it.
+pub(super) fn events_after(
+    vault: &Vault,
+    after: Option<SurfaceInboundPosition>,
+    max_entries: usize,
+) -> Result<SourceBatch> {
+    let rtxn = vault.store.env.read_txn()?;
+    let start = after
+        .as_ref()
+        .map_or(Bound::Unbounded, |position| Bound::Excluded(&position.0));
+    let actor = crate::ports::storage_service_principal()?;
+    let mut batch = SourceBatch::default();
+    for row in SURFACE_INBOUND.iter_range(&vault.store, &rtxn, start, Bound::Unbounded)? {
+        if batch.entries.len() >= max_entries {
+            batch.more = true;
+            break;
+        }
+        let (sequence, event) = row?;
+        let position = FactPosition::SurfaceInbound(SurfaceInboundPosition(sequence));
+        batch.through = Some(position);
+        batch.entries.push(FactEntry {
+            position,
+            kind: FactKind::SurfaceInbound,
+            entity: event.receiving_identity,
+            op: FactOp::Inbound,
+            actor,
+            recorded_at: event.recorded_at,
+            input_hash: event.input_hash(),
+            body_hash: None,
+            revision: None,
+            settlement: None,
+            predicate: None,
+            tick: None,
+            surface: Some(event),
+        });
+    }
+    Ok(batch)
+}
+
+/// The newest inbound position, or `None` while the feed is empty.
+pub(super) fn head_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<FactPosition>> {
+    Ok(SURFACE_INBOUND
+        .iter_rev_from(&vault.store, txn, &[])?
+        .next()
+        .transpose()?
+        .map(|(sequence, _)| FactPosition::SurfaceInbound(SurfaceInboundPosition(sequence))))
+}

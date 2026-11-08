@@ -1,5 +1,4 @@
 //! The one scoped graph projection: exact relation + both endpoints, then limits.
-use super::access_gate::HeldAuthority;
 use super::{ScopedRead, ScopedReadResult, admission::ReadAdmission};
 use crate::edge::{EdgeInfo, EdgeKind};
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
@@ -252,7 +251,7 @@ impl ScopedRead<'_> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         // One held authority for the tree's node reads in this txn (FIX 7462).
-        let held = HeldAuthority::for_request(None);
+        let held = self.held_for(None);
         let anchor = self.admit_entity_in(&txn, &policy, &filter, root)?;
         let mut tree = None;
         if anchor.visible()
