@@ -47,6 +47,11 @@ pub(in crate::batch) struct PutRow<'a> {
     pub(in crate::batch) learned_at: u64,
     pub(in crate::batch) data: &'a [u8],
     pub(in crate::batch) row_version: Option<u64>,
+    /// The bytes an ASSET body file holds when `data` is its manifest and
+    /// the batch read them (FIX 22075, 22091): an owning adapter's put
+    /// checks and custody read these, never the manifest. `None` for every
+    /// other row.
+    pub(in crate::batch) file_body: Option<&'a [u8]>,
 }
 
 /// Every flag a put is admitted under, grouped by what it governs.

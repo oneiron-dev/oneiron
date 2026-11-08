@@ -198,6 +198,9 @@ struct BatchApplyState {
     derived_from_edge_sources: BTreeSet<EntityId>,
     births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
+    /// The bytes each interpreted or carrier body file holds, which its
+    /// put's adapter checks read (FIX 22091).
+    asset_file_bodies: HashMap<EntityId, zeroize::Zeroizing<Vec<u8>>>,
     replicated_puts: BTreeSet<EntityId>,
     mutation_recorded_at: u64,
     authority_generation: u64,
@@ -348,7 +351,7 @@ pub(super) fn apply_ops_with_authority_beside(
             mutation_recorded_at,
         )
     };
-    asset_file_bodies::restore_manifests(&mut ops.ops, manifests);
+    let asset_file_bodies = asset_file_bodies::restore_manifests(&mut ops.ops, manifests);
     let (masked_files, masked_claim_pre) = masked?;
     // The pre-mask body of each MACHINE candidate the mask rewrote in this
     // transaction (FIX 11356), in op order per id: the candidate apply
@@ -427,6 +430,7 @@ pub(super) fn apply_ops_with_authority_beside(
         derived_from_edge_sources,
         births,
         asset_files,
+        asset_file_bodies,
         replicated_puts,
         mutation_recorded_at,
         authority_generation,

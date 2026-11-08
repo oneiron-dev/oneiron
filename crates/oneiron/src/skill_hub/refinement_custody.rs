@@ -152,7 +152,16 @@ pub(crate) fn validate_refinement_carrier_put(
     if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
         let head = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("refinement carrier header"))?;
-        if head.entity_type != ENTITY_TYPE_ASSET || raw[ENTITY_METADATA_HEADER_LEN..] != *bytes {
+        // A carrier is compared by what it holds, read from its body file
+        // when it has one (FIX 22091), never by its manifest.
+        if head.entity_type != ENTITY_TYPE_ASSET
+            || *crate::store::asset_carrier_body_in_txn(
+                store,
+                txn,
+                id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )? != *bytes
+        {
             return Err(invalid("refinement carrier cannot be overwritten"));
         }
     }
@@ -225,8 +234,14 @@ impl Vault {
         if head.entity_type != ENTITY_TYPE_ASSET {
             return Err(Error::CorruptedIndex("refinement source kind"));
         }
-        let (holder, ruling, payload) = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?
-            .ok_or(Error::CorruptedIndex("refinement source body"))?;
+        let body = crate::store::asset_carrier_body_in_txn(
+            &self.store,
+            txn,
+            &id,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        let (holder, ruling, payload) =
+            decode(&body)?.ok_or(Error::CorruptedIndex("refinement source body"))?;
         if holder != candidate || receipt_id(&holder, &ruling)? != id {
             return Err(Error::CorruptedIndex("refinement latest binding"));
         }

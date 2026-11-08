@@ -99,6 +99,9 @@ impl Vault {
             else {
                 continue;
             };
+            // A seed is read for what it holds, from its body file when it
+            // has one (FIX 22091).
+            let body = crate::store::asset_carrier_body_in_txn(&self.store, txn, &id, &body)?;
             let Some(stored) = decode(id, &body)? else {
                 continue;
             };

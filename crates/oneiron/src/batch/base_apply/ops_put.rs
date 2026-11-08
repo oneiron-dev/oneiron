@@ -49,6 +49,9 @@ pub(super) fn apply_put_arm(
     // here, and the row keeps its manifest; a replicated or
     // replayed row is written as it came.
     put_options.storage.asset_file = state.asset_files.remove(&id);
+    // The bytes the body file holds, read for this put's adapter checks
+    // (FIX 22091).
+    let file_body = state.asset_file_bodies.remove(&id);
     if put_options.storage.asset_file.is_none()
         && !replicated
         && !state.replay
@@ -209,6 +212,7 @@ pub(super) fn apply_put_arm(
                 learned_at,
                 data: &data,
                 row_version,
+                file_body: file_body.as_ref().map(|body| body.as_slice()),
             },
             options: put_options,
             context: PutContext {
