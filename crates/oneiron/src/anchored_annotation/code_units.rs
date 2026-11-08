@@ -74,7 +74,7 @@ fn file_hash_bytes(hex: &str) -> Option<FileHash> {
 /// as its masked copy, before its bytes are read, and every other file
 /// masked as it is read (FIX 7608, FIX 8964). `None` when that ASSET is
 /// gone.
-fn file_bytes_by_hash_in_txn(
+pub(super) fn file_bytes_by_hash_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     hash: &FileHash,

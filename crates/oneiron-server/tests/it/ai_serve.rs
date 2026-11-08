@@ -261,7 +261,11 @@ async fn wait_healthy(client: &reqwest::Client, base: &str) -> serde_json::Value
         if let Ok(response) = client.get(format!("{base}/api/health")).send().await
             && response.status().is_success()
         {
-            return response.json().await.unwrap();
+            let health: serde_json::Value = response.json().await.unwrap();
+            // A server still starting answers `"starting"` (FIX 22117).
+            if health["status"] == "ok" {
+                return health;
+            }
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

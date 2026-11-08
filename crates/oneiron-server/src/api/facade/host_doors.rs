@@ -133,6 +133,8 @@ pub(crate) use super::foreign_code_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
 pub(crate) use super::off_record_room_doors::*;
+// The owner's Mail & Calendar pack install door (FIX 12559), likewise.
+pub(crate) use super::mail_pack_doors::*;
 // The owner's pack preview door (FIX 5493), likewise.
 pub(crate) use super::pack_preview_doors::*;
 pub(crate) use super::persona_doors::*;
