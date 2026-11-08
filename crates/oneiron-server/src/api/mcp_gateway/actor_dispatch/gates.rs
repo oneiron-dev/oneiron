@@ -80,7 +80,7 @@ pub(in crate::api::mcp_gateway) fn mcp_proof_admits(
 
 /// A share recipient needs no general write-ceiling row merely to reach
 /// the two renderers. Only the live proof's own holder and class qualify.
-fn mcp_share_view_holder_admits(
+pub(super) fn mcp_share_view_holder_admits(
     server: &SyncServer,
     auth: &crate::auth::CoreAuth,
     class: &str,

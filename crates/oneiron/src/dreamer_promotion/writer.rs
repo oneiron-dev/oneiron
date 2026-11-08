@@ -312,6 +312,15 @@ pub(super) fn promote_one_answering(
         )
     };
 
+    // The rows an unverified promotion cites, kept before `surviving` moves:
+    // one drawn from a kept copy of mail the provider deleted is checked
+    // again (fix list row 15414).
+    let unverified_cited: Vec<EntityId> = if verified.is_none() {
+        surviving.clone()
+    } else {
+        Vec::new()
+    };
+
     // Surviving evidence + the typed chain + the computed meet ride the
     // candidate's structured evidence payload: the envelope evidence map's
     // candidate_evidence entry that GATE-12's evidence floor reads, and the
@@ -519,7 +528,11 @@ pub(super) fn promote_one_answering(
                     run.now_ms,
                 )
             }
-            None => Ok(()),
+            None => crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(
+                vault,
+                wtxn,
+                &unverified_cited,
+            ),
         }?;
         if record_output {
             let approval = verify_landed_body(&landed, &probe_body.predicate, source)

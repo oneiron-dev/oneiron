@@ -15,6 +15,8 @@ mod git_process;
 mod http_fetch;
 mod hub_owner;
 mod import_receipt;
+mod import_rows;
+pub(crate) use import_rows::SkillImportRows;
 mod install_transition;
 mod local_dir;
 pub use import_receipt::{

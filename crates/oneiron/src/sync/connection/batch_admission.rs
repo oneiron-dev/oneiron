@@ -342,6 +342,7 @@ impl SyncConnection {
                 if matches!(
                     data.first(),
                     Some(&transport::TAG_WINDOW_SYNC)
+                        | Some(&transport::TAG_ROOT_PART)
                         | Some(&transport::TAG_BULK_TRANSFER)
                         | Some(&transport::TAG_BULK_TRANSFER_DONE)
                 ) {
