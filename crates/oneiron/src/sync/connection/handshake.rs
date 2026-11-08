@@ -18,6 +18,7 @@ use super::session::{FullResyncMarker, SessionFault};
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
 mod acks;
+mod policy_wake_markers;
 mod replay;
 mod upgrade;
 
@@ -632,7 +633,12 @@ impl SyncConnection {
             let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Connected));
             return Ok(ws_stream);
         }
-        let full_resync_markers = self.full_resync_markers()?;
+        let mut full_resync_markers = self.full_resync_markers()?;
+        // An opened-item device leaves a policy wake's markers to their windows' promoted
+        // exchange (FIX 20202); any other marker still asks for sync-all recovery.
+        if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
+            self.defer_policy_wake_markers(&mut full_resync_markers)?;
+        }
         let force_resync: BTreeSet<String> = full_resync_markers
             .iter()
             .map(|marker| marker.window_key.clone())

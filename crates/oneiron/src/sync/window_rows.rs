@@ -1,5 +1,11 @@
 //! Window/root row vocabulary, defined in the storage layer.
 
+mod full_resync;
+
+pub(crate) use self::full_resync::{
+    FullResyncForm, clear_covered_policy_wake_marker_in_txn, full_resync_form_in_txn,
+    put_policy_wake_marker_in_txn,
+};
 pub(crate) use crate::store::window_rows::{
     BULK_TRANSFER_MARKER, ERR_WINDOW_UPDATE_SEQ_ROW, HISTORY_FREE_WINDOW, HexSeqKey, LAST_SYNC,
     OFF_RECORD_PROMOTE_PICKUP, PENDING_TOMBSTONE, REASSERT_MARKER, REMAT_MARKER,

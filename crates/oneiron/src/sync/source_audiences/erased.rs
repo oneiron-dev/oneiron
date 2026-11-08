@@ -19,15 +19,19 @@
 //! stores the change as one more pending update of that window, which it
 //! pins history-free and marks for a full resync; its queued sends go but
 //! the delete-bearing, and the erase owes the sweep the window's compaction,
-//! whose shallow cut drops the old revisions from its history. Every export,
+//! whose shallow cut drops the old revisions from its history. The marker is
+//! in the policy wake's form (FIX 20202): the wake this erase left persists
+//! the window again and readies it, and the window's exchange at that ready
+//! generation delivers the change and the sends that went. Every export,
 //! persist and compaction scrubs again ([`super::refresh_and_scrub`]), so a
 //! loaded copy that has not merged the removal, or a peer's copy that brings
 //! a revision back, never ships one. A stored window that does not rebuild
 //! does not stop the erase (fix list row 17209): it is pinned history-free,
 //! its queued sends go but the delete-bearing, it is marked for a full
-//! resync, and it is owed the sweep's compaction, which keeps its row, and so
-//! counts it as not done, until a pass compacts it; nothing ships from it
-//! meanwhile, since an export rebuilds it first and scrubs it then.
+//! resync in the plain form, since no exchange ships from it, and it is owed
+//! the sweep's compaction, which keeps its row, and so counts it as not done,
+//! until a pass compacts it; nothing ships from it meanwhile, since an export
+//! rebuilds it first and scrubs it then.
 
 use std::collections::BTreeSet;
 
@@ -43,13 +47,16 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::source_audience::{self, SourceAudienceEvent, SourceAudienceKind, SourceAudiencePolicy};
+use crate::sync::WindowManager;
 use crate::sync::bridge::{BRIDGE_ORIGIN, persist_window_update_in_txn};
 use crate::sync::loro_support::{
     doc_from_snapshot, export_updates_from, import_doc, map_delete, map_get_bytes, map_insert_bytes,
 };
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
-use crate::sync::window_rows::{HISTORY_FREE_WINDOW, WINDOW_FULL_RESYNC_MARKER};
+use crate::sync::window_rows::{
+    HISTORY_FREE_WINDOW, WINDOW_FULL_RESYNC_MARKER, put_policy_wake_marker_in_txn,
+};
 
 /// Drops, in the erase's own transaction `wtxn`, every stored window's
 /// policy revision naming `actor` or another actor this vault erased, and
@@ -317,7 +324,10 @@ struct Rewrite {
 /// marks it for a full resync, every queued send of it going but the
 /// delete-bearing, whether or not the live map changed: a revision or a
 /// receipt its history keeps goes when the erasure sweep compacts the
-/// window, which this owes it.
+/// window, which this owes it. The marker is the policy wake's, at the ready
+/// generation the wake this erase left raises the window to (FIX 20202): an
+/// opened-item device leaves it to the window's promoted exchange at that
+/// generation, which carries the change and every send that went.
 fn rewrite_stored_window_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -330,7 +340,8 @@ fn rewrite_stored_window_in_txn(
     let label = key.as_str().to_owned();
     HISTORY_FREE_WINDOW.put(&vault.store, wtxn, &label, &[1u8])?;
     crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, &label)?;
-    WINDOW_FULL_RESYNC_MARKER.put(&vault.store, wtxn, &label, &[1u8])?;
+    let generation = WindowManager::next_ready_generation_in_txn(vault, wtxn, &label)?;
+    put_policy_wake_marker_in_txn(vault, wtxn, &label, generation)?;
     crate::sweep::owed::owe_window_compaction_in_txn(vault, wtxn, key)?;
     if !changed {
         return Ok(());

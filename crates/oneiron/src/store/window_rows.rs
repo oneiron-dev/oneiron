@@ -26,7 +26,10 @@ pub(crate) const WINDOW_SHALLOW_FENCE: SideTable<String, [u8; 1], Raw> =
 pub(crate) const HISTORY_FREE_WINDOW: SideTable<String, [u8; 1], Raw> =
     SideTable::new(&side_table::SYNC_HISTORY_FREE_WINDOW);
 
-/// A sync window needs a full resync (`fr:w:{key}`). Marker byte `[1]`.
+/// A sync window needs a full resync (`fr:w:{key}`). Marker byte `[1]`, the
+/// plain form; the actor erase's rewrite puts the policy wake's form through
+/// `sync::window_rows::FullResyncForm` instead (FIX 20202), and a plain put
+/// here replaces it.
 pub(crate) const WINDOW_FULL_RESYNC_MARKER: SideTable<String, [u8; 1], Raw> =
     SideTable::new(&side_table::WINDOW_FULL_RESYNC_MARKER);
 

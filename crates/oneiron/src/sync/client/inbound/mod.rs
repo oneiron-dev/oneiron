@@ -9,11 +9,12 @@ use crate::sync::transport;
 use crate::sync::transport::{
     LEASE_STATUS_GRANTED, MAX_DECODED_PAYLOAD_BYTES, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE,
     TAG_EPHEMERAL, TAG_LEASE_GRANTED, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR, TAG_WINDOW_SYNC,
-    TransportError,
+    TransportError, window_sub_tags,
 };
 use crate::sync::types::WindowKey;
 
 mod bulk;
+mod policy_wake_marker;
 mod window_sync;
 
 impl SyncClient {
@@ -169,6 +170,14 @@ impl SyncClient {
             TAG_WINDOW_SYNC => {
                 let (window_key, sub_tag, inner) = transport::decode_window_sync(payload)?;
                 responses.extend(self.handle_window_sync(window_key, sub_tag, inner)?);
+                // The home's vector a promoted window's exchange recorded may
+                // prove a policy wake's full-resync marker delivered (FIX 20202).
+                if matches!(
+                    sub_tag,
+                    window_sub_tags::VV_REQUEST | window_sub_tags::VV_RESPONSE
+                ) {
+                    self.settle_policy_wake_marker(window_key);
+                }
             }
             TAG_BULK_TRANSFER => {
                 if self.config.residence_mode == SyncResidenceMode::Opened {

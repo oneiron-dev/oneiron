@@ -53,14 +53,44 @@ impl WindowManager {
             if !window_stored_in(vault, wtxn, key)? {
                 return Ok(false);
             }
-            let generation = READY_GENERATION
-                .get(&vault.store, wtxn, &key.0)?
-                .map_or(0, u64::from_le_bytes)
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("window ready generation"))?;
+            let generation = Self::next_ready_generation_in_txn(vault, wtxn, key.as_str())?;
             READY_GENERATION.put(&vault.store, wtxn, &key.0, &generation.to_le_bytes())?;
             Ok(true)
         })
+    }
+
+    /// Window `label`'s ready generation, read in `txn`: 0 for a window no
+    /// wake readied. An exchange of the window that starts once it is `g`
+    /// carries what the wake that raised it to `g` persisted.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and a row that does not read as a generation.
+    pub(crate) fn ready_generation_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        label: &str,
+    ) -> Result<u64> {
+        Ok(READY_GENERATION
+            .get(&vault.store, txn, &label.to_owned())?
+            .map_or(0, u64::from_le_bytes))
+    }
+
+    /// The ready generation the next [`Self::mark_window_ready`] of window
+    /// `label` raises it to, read in `txn`: what a writer whose change a
+    /// policy wake delivers stamps on its full-resync marker (FIX 20202).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and a generation at its last value.
+    pub(crate) fn next_ready_generation_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        label: &str,
+    ) -> Result<u64> {
+        Self::ready_generation_in_txn(vault, txn, label)?
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("window ready generation"))
     }
 
     /// Whether this vault stores window `key`: its snapshot, or pending
