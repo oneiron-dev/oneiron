@@ -6360,6 +6360,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_waits_rebind_prepare(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.waits.rebind_prepare", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_waits_rebind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.waits.rebind", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_waits_resolve(
         &self,
         input: serde_json::Value,
@@ -7986,6 +8004,15 @@ impl NativeClient {
     pub fn tasks_outcomes(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("tasks.outcomes", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_outcomes_route_calibration(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.outcomes.route_calibration", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -9915,6 +9942,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.esign.signing.signature", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_esign_signing_preview(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.esign.signing.preview", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

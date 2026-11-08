@@ -21,8 +21,8 @@
 
 mod args;
 mod arms;
-mod cases;
-mod config;
+pub(crate) mod cases;
+pub(crate) mod config;
 mod engine;
 mod measure;
 mod native;
