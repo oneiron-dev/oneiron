@@ -14,6 +14,7 @@ mod decls;
 mod erased;
 use oneiron_store::side_table::key;
 mod raw_reverse;
+pub(crate) mod row_classes;
 #[cfg(test)]
 mod tests;
 
@@ -34,6 +35,7 @@ pub(crate) use codec::{
 pub(crate) use decls::*;
 pub(crate) use erased::{Erased, ErasedForm};
 pub(crate) use key::{FixedSideKey, HexId, SideKey};
+pub(crate) use row_classes::{RestoreClass, StorageTier};
 
 /// Where a side table's rows live: the two side databases of a write target.
 pub(crate) trait SideTableDbs {
@@ -256,9 +258,28 @@ pub(crate) struct SideTableDecl {
     /// The typed acceptance the historical lift sweep runs over a masked copy of
     /// a row (FIX 2680); a table that names none keeps the sweep's shape check.
     pub(crate) accepts: Option<MaskedAccepts>,
+    /// What a restore over a live vault does with this table's rows.
+    pub(crate) restore: RestoreClass,
+    /// The payload family a checkpoint capture places this table's rows in; `None` while the
+    /// table has none, which the payload preflight names as unregistered.
+    pub(crate) family: Option<crate::store::checkpoint_payload::rows::Class>,
+    /// Whether a checkpoint image carries this table's rows.
+    pub(crate) tier: StorageTier,
+    /// The key ranges of this table in another tier than [`Self::tier`]: the bytes after the
+    /// prefix a range's keys start with, and its tier.
+    pub(crate) key_tiers: &'static [(&'static [u8], StorageTier)],
 }
 
 impl SideTableDecl {
+    /// The storage tier of this table's row `key`: its key range's, else the table's.
+    pub(crate) fn tier_of(&self, key: &[u8]) -> StorageTier {
+        let rest = key.strip_prefix(self.prefix).unwrap_or(key);
+        self.key_tiers
+            .iter()
+            .find(|(range, _)| rest.starts_with(range))
+            .map_or(self.tier, |(_, tier)| *tier)
+    }
+
     /// The declared prefix as the `sync_state` key spelling.
     fn prefix_str(&self) -> Result<&'static str> {
         std::str::from_utf8(self.prefix)

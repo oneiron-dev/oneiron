@@ -1,9 +1,9 @@
 //! The payload registry (KS7-2b): one class for every declared side-table
-//! family, by its declaration's `(SideDb, prefix)`, for every manifest
-//! database and for every entity kind. Nothing has a class by default and
-//! nothing registers itself: a family declared later has none until it is
-//! named here, and until then a capture keeps its rows in the image, named
-//! ([`super::preflight`]).
+//! family, for every manifest database and for every entity kind. A side
+//! table's class is on its row (`[family: ..]`, core split slice 1); the
+//! databases and kinds are classed here. Nothing has a class by default: a
+//! table whose row says `unregistered` has none, and a capture keeps its rows
+//! in the image, named ([`super::preflight`]).
 //!
 //! A family an owner getter reads is that getter's, and the getter places
 //! each of its rows: in an owner's compartment, as structure, with another
@@ -24,45 +24,15 @@ use std::ops::Bound;
 use super::{Carrier, Getter};
 use crate::side_table::{self, SideDb, SideTableDecl};
 use crate::store::checkpoint_payload::rows::OtherClient;
-use crate::store::{CustodyKind, ResponseDb, ResponseFamily};
-
-mod families;
-
-use families::FAMILIES;
-
-/// Where a family's rows go: its one class.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Class {
-    /// An owner getter reads the family and places each row.
-    Owner(Getter),
-    /// Ids, counts, digests, markers and pins with no payload of their own.
-    Structure,
-    /// Another custody client's rows, handed to it as they stand.
-    Other(Client),
-    /// A mixed sync carrier, which KS7-3's port splits.
-    Mixed(Carrier),
-    /// Not compartmented: under the vault-wide seal, named on the receipt.
-    Unclassified,
-    /// Runtime or derived rows, which no image takes.
-    NotImaged,
-}
-
-/// The custody client another family's rows belong to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Client {
-    /// One the getters dispatch to as well (KS-2, KS-2B, KS-5, KS-6).
-    Dispatch(OtherClient),
-    /// Rows already sealed under that kind's own keys, which stay live in
-    /// custody: KS-1's claim-bound gate decisions.
-    Sealed(CustodyKind),
-}
+pub(super) use crate::store::checkpoint_payload::rows::{Class, Client};
+use crate::store::{ResponseDb, ResponseFamily};
 
 /// What a manifest database holds.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum DbClass {
     /// Rows of one class.
     Rows(Class),
-    /// Declared side-table families, each classed in [`FAMILIES`].
+    /// Declared side-table families, each classed on its row.
     Families(SideDb),
 }
 
@@ -145,12 +115,6 @@ pub(super) fn db_name(db: SideDb) -> &'static str {
     }
 }
 
-/// Every family the registry names, by class, as written: the preflight
-/// reads it whole ([`super::preflight`]).
-pub(super) fn families() -> &'static [(Class, &'static [&'static SideTableDecl])] {
-    FAMILIES
-}
-
 /// Every entity kind the registry names, by class, as written.
 pub(super) fn kinds() -> &'static [(Class, &'static [&'static str])] {
     KINDS
@@ -188,12 +152,13 @@ pub(super) fn class_for_row(database: &str, key: &[u8], value: &[u8], declared: 
 pub(super) struct Families([BTreeMap<&'static [u8], (&'static SideTableDecl, Class)>; 2]);
 
 impl Families {
+    /// Every declared table that names a family on its row.
     pub(super) fn new() -> Self {
         let mut by_db = [BTreeMap::new(), BTreeMap::new()];
-        for (class, decls) in FAMILIES {
-            for decl in *decls {
+        for decl in side_table::declared() {
+            if let Some(class) = decl.family {
                 let (sync, prefix) = identity(decl);
-                by_db[usize::from(sync)].insert(prefix, (*decl, *class));
+                by_db[usize::from(sync)].insert(prefix, (decl, class));
             }
         }
         Self(by_db)

@@ -4,5 +4,6 @@
 crate::side_table::side_tables! {
     /// Owner-set inbox review dial (exceptions-only vs review-all), house per-feature dial pattern.
     /// Key: ().
-    INBOX_REVIEW_DIAL: VaultMeta b"settings:inbox:v1:review_dial" Raw;
+    INBOX_REVIEW_DIAL: VaultMeta b"settings:inbox:v1:review_dial" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
 }

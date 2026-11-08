@@ -4,5 +4,6 @@
 crate::side_table::side_tables! {
     /// Channel-identity selection rule set. Key: ().
     CHANNEL_IDENTITY_SELECTION_RULES: VaultMeta b"channel_identity_selection:v1:rules" Raw
+        [restore: live] [family: unclassified] [tier: canonical]
         => crate::channel_identity_selection::erase_rule_actor_in_txn;
 }
