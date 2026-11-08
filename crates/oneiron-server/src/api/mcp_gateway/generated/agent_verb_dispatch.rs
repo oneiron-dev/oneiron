@@ -200,6 +200,9 @@ pub(crate) fn mcp_agent_verb_input(
             if let Some(value) = &a.due_at {
                 map.insert("due_at".to_owned(), json!(value));
             }
+            if let Some(value) = &a.watch {
+                map.insert("watch".to_owned(), json!(value));
+            }
             Ok(Value::Object(map))
         }
         "tasks.wave" => a.spec.clone().ok_or_else(invalid),
@@ -1209,6 +1212,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.skills.pack_receipt" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.outcomes.project" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.outcomes.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.settings.models.responses_store.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.settings.models.responses_store.set" => a.spec.clone().ok_or_else(invalid),
         "vault.models.manifest.read" => a.spec.clone().ok_or_else(invalid),
         "vault.models.manifest.replace" => a.spec.clone().ok_or_else(invalid),
         "vault.settings.web_connector" => a.spec.clone().ok_or_else(invalid),
@@ -1886,6 +1891,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
             if let Some(value) = input.get("due_at") {
                 arguments.insert("due_at".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("watch") {
+                arguments.insert("watch".to_owned(), value.clone());
             }
         }
         "tasks.wave" => {
@@ -4515,6 +4523,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skills.outcomes.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.settings.models.responses_store.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.settings.models.responses_store.set" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.models.manifest.read" => {
@@ -7599,6 +7613,12 @@ async fn execute_agent_verb_row_on(
             boxed_mcp_verb_row_vault_skills_outcomes_project(row).await
         }
         "vault.skills.outcomes.get" => boxed_mcp_verb_row_vault_skills_outcomes_get(row).await,
+        "vault.settings.models.responses_store.read" => {
+            boxed_mcp_verb_row_vault_settings_models_responses_store_read(row).await
+        }
+        "vault.settings.models.responses_store.set" => {
+            boxed_mcp_verb_row_vault_settings_models_responses_store_set(row).await
+        }
         "vault.models.manifest.read" => boxed_mcp_verb_row_vault_models_manifest_read(row).await,
         "vault.models.manifest.replace" => {
             boxed_mcp_verb_row_vault_models_manifest_replace(row).await
@@ -55625,6 +55645,120 @@ async fn mcp_verb_row_vault_skills_outcomes_get(row: McpVerbRow<'_>) -> McpVerbR
     let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skills_outcomes_get(
         server, auth, input,
     ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_settings_models_responses_store_read<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_settings_models_responses_store_read(row))
+}
+async fn mcp_verb_row_vault_settings_models_responses_store_read(
+    row: McpVerbRow<'_>,
+) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.models.responses_store.read", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::task_verb::sdk::EmptyRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(
+        crate::api::facade::host_doors::vault_settings_models_responses_store_read(
+            server, auth, input,
+        ),
+    )
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_settings_models_responses_store_set<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_settings_models_responses_store_set(row))
+}
+async fn mcp_verb_row_vault_settings_models_responses_store_set(
+    row: McpVerbRow<'_>,
+) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.models.responses_store.set", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::task_verb::sdk::ModelResponsesStoreSettings =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(
+        crate::api::facade::host_doors::vault_settings_models_responses_store_set(
+            server, auth, input,
+        ),
+    )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
     served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
