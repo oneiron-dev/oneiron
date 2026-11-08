@@ -212,7 +212,9 @@ impl Vault {
     /// live owner writing in person and the prior's author; the replacement
     /// must have landed (Auto or Approved, as the settled close requires),
     /// and a class a manifest rule declares critical keeps its owner
-    /// confirmation, so either fails the write closed.
+    /// confirmation, so either fails the write closed. The prior's close is
+    /// gated as `owner`'s verified close of its row, so a prior that was
+    /// settled Approved passes the fallback floor as an Auto one does.
     pub(crate) fn supersede_by_owner_correction_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
