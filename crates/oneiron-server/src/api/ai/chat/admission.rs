@@ -504,6 +504,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
             server.ai.session_app_open_applied(session_key, None);
     }
     let mut written = None;
+    let mut written_turn = None;
     let mut native_user_turn = None;
     let user = crate::server::blocking(|| {
         let memory = vault.memory(actor, class).with_session(session_key);
@@ -519,6 +520,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
             witness_session.as_ref(),
             session_binding.as_ref(),
             &mut written,
+            &mut written_turn,
             &mut native_user_turn,
         )
     })
@@ -606,9 +608,15 @@ pub(in crate::api::ai::chat) async fn start_turn(
             model_call_no_record_at_arrival,
             keepalive,
             mark,
+            // FIX 5033: its seed binds the user turn this request answers,
+            // by the TURN and MESSAGE rows the witness above wrote.
             breakpoint: self_chat.map(|chat| {
                 let reader = WriteActor::new(actor, class);
+                let answered = written_turn.zip(written.clone()).map(|(turn, messages)| {
+                    oneiron::conversation::ChatBreakpointUserTurn { turn, messages }
+                });
                 chat.breakpoint(reader, locality, recalled, breakpoint_craft)
+                    .with_user_turn(answered)
             }),
             today: None,
             craft,
