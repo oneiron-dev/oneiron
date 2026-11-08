@@ -333,16 +333,17 @@ pub(crate) fn judge_external_effect_in_txn(
         })
         .transpose()?
         .flatten();
+    // The one proposed public effect a publish press can release.
+    let publish_press_target = hydrated_effect.channel == "artifact"
+        && hydrated_effect.verb == "publish"
+        && hydrated_effect.brief_ref.is_some();
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
         effect.mail_graduated = mail_graduated;
         effect.mail_approve_once = mail_retry_authorized || (mail_once && approve_once.is_some());
         // Only a still-available marker looked up by the engine-computed,
         // exact publish digest can release this one proposed public effect.
-        effect.artifact_publish_approve_once = approve_once.is_some()
-            && hydrated_effect.channel == "artifact"
-            && hydrated_effect.verb == "publish"
-            && hydrated_effect.brief_ref.is_some();
+        effect.artifact_publish_approve_once = approve_once.is_some() && publish_press_target;
         // ONE-1752: the same post-conversion seam. Hydration cannot reach a
         // context that does not exist until `gate_input()` builds it, so the
         // override it resolved is written on here, once, before evaluation.
@@ -640,9 +641,16 @@ pub(crate) fn judge_external_effect_in_txn(
     } else {
         None
     };
+    // A preflight reads whether the owner's press on this one effect would
+    // supply the external-effect authority it lacks (FIX 22102).
+    let press_supplies_authority = decision
+        .reason_codes()
+        .contains(&GateReasonCode::PendingExternalEffectAuthority)
+        && policy.press_supplies_external_effect_authority(&input, mail_once, publish_press_target);
     Ok(ExternalEffectJudgment {
         decision,
         created_at,
+        press_supplies_authority,
         input,
         binding,
         grant_ref,
