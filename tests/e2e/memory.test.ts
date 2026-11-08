@@ -414,22 +414,16 @@ suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work
     await w.engine.awaitReceipt(settled.receipt_ref);
     // Current ordinary-owner supersession is upsert-driven. Reuse the
     // approved row's public id; no caller-set approval or run-id substitute.
+    // FIX 22041: the owner's own correction of the original lands at once
+    // and closes it in the same write. No proposal opens, so nothing is
+    // settled a second time.
     const supersession = await w.engine.client.call("vault.claims.upsert", claimInput(w, c.alternative, newId));
     expect((await entity(w.engine.client, supersession.claim_short_id)).id_hex).toBe(newId);
+    expect(supersession.approval).toBe("auto");
     expect(supersession.superseded_short_id).toBe(original.claim_short_id);
-    // A replacement re-proposes: the superseding upsert lands proposed and
-    // closes the original, so the holder settles the same proposal again.
-    expect((await claim(w, newId)).approval).toBe("proposed");
-    expect(values(await recalled(w, "Morgan name"), c.current.predicate)).toEqual([]);
-    const review2 = await w.engine.client.call("vault.claims.review", { claim_ref: newId });
-    expect(review2.proposal_ref).toBe(newId);
-    const settled2 = await w.engine.client.call("vault.claims.settle", {
-      claim_ref: newId, review_id: review2.review_id, decision: "approve",
-    });
-    expect(settled2.verdict).toBe("landed");
-    expect(settled2.changes).toEqual([{ claim_ref: newId, verdict: "landed" }]);
-    await w.engine.awaitReceipt(settled2.receipt_ref);
-    expect((await claim(w, newId)).approval).toBe("approved");
+    expect(supersession.superseded?.id).toBe(oldId);
+    await w.engine.awaitReceipt(supersession.receipt_ref);
+    expect((await claim(w, newId)).approval).toBe("auto");
     expect(values(await recalled(w, "Morgan name"), c.current.predicate))
       .toEqual(c.expected.recallAfterAuthorizedApprovalAndSupersession);
     const retracted = await w.engine.client.call("vault.claims.retract", { claim_ref: newId });
@@ -441,7 +435,7 @@ suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work
     expect(old.value).toBe(c.current.value.value);
     expect(old.lifecycle).toBe("superseded"); expect(old.approval).toBe("auto");
     expect(current.value).toBe(c.alternative.value.value);
-    expect(current.lifecycle).toBe("retracted"); expect(current.approval).toBe("approved");
+    expect(current.lifecycle).toBe("retracted"); expect(current.approval).toBe("auto");
     for (const [row, evidence, actor] of [[old, ref(w, "@name-statement"), w.engine.pairedActor.principalRef],
       [current, ref(w, "@name-correction"), ref(w, "@agent-a")]] as const) {
       expect(row.valid_from).not.toBeNull(); expect(row.valid_to).not.toBeNull();
@@ -455,7 +449,7 @@ suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work
     expect(newer.state).toBe("retracted"); expect(newer.supersedes).toContain(oldId);
     expect(full.records.find(row => row.id === oldId)?.superseded_by).toContain(newId);
     await w.engine.artifacts.json("lifecycle.json", { original, alternative, review, refusal: refused.body,
-      settled, supersession, review2, settled2, retracted, history, timeline: full });
+      settled, supersession, retracted, history, timeline: full });
   } finally { await closeWorld(w) }
 });
 

@@ -879,7 +879,7 @@ export class Oneiron {
       /** Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically. */
       resolve_proposal: (input: Facade.ClusterResolveRequest): Facade.ClusterTopologyReceipt => this.#call(() => this.#client.vaultClusterResolveProposal(input) as Facade.ClusterTopologyReceipt),
     }),
-    /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
+    /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes. */
     export: Object.assign((format?: string): Facade.ExportAnswer => this.#call(() => this.#client.vaultExport({format: format}) as Facade.ExportAnswer), {
       transfer: {
         /** Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it. */
@@ -3436,11 +3436,11 @@ export class Oneiron {
     },
     mail: {
       pack: {
-        /** The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing. */
+        /** The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing. */
         install: (input: Facade.EmptyRequest = {}): Facade.PackPutReceipt => this.#call(() => this.#client.vaultMailPackInstall(input) as Facade.PackPutReceipt),
       },
       sources: {
-        /** Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names. */
+        /** Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members. */
         connect: (input: Facade.MailSourceConnectRequest): Facade.MailSourceConnectReceipt => this.#call(() => this.#client.vaultMailSourcesConnect(input) as Facade.MailSourceConnectReceipt),
         /** The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted. */
         list: (input: Facade.EmptyRequest = {}): Facade.MailSourceView[] => this.#call(() => this.#client.vaultMailSourcesList(input) as Facade.MailSourceView[]),
@@ -3456,6 +3456,10 @@ export class Oneiron {
         audience_events: (input: Facade.MailSourceRef): Facade.SourceAudienceEventView[] => this.#call(() => this.#client.vaultMailSourcesAudienceEvents(input) as Facade.SourceAudienceEventView[]),
         /** Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers. */
         sync_status: (input: Facade.MailSourceRef): Facade.MailSyncStatusView => this.#call(() => this.#client.vaultMailSourcesSyncStatus(input) as Facade.MailSyncStatusView),
+        /** The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place. */
+        import_mbox: (input: Facade.MailMboxImportRequest): Facade.MailMboxImportReport => this.#call(() => this.#client.vaultMailSourcesImportMbox(input) as Facade.MailMboxImportReport),
+        /** The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner. */
+        sync: (input: Facade.MailSourceSyncRequest): Facade.MailSyncReport => this.#call(() => this.#client.vaultMailSourcesSync(input) as Facade.MailSyncReport),
       },
       threads: {
         /** Shares one mail thread with a person as the caller's explicit act; the caller must read the thread. The share reaches that thread alone, never the mailbox. */
@@ -3464,6 +3468,16 @@ export class Oneiron {
         unshare: (input: Facade.MailThreadShareRequest): Facade.MailThreadShareReceipt => this.#call(() => this.#client.vaultMailThreadsUnshare(input) as Facade.MailThreadShareReceipt),
         /** One mail thread's messages, oldest first, to a reader of its source or someone it was shared with. */
         read: (input: Facade.MailThreadRequest): Facade.MailThreadView => this.#call(() => this.#client.vaultMailThreadsRead(input) as Facade.MailThreadView),
+      },
+      reply: {
+        /** Drafts a reply to a mail thread the caller reads, in plain text with optional simple HTML, to its sender (reply_all adds its To and Cc; cc names more), or its next revision under the same key. Nothing sends until the mailbox owner approves. */
+        draft: (input: Facade.MailReplyDraftRequest): Facade.MailReplyDraftView => this.#call(() => this.#client.vaultMailReplyDraft(input) as Facade.MailReplyDraftView),
+        /** The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, frozen plan and state. */
+        drafts: (input: Facade.MailReplyDraftsRequest): Facade.MailReplyDraftPage => this.#call(() => this.#client.vaultMailReplyDrafts(input) as Facade.MailReplyDraftPage),
+        /** Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends. */
+        discard: (input: Facade.MailReplyDraftRef): Facade.MailReplyDraftView => this.#call(() => this.#client.vaultMailReplyDiscard(input) as Facade.MailReplyDraftView),
+        /** The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice. */
+        approve: (input: Facade.MailReplyApproveRequest): Facade.MailReplyDraftView => this.#call(() => this.#client.vaultMailReplyApprove(input) as Facade.MailReplyDraftView),
       },
       compliance: {
         /** Whether org compliance search across mailboxes is on; off by default. */
@@ -3477,6 +3491,10 @@ export class Oneiron {
       },
       /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
       inbox: (input: Facade.MailInboxRequest): Facade.MailInboxPage => this.#call(() => this.#client.vaultMailInbox(input) as Facade.MailInboxPage),
+      attachments: {
+        /** A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers. */
+        open: (input: Facade.MailAttachmentOpenRequest): Facade.MailAttachmentView => this.#call(() => this.#client.vaultMailAttachmentsOpen(input) as Facade.MailAttachmentView),
+      },
     },
     dreamer: {
       follower: {
