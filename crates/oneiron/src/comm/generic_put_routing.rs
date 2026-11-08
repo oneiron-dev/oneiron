@@ -298,7 +298,10 @@ fn take_batch_puts_in_txn(
             continue;
         };
         let birth = bound_births.and_then(|births| {
-            births.iter().find(|(row, _)| row == id).map(|(_, birth)| birth)
+            births
+                .iter()
+                .find(|(row, _)| row == id)
+                .map(|(_, birth)| birth)
         });
         if mentions.get(id) != Some(&1)
             || (birth.is_some() && predicate != PREDICATE_COMM_LAST_TOUCH)

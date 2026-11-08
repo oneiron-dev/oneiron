@@ -7,6 +7,7 @@ use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::rpc::RpcFault;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::sync::client::SyncResidenceMode;
 use crate::sync::residence::WindowIndexEntry;
@@ -22,6 +23,49 @@ pub struct ResidenceIndexWindow {
     pub items: Vec<WindowIndexEntry>,
 }
 
+/// Why a residence index fetch failed, by the side the fault is on (FIX
+/// 22153), around the error the fetch tells.
+#[derive(Debug)]
+pub(crate) enum IndexFetchFault {
+    /// The home's: no socket to it, its refusal, or a reply that breaks the
+    /// RPC's or the index's paging contract.
+    Remote(TransportError),
+    /// This machine's own: its lane mode, residence policy or selector, its
+    /// actor session, its endpoint and upgrade, its own encode, or a read or
+    /// write of its store (FIX 22179).
+    Local(TransportError),
+}
+
+impl IndexFetchFault {
+    /// The fault of a residence RPC, on the side the RPC named (FIX 22179).
+    fn of_rpc(fault: RpcFault) -> Self {
+        match fault {
+            RpcFault::Remote(error) => Self::Remote(error),
+            RpcFault::Local(error) => Self::Local(error),
+        }
+    }
+
+    /// Whether the fault is this machine's own.
+    pub(crate) const fn is_local(&self) -> bool {
+        matches!(self, Self::Local(_))
+    }
+
+    /// The error the fetch tells, its side dropped.
+    pub(crate) fn into_error(self) -> TransportError {
+        match self {
+            Self::Remote(error) | Self::Local(error) => error,
+        }
+    }
+}
+
+impl std::fmt::Display for IndexFetchFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Remote(error) | Self::Local(error) => std::fmt::Display::fmt(error, f),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct IndexReply {
@@ -34,19 +78,37 @@ struct IndexReply {
 impl SyncClient {
     /// Fetch the current windows' thin index without a full-window VV exchange.
     pub async fn fetch_current_index(&self, now_secs: u64) -> Result<usize, TransportError> {
+        self.fetch_current_index_by_side(now_secs)
+            .await
+            .map_err(IndexFetchFault::into_error)
+    }
+
+    /// [`Self::fetch_current_index`], its fault told by the side it is on
+    /// (FIX 22153): a home session counts only the home's against the home.
+    /// The residence socket's opening and each call on it fail on the side
+    /// the RPC names (FIX 22179): its endpoint, its signing, its actor
+    /// session and its bind's or request's encode are this machine's own.
+    pub(crate) async fn fetch_current_index_by_side(
+        &self,
+        now_secs: u64,
+    ) -> Result<usize, IndexFetchFault> {
         if self.config.residence_mode != SyncResidenceMode::Opened {
-            return Err(refused());
+            return Err(IndexFetchFault::Local(refused()));
         }
-        let budgets = residence_budgets(&self.vault)?;
+        let budgets = residence_budgets(&self.vault).map_err(IndexFetchFault::Local)?;
         let selector = self
             .config
             .residence_selector
             .as_ref()
-            .ok_or_else(refused)?;
-        let selector_bytes = encode_sync_selector(selector).map_err(|_| refused())?;
+            .ok_or_else(|| IndexFetchFault::Local(refused()))?;
+        let selector_bytes =
+            encode_sync_selector(selector).map_err(|_| IndexFetchFault::Local(refused()))?;
         let selector = base64::engine::general_purpose::STANDARD.encode(selector_bytes);
-        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
+        let Some(mut rpc) = ResidenceRpc::connect_by_side(&self.vault, &self.config, budgets)
+            .await
+            .map_err(IndexFetchFault::of_rpc)?
+        else {
+            return Err(IndexFetchFault::Remote(TransportError::home_offline()));
         };
         let mut eligible = HashSet::new();
         let mut next = Some(WindowKey::from_timestamp(now_secs));
@@ -57,7 +119,7 @@ impl SyncClient {
         }
         // A current month's world windows are indexed for the worlds this
         // device follows; any other world item is still opened by id.
-        let worlds = self.effective_worlds()?;
+        let worlds = self.effective_worlds().map_err(IndexFetchFault::Local)?;
         let mut total = 0;
         let mut indexed = HashSet::new();
         for key in self.server_windows() {
@@ -84,7 +146,7 @@ impl SyncClient {
                         tokio::task::yield_now().await;
                     }
                     let value = match rpc
-                        .request(
+                        .request_by_side(
                             "residence.index",
                             json!({
                                 "window": key, "selector": selector, "after": cursor,
@@ -94,10 +156,11 @@ impl SyncClient {
                         .await
                     {
                         Ok(value) => value,
-                        Err(TransportError::IndexRevisionChanged) => break,
-                        Err(error) => return Err(error),
+                        Err(RpcFault::Remote(TransportError::IndexRevisionChanged)) => break,
+                        Err(fault) => return Err(IndexFetchFault::of_rpc(fault)),
                     };
-                    let reply: IndexReply = serde_json::from_value(value).map_err(|_| refused())?;
+                    let reply: IndexReply = serde_json::from_value(value)
+                        .map_err(|_| IndexFetchFault::Remote(refused()))?;
                     if reply.window != key
                         || reply.revision.len() != 64
                         || !reply.revision.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -105,30 +168,32 @@ impl SyncClient {
                             .as_ref()
                             .is_some_and(|prior| prior != &reply.revision)
                     {
-                        return Err(refused());
+                        return Err(IndexFetchFault::Remote(refused()));
                     }
                     revision = Some(reply.revision);
                     let mut previous = cursor.clone();
                     for entry in &reply.items {
-                        let id = EntityId::from_hex(&entry.entity_id).map_err(|_| refused())?;
+                        let id = EntityId::from_hex(&entry.entity_id)
+                            .map_err(|_| IndexFetchFault::Remote(refused()))?;
                         if entry.entity_id != id.to_hex()
                             || previous
                                 .as_ref()
                                 .is_some_and(|prior| prior >= &entry.entity_id)
                         {
-                            return Err(refused());
+                            return Err(IndexFetchFault::Remote(refused()));
                         }
                         previous = Some(entry.entity_id.clone());
                     }
                     items.extend(reply.items);
                     match reply.next_cursor {
                         Some(next) => {
-                            let id = EntityId::from_hex(&next).map_err(|_| refused())?;
+                            let id = EntityId::from_hex(&next)
+                                .map_err(|_| IndexFetchFault::Remote(refused()))?;
                             if next != id.to_hex()
                                 || previous.as_ref().is_some_and(|prior| prior > &next)
                                 || cursor.as_ref().is_some_and(|prior| prior >= &next)
                             {
-                                return Err(refused());
+                                return Err(IndexFetchFault::Remote(refused()));
                             }
                             cursor = Some(next);
                         }
@@ -142,7 +207,9 @@ impl SyncClient {
                     break;
                 }
             }
-            let items = complete.ok_or(TransportError::IndexRevisionChanged)?;
+            let items = complete.ok_or(IndexFetchFault::Remote(
+                TransportError::IndexRevisionChanged,
+            ))?;
             let prefix = format!("ri:w:{key}:");
             self.vault
                 .with_write_txn_grouped(|txn| {
@@ -164,7 +231,7 @@ impl SyncClient {
                     }
                     Ok(())
                 })
-                .map_err(|e| TransportError::Storage(e.to_string()))?;
+                .map_err(|e| IndexFetchFault::Local(TransportError::Storage(e.to_string())))?;
             total += items.len();
             indexed.insert(key);
         }
@@ -190,7 +257,7 @@ impl SyncClient {
                 }
                 Ok(())
             })
-            .map_err(|e| TransportError::Storage(e.to_string()))?;
+            .map_err(|e| IndexFetchFault::Local(TransportError::Storage(e.to_string())))?;
         Ok(total)
     }
 

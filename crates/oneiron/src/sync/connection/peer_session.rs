@@ -21,8 +21,9 @@
 //! resets the count and ends peer mode, said once; however that session ends
 //! later, it counts nothing. A home session that fails on a fault of this
 //! machine's own instead (FIX 22107: its store or queue, its full-resync
-//! markers, an encode, the recovery it needs first) says nothing of the home:
-//! it counts nothing, resets nothing, and a turn a probe gave the home stays.
+//! markers, an encode, the recovery it needs first; FIX 22153: its store as
+//! it applies the home's frames or index) says nothing of the home: it
+//! counts nothing, resets nothing, and a turn a probe gave the home stays.
 //!
 //! A peer session (`SyncClient::peer_session`) exchanges
 //! updates both ways as a home session does (queue replay, vector rounds,

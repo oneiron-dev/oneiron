@@ -564,9 +564,9 @@ fn apply_admitted(
             routed.record_with_admission_in_txn(
                 vault,
                 wtxn,
-                admission.as_mut().map(|bound| {
-                    &mut **bound as &mut dyn crate::comm::ProjectedHeadAdmission
-                }),
+                admission
+                    .as_mut()
+                    .map(|bound| &mut **bound as &mut dyn crate::comm::ProjectedHeadAdmission),
             )?
         }
         None => BTreeSet::new(),

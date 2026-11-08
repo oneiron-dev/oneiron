@@ -98,6 +98,8 @@ pub enum WithdrawnUnit {
     },
     Paragraph {
         block: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<oneiron_docedit::docx_body::DocxStoryScope>,
     },
     FolderItem {
         file: EntityId,
@@ -154,6 +156,8 @@ pub enum ReaskShape {
     Paragraphs {
         author: String,
         labels: SlideReviewLabels,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<oneiron_docedit::docx_body::DocxStoryScope>,
     },
     Slides {
         author: PptxAuthor,
