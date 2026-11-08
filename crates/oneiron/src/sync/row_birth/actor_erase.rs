@@ -21,7 +21,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use loro::{CommitOptions, LoroDoc};
+use loro::json::{JsonOpContent, MapOp};
+use loro::{CommitOptions, ContainerID, ContainerType, LoroDoc, LoroValue, VersionVector};
 
 use super::births;
 use crate::Vault;
@@ -77,7 +78,115 @@ pub(crate) fn erase_birth_carriers_in_txn(
             drop_from_stored_window_in_txn(vault, wtxn, &key, &doc, &doomed, &positions)?;
         }
     }
-    Ok(())
+    // And every sealed world mirror, a second document of its window that
+    // the pass above never reads, from the erase and the hold release alike
+    // (FIX 17210 follow-up).
+    crate::world_keys::rewrite_mirrors_in_txn(vault, wtxn, |wtxn, doc| {
+        drop_actor_births_from_mirror_in_txn(vault, wtxn, doc, actors)
+    })
+}
+
+/// Drops from `doc`, a sealed world mirror rebuilt in the erase's or the
+/// hold release's own transaction `txn`, each birth carrier one of `actors`
+/// made, but for a born row a legal hold keeps (FIX 17210 follow-up): a
+/// mirror is a second document of its window, which the stored-window pass
+/// above never reads. Whether the mirror must go history-free: a carrier
+/// went, or its history or shallow root may still hold one.
+///
+/// # Errors
+///
+/// Storage errors, or a removal that cannot be written.
+fn drop_actor_births_from_mirror_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    actors: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    let doomed = doomed_carriers_in_txn(vault, txn, doc, |made| Ok(actors.contains(made)))?;
+    if !doomed.is_empty() {
+        let map = births(doc);
+        for map_key in &doomed {
+            map_delete(&map, map_key)?;
+        }
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
+    Ok(!doomed.is_empty() || doc.is_shallow() || history_births_made_by(doc, actors))
+}
+
+/// Whether `doc`'s history past `from` (its shallow root or later) inserted a
+/// birth carrier whose maker this vault erased, read in `txn`, live or
+/// removed since: a sealed mirror that took one in from another machine pins
+/// its window history-free, so its seals check what they ship (FIX 17210
+/// follow-up).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn history_births_made_by_erased_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    from: &VersionVector,
+) -> Result<bool> {
+    let container = ContainerID::new_root(super::ROW_BIRTHS_MAP, ContainerType::Map);
+    let history = doc.export_json_updates(from, &doc.oplog_vv());
+    for op in history.changes.iter().flat_map(|change| &change.ops) {
+        if op.container != container {
+            continue;
+        }
+        let JsonOpContent::Map(MapOp::Insert {
+            value: LoroValue::Binary(bytes),
+            ..
+        }) = &op.content
+        else {
+            continue;
+        };
+        if let Some(actor) = maker(bytes)
+            && vault.carrier_actor_erased_in_txn(txn, &actor)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether the shallow root of `doc` holds a birth carrier one of `actors`
+/// made: a value removed after the root stays in the root's state. A root
+/// that cannot be read counts.
+fn root_births_made_by(doc: &LoroDoc, actors: &BTreeSet<EntityId>) -> bool {
+    if !doc.is_shallow() {
+        return false;
+    }
+    let at_root = doc.fork();
+    if at_root.checkout(&doc.shallow_since_frontiers()).is_err() {
+        return true;
+    }
+    let mut carried = false;
+    map_for_each_bytes(&births(&at_root), |_, bytes| {
+        carried |= maker(bytes).is_some_and(|actor| actors.contains(&actor));
+    });
+    carried
+}
+
+/// Whether `doc`'s history past its shallow root inserted a birth carrier
+/// one of `actors` made, live or removed since.
+fn history_births_made_by(doc: &LoroDoc, actors: &BTreeSet<EntityId>) -> bool {
+    let container = ContainerID::new_root(super::ROW_BIRTHS_MAP, ContainerType::Map);
+    let history = doc.export_json_updates(&doc.shallow_since_vv().to_vv(), &doc.oplog_vv());
+    history
+        .changes
+        .iter()
+        .flat_map(|change| &change.ops)
+        .any(|op| {
+            op.container == container
+                && matches!(
+                    &op.content,
+                    JsonOpContent::Map(MapOp::Insert {
+                        value: LoroValue::Binary(bytes),
+                        ..
+                    }) if maker(bytes).is_some_and(|made| actors.contains(&made))
+                )
+        })
 }
 
 /// Whether a window this vault stores still carries a birth one of `actors`
@@ -111,7 +220,17 @@ pub(crate) fn birth_carriers_remain_in_txn(
             return Ok(true);
         }
     }
-    Ok(false)
+    // A sealed mirror counts as a stored window does (FIX 17210 follow-up),
+    // its history and shallow root too: a legal hold over another row can
+    // keep a mirror whole, and its insertion history keeps the birth until
+    // a later pass cuts it.
+    crate::world_keys::any_mirror_in(vault, txn, |doc| {
+        let mut carried = false;
+        map_for_each_bytes(&births(doc), |_, bytes| {
+            carried |= maker(bytes).is_some_and(|actor| actors.contains(&actor));
+        });
+        carried || history_births_made_by(doc, actors) || root_births_made_by(doc, actors)
+    })
 }
 
 /// Drops from `doc` each birth carrier whose maker this vault erased, by its

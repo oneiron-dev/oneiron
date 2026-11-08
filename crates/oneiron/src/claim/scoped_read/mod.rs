@@ -157,6 +157,9 @@ pub struct ScopedRead<'a> {
     read_filter: Option<RetrievalFilter>,
 }
 
+mod owned;
+pub use owned::OwnedScopedRead;
+
 mod admission;
 mod commitment_reminder_wording;
 mod edge_admission;
