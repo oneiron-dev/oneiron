@@ -491,11 +491,10 @@ impl SyncConnection {
                         .into_iter()
                         .filter(|frame| !client.frame_withheld(frame))
                     {
-                        write
-                            .send(Message::Binary(resp.into()))
+                        self.send_document_response(&mut write, &client, resp)
                             .await
-                            .map_err(|e| {
-                                SessionFault::Remote(format!("Send response failed: {e}"))
+                            .map_err(|exit| {
+                                SessionFault::remote(super::document_response::response_error(exit))
                             })?;
                     }
                     init_messages_received += 1;
@@ -529,13 +528,13 @@ impl SyncConnection {
                                     .into_iter()
                                     .filter(|frame| !client.frame_withheld(frame))
                                 {
-                                    write.send(Message::Binary(resp.into())).await.map_err(
-                                        |e| {
-                                            SessionFault::Remote(format!(
-                                                "Send response failed: {e}"
-                                            ))
-                                        },
-                                    )?;
+                                    self.send_document_response(&mut write, &client, resp)
+                                        .await
+                                        .map_err(|exit| {
+                                            SessionFault::remote(
+                                                super::document_response::response_error(exit),
+                                            )
+                                        })?;
                                 }
                                 init_messages_received += 1;
                             }

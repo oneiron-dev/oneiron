@@ -3,9 +3,10 @@
 //! runner's drain hands the saved call here. The instrument the caller's
 //! request was admitted on is verified again against current authority, the
 //! caller is rebuilt from it alone, and the call runs through the door it came
-//! in by, whose own admission runs again: the facade's generated dispatch, or
-//! the MCP registration it named. A task's answer is never the credential;
-//! any failure refuses the call, and the engine ends it with one receipt.
+//! in by, whose own admission runs again: the facade's generated dispatch, a
+//! direct native read's own route (FIX 1435), or the MCP registration it
+//! named. A task's answer is never the credential; any failure refuses the
+//! call, and the engine ends it with one receipt.
 //!
 //! A managed vault's attested owner kept no slip (FIX 11063): his caller is
 //! built again as the owner the vault records as live now, and his console
@@ -28,7 +29,7 @@ use oneiron::runtime_hooks::verb::{
     VerbAskResumed, VerbAskSavedCall,
 };
 
-use crate::api::{FacadeApiError, FacadeCall, McpCallContext, facade_call_verb};
+use crate::api::{FacadeCall, McpCallContext, facade_call_verb};
 use crate::auth::CoreAuth;
 // The kept-instrument check is shared with the code consent host, which runs
 // whatever the hook sandbox feature (DOOR-079 1a).
@@ -54,8 +55,9 @@ impl ServerVerbAskCredentialCheck {
     }
 
     /// Runs `call` again through its door, under its credential as it
-    /// stands now; the refusal when it does not. An MCP door lists the rows
-    /// its answer was derived from beside it (FIX 1435, FIX 21054).
+    /// stands now; the refusal when it does not. An MCP door, a native
+    /// read's door and a facade row that lists its rows list the rows its
+    /// answer was derived from beside it (FIX 1435, FIX 21054).
     fn resumed(
         &self,
         call: VerbAskSavedCall,
@@ -67,19 +69,40 @@ impl ServerVerbAskCredentialCheck {
             .ok_or(VerbAskRefusal::CredentialUnavailable)?;
         match call.reference.door.clone() {
             VerbAskDoor::Facade { room } => {
-                let auth = kept_auth(&server, &call, Some(&call.verb))?;
+                // A direct native HTTP read came in by its own route, which
+                // no facade row or invitee door is (FIX 1435).
+                let native = crate::api::native_read_hooks::native_read_method(&call.verb);
+                let door = native.is_none().then_some(call.verb.as_str());
+                let auth = kept_auth(&server, &call, door)?;
                 require_saved_facade_caller(&server, &auth, &call)?;
                 let resumed = FacadeCall::resumed(&auth, room, call.invocation, drain);
+                if let Some(method) = native {
+                    // The route's own admission and read, on the heap.
+                    return Ok(self.runtime.block_on(Box::pin(
+                        crate::api::native_read_hooks::resume_native_read(
+                            &server, &resumed, method, call.args,
+                        ),
+                    )));
+                }
                 let ran = self.runtime.block_on(facade_call_verb(
                     &server,
                     &resumed,
                     &call.verb,
                     Ok(call.args),
                 ));
-                Ok(VerbAskResumed::Ran(
-                    ran.map(|output| output.value)
-                        .map_err(FacadeApiError::into_memory_error),
-                ))
+                // The rows the row listed are saved with its answer, so the
+                // caller's retry is released by them (FIX 21054). A row
+                // that lists none saves its answer with its rows unknown.
+                Ok(match ran {
+                    Ok(output) => match output.rows {
+                        Some(producers) => VerbAskResumed::RanWithProducers {
+                            result: Ok(output.value),
+                            producers,
+                        },
+                        None => VerbAskResumed::Ran(Ok(output.value)),
+                    },
+                    Err(refused) => VerbAskResumed::Ran(Err(refused.into_memory_error())),
+                })
             }
             VerbAskDoor::Mcp {
                 connection,
