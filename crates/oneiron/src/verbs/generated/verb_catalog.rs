@@ -807,6 +807,8 @@ pub enum AgentVerb {
     VaultAgentsDreamingSet,
     VaultAgentsGrantsMint,
     VaultAgentsGrantsRevoke,
+    VaultAgentsVerbClassesGet,
+    VaultAgentsVerbClassesConfigure,
     VaultRepoGitPushMint,
     VaultRepoGitPushRevoke,
     VaultConnectorsReadGrantsGrant,
@@ -2156,6 +2158,8 @@ impl AgentVerb {
         Self::VaultAgentsDreamingSet,
         Self::VaultAgentsGrantsMint,
         Self::VaultAgentsGrantsRevoke,
+        Self::VaultAgentsVerbClassesGet,
+        Self::VaultAgentsVerbClassesConfigure,
         Self::VaultRepoGitPushMint,
         Self::VaultRepoGitPushRevoke,
         Self::VaultConnectorsReadGrantsGrant,
@@ -3532,6 +3536,8 @@ impl AgentVerb {
             Self::VaultAgentsDreamingSet => "vault.agents.dreaming.set",
             Self::VaultAgentsGrantsMint => "vault.agents.grants.mint",
             Self::VaultAgentsGrantsRevoke => "vault.agents.grants.revoke",
+            Self::VaultAgentsVerbClassesGet => "vault.agents.verb_classes.get",
+            Self::VaultAgentsVerbClassesConfigure => "vault.agents.verb_classes.configure",
             Self::VaultRepoGitPushMint => "vault.repo.git_push.mint",
             Self::VaultRepoGitPushRevoke => "vault.repo.git_push.revoke",
             Self::VaultConnectorsReadGrantsGrant => "vault.connectors.read_grants.grant",
@@ -4897,6 +4903,8 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultAgentsVerbClassesGet
+                | Self::VaultAgentsVerbClassesConfigure
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
                 | Self::VaultConnectorsReadGrantsGrant
@@ -6275,6 +6283,8 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultAgentsVerbClassesGet
+                | Self::VaultAgentsVerbClassesConfigure
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
                 | Self::VaultConnectorsReadGrantsGrant
@@ -7793,6 +7803,8 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultAgentsVerbClassesGet
+                | Self::VaultAgentsVerbClassesConfigure
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
                 | Self::VaultConnectorsReadGrantsGrant
@@ -8754,6 +8766,7 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultAgentsVerbClassesConfigure
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
                 | Self::VaultConnectorsReadGrantsGrant
@@ -9925,6 +9938,8 @@ impl AgentVerb {
             Self::VaultAgentsDreamingSet => &["spec"],
             Self::VaultAgentsGrantsMint => &["spec"],
             Self::VaultAgentsGrantsRevoke => &["spec"],
+            Self::VaultAgentsVerbClassesGet => &["spec"],
+            Self::VaultAgentsVerbClassesConfigure => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
             Self::VaultConnectorsReadGrantsGrant => &["spec"],
@@ -11275,6 +11290,8 @@ impl AgentVerb {
             Self::VaultAgentsDreamingSet => &["spec"],
             Self::VaultAgentsGrantsMint => &["spec"],
             Self::VaultAgentsGrantsRevoke => &["spec"],
+            Self::VaultAgentsVerbClassesGet => &["spec"],
+            Self::VaultAgentsVerbClassesConfigure => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
             Self::VaultConnectorsReadGrantsGrant => &["spec"],
@@ -12052,7 +12069,7 @@ impl AgentVerb {
                 "Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only."
             }
             Self::VaultBudgetsLeaseOpen => {
-                "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit."
+                "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit, optionally funded by his agent grant that names a wallet its whole tree draws on."
             }
             Self::VaultBudgetsLease => {
                 "The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."
@@ -14197,10 +14214,16 @@ impl AgentVerb {
                 "The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."
             }
             Self::VaultAgentsGrantsMint => {
-                "The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door."
+                "The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it."
             }
             Self::VaultAgentsGrantsRevoke => {
                 "The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."
+            }
+            Self::VaultAgentsVerbClassesGet => {
+                "The owner reads his verb-class rows, each a class name and the exact verbs an agent grant naming it admits, with the trusted manifest hash."
+            }
+            Self::VaultAgentsVerbClassesConfigure => {
+                "The owner replaces his whole verb-class table against the current manifest hash; each row names a class and its exact verbs, never git_push or another class, and grants naming the class admit them at once."
             }
             Self::VaultRepoGitPushMint => {
                 "The owner grants one live person or agent raw git_push on explicitly named repos, each whole, until he revokes it or until the expiry he sets; a write grant never implies it."

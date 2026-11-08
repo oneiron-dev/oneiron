@@ -2496,6 +2496,12 @@ impl OneironClient {
                 "vault.agents.grants.revoke" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AgentGrantRevoked,
                 >(client, verb, &input),
+                "vault.agents.verb_classes.get" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::AgentVerbClassesView,
+                >(client, verb, &input),
+                "vault.agents.verb_classes.configure" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::AgentVerbClassesReceipt,
+                >(client, verb, &input),
                 "vault.repo.git_push.mint" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::GitPushGrantMintOutput,
                 >(client, verb, &input),
@@ -13955,6 +13961,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.agents.grants.revoke", value)
+    }
+    pub fn vault_agents_verb_classes_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::policy_manifest_doors::AgentVerbClassesView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.agents.verb_classes.get", value)
+    }
+    pub fn vault_agents_verb_classes_configure(
+        &self,
+        input: &oneiron::policy_manifest_doors::AgentVerbClassesConfigureRequest,
+    ) -> Result<oneiron::policy_manifest_doors::AgentVerbClassesReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.agents.verb_classes.configure", value)
     }
     pub fn vault_repo_git_push_mint(
         &self,
