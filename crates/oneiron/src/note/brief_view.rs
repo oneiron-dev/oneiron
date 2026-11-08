@@ -130,7 +130,8 @@ impl Vault {
         // The viewer is resolved before the brief handle is parsed or its
         // NOTE loaded, so a share this viewer cannot see answers unresolved
         // whatever its brief holds (FIX 1609).
-        let Some(authorized) = self.resolve_share_for_view(&share_id, &viewer, narrowing, &[])?
+        let Some(authorized) =
+            self.resolve_share_for_read(&share_id, &viewer, narrowing, &[], Some(read))?
         else {
             return unresolved();
         };
@@ -139,7 +140,8 @@ impl Vault {
         listed.push(id);
         let document = self.note_document(id)?;
         let refs: Vec<_> = document.pins.iter().map(|pin| pin.claim).collect();
-        let Some(resolved) = self.resolve_share_for_view(&share_id, &viewer, narrowing, &refs)?
+        let Some(resolved) =
+            self.resolve_share_for_read(&share_id, &viewer, narrowing, &refs, Some(read))?
         else {
             return unresolved();
         };
