@@ -59,7 +59,8 @@ pub(super) fn sized_call(
 }
 
 /// The region and absolute deadline were admitted by this caller, not
-/// reconstructed from a new duration here.
+/// reconstructed from a new duration here. `measure` holds what the call
+/// measured, however it ended: the actual slot's tier among it.
 pub(super) fn sized_region_call_until(
     host: &OrganHost,
     vault: &Vault,
@@ -67,19 +68,12 @@ pub(super) fn sized_region_call_until(
     input: LentRegion,
     handlers: &AskHandlers<'_>,
     deadline: std::time::Instant,
+    measure: &mut CallMeasure,
 ) -> Result<(Value, OrganOutcome), EsignSealerError> {
     let size = call_size(input.len());
-    let mut measure = CallMeasure::default();
-    let called = host.call_sized_region_until_with(
-        vault,
-        call,
-        input,
-        handlers,
-        size,
-        &mut measure,
-        deadline,
-    );
-    read_sized_call(vault, called, &measure)
+    let called =
+        host.call_sized_region_until_with(vault, call, input, handlers, size, measure, deadline);
+    read_sized_call(vault, called, measure)
 }
 
 fn read_sized_call(
