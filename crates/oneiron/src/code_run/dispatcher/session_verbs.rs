@@ -4,11 +4,13 @@
 //! A session-bound run forwards no verb through its door: the door runs on
 //! the canonical vault, outside the room's route and saver. Of its verb
 //! calls, `vault.notes.create` and `vault.claims.upsert` stage in the room
-//! (DOOR-127), and the four reads [`session_read`] names read the room
+//! (DOOR-127), and the five reads [`session_read`] names read the room
 //! through its view ([`crate::memory::SessionReadContext`]), under the key
-//! the run's door admits for its caller at each call. Every other verb keeps
-//! its refusal. The run's own `vault.search` reads the same way when its door
-//! admits it with a key (`ExecutorStorage::search_text_as`).
+//! the run's door admits for its caller at each call. `vault.receipts` reads
+//! the vault's receipts beside the served forms the room kept (FIX 7355).
+//! Every other verb keeps its refusal. The run's own `vault.search` reads the
+//! same way when its door admits it with a key
+//! (`ExecutorStorage::search_text_as`).
 //!
 //! A verb hook bound to one of these reads runs in the room as on base
 //! (S01-2c, [`hooks`]): its content reads go through the room's view under
@@ -18,6 +20,15 @@
 //! own, and the read answers; so does a read whose room keeps no record of
 //! its hooks.
 //!
+//! An anonymous room serves the same five reads (FIX 5166): a read that
+//! keeps nothing keeps no memory, which is all ARCH-0052 asks of the room.
+//! Its retrieval telemetry and its hooks' records take the room's Discard
+//! route, and the read keeps no base receipt, query cache, replay body, job
+//! or side row of its own. A hydrate that serves an image form needs a
+//! served-form receipt, which the room cannot keep, so that hydrate refuses
+//! as the room's writes do. Every write and every other verb keeps its
+//! refusal.
+//!
 //! Nothing here asks where the caller or the vault runs: the door's key
 //! carries its caller's Grant and ceiling as the host's own judges made it.
 
@@ -25,7 +36,7 @@ mod hooks;
 
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
-    AGENT_VERB_DOOR_UNBOUND, AgentVerbAnswer, SelfAgentVerbCall, SelfDeniedResult,
+    AGENT_VERB_DOOR_UNBOUND, AgentVerbAnswer, SelfAgentVerbCall, SelfCall, SelfDeniedResult,
     SelfDispatchOutcome, SelfEffect,
 };
 use crate::error::{Error, Result};
@@ -44,6 +55,7 @@ pub(super) fn session_read(verb: AgentVerb) -> Option<SessionRead> {
         "vault.hydrate" => Some(SessionRead::Hydrate),
         "vault.refs.resolve" => Some(SessionRead::RefsResolve),
         "vault.search.bm25" => Some(SessionRead::SearchBm25),
+        "vault.receipts" => Some(SessionRead::Receipts),
         _ => None,
     }
 }
@@ -77,6 +89,23 @@ impl SessionReadRefusal {
 }
 
 impl HostSelfDispatcher<'_> {
+    /// The read `call` is when this run serves it through its room's view:
+    /// a verb [`session_read`] names, from a run bound to a session that is
+    /// no scoped child, exactly the call `dispatch_agent_verb` hands to
+    /// [`Self::dispatch_session_read`]. The anonymous-room rule passes this
+    /// call and no other verb (FIX 5166).
+    pub(super) fn room_session_read(&self, call: &SelfCall) -> Option<SessionRead> {
+        let SelfCall::AgentVerb(call) = call else {
+            return None;
+        };
+        if !matches!(self.storage, ExecutorStorage::Session(_))
+            || self.scoped_child_spec().is_some()
+        {
+            return None;
+        }
+        session_read(call.verb)
+    }
+
     /// `read`, the verb `call` names, in the run's room: admitted by the
     /// run's door for its caller at this call, then read on the key it
     /// admitted, through the run-entry route, over one view of the room,

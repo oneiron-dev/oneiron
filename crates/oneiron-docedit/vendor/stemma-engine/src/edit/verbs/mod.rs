@@ -25,6 +25,7 @@ pub(crate) mod paragraph_formatting;
 pub(crate) mod row_formatting;
 pub(crate) mod run_formatting;
 pub(crate) mod sdt_text_fill;
+pub(crate) mod story_cells;
 pub(crate) mod style_defs;
 pub(crate) mod styles;
 pub(crate) mod table_formatting;

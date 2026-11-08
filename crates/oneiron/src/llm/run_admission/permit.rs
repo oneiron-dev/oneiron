@@ -9,7 +9,8 @@ use super::super::{
 use super::admission::{CallOrigin, RunCall, RunDenied, RunInner};
 use super::declaration::{LeaseUnit, RunDeclaration};
 use super::host::{
-    AllocationRef, KeyCustody, LiveAllocation, PaidConnector, Payer, UnitRate, Unpriced, convert,
+    AllocationRef, KeyCustody, LiveAllocation, OfferBinding, PaidConnector, Payer, UnitRate,
+    Unpriced, convert,
 };
 use super::receipt::{PermitFacts, RunStreamUsage};
 use super::resident::ResidentDraw;
@@ -287,6 +288,7 @@ impl RunInner {
                     &request.envelope.purpose,
                 )),
                 attribution: self.attribution.clone(),
+                funding: self.funding.clone(),
                 seat: request
                     .envelope
                     .tier
@@ -395,6 +397,7 @@ impl RunInner {
                     .as_ref()
                     .map(|bound| super::super::routing::purpose_key(&bound.purpose)),
                 attribution: self.attribution.clone(),
+                funding: self.funding.clone(),
                 seat: None,
                 rules_enforced,
                 source_rows: origin.sources,
@@ -437,7 +440,10 @@ impl RunInner {
     /// A refused fresh allocation only matters once the live one cannot fit
     /// the call. A run with no host account has no allocation to draw on, so
     /// it admits no host-paid call. A memory-work run takes no hold at all
-    /// (FIX 11003): memory work never needs funds.
+    /// (FIX 11003): memory work never needs funds. A run an owner's agent
+    /// Grant funds (FIX 7766) holds only on a live allocation the host named
+    /// that Grant's wallet for, checked before anything is reserved; any
+    /// other is refused, never used as a default.
     fn hold_allocation(
         &self,
         payer: Payer,
@@ -461,6 +467,7 @@ impl RunInner {
             reference,
             unit,
             meter,
+            wallet,
         }) = live
         else {
             return Err(match refused {
@@ -468,6 +475,7 @@ impl RunInner {
                 None => RunDenied::NoAllocation,
             });
         };
+        funding_admits_allocation(self.funding.as_ref(), wallet.as_ref())?;
         let units = priced(native_units, native, &unit, rates)?;
         let lease = meter
             .admit_reserve(units)
@@ -503,18 +511,54 @@ impl RunInner {
     }
 }
 
+/// Whether the allocation a host-paid call is about to hold on, whose
+/// host-delivered wallet identity is `wallet`, may fund a run whose frozen
+/// funding binding is `funding` (FIX 7766, Engine 19:59 W-D): any allocation
+/// when no owner's agent Grant funds the run; else only one the host named
+/// that Grant's wallet for, compared byte for byte. Judged on the exact
+/// allocation the hold then takes, before anything is reserved or written:
+/// the live one in [`RunInner::hold_allocation`], and the one a persistent
+/// allocation ledger's reserve writer selected, inside that writer, before
+/// it freezes the hold. A mismatch, or an allocation with no wallet named,
+/// is [`RunDenied::AllocationWalletMismatch`], never a default wallet.
+pub(crate) fn funding_admits_allocation(
+    funding: Option<&crate::agent_dispatch::GrantSpendBinding>,
+    wallet: Option<&crate::federation::WalletRef>,
+) -> Result<(), RunDenied> {
+    match funding {
+        Some(funding) if wallet != Some(&funding.wallet_ref) => {
+            Err(RunDenied::AllocationWalletMismatch {
+                expected: funding.wallet_ref.clone(),
+                live: wallet.cloned(),
+            })
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Whether a call is free work (FIX 9482): nobody pays per call
-/// ([`Payer::Local`]) and the host bound it to this device, or to the owner's
-/// own server with no key. Read only from the host-bound offer or connector,
-/// never from a caller's request, nor from a missing key, an own server or a
-/// zero rate alone; a keyed owner endpoint stays paid.
+/// ([`Payer::Local`]) and the host bound it, with no key, to this device or
+/// to the owner's own server. Read only from the host-bound offer or
+/// connector, never from a caller's request, nor from a missing key, an own
+/// server or a zero rate alone; a keyed owner endpoint stays paid, on this
+/// device too (FIX 14889): a paid provider's managed worker served over its
+/// native channel is paid as its own-server offer is, so no locality turns
+/// paid work free.
 fn free_work(payer: Payer, locality: ModelLocality, custody: KeyCustody) -> bool {
     let free_route = match locality {
-        ModelLocality::OnDevice => true,
-        ModelLocality::OwnServer => custody == KeyCustody::Keyless,
+        ModelLocality::OnDevice | ModelLocality::OwnServer => custody == KeyCustody::Keyless,
         ModelLocality::ThirdParty => false,
     };
     payer == Payer::Local && free_route
+}
+
+/// Whether a call bound to `binding` is free work, by the one rule the run
+/// admission charges it by (FIX 9482, FIX 14889): a host that annotates its
+/// work or builds an offer's on-device alternative reads the answer the
+/// permit reaches, never a copy of the rule.
+#[must_use]
+pub fn offer_is_free_work(binding: &OfferBinding) -> bool {
+    free_work(binding.payer, binding.locality, binding.custody)
 }
 
 /// A reservation in a meter's unit. A price no meter can hold never fits.

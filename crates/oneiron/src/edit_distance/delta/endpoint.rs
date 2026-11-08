@@ -137,6 +137,20 @@ impl EndpointRef {
         }
     }
 
+    /// The entity row this end's document is retained under; `None` for a
+    /// receipt field, which no row holds.
+    #[must_use]
+    pub fn entity(&self) -> Option<EntityId> {
+        match &self.document {
+            EndpointDocument::ProposalArtifact(hex)
+            | EndpointDocument::ImportedProposed(hex)
+            | EndpointDocument::ImportedFinal(hex)
+            | EndpointDocument::ApprovedClaim(hex)
+            | EndpointDocument::IdentityOpProposal(hex) => EntityId::from_hex(hex).ok(),
+            EndpointDocument::ReceiptAmendedBody(_) => None,
+        }
+    }
+
     /// One string spelling of the ref, `kind:id@frontier`, for surfaces that
     /// carry a ref as text.
     #[must_use]

@@ -1,4 +1,7 @@
 //! Txn segment install, leases, commit/apply guards.
+mod base_retirement;
+pub use base_retirement::BaseRowRetirementGuard;
+
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -27,6 +30,7 @@ pub(in crate::session_overlay) struct TxnSegment {
     )]
     pub(super) journal: Vec<JournalEntry>,
     pub(super) journal_bytes: usize,
+    pub(super) net_budget: Option<super::rows::NetBudgetCheckpoint>,
     _lease: Lease,
 }
 
@@ -62,6 +66,11 @@ impl TxnSegmentGuard {
         if !Arc::ptr_eq(&segment.overlay, &self.overlay) {
             return Err(Error::InvariantViolation(
                 "another session txn segment replaced the installed segment",
+            ));
+        }
+        if segment.net_budget.is_some() {
+            return Err(Error::InvariantViolation(
+                "a room net-budget operation must finish before commit",
             ));
         }
         let result = self.overlay.apply_segment(&segment);
@@ -101,6 +110,13 @@ impl SessionOverlay {
         reason = "ONE-1728 witness is the first lib-target session write transaction"
     )]
     pub fn install_txn_segment(self: &Arc<Self>) -> Result<TxnSegmentGuard> {
+        self.install_segment(None)
+    }
+
+    fn install_segment(
+        self: &Arc<Self>,
+        base_mode_generation: Option<u64>,
+    ) -> Result<TxnSegmentGuard> {
         ACTIVE_SEGMENT.with(|slot| {
             if slot.borrow().is_some() {
                 return Err(Error::InvariantViolation(
@@ -110,7 +126,10 @@ impl SessionOverlay {
             Ok(())
         })?;
 
-        let lease = self.acquire_segment_lease()?;
+        let lease = match base_mode_generation {
+            Some(mode_generation) => self.acquire_base_retirement_lease(mode_generation)?,
+            None => self.acquire_segment_lease()?,
+        };
         let generation = lease.generation;
         let snapshot = self.state.load_full();
         let segment = TxnSegment {
@@ -121,6 +140,7 @@ impl SessionOverlay {
             mutations: Vec::new(),
             journal: Vec::new(),
             journal_bytes: 0,
+            net_budget: None,
             _lease: lease,
         };
         let install_result = ACTIVE_SEGMENT.with(|slot| {

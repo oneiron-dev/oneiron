@@ -513,6 +513,10 @@ fn finish_remote_applied_write(
         }
     }
 
+    // FIX 4797: the completion can turn an inbound passport two-way and
+    // supersede its head, so it runs in the vault's one calendar admission
+    // turn, taken before its writer.
+    let _turn = crate::calendar::ingest::admission_turn(vault)?;
     let carrier = match vault.try_with_write_txn_grouped(|txn| {
         finish_remote_applied_write_in_txn(
             vault, txn, operation, transport, event_ref, row, &receipt, now,
@@ -600,6 +604,7 @@ fn finish_remote_applied_write_in_txn(
             uid: row.uid.clone(),
             last_sequence: receipt.sequence,
             content_hash,
+            source: None,
             direction,
             last_seen_at: now,
             presence: CalendarPassportPresence::Live,
