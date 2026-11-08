@@ -4,13 +4,15 @@
 //! brings it back as imported evidence, never as a note this vault's actor
 //! wrote: the source author stays in `author_ref` as
 //! [`NoteActor::Imported`], which matches no local writer and opens no
-//! author-only read or edit. No `AuthoredBy` edge, stamp token, document
-//! operation or title, pin or seal is written. A NOTE an import already
-//! marked, or whose author was erased, comes back as it is.
+//! author-only read or edit. No `AuthoredBy` edge, stamp token, title, pin
+//! or seal is written. The row is the NOTE's core alone, and its document is
+//! born from that markdown in the same transaction, as every NOTE's is (FIX
+//! 7783). A NOTE an import already marked, or whose author was erased, comes
+//! back as it is.
 //!
 //! [`ArchivedNoteAdmission`] is the archive NOTE put's capability: its one
 //! constructor proves the bytes are a NOTE body under the pinned ABI whose
-//! author is no local actor.
+//! author is no local actor, and keeps its core and its markdown.
 //!
 //! An imported diary or owner-only NOTE has no local author to read it, so
 //! every ordinary read, search and context pack holds it. The vault's
@@ -19,7 +21,9 @@
 
 use serde::Serialize;
 
-use super::{NoteActor, NoteBody, NoteKind, decode_note_body_using};
+use super::{
+    NoteActor, NoteBody, NoteKind, decode_note_body_using, decode_note_core_using, encode_note_core,
+};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::consent::AuthenticatedOwner;
@@ -42,17 +46,23 @@ pub struct ImportedNoteRead {
     pub markdown: String,
 }
 
-/// One archived NOTE body the archive put may stage.
+/// One archived NOTE the archive put may stage: its core, the row it
+/// stores, and its markdown, the text its document is born from (FIX 7783).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ArchivedNoteAdmission {
-    body: Vec<u8>,
+    core: Vec<u8>,
     markdown: String,
 }
 
 impl ArchivedNoteAdmission {
-    /// The proven body bytes, and nothing else.
-    pub(crate) fn body(&self) -> &[u8] {
-        &self.body
+    /// The proven core bytes, and nothing else.
+    pub(crate) fn core(&self) -> &[u8] {
+        &self.core
+    }
+
+    /// The archived markdown, the NOTE's birth text.
+    pub(crate) fn markdown(&self) -> &str {
+        &self.markdown
     }
 }
 
@@ -81,7 +91,8 @@ pub(crate) fn archived_note_body(source: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// The archive NOTE put's capability for `body`: a NOTE body under the
-/// pinned ABI whose author is no local actor.
+/// pinned ABI whose author is no local actor, kept as its core and its
+/// markdown (FIX 7783).
 fn admit_archived_note(body: &[u8]) -> Result<ArchivedNoteAdmission> {
     let decoded = decode(body)?;
     if matches!(decoded.author_ref, NoteActor::Actor(_)) {
@@ -93,7 +104,7 @@ fn admit_archived_note(body: &[u8]) -> Result<ArchivedNoteAdmission> {
         return Err(refused("an archived NOTE body is not canonical"));
     }
     Ok(ArchivedNoteAdmission {
-        body: body.to_vec(),
+        core: encode_note_core(&decoded.core())?,
         markdown: decoded.markdown,
     })
 }
@@ -133,7 +144,9 @@ impl Vault {
         let body = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
             .ok_or(Error::CorruptedIndex("entity header"))?;
-        let NoteActor::Imported(author) = decode(body)?.author_ref else {
+        // The stored row is the NOTE's core (FIX 7783).
+        let NoteActor::Imported(author) = decode_note_core_using(body, NoteKind::wire)?.author_ref
+        else {
             return Ok(None);
         };
         let live = super::live_body_in_txn(&self.store, &txn, note, ENTITY_TYPE_NOTE, body)?;
@@ -145,12 +158,13 @@ impl Vault {
         }))
     }
 
-    /// Restores one archived NOTE in the import's writer (FIX 7777): the
-    /// row through the archive put, born under `mask` (its archived facet,
-    /// or the vault default when `None`), and its markdown's text posting.
+    /// Restores one archived NOTE in the import's writer (FIX 7777): its
+    /// core through the archive put, born under `mask` (its archived facet,
+    /// or the vault default when `None`), and its document born from its
+    /// markdown in the same transaction, with its text posting (FIX 7783).
     /// Its kind's installed descriptor and its immutable birth bytes are
-    /// checked where every NOTE put meets them. Nothing binds an actor or
-    /// mints authorship.
+    /// checked where every NOTE put meets them. Nothing binds an actor: the
+    /// document's birth record names no one.
     ///
     /// # Errors
     /// The admission's refusal; the NOTE put's refusals; storage faults.
@@ -164,13 +178,9 @@ impl Vault {
         mask: Option<EntityId>,
     ) -> Result<()> {
         let admission = admit_archived_note(body)?;
-        let mut batch = self
-            .batch_in()
+        self.batch_in()
             .mask(mask)
-            .put_archived_note(id, occurred, learned_at, &admission);
-        if !admission.markdown.is_empty() {
-            batch = batch.text(id, &[("markdown", admission.markdown.as_str())]);
-        }
-        batch.apply(wtxn)
+            .put_archived_note(id, occurred, learned_at, &admission)
+            .apply(wtxn)
     }
 }

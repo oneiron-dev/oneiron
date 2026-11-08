@@ -33,7 +33,7 @@ async fn prepare(
     let server = Arc::clone(server);
     let auth = auth.clone();
     super::super::clock_ingress::run_blocking(move || -> MemoryResult<QuestionPrepared> {
-        let lane = asker_lane(server.vault(), &auth, actor.entity_ref(), VERB)?;
+        let lane = asker_lane(server.vault(), &auth, VERB)?;
         let (record, context, source_frontier) = prepare_standing_answer(
             &lane,
             GraphQuestionRef {
@@ -83,7 +83,7 @@ async fn admit(
     let server = Arc::clone(server);
     let auth = auth.clone();
     super::super::clock_ingress::run_blocking(move || -> MemoryResult<AnswerRecord> {
-        let lane = asker_lane(server.vault(), &auth, actor.entity_ref(), VERB)?;
+        let lane = asker_lane(server.vault(), &auth, VERB)?;
         Ok(admit_standing_answer(
             &lane,
             GraphQuestionRef {

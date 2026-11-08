@@ -87,19 +87,15 @@ impl Vault {
                 "entity is not a NOTE",
             )));
         }
-        let bytes = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
-        #[cfg(feature = "sync")]
-        let resolved = crate::entity_doc::resolve_record_body(&self.store, &txn, id, bytes)?;
-        #[cfg(feature = "sync")]
-        let bytes = resolved.as_slice();
-        let bytes = super::live_body_in_txn(
+        // The live NOTE: its core and its head document's text, in this read.
+        super::live_note_from_in_txn(
+            &self.store,
             &self.store,
             &txn,
             id,
-            crate::registry::ENTITY_TYPE_NOTE,
-            bytes,
-        )?;
-        super::decode_note_body_in_txn(&self.store, &txn, &bytes).map(Some)
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )
+        .map(Some)
     }
 }
 
@@ -110,8 +106,8 @@ pub(crate) fn validate_registered_kind(
     txn: &heed::RoTxn<'_>,
     bytes: &[u8],
 ) -> Result<()> {
-    let body = super::decode_note_body_using(bytes, NoteKind::wire)?;
-    let kind = body.kind.as_str();
+    let core = super::decode_note_core_using(bytes, NoteKind::wire)?;
+    let kind = core.kind.as_str();
     context_in_txn(store, txn, kind.as_ref()).map(|_| ())
 }
 

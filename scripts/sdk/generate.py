@@ -146,7 +146,8 @@ for row in ROWS:
     # (FIX 8753): its invocation, the door it came in by and, on the drain's
     # run of a held call, the drain's permit, so a full budget window holds
     # the call in its caller's paced line and the drain runs it there again.
-    # An MCP call hands `None` and answers its paced receipt as before.
+    # A tool-first MCP call hands its own: its invocation, its MCP door and
+    # the drain's permit on the drain's run of it (FIX 22259).
     if row.get('host_door_paced') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door takes a paced context')
     # `host_door_lens_owner` hands a live lens door the owner its card is held
@@ -903,7 +904,7 @@ def mcp_input_dispatch(row):
         # a call that keeps no record hands its hidden id (FIX 5381).
         caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, {json.dumps(name)}), '
         fold_hooks_arg = ', pre_hooked_fold' if name == 'self.fold' else ''
-        paced_arg = 'None, ' if row.get('host_door_paced') else ''
+        paced_arg = 'super::mcp_paced_call(actor, &memory), ' if row.get('host_door_paced') else ''
         door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}input{fold_hooks_arg})).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
@@ -1069,7 +1070,9 @@ pub(crate) async fn execute_agent_verb_input(
         // A custody row's value leaves the args before its hooks read them,
         // and rides to its door scoped, as an HTTP body's does (FIX 11665).
         let secret = crate::api::facade::lift_custody_secret(tool, &mut input);
-        let listed = super::skill_execution::CALLER.scope(actor.clone(), execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks));
+        // The drain's run of a held call runs as its turn in every poll of
+        // its row, its retry lookup included (FIX 19034).
+        let listed = super::skill_execution::CALLER.scope(actor.clone(), super::mcp_drain_polls(actor, execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks)));
         let produced = crate::api::clock_ingress::scoped(restrictive, crate::api::facade::with_custody_secret(secret, listed)).await;
         served.extend(producers.take());
         produced
@@ -1127,6 +1130,14 @@ async fn execute_agent_verb_listing(
     // The direct caller's own proof, on the rows whose HTTP door binds it
     // outside a room turn (OF-417, OF-365).
     let memory = mcp_direct_authorship(server, tool, actor, surface.memory(server, actor, producers))?;
+    // A retry of a call its budget window paced meets the paced line here,
+    // before its hooks or its row run again: still held, or the saved answer
+    // of the drain's turn (FIX 19034).
+    if let Some((output, producers)) = super::verb_hooks::mcp_row_paced_reply(server, tool, actor, &memory)? {
+        // Released by the rows the saved answer was derived from (FIX 22259).
+        served.listed(producers);
+        return Ok((output, crate::mcp::McpPageSource::complete(1), McpCarrierPolicy::Drain, None, None));
+    }
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
     // Rule 5 (FIX 4445): a row one branch of whose engine call produces task
     // work takes its turn on the args its pre hooks left, as the served
