@@ -17,6 +17,7 @@ use oneiron::task_verb::sdk::{EmptyRequest, PackPutReceipt};
 use super::host_doors::support::{internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
+use oneiron_mail_pack::ext::MailPackPackVaultExt as _;
 
 /// `vault.mail.pack.install`: installs the pack folder through the ordinary
 /// owner install. It connects no source and grants nothing.

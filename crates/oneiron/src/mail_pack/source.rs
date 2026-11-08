@@ -10,7 +10,7 @@ use crate::channel_identity_provider::native_mail::canonical_recipient;
 use crate::side_table::{self, Named, SideTable};
 
 /// Every connected source, by its id.
-pub(super) const SOURCES: SideTable<EntityId, MailSourceRow, Named> =
+pub const SOURCES: SideTable<EntityId, MailSourceRow, Named> =
     SideTable::new(&side_table::MAIL_PACK_SOURCE);
 /// A source's id by the BLAKE3 of its provider, kind, provider account and
 /// address ([`source_identity_key`]): reconnecting the same mailbox resumes
@@ -157,9 +157,9 @@ pub enum MailSourceStatus {
 
 /// One stored source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct MailSourceRow {
+pub struct MailSourceRow {
     pub(super) provider: MailProvider,
-    pub(super) kind: MailSourceKind,
+    pub kind: MailSourceKind,
     /// The mailbox or group address, or the calendar's provider id, as given.
     pub(super) address: String,
     /// Every other address the mailbox owns, canonical, sorted, each once,
@@ -186,7 +186,7 @@ pub(super) struct MailSourceRow {
     pub(super) copy: MailCopySetting,
     pub(super) on_provider_delete: MailProviderDeleteSetting,
     pub(super) calendar_details: CalendarDetailSetting,
-    pub(super) status: MailSourceStatus,
+    pub status: MailSourceStatus,
     /// Who connected it; `None` once that actor was erased.
     pub(super) connected_by: Option<EntityId>,
     pub(super) connected_at: u64,

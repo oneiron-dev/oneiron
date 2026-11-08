@@ -668,23 +668,6 @@ fn merge_labels(
 }
 
 impl Vault {
-    /// The mailbox sources a host's importer syncs: every connected mailbox
-    /// whose status is Active, while the pack is installed Active.
-    pub fn mail_sync_sources(&self) -> Result<Vec<EntityId>> {
-        let txn = self.store.env.read_txn()?;
-        if require_pack_active_in(self, &txn).is_err() {
-            return Ok(Vec::new());
-        }
-        let mut sources = Vec::new();
-        for row in SOURCES.iter_from(&self.store, &txn, &[])? {
-            let (id, row) = row?;
-            if row.kind.is_mailbox() && row.status == MailSourceStatus::Active {
-                sources.push(id);
-            }
-        }
-        Ok(sources)
-    }
-
     /// The wire snapshot of one mailbox source, for a host to choose and
     /// authorize its wire: what it reads, and the custody record of its
     /// credential, never the credential.
