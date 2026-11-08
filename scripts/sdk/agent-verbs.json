@@ -11291,6 +11291,34 @@
       "openapi": true
     },
     {
+      "name": "vault.code.waits.rebind_prepare",
+      "description": "Propose the original holder's actual successor credential for one admitted, unsettled code consent wait. Stores no active authorization; a separate owner rebind act must confirm it.",
+      "input": "crate::memory::code_wait_doors::CodeWaitRebindPrepareRequest",
+      "output": "crate::memory::code_wait_doors::CodeWaitRebindPrepared",
+      "call": "memory.code_wait_rebind_prepare(input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.code.waits.rebind",
+      "description": "Explicitly authorize one exact holder-proposed successor as the independent authenticated owner. Only an admitted, unsettled wait continues under the same intent; its original answer, admission and delivery stay unchanged.",
+      "input": "crate::memory::code_wait_doors::CodeWaitRebindRequest",
+      "output": "crate::memory::code_wait_doors::CodeWaitRebindReceipt",
+      "call": "memory.code_wait_rebind_as(&memory.embedded_owner(\"vault.code.waits.rebind\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.waits.resolve",
       "description": "Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption.",
       "input": "crate::memory::code_wait_doors::CodeWaitResolveRequest",
