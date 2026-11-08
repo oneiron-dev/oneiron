@@ -26,7 +26,9 @@ mod retry_audit;
 mod retry_edge;
 mod schedule_contract;
 pub use schedule_contract::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+mod send_lookup;
 mod served_sink;
+mod uncertain_send;
 mod weave_digest_send;
 mod window_door;
 
@@ -53,7 +55,7 @@ pub use self::capability::{
 pub use self::connector_reply::{ConnectorReply, ConnectorReplyDispatch, connector_reply_request};
 pub use self::connector_task::{
     CONNECTOR_SEND_TASK_SUBKIND, ConnectorSendTask, ConnectorSendTaskOutcome, SendExecutorLease,
-    connector_actor_id,
+    UncertainSendAnswerOutcome, UncertainSendHold, connector_actor_id,
 };
 pub(crate) use self::dispatch_attempt_id::{
     connector_logical_send_ref, outbound_dispatch_attempt_id,
@@ -90,6 +92,7 @@ pub use self::reply_job::{
     CONNECTOR_REPLY_JOB_KIND, CONNECTOR_REPLY_REF, CONNECTOR_REPLY_RESULT_PREFIX,
     ConnectorReplyJob, ConnectorReplyJobResult, ConnectorReplyStage,
 };
+pub use self::send_lookup::{EngineSendId, SENT_LOOKUP_TIMEOUT, SentLookup, SentLookupTarget};
 pub use self::served_sink::{
     APNS_EFFECTOR, ApnsAppConfig, ApnsDeviceAddress, ApnsEnvironment, LINE_API_BASE,
     OwnedServedChannelSink, SLACK_API_BASE, ServedChannelSink, ServedEndpoints, ServedTransports,
@@ -105,6 +108,9 @@ pub(crate) use self::reply_job::{
     erase_connector_reply_bodies_by_authors_in_txn, erase_connector_reply_bodies_for_events_in_txn,
     erase_connector_reply_job_payload, erase_connector_reply_results_in_txn,
     surface_participant_ids,
+};
+pub(crate) use self::uncertain_send::{
+    UNCERTAIN_SEND_ANSWER_VERB, UNCERTAIN_SEND_NOTIFICATION_PRODUCER,
 };
 pub(crate) use self::weave_digest_send::erase_weave_digest_channel_override_actor_in_txn;
 pub use self::weave_digest_send::{WeaveDigestChannelOverride, WeaveDigestChannelSetting};

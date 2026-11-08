@@ -49,6 +49,8 @@ pub struct ScopedMcpDispatchResult {
     /// charge, never a second delivery lane; `None` when no key governed or
     /// a replay charged nothing.
     pub budget_charge: Option<EffectorBudgetCharge>,
+    /// Confirmed-settlement events, also present when a resume charged nothing.
+    pub budget_settlement_events: Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
     /// A full count-bound budget window paced the call until this engine
     /// instant, Unix seconds (FIX 8686): it was not sent, recorded or
     /// charged, and goes again once its windows open.
@@ -56,6 +58,25 @@ pub struct ScopedMcpDispatchResult {
 }
 
 impl ScopedMcpDispatchResult {
+    /// Admission and confirmed-settlement messages on the existing steering
+    /// channel. A resumed Done can emit without a new admission charge.
+    #[must_use]
+    pub fn steering_messages(&self) -> Vec<String> {
+        let mut messages = self
+            .budget_charge
+            .as_ref()
+            .map(EffectorBudgetCharge::steering_messages)
+            .unwrap_or_default();
+        for event in self
+            .budget_settlement_events
+            .iter()
+            .flat_map(|events| &events.ladder_events)
+        {
+            crate::connector_key::append_effector_steering_message(&mut messages, event);
+        }
+        messages
+    }
+
     /// When a full count-bound budget window paced this call, the instant
     /// (Unix seconds) its windows all open again (FIX 8686).
     #[must_use]
@@ -126,6 +147,7 @@ impl fmt::Debug for ScopedMcpDispatchResult {
             .field("held_ask", &self.held_ask)
             .field("delivery_unresolved", &self.delivery_unresolved)
             .field("budget_charge", &self.budget_charge)
+            .field("budget_settlement_events", &self.budget_settlement_events)
             .field("paced_until", &self.paced_until)
             .finish()
     }
@@ -359,6 +381,7 @@ fn dispatch_result<S>(
         held_ask: None,
         delivery_unresolved,
         budget_charge: effect.budget_charge,
+        budget_settlement_events: effect.budget_settlement_events,
         paced_until: effect.paced_until,
     }
 }

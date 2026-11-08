@@ -30,6 +30,7 @@ mod affect_doors;
 mod ag_ui_file_doors;
 mod agent_definition_doors;
 mod agent_grant_doors;
+mod agent_verb_class_doors;
 #[path = "facade/generated/agent_verbs.rs"]
 mod agent_verbs;
 mod aging_doors;
@@ -213,6 +214,7 @@ mod sync_quarantine_doors;
 pub(super) mod tests;
 mod trusted_contact_doors;
 pub(super) mod ui_action_routes;
+mod uncertain_send_doors;
 mod usage_repair_doors;
 mod vault_shape_doors;
 mod vector_doors;
