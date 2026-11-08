@@ -20238,12 +20238,14 @@ class VerbHookStopCompleted(TypedDict):
     status: Literal["completed"]
     invocation: str
     result: Any
+    hook_notice: NotRequired[bool | None]
 class VerbHookStopCompletedWithError(TypedDict):
     status: Literal["completed_with_error"]
     invocation: str
     code: str
     message: str
     receipt_ref: NotRequired[str | None]
+    hook_notice: NotRequired[bool | None]
 VerbHookStop = VerbHookStopSkipped | VerbHookStopPending | VerbHookStopHidden | VerbHookStopCompleted | VerbHookStopCompletedWithError
 class RoomJoinHold(TypedDict):
     room: EntityId

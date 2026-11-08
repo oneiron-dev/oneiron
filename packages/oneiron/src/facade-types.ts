@@ -7921,7 +7921,7 @@ export type MemoryPolicyDenial = { level: string; row_ref: string; role: string;
 /** `oneiron_contracts::memory::error::MemoryWrongRoot` */
 export type MemoryWrongRoot = { attempted: string; replacement: string; schemaRef: string }
 /** `oneiron_contracts::error::hook::VerbHookStop` */
-export type VerbHookStop = { status: "skipped"; hook: string; reason: string } | { status: "pending"; invocation: string; ask: string } | { status: "hidden"; hook: string } | { status: "completed"; invocation: string; result: unknown } | { status: "completed_with_error"; invocation: string; code: string; message: string; receipt_ref?: string | null }
+export type VerbHookStop = { status: "skipped"; hook: string; reason: string } | { status: "pending"; invocation: string; ask: string } | { status: "hidden"; hook: string } | { status: "completed"; invocation: string; result: unknown; hook_notice?: boolean | null } | { status: "completed_with_error"; invocation: string; code: string; message: string; receipt_ref?: string | null; hook_notice?: boolean | null }
 /** `oneiron_contracts::room_join::RoomJoinHold` */
 export type RoomJoinHold = { room: EntityId; person: EntityId; intent_key: string; needs: ConsentNeed[] }
 /** `oneiron_contracts::memory::error::MemoryError` */

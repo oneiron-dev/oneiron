@@ -120,6 +120,7 @@ pub(in crate::runtime_hooks::verb) fn retry(
                           invocation"
                     .to_owned(),
                 receipt_ref: None,
+                hook_notice: None,
             }));
         }
         if !keep.unuse_ask(key, invocation, row.ask) {

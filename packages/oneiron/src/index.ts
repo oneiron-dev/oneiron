@@ -396,6 +396,16 @@ export class Oneiron {
   }
 
   /**
+   * Content-free hook notice beside the last facade call's reply. Typed
+   * results keep their shape. The next facade call clears it before sending;
+   * a cloned or vault-direct handle has none. Session-only calls may carry a
+   * notice without keeping a durable receipt.
+   */
+  lastHookNotice(): string | null {
+    return this.#client.lastHookNotice() ?? null
+  }
+
+  /**
    * The engine `[limits]` rows this client's own vault crossed, latest per
    * row: the row's key plus what it stood at and what the work measured,
    * both exact (`bigint`, never `number`). `null` on a remote, attached, or
