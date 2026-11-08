@@ -8,7 +8,7 @@
 //! words are found with the plain-text search, so a span counts characters
 //! as every code locator does.
 
-use super::super::anchor_text::{MAX_OFFERS, UnitFormat, find_text};
+use super::super::anchor_text::{MAX_OFFERS, UnitFormat, find_text, text_span};
 use super::super::code_units::{
     CodeFile, FileHash, code_span_words_in_txn, file_bytes_by_hash_in_txn, file_hash_hex,
 };
@@ -25,7 +25,9 @@ use crate::secret_custody::SecretSight;
 /// come in thread order, and each thread's places in path order, then file
 /// order, at most [`MAX_OFFERS`] a thread, as one blob search lists them. A
 /// path the snapshot's custody withholds, or one whose file `reads` refuses,
-/// is skipped; a file that is not text holds no place.
+/// is skipped; a file that is not text holds no place. A place holds the
+/// raw words the thread's pin held, compared in memory and never stored,
+/// and a thread whose pinned words no longer read is offered nothing.
 /// No snapshot offers nothing. A resource refusal is the engine's error
 /// (FIX 10587), never empty offers.
 pub(super) fn code_reattach_offers_in_txn(
@@ -36,10 +38,20 @@ pub(super) fn code_reattach_offers_in_txn(
     sight: SecretSight,
     reads: impl Fn(&FileHash) -> Result<bool>,
 ) -> Result<Vec<ReattachOffer>> {
-    let wanted: Vec<(EntityId, &str)> = unattached
-        .iter()
-        .filter_map(|thread| Some((thread.thread.thread_id, thread.snapshot.as_deref()?)))
-        .collect();
+    // Equal words in one projection are not the same words: a masked secret
+    // and literal filler read alike. Each place must hold the raw words the
+    // thread's pin held (review #6752).
+    let mut wanted: Vec<(EntityId, &str, String)> = Vec::new();
+    for thread in unattached {
+        let Some(words) = thread.snapshot.as_deref() else {
+            continue;
+        };
+        let Some(pinned) = raw_words_in_txn(vault, txn, artifact, &thread.thread.anchor.locator)?
+        else {
+            continue;
+        };
+        wanted.push((thread.thread.thread_id, words, pinned));
+    }
     if wanted.is_empty() {
         return Ok(Vec::new());
     }
@@ -64,7 +76,9 @@ pub(super) fn code_reattach_offers_in_txn(
             continue;
         };
         let hash = file_hash_hex(&entry.content_hash);
-        for ((_, words), found) in wanted.iter().zip(places.iter_mut()) {
+        // The file's raw bytes, read once and only when a place is found.
+        let mut raw: Option<Option<Vec<u8>>> = None;
+        for ((_, words, pinned), found) in wanted.iter().zip(places.iter_mut()) {
             if found.len() >= MAX_OFFERS {
                 continue;
             }
@@ -76,6 +90,23 @@ pub(super) fn code_reattach_offers_in_txn(
                 else {
                     continue;
                 };
+                if raw.is_none() {
+                    raw = Some(file_bytes_by_hash_in_txn(
+                        vault,
+                        txn,
+                        &entry.content_hash,
+                        SecretSight::Owner,
+                    )?);
+                }
+                let same = raw
+                    .as_ref()
+                    .and_then(|bytes| bytes.as_deref())
+                    .and_then(|bytes| text_span(bytes, char_start, char_end))
+                    .as_deref()
+                    == Some(pinned.as_str());
+                if !same {
+                    continue;
+                }
                 // A path past the locator bound has no code span.
                 if let Ok(locator) = Locator::code(
                     commit,
@@ -95,7 +126,7 @@ pub(super) fn code_reattach_offers_in_txn(
     Ok(wanted
         .iter()
         .zip(places)
-        .flat_map(|(&(thread_id, _), found)| {
+        .flat_map(|(&(thread_id, _, _), found)| {
             found.into_iter().map(move |locator| ReattachOffer {
                 thread_id,
                 version: CODE_ANCHOR_VERSION,
@@ -109,14 +140,17 @@ pub(super) fn code_reattach_offers_in_txn(
 /// `artifact` would land on, read in `txn` through the masked projection,
 /// the one the Unattached list's snapshot words were read through
 /// (`record_detached_in_txn`), so the two compare in one projection and no
-/// plaintext secret is read to compare them. Refused unless `locator` is a
-/// code locator that names the artifact's current repo_ref commit and that
-/// commit's file hash for its path. `None` when the path is withheld or the
-/// span does not read.
+/// plaintext secret is returned to compare them. Refused unless `locator`
+/// is a code locator that names the artifact's current repo_ref commit and
+/// that commit's file hash for its path. `None` when the path is withheld,
+/// the span does not read, or its raw words are not the raw words `pinned`
+/// (the thread's pin) held: equal masked words are not the same words, and
+/// the raw words are compared in memory only (review #6752).
 pub(super) fn code_reattach_words_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     artifact: &EntityId,
+    pinned: &Locator,
     locator: &Locator,
 ) -> Result<Option<String>> {
     let Some(file) = CodeFile::of(locator) else {
@@ -138,7 +172,26 @@ pub(super) fn code_reattach_words_in_txn(
             "a code reattach names the artifact's current commit and that commit's file hash",
         )));
     }
-    code_span_words_in_txn(vault, txn, artifact, locator, SecretSight::Masked)
+    let Some(words) = code_span_words_in_txn(vault, txn, artifact, locator, SecretSight::Masked)?
+    else {
+        return Ok(None);
+    };
+    let pinned_raw = raw_words_in_txn(vault, txn, artifact, pinned)?;
+    let same =
+        pinned_raw.is_some() && raw_words_in_txn(vault, txn, artifact, locator)? == pinned_raw;
+    Ok(same.then_some(words))
+}
+
+/// The raw words under `locator` on `artifact`, read through the owner's
+/// sight for an in-memory comparison only: never stored, and never returned
+/// to a reader.
+fn raw_words_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    artifact: &EntityId,
+    locator: &Locator,
+) -> Result<Option<String>> {
+    code_span_words_in_txn(vault, txn, artifact, locator, SecretSight::Owner)
 }
 
 impl Vault {
