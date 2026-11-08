@@ -160,7 +160,7 @@ pub const EMAIL_ATTRIBUTION_COLONS: &[char] = &[':', '：'];
 /// The mobile client sign-off lines a reply's top text drops from its end,
 /// each compared after trimming: a final line that is one of these is not
 /// the reply's own words.
-pub const EMAIL_CLIENT_SIGNOFFS: &[&str] = &[
+const EMAIL_CLIENT_SIGNOFFS: &[&str] = &[
     "Sent from my iPhone",
     "Sent from my iPad",
     "Sent from my Android",
