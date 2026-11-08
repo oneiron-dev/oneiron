@@ -23,8 +23,8 @@ use super::source::{
 
 pub(crate) use erase::scrub_hook_source_in_txn;
 pub(super) use erase::{
-    dependencies_erased_in_txn, erased_dependency_ids_in_txn, scrub_intent_payload,
-    scrub_memo_payload, scrub_receipt_payload, scrub_verb_payload,
+    dependencies_erased_in_txn, erased_dependency_ids_in_txn, scrub_erased_actor_in_txn,
+    scrub_intent_payload, scrub_memo_payload, scrub_receipt_payload, scrub_verb_payload,
 };
 
 /// A run's identity: BLAKE3 over its derivation envelope and its position.
@@ -187,6 +187,24 @@ pub(super) fn cursor_in_txn(
     source: FactSource,
 ) -> Result<Option<CursorRow>> {
     CURSORS.get(&vault.store, txn, &(binding, [source.tag()]))
+}
+
+/// The bindings whose cursor in `source` stands unpaused, read in `txn`, in
+/// binding order. A binding with no cursor there, or a paused one, takes a
+/// start when it next runs or is enabled ([`source::enable_start_in_txn`]).
+pub(super) fn unpaused_cursor_bindings_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: FactSource,
+) -> Result<Vec<EntityId>> {
+    let mut bindings = Vec::new();
+    for row in CURSORS.iter_from(&vault.store, txn, &[])? {
+        let ((binding, tag), cursor) = row?;
+        if tag == [source.tag()] && !cursor.paused {
+            bindings.push(binding);
+        }
+    }
+    Ok(bindings)
 }
 
 pub(super) fn put_cursor_in_txn(
@@ -430,6 +448,20 @@ impl HookRunDerivation {
                 id: *id,
                 revision,
                 body_hash,
+            });
+        }
+        // An inbound event's input names its actor too, so that actor's
+        // erase scrubs the run as its identity's does; a pinned dependency
+        // on the same id already does.
+        if let Some(surface) = &entry.surface
+            && !dependencies
+                .iter()
+                .any(|dependency| dependency.id == surface.actor)
+        {
+            dependencies.push(HookDependency {
+                id: surface.actor,
+                revision: None,
+                body_hash: None,
             });
         }
         dependencies.sort();

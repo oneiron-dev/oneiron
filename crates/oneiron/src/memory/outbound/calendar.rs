@@ -92,10 +92,7 @@ impl Memory<'_> {
                         .chain(sources),
                 )
                 .into_iter()
-                .map(|(start_utc, end_utc)| CalendarFreebusyIntervalDto {
-                    start_utc,
-                    end_utc,
-                })
+                .map(|(start_utc, end_utc)| CalendarFreebusyIntervalDto { start_utc, end_utc })
                 .collect()
             }),
         )
