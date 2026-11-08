@@ -2,6 +2,8 @@
 //! Runs the same typed engine doors and verb hooks as the current CLI.
 //! Shared owner, actor, argument, and row helpers stay in the parent.
 
+use std::collections::BTreeMap;
+
 use super::{
     CallerLocality, GateConsentBundleAction, HandoffAlarmsCommand, RunsCommand, SpaceRow,
     declared_space, emit, hold_host_root, hold_id_arg, hold_targets, hooked_row, input_kind,
@@ -586,13 +588,15 @@ pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
         }
         RunsCommand::Approve(args) => {
             let run = runs::RunName::from_fields(args.run_id.as_deref(), args.run_ref.as_deref())?;
-            emit(&runs::resolve(
+            let wordings = reminder_wordings(&args.wording)?;
+            emit(&runs::resolve_with_wordings(
                 &vault,
                 &local_owner(&vault)?,
                 run,
                 &args.bundle,
                 GateConsentBundleAction::Approve,
                 CallerLocality::OnDevice,
+                &wordings,
             )?)
         }
         RunsCommand::Decline(args) => {
@@ -607,4 +611,19 @@ pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
             )?)
         }
     }
+}
+
+/// Parses `--wording` repeats, each `CLAIM_ID=HASH`, into the
+/// `reminder_wordings` map `runs::resolve_with_wordings` takes. A repeated
+/// claim keeps its last entry.
+fn reminder_wordings(entries: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
+    let mut wordings = BTreeMap::new();
+    for entry in entries {
+        let (claim, hash) = entry.split_once('=').unwrap_or(("", ""));
+        if claim.is_empty() || hash.is_empty() {
+            return Err(anyhow::anyhow!("--wording {entry:?} is not CLAIM_ID=HASH"));
+        }
+        wordings.insert(claim.to_owned(), hash.to_owned());
+    }
+    Ok(wordings)
 }

@@ -15,7 +15,9 @@ mod skill_delivery;
 mod type_feedback;
 
 use super::cancel::StepCancellation;
-use super::program_entry::{InjectedAnswer, PROGRAM_RESUME_HELD, ProgramInjection};
+use super::program_entry::{
+    InjectedAnswer, PROGRAM_RESUME_HELD, ProgramCallableSpan, ProgramInjection,
+};
 use super::stack_floor::on_callable_stack;
 use super::store::{
     ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
@@ -27,6 +29,7 @@ use super::types::{
     JsCodeModeStream, JsResultCall, JsResultRef, JsResultTarget, SelfDispatchResponse,
     StoreReceiptInput,
 };
+use crate::code_run::ProgramResumeKind;
 use crate::code_run::{
     CapturedSkillDelivery, CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput,
     CodeRunReplayRecord, CodeRunResultBinding, DelegatedSource, ExecutorCallSite, ExecutorStorage,
@@ -143,6 +146,10 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// A turn program's pinned entry only (DOOR-141 PR3b): the calls an
     /// earlier entry settled, answered in their place instead of issued.
     pub(super) injection: Option<ProgramInjection>,
+    /// The callables a pinned entry's own calls ran, nested in its pinned
+    /// call (FIX 5878): where each one's own calls end, and whether its
+    /// body reached the entry's wait.
+    pub(super) program_callables: Vec<ProgramCallableSpan>,
     /// The type checks of the callable skills this host's calls run (FIX
     /// 10389): none attached until the run lends its service.
     callable_checks: CallableChecks<'s>,
@@ -230,6 +237,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             admitted_skill_seq: None,
             callable_rows: (Vec::new(), Some(Vec::new())),
             injection: None,
+            program_callables: Vec::new(),
             callable_checks: CallableChecks::default(),
             step_deadline: false,
             deadline_replay: None,
