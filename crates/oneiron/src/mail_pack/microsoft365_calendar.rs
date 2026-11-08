@@ -222,6 +222,7 @@ impl MailCalendarWire for HttpGraphCalendarWire<'_> {
                 start: cursor.opened_at.saturating_sub(VIEW_BEFORE_SECS),
                 end: cursor.opened_at.saturating_add(VIEW_AFTER_SECS),
             }),
+            vacated: Vec::new(),
         }))
     }
 }

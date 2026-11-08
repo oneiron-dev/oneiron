@@ -188,6 +188,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultPacksPreview
         | Row::VaultMailPackInstall
         | Row::VaultMailSourcesSync
+        | Row::VaultMailSourcesSearch
         | Row::VaultMailReplyApprove
         | Row::VaultPacksConnectorPrepare
         | Row::VaultPacksConnectorGet
@@ -273,7 +274,11 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultHooksReplay
         | Row::VaultHooksRegenDue
         | Row::VaultHooksRegenGet
+        | Row::VaultHooksRegenHistory
+        | Row::VaultHooksRegenRun
         | Row::VaultHooksRegenAdopt
+        | Row::VaultHooksRegenRevert
+        | Row::VaultHooksRegenCancel
         | Row::VaultLensesActivate
         | Row::VaultLensesDeactivate
         | Row::VaultAuthorityHandoffAlarms
@@ -301,6 +306,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultRepoGitPushRevoke
         | Row::VaultRepoAnchorBind
         | Row::VaultAgentsBase
+        | Row::VaultOauthAuthorizationAnswer
         | Row::VaultResidenceMode
         | Row::VaultResidenceOpen
         | Row::VaultResidenceIndex

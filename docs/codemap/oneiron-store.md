@@ -11,6 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `examples/vector_row_codec.rs` | src | s | — | — | Bench-only micro-bench (never part of production paths): the public persisted vector-row f16 codec in… |
 | `src/active_write_txn.rs` | src | s | 1 struct · 2 fn | ActiveWriteTxnGuard | The calling thread's open write-transaction depth: a guard raises it while a vault write runs its closure… |
 | `src/agent_birth_identity.rs` | src | s | 1 fn | — | The derived id of the asset that carries a birthed agent's captured source |
 | `src/agent_definition_codec.rs` | src | s | 2 mod | — | Store-layer modules of core `store::agent_definition_codec`; core re-exports each one at its old path |
@@ -122,7 +123,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/checkpoint_payload/loro/proof.rs` | src | s | 1 fn | — | The typed equality of two Loro histories a join's proof compares (FIX 6072, Engine R1): change by change and… |
 | `src/checkpoint_payload/mod.rs` | src | s | 1 struct · 2 enum · 16 fn · 5 const · 2 mod | CompartmentAccess, PayloadItem, Subtype | Checkpoint payload custody (KS-7, FIX 5688): the ordinary payload a checkpoint copies is sealed one owner at… |
 | `src/claim_lineage.rs` | src | s | 6 fn | — | Claim source lineage, evidence taint, and stored value projections |
-| `src/claim_refinement_control.rs` | src | s | 2 struct · 3 enum · 4 fn | RefinementControl, RefinementState, RefinementTarget, SharedSkillDelta, SharedSkillLane | A refinement candidate's content-free control row, the claim base's reserved held-out labels and the offered… |
+| `src/claim_refinement_control.rs` | src | s | 2 struct · 3 enum · 5 fn | RefinementControl, RefinementState, RefinementTarget, SharedSkillDelta, SharedSkillLane | A refinement candidate's content-free control row, the claim base's reserved held-out labels and the offered… |
 | `src/claim_source_ranking/mod.rs` | src | m | 1 struct · 8 fn | SourceRankingPolicy | PACK data for provenance-aware claim ordering |
 | `src/claim_vad_payment.rs` | src | s | 2 struct | ClaimVadPayment, ClaimVadPaymentWorker | Per-handle claim VAD payment wake state and attached-worker lifetime |
 | `src/code_artifact_body.rs` | src | m | 1 struct · 1 enum · 8 fn · 10 const | CodeArtifactBody, CodeArtifactClass | Code artifact body values and the pinned MessagePack codec |
@@ -142,7 +143,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_snapshot.rs` | src | s | 5 mod | — | Store-layer modules of core `store::code_snapshot`; core re-exports each one at its old path |
 | `src/code_snapshot/file_mode.rs` | src | s | 1 fn · 1 const | — | The Git file modes a code snapshot keeps (FIX 6869, G4 PR1) |
 | `src/code_snapshot/ids.rs` | src | s | 4 fn | — | Domain-separated entity identifiers for immutable snapshot assets and manifests |
-| `src/code_snapshot/repo_ref.rs` | src | s | 1 enum · 8 fn · 2 const | RepoRef | RepoRef identity: local-folder and GitHub-at-commit references with parsing and commit-hash normalization |
+| `src/code_snapshot/repo_ref.rs` | src | s | 1 enum · 8 fn · 2 const | RepoRef | Repository references: committed local/GitHub trees and current local captures |
 | `src/code_snapshot/snapshot.rs` | src | m | 2 struct · 10 fn · 2 type · 8 const | CodebaseFileEntry, CodebaseSnapshot | Codebase snapshot value type, MessagePack codec, fork/scope hashing, and manifest validation |
 | `src/code_snapshot/validation.rs` | src | s | 2 fn | — | Project identifiers and normalized paths in code snapshot manifests |
 | `src/code_tree_blob.rs` | src | s | 1 struct · 1 const | CodeTreeBlob | Untouched blob references and submodule mode in tested code trees |
@@ -160,7 +161,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/retrieval_affect.rs` | src | s | 1 struct · 3 fn · 3 const | AffectRetrievalPolicy | Per-vault read-side affect retrieval policy |
 | `src/config/tagging.rs` | src | s | 2 struct · 1 enum · 9 fn · 7 const | TaggingMarkerConfig, TaggingMode, TaggingTraceHistory | Tagging marker configuration and identity validation |
 | `src/connector_key_status.rs` | src | s | 1 enum · 2 fn | ConnectorKeyStatus | Connector-key lifecycle status and its pinned wire strings |
-| `src/consent_bound.rs` | src | m | 7 struct · 5 enum · 50 fn · 5 const | ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope, BoundSubject, ConsentDecision +4 | Consent bound vocabulary, normalization and containment |
+| `src/consent_bound.rs` | src | L | 7 struct · 5 enum · 51 fn · 5 const | ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope, BoundSubject, ConsentDecision +4 | Consent bound vocabulary, normalization and containment |
 | `src/consolidation_evidence.rs` | src | s | 1 fn · 1 const | — | Domain-separated content hashes of consolidation source bytes |
 | `src/consolidation_reader.rs` | src | s | 1 enum · 1 fn · 1 const | ConsolidationReader | The readers that consolidate a claim: the vocabulary the engine's consolidation check and the store layer's… |
 | `src/consolidation_scope.rs` | src | s | 1 enum · 2 fn | DreamerConsolidationScope | Consolidation attempt-table lanes and their stored queue kinds |
@@ -311,7 +312,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/manifest_origin_keys.rs` | src | s | 2 fn | — | The row keys of a policy manifest's trusted-origin and seeded-confidence side tables, spelled for the… |
 | `src/materialization_event.rs` | src | s | 1 struct | OriginMark | Commit-bound materialization revisions and read invalidation data |
 | `src/merge_queue.rs` | src | s | 5 mod | — | Store-layer modules of core `merge_queue`; core re-exports each one at its old path |
-| `src/merge_queue/driver_types.rs` | src | s | 7 struct · 4 enum · 2 fn | QueueBatchDrive, QueueConflictLink, QueueConflictView, QueueDriveHold, QueueDriveHoldReason, QueueDriveOutcome, QueueDrivePass, QueueDriveStatus +3 | The queue driver's instructions, outcomes, holds and the durable drive record a batch keeps (FIX 6868, G2 PR2) |
+| `src/merge_queue/driver_types.rs` | src | s | 8 struct · 4 enum · 2 fn | QueueBatchDrive, QueueConflictLink, QueueConflictView, QueueDiagnosisDecision, QueueDriveHold, QueueDriveHoldReason, QueueDriveOutcome, QueueDrivePass +4 | The queue driver's instructions, outcomes, holds and the durable drive record a batch keeps (FIX 6868, G2 PR2) |
 | `src/merge_queue/file_metadata.rs` | src | s | 2 fn | — | A received bundle's files in speculation (FIX 6869, G4 PR2): each one's reviewed exact Git state change… |
 | `src/merge_queue/source_types.rs` | src | s | 1 struct · 2 const | ServedQueueSource | The served queue source's names (FIX 6869): which authenticated import a served repository's checked queue… |
 | `src/merge_queue/tested_types.rs` | src | s | 6 struct · 5 enum · 3 fn | CodePushProjectionSourceLink, CodePushSourceLink, QueueAppliedSource, QueueExportHold, QueueExportHoldReason, QueueGreenExportView, QueueRevisionIntent, QueueRevisionLink +3 | The tested-revision seal's records, links and holds (FIX 6868, G2 PR3) |

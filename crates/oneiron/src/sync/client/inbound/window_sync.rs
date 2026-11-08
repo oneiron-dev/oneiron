@@ -69,7 +69,7 @@ impl SyncClient {
                 .map_err(|e| TransportError::Storage(e.to_string()))?;
             return Ok(vec![
                 transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
-                    .into_result()?,
+                    .into_own_frame()?,
             ]);
         }
         // A device syncs what it opened (ARCH-0023b): a window this device
@@ -125,6 +125,11 @@ impl SyncClient {
                 {
                     return Err(TransportError::InvalidPayload("unpromoted window control"));
                 }
+                // The home's grant on this socket, which a per-window
+                // re-bootstrap waits for before it asks for the window (FIX 20202).
+                if sub_tag == window_sub_tags::PROMOTION_GRANTED {
+                    self.promotions_granted.insert(key.clone());
+                }
                 // The setup window's catch-up asks for the window only once the home granted it.
                 if sub_tag == window_sub_tags::PROMOTION_GRANTED && !catch_up {
                     return Ok(Vec::new());
@@ -141,7 +146,7 @@ impl SyncClient {
                         window_sub_tags::VV_REQUEST,
                         &doc_version_vector(&window.doc),
                     )
-                    .into_result()?,
+                    .into_own_frame()?,
                 ])
             }
             window_sub_tags::RESIDENCE_ACK | window_sub_tags::RESIDENCE_HELD
@@ -197,7 +202,7 @@ impl SyncClient {
                             window_sub_tags::VV_RESPONSE,
                             &doc_version_vector(doc),
                         )
-                        .into_result()?,
+                        .into_own_frame()?,
                     ]);
                 }
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
@@ -216,7 +221,7 @@ impl SyncClient {
                         window_sub_tags::VV_RESPONSE,
                         &doc_version_vector(doc),
                     )
-                    .into_result()?,
+                    .into_own_frame()?,
                 );
                 // Record the server VV only after a fully valid exchange — it
                 // becomes the convergence witness for this window (ONE-1128).
@@ -278,7 +283,8 @@ impl SyncClient {
                 } else {
                     QueuedSends::Retire
                 };
-                // Judged again once no demotion holds the window closed.
+                // Judged again once no demotion holds the window closed. A fault
+                // not this vault's own is the home's, refused (FIX 22153).
                 let (window, conflicts) = self
                     .manager
                     .replace_window_bounded(
@@ -299,10 +305,7 @@ impl SyncClient {
                         }) => TransportError::Storage(
                             "window replacement waits on a held window".to_string(),
                         ),
-                        Error::Sync(SyncError::SyncProtocolError {
-                            context: SyncProtocolValidation::ReplacementRejected,
-                        }) => TransportError::InvalidPayload("window replacement rejected"),
-                        error => TransportError::Storage(error.to_string()),
+                        e => TransportError::from_applied(&e, "window replacement rejected"),
                     })?;
                 if !conflicts.is_empty() {
                     let _ = self.event_tx.send(SyncEvent::ReplacementConflicts {
@@ -314,11 +317,16 @@ impl SyncClient {
                 // one witnesses nothing about the new one.
                 self.server_vvs.remove(window_key);
                 self.kept_out_peer_copies.remove(window_key);
+                // The home's replacement installed, the evidence a per-window
+                // re-bootstrap waits for (FIX 20202); a peer's copy is not it.
+                if self.peer_session.is_none() {
+                    self.replacements_installed.insert(key.clone());
+                }
                 let vv = doc_version_vector(&window.doc);
                 drop(window);
                 Ok(vec![
                     transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
-                        .into_result()?,
+                        .into_own_frame()?,
                 ])
             }
             window_sub_tags::VV_RESPONSE => {
@@ -698,7 +706,9 @@ impl SyncClient {
                         Ok(missing) => missing,
                         Err(e) => {
                             self.manager.discard_window(&key);
-                            return Err(super::map_delta_export_err(e));
+                            return Err(TransportError::Storage(format!(
+                                "export durable delta: {e}"
+                            )));
                         }
                     };
                 // Its pads persist by reference where custody here holds them
@@ -894,7 +904,7 @@ impl SyncClient {
                 window_sub_tags::VV_REQUEST,
                 &doc_version_vector(&window.doc),
             )
-            .into_result()?,
+            .into_own_frame()?,
         );
         Ok(Some(answer))
     }
@@ -949,5 +959,5 @@ impl SyncClient {
 /// A device's request for the server's replacement of `window_key`.
 fn replacement_request(window_key: &str) -> std::result::Result<Vec<u8>, TransportError> {
     transport::encode_window_sync(window_key, window_sub_tags::REPLACEMENT_REQUEST, &[])
-        .into_result()
+        .into_own_frame()
 }

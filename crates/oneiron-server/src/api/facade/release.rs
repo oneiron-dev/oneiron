@@ -27,6 +27,27 @@ pub(crate) struct FacadeReleased {
     peer: PeerMachine,
     rows: Option<Vec<EntityId>>,
     withheld: Option<serde_json::Value>,
+    hook_notice: bool,
+}
+
+/// The HTTP/chat claim's private reply, never the wire result. The notice is
+/// content-free, so it has no dependency rows of its own.
+#[derive(serde::Deserialize)]
+struct SavedFacadeReply {
+    value: serde_json::Value,
+    hook_notice: bool,
+}
+
+impl SavedFacadeReply {
+    fn into_value(self) -> serde_json::Value {
+        serde_json::Value::Object(serde_json::Map::from_iter([
+            ("value".to_owned(), self.value),
+            (
+                "hook_notice".to_owned(),
+                serde_json::Value::Bool(self.hook_notice),
+            ),
+        ]))
+    }
 }
 
 impl FacadeReleased {
@@ -36,6 +57,7 @@ impl FacadeReleased {
             peer,
             rows: Some(rows),
             withheld: None,
+            hook_notice: false,
         }
     }
 
@@ -43,7 +65,11 @@ impl FacadeReleased {
     pub(crate) fn kept(self, sent: &serde_json::Value) -> InvocationRelease {
         InvocationRelease {
             peer: self.peer,
-            value: self.withheld.unwrap_or_else(|| sent.clone()),
+            value: SavedFacadeReply {
+                value: self.withheld.unwrap_or_else(|| sent.clone()),
+                hook_notice: self.hook_notice,
+            }
+            .into_value(),
             rows: self.rows,
         }
     }
@@ -66,22 +92,31 @@ pub(super) fn released_reply(
     auth: &CoreAuth,
     verb: &str,
     output: FacadeCallOutput,
-) -> (axum::Extension<FacadeReleased>, Json<serde_json::Value>) {
+) -> Response {
+    let hook_notice = output.hook_notice;
     let (kept, sent) = released_value(server, auth, verb, output);
-    (axum::Extension(kept), Json(sent))
+    with_hook_notice(
+        (axum::Extension(kept), Json(sent)).into_response(),
+        hook_notice,
+    )
 }
 
 /// The value [`released_reply`] sends for `output`, beside what it keeps
 /// for the invocation claim: one judgement for a door that answers by HTTP
 /// and for one that hands the answer on in process, as a credential's
-/// action row does (FIX 21054).
+/// action row does (FIX 21054). The caller notice rides beside it, never in
+/// it (FIX 12517).
 pub(super) fn released_value(
     server: &SyncServer,
     auth: &CoreAuth,
     verb: &str,
     output: FacadeCallOutput,
 ) -> (FacadeReleased, serde_json::Value) {
-    let FacadeCallOutput { value, rows } = output;
+    let FacadeCallOutput {
+        value,
+        rows,
+        hook_notice,
+    } = output;
     let owner_export = verb == OWNER_EXPORT_VERB && auth.is_owner_grade();
     let owner_whole_vault_export =
         super::export_transfer::owner_whole_vault_export_admitted(server, auth, verb);
@@ -115,8 +150,21 @@ pub(super) fn released_value(
         peer: auth.peer(),
         rows,
         withheld,
+        hook_notice,
     };
     (kept, sent)
+}
+
+pub(super) fn with_hook_notice(mut response: Response, hook_notice: bool) -> Response {
+    if hook_notice {
+        use oneiron::task_verb::revoke_lands::{CALLER_NOTICE_HEADER, CALLER_NOTICE_SUMMARY};
+
+        response.headers_mut().insert(
+            CALLER_NOTICE_HEADER,
+            axum::http::HeaderValue::from_static(CALLER_NOTICE_SUMMARY),
+        );
+    }
+    response
 }
 
 /// The reply of a call no credential binds, whose answer derives from no row
@@ -129,6 +177,7 @@ pub(super) fn unbound_reply(
         peer: PeerMachine::Unknown,
         rows: Some(Vec::new()),
         withheld: None,
+        hook_notice: false,
     };
     (axum::Extension(kept), Json(value))
 }
@@ -181,6 +230,29 @@ pub(crate) fn replayed_value(
     let rows = release.rows.as_deref();
     released_feedback(vault, &destination, rows, release.value.clone(), feedback)
         .unwrap_or(release.value)
+}
+
+/// [`replayed_value`] for the reply an invocation claim kept
+/// ([`FacadeReleased::kept`]): the first call's answer judged again for this
+/// waiter, beside the content-free caller notice it went out with (FIX
+/// 12517). A kept reply that does not decode is its error.
+pub(crate) fn replayed_claim_value(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    verb: &str,
+    release: InvocationRelease,
+    owner_whole_vault_export: bool,
+) -> serde_json::Result<(serde_json::Value, bool)> {
+    let SavedFacadeReply { value, hook_notice } = serde_json::from_value(release.value)?;
+    let release = InvocationRelease {
+        peer: release.peer,
+        value,
+        rows: release.rows,
+    };
+    Ok((
+        replayed_value(vault, auth, verb, release, owner_whole_vault_export),
+        hook_notice,
+    ))
 }
 
 /// `value`, an answer released as it stands, with the step feedback it

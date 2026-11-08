@@ -16,9 +16,12 @@ use super::seat::{
 use crate::attempt_queue::EnqueueAttempt;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::CalendarPassportPresence;
-use crate::calendar::ingest::{admit_calendar_import_claim, admit_calendar_import_claim_in_txn};
+use crate::calendar::ingest::{
+    ConnectorAdmissionSource, ConnectorScreen, admit_calendar_import_claim,
+    admit_calendar_import_claim_in_txn,
+};
 use crate::calendar::passport::live_passport_for;
-use crate::calendar::safeguard::{CalendarInboundBody, screen_then_claim};
+use crate::calendar::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
 use crate::entity_id::EntityId;
 use crate::vault::Vault;
 
@@ -31,6 +34,10 @@ use crate::vault::Vault;
 /// Gate-backed imported-evidence door, and re-enqueues one attempt inside the
 /// configured jitter window.
 ///
+/// The safeguard dial is off and no screener runs. An owner's pull
+/// ([`run_calendar_connector_sync_with_screener`]) runs under the owner's
+/// CAL-09 dial instead.
+///
 /// # Errors
 ///
 /// [`CalendarConnectorError`] for seat, transport, parse, timezone, and store
@@ -39,6 +46,35 @@ pub fn run_calendar_connector_sync(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
     transport: &dyn CalendarRemoteTransport,
+    now: u64,
+    jitter_seed: u64,
+) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
+    run_calendar_connector_sync_with_screener(
+        vault,
+        operation,
+        transport,
+        None,
+        false,
+        now,
+        jitter_seed,
+    )
+}
+
+/// [`run_calendar_connector_sync`] with CAL-09's safeguard wired, as a feed
+/// poll wires it: when `safeguard_enabled`, `screener` (or its recorded
+/// absence) produces a verdict immediately before every imported-claim
+/// admission the pull makes, its absence sweeps and remote deletions
+/// included.
+///
+/// # Errors
+///
+/// Same contract as [`run_calendar_connector_sync`].
+pub fn run_calendar_connector_sync_with_screener(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    transport: &dyn CalendarRemoteTransport,
+    screener: Option<&dyn CalendarBodyScreener>,
+    safeguard_enabled: bool,
     now: u64,
     jitter_seed: u64,
 ) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
@@ -56,6 +92,10 @@ pub fn run_calendar_connector_sync(
         seat.cursor.as_deref(),
     )?;
 
+    let screen = ConnectorScreen {
+        screener,
+        safeguard_enabled,
+    };
     let mut counters = SyncCounters::default();
     for change in &batch.changes {
         apply_remote_change(
@@ -64,6 +104,7 @@ pub fn run_calendar_connector_sync(
             seat,
             transport.provider_key(),
             change,
+            screen,
             now,
             &mut counters,
         )?;
@@ -111,13 +152,15 @@ struct SyncCounters {
     owed_omissions: u32,
 }
 
-/// Applies one pulled change under the echo law.
+/// Applies one pulled change under the echo law, each admission under
+/// `screen`.
 fn apply_remote_change(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
     seat: &CalendarConnectorSeatState,
     provider: &'static str,
     change: &RemoteCalendarChange,
+    screen: ConnectorScreen<'_>,
     now: u64,
     counters: &mut SyncCounters,
 ) -> Result<(), CalendarConnectorError> {
@@ -145,6 +188,12 @@ fn apply_remote_change(
             )?;
             let source_blob_ref = archived.blob_ref();
             crate::calendar::ingest::preflight_connector_feed(vault, system, &source, &feed, now)?;
+            let admission_source = ConnectorAdmissionSource {
+                record: source.as_str(),
+                source_version: Some(source_blob_ref.as_str()),
+                screen,
+                source: Some(archived),
+            };
             for parsed in &feed.events {
                 let normalized = RemoteCalendarChange::Upsert(RemoteCalendarObject {
                     href: object.href.clone(),
@@ -167,11 +216,7 @@ fn apply_remote_change(
                         crate::calendar::ingest::admit_connector_event(
                             vault,
                             system,
-                            crate::calendar::ingest::ConnectorAdmissionSource {
-                                record: source.as_str(),
-                                source_version: Some(source_blob_ref.as_str()),
-                                source: Some(archived),
-                            },
+                            admission_source,
                             parsed,
                             now,
                         )?;
@@ -185,7 +230,7 @@ fn apply_remote_change(
             crate::calendar::ingest::sweep_connector_resource(
                 vault,
                 system,
-                &source,
+                admission_source,
                 &feed,
                 &primary.uid,
                 now,
@@ -220,6 +265,7 @@ fn apply_remote_change(
                 provider,
                 uid,
                 RemovalEvidence::Tombstone,
+                screen,
                 now,
                 counters,
             )
@@ -241,6 +287,7 @@ fn apply_remote_change(
                 provider,
                 uid,
                 RemovalEvidence::Omission,
+                screen,
                 now,
                 counters,
             )
@@ -265,12 +312,17 @@ enum RemovalEvidence {
 /// supersedes only that passport, never the EVENT status. The EVENT is never
 /// deleted, CAL-07's outcome predicate is never written, and no delete is bounced
 /// back to any provider.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a removal's evidence and its pull's screen meet the one passport sweep"
+)]
 fn apply_remote_deletion(
     vault: &Vault,
     seat: &CalendarConnectorSeatState,
     provider: &'static str,
     uid: &str,
     evidence: RemovalEvidence,
+    screen: ConnectorScreen<'_>,
     now: u64,
     counters: &mut SyncCounters,
 ) -> Result<(), CalendarConnectorError> {
@@ -299,19 +351,25 @@ fn apply_remote_deletion(
         }
         after = ids.last().copied();
     }
-    let source = pull_source_record_id(provider, seat, uid);
+    let record = pull_source_record_id(provider, seat, uid);
+    let source = ConnectorAdmissionSource {
+        record: &record,
+        source_version: None,
+        screen,
+        source: None,
+    };
     match evidence {
         RemovalEvidence::Tombstone => crate::calendar::ingest::delete_connector_resource(
             vault,
             &seat.config.system,
-            &source,
+            source,
             uid,
             now,
         )?,
         RemovalEvidence::Omission => crate::calendar::ingest::sweep_connector_uids(
             vault,
             &seat.config.system,
-            &source,
+            source,
             &std::collections::BTreeSet::from([uid]),
             now,
         )?,

@@ -92,6 +92,7 @@ fn absent_callable_outcome() -> SelfDispatchOutcome {
 pub(crate) fn absent_delivery_outcome(verb: Option<AgentVerb>) -> Option<SelfDispatchOutcome> {
     (verb == Some(AgentVerb::VaultSkillsGet)).then(|| {
         SelfDispatchOutcome::Denied(SelfDeniedResult {
+            hook_notice: None,
             effect: SelfEffect::AgentVerb,
             outcome: MemoryError::from(Error::EntityNotFound).code,
             reason_codes: Vec::new(),

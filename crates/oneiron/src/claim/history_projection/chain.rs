@@ -473,6 +473,15 @@ fn eligible_machine_history_from(
     target: EntityId,
 ) -> Result<(ClaimTransitionProjection, Vec<EntityId>)> {
     let (projection, carriers) = machine_history(rows, store, txn, fold, target)?;
+    // FIX 12374: a stored fingerprint over today's seal, pin and gate
+    // sequence proves the gate verdict without re-reading every carrier's
+    // rows. Any absence, decode failure or mismatch runs today's loop.
+    if let Some(settled) = super::super::history_seal::matching_gate_verdict(store, txn, target)? {
+        if settled {
+            return Ok((projection, carriers));
+        }
+        return Err(missing());
+    }
     // A carrier awaiting its owner's answer leaves the history incomplete, as
     // one that has not arrived does: no approval projects from it yet.
     for id in &carriers {

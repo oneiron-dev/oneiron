@@ -84,8 +84,8 @@ pub use self::compaction_home::{
 pub use self::consent_wait::{
     AdmittedBrowserAct, CodeConsentAnswerInput, CodeConsentBrowserAction,
     CodeConsentBrowserOutcome, CodeConsentChoice, CodeConsentEffectHost,
-    CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentWaitState,
-    CodeConsentWaitView,
+    CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentStandingOffer,
+    CodeConsentWaitState, CodeConsentWaitView,
 };
 pub(crate) use self::consent_wait::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, CodeConsentCallSite, CodeConsentConnectorCall,
@@ -195,8 +195,9 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
-    ProgramResumeWait, ProgramRowAnswer, load_program_checkpoint_tail, program_resume_call,
-    program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
+    ProgramResumeKind, ProgramResumeWait, ProgramRowAnswer, load_program_checkpoint_tail,
+    program_resume_call, program_resume_calls_in_txn, program_resume_head_in_txn,
+    wait_delivered_in_txn,
 };
 pub(crate) use self::storage::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
