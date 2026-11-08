@@ -125,7 +125,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim_refinement_control.rs` | src | s | 2 struct · 3 enum · 4 fn | RefinementControl, RefinementState, RefinementTarget, SharedSkillDelta, SharedSkillLane | A refinement candidate's content-free control row, the claim base's reserved held-out labels and the offered… |
 | `src/claim_source_ranking/mod.rs` | src | m | 1 struct · 8 fn | SourceRankingPolicy | PACK data for provenance-aware claim ordering |
 | `src/claim_vad_payment.rs` | src | s | 2 struct | ClaimVadPayment, ClaimVadPaymentWorker | Per-handle claim VAD payment wake state and attached-worker lifetime |
-| `src/code_artifact_body.rs` | src | m | 1 struct · 1 enum · 7 fn · 9 const | CodeArtifactBody, CodeArtifactClass | Code artifact body values and the pinned MessagePack codec |
+| `src/code_artifact_body.rs` | src | m | 1 struct · 1 enum · 8 fn · 10 const | CodeArtifactBody, CodeArtifactClass | Code artifact body values and the pinned MessagePack codec |
 | `src/code_commit_metadata.rs` | src | s | 1 struct · 3 fn | CodeCommitMetadata | Canonical commit authorship, message and file modes |
 | `src/code_document_values.rs` | src | s | 5 struct · 1 enum · 10 fn | CodeDocumentFrontier, CodeDocumentRows, CodeFileEdit, CodeFileMetadataEdit, CodeFilePresence, CodeSpanAnchor | Tested code file frontiers, text edits and Git metadata edits |
 | `src/code_import_manifest.rs` | src | s | 2 struct · 6 fn · 1 const | CodeImportAnchor, CodeImportManifest | Reviewed repository import anchors, manifest digests and raw claim codecs |
@@ -133,6 +133,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_memory_values/mod.rs` | src | m | 15 struct · 5 enum · 21 fn · 8 const · 1 mod · 1 re-export | AlwaysOnCodeMemoryContract, AnchorTransfer, AnchorTransferKind, AnchorTransferReceipt, AnchorTransferRecord, AttachCodeMemory, BlocksWriteContext, CodeMemoryAnchor +12 | Symbol-anchored memory values, deterministic union rules and row codecs |
 | `src/code_memory_values/pull_result.rs` | src | s | 1 struct | CodeMemoryPullResult | Provenance-labelled code-memory pull values |
 | `src/code_promotion_gap.rs` | src | s | 1 enum · 1 fn | QueuePromotionGap | Reasons a tested revision lacks reviewed promotion |
+| `src/code_repo_registration.rs` | src | s | 1 struct · 1 enum · 9 fn · 1 const | CodeRepoRegistration, CodeRepoSource | The retained configuration of a registered repository (FIX 4299, CODE-CUSTODY-01), nested in its… |
 | `src/code_revision_identity.rs` | src | s | 3 fn | — | Deterministic aggregation-session, tested-revision and provenance identifiers |
 | `src/code_revision_record/commit_metadata.rs` | src | s | 3 fn | — | Message and file modes are canonical revision data, not export input; authorship is erasable attribution… |
 | `src/code_revision_record/file_frontiers.rs` | src | s | 2 fn | — | Pure tested-file frontier map validation and codecs |
@@ -141,8 +142,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_snapshot.rs` | src | s | 5 mod | — | Store-layer modules of core `store::code_snapshot`; core re-exports each one at its old path |
 | `src/code_snapshot/file_mode.rs` | src | s | 1 fn · 1 const | — | The Git file modes a code snapshot keeps (FIX 6869, G4 PR1) |
 | `src/code_snapshot/ids.rs` | src | s | 4 fn | — | Domain-separated entity identifiers for immutable snapshot assets and manifests |
-| `src/code_snapshot/repo_ref.rs` | src | s | 1 enum · 7 fn · 2 const | RepoRef | RepoRef identity: local-folder and GitHub-at-commit references with parsing and commit-hash normalization |
-| `src/code_snapshot/snapshot.rs` | src | m | 2 struct · 8 fn · 2 type · 8 const | CodebaseFileEntry, CodebaseSnapshot | Codebase snapshot value type, MessagePack codec, fork/scope hashing, and manifest validation |
+| `src/code_snapshot/repo_ref.rs` | src | s | 1 enum · 8 fn · 2 const | RepoRef | RepoRef identity: local-folder and GitHub-at-commit references with parsing and commit-hash normalization |
+| `src/code_snapshot/snapshot.rs` | src | m | 2 struct · 10 fn · 2 type · 8 const | CodebaseFileEntry, CodebaseSnapshot | Codebase snapshot value type, MessagePack codec, fork/scope hashing, and manifest validation |
 | `src/code_snapshot/validation.rs` | src | s | 2 fn | — | Project identifiers and normalized paths in code snapshot manifests |
 | `src/code_tree_blob.rs` | src | s | 1 struct · 1 const | CodeTreeBlob | Untouched blob references and submodule mode in tested code trees |
 | `src/compaction.rs` | src | s | 2 mod | — | Store-layer modules of core `compaction`; core re-exports each one at its old path |
@@ -250,7 +251,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/objects.rs` | src | s | 3 struct · 7 fn | GitCommitHeader, GitCommitRequest, GitTreeEntry | Commit and tree object model: tree entries, commit headers, commit-request bytes, tree parsers |
 | `src/git_wire/operation.rs` | src | s | 2 enum · 6 fn · 1 const | GitWireEffectClass, GitWireOperation | Operation enum, effect classes, and the stable wire-name mapping |
 | `src/git_wire/origin_relay.rs` | src | s | 1 struct · 4 fn | OriginRelayEgress | The fixed process profile of an origin mirror's Git legs on a served host: an exact publish's and an… |
-| `src/git_wire/path_text.rs` | src | s | 5 fn · 1 const | — | The text form of a Git path (FIX 21326) |
+| `src/git_wire/path_text.rs` | src | s | 6 fn · 1 const | — | The text form of a Git path (FIX 21326) |
 | `src/git_wire/plan.rs` | src | s | 1 struct · 1 enum · 1 fn | GitWirePlannedOid, PlannedPublication | Two-phase plan assembly: object writes plus the ref publications they authorize |
 | `src/git_wire/process.rs` | src | s | 7 fn | — | The crate's single git child-process constructor plus its bounded IO and thread-pump helpers |
 | `src/git_wire/projected_object.rs` | src | m | 2 struct · 1 enum · 11 fn · 3 const | GitObjectEdge, GitProjectedPayload, RawTreeEntry | A masked copy's objects and its store (FIX 7608 slice 2b-i, CALL P2 `PreservePayload`) |
@@ -301,7 +302,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/known_value_index/forms.rs` | src | m | 1 struct · 11 fn · 1 const | View | A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not… |
 | `src/known_value_index/rolling.rs` | src | s | 3 struct · 11 fn | RollingKey, RollingScan, RollingSets | The keyed rolling prefilter (FIX 12209): each entry keeps a 2-byte keyed rolling value of its first window… |
 | `src/l2_evidence.rs` | src | s | 2 struct · 4 fn | L2BaseCache, L2BaseSummary | Bounded, vault-owned cache of score-free context evidence |
-| `src/lib.rs` | src | s | 222 mod | — | The store layer of the oneiron engine |
+| `src/lib.rs` | src | s | 223 mod | — | The store layer of the oneiron engine |
 | `src/live_speaker_calls.rs` | src | s | 1 struct · 3 fn | LiveSpeakers | Per-room live voice-call registration index |
 | `src/local_queue_budget.rs` | src | s | 1 fn | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/long_interval.rs` | src | s | 1 const | — | The occurrence span past which a stored record is a long interval |
