@@ -195,6 +195,8 @@ impl DreamerWakeDriver<'_> {
                         != crate::dreamer_runner::maintenance::COMPACTION_CHECK_FACET
                     && admitted.status.payload.attempt_type
                         != crate::dreamer_runner::maintenance::digest::DIGEST_ASSESS_FACET
+                    && admitted.status.payload.attempt_type
+                        != crate::dreamer_runner::maintenance::CLAIM_SOURCE_RECHECK_FACET
                 {
                     crate::dreamer_runner::maintenance::execute(
                         admitted,
@@ -207,9 +209,11 @@ impl DreamerWakeDriver<'_> {
                     super::super::recipe_wake::execute(admitted, &ctx)
                 } else {
                     // The host's executor runs the rest, a self-written
-                    // compaction's check (FIX 4465 B) and an urgent
-                    // digest's harm question (OF-194) among them: each
-                    // is judged on the model or ladder the host lends.
+                    // compaction's check (FIX 4465 B), an urgent digest's
+                    // harm question (OF-194) and the re-check of a
+                    // provider-deleted, kept message's claims (FIX 15414)
+                    // among them: each is judged on the model or ladder
+                    // the host lends.
                     exec.execute(admitted, &mut ctx).await
                 }
             });
