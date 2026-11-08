@@ -27,8 +27,10 @@ use crate::tokenizer::count_context_pack_tokens;
 use crate::{ContentPart, LlmRequest, WriteActor};
 
 pub(super) mod live_fork;
+mod speech;
 mod wait;
 
+pub(super) use self::speech::speech_call_text;
 use wait::FlightReceiver;
 
 /// Runs one background pass where the host chooses: a thread, a blocking
@@ -1026,18 +1028,6 @@ pub(super) fn result_read_affordance(read: &str) -> super::EngineExecutorResult<
         "sandbox.fs.read_file": path,
         "max_chunk_bytes": super::store::RECOVERABLE_OUTPUT_CHUNK_BYTES,
     }))?)
-}
-
-/// The text one speech call dispatched: a hook's rewrite where one rewrote
-/// it, else the guest's own request.
-pub(super) fn speech_call_text(call: &crate::code_run::CodeRunBridgeCall) -> Option<&str> {
-    let rmpv::Value::Map(entries) = call.rewritten_request.as_ref().unwrap_or(&call.request) else {
-        return None;
-    };
-    entries
-        .iter()
-        .find(|(key, _)| key.as_str() == Some("text"))
-        .and_then(|(_, value)| value.as_str())
 }
 
 /// Every stored result's read path `text` names.

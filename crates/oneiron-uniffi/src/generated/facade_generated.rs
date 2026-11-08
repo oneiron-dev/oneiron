@@ -3592,10 +3592,20 @@ export_facade! {
     let output = client.vault_code_model_heal_count(&input)?;
     crate::codec::lift_record("vault.code.model_heal_count", &output)
 };
+"vault.code.session_model_heal_count" => fn vault_code_session_model_heal_count(&self, input: CodeRunSessionModelHealCountRequest) -> CodeRunSessionModelHealCountView = |client| {
+    let input: oneiron::memory::code_run_doors::CodeRunSessionModelHealCountRequest = crate::codec::lower_record("vault.code.session_model_heal_count", input)?;
+    let output = client.vault_code_session_model_heal_count(&input)?;
+    crate::codec::lift_record("vault.code.session_model_heal_count", &output)
+};
 "vault.code.corrections" => fn vault_code_corrections(&self, input: CodeRunCorrectionsRequest) -> CodeRunCorrectionsView = |client| {
     let input: oneiron::memory::code_run_doors::CodeRunCorrectionsRequest = crate::codec::lower_record("vault.code.corrections", input)?;
     let output = client.vault_code_corrections(&input)?;
     crate::codec::lift_record("vault.code.corrections", &output)
+};
+"vault.code.step_evidence" => fn vault_code_step_evidence(&self, input: CodeRunStepEvidenceRequest) -> Option<CodeRunStepEvidenceView> = |client| {
+    let input: oneiron::memory::code_run_doors::CodeRunStepEvidenceRequest = crate::codec::lower_record("vault.code.step_evidence", input)?;
+    let output = client.vault_code_step_evidence(&input)?;
+    crate::codec::lift_record("vault.code.step_evidence", &output)
 };
 "vault.code.type_diagnostics" => fn vault_code_type_diagnostics(&self, input: CodeRunTypeDiagnosticsRequest) -> Option<ProgramStepFeedbackRelease> = |client| {
     let input: oneiron::memory::code_run_doors::CodeRunTypeDiagnosticsRequest = crate::codec::lower_record("vault.code.type_diagnostics", input)?;
@@ -4011,6 +4021,16 @@ export_facade! {
     let input: oneiron::task_verb::sdk::AgentGrantRevokeRequest = crate::codec::lower_record("vault.agents.grants.revoke", input)?;
     let output = client.vault_agents_grants_revoke(&input)?;
     crate::codec::lift_record("vault.agents.grants.revoke", &output)
+};
+"vault.agents.verb_classes.get" => fn vault_agents_verb_classes_get(&self) -> AgentVerbClassesView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.agents.verb_classes.get")?;
+    let output = client.vault_agents_verb_classes_get(&input)?;
+    crate::codec::lift_record("vault.agents.verb_classes.get", &output)
+};
+"vault.agents.verb_classes.configure" => fn vault_agents_verb_classes_configure(&self, input: AgentVerbClassesConfigureRequest) -> AgentVerbClassesReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::AgentVerbClassesConfigureRequest = crate::codec::lower_record("vault.agents.verb_classes.configure", input)?;
+    let output = client.vault_agents_verb_classes_configure(&input)?;
+    crate::codec::lift_record("vault.agents.verb_classes.configure", &output)
 };
 "vault.repo.git_push.mint" => fn vault_repo_git_push_mint(&self, input: GitPushGrantMintInput) -> GitPushGrantMintOutput = |client| {
     let input: oneiron::task_verb::sdk::GitPushGrantMintInput = crate::codec::lower_record("vault.repo.git_push.mint", input)?;
