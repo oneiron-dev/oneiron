@@ -3849,6 +3849,9 @@ class Oneiron:
         def inference_defaults(self) -> "Oneiron._VaultSettingsInferenceDefaultsVerbs":
             return Oneiron._VaultSettingsInferenceDefaultsVerbs(self._client)
         @property
+        def models(self) -> "Oneiron._VaultSettingsModelsVerbs":
+            return Oneiron._VaultSettingsModelsVerbs(self._client)
+        @property
         def web_connector(self) -> "Oneiron._VaultSettingsWebConnectorVerbs":
             return Oneiron._VaultSettingsWebConnectorVerbs(self._client)
         @property
@@ -3881,6 +3884,21 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
             return json.loads(_translate(lambda: self._client.vault_settings_inference_defaults_replace(json.dumps(spec))))
+    class _VaultSettingsModelsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def responses_store(self) -> "Oneiron._VaultSettingsModelsResponsesStoreVerbs":
+            return Oneiron._VaultSettingsModelsResponsesStoreVerbs(self._client)
+    class _VaultSettingsModelsResponsesStoreVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """Reads the owner's Responses store switch from the serving vault."""
+            return json.loads(_translate(lambda: self._client.vault_settings_models_responses_store_read(json.dumps(spec))))
+        def set(self, spec):
+            """Sets the owner's Responses store switch, persisting it before updating this server's live providers."""
+            return json.loads(_translate(lambda: self._client.vault_settings_models_responses_store_set(json.dumps(spec))))
     class _VaultSettingsWebConnectorVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4648,7 +4666,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def ingest(self, spec):
-            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""
+            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership."""
             return json.loads(_translate(lambda: self._client.vault_code_snapshots_ingest(json.dumps(spec))))
         def get(self, spec):
             """Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."""
@@ -4852,7 +4870,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def bind(self, spec):
-            """The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing."""
+            """The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership."""
             return json.loads(_translate(lambda: self._client.vault_repo_anchor_bind(json.dumps(spec))))
     class _VaultRepoSnapshotsVerbs:
         def __init__(self, client: _NativeClient) -> None:
