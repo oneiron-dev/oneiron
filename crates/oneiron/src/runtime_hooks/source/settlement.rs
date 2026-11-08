@@ -39,7 +39,7 @@ enum SettlementFeedRow {
 
 /// One settled proposal, as the feed keeps it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct SettledRow {
+pub(in crate::runtime_hooks) struct SettledRow {
     #[serde(with = "crate::serialize::entity_ref")]
     proposal: EntityId,
     outcome: SettledOutcome,
