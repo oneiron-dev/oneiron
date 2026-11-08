@@ -30,7 +30,9 @@ use serde_json::Value;
 use super::calendar::{MailCalendarPull, MailCalendarRead, MailCalendarWire, landed_uid};
 use super::credential::WireReads;
 use super::gmail::reads_google_mail;
-use super::rest::{self, RestAnswer, VerifiedCredentials, array, bearer_header, refused, text_of};
+use super::rest::{
+    self, FreshGoogleTokens, RestAnswer, VerifiedCredentials, array, refused, text_of,
+};
 use super::wire::MailSyncSource;
 use crate::Vault;
 use crate::calendar::{RemoteCalendarChange, RemoteCalendarObject};
@@ -59,6 +61,9 @@ pub struct HttpGoogleCalendarWire<'v> {
     client: reqwest::blocking::Client,
     /// The credentials this wire has seen own their source's calendar.
     verified: VerifiedCredentials,
+    /// The fresh access tokens its sources' stored grants were exchanged
+    /// for (fix list row 16311).
+    tokens: FreshGoogleTokens,
 }
 
 impl<'v> HttpGoogleCalendarWire<'v> {
@@ -72,6 +77,7 @@ impl<'v> HttpGoogleCalendarWire<'v> {
             vault,
             client: rest::https_client()?,
             verified: VerifiedCredentials::new(),
+            tokens: FreshGoogleTokens::new(),
         })
     }
 
@@ -97,7 +103,7 @@ impl<'v> HttpGoogleCalendarWire<'v> {
             WireReads::Calendar,
             GOOGLE_CALENDAR_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
-                let auth = bearer_header(token)?;
+                let auth = self.tokens.bearer(&self.client, source.source_ref, token)?;
                 // The credential presented here is the one checked: its user
                 // owns the calendar the source names.
                 if !self.verified.holds(source.source_ref, token) {
