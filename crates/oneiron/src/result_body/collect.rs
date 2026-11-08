@@ -162,7 +162,8 @@ impl Vault {
 
     /// Unlinks up to `limit` of the files the collector noted as unnamed
     /// that `wanted` takes, once no live read transaction is older than the
-    /// write that noted it (FIX 22101): every snapshot left sees it unnamed,
+    /// committed write that noted it, as the reader table reads under the
+    /// unlinking writer (FIX 22101): every snapshot left sees it unnamed,
     /// and a write that named it since held a pin, whose drop forgot the
     /// note. Each goes in a fresh writer that finds it unnamed again, under
     /// the pin lock, so no pin is taken between that check and the unlink.
@@ -183,7 +184,19 @@ impl Vault {
         let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
         let pins = &self.result_body_pins;
         self.with_write_txn_grouped(|txn| {
+            // The sample above may predate a note another collector made
+            // since: each note goes only when the reader table, read again
+            // under this writer, holds no snapshot older than the write that
+            // made it, and that write has committed; one this writer's own
+            // commit group made waits (FIX 22101). No reader opened from here
+            // on sees an older snapshot.
+            let writer = txn.id();
+            let oldest = self.store.env.oldest_reader_txn_id()?;
             for (digest, file, since) in &due {
+                if *since >= writer || oldest.is_some_and(|oldest| oldest < *since) {
+                    retired.kept += 1;
+                    continue;
+                }
                 let named = match *file {
                     RetiringFile::Released(_) => self.released_named_in_txn(txn, digest)?,
                     RetiringFile::Entry { instance, index } => {
