@@ -8,6 +8,7 @@
 
 use super::admission::{PollAdmission, VerdictFold};
 use crate::calendar::CalendarError;
+use crate::calendar::claims::CalendarPassportSource;
 use crate::calendar::connectors::{RemoteCalendarChange, RemoteCalendarObject};
 use crate::calendar::ics::{ParsedIcsFeed, parse_ics_feed};
 use crate::entity_id::EntityId;
@@ -79,6 +80,8 @@ pub(crate) fn apply_calendar_source_feed(
         preserve_direction: false,
         now,
         blob_ref: &archived.record,
+        // The passports keep the exact archived version the feed came from.
+        source: Some(archived.source),
         verdict_fold: VerdictFold::default(),
         continuations: None,
     };
@@ -226,6 +229,8 @@ fn parse_resource(ics: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
 struct ArchivedResource {
     /// The `hex#vN` reference the admitted claims cite.
     record: String,
+    /// The same version as the passports' exact source.
+    source: CalendarPassportSource,
     artifact_id: EntityId,
     /// The version this one descends from, when it is not the first.
     parent_version: Option<u64>,
@@ -275,8 +280,13 @@ fn archive_source_resource(
         at,
         now,
     )?;
+    let source = CalendarPassportSource {
+        artifact: artifact_id,
+        version: version.version,
+    };
     Ok(ArchivedResource {
-        record: format!("{}#v{}", artifact_id.to_hex(), version.version),
+        record: source.blob_ref(),
+        source,
         artifact_id,
         parent_version: version.parent_version,
     })
