@@ -143,6 +143,15 @@ impl ConvergenceSession {
         }
         self.rounds_started += 1;
         self.settle_unreadable(client);
+        self.vector_requests(client).map(Some)
+    }
+
+    /// SyncStep1 `VV_REQUEST` frames (carrying our VV) for every pending
+    /// window, outside the round budget: the caller keeps its own.
+    pub(super) fn vector_requests(
+        &self,
+        client: &mut SyncClient,
+    ) -> Result<Vec<Vec<u8>>, TransportError> {
         let mut frames = Vec::with_capacity(self.pending.len());
         for key in &self.pending {
             let window = client.ensure_window(key)?;
@@ -155,7 +164,7 @@ impl ConvergenceSession {
                 .into_result()?,
             );
         }
-        Ok(Some(frames))
+        Ok(frames)
     }
 
     /// Drops every pending window whose local doc is now VV-identical to a

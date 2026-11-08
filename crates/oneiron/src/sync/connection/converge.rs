@@ -232,12 +232,10 @@ impl SyncConnection {
         }
         // Phase 2 asked the home to promote each window before its first
         // vector; nothing is asked of a window until its grant is here.
-        let granted = |client: &SyncClient| {
-            keys.iter()
-                .all(|key| client.promotion_granted_on_connection(key))
-        };
+        let granted =
+            |client: &SyncClient, key: &WindowKey| client.promotion_granted_on_connection(key);
         if !self
-            .pump_until(write, read, client, event_tx, granted)
+            .pump_until_each(write, read, client, event_tx, &keys, granted)
             .await?
         {
             return Err(SessionFault::remote(
@@ -260,27 +258,25 @@ impl SyncConnection {
         }
         // A reply is not an install: a withheld or partial answer installs
         // nothing, and the window stays marked.
-        let installed = |client: &SyncClient| {
-            keys.iter()
-                .all(|key| client.window_replacement_installed(key))
-        };
+        let installed =
+            |client: &SyncClient, key: &WindowKey| client.window_replacement_installed(key);
         if !self
-            .pump_until(write, read, client, event_tx, installed)
+            .pump_until_each(write, read, client, event_tx, &keys, installed)
             .await?
         {
             return Err(SessionFault::remote(
                 "a marked promoted window's replacement did not install",
             ));
         }
+        // Each install asked the home for the new window's vector already.
         let mut session = ConvergenceSession::confirming(&[], &windows);
-        session.note_progress(client);
-        if !session.all_converged()
-            && !self
-                .confirm_rounds(write, read, client, event_tx, &mut session, true)
-                .await?
+        if !self
+            .confirm_each(write, read, client, event_tx, &mut session)
+            .await?
         {
             return Err(SessionFault::Remote(format!(
-                "Promoted re-bootstrap not confirmed after {MAX_CONVERGENCE_ROUNDS} rounds"
+                "Promoted re-bootstrap not confirmed: {MAX_CONVERGENCE_ROUNDS} rounds in a row \
+                 brought no window level"
             )));
         }
         // A window the home may not read settles a confirming session
@@ -293,24 +289,80 @@ impl SyncConnection {
         self.clear_full_resync_markers(markers)
     }
 
-    /// Strict server-frame pumps until `done` holds, at most
-    /// `MAX_CONVERGENCE_ROUNDS` of them: `true` once it holds.
-    async fn pump_until(
+    /// Strict server-frame pumps until `holds` is true of every key in
+    /// `keys`. The budget follows progress, so each of many windows gets its
+    /// answer: it ends only after `MAX_CONVERGENCE_ROUNDS` pumps in a row add
+    /// no key. `true` once every key holds.
+    async fn pump_until_each(
         &self,
         write: &mut WsSink,
         read: &mut WsSource,
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
-        done: impl Fn(&SyncClient) -> bool,
+        keys: &[WindowKey],
+        holds: impl Fn(&SyncClient, &WindowKey) -> bool,
     ) -> Result<bool, SessionFault> {
-        for _ in 0..MAX_CONVERGENCE_ROUNDS {
-            if done(&*client) {
-                return Ok(true);
+        let count = |client: &SyncClient| keys.iter().filter(|key| holds(client, key)).count();
+        let mut held = count(&*client);
+        let mut idle = 0;
+        while held < keys.len() {
+            if idle >= MAX_CONVERGENCE_ROUNDS {
+                return Ok(false);
             }
             self.pump_server_frames(read, write, client, event_tx, PumpBudget::standard(), true)
                 .await?;
+            let now = count(&*client);
+            if now > held {
+                held = now;
+                idle = 0;
+            } else {
+                idle += 1;
+            }
         }
-        Ok(done(&*client))
+        Ok(true)
+    }
+
+    /// Strict VV confirmation of `session`'s windows, its budget following
+    /// progress as [`Self::pump_until_each`]'s does: it reads on while any
+    /// window comes level, asks again for every window still pending only
+    /// after a pump brought none level, and gives up after
+    /// `MAX_CONVERGENCE_ROUNDS` such asks in a row. `true` once all confirm.
+    async fn confirm_each(
+        &self,
+        write: &mut WsSink,
+        read: &mut WsSource,
+        client: &mut SyncClient,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
+        session: &mut ConvergenceSession,
+    ) -> Result<bool, SessionFault> {
+        session.note_progress(client);
+        let mut idle = 0;
+        while !session.all_converged() {
+            let before = session.pending.len();
+            self.pump_server_frames(read, write, client, event_tx, PumpBudget::standard(), true)
+                .await?;
+            session.note_progress(client);
+            if session.pending.len() < before {
+                idle = 0;
+                continue;
+            }
+            if idle >= MAX_CONVERGENCE_ROUNDS {
+                return Ok(false);
+            }
+            idle += 1;
+            let frames = session.vector_requests(client).map_err(|e| {
+                SessionFault::Local(format!("Promoted re-bootstrap round failed: {e}"))
+            })?;
+            for frame in frames {
+                write
+                    .send(Message::Binary(frame.into()))
+                    .await
+                    .map_err(|e| {
+                        SessionFault::Remote(format!("Promoted re-bootstrap send failed: {e}"))
+                    })?;
+            }
+        }
+        Ok(true)
     }
 
     /// The queue clear of every re-bootstrap (`clear_all`). A row a
