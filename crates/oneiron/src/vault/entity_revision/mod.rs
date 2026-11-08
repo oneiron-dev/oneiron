@@ -4,6 +4,10 @@
 
 mod citations;
 pub(crate) use citations::resolve_room_pinned_alias_in_txn;
+mod document_mutation;
+pub(crate) use document_mutation::{
+    advance_document_mutation_head_in_txn, document_mutation_head_in_txn,
+};
 mod document_version;
 pub(crate) use document_version::common_document_retains_in_txn;
 mod idle;
