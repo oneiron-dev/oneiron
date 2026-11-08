@@ -266,6 +266,14 @@ pub trait MailProviderWire {
         Err(super::rest::refused("mail_search_not_served"))
     }
 
+    /// Whether a backslash inside a quoted string of this provider's search
+    /// language escapes the character after it (IMAP), so a search query's
+    /// grouping is read as the provider reads it (fix list row 19089). No by
+    /// default: a quote then always ends the string.
+    fn search_escapes(&self) -> bool {
+        false
+    }
+
     /// One attachment's bytes, as a reader opened it; `None` when the
     /// provider no longer has the message or the attachment.
     fn attachment(

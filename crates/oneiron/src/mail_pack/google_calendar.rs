@@ -201,11 +201,6 @@ impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
                 )));
             }
         };
-        // All-day exceptions name their occurrence in the calendar's zone.
-        let zone = text_of(page.get("timeZone")).filter(|zone| {
-            zone.chars().all(|ch| ch.is_ascii_graphic())
-                && crate::calendar::utc_to_wall(0, zone).is_ok()
-        });
         let mut by_uid: BTreeMap<String, Vec<Value>> = BTreeMap::new();
         // UIDs whose series is read again whole, and deleted resources by UID.
         let mut reread: BTreeSet<String> = BTreeSet::new();
@@ -251,14 +246,14 @@ impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
                 events
             };
             gone.remove(&uid);
-            if let Some(change) = resource_change(&uid, &series, zone.as_deref())? {
+            if let Some(change) = resource_change(&uid, &series)? {
                 changes.push(change);
             }
         }
         for uid in reread {
             gone.remove(&uid);
             let series = self.series(source, &uid)?;
-            if let Some(change) = resource_change(&uid, &series, zone.as_deref())? {
+            if let Some(change) = resource_change(&uid, &series)? {
                 changes.push(change);
             }
         }
@@ -306,12 +301,8 @@ impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
 
 /// One UID's resource from its events: a delete when its master is
 /// cancelled, the master with its instances otherwise, nothing when no
-/// master is among them. `zone` is the calendar's time zone.
-fn resource_change(
-    uid: &str,
-    events: &[Value],
-    zone: Option<&str>,
-) -> Result<Option<RemoteCalendarChange>> {
+/// master is among them.
+fn resource_change(uid: &str, events: &[Value]) -> Result<Option<RemoteCalendarChange>> {
     let Some(master) = events
         .iter()
         .find(|event| event.get("recurringEventId").is_none())
@@ -327,7 +318,7 @@ fn resource_change(
     }
     let mut ics = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n");
     ics.push_str("PRODID:-//oneiron//mail-pack google calendar//EN\r\n");
-    write_vevent(&mut ics, uid, master, None, zone)?;
+    write_vevent(&mut ics, uid, master, None)?;
     for instance in events
         .iter()
         .filter(|event| event.get("recurringEventId").is_some())
@@ -335,7 +326,7 @@ fn resource_change(
         let Some(original) = instance.get("originalStartTime") else {
             continue;
         };
-        write_vevent(&mut ics, uid, instance, Some(original), zone)?;
+        write_vevent(&mut ics, uid, instance, Some(original))?;
     }
     ics.push_str("END:VCALENDAR\r\n");
     let ics = ics.into_bytes();
@@ -351,15 +342,13 @@ fn resource_change(
 
 /// One event as a VEVENT: a series master (with its recurrence lines) when
 /// `original` is `None`, else the instance that replaced the occurrence
-/// starting at `original`. An all-day occurrence is named by its day's
-/// midnight in the calendar's zone `zone` (UTC when it has none), as a
-/// recurrence id names an instant.
+/// starting at `original`. An all-day occurrence is named by its date, the
+/// civil key its series steps on (FIX 16568).
 fn write_vevent(
     ics: &mut String,
     uid: &str,
     event: &Value,
     original: Option<&Value>,
-    zone: Option<&str>,
 ) -> Result<()> {
     let cancelled = event.get("status").and_then(Value::as_str) == Some("cancelled");
     ics.push_str("BEGIN:VEVENT\r\n");
@@ -374,7 +363,7 @@ fn write_vevent(
     }
     if let Some(original) = original {
         let recurrence_id = match original.get("date").and_then(Value::as_str) {
-            Some(date) => day_recurrence_id(date, zone)?,
+            Some(date) => day_recurrence_id(date)?,
             None => time_property("RECURRENCE-ID", original)?
                 .ok_or_else(|| refused("google_calendar_instance_without_original_start"))?,
         };
@@ -507,16 +496,13 @@ fn time_property(name: &str, time: &Value) -> Result<Option<String>> {
 }
 
 /// The recurrence id of the all-day occurrence on `date` (`YYYY-MM-DD`):
-/// its midnight in `zone`, or in UTC.
-fn day_recurrence_id(date: &str, zone: Option<&str>) -> Result<String> {
+/// that date, as its series' dated start names its days.
+fn day_recurrence_id(date: &str) -> Result<String> {
     let digits: String = date.chars().filter(char::is_ascii_digit).collect();
     if digits.len() != 8 {
         return Err(refused("google_calendar_date_unreadable"));
     }
-    Ok(match zone {
-        Some(zone) => format!("RECURRENCE-ID;TZID={zone}:{digits}T000000\r\n"),
-        None => format!("RECURRENCE-ID:{digits}T000000Z\r\n"),
-    })
+    Ok(format!("RECURRENCE-ID;VALUE=DATE:{digits}\r\n"))
 }
 
 fn utc_stamp(seconds: u64) -> Result<String> {
