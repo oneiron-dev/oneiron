@@ -85,6 +85,11 @@ pub(crate) struct CoreQueryRequest {
     /// Session receiving the result. Defaults to the caller's current board session.
     #[serde(default)]
     session_id: Option<String>,
+    /// The caller's retrieval filter (FIX 3977, `#t-filter`): it only
+    /// narrows the vault's floor for this read.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>)]
+    filter: Option<oneiron::memory::ReadFilterInput>,
 }
 
 #[derive(serde::Serialize, ToSchema)]
@@ -244,6 +249,12 @@ async fn read_core_query(
     );
     let mut observations =
         super::super::session_read_set(server, scope, req.session_id.as_deref()).await?;
+    // The caller's filter, as the hooks left the request (FIX 3977).
+    let request = req
+        .filter
+        .as_ref()
+        .map(oneiron::memory::ReadFilterInput::to_filter);
+    let scoped_read = scoped_read.with_read_filter(request.as_ref());
     let results = run_core_query(
         &scoped_read,
         query,
