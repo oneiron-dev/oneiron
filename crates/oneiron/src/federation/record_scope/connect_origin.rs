@@ -15,7 +15,9 @@ use crate::error::{Error, Result, SyncEngineContext};
 use crate::federation::{FederationGrant, Scope, ScopeAxis, ScopeId};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::provenance::birth::{RowBirth, row_birth_in_txn};
-use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_FEDERATION_GRANT};
+use crate::registry::{
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_NOTE,
+};
 use crate::store::asset_file_in_txn;
 use crate::store::loro_document::{map_for_each_value_bytes, map_get_bytes, map_insert_bytes};
 use crate::sync::SyncSelector;
@@ -23,6 +25,16 @@ use crate::sync::client::VerifiedConnectOrigin;
 use crate::{EntityId, Vault};
 
 const ORIGIN_POSITIONS: &str = "origin_positions";
+
+/// The kinds a Connect origin position places: a NOTE, an ASSET and a
+/// caption. Each is born under one facet and sits in its live worlds, and the
+/// guest export carries none of their birth facets (FIX 22223).
+fn placed_kind(kind: u8) -> bool {
+    matches!(
+        kind,
+        ENTITY_TYPE_NOTE | ENTITY_TYPE_ASSET | ENTITY_TYPE_ASSET_TEXT
+    )
+}
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -127,10 +139,8 @@ fn current_row(
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok(None);
     };
-    if !matches!(
-        header.entity_type,
-        ENTITY_TYPE_ASSET | ENTITY_TYPE_ASSET_TEXT
-    ) || vault.store.port_entity_raw(txn, &id)?.as_deref() != Some(raw.as_slice())
+    if !placed_kind(header.entity_type)
+        || vault.store.port_entity_raw(txn, &id)?.as_deref() != Some(raw.as_slice())
         || !crate::ports::raw_readable_in_txn(&vault.store, txn, &id, &raw)?
     {
         return Ok(None);
@@ -252,13 +262,13 @@ pub(crate) fn witness_connect_positions(
     {
         return Ok(None);
     }
-    let mut captions = Vec::new();
+    let mut rows = Vec::new();
     map_for_each_value_bytes(&doc.get_map("entities"), |key, raw| {
-        if raw.is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_ASSET_TEXT))
+        if raw.is_some_and(|raw| raw.first().is_some_and(|kind| placed_kind(*kind)))
             && let Ok(id) = EntityId::from_hex(key)
             && id.to_hex() == key
         {
-            captions.push(id);
+            rows.push(id);
         }
     });
     // The worlds this window may carry a position in: the grant's, met with
@@ -266,27 +276,26 @@ pub(crate) fn witness_connect_positions(
     let window = super::note_world::selector_world_axis(selector.world);
     let ceilings = [&grant.authority_scope.worlds, &window];
     let mut positions = BTreeMap::new();
-    for id in captions {
-        let Some(caption) = source_position(vault, &txn, &doc, id, grant, &ceilings)? else {
-            continue;
-        };
-        let mut sources = Vec::new();
-        for source in &caption.sources {
-            match source_position(vault, &txn, &doc, *source, grant, &ceilings)? {
-                Some(position)
-                    if position.kind == ENTITY_TYPE_ASSET && position.facet == caption.facet =>
-                {
-                    sources.push((*source, position))
-                }
-                _ => break,
-            }
+    for id in rows {
+        if let Some(position) = source_position(vault, &txn, &doc, id, grant, &ceilings)? {
+            positions.insert(id, position);
         }
-        if sources.len() != caption.sources.len() {
-            continue;
-        }
-        positions.extend(sources);
-        positions.insert(id, caption);
     }
+    // A caption carries its position only beside every source's, each an
+    // ASSET born under the caption's facet.
+    let unbacked: BTreeSet<EntityId> = positions
+        .iter()
+        .filter(|(_, position)| {
+            position.kind == ENTITY_TYPE_ASSET_TEXT
+                && !position.sources.iter().all(|source| {
+                    positions.get(source).is_some_and(|backing| {
+                        backing.kind == ENTITY_TYPE_ASSET && backing.facet == position.facet
+                    })
+                })
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    positions.retain(|id, _| !unbacked.contains(id));
     if positions.is_empty() {
         return Ok(None);
     }
@@ -355,7 +364,7 @@ pub(crate) fn import_connect_positions(
             && id.to_hex() == key
             && let Ok(position) = rmp_serde::from_slice::<OriginPosition>(bytes)
             && rmp_serde::to_vec_named(&position).ok().as_deref() == Some(bytes)
-            && matches!(position.kind, ENTITY_TYPE_ASSET | ENTITY_TYPE_ASSET_TEXT)
+            && placed_kind(position.kind)
         {
             positions.insert(id, position);
         }
@@ -407,7 +416,8 @@ pub(crate) fn import_connect_positions(
         };
         let mut admitted_sources = BTreeSet::new();
         let mut changed = false;
-        for kind in [ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT] {
+        // Sources land before the captions they back.
+        for kind in [ENTITY_TYPE_NOTE, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT] {
             for (id, position) in positions
                 .iter()
                 .filter(|(_, position)| position.kind == kind)
@@ -439,6 +449,18 @@ pub(crate) fn import_connect_positions(
                         || related_in_store(vault, txn, *id, EdgeKind::DerivedFrom)?
                             != position.sources
                         || !position.sources.is_subset(&admitted_sources))
+                {
+                    continue;
+                }
+                // The row must already sit in the signed foreign world here:
+                // its `InWorld` edge (a caption's, its sources') landed on this
+                // vault's copy of the world. A row whose edge is still
+                // deferred, because no WORLD row for that copy exists here yet,
+                // reads as base reality, and a stamp beside it would place a
+                // guest's row in base under the sender's facet (FIX 22223).
+                // Its position waits for a later Connect, once the edge lands.
+                if super::note_world::live_worlds_in(&vault.store, txn, *id, kind).axis()
+                    != scope.worlds
                 {
                     continue;
                 }
