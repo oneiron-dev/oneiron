@@ -203,6 +203,7 @@ impl RunInner {
                     CallOutcome::Answered(usage) => Some(RunTokenUsage {
                         input: usage.input,
                         output: usage.output,
+                        provider_token_measurement: usage.provider_token_measurement(),
                     }),
                     _ => None,
                 },
