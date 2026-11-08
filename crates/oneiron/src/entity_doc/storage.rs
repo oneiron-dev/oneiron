@@ -431,17 +431,10 @@ impl Vault {
                 }
                 crate::store::witness_message_body::validate_canonical_witness_message_body(body)?;
             }
+            // A NOTE owns its own document from its birth (FIX 7783): its row
+            // is its core alone, with no text to move.
             if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-                let original = crate::store::note_body::decode_note_body(body)?;
-                // Only a live author that is the migrating writer matches: an
-                // erased one is no one, never another verified writer.
-                if !original.author_ref.is(birth_actor.entity_ref())
-                    || *field != TextField::MapField("markdown".to_owned())
-                {
-                    return Err(invalid(
-                        "note migration must preserve its original author and markdown field",
-                    ));
-                }
+                return Err(invalid("entity already owns a document"));
             }
             let (initial, metadata, pointer) = replace_text(body, field, &entity.to_hex())?;
             crate::origin::lfs::guard_lfs_asset_put(

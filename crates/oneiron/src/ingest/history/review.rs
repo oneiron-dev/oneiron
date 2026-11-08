@@ -109,7 +109,7 @@ pub(crate) fn imported_evidence_in_txn(
             // A NOTE an archive import kept with its source author is
             // imported words (FIX 7777); it names no review of its own.
             ENTITY_TYPE_NOTE => {
-                imported |= crate::store::note_body::decode_note_body_using(
+                imported |= crate::store::note_body::decode_note_core_using(
                     &body,
                     crate::store::note_body::NoteKind::wire,
                 )
