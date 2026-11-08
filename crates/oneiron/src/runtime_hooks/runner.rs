@@ -34,6 +34,7 @@ use super::source::{self, FactEntry, FactKind, FactPosition, FactSource};
 use super::store::{self, HookRunState, RunKey};
 
 pub(super) use body::{Verdict, ask_verdict, judge, verdict_context};
+pub(crate) use hook_feeds::prune_hook_feeds;
 use retained::RetainedPass;
 
 /// Entries one pass reads from each source: the in-memory cap. A source with
