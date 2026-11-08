@@ -37,7 +37,8 @@ const AMBIENT_ALTERNATIVE_REF_SEGMENT: &str = "ambient";
 
 /// The identity an alternative bound for `surface` derives from its
 /// interrupt's identity `parent_ref`: its receipt id, its intent ref, and
-/// its ledger identity, under which its ledger rows are keyed.
+/// its ledger identity, under which its ledger rows are keyed (FIX 11029:
+/// the executor finds the alternative's ledger row by it).
 pub(in crate::outbound) fn ambient_alternative_ref(parent_ref: &str, surface: &str) -> String {
     format!("{parent_ref}:{AMBIENT_ALTERNATIVE_REF_SEGMENT}:{surface}")
 }
@@ -60,6 +61,13 @@ fn ambient_alternative_request(
         OutboundDeliveryWindowDecision::DeliverNow,
     );
     request.ledger_identity_ref = parent.ledger_identity_ref.as_deref().map(derive);
+    // It never goes beside an interrupt whose own send may have gone.
+    request.exclusive_route_ref = Some(
+        parent
+            .ledger_identity_ref
+            .clone()
+            .unwrap_or_else(|| parent.intent_ref.clone()),
+    );
     request.counterparty_ref = alternative.counterparty_ref.clone();
     request.originating_session_ref = parent.originating_session_ref.clone();
     request.active_delivery_contexts = parent.active_delivery_contexts.clone();
@@ -83,6 +91,43 @@ fn ambient_alternative_request(
     request.owner_released_resend = parent.owner_released_resend;
     request.send_approved_at = parent.send_approved_at;
     request
+}
+
+/// The request an interrupt's bound alternative goes as, outside a
+/// degraded dispatch: the executor's send of an alternative already
+/// admitted (FIX 11029).
+pub(in crate::outbound) fn ambient_alternative_dispatch_request(
+    parent: &OutboundDispatchRequest,
+    alternative: &OutboundAmbientAlternative,
+) -> OutboundDispatchRequest {
+    ambient_alternative_request(parent, alternative)
+}
+
+/// Names an interrupt's alternative, its receipt when known, and what came
+/// of it on the interrupt's receipt, as a degraded dispatch names them.
+pub(in crate::outbound) fn name_ambient_alternative(
+    receipt: &mut crate::receipt::ReceiptRecord,
+    parent: &OutboundDispatchRequest,
+    alternative: &OutboundAmbientAlternative,
+    outcome: &str,
+    child_receipt: Option<&str>,
+) {
+    let fields = &mut receipt.fields;
+    if let Some(child_receipt) = child_receipt {
+        fields.insert(
+            ALTERNATIVE_RECEIPT_REF_FIELD.to_owned(),
+            child_receipt.to_owned(),
+        );
+    }
+    fields.insert(
+        ALTERNATIVE_SURFACE_FIELD.to_owned(),
+        alternative.surface.clone(),
+    );
+    fields.insert(
+        ALTERNATIVE_INTENT_REF_FIELD.to_owned(),
+        ambient_alternative_ref(&parent.intent_ref, &alternative.surface),
+    );
+    fields.insert(ALTERNATIVE_OUTCOME_FIELD.to_owned(), outcome.to_owned());
 }
 
 /// Sends a degraded interrupt's bound alternative and names it on the

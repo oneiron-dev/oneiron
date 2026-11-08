@@ -5,14 +5,17 @@ use super::{
     model::*,
     rate::{LimitCrossing, keep_limit_crossings},
 };
+use crate::host_memory::MemoryRefusal;
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Result, TimeRange, Vault};
 use std::io::{BufRead, Cursor, Read, Seek, SeekFrom};
 
-/// The widest and the tallest a signature image decodes: past either axis its
-/// decode is refused before a raster is allocated.
-const DECODE_MAX_AXIS: u32 = 2048;
+mod memory;
+
+/// An initial raster estimate when the spool's header parser cannot name
+/// dimensions. The decoder's actual dimensions refine admission before allocation.
+const HEADER_ESTIMATE_AXIS: u32 = 2048;
 
 /// Signature image ownership marker. Key: id16 (document) + string (recipient) + string (image
 /// hex) — recipient and image are concatenated with no separator between them, so the shape is
@@ -50,8 +53,8 @@ impl Vault {
     /// it: past one, the image is stored and bound, and the crossing is kept
     /// for the host's health check to ask the envelope's sender whether
     /// everything is okay (FIX 3807, Engine ruling 10-19). Only its
-    /// capability and turn, its format and visible pixels, and the decoder's
-    /// bounds can refuse it.
+    /// capability and turn, its format and visible pixels, and the machine's
+    /// memory admission can refuse it.
     pub fn upload_esign_signature_image(
         &self,
         token: &EsignCapability,
@@ -73,6 +76,30 @@ impl Vault {
         })
     }
 
+    /// Uploads under the host's existing memory admission. The callback admits
+    /// the header copy, then the actual decoder's peak before its raster is
+    /// allocated. The second argument names the encoded header copy now
+    /// allocated: materialize that reservation before growing for the raster.
+    /// The host keeps that admission through this call's return.
+    pub fn upload_esign_signature_image_admitted_as(
+        &self,
+        token: &EsignCapability,
+        bytes: &[u8],
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
+        admit: &mut dyn FnMut(SignatureImagePlan, u64) -> std::result::Result<(), MemoryRefusal>,
+    ) -> Result<String> {
+        self.upload_esign_signature_image_admitted_within(
+            token,
+            bytes,
+            caller,
+            verified_actor,
+            &|_, _| Ok(true),
+            admit,
+            false,
+        )
+    }
+
     /// [`Self::upload_esign_signature_image`] under a narrowed caller's
     /// credential ceiling (FIX 6403): each of its writers judges the
     /// document the capability binds as soon as the binding names it, the
@@ -86,6 +113,28 @@ impl Vault {
         caller: super::SigningCaller,
         verified_actor: Option<EntityId>,
         ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
+    ) -> Result<String> {
+        let mut admit = memory::native_admission(bytes.len() as u64);
+        self.upload_esign_signature_image_admitted_within(
+            token,
+            bytes,
+            caller,
+            verified_actor,
+            ceiling,
+            &mut admit,
+            true,
+        )
+    }
+
+    fn upload_esign_signature_image_admitted_within(
+        &self,
+        token: &EsignCapability,
+        bytes: &[u8],
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
+        ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
+        admit: &mut dyn FnMut(SignatureImagePlan, u64) -> std::result::Result<(), MemoryRefusal>,
+        reopen_after_admission: bool,
     ) -> Result<String> {
         let now = self.now_recorded_at();
         // Authenticate before attacker-controlled image decode. Count the
@@ -122,7 +171,14 @@ impl Vault {
         if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
             return Err(invalid("signature image format"));
         }
-        let decoded = self.decode_signature_image(bytes, format)?;
+        admit(SignatureImagePlan::header(format), 0).map_err(memory::refused)?;
+        let decoded = self.decode_signature_image(
+            bytes,
+            format,
+            admit,
+            &mut crossings,
+            reopen_after_admission,
+        )?;
         if !decoded.to_rgba8().pixels().any(|p| p.0[3] != 0) {
             return Err(invalid("signature image has no visible pixels"));
         }
@@ -237,29 +293,71 @@ impl Vault {
         &self,
         bytes: &[u8],
         format: image::ImageFormat,
+        admit: &mut dyn FnMut(SignatureImagePlan, u64) -> std::result::Result<(), MemoryRefusal>,
+        crossings: &mut Vec<LimitCrossing>,
+        reopen_after_admission: bool,
     ) -> Result<image::DynamicImage> {
+        use image::ImageDecoder;
+
         let row = EngineLimit::SignatureDecodeBytes;
         let bound = self.limit_watch().bound(row);
-        let reader = |max_alloc: u64| {
+        let mut limits = image::Limits::default();
+        limits.max_alloc = Some(bound);
+        let reader = || {
             let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
-            let mut limits = image::Limits::default();
-            limits.max_image_width = Some(DECODE_MAX_AXIS);
-            limits.max_image_height = Some(DECODE_MAX_AXIS);
-            limits.max_alloc = Some(max_alloc);
-            reader.limits(limits);
+            reader.limits(limits.clone());
             reader
         };
-        let raster = reader(bound)
+        let mut decoder = reader()
             .into_decoder()
-            .map(|decoder| image::ImageDecoder::total_bytes(&decoder))
             .map_err(|_| invalid("signature image decode"))?;
-        let max_alloc = match self.measure_limit(row, raster) {
+        let (width, height) = decoder.dimensions();
+        let pixel_bytes = match decoder.color_type() {
+            image::ColorType::L16
+            | image::ColorType::La16
+            | image::ColorType::Rgb16
+            | image::ColorType::Rgba16 => WIDE_PIXEL_BYTES,
+            _ => PIXEL_BYTES,
+        };
+        let plan = SignatureImagePlan::decoded(
+            width,
+            height,
+            pixel_bytes,
+            format == image::ImageFormat::Jpeg,
+        );
+        let header_allocated = if format == image::ImageFormat::Jpeg {
+            bytes.len() as u64
+        } else {
+            0
+        };
+        if reopen_after_admission {
+            // A native full-plan wait must own neither the temporary decoder
+            // nor its partial reservation: an earlier waiter may need that room.
+            drop(decoder);
+            admit(plan, 0).map_err(memory::refused)?;
+            decoder = reader()
+                .into_decoder()
+                .map_err(|_| invalid("signature image decode"))?;
+            if header_allocated != 0 {
+                admit(plan, header_allocated).map_err(memory::refused)?;
+            }
+        } else {
+            admit(plan, header_allocated).map_err(memory::refused)?;
+        }
+        crossings.extend(self.signature_crossing(
+            EngineLimit::EsignSignatureImageDimensionPx,
+            u64::from(width.max(height)),
+        ));
+        let raster = decoder.total_bytes();
+        limits.max_alloc = Some(match self.measure_limit(row, raster) {
             Some(_) => bound.saturating_add(raster),
             None => bound,
-        };
-        reader(max_alloc)
-            .decode()
-            .map_err(|_| invalid("signature image decode"))
+        });
+        limits
+            .reserve(raster)
+            .and_then(|()| decoder.set_limits(limits))
+            .map_err(|_| invalid("signature image decode"))?;
+        image::DynamicImage::from_decoder(decoder).map_err(|_| invalid("signature image decode"))
     }
 
     /// Read only a canonical raster uploaded by this capability's recipient.
@@ -367,12 +465,12 @@ const PNG_FRAMING_BYTES: u64 = 4096;
 /// What uploading one signature image holds in memory at its peak, planned
 /// from its header alone before its body is read into memory
 /// ([`plan_signature_image`], FIX 7649), so the host can admit that much of
-/// the machine's memory first. An upper bound, never a refusal size: the
-/// upload's own checks judge the image as they always have.
+/// the machine's memory first. An unreadable header gives an initial estimate;
+/// the actual decoder refines it before allocating the raster. Never a size cap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SignatureImagePlan {
-    /// Pixels the decode can hold: its width by its height, each axis at
-    /// most [`DECODE_MAX_AXIS`], past which the decode is refused unallocated.
+    /// Pixels the decode can hold: its width by its height. An unreadable
+    /// header starts with an estimate, refined from the decoder before allocation.
     pixels: u64,
     /// Rows of those pixels: each takes one filter byte in the PNG.
     rows: u64,
@@ -399,8 +497,8 @@ impl SignatureImagePlan {
     /// A decode of `width` by `height` pixels of `pixel_bytes` each, by the
     /// JPEG decoder when `jpeg`.
     fn decoded(width: u32, height: u32, pixel_bytes: u64, jpeg: bool) -> Self {
-        let width = u64::from(width.min(DECODE_MAX_AXIS));
-        let height = u64::from(height.min(DECODE_MAX_AXIS));
+        let width = u64::from(width);
+        let height = u64::from(height);
         Self {
             pixels: width * height,
             rows: height,
@@ -410,11 +508,23 @@ impl SignatureImagePlan {
         }
     }
 
-    /// The most any decode can hold, for a PNG or JPEG whose header cannot
-    /// be read: both axes at their bound, the widest pixel, and the JPEG
-    /// decoder's copy and scratch.
-    fn ceiling() -> Self {
-        Self::decoded(DECODE_MAX_AXIS, DECODE_MAX_AXIS, WIDE_PIXEL_BYTES, true)
+    /// The encoded input copy needed before the decoder names its raster.
+    fn header(format: image::ImageFormat) -> Self {
+        Self {
+            copies_input: format == image::ImageFormat::Jpeg,
+            ..Self::UNDECODED
+        }
+    }
+
+    /// Initial room for an unreadable header, not a decode limit. The actual
+    /// decoder refines it before allocating any raster.
+    fn initial_estimate() -> Self {
+        Self::decoded(
+            HEADER_ESTIMATE_AXIS,
+            HEADER_ESTIMATE_AXIS,
+            WIDE_PIXEL_BYTES,
+            true,
+        )
     }
 
     /// Bytes uploading this image of `input` encoded bytes holds at its
@@ -456,9 +566,9 @@ impl SignatureImagePlan {
 
 /// Plans uploading the signature image `spool` holds, reading no more of it
 /// than its format and its frame header, then rewinds it (FIX 7649). A PNG
-/// or JPEG whose header cannot be read is planned at the most any decode can
-/// hold; an upload that is neither plans no raster, since the upload refuses
-/// it before decoding.
+/// or JPEG whose header cannot be read starts with an estimate, refined by the
+/// actual decoder before raster allocation. An upload of neither format plans
+/// no raster, since the upload refuses it before decoding.
 ///
 /// # Errors
 /// Reading or rewinding `spool` failed.
@@ -482,7 +592,7 @@ fn png_plan(spool: &mut (impl BufRead + Seek)) -> Result<SignatureImagePlan> {
     // The signature, then IHDR's length and type, width, height and depth.
     let mut header = [0u8; 25];
     if !read_whole(spool, &mut header)? || header[12..16] != *b"IHDR" {
-        return Ok(SignatureImagePlan::ceiling());
+        return Ok(SignatureImagePlan::initial_estimate());
     }
     let width = u32::from_be_bytes([header[16], header[17], header[18], header[19]]);
     let height = u32::from_be_bytes([header[20], header[21], header[22], header[23]]);
@@ -501,20 +611,20 @@ fn png_plan(spool: &mut (impl BufRead + Seek)) -> Result<SignatureImagePlan> {
 
 /// A JPEG's plan from its frame header, found by stepping over the segments
 /// before it by their lengths, their bodies unread. One that ends, scans or
-/// names no size before a frame header is planned at the ceiling.
+/// names no size before a frame header starts with an estimate.
 fn jpeg_plan(spool: &mut (impl BufRead + Seek)) -> Result<SignatureImagePlan> {
     // Past the start-of-image marker.
     spool.seek(SeekFrom::Start(2))?;
     let mut byte = [0u8; 1];
     loop {
         if !read_whole(spool, &mut byte)? || byte[0] != 0xFF {
-            return Ok(SignatureImagePlan::ceiling());
+            return Ok(SignatureImagePlan::initial_estimate());
         }
         // A marker may follow any number of fill bytes.
         let mut marker = 0xFF;
         while marker == 0xFF {
             if !read_whole(spool, &mut byte)? {
-                return Ok(SignatureImagePlan::ceiling());
+                return Ok(SignatureImagePlan::initial_estimate());
             }
             marker = byte[0];
         }
@@ -526,13 +636,13 @@ fn jpeg_plan(spool: &mut (impl BufRead + Seek)) -> Result<SignatureImagePlan> {
             0xC0..=0xC3 | 0xC5..=0xC7 | 0xC9..=0xCB | 0xCD..=0xCF => {
                 let mut frame = [0u8; 7];
                 if !read_whole(spool, &mut frame)? {
-                    return Ok(SignatureImagePlan::ceiling());
+                    return Ok(SignatureImagePlan::initial_estimate());
                 }
                 let height = u32::from(u16::from_be_bytes([frame[3], frame[4]]));
                 let width = u32::from(u16::from_be_bytes([frame[5], frame[6]]));
                 // A height of 0 is named later, past the first scan.
                 if width == 0 || height == 0 {
-                    return Ok(SignatureImagePlan::ceiling());
+                    return Ok(SignatureImagePlan::initial_estimate());
                 }
                 return Ok(SignatureImagePlan::decoded(
                     width,
@@ -542,14 +652,14 @@ fn jpeg_plan(spool: &mut (impl BufRead + Seek)) -> Result<SignatureImagePlan> {
                 ));
             }
             // A second image's start, the image's end or its first scan.
-            0xD8..=0xDA => return Ok(SignatureImagePlan::ceiling()),
+            0xD8..=0xDA => return Ok(SignatureImagePlan::initial_estimate()),
             _ => {
                 let mut length = [0u8; 2];
                 if !read_whole(spool, &mut length)? {
-                    return Ok(SignatureImagePlan::ceiling());
+                    return Ok(SignatureImagePlan::initial_estimate());
                 }
                 let Some(body) = u16::from_be_bytes(length).checked_sub(2) else {
-                    return Ok(SignatureImagePlan::ceiling());
+                    return Ok(SignatureImagePlan::initial_estimate());
                 };
                 spool.seek_relative(i64::from(body))?;
             }

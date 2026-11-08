@@ -14,6 +14,12 @@
 //!   exchanges, and Git fetches from a loopback source relay of this
 //!   invocation that sends each exchange through the broker, so neither
 //!   this process's HTTP client nor the Git child ever holds it.
+//! - **Git-LFS.** The fetched history's Git-LFS objects this vault lacks come
+//!   from the source's batch API through the same broker, bound or not
+//!   ([`super::import_source_relay`], FIX 19876): every batch call and
+//!   object action, each judged again first, a bound batch call under the
+//!   binding's credential, which only the broker installs. This process's
+//!   HTTP client sends none of them.
 //! - **Push.** Stock Git pushes from the scratch store to a relay of this
 //!   invocation alone: a loopback listener on an OS-assigned port under an
 //!   unguessable in-memory path, serving the receive-pack advertisement
@@ -40,11 +46,13 @@ use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::request::Parts;
 use axum::response::Response;
 use axum::routing::{get, post};
+use oneiron::Vault;
 use oneiron::federation::GitPushCaller;
 use oneiron::git_wire::{
     FetchedExternalGit, GitImportFetchOutcome, GitImportPushOutcome, GitOid, GitRefName, GitWire,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::origin::lfs::{LfsOid, LfsTransferReport};
 use oneiron::origin::smart_http;
 use oneiron::repo_mutation::external_import::{
     ExternalGitSourceHost, ExternalImportDoor, ExternalImportLookup, ExternalImportSource,
@@ -150,6 +158,28 @@ impl ExternalGitSourceHost for GitImportRelayHost {
             wire,
             source,
             (&source_ref, &base, &head),
+        )
+    }
+
+    fn fetch_lfs_objects(
+        &self,
+        vault: &Vault,
+        source: &ExternalImportSource,
+        binding: Option<&str>,
+        objects: &[(LfsOid, u64)],
+        now: u64,
+    ) -> LfsTransferReport {
+        super::import_source_relay::fetch_lfs_through_broker(
+            &super::import_source_relay::SourceLfsCall {
+                server: &self.server,
+                auth: &self.auth,
+                importer: self.caller.principal(),
+                binding,
+            },
+            vault,
+            source,
+            objects,
+            now,
         )
     }
 
@@ -333,6 +363,7 @@ async fn relay_info_refs(
         Body::empty(),
         push_caller(&auth),
         relay_read_context(),
+        None,
     )
     .await;
     relay.observed(response)
@@ -374,6 +405,7 @@ async fn relay_receive_pack(
         body,
         push_caller(&auth),
         relay_read_context(),
+        None,
     )
     .await;
     relay.observed(response)
