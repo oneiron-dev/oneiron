@@ -59,6 +59,7 @@
 //! after every serialized assembly.
 
 use crate::ports::EntityStoreRead;
+mod check_material;
 mod conversation;
 mod driver;
 mod epoch;
@@ -84,6 +85,13 @@ pub use folds::{
     FoldUnfoldInput, FoldUnfolded, FoldsInput, SelfFoldCall, fold_handle, parse_fold_handle,
 };
 
+pub use check_material::CompactionCheckMaterialRef;
+pub(crate) use check_material::{
+    CheckMaterialFault, CompactionCheckMaterial, admit_check_material_in_txn,
+    check_material_carriage, check_material_in, check_material_owners,
+    compaction_check_material_accepts_masked, erase_check_material_in_txn,
+    put_check_material_in_txn,
+};
 pub use conversation::{
     ChatLog, ChatLogCut, ChatLogLine, ConversationCompactionUnavailable, ConversationEvidence,
     ConversationFlight, ConversationFlightOutcome, ConversationTurnSpan, capture_conversation_fork,
