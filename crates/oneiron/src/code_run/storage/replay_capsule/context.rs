@@ -12,11 +12,17 @@
 //! checkpoint that did not commit: it is written in that checkpoint's own
 //! transaction. An erase of the capsule's actor releases the context with
 //! the capsule's other bodies (`erase`).
+//!
+//! FIX 18924: the capsule names the folds whose accepted summaries the
+//! context's hook views show. A context whose views show withdrawn words
+//! joins no capsule, and a read of a context whose words a withdrawal took
+//! reads none.
 
 use heed::RwTxn;
 
 use super::super::super::replay_capsule::{StepContextRef, StepReplayCapsule};
 use super::super::super::replay_context::{StepContextCommit, StepReplayContext};
+use super::super::fold_answers::words_withdrawn;
 use super::super::records::body_drifted;
 use super::admit::{Spill, Unwritten};
 use super::erase::actor_gone_in_txn;
@@ -113,6 +119,7 @@ fn attach_in_txn(
     if actor_gone_in_txn(vault, wtxn, &actor)
         || capsule.context.is_some()
         || !captured_step(&capsule, &commit.context)
+        || words_withdrawn(&vault.store, wtxn, &commit.fold_words)?
     {
         return Ok(false);
     }
@@ -133,6 +140,7 @@ fn attach_in_txn(
         digest: *blake3::hash(&bytes).as_bytes(),
         erased: false,
     });
+    capsule.fold_words.context.clone_from(&commit.fold_words);
     CAPSULES.put(vault, wtxn, key, &capsule)?;
     Ok(true)
 }
@@ -180,7 +188,7 @@ fn admitted_context(parts: &[SidePart]) -> Result<Vec<u8>> {
 /// transaction, as stored: masked. `None` when the capsule names none,
 /// holds its content no longer (its actor was erased), or the body is
 /// released, gone, withheld, marked erased by a restore or no longer its
-/// digest.
+/// digest, and when its hook views show withdrawn fold words (FIX 18924).
 pub(crate) fn capsule_context_body(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -192,7 +200,7 @@ pub(crate) fn capsule_context_body(
     let Some(context) = &capsule.context else {
         return Ok(None);
     };
-    if context.erased {
+    if context.erased || words_withdrawn(&vault.store, rtxn, &capsule.fold_words.context)? {
         return Ok(None);
     }
     let held = match held_body_in_txn(vault, rtxn, capsule.run, &context.path, context.body) {

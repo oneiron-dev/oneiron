@@ -30,6 +30,7 @@ mod affect_doors;
 mod ag_ui_file_doors;
 mod agent_definition_doors;
 mod agent_grant_doors;
+mod agent_verb_class_doors;
 #[path = "facade/generated/agent_verbs.rs"]
 mod agent_verbs;
 mod aging_doors;
@@ -84,6 +85,7 @@ mod decision_ask_doors;
 mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod deck_creation_doors;
+mod device_succession_doors;
 mod disclosure_doors;
 #[path = "facade/generated/dispatch.rs"]
 mod dispatch;
@@ -141,6 +143,7 @@ mod mesh_doors;
 mod model_catalog_doors;
 mod model_manifest_doors;
 mod model_pack_doors;
+mod model_setting_doors;
 mod model_step_doors;
 mod model_stream_doors;
 mod note_doors;
@@ -171,6 +174,8 @@ mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
 pub(super) mod role_picks;
+// FIX 13274: the owner reviews and settles a retained document-copy edit.
+mod repo_copy_edit_doors;
 mod root_request_doors;
 mod run_read_doors;
 mod run_review_doors;
@@ -211,6 +216,7 @@ mod sync_quarantine_doors;
 pub(super) mod tests;
 mod trusted_contact_doors;
 pub(super) mod ui_action_routes;
+mod uncertain_send_doors;
 mod usage_repair_doors;
 mod vault_shape_doors;
 mod vector_doors;
@@ -233,7 +239,9 @@ use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{
     connector_answer_as, connector_call_listing_as, connector_call_listing_on,
 };
-pub(crate) use export_transfer::{ExportTransfers, mcp_export_transfer};
+pub(crate) use export_transfer::{
+    ExportTransfers, mcp_export_transfer, owner_whole_vault_export_admitted,
+};
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{
