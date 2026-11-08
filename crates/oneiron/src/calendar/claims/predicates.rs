@@ -8,7 +8,9 @@ pub const PREDICATE_CALENDAR_TIME_KIND: &str = "calendar.time_kind";
 /// Structural wall-clock storage; IANA conversion belongs to CAL-01.
 pub const PREDICATE_CALENDAR_WALL_TIME: &str = "calendar.wall_time";
 
-/// IANA zone name, structurally bounded only at this layer.
+/// IANA zone name, structurally bounded only at this layer. An all-day
+/// EVENT takes its calendar's zone (`X-WR-TIMEZONE`), which places its days;
+/// a name the engine does not resolve keeps the all-zone span.
 pub const PREDICATE_CALENDAR_TZ: &str = "calendar.tz";
 
 /// Verbatim RFC 5545 recurrence text; CAL-03 owns parsing.
