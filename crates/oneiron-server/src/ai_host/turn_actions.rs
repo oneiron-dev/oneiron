@@ -39,8 +39,8 @@ use oneiron::attempt_queue::{
 };
 use oneiron::claim::CallerLocality;
 use oneiron::conversation::{
-    TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionAuthority,
-    turn_action_hook_parent, turn_action_resumed_from_hook,
+    ChatBreakpointUserTurn, TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt,
+    TurnActionAuthority, turn_action_hook_parent, turn_action_resumed_from_hook,
 };
 use oneiron::memory::{Memory, MessageWriteMode, WitnessAuthor};
 use oneiron::runtime_hooks::{InvocationId, VerbHookStop};
@@ -410,6 +410,19 @@ async fn act(
         && board_rows.is_none()
         && let (Some(log), Some(messages)) = (action_log, action_messages)
     {
+        // FIX 5033: its seed binds the user turn the Retry answers again, by
+        // the TURN and MESSAGE rows its walk read; unknown rows bind none.
+        let user_turn = context
+            .user_sources
+            .as_deref()
+            .map(|rows| ChatBreakpointUserTurn {
+                turn: action.user_turn,
+                messages: rows
+                    .iter()
+                    .copied()
+                    .filter(|row| *row != action.user_turn)
+                    .collect(),
+            });
         breakpoint = crate::api::ai::chat::action_breakpoint(
             ai,
             vault,
@@ -419,7 +432,8 @@ async fn act(
             action_craft,
             &messages,
             &admitted,
-        );
+        )
+        .map(|breakpoint| breakpoint.with_user_turn(user_turn));
     }
     let keepalive = keepalive_every(
         vault
