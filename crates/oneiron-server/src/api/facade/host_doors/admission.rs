@@ -301,6 +301,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultRepoGitPushRevoke
         | Row::VaultRepoAnchorBind
         | Row::VaultAgentsBase
+        | Row::VaultOauthAuthorizationAnswer
         | Row::VaultResidenceMode
         | Row::VaultResidenceOpen
         | Row::VaultResidenceIndex
