@@ -35,7 +35,7 @@ use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnect
 use oneiron::llm::{
     BudgetLease, CacheDigest, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
     LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
-    LlmUsage, RetryableLlmError,
+    LlmUsage, RetryableLlmError, WorkCancel,
 };
 use oneiron::{ModelId, ModelLocality};
 use oneiron_driver::WorkerLease;
@@ -57,7 +57,7 @@ const TOKENIZE_PATH: &str = "/tokenize";
 const COMPLETION_PATH: &str = "/completion";
 /// The fields each answer carries: as measured, the prompt it answers, and
 /// the model that answered it (its launch alias, FIX 7895).
-const RESPONSE_FIELDS: [&str; 9] = [
+const RESPONSE_FIELDS: [&str; 10] = [
     "index",
     "model",
     "content",
@@ -67,7 +67,9 @@ const RESPONSE_FIELDS: [&str; 9] = [
     "tokens_predicted",
     "stop_type",
     "stopped_eos",
+    "truncated",
 ];
+const EOS_READ_TOKENS: u64 = 1;
 /// The bias that forces the end token: generation stops at once, and the
 /// probabilities read are the pre-sampler ones, which no bias touches.
 const EOS_BIAS: f64 = 1e9;
@@ -415,7 +417,7 @@ impl DecisionReader {
     ) -> LlmResult<(JsonValue, Option<CacheDigest>)> {
         let body = json!({
             "prompt": prompt,
-            "n_predict": 1,
+            "n_predict": EOS_READ_TOKENS,
             "temperature": 0.0,
             "cache_prompt": true,
             "id_slot": -1,
@@ -494,6 +496,49 @@ impl DecisionReader {
         })
     }
 
+    fn read_with_cancellation(
+        &self,
+        request: &LabelReadRequest<'_>,
+        cancel: Option<&WorkCancel>,
+    ) -> LlmResult<LabelReadResponse> {
+        // Before the state renders or the tokenizer and completion are asked.
+        if !self.permitted {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        if request.questions.is_empty() {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        let prompts = request
+            .questions
+            .iter()
+            .map(|question| self.recipe.render(&prompt_of(request.state, question)))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(refused)?;
+        let read = async {
+            let _worker = self.hold_worker().await?;
+            self.read_pack(&prompts, request.questions).await
+        };
+        let read = async {
+            match cancel {
+                Some(cancel) => tokio::select! {
+                    biased;
+                    result = read => result,
+                    () = cancel.cancelled() => Err(RetryableLlmError::Timeout.into()),
+                },
+                None => read.await,
+            }
+        };
+        // One bound for the tokenizer and completion waits: the decision's work cutoff.
+        match request.work_until {
+            Some(until) => self.runtime.block_on(async {
+                tokio::time::timeout_at(until.into(), read)
+                    .await
+                    .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
+            }),
+            None => self.runtime.block_on(read),
+        }
+    }
+
     /// Waits for the rung's managed worker to be ready and holds it for the
     /// read; `None` for a rung no managed worker serves, whose endpoint this
     /// process never stops. A parked worker fails the read as a server that
@@ -549,32 +594,16 @@ impl LabelReadModel for DecisionReader {
         request: &LabelReadRequest<'_>,
         _lease: &BudgetLease,
     ) -> LlmResult<LabelReadResponse> {
-        // Before the state renders or the tokenizer and completion are asked.
-        if !self.permitted {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        if request.questions.is_empty() {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        let prompts = request
-            .questions
-            .iter()
-            .map(|question| self.recipe.render(&prompt_of(request.state, question)))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(refused)?;
-        let read = async {
-            let _worker = self.hold_worker().await?;
-            self.read_pack(&prompts, request.questions).await
-        };
-        // One bound for the tokenizer and completion waits: the decision's work cutoff.
-        match request.work_until {
-            Some(until) => self.runtime.block_on(async {
-                tokio::time::timeout_at(until.into(), read)
-                    .await
-                    .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
-            }),
-            None => self.runtime.block_on(read),
-        }
+        self.read_with_cancellation(request, None)
+    }
+
+    fn read_with_cancel(
+        &self,
+        request: &LabelReadRequest<'_>,
+        _lease: &BudgetLease,
+        cancel: &WorkCancel,
+    ) -> LlmResult<LabelReadResponse> {
+        self.read_with_cancellation(request, Some(cancel))
     }
 }
 
@@ -640,7 +669,18 @@ fn label_logprobs(body: &JsonValue, ids: &[u64], tokens: &[String]) -> LlmResult
     let eos = body.get("stop_type").and_then(JsonValue::as_str) == Some("eos")
         || body.get("stopped_eos").and_then(JsonValue::as_bool) == Some(true);
     if !eos {
-        return Err(failed(LabelReadFailure::NotEosStop));
+        // A native "limit" alone can also mean a context or time limit.
+        let token_cap = body.get("stop_type").and_then(JsonValue::as_str) == Some("limit")
+            && body.get("truncated").and_then(JsonValue::as_bool) == Some(false)
+            && body
+                .get("tokens_predicted")
+                .and_then(JsonValue::as_u64)
+                .is_some_and(|tokens| tokens >= EOS_READ_TOKENS);
+        return Err(failed(if token_cap {
+            LabelReadFailure::TokenCap
+        } else {
+            LabelReadFailure::NotEosStop
+        }));
     }
     let rows = body
         .get("completion_probabilities")
