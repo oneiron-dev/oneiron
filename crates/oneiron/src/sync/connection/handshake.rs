@@ -7,22 +7,21 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 
 use crate::sync::client::{SyncClient, SyncEvent, SyncStatus, next_backoff};
-use crate::sync::queue::QueuedUpdate;
-use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::parse_window_key_str;
-use crate::sync::window::UpdateVerdict;
 use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
-use super::peer_session::{ConnectError, HomeReach};
+use super::peer_session::{HomeReach, home_served};
 use super::server_close::ServerClose;
-use super::session::{FullResyncMarker, WsSink};
+use super::session::FullResyncMarker;
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
 mod acks;
+mod replay;
+mod upgrade;
+
+pub(super) use self::upgrade::upgrade_request;
 
 impl SyncConnection {
     /// Queue-overflow check, run between reconnect attempts.
@@ -182,8 +181,8 @@ impl SyncConnection {
         let mut backoff_ms = self.config.client_config.reconnect_initial_ms;
         let mut promotion_rx = self.manager.subscribe_promotions();
         let mut mode_rx = self.mode.subscribe();
-        // Whether the home answers; while it is down, sessions go to this
-        // vault's other machines (FIX 4748).
+        // Whether the home serves this machine's sync; while it is down,
+        // sessions go to this vault's other machines (FIX 4748).
         let mut reach = HomeReach::new(self.config.client_config.peer_dialer.is_some());
         self.running.send_replace(true);
 
@@ -228,11 +227,14 @@ impl SyncConnection {
                 connected = self.connect_and_sync(&mut client, &event_tx) => connected,
             };
             drop(connect_batch);
+            // Whether the far end served this session's sync, opened or not:
+            // a home that did not counts toward down (FIX 4748).
+            let served = client.home_served;
             let mut renegotiate = false;
             let mut home_returned = false;
             match connected {
                 Ok(ws_stream) => {
-                    reach.opened(peer);
+                    reach.opened(peer, served);
                     // Reset backoff on successful connect
                     // Note: connect_and_sync already emits Synced, so we don't emit Connected here
                     // to avoid regressing status for observers.
@@ -278,8 +280,8 @@ impl SyncConnection {
                                 event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
                             renegotiate = super::residence_mode::RENEGOTIATE_AT_ONCE;
                         }
-                        // FIX 4748: the home answers again; its session
-                        // follows at once.
+                        // FIX 4748: the home serves this machine's sync
+                        // again; its session follows at once.
                         LoopExit::HomeReturned => {
                             let _ =
                                 event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
@@ -291,7 +293,7 @@ impl SyncConnection {
                 Err(e) => {
                     // The first peer is dialed on the first backoff step, not
                     // the home's grown one (FIX 4748).
-                    if reach.failed(peer, e.answered) {
+                    if reach.failed(peer, served) {
                         backoff_ms = self.config.client_config.reconnect_initial_ms;
                     }
                     let _ = event_tx.send(SyncEvent::Error(format!("Connection failed: {e}")));
@@ -370,13 +372,15 @@ impl SyncConnection {
 
     /// Connects to the server and performs initial sync + queue replay. A
     /// peer session (FIX 4748, `client.peer_session`) dials its peer over
-    /// the mesh and runs the same exchange, confirming nothing. The error
-    /// says whether the far end answered the upgrade.
+    /// the mesh and runs the same exchange, confirming nothing. Either way it
+    /// ends, `client.home_served` says whether the far end served this
+    /// machine's sync on it ([`home_served`]).
     pub(super) async fn connect_and_sync(
         &self,
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
-    ) -> Result<crate::sync::carrier::SyncSocket, ConnectError> {
+    ) -> Result<crate::sync::carrier::SyncSocket, String> {
+        client.home_served = false;
         client.note_session_bound = false;
         client.artifact_publication_resend.clear();
         client.document_retries = Default::default();
@@ -388,96 +392,6 @@ impl SyncConnection {
         let (ws_stream, response, binding) = self.open_socket(client, event_tx).await?;
         self.sync_socket(client, event_tx, ws_stream, &response, binding.as_ref())
             .await
-            .map_err(ConnectError::from)
-    }
-
-    /// Opens the session's socket, its upgrade proved: to the home on the
-    /// configured carrier, or to the session's peer on its mesh dial (FIX
-    /// 4748). Returns the upgrade answer's headers and the proof the upgrade
-    /// was signed with. A failure before any upgrade answer is unanswered.
-    async fn open_socket(
-        &self,
-        client: &mut SyncClient,
-        event_tx: &mpsc::UnboundedSender<SyncEvent>,
-    ) -> Result<
-        (
-            crate::sync::carrier::SyncSocket,
-            tokio_tungstenite::tungstenite::http::HeaderMap,
-            Option<crate::sync::home_proof::UpgradeBinding>,
-        ),
-        ConnectError,
-    > {
-        // Sync pulls the full root snapshot. The upgrade therefore proves an
-        // unattenuated logged slip with a fresh holder signature; a device-key
-        // lease or an issuer secret never grants this read. Each reconnect has
-        // its own nonce, so it cannot replay a previous upgrade's proof. It
-        // is signed on the wall clock, as every holder signs: the recording
-        // clock may still hold a floor a host clock that ran ahead left.
-        let url = &self.config.client_config.server_url;
-        let mut request = url
-            .into_client_request()
-            .map_err(|e| format!("WS connect failed: {e}"))?;
-        let mut binding = None;
-        // FIX 11111: no credential rides a clear `ws` upgrade that is neither
-        // loopback nor mesh; the socket opens as one with no credential. A
-        // peer session rides the paired mesh to its peer (FIX 4748).
-        let config = &self.config.client_config;
-        let (slip, bearer) = if client.peer_session.is_some() || config.server_admits_credentials()
-        {
-            (
-                config.transport_credential.as_ref(),
-                config.auth_token.as_str(),
-            )
-        } else {
-            let held = config.transport_credential.is_some() || !config.auth_token.is_empty();
-            if held && !client.cleartext_withhold_logged {
-                client.cleartext_withhold_logged = true;
-                tracing::warn!("sync server is clear ws off loopback and mesh: no credential sent");
-            }
-            (None, "")
-        };
-        if let Some(credential) = slip {
-            binding = Some(
-                credential
-                    .sign_upgrade(
-                        self.manager.vault(),
-                        self.manager.vault().store.clock.wall_now(),
-                        &mut request,
-                    )
-                    .map_err(str::to_owned)?,
-            );
-        } else if !bearer.is_empty() {
-            let header_value = format!("Bearer {bearer}")
-                .parse()
-                .map_err(|_| "Auth token is not a valid header value".to_string())?;
-            request.headers_mut().insert(AUTHORIZATION, header_value);
-        }
-        let peer_dial = client
-            .peer_session
-            .zip(config.peer_dialer.as_deref())
-            .map(|(peer, dialer)| crate::sync::carrier::PeerDial { dialer, peer });
-        let dialer = match &peer_dial {
-            Some(dial) => Some(dial as &dyn crate::sync::SyncDialer),
-            None => config.mesh_dialer.as_deref(),
-        };
-        let (ws_stream, response) = crate::sync::carrier::connect_sync_socket(request, dialer)
-            .await
-            .map_err(|e| {
-                // A home's refused credential may mean a removed membership:
-                // the host asks the home, and this socket decides nothing
-                // (FIX 12442). A peer's refusal is not the home's.
-                if client.peer_session.is_none() && crate::sync::carrier::upgrade_unauthorized(&e) {
-                    let _ = event_tx.send(SyncEvent::UpgradeUnauthorized);
-                }
-                let message = format!("WS connect failed: {e}");
-                // An HTTP answer is the far end's, a refusal included.
-                if matches!(e, tokio_tungstenite::tungstenite::Error::Http(_)) {
-                    ConnectError::from(message)
-                } else {
-                    ConnectError::unanswered(message)
-                }
-            })?;
-        Ok((ws_stream, response, binding))
     }
 
     /// Initial sync and queue replay on the open socket whose upgrade
@@ -552,6 +466,11 @@ impl SyncConnection {
 
             match msg {
                 Some(Ok(Message::Binary(data))) => {
+                    // FIX 4748: the far end served this machine's sync when
+                    // the first frame it sends is its root.
+                    if init_messages_received == 0 {
+                        client.home_served = home_served(&data);
+                    }
                     let responses = client
                         .handle_server_message(&data)
                         .map_err(|e| format!("Handle server message failed: {e}"))?;
@@ -749,118 +668,6 @@ impl SyncConnection {
         }
 
         Ok(ws_stream)
-    }
-
-    /// Sends queued rows the way Phase 3 replays them, importing each into the
-    /// local window doc first. Returns the rows sent; a row the device-only
-    /// verdict withholds is skipped, and nothing past an unjudged row is sent.
-    pub(super) async fn replay_queued_updates(
-        &self,
-        write: &mut WsSink,
-        client: &mut SyncClient,
-        event_tx: &mpsc::UnboundedSender<SyncEvent>,
-        queued: Vec<QueuedUpdate>,
-    ) -> Result<Vec<QueuedUpdate>, String> {
-        let mut sent = Vec::with_capacity(queued.len());
-        let mut frames = Vec::new();
-        let mut size = 1;
-        let mut tick = tokio::time::interval(Duration::from_millis(
-            u64::from(client.config.sync_debounce_ms).max(1),
-        ));
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        for update in queued {
-            // Mirror the queued ops into the LOCAL window doc first:
-            // convergence is confirmed by VV equality with the server,
-            // which only vouches for ops the local doc knows about
-            // (ONE-1128). Corrupt bytes cannot be confirmed — surface
-            // loudly and still replay them; the server-side import is
-            // the last chance to recover the ops.
-            if let Err(e) = client.import_queued_update(&update.window_key, &update.encoded) {
-                let _ = event_tx.send(SyncEvent::Error(format!(
-                    "Queued update import failed (window {}, seq {}): {e}",
-                    update.window_key, update.seq
-                )));
-            }
-            // Bytes queued while a world was portable stay here once it
-            // is flagged device-only; the window's next export reads the
-            // flag again. Bytes that cannot be read in full keep their
-            // row and every later one queued: nothing past them is sent,
-            // so no clear reaches them.
-            match client.update_verdict(&update.window_key, &update.encoded) {
-                UpdateVerdict::Portable => {}
-                UpdateVerdict::Withheld => {
-                    // A home that may not read the world takes it sealed,
-                    // when the world syncs sealed (DEC-0005 fix 8).
-                    client.relay_withheld_update(&update.window_key, &update.encoded);
-                    continue;
-                }
-                UpdateVerdict::Uninspectable => break,
-            }
-            // A window the home refused to grant again keeps its rows queued,
-            // unsent; they hold back no other window's clear.
-            if !client.residence_granted(&update.window_key) {
-                continue;
-            }
-            // Each row goes in its window pad envelope for the home, its pads
-            // projected and sealed at this send (FIX 7107).
-            let opened = client.config.residence_mode == crate::sync::SyncResidenceMode::Opened;
-            let context = client.window(&update.window_key);
-            let msgs = client
-                .window_pad_frames(
-                    &update.window_key,
-                    if opened {
-                        window_sub_tags::RESIDENCE_UPDATE
-                    } else {
-                        window_sub_tags::UPDATE
-                    },
-                    opened.then_some(update.seq),
-                    &update.encoded,
-                    context.as_ref().map(|window| &window.doc),
-                )
-                .map_err(|e| format!("Queue replay encode failed: {e}"))?;
-            for msg in msgs {
-                // A first frame past a member's room by its envelope header
-                // goes alone; its parts follow it in order.
-                let alone = !super::session::fits_alone(&msg);
-                if (alone
-                    || !super::node_batch::fits(&frames, size, &msg).map_err(|e| e.to_string())?)
-                    && !frames.is_empty()
-                {
-                    tick.tick().await;
-                    let batch = transport::encode_node_batch(&frames)
-                        .into_result()
-                        .map_err(|e| e.to_string())?;
-                    write
-                        .send(Message::Binary(batch.into()))
-                        .await
-                        .map_err(|e| format!("Queue replay failed: {e}"))?;
-                    frames.clear();
-                    size = 1;
-                }
-                if alone {
-                    tick.tick().await;
-                    write
-                        .send(Message::Binary(msg.into()))
-                        .await
-                        .map_err(|e| format!("Queue replay failed: {e}"))?;
-                    continue;
-                }
-                size += 4 + msg.len();
-                frames.push(msg);
-            }
-            sent.push(update);
-        }
-        if !frames.is_empty() {
-            tick.tick().await;
-            let batch = transport::encode_node_batch(&frames)
-                .into_result()
-                .map_err(|e| e.to_string())?;
-            write
-                .send(Message::Binary(batch.into()))
-                .await
-                .map_err(|e| format!("Queue replay failed: {e}"))?;
-        }
-        Ok(sent)
     }
 
     fn full_resync_markers(&self) -> Result<Vec<FullResyncMarker>, String> {

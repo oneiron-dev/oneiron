@@ -89,6 +89,8 @@ pub use sealer::{
     EsignSignatureRevision, EsignVerdict, SealActiveContentFacts, SealDegrade, SealDegradeReason,
     SealProfile, SealProfileEvidence, SealVerdict,
 };
+mod page_inspector;
+pub use page_inspector::EsignPageInspector;
 mod signature_revision;
 pub use signature_revision::SEAL_CONTENTS_LADDER;
 
