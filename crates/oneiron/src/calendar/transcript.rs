@@ -13,8 +13,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod door;
+mod landing;
 mod pending;
+
 pub use door::TranscriptFileDropInput;
+use landing::ingest_parsed_transcript_in_txn;
 pub use pending::{
     PendingTranscriptPass, TRANSCRIPT_OPEN_SESSION_WAIT_SECS, TRANSCRIPT_PENDING_ATTEMPT_KIND,
     run_pending_transcript_ingests,
@@ -138,6 +141,15 @@ pub enum TranscriptIngestOutcome {
     RetryOpenSession {
         open_session_ref: crate::EntityId,
     },
+    /// The original session-open hook has asked; no SESSION was minted.
+    HookPending {
+        session_ref: crate::EntityId,
+        ask: crate::EntityId,
+    },
+    /// The same upload is already retained under its native lease or due instant.
+    Queued {
+        attempt_ref: String,
+    },
     /// A nonempty file with no usable turns remains explicit caller-owned NOTE input.
     NoteFallback {
         note_ref: crate::EntityId,
@@ -185,72 +197,6 @@ fn ingest_file_drop_transcript_inner(
             None,
         )
     })
-}
-
-/// The shared landing used by the host helper and the caller-bound public door.
-fn ingest_parsed_transcript_in_txn(
-    vault: &crate::Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    request: TranscriptFileDropRequest<'_>,
-    parsed: &ParsedTranscript,
-    session_key: crate::session_lifecycle::SessionKey,
-    fail_after_turns: bool,
-    source_version: Option<&crate::blob_artifact::BlobArtifactVersion>,
-) -> crate::Result<TranscriptIngestOutcome> {
-    let hint = crate::session_lifecycle::SessionHintTimestamp {
-        claimed_ms: parsed.claimed_started_ms,
-        arrival_ms: request.arrived_at_ms,
-        effective_ms: request.arrived_at_ms,
-    };
-    match vault.mint_session_from_hint_in_txn(wtxn, session_key, hint)? {
-        crate::session_lifecycle::SessionMintOutcome::AlreadyOpen(id) => {
-            Ok(TranscriptIngestOutcome::RetryOpenSession {
-                open_session_ref: id,
-            })
-        }
-        crate::session_lifecycle::SessionMintOutcome::Minted(session_ref) => {
-            let turn_refs = persist_turns(
-                vault,
-                wtxn,
-                request.source_blob_ref,
-                session_ref,
-                &parsed.turns,
-                request.arrived_at_ms,
-                source_version,
-            )?;
-            let wake = vault.plan_session_end_wake_in_txn(wtxn, &session_ref)?;
-            let wake_turn_refs = wake.planned_turn_ids.clone();
-            let end_hint = crate::session_lifecycle::SessionHintTimestamp {
-                claimed_ms: parsed.claimed_ended_ms,
-                arrival_ms: request.arrived_at_ms,
-                effective_ms: request.arrived_at_ms,
-            };
-            vault
-                .end_session_with_wake_and_hint_in_txn(
-                    wtxn,
-                    &session_ref,
-                    crate::session_lifecycle::SessionClosePredicate::Explicit,
-                    request.arrived_at_ms / 1000,
-                    &wake,
-                    Some(end_hint),
-                )?
-                .ok_or(crate::Error::InvariantViolation(
-                    "file-drop session was not closed",
-                ))?;
-            // Exercise transaction rollback only after close and its wake writes landed.
-            if fail_after_turns {
-                return Err(crate::Error::InvariantViolation(
-                    "file-drop transcript test failure injection",
-                ));
-            }
-            Ok(TranscriptIngestOutcome::Session {
-                session_ref,
-                turn_refs,
-                wake_turn_refs,
-                extraction_enqueued: !wake.plans.is_empty(),
-            })
-        }
-    }
 }
 
 #[cfg(feature = "test-support")]

@@ -18,8 +18,12 @@ use std::io::Cursor;
 
 mod contact_verdict_index;
 mod offers;
+mod predecessor;
 mod row_reuse;
 mod streamed;
+
+pub(super) use predecessor::forget_widen_predecessor_in_txn;
+use predecessor::predecessors_at_filing;
 
 /// Parked authority-widening request, keyed by its own hex64 reference.
 const WIDEN_PROPOSALS: SideTable<String, StoredProposal, LegacyJson> =
@@ -82,6 +86,11 @@ struct StoredProposal {
     /// lineage nor any fork of it may settle it (FIX 5064).
     #[serde(default)]
     opener_lineage: Vec<[u8; 32]>,
+    /// The owner's active grants the proposed bound strictly contained when
+    /// it was filed, less any minted again since: the accept that mints the
+    /// wider grant revokes those still standing so, in the same writer
+    /// (FIX 9740).
+    predecessors: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -409,6 +418,11 @@ impl Vault {
             if let Some(row) = WIDEN_PROPOSALS.get(&self.store, &*txn, &reference)? {
                 return Ok(validate_row(row, &reference)?.proposal);
             }
+            // The grants this widening replaces, as they stand at filing.
+            let predecessors = match decode_delta(&canonical_delta)? {
+                WidenDelta::Bound(bound) => predecessors_at_filing(self, txn, &bound, &owner_ref)?,
+                WidenDelta::ContactDisclosure(_) => Vec::new(),
+            };
             let proposal = WidenProposal {
                 proposal_ref: reference,
                 canonical_delta,
@@ -444,6 +458,7 @@ impl Vault {
                 resolved: false,
                 settlement: None,
                 opener_lineage,
+                predecessors,
             };
             WIDEN_PROPOSALS.put(&self.store, txn, &row.proposal.proposal_ref, &row)?;
             Ok(proposal)
@@ -607,6 +622,37 @@ impl Vault {
         matches_delta: impl FnOnce(&[u8]) -> bool,
     ) -> Result<ConsentReceipt> {
         self.accept_widen_matching_reusing(owner, credential, reference, None, matches_delta)
+    }
+
+    /// Refuses an accept answered from the lineage that opened `row`, or a
+    /// fork of it (DEC-0006, FIX 5064, 9741), as every proposal door does:
+    /// the proposer itself, the proof's carried credential chains, or the
+    /// holder credential the route passed. A proposal frozen with no
+    /// lineage shares none.
+    fn refuse_opener_answer_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+        row: &StoredProposal,
+    ) -> Result<()> {
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        let holder_meets = match credential {
+            Some(credential) => {
+                let lineage = self.slip_lineage_in_txn(txn, credential)?;
+                self.frozen_lineages_meet_in_txn(txn, &lineage, &row.opener_lineage)?
+            }
+            None => false,
+        };
+        if row.proposal.proposer == actor.to_hex()
+            || holder_meets
+            || owner.answers_from_slip_lineage_in_txn(self, txn, &row.opener_lineage)?
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "the lineage that opened a proposal cannot settle it",
+            )));
+        }
+        Ok(())
     }
 
     /// The open contact-disclosure offer `reference` names, checked in the
