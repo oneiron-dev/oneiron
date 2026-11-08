@@ -12,6 +12,9 @@
 //! A fork is written only by its opener and lands only through a merge by
 //! someone else against the head that someone reviewed. Erasing the entity
 //! erases its body, every fork of it and their receipts ([`erase_in_txn`]).
+//! A fork's row and an open fork's document ride to the owner's other
+//! machines beside the body (`carried_fork`, FIX 12470), each write of a
+//! fork queuing its body for that window mirror.
 
 use crate::Vault;
 use crate::edge::EdgeActorClass;
@@ -28,6 +31,8 @@ use loro::{CommitOptions, ExportMode, Frontiers, LoroDoc};
 use serde::{Deserialize, Serialize};
 
 mod body_actor;
+#[cfg(feature = "sync")]
+mod carried_fork;
 pub(crate) mod checkpoint;
 mod discard;
 mod lift;
@@ -38,6 +43,10 @@ pub(crate) mod reviewed_fork;
 pub(crate) mod sync_frame;
 pub use self::body_actor::BodyActor;
 pub(crate) use self::body_actor::{erase_fork_actor_in_txn, names_no_actor};
+#[cfg(feature = "sync")]
+pub(crate) use self::carried_fork::{
+    CarriedFork, ForkSnapshot, carried_forks_in_txn, merge_carried_fork_in_txn,
+};
 pub(crate) use self::discard::{
     discard_admitted_typed_body_fork_in_txn, discard_typed_body_fork_in_txn,
 };
@@ -103,6 +112,14 @@ pub struct TypedBodyFork {
     pub commits: u64,
     pub opened_at: u64,
     pub state: TypedForkState,
+    /// The fork document's version vector at its latest authored state,
+    /// encoded (`oplog_vv().encode()`), and kept once the fork is merged or
+    /// discarded: what orders two machines' copies of the fork, since a
+    /// version vector compares without the other machine's operations (FIX
+    /// 12470). Empty for a fork stored before it was recorded, which keeps
+    /// the spelling it was stored in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub version: Vec<u8>,
 }
 
 /// Who writes one commit, and the body shape the writer expects.
@@ -241,10 +258,12 @@ pub(crate) fn open_typed_body_fork_in_txn(
         commits: 0,
         opened_at: vault.now_recorded_at(),
         state: TypedForkState::Open,
+        version: live.oplog_vv().encode(),
     };
     let key = (*entity, fork.fork);
     FORK_DOCS.put(&vault.store, txn, &key, &snapshot(&live)?)?;
     FORKS.put(&vault.store, txn, &key, &fork)?;
+    queue_fork_mirror(vault, txn, entity);
     Ok(fork)
 }
 
@@ -269,7 +288,9 @@ pub(crate) fn edit_typed_body_fork_in_txn<T>(
     let (value, receipt) = commit_as(vault, txn, &mut doc, *entity, writer, "fork", edit)?;
     FORK_DOCS.put(&vault.store, txn, &key, &snapshot(&doc)?)?;
     record.commits += 1;
+    record.version = doc.oplog_vv().encode();
     FORKS.put(&vault.store, txn, &key, &record)?;
+    queue_fork_mirror(vault, txn, entity);
     Ok((
         value,
         TypedBodyCommit {
@@ -391,8 +412,10 @@ fn land_typed_body_fork_in_txn(
         at,
         head: head.frontier.clone(),
     };
+    record.version = proposal.oplog_vv().encode();
     FORKS.put(&vault.store, txn, &key, &record)?;
     FORK_DOCS.delete(&vault.store, txn, &key)?;
+    queue_fork_mirror(vault, txn, entity);
     Ok(head)
 }
 
@@ -768,6 +791,29 @@ fn import(doc: &LoroDoc, updates: &[u8]) -> Result<()> {
         return Err(Error::CorruptedIndex("typed body update dependencies"));
     }
     Ok(())
+}
+
+/// The version vector of the fork document `key`'s row holds, encoded;
+/// `None` when the row is gone or does not read (FIX 12470).
+fn fork_doc_version(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    key: &(EntityId, EntityId),
+) -> Result<Option<Vec<u8>>> {
+    Ok(FORK_DOCS
+        .get(store, txn, key)?
+        .and_then(|bytes| LoroDoc::from_snapshot(&bytes).ok())
+        .map(|doc| doc.oplog_vv().encode()))
+}
+
+/// Queues `entity` for the owner's post-commit live-window mirror: its fork
+/// rows ride beside it to the owner's other machines once this write
+/// commits (FIX 12470). A rolled-back write queues nothing.
+fn queue_fork_mirror(vault: &Vault, txn: &RwTxn<'_>, entity: &EntityId) {
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows(vault, txn, std::collections::BTreeSet::from([*entity]));
+    #[cfg(not(feature = "sync"))]
+    let _ = (vault, txn, entity);
 }
 
 fn fork_at(doc: &LoroDoc, frontier: &[u8]) -> Result<LoroDoc> {

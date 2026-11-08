@@ -64,6 +64,23 @@ pub(crate) struct BodyOwner {
     /// Its merge preflight for a body of a schema: `true` lands the carried
     /// operations on the head, `false` opens a fork the owner resolves.
     pub(crate) preflight: fn(&Vault, &str, &CarriedBody<'_>) -> Result<bool>,
+    /// Its record of one fork of an entity's body (a deck fork's office
+    /// record), which rides beside the typed fork to the owner's other
+    /// machines (FIX 12470): its exact bytes; `None` for a fork it keeps no
+    /// record of.
+    pub(crate) fork_companion:
+        fn(&Vault, &RoTxn<'_>, &EntityId, &EntityId) -> Result<Option<Vec<u8>>>,
+    /// Installs a fork record another machine holds, as it came, beside the
+    /// typed fork it rides with.
+    pub(crate) adopt_fork_companion:
+        fn(&Vault, &mut RwTxn<'_>, &EntityId, &EntityId, &[u8]) -> Result<()>,
+    /// A carried fork record as this vault holds it: naming no one where
+    /// this vault erased an actor; `None` where it goes, as an open fork
+    /// whose opener this vault erased does.
+    pub(crate) erased_fork_companion: fn(&Vault, &RoTxn<'_>, &[u8]) -> Result<Option<Vec<u8>>>,
+    /// Two copies of one fork record as one, naming no one where either
+    /// does; `None` when they differ otherwise.
+    pub(crate) join_fork_companion: fn(&[u8], &[u8]) -> Result<Option<Vec<u8>>>,
 }
 
 /// A carried body beside the one held here, as a merge preflight reads it.
@@ -362,9 +379,13 @@ fn open_carried_fork_in_txn(
         commits,
         opened_at: vault.now_recorded_at(),
         state: TypedForkState::Open,
+        version: theirs.oplog_vv().encode(),
     };
     FORK_DOCS.put(&vault.store, txn, &key, &snapshot(theirs)?)?;
     FORKS.put(&vault.store, txn, &key, &record)?;
+    // FIX 12470: the fork rides to the owner's other machines once this
+    // write commits.
+    super::queue_fork_mirror(vault, txn, entity);
     tracing::info!(
         entity = %entity.to_hex(),
         fork = %fork.to_hex(),
