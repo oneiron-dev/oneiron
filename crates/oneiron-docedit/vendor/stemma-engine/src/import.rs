@@ -4806,7 +4806,7 @@ fn table_from_element(
 
         // Parse table rows (w:tr)
         if is_w_tag(el, "tr") {
-            let row = table_row_from_element(el, table_id, row_index, ctx)?;
+            let row = table_row_from_element(el, table_id, row_index, table_counter, ctx)?;
             rows.push(row);
             row_index += 1;
             continue;
@@ -4962,7 +4962,7 @@ fn table_from_element(
                     context: Some(format!("tbl_{table_id}")),
                 });
                 for tr in wrapped_rows {
-                    let row = table_row_from_element(tr, table_id, row_index, ctx)?;
+                    let row = table_row_from_element(tr, table_id, row_index, table_counter, ctx)?;
                     rows.push(row);
                     row_index += 1;
                 }
@@ -5107,6 +5107,7 @@ fn table_row_from_element(
     element: &Element,
     table_id: u32,
     row_index: u32,
+    table_counter: &mut u32,
     ctx: &mut ParseContext,
 ) -> Result<TableRowNode, RuntimeError> {
     let mut cells = Vec::new();
@@ -5145,7 +5146,8 @@ fn table_row_from_element(
 
         // Parse table cells (w:tc)
         if is_w_tag(el, "tc") {
-            let cell = table_cell_from_element(el, table_id, row_index, cell_index, ctx)?;
+            let cell =
+                table_cell_from_element(el, table_id, row_index, cell_index, table_counter, ctx)?;
             cells.push(cell);
             cell_index += 1;
             continue;
@@ -5291,6 +5293,7 @@ fn table_row_from_element(
                 cell_index: &mut u32,
                 sdt_wrapper: &SdtWrapper,
                 cells: &mut Vec<TableCellNode>,
+                table_counter: &mut u32,
                 ctx: &mut ParseContext,
             ) -> Result<(), RuntimeError> {
                 for sdt_child in &sdt_el.children {
@@ -5305,6 +5308,7 @@ fn table_row_from_element(
                                         table_id,
                                         row_index,
                                         *cell_index,
+                                        table_counter,
                                         ctx,
                                     )?;
                                     cell.row_sdt_wrapper = Some(sdt_wrapper.clone());
@@ -5319,6 +5323,7 @@ fn table_row_from_element(
                                         cell_index,
                                         sdt_wrapper,
                                         cells,
+                                        table_counter,
                                         ctx,
                                     )?;
                                 }
@@ -5335,6 +5340,7 @@ fn table_row_from_element(
                 &mut cell_index,
                 &sdt_wrapper,
                 &mut cells,
+                table_counter,
                 ctx,
             )?;
             continue;
@@ -5379,8 +5385,14 @@ fn table_row_from_element(
                 if let XMLNode::Element(inner_el) = inner_child
                     && is_w_tag(inner_el, "tc")
                 {
-                    let cell =
-                        table_cell_from_element(inner_el, table_id, row_index, cell_index, ctx)?;
+                    let cell = table_cell_from_element(
+                        inner_el,
+                        table_id,
+                        row_index,
+                        cell_index,
+                        table_counter,
+                        ctx,
+                    )?;
                     cells.push(cell);
                     cell_index += 1;
                 }
@@ -5448,11 +5460,11 @@ fn table_cell_from_element(
     table_id: u32,
     row_index: u32,
     cell_index: u32,
+    table_counter: &mut u32,
     ctx: &mut ParseContext,
 ) -> Result<TableCellNode, RuntimeError> {
     let mut blocks = Vec::new();
     let mut opaque_counter = 1u32;
-    let mut nested_table_counter = 1u32;
     // Cell-level bookmark markers with the block count at their position.
     let mut pending_markers: Vec<(usize, InlineNode)> = Vec::new();
     let mut grid_span: u32 = 1;
@@ -5677,7 +5689,7 @@ fn table_cell_from_element(
                                 content_el,
                                 None,
                                 &mut blocks,
-                                &mut nested_table_counter,
+                                table_counter,
                                 &mut cell_ctx,
                             )?;
                         }
@@ -5721,13 +5733,7 @@ fn table_cell_from_element(
         }
 
         // Recurse into cell content using existing block parsing
-        append_blocks_from_element(
-            el,
-            None,
-            &mut blocks,
-            &mut nested_table_counter,
-            &mut cell_ctx,
-        )?;
+        append_blocks_from_element(el, None, &mut blocks, table_counter, &mut cell_ctx)?;
     }
 
     // Word ignores several paragraph properties inside table cells — but that

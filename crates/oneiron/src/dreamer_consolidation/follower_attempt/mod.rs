@@ -80,7 +80,7 @@ impl Leg<'_> {
                 .now_ms
                 .div_ceil(1_000)
                 .saturating_add(self.policy.rung_retry_secs),
-            step_hashes: charges.step_hashes.clone(),
+            step_bindings: charges.step_bindings.clone(),
         }
     }
 
@@ -88,8 +88,8 @@ impl Leg<'_> {
     fn receipt(&self, charges: &StepChargeTally, before: (u64, usize)) -> Receipt {
         Receipt {
             completed_units: charges.units.saturating_sub(before.0),
-            step_hashes: charges
-                .step_hashes
+            step_bindings: charges
+                .step_bindings
                 .get(before.1..)
                 .unwrap_or_default()
                 .to_vec(),
@@ -161,8 +161,11 @@ impl ConsolidationExecutor<'_> {
             ));
         }
         let key = follower::check_input(&attempt.status.payload.input)?;
-        let (units, step_hashes) = follower::unpaid_in(ctx.vault, attempt.status.attempt.id)?;
-        let mut charges = StepChargeTally { units, step_hashes };
+        let (units, step_bindings) = follower::unpaid_in(ctx.vault, attempt.status.attempt.id)?;
+        let mut charges = StepChargeTally {
+            units,
+            step_bindings,
+        };
         let call = RoleCall::resolve(
             &self.roles,
             DREAMER_EXTRACTION_ROLE,
@@ -196,7 +199,7 @@ impl ConsolidationExecutor<'_> {
             if !policy.follower_enabled {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
-                    step_hashes: charges.step_hashes.clone(),
+                    step_bindings: charges.step_bindings.clone(),
                 });
             }
             let leg = Leg {
@@ -226,7 +229,7 @@ impl ConsolidationExecutor<'_> {
                 Next::Idle => {
                     return Ok(DreamerAttemptExecution::Completed {
                         completed_units: charges.units,
-                        step_hashes: charges.step_hashes.clone(),
+                        step_bindings: charges.step_bindings.clone(),
                     });
                 }
                 Next::Fold(work) => self.fold(&leg, &work, &mut charges).await?,
@@ -282,7 +285,7 @@ impl ConsolidationExecutor<'_> {
             }
             output::decode(response, &check_labels, &check_candidates).map(|_| ())
         };
-        let before = (charges.units, charges.step_hashes.len());
+        let before = (charges.units, charges.step_bindings.len());
         let (response, memoized) = match call_as_step_checked(
             &step,
             leg.call.backend,
@@ -296,11 +299,15 @@ impl ConsolidationExecutor<'_> {
                 response,
                 memoized,
                 failure_policy,
+                binding,
                 ..
             }) => {
-                if let Err(error) =
-                    charges.record_terminal(vault, attempt_id, step_hash, &response.usage)
-                {
+                if let Err(error) = charges.record_terminal(
+                    vault,
+                    binding.attempt_id,
+                    binding.step_hash,
+                    &response.usage,
+                ) {
                     if !memoized {
                         charges.record_usage(&response.usage);
                     }
@@ -309,8 +316,8 @@ impl ConsolidationExecutor<'_> {
                 if failure_policy.is_some() {
                     return match charges.park_on_fallback(
                         vault,
-                        attempt_id,
-                        step_hash,
+                        binding.attempt_id,
+                        binding.step_hash,
                         FOLLOWER_FALLBACK,
                         &response,
                     ) {
@@ -387,7 +394,7 @@ impl ConsolidationExecutor<'_> {
         work: &FoldWork,
         charges: &mut StepChargeTally,
     ) -> Result<Option<DreamerAttemptExecution>> {
-        let before = (charges.units, charges.step_hashes.len());
+        let before = (charges.units, charges.step_bindings.len());
         let room = leg
             .sizing
             .room(leg.policy.follower_keyframe_instruction.len());
@@ -479,11 +486,15 @@ impl ConsolidationExecutor<'_> {
                 response,
                 memoized,
                 failure_policy,
+                binding,
                 ..
             }) => {
-                if let Err(error) =
-                    charges.record_terminal(vault, attempt_id, step_hash, &response.usage)
-                {
+                if let Err(error) = charges.record_terminal(
+                    vault,
+                    binding.attempt_id,
+                    binding.step_hash,
+                    &response.usage,
+                ) {
                     if !memoized {
                         charges.record_usage(&response.usage);
                     }
@@ -492,8 +503,8 @@ impl ConsolidationExecutor<'_> {
                 if failure_policy.is_some() {
                     return match charges.park_on_fallback(
                         vault,
-                        attempt_id,
-                        step_hash,
+                        binding.attempt_id,
+                        binding.step_hash,
                         FOLLOWER_FALLBACK,
                         &response,
                     ) {
@@ -574,7 +585,7 @@ fn hand_back_owed(
             vault.store.notify_attempt_observers();
             Ok(Some(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             }))
         }
         Err(error) => engine(charges, error).map(Some),

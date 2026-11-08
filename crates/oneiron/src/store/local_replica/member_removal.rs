@@ -179,6 +179,7 @@ pub(super) fn remove_member(
     // Thread meta reads the RepliesTo edges, so it is marked dirty first.
     crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, txn, *id)?;
     crate::task_verb::index_owner_fact(store, txn, id, None)?;
+    crate::runtime_hooks::index_task_due_in_txn(store, txn, *id, None)?;
     crate::store::text_index::deindex_text(store, txn, id)?;
     crate::vault::entity_revision::remove_entity_revisions(store, txn, id)?;
     crate::batch::delete_from_phonetic_postings(store, txn, id)?;
