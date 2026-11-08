@@ -2340,14 +2340,14 @@ declare namespace Sdk {
   type WidenProposalView = { proposal_id: string; state: WidenProposalState; parent_attempt: string; board_attempt?: string | null; target_kind: string; target: string; parent_context: unknown; requested_context: unknown; widened_parent_context: unknown; recorded_at: number; landed_attempt?: string | null; declined_by?: string | null; declined_at?: number | null };
   type WidenProposalsView = { proposals: WidenProposalView[] };
   type WidenProposalAnswer = { proposal_id: string };
-  type ClaimProposalReviewRequest = { claim_ref: string };
+  type ClaimProposalReviewRequest = { claim_ref: string; grant_ref?: string | null };
   type ClaimProposalReview = { review_id: string; proposal_ref: string; claim: ClaimView; opener_ref?: string | null; pending_ref?: string | null };
   type ClaimSettleDecision = "approve" | "reject";
-  type ClaimSettleRequest = { claim_ref: string; review_id: string; decision: ClaimSettleDecision };
+  type ClaimSettleRequest = { claim_ref: string; review_id: string; decision: ClaimSettleDecision; grant_ref?: string | null };
   type ClaimSettlementVerdict = "landed" | "rejected";
   type ClaimChangeVerdict = { claim_ref: string; verdict: ClaimSettlementVerdict };
-  type ClaimSettlementAnswer = { kind: "word"; person_ref: string };
-  type ClaimSettlementReason = "gate.claim.settle.approved" | "gate.claim.settle.declined";
+  type ClaimSettlementAnswer = { kind: "word"; person_ref: string } | { kind: "grant"; grant_ref: string };
+  type ClaimSettlementReason = "gate.claim.settle.approved" | "gate.claim.settle.declined" | "gate.claim.settle.holder_approved" | "gate.claim.settle.holder_declined";
   type ClaimSettlementRevert = { verb: string; claim_ref: string };
   type SettleWarningCode = "vad_pending";
   type SettleWarning = { code: SettleWarningCode; claim_ref: string; detail: string };
@@ -5653,11 +5653,11 @@ declare const vault: Sdk.VaultHost & {
     read_filtered(input: Sdk.ClaimFilteredReadRequest): Promise<Sdk.ScopedReadResult<Sdk.ClaimView | null> | StoredResult>;
     /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
     retract(input: Sdk.ClaimRefRequest): Promise<Sdk.CommitReceipt | StoredResult>;
-    /** The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content. */
+    /** The owner or explicitly granted holder reviews one readable proposed claim: its content-bound review_id, opener and tray row. A native claim-review Grant grants no read access. */
     review(input: Sdk.ClaimProposalReviewRequest): Promise<Sdk.ClaimProposalReview | StoredResult>;
     /** Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt. */
     seed(input: Sdk.ScopedCommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
-    /** The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused. */
+    /** The owner or explicitly granted holder approves or rejects exactly a reviewed proposed claim through the gate. Its Settlement names the actual person or Grant; owner-critical obligations still require owner proof. */
     settle(input: Sdk.ClaimSettleRequest): Promise<Sdk.ClaimSettlement | StoredResult>;
     supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
     /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
