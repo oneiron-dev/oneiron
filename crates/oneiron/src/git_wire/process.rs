@@ -215,7 +215,7 @@ fn spawn_git_child(
     };
     let out_reader = child.stdout.take().map(|pipe| spawn_reader(pipe, cap));
     let err_reader = child.stderr.take().map(|pipe| spawn_reader(pipe, cap));
-    // An import leg's profile, an exact publish's relay push and a retained
+    // An import leg's profile, an origin mirror's relay push and a retained
     // call lift the wall-clock bound (Rule 5); every other child keeps it.
     let relay_lifts = process_env
         .origin_relay
