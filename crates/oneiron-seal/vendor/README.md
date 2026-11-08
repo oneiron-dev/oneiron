@@ -115,6 +115,7 @@
     targets into the map instead of cloning them. Grammar, entry points, error
     behavior, returned mappings and the reverse map are unchanged; no new API,
     and no admission/heap/lifecycle claim.
+  - `src/parser/cmap_parser.rs` (FIX 12777 codespace metadata): validates every codespace range with the same one-or-more grammar without collecting the discarded range payload. Keeps the private empty `CsRange` marker consumed by `ToUnicodeCMap`, which ignores that payload. Mapping data, accepted input and public error classes are unchanged; sections, maps and admission plumbing remain separate. No new cap, refusal or format.
   - `src/parser/mod.rs` + `src/parser/cmap_parser.rs` (FIX 12777 CMap metadata): shared `name_byte` factored from `name`; new `name_skip` validates the same `/`-name grammar via `many0_count` without building the discarded `Vec<u8>`; `cmap_name` uses `name_skip`. Removes only the discarded CMapName allocation on the ToUnicode path. `CIDSystemInfo` dictionaries, sections, maps and admission plumbing unchanged. No new cap/refusal/format/policy.
   - CMap reverse-map/fallback allocation (FIX 12777, narrow slice): `src/encodings/cmap.rs`
     builds the reverse map over borrowed Unicode slices with a per-iteration stack
