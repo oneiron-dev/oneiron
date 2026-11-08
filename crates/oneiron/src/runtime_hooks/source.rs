@@ -583,17 +583,18 @@ pub(super) fn delete_feed_rows_in_txn(
     }
 }
 
-/// Erases `id` from the three hook feeds in the caller's erase write: an
+/// Erases `ids` from the three hook feeds in the caller's erase write: an
 /// erased TASK's due index rows, and every settlement, tick or inbound row
-/// that names it, each kept at its sequence with nothing in it.
+/// that names one, each kept at its sequence with nothing in it. One walk
+/// of each feed for all of them.
 pub(super) fn scrub_hook_feeds_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
+    ids: &std::collections::BTreeSet<EntityId>,
 ) -> Result<()> {
-    settlement::scrub_settlements_in_txn(vault, txn, id)?;
-    schedule::scrub_task_ticks_in_txn(vault, txn, id)?;
-    surface_inbound::scrub_inbound_events_in_txn(vault, txn, id)
+    settlement::scrub_settlements_in_txn(vault, txn, ids)?;
+    schedule::scrub_task_ticks_in_txn(vault, txn, ids)?;
+    surface_inbound::scrub_inbound_events_in_txn(vault, txn, ids)
 }
 
 /// The changelog position of a binding claim's latest write, in the

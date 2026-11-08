@@ -23,6 +23,7 @@
 //! keeps the feed bounded too, and an erase leaves an erased TASK's rows at
 //! their sequences with no TASK in them.
 
+use std::collections::BTreeSet;
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
@@ -356,20 +357,24 @@ pub(super) fn delete_ticks_in_txn(
     Ok(())
 }
 
-/// Erases `task` from the tick source in the caller's erase write: its due
-/// index rows go, and each tick feed row that names it becomes
-/// [`TickRow::Erased`] at its own sequence. A complete scan, as the other
-/// hook carriers' scrub; a row erased already stays as it is.
+/// Erases `tasks` from the tick source in the caller's erase write: their
+/// due index rows go, and each tick feed row that names one becomes
+/// [`TickRow::Erased`] at its own sequence. One complete scan for all of
+/// them, as the other hook carriers' scrub; a row erased already stays as
+/// it is. A tick written later names none: a release ticks only a TASK
+/// still open in its own write.
 pub(super) fn scrub_task_ticks_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    task: &EntityId,
+    tasks: &BTreeSet<EntityId>,
 ) -> Result<()> {
-    index_task_due_in_txn(&vault.store, txn, *task, None)?;
+    for task in tasks {
+        index_task_due_in_txn(&vault.store, txn, *task, None)?;
+    }
     let mut named = Vec::new();
     for row in TICKS.iter_from(&vault.store, txn, &[])? {
         let (sequence, row) = row?;
-        if matches!(&row, TickRow::Released(tick) if tick.task == *task) {
+        if matches!(&row, TickRow::Released(tick) if tasks.contains(&tick.task)) {
             named.push(sequence);
         }
     }
