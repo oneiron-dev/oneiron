@@ -54,6 +54,7 @@ mod broker_relay;
 mod gate;
 mod import_relay;
 mod import_source_relay;
+mod lfs_broker;
 mod mirror_relay;
 mod projection;
 mod routes;

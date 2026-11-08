@@ -61,30 +61,36 @@ impl ArmStreams {
     }
 
     /// The step's bodies once it ran: the answer of a finished step, else
-    /// its console lines, and its files, with whatever the runtime returned
-    /// in its outcome instead of streaming it.
+    /// its console lines, a finished step's console lines beside it, and
+    /// its files, with whatever the runtime returned in its outcome
+    /// instead of streaming it.
     pub(crate) fn into_bodies(
         self,
         store: &ShadowBodyStore,
         outcome: &JsCodeModeStepOutcome,
-    ) -> Result<(BodySink, Vec<(String, BodySink)>)> {
-        let observation = if outcome.done {
-            self.finish
+    ) -> Result<(BodySink, Option<BodySink>, Vec<(String, BodySink)>)> {
+        let (observation, mut console) = if outcome.done {
+            (self.finish, self.console)
         } else {
-            self.console
+            (self.console, None)
         };
         let mut observation = match observation {
             Some(sink) => sink,
             None => store.sink()?,
         };
         observation.write(outcome.observation.as_bytes())?;
+        if console.is_none() && !outcome.console.is_empty() {
+            let mut sink = store.sink()?;
+            sink.write(outcome.console.as_bytes())?;
+            console = Some(sink);
+        }
         let mut files = self.files;
         for output in &outcome.outputs {
             let mut sink = store.sink()?;
             sink.write(&output.bytes)?;
             files.push((output.path.clone(), sink));
         }
-        Ok((observation, files))
+        Ok((observation, console, files))
     }
 
     /// What a step that failed streamed before it failed: its console
