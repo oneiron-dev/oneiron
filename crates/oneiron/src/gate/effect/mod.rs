@@ -6,6 +6,7 @@ mod effect_grants;
 mod effect_paced;
 mod effect_pair;
 mod evaluate;
+mod preflight;
 mod record;
 
 pub(crate) use self::approval_target::{
@@ -28,6 +29,9 @@ use self::effect_grants::{
 pub(crate) use self::effect_paced::{ExternalEffectCheck, check_external_effect_policy_paced};
 pub(crate) use self::effect_pair::{PairAdmission, check_external_effect_policy_pair};
 pub(crate) use self::evaluate::{evaluate_external_effect_policy, judge_external_effect_in_txn};
+pub(crate) use self::preflight::{
+    ExternalEffectPreflight, PreflightBudget, PreflightVerdict, preflight_answer_in_txn,
+};
 pub(crate) use self::record::{
     check_external_effect_policy, record_external_effect_policy, record_held_external_effect_policy,
 };
@@ -104,6 +108,9 @@ pub(crate) struct ExternalEffectGovernance {
 pub(crate) struct ExternalEffectJudgment {
     decision: GateDecision,
     created_at: u64,
+    /// The decision lacks external-effect authority that the owner's press
+    /// on this one effect would supply (ARCH-0046 "a press per send").
+    press_supplies_authority: bool,
     input: GateEvaluatorInput,
     binding: GateConsentBinding,
     grant_ref: Option<String>,
@@ -147,32 +154,37 @@ impl ExternalEffectJudgment {
         }
     }
 
-    // read by can(effect), FIX 22102 slice 1b
-    #[allow(dead_code)]
     #[must_use]
     pub(crate) fn outcome(&self) -> GateOutcome {
         self.decision.outcome()
     }
 
-    // read by can(effect), FIX 22102 slice 1b
-    #[allow(dead_code)]
     pub(crate) fn decision(&self) -> &GateDecision {
         &self.decision
     }
 
-    // read by can(effect), FIX 22102 slice 1b
-    #[allow(dead_code)]
+    /// FIX 7948: the Gate allowed this send on an envelope whose window is
+    /// full, so the send would keep its place in that envelope's line rather
+    /// than go now, as
+    /// [`ExternalEffectGovernance::retain_envelope_wait_in_txn`] keeps it.
     #[must_use]
-    pub(crate) fn created_at(&self) -> u64 {
-        self.created_at
+    pub(crate) fn waits_for_envelope_window(&self) -> bool {
+        self.decision.outcome() == GateOutcome::Allow && self.envelope_wait.is_some()
     }
 
-    /// The actual hydrated consent composition for a live scoped-MCP hold.
-    /// It is metadata for an owner question, never admission authority.
-    // read by can(effect), FIX 22102 slice 1b
-    #[allow(dead_code)]
-    pub(crate) fn ask_consent(&self) -> Option<&crate::llm::decision::AskConsent> {
-        self.ask_consent.as_ref()
+    /// The decision lacks external-effect authority, and the owner's press on
+    /// this one effect would supply it: the per-send mail press or the
+    /// publish press (ARCH-0046 "a press per send").
+    #[must_use]
+    pub(crate) const fn press_supplies_authority(&self) -> bool {
+        self.press_supplies_authority
+    }
+
+    /// The governing key an admitted effect would be charged to, if any;
+    /// the judgment selects it and charges nothing.
+    #[must_use]
+    pub(crate) const fn budget_target(&self) -> Option<&ExternalEffectBudgetTarget> {
+        self.budget_target.as_ref()
     }
 }
 
