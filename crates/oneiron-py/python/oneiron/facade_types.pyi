@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1304 facade rows, 4728 declarations.
-Inputs: 1233 of 1304 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1133 of 1304 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 121; unread shapes: 0.
+Census: 1305 facade rows, 4729 declarations.
+Inputs: 1234 of 1305 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1134 of 1305 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -11026,6 +11026,8 @@ class AutoWeaveGrantRequest(TypedDict):
     writer_class: AutoWeaveWriterClass
     scope: str
     scope_id: str
+class NightlyLinkGrantRequest(TypedDict):
+    ...
 class ConsentRegistryQuery(TypedDict):
     limit: int
     include_revoked: NotRequired[bool]
@@ -11939,7 +11941,7 @@ class LensScope(TypedDict):
 class LensProposeRequest(TypedDict):
     slot: LensSlot
     pack_content_hash: str
-    compiled: Any
+    compiled: GeneratedLens
     intent_prompt: str
     trigger: NotRequired[MadeByTrigger | None]
     scope: NotRequired[LensScope | None]
@@ -19382,10 +19384,17 @@ class TranscriptIngestOutcomeSession(TypedDict):
 class TranscriptIngestOutcomeRetryOpenSession(TypedDict):
     outcome: Literal["retry_open_session"]
     open_session_ref: EntityId
+class TranscriptIngestOutcomeHookPending(TypedDict):
+    outcome: Literal["hook_pending"]
+    session_ref: EntityId
+    ask: EntityId
+class TranscriptIngestOutcomeQueued(TypedDict):
+    outcome: Literal["queued"]
+    attempt_ref: str
 class TranscriptIngestOutcomeNoteFallback(TypedDict):
     outcome: Literal["note_fallback"]
     note_ref: EntityId
-TranscriptIngestOutcome = TranscriptIngestOutcomeSession | TranscriptIngestOutcomeRetryOpenSession | TranscriptIngestOutcomeNoteFallback
+TranscriptIngestOutcome = TranscriptIngestOutcomeSession | TranscriptIngestOutcomeRetryOpenSession | TranscriptIngestOutcomeHookPending | TranscriptIngestOutcomeQueued | TranscriptIngestOutcomeNoteFallback
 class ClaimListFilter(TypedDict):
     subject_ref: NotRequired[str | None]
     predicate: NotRequired[str | None]
@@ -22213,6 +22222,7 @@ class WakeRecipePolicy(TypedDict):
     narrative_instruction: str
     arc_min_new_statements: int
     arc_child_calls_per_wake: int
+    arc_synopsis_enabled: bool
     audit_window_instruction: str
     follower_enabled: bool
     follower_instruction: str
