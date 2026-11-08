@@ -190,9 +190,9 @@ fn complete_read_back<T: OutboundTransport>(
     record: &crate::outbound_intent_ledger::IntentLedgerRecord,
     now_ms: u64,
     replayed: bool,
-    transport: &T,
+    transport: &mut T,
 ) -> Result<OutboundEffectResult, IntentLedgerError> {
-    let body = transport.settled_result();
+    let body = transport.take_settled_result();
     let done = complete_record_bridged(vault, record.id, now_ms, |wtxn, done| {
         crate::dreamer_runner::settle_program_outbound_in_txn(
             vault,
