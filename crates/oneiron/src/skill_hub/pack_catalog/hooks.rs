@@ -1,6 +1,7 @@
 //! The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8,
-//! PACK-HOOKS = A). One folder per hook: `HOOK.md`, an optional `intent.md`
-//! and `body.js`. Owner consent binds an installed pack's hooks: each becomes
+//! PACK-HOOKS = A). One folder per hook: `HOOK.md`, an optional `intent.md`,
+//! `body.js` and, for a verb hook, an optional `golden.json` its pack's test
+//! runs. Owner consent binds an installed pack's hooks: each becomes
 //! a CODE entity plus a binding claim, the row kind a connector subscription
 //! writes. The runner is L11's; nothing here executes a body.
 use std::collections::{BTreeMap, BTreeSet};
@@ -26,12 +27,14 @@ use crate::{
 
 mod author;
 mod bindings;
+mod golden;
 mod install;
 mod proposal;
 
 pub use self::author::{FOREIGN_SKILL_PUBLISHER, HookAuthor};
 pub use self::bindings::PackHookBinding;
 pub(crate) use self::bindings::is_hook_binding;
+pub use self::golden::{HookGoldenExpect, HookGoldenInput};
 pub(super) use self::install::HookBinder;
 pub use self::proposal::{HookWidening, PackHookProposal, PackHookProposalStatus};
 pub use crate::store::pack_hook_proposal::{
@@ -89,6 +92,9 @@ pub struct PackHook {
     pub intent: Option<String>,
     /// BLAKE3 of `body.js`: the code identity the binding names.
     pub body_hash: [u8; 32],
+    /// A verb hook's golden inputs, from its `golden.json`; empty when it
+    /// carries none.
+    pub golden: Vec<HookGoldenInput>,
 }
 
 impl PackHook {
@@ -150,7 +156,13 @@ impl PackHook {
         tokens
     }
 
-    fn parse(folder: &str, text: &str, body: &[u8], intent: Option<String>) -> Result<Self> {
+    fn parse(
+        folder: &str,
+        text: &str,
+        body: &[u8],
+        intent: Option<String>,
+        golden_json: Option<&[u8]>,
+    ) -> Result<Self> {
         let front = super::super::folder::source_frontmatter(text)?
             .ok_or_else(|| invalid("HOOK.md requires frontmatter"))?;
         let mut fields = BTreeMap::new();
@@ -203,11 +215,17 @@ impl PackHook {
             scalar("phase")?.ok_or_else(|| invalid("HOOK.md requires a phase"))?,
         ))
         .map_err(|_| invalid("hook phase is pre, post or fact"))?;
-        // An entry is a verb glob, or `<fact kind>:<predicate glob>`; the
-        // first ':' splits them.
+        // An entry is a verb glob, or `<fact kind>:<glob>`; the first ':'
+        // splits them. A watcher source (`schedule.tick`, `surface.inbound`)
+        // is a fact, never a verb: only a fact hook names one (FIX 4749).
         let verbs: Vec<String> = json_list(&fields, "verbs")?;
         if verbs.is_empty() || !verbs.iter().all(|verb| selector_entry(verb)) {
             return Err(invalid("a hook selects one or more verb globs"));
+        }
+        if phase != HookPhase::Fact && verbs.iter().any(|verb| names_watcher_source(verb)) {
+            return Err(invalid(
+                "schedule.tick and surface.inbound are facts: only a fact hook selects them",
+            ));
         }
         // Served rows are a post-hook's to filter on.
         let served: Vec<String> = json_list(&fields, "served")?;
@@ -262,23 +280,29 @@ impl PackHook {
                 "a hook returns only outcome kinds its phase allows",
             ));
         }
+        let selector = HookSelector {
+            verbs,
+            actors,
+            scope,
+            phase,
+            priority,
+            budget_ms,
+            blocking,
+            outcomes,
+            served,
+            render_class,
+        };
+        let golden = golden_json
+            .map(|bytes| golden::parse_golden(bytes, &selector))
+            .transpose()?
+            .unwrap_or_default();
         Ok(Self {
             name,
             version,
-            selector: HookSelector {
-                verbs,
-                actors,
-                scope,
-                phase,
-                priority,
-                budget_ms,
-                blocking,
-                outcomes,
-                served,
-                render_class,
-            },
+            selector,
             intent,
             body_hash: *blake3::hash(body).as_bytes(),
+            golden,
         })
     }
 }
@@ -295,6 +319,14 @@ fn selector_entry(entry: &str) -> bool {
                 || b.is_ascii_digit()
                 || matches!(b, b'.' | b'_' | b'-' | b'*' | b':')
         })
+}
+
+/// Whether a selector entry names a watcher source, bare or as its
+/// `<kind>:` part.
+fn names_watcher_source(entry: &str) -> bool {
+    let kind = entry.split_once(':').map_or(entry, |(kind, _)| kind);
+    crate::runtime_hooks::FactKind::from_token(kind)
+        .is_some_and(crate::runtime_hooks::FactKind::is_watcher_source)
 }
 
 /// A JSON string list without repeats.
@@ -349,9 +381,12 @@ pub(super) fn parse_source_hooks(
         let (folder, name) = relative
             .split_once('/')
             .ok_or_else(|| invalid("a hook must have a folder"))?;
-        if !matches!(name, HOOK_MANIFEST | HOOK_INTENT | HOOK_BODY) {
+        if !matches!(
+            name,
+            HOOK_MANIFEST | HOOK_INTENT | HOOK_BODY | golden::HOOK_GOLDEN
+        ) {
             return Err(invalid(
-                "a hook folder holds HOOK.md, intent.md and body.js only",
+                "a hook folder holds HOOK.md, intent.md, body.js and golden.json only",
             ));
         }
         if !manifest.hooks.contains(folder) {
@@ -386,7 +421,8 @@ pub(super) fn parse_source_hooks(
             return Err(invalid("intent.md exceeds the CODE prompt bound"));
         }
         let text = std::str::from_utf8(text).map_err(|_| invalid("HOOK.md is not UTF-8"))?;
-        hooks.push(PackHook::parse(name, text, body, intent)?);
+        let golden_json = folder.get(golden::HOOK_GOLDEN).copied();
+        hooks.push(PackHook::parse(name, text, body, intent, golden_json)?);
     }
     Ok(hooks)
 }
@@ -400,41 +436,59 @@ fn bindings_in_txn(
 ) -> Result<Vec<(EntityId, PackHookBinding)>> {
     let mut result = Vec::new();
     for id in crate::claim::claim_ids_for_predicate_in_txn(store, txn, PREDICATE)? {
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
-            continue;
-        };
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-            || raw.len() == ENTITY_METADATA_HEADER_LEN
-        {
-            continue;
-        }
-        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        if body.predicate != PREDICATE
-            || !is_hook_binding(&body)
-            || body.lifecycle != ClaimLifecycleStatus::Active
-            || !matches!(
-                body.approval,
-                ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
-            )
-        {
-            continue;
-        }
-        match serde_json::from_str::<PackHookBinding>(body.value.as_str().unwrap_or_default()) {
-            Ok(row) if body.subject == ClaimSubject::Entity(row.code) => result.push((id, row)),
-            Ok(_) => tracing::warn!(
-                claim = %id.to_hex(),
-                "hook binding subject is not its CODE entity; skipped"
-            ),
-            Err(error) => tracing::warn!(
-                claim = %id.to_hex(),
-                %error,
-                "hook binding is malformed; skipped"
-            ),
+        if let Some(row) = binding_in_txn(store, txn, &id)? {
+            result.push((id, row));
         }
     }
     Ok(result)
+}
+
+/// The live, approved hook binding claim at `id`, enabled or not, as
+/// [`bindings_in_txn`] reads each; `None` for any other row, with a warning
+/// when its payload is no binding of its CODE entity.
+fn binding_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<PackHookBinding>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+        || raw.len() == ENTITY_METADATA_HEADER_LEN
+    {
+        return Ok(None);
+    }
+    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    if body.predicate != PREDICATE
+        || !is_hook_binding(&body)
+        || body.lifecycle != ClaimLifecycleStatus::Active
+        || !matches!(
+            body.approval,
+            ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
+        )
+    {
+        return Ok(None);
+    }
+    match serde_json::from_str::<PackHookBinding>(body.value.as_str().unwrap_or_default()) {
+        Ok(row) if body.subject == ClaimSubject::Entity(row.code) => Ok(Some(row)),
+        Ok(_) => {
+            tracing::warn!(
+                claim = %id.to_hex(),
+                "hook binding subject is not its CODE entity; skipped"
+            );
+            Ok(None)
+        }
+        Err(error) => {
+            tracing::warn!(
+                claim = %id.to_hex(),
+                %error,
+                "hook binding is malformed; skipped"
+            );
+            Ok(None)
+        }
+    }
 }
 
 /// The owner's dial on the binding claim at `id`, read from the raw claim so

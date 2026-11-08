@@ -12,6 +12,8 @@ use crate::codebase::entity_id_from_hash_material;
 
 mod rereview;
 
+pub(super) use rereview::RereviewPrepared;
+
 /// The effector a landing reads secret values under: the owner binds a
 /// record's `read` scope to it at the bind door, and an unbound record
 /// refuses the landing with its typed binding error.
@@ -179,6 +181,9 @@ pub(super) fn resolved_successor(
     successor.files = vec![RepoProposedFile::ordinary(path.clone(), resolved)];
     successor.status = RepoProposalStatus::Approved;
     successor.resolves = Some(row.id);
+    // A resolved successor is no repair: a repair link names the original,
+    // and the successor's own submission receipt is written below (FIX 4364).
+    successor.repair_of = None;
     successor.settlement = None;
     successor.queue_review = None;
     successor.operation_seq = None;
@@ -469,6 +474,7 @@ fn landing_store_identity(repo: &RepoRef) -> String {
     match repo {
         RepoRef::LocalFolder { path, .. } => format!("local:{path}"),
         RepoRef::GitHubAtCommit { owner, repo, .. } => format!("github:{owner}/{repo}"),
+        RepoRef::LocalCapture { .. } => repo.canonical(),
     }
 }
 

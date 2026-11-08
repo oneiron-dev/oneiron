@@ -37,6 +37,19 @@ fn invalid() -> Error {
     ))
 }
 
+/// The run reference the dispatcher of agent attempt `attempt` runs under:
+/// the attempt's `run_id`, else `agent:` and the attempt's hex. The run's
+/// write receipts are keyed by it, so a continuation of a failed run reads
+/// the source's receipts under it (FIX 4199).
+pub(crate) fn agent_attempt_run_ref(attempt: AttemptId, run_id: Option<String>) -> String {
+    run_id.unwrap_or_else(|| {
+        format!(
+            "agent:{}",
+            crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())
+        )
+    })
+}
+
 /// What a run lends one callable skill its program calls (OF-353): the vault
 /// as the host holds it, and the running attempt's lease, read live.
 pub(crate) struct CallableSkillLease {
@@ -65,12 +78,7 @@ impl<'a> HostSelfDispatcher<'a> {
         {
             return Err(invalid());
         }
-        let run_ref = status.attempt.run_id.unwrap_or_else(|| {
-            format!(
-                "agent:{}",
-                crate::entity_id::bytes_to_hex_lower(parent.as_bytes())
-            )
-        });
+        let run_ref = agent_attempt_run_ref(parent, status.attempt.run_id);
         let mut dispatcher = Self::new(vault, actor, run_ref)?;
         dispatcher.agent_parent = Some(parent);
         Ok(dispatcher)
@@ -454,6 +462,7 @@ impl<'a> HostSelfDispatcher<'a> {
     pub(super) fn dispatch_tasks_refuse(
         &self,
         call: SelfTaskRefuseCall,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         let refused = |code: &str| {
             SelfDispatchOutcome::Failed(SelfFailedResult {
@@ -494,11 +503,18 @@ impl<'a> HostSelfDispatcher<'a> {
             Err(error) => return Ok(failed(SelfEffect::TasksRefuse, error)),
         }
         Ok(match memory.land_task_refusal(task, &input) {
-            Ok(receipt) => SelfDispatchOutcome::TaskRefusal(SelfTaskRefusalResult {
-                task_ref: receipt.task_ref,
-                level: receipt.level,
-                replay: receipt.idempotent_replay,
-            }),
+            Ok(receipt) => {
+                if receipt.outcome == crate::agent_def::RefusalOutcome::Decline
+                    && !receipt.idempotent_replay
+                {
+                    self.capture_task_refusal_output(vault, read_as, input.reason_ref);
+                }
+                SelfDispatchOutcome::TaskRefusal(SelfTaskRefusalResult {
+                    task_ref: receipt.task_ref,
+                    level: receipt.level,
+                    replay: receipt.idempotent_replay,
+                })
+            }
             Err(error) => failed(SelfEffect::TasksRefuse, error),
         })
     }
@@ -584,7 +600,7 @@ impl<'a> HostSelfDispatcher<'a> {
     ) -> Result<std::result::Result<CallableSkillLease, SelfDispatchOutcome>> {
         let effect = call.effect();
         self.storage.answered(|| {
-            self.enforce_off_record_effect_policy(effect)?;
+            self.enforce_off_record_effect_policy(call)?;
             if let Some(refused) = self.reader_child_refusal(effect) {
                 return Ok(Err(refused));
             }
@@ -598,6 +614,7 @@ impl<'a> HostSelfDispatcher<'a> {
                 Ok(read_as) => read_as,
                 Err(refusal) => {
                     return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                        hook_notice: None,
                         effect,
                         outcome: refusal.code,
                         reason_codes: Vec::new(),
@@ -688,9 +705,10 @@ impl<'a> HostSelfDispatcher<'a> {
                 super::super::payload::self_call_request_value(&SelfCall::TasksWait(handle))?;
             for call in &record.bridge_calls {
                 // Observed generations are an outcome fact of the dispatched
-                // wait: compare against the effective request (FIX 1442).
+                // wait: compare against the effective request (FIX 1442), by
+                // its identity once an erase took its words (FIX 6534).
                 if call.effect == SelfEffect::TasksWait
-                    && call.rewritten_request.as_ref().unwrap_or(&call.request) == &request
+                    && call.dispatched_request_is(&request)?
                     && let SelfDispatchOutcome::TaskAskStatus(
                         crate::task_verb::TaskAskStatus::Changed { generation, .. },
                     ) = super::super::payload::decode_self_dispatch_outcome(&call.outcome)?

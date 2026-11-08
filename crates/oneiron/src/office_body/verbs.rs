@@ -30,7 +30,7 @@ use crate::provenance::text_commit::TextCommitReceipt;
 use crate::secret_custody::SecretSight;
 use crate::typed_body::LiftedSources;
 use crate::write_envelope::WriteActor;
-use oneiron_docedit::docx_body::DocxRun;
+use oneiron_docedit::docx_body::{DocxRun, DocxStoryScope};
 use oneiron_docedit::live::{ApproveScope, DeckOp};
 use oneiron_docedit::xlsx_body::XlsxLines;
 
@@ -271,8 +271,45 @@ pub struct DocxBlockView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocxStoryParagraphView {
+    pub id: String,
+    pub locked: bool,
+    pub text: String,
+    /// The paragraph's text as runs of one mark set each.
+    pub runs: Vec<DocxRun>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocxStoryCellParagraphView {
+    pub id: String,
+    pub locked: bool,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocxStoryCellView {
+    pub row: usize,
+    pub col: usize,
+    pub paragraphs: Vec<DocxStoryCellParagraphView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocxStoryTableView {
+    pub id: String,
+    pub cells: Vec<DocxStoryCellView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocxStoryView {
+    pub scope: DocxStoryScope,
+    pub paragraphs: Vec<DocxStoryParagraphView>,
+    pub tables: Vec<DocxStoryTableView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocxBodyView {
     pub blocks: Vec<DocxBlockView>,
+    pub stories: Vec<DocxStoryView>,
 }
 
 /// One sheet, its cells in row-major order.
@@ -338,6 +375,47 @@ impl From<DocxBody> for DocxBodyView {
                         .cells
                         .into_iter()
                         .map(|((row, col), text)| DocxCellView { row, col, text })
+                        .collect(),
+                })
+                .collect(),
+            stories: body
+                .stories
+                .into_iter()
+                .map(|story| DocxStoryView {
+                    scope: story.scope,
+                    paragraphs: story
+                        .paragraphs
+                        .into_iter()
+                        .map(|paragraph| DocxStoryParagraphView {
+                            id: paragraph.id,
+                            locked: paragraph.locked,
+                            text: paragraph.text,
+                            runs: paragraph.runs,
+                        })
+                        .collect(),
+                    tables: story
+                        .tables
+                        .into_iter()
+                        .map(|table| DocxStoryTableView {
+                            id: table.id,
+                            cells: table
+                                .cells
+                                .into_iter()
+                                .map(|cell| DocxStoryCellView {
+                                    row: cell.row,
+                                    col: cell.col,
+                                    paragraphs: cell
+                                        .paragraphs
+                                        .into_iter()
+                                        .map(|paragraph| DocxStoryCellParagraphView {
+                                            id: paragraph.id,
+                                            locked: paragraph.locked,
+                                            text: paragraph.text,
+                                        })
+                                        .collect(),
+                                })
+                                .collect(),
+                        })
                         .collect(),
                 })
                 .collect(),
@@ -916,10 +994,13 @@ impl Memory<'_> {
                 zone: &zone,
             },
         )?;
-        Ok(OfficeBodyExportView {
-            frontier: export.frontier,
-            record: export.record,
-        })
+        self.lifted_body_view(
+            &artifact,
+            OfficeBodyExportView {
+                frontier: export.frontier,
+                record: export.record,
+            },
+        )
     }
 
     /// `vault.artifacts.body.preview`: the workbook an export would land now,

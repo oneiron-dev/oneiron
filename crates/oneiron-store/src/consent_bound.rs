@@ -11,13 +11,13 @@ pub const DOMAIN_ACTION: &str = "action";
 /// Domain-separated BLAKE3 label for a normalized bound digest.
 const BOUND_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.bound_digest.v2\0";
 
-/// Upper bound on selectors in one envelope. A bound is a bound, not a
-/// standing blanket assembled out of thousands of clauses.
-pub const MAX_ENVELOPE_SELECTORS: usize = 256;
 /// Upper bound on the byte length of any single ref/selector string.
+///
+/// A bound names as many audience members and envelope selectors as its
+/// grantor states (FIX 10198): each is kept, sorted and deduplicated, and
+/// containment checks every one, so a larger bound is more work, never a
+/// broader grant and never a count refusal.
 pub const MAX_CONSENT_REF_LEN: usize = 512;
-/// Upper bound on audience members in a disclosure bound.
-pub const MAX_AUDIENCE_MEMBERS: usize = 256;
 
 // ---------------------------------------------------------------------------
 // The bound — invariant 3
@@ -96,9 +96,6 @@ impl AudienceBound {
         members.dedup();
         if members.is_empty() {
             return Err(invalid_bound("audience bound has no members"));
-        }
-        if members.len() > MAX_AUDIENCE_MEMBERS {
-            return Err(invalid_bound("audience bound exceeds the member cap"));
         }
         Ok(Self { members })
     }
@@ -203,6 +200,55 @@ impl ActionClass {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Verb-class membership — the one registry
+// ---------------------------------------------------------------------------
+
+/// The outbound verb class of a message delivered to a counterparty in its
+/// conversation. A contact or channel dial is send-class by construction.
+pub const SEND_VERB_CLASS: &str = "send";
+
+/// Each registered class and its member verbs, as the outbound capability
+/// manifests name them. A grant stores a class name, never the verbs in it
+/// (DEC-0006 invariant 3): membership resolves here when an effect arrives.
+/// A verb outside the class a grant names matches nothing, so the Gate raises
+/// its consent ask for it: the owner widens a class for a grant by answering
+/// that ask or a proposed action widen (`Vault::propose_action_widen`), never
+/// through reuse.
+const OUTBOUND_VERB_CLASSES: [(&str, &[&str]); 1] = [
+    // A message delivered to a counterparty in its conversation. A cold
+    // first contact, a broadcast, an edit or a retraction is not one.
+    (SEND_VERB_CLASS, &["send", "send_media", "send_dm", "reply"]),
+];
+
+/// Whether `verb` is a member of the class `class` names: its own literal
+/// spelling, or a member the registry lists for that class. Both sides are
+/// trimmed; spelling is otherwise exact. Membership has a direction: class
+/// `send` covers `send_dm`, and `send_dm` never covers `send`.
+#[must_use]
+pub fn verb_in_class(class: &str, verb: &str) -> bool {
+    let (class, verb) = (class.trim(), verb.trim());
+    class == verb
+        || OUTBOUND_VERB_CLASSES
+            .iter()
+            .any(|(name, members)| *name == class && members.contains(&verb))
+}
+
+/// Every class `verb` is a member of: its own literal spelling, then each
+/// registered class that lists it. The verb is trimmed.
+#[must_use]
+pub fn classes_of(verb: &str) -> Vec<&str> {
+    let verb = verb.trim();
+    let mut classes = vec![verb];
+    classes.extend(
+        OUTBOUND_VERB_CLASSES
+            .iter()
+            .filter(|(name, members)| *name != verb && members.contains(&verb))
+            .map(|(name, _)| *name),
+    );
+    classes
+}
+
 /// The class axis of a bound.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BoundClass {
@@ -220,10 +266,18 @@ impl BoundClass {
         }
     }
 
+    /// Class coverage: whether this bound's class covers the candidate's. A
+    /// disclosure class covers only itself. An action class covers its own
+    /// spelling and every member the verb-class registry lists for it
+    /// ([`verb_in_class`]), so a `send` grant covers a `send_dm` act and a
+    /// `send_dm` grant never covers a `send` act. Crossed domains never match.
+    #[must_use]
     pub fn matches(&self, candidate: &Self) -> bool {
         match (self, candidate) {
             (Self::Disclosure(bound), Self::Disclosure(candidate)) => bound == candidate,
-            (Self::Action(bound), Self::Action(candidate)) => bound == candidate,
+            (Self::Action(bound), Self::Action(candidate)) => {
+                verb_in_class(bound.as_str(), candidate.as_str())
+            }
             _ => false,
         }
     }
@@ -596,10 +650,12 @@ impl GrantBound {
 
     /// Deterministic, monotone containment — invariant 3.
     ///
-    /// Same domain **and** same subject-containment **and** same class **and**
-    /// envelope containment. Anything that exceeds the bound is not contained,
-    /// so it becomes a fresh ask rather than silent reuse. Containment never
-    /// mutates either side: widening is a separate owner decision.
+    /// Same domain **and** subject containment **and** class coverage
+    /// ([`BoundClass::matches`]: an action class covers its registered member
+    /// verbs) **and** envelope containment. Anything that exceeds the bound is
+    /// not contained, so it becomes a fresh ask rather than silent reuse.
+    /// Containment never mutates either side: widening is a separate owner
+    /// decision.
     #[must_use]
     pub fn contains(&self, candidate: &Self) -> bool {
         self.domain() == candidate.domain()
@@ -723,9 +779,6 @@ pub fn normalized_selectors(selectors: impl IntoIterator<Item = String>) -> Resu
         return Err(invalid_bound(
             "envelope has no selectors; an empty envelope is not a bound",
         ));
-    }
-    if selectors.len() > MAX_ENVELOPE_SELECTORS {
-        return Err(invalid_bound("envelope exceeds the selector cap"));
     }
     Ok(selectors)
 }

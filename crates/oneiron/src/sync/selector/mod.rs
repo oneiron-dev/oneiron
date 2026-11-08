@@ -11,18 +11,27 @@ pub(crate) use admission::admit_federated_entity_blob;
 #[cfg(feature = "sync")]
 pub(in crate::sync) mod authority_beside;
 mod authorize;
+// FIX 3656: a TASK's or SUMMARY's birth placement beside it on a copy to
+// another vault.
+mod birth_placements;
 mod born_with;
 mod codec;
 mod document_admission;
 mod epoch_egress;
 pub(in crate::sync) use document_admission::{
     admit_document_read_in_txn, admit_document_write_in_txn, admit_promoted_entity_write_in_txn,
+    cache_worlds_admitted_in_txn,
 };
 #[cfg(feature = "sync")]
 mod edge;
 mod guest_document;
 pub use guest_document::{
     GuestDocumentShareRequest, export_guest_document_for_guest, share_guest_document_as_owner,
+};
+mod guest_proposal;
+pub use guest_proposal::{
+    accept_connect_proposal_as_owner, connect_proposals_as_owner, propose_as_connect_guest,
+    reject_connect_proposal_as_owner,
 };
 mod held_retire;
 mod machine_history;
@@ -68,8 +77,8 @@ pub(in crate::sync) use self::admission::validate_sync_identity_body;
 pub(crate) use self::admission::{AdmittedUpdate, admit_staged_window_update};
 pub use self::admission::{FederationAdmissionRole, admit_federated_window_update};
 pub(in crate::sync) use self::admission::{
-    admit_peer_window_update_as, release_landed_stamps, revalidate_admitted_facet_stamps,
-    revalidate_admitted_federated_claims, staged_births,
+    admit_peer_window_update_as, release_landed_stamps, release_staged_landed_stamps,
+    revalidate_admitted_facet_stamps, revalidate_admitted_federated_claims, staged_births,
 };
 pub use self::authorize::authorize_sync_selector;
 pub(in crate::sync) use self::authorize::authorize_sync_selector_in_txn;
@@ -85,6 +94,7 @@ pub(crate) fn keep_carried_born_with(
     born_with::keep_carried(vault, carried)
 }
 pub(in crate::sync) use self::codec::granted_window_doc;
+pub(crate) use self::codec::guest_share_envelope_body_listing;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
     SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,

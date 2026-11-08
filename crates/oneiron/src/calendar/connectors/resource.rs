@@ -111,6 +111,7 @@ pub(super) fn render(
         Some(bytes) => source_components(bytes)?,
         None => Vec::new(),
     };
+    let civil = civil_series(vault, *master)?;
     let mut out =
         String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//calendar//EN\r\n");
     for &event in &member_ids {
@@ -151,11 +152,8 @@ pub(super) fn render(
                 }
                 PREDICATE_CALENDAR_SERIES_EXCEPTION => {
                     let value = decode_series_exception_value(&body.value)?;
-                    line(
-                        &mut out,
-                        "RECURRENCE-ID",
-                        &super::remote::format_utc(value.original_start_utc)?,
-                    )?;
+                    let (name, original) = recurrence_id_line(value.original_start_utc, civil)?;
+                    line(&mut out, name, &original)?;
                     recurrence_id = Some(value.original_start_utc);
                 }
                 PREDICATE_CALENDAR_ATTENDEE => {
@@ -212,6 +210,67 @@ pub(super) fn render(
         component_hashes,
     })
 }
+/// The kind of an all-day or floating series stepping on the UTC carrier
+/// (FIX 16568); `None` for a series anchored at an instant or in a zone,
+/// whose keys are instants.
+fn civil_series(
+    vault: &Vault,
+    master: EntityId,
+) -> Result<Option<CalendarTimeKind>, CalendarConnectorError> {
+    let (mut kind, mut tz) = (None, None);
+    for id in vault.claims_for_subject(&master)? {
+        let Some(body) = vault.get_claim(&id)? else {
+            continue;
+        };
+        if body.lifecycle != ClaimLifecycleStatus::Active {
+            continue;
+        }
+        match body.predicate.as_str() {
+            PREDICATE_CALENDAR_TIME_KIND => kind = Some(decode_time_kind_value(&body.value)?.kind),
+            PREDICATE_CALENDAR_SERIES_MASTER => {
+                tz = Some(decode_series_master_value(&body.value)?.tz);
+            }
+            _ => {}
+        }
+    }
+    Ok(match kind {
+        Some(kind @ (CalendarTimeKind::AllDay | CalendarTimeKind::Floating))
+            if tz.as_deref() == Some("UTC") =>
+        {
+            Some(kind)
+        }
+        _ => None,
+    })
+}
+
+/// The `RECURRENCE-ID` line naming the occurrence keyed `original`, typed as
+/// its series' start is: on the UTC carrier an all-day series' date or a
+/// floating series' floating time, each of which parses back to the same
+/// key; else the UTC instant.
+fn recurrence_id_line(
+    original: u64,
+    civil: Option<CalendarTimeKind>,
+) -> Result<(&'static str, String), CalendarConnectorError> {
+    let Some(kind) = civil else {
+        return Ok(("RECURRENCE-ID", super::remote::format_utc(original)?));
+    };
+    let wall = crate::calendar::utc_to_wall(original, "UTC")?;
+    Ok(if kind == CalendarTimeKind::AllDay {
+        (
+            "RECURRENCE-ID;VALUE=DATE",
+            format!("{:04}{:02}{:02}", wall.y, wall.mo, wall.d),
+        )
+    } else {
+        (
+            "RECURRENCE-ID",
+            format!(
+                "{:04}{:02}{:02}T{:02}{:02}{:02}",
+                wall.y, wall.mo, wall.d, wall.h, wall.mi, wall.s
+            ),
+        )
+    })
+}
+
 /// Properties the render writes from the EVENT claims; a source line under
 /// any of these names is replaced, never repeated. `DURATION` is owned because
 /// the render always states the end as `DTEND`.
@@ -320,8 +379,8 @@ fn property_name(raw: &str) -> String {
 
 /// Archives the ICS one connector pull returned for `(system, calendar_ref,
 /// uid)`: one BLOB_ARTIFACT per resource, one version per distinct body, so a
-/// later write renders over the copy the remote holds. Returns the `hex#vN`
-/// reference the remote-object row keeps.
+/// later write renders over the copy the remote holds. Returns the exact
+/// stored artifact/version; the remote-object locator is its projection.
 pub(super) fn archive_remote_source(
     vault: &Vault,
     system: &str,
@@ -329,7 +388,7 @@ pub(super) fn archive_remote_source(
     uid: &str,
     ics: &[u8],
     now: u64,
-) -> Result<String, CalendarConnectorError> {
+) -> Result<CalendarPassportSource, CalendarConnectorError> {
     let artifact_id = EntityId::derive(
         CALENDAR_CONNECTOR_SOURCE_BLOB,
         &[system.as_bytes(), calendar_ref.as_bytes(), uid.as_bytes()],
@@ -360,7 +419,10 @@ pub(super) fn archive_remote_source(
         at,
         now,
     )?;
-    Ok(format!("{}#v{}", artifact_id.to_hex(), version.version))
+    Ok(CalendarPassportSource {
+        artifact: artifact_id,
+        version: version.version,
+    })
 }
 
 /// The archived source a write of `uid` renders over: the copy this seat last
@@ -385,11 +447,23 @@ pub(super) fn archived_source(
         };
         if body.lifecycle != ClaimLifecycleStatus::Active
             || body.predicate != PREDICATE_CALENDAR_PASSPORT
-            || decode_passport_value(&body.value)?.uid != uid
         {
             continue;
         }
-        // Feed admissions cite `hex#vN:uid`, the archived feed version.
+        let passport = decode_passport_value(&body.value)?;
+        if passport.uid != uid {
+            continue;
+        }
+        if let Some(source) = passport.source {
+            if let Some(bytes) =
+                vault.read_blob_artifact_version(&source.artifact, source.version)?
+            {
+                return Ok(Some(bytes));
+            }
+            // A missing exact version never falls back to this claim's locator.
+            continue;
+        }
+        // Record-only admissions can still cite an archived feed locator.
         let cited = body
             .evidence
             .as_ref()

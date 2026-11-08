@@ -5,6 +5,7 @@ use crate::channel_identity::{
     DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS, SUBJECT_CLASS_SELF_HELD,
     WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
 };
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::claim::{ClaimSource, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
 use crate::commitment_schedule::commitment_projection_actor;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
@@ -128,6 +129,8 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     // behind the derivation ever moves, the row dangles and mints pend —
     // fail-closed, never silently re-aimed.
     let commitment_projection_actor_ref = commitment_projection_actor()?.entity_ref().to_hex();
+    let seal_actor_ref =
+        EntityId::derive(crate::entity_id::derived_domains::ESIGN_SEAL_ACTOR, &[])?.to_hex();
     // The conversation-mirror MACHINE attests connector-observed reactions
     // (OF-372). Derived the same way, so a moved domain fails closed too.
     let conversation_mirror_actor_ref =
@@ -324,6 +327,13 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                         ]),
                     ),
                 ]),
+                // The four learning predicates are measured state, normal
+                // class, never the unknown-predicate critical fallback (FIX
+                // 7759).
+                learning_predicate_rule(LearningPredicate::Reliability),
+                learning_predicate_rule(LearningPredicate::EditCost),
+                learning_predicate_rule(LearningPredicate::RetestNoise),
+                learning_predicate_rule(LearningPredicate::Setting),
                 // A goal-intake candidate still needs a human-authenticated
                 // write door; the ordinary claim gate must not strand that
                 // confirmed interview at the unrelated critical-consent floor.
@@ -622,6 +632,16 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                     ),
                     (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
                 ]),
+                // ARCH-0064: the verified SealJob commits automatically.
+                // Only its private producer guard can use this actor/permit.
+                Value::Map(vec![
+                    (Value::from(ACTOR_CLASS_KEY), Value::from("system")),
+                    (
+                        Value::from(ACTOR_REF_KEY),
+                        Value::from(seal_actor_ref.clone()),
+                    ),
+                    (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+                ]),
                 // OF-372 (owner ruling 2026-09-29): a reaction is not
                 // gate-pending, and a mirrored one is written by the signed
                 // conversation-mirror MACHINE. The row is keyed to that ONE
@@ -682,20 +702,38 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 // above; projection mints pend again (fail-closed).
                 (
                     Value::from(ClaimSource::Generated.as_str()),
-                    Value::Map(vec![
-                        (
-                            Value::from(ACTOR_REF_KEY),
-                            Value::from(commitment_projection_actor_ref),
-                        ),
-                        (
-                            Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
-                            Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
-                        ),
-                        (
-                            Value::from(SOURCE_TRUST_RECEIPTED_KEY),
-                            Value::Boolean(true),
-                        ),
-                        (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+                    Value::Array(vec![
+                        Value::Map(vec![
+                            (
+                                Value::from(ACTOR_REF_KEY),
+                                Value::from(commitment_projection_actor_ref),
+                            ),
+                            (
+                                Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                                Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                            ),
+                            (
+                                Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                                Value::Boolean(true),
+                            ),
+                            (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+                        ]),
+                        Value::Map(vec![
+                            (Value::from(ACTOR_REF_KEY), Value::from(seal_actor_ref)),
+                            (
+                                Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                                Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                            ),
+                            (
+                                Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                                Value::Boolean(true),
+                            ),
+                            (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+                            (
+                                Value::from(super::constants::POLICY_AUTO_CHECKER_KEY),
+                                Value::from(super::NativeAutoChecker::SealJob.as_str()),
+                            ),
+                        ]),
                     ]),
                 ),
             ]),
@@ -816,6 +854,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             ]),
         ),
         teacher_probe_default_entry(),
+        crate::gate::code_consent_settlement::CodeConsentSettlementRow::shipped_entry(),
         (
             Value::from(POLICY_SHEET_ANSWER_PRECEDENCE_KEY),
             Value::Map(vec![(
@@ -1415,4 +1454,23 @@ pub(crate) fn default_consult_fanout_policy()
         peer_rate: shipped.controls.peer_rate.clone(),
         create_rate: shipped.controls.create_rate,
     }
+}
+
+/// The shipped rule of one learning predicate (FIX 7759): exact, criticality
+/// and sensitivity normal, as its measured-state family declares.
+fn learning_predicate_rule(predicate: LearningPredicate) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(RULE_PREFIX_KEY),
+            Value::from(predicate.as_str()),
+        ),
+        (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+        (
+            Value::from(RULE_AXES_KEY),
+            Value::Map(vec![
+                (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+            ]),
+        ),
+    ])
 }

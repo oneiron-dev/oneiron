@@ -2,6 +2,7 @@
 //! Entry: `self_call_request_value`.
 //! The request child owns request encoding; `code_run::types` owns call and outcome types.
 
+mod fold_words;
 mod observations;
 mod request;
 mod session_hooks;
@@ -31,6 +32,8 @@ use super::types::{
 use super::{SelfLeaderCall, SummarizeEffort, coordination_codec};
 use crate::error::GateError;
 
+pub(super) use self::fold_words::{answer_fold_words, keep_erased_fold_words};
+pub(crate) use self::fold_words::{push_fold_word, recorded_fold_words};
 pub(crate) use self::observations::agent_verb_observations_of;
 pub(super) use self::request::{agent_verb_call_identity, self_call_request_value};
 
@@ -73,21 +76,27 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                     .map_or(Value::Nil, |prompt| Value::from(prompt.as_str())),
             ),
         ]),
-        SelfDispatchOutcome::Denied(result) => request_map(vec![
-            ("kind", Value::from("denied")),
-            ("effect", Value::from(result.effect.as_str())),
-            ("outcome", Value::from(result.outcome.as_str())),
-            (
-                "reason_codes",
-                Value::Array(
-                    result
-                        .reason_codes
-                        .iter()
-                        .map(|reason| Value::from(reason.as_str()))
-                        .collect(),
+        SelfDispatchOutcome::Denied(result) => {
+            let mut entries = vec![
+                ("kind", Value::from("denied")),
+                ("effect", Value::from(result.effect.as_str())),
+                ("outcome", Value::from(result.outcome.as_str())),
+                (
+                    "reason_codes",
+                    Value::Array(
+                        result
+                            .reason_codes
+                            .iter()
+                            .map(|reason| Value::from(reason.as_str()))
+                            .collect(),
+                    ),
                 ),
-            ),
-        ]),
+            ];
+            if let Some(notice) = &result.hook_notice {
+                entries.push(("hook_notice", Value::from(notice.to_string())));
+            }
+            request_map(entries)
+        }
         SelfDispatchOutcome::AgentVerb(answer) => {
             let mut entries = vec![
                 ("kind", Value::from("agent_verb")),
@@ -98,6 +107,9 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                     "rows",
                     Value::Array(rows.iter().copied().map(entity_id_value).collect()),
                 ));
+            }
+            if let Some(notice) = &answer.hook_notice {
+                entries.push(("hook_notice", Value::from(notice.to_string())));
             }
             observations::keep_observations(&mut entries, &answer.observations)?;
             session_hooks::keep_hooks(&mut entries, &answer.hooks)?;
@@ -133,10 +145,17 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
             ("kind", Value::from("inference_defaults")),
             ("json", Value::from(json.as_str())),
         ]),
-        SelfDispatchOutcome::Fold(json) => request_map(vec![
-            ("kind", Value::from("fold")),
-            ("json", Value::from(json.as_str())),
-        ]),
+        SelfDispatchOutcome::Fold(answer) => {
+            let mut entries = vec![
+                ("kind", Value::from("fold")),
+                ("json", Value::from(answer.json.as_str())),
+            ];
+            // The folds it copies the words of, text-free (FIX 18924).
+            if !answer.words.is_empty() {
+                entries.push(("words", fold_words::fold_words_value(&answer.words)));
+            }
+            request_map(entries)
+        }
         SelfDispatchOutcome::TaskRefusal(result) => request_map(vec![
             ("kind", Value::from("task_refusal")),
             ("task_ref", entity_id_value(result.task_ref)),
@@ -185,6 +204,7 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                 SelfStoredReplyKind::InferenceDefaults => "inference_defaults",
                 SelfStoredReplyKind::TaskAskSettled => "task_ask_settled",
                 SelfStoredReplyKind::TaskAskWorldPrivacy => "task_ask_world_privacy",
+                SelfStoredReplyKind::TaskWaitSet => "task_wait_set",
                 SelfStoredReplyKind::TeamStartReceipt => "team_start_receipt",
             };
             request_map(vec![
@@ -219,9 +239,10 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
         "inference_defaults" => Ok(SelfDispatchOutcome::InferenceDefaults(
             str_value(map_get(entries, "json")?)?.to_owned(),
         )),
-        "fold" => Ok(SelfDispatchOutcome::Fold(
+        "fold" => Ok(SelfDispatchOutcome::Fold(super::FoldAnswer::new(
             str_value(map_get(entries, "json")?)?.to_owned(),
-        )),
+            fold_words::decode_fold_words(entries)?,
+        ))),
         "leader" => Ok(SelfDispatchOutcome::Leader(
             str_value(map_get(entries, "json")?)?.to_owned(),
         )),
@@ -319,6 +340,13 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
             effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
             outcome: str_value(map_get(entries, "outcome")?)?.to_owned(),
             reason_codes: str_array(map_get(entries, "reason_codes")?)?,
+            hook_notice: map_get(entries, "hook_notice")
+                .ok()
+                .map(|notice| {
+                    serde_json::from_str(str_value(notice)?)
+                        .map_err(|_| invalid_code_run_replay("invalid denied hook notice"))
+                })
+                .transpose()?,
         })),
         "agent_verb" => Ok(SelfDispatchOutcome::AgentVerb(super::AgentVerbAnswer {
             output: serde_json::from_str(str_value(map_get(entries, "output")?)?)
@@ -329,8 +357,16 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
                 .ok()
                 .map(|rows| decode_array(rows, entity_value))
                 .transpose()?,
+            hook_notice: map_get(entries, "hook_notice")
+                .ok()
+                .map(|notice| {
+                    serde_json::from_str(str_value(notice)?)
+                        .map_err(|_| invalid_code_run_replay("invalid agent verb hook notice"))
+                })
+                .transpose()?,
             observations: observations::decode_observations(entries)?,
             hooks: session_hooks::decode_hooks(entries)?,
+            stored_output: None,
         })),
         "failed" => {
             let code = match map_get(entries, "code")? {
@@ -416,6 +452,7 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
                 "inference_defaults" => SelfStoredReplyKind::InferenceDefaults,
                 "task_ask_settled" => SelfStoredReplyKind::TaskAskSettled,
                 "task_ask_world_privacy" => SelfStoredReplyKind::TaskAskWorldPrivacy,
+                "task_wait_set" => SelfStoredReplyKind::TaskWaitSet,
                 "team_start_receipt" => SelfStoredReplyKind::TeamStartReceipt,
                 _ => {
                     return Err(invalid_code_run_replay("unknown stored reply source kind"));

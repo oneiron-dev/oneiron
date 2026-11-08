@@ -94,9 +94,17 @@ pub enum GitWireOperation {
     /// `diff-tree` of reviewed commits against their parents: what each
     /// commit an exact publish would expose introduces (FIX 6866).
     ReviewDiffs,
+    /// `reflog expire --expire=now --all` in one served store, run only by
+    /// the owner's confirmed secret purge (FIX 7608 slice 10). It drops
+    /// reflog entries, so no reflog keeps a purged object.
+    ExpireReflogs,
+    /// `gc --prune=now --quiet` in one served store, run only by the owner's
+    /// confirmed secret purge after its refs moved (FIX 7608 slice 10). It
+    /// repacks what refs reach and deletes every object none reaches.
+    CollectObjects,
 }
 
-pub const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 29] = [
+pub const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 31] = [
     GitWireOperation::ReadConfig,
     GitWireOperation::ConfigureCheckout,
     GitWireOperation::ReadRefs,
@@ -126,6 +134,8 @@ pub const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 29] = [
     GitWireOperation::ImportFetch,
     GitWireOperation::ImportDoorPush,
     GitWireOperation::ReviewDiffs,
+    GitWireOperation::ExpireReflogs,
+    GitWireOperation::CollectObjects,
 ];
 
 impl GitWireOperation {
@@ -161,6 +171,8 @@ impl GitWireOperation {
             Self::ImportFetch => "import_fetch",
             Self::ImportDoorPush => "import_door_push",
             Self::ReviewDiffs => "review_diffs",
+            Self::ExpireReflogs => "expire_reflogs",
+            Self::CollectObjects => "collect_objects",
         }
     }
 
@@ -187,7 +199,9 @@ impl GitWireOperation {
             Self::WriteBlob | Self::WriteTree | Self::WriteCommit | Self::WriteTag => {
                 GitWireEffectClass::ObjectWrite
             }
-            Self::NotesAdd | Self::ImportFetch => GitWireEffectClass::ObjectAndRefWrite,
+            Self::NotesAdd | Self::ImportFetch | Self::ExpireReflogs | Self::CollectObjects => {
+                GitWireEffectClass::ObjectAndRefWrite
+            }
             Self::PublishRefs => GitWireEffectClass::RefWrite,
             Self::ConfigureCheckout
             | Self::WorktreeAdd

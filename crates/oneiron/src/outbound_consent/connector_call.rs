@@ -70,7 +70,8 @@ pub(super) use super::connector_call_driver::{Step, refused};
 pub use super::connector_call_types::{
     ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorCallInvocation,
     ConnectorCallOutcome, ConnectorCallRequest, ConnectorCallState, ConnectorQuestion,
-    ConnectorResultAbsence, ConnectorToolSchema, PendingConnectorCallRef, UntrustedToolResult,
+    ConnectorResultAbsence, ConnectorSource, ConnectorToolSchema, PendingConnectorCallRef,
+    UntrustedToolResult,
 };
 
 /// The most bytes of one connector discovery or qualification reply a host
@@ -251,6 +252,14 @@ pub(super) fn connector_call_ref(
             &invocation.call_seq.to_le_bytes(),
         ],
     )?)
+}
+
+impl ConnectorCallInvocation {
+    /// The native row identity for this invocation and its verified caller.
+    /// This derives an identity only; it grants no right to read or send.
+    pub fn call_ref(self, principal: EntityId) -> Result<EntityId, IntentLedgerError> {
+        connector_call_ref(&principal.to_hex(), self)
+    }
 }
 
 pub(super) fn now_ms() -> u64 {

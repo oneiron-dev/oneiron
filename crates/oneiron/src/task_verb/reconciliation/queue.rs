@@ -253,17 +253,15 @@ pub(super) fn mint_reconciliation_task_in_txn(
             Value::from(conflict.theirs_tree.clone()),
         ),
     ]);
-    let validated = ValidatedTaskCreate {
-        kind: TaskKind::Reconciliation,
-        assignee: Some(TaskAssignee::Dreamer),
-        consult: None,
-        ttl: None,
+    let validated = ValidatedTaskCreate::engine_internal(
+        TaskKind::Reconciliation,
+        Some(TaskAssignee::Dreamer),
         spec,
-        type_ref: crate::task_type::TaskTypeRef::seed(
+        crate::task_type::TaskTypeRef::seed(
             crate::task_type::SeedTaskType::Solve,
             crate::task_type::SEEDED_TREE_VERSION,
         ),
-    };
+    );
     let provenance = Value::Map(vec![
         (Value::from("source"), Value::from("repo.conflict")),
         (

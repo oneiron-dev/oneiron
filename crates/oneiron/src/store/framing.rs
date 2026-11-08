@@ -30,6 +30,10 @@ pub(crate) fn validate_document_kind(kind: u8) -> Result<(), TransportError> {
         | document_sub_tags::ARTIFACT_PUBLICATION
         | document_sub_tags::ARTIFACT_RECEIPT
         | document_sub_tags::WAITED_OUT
+        | document_sub_tags::NOTE_FORK_UPLOAD
+        | document_sub_tags::NOTE_FORK_RECEIPT
+        | document_sub_tags::NOTE_FORK_STATE
+        | document_sub_tags::NOTE_FORK_SET
         | document_sub_tags::PART => Ok(()),
         _ => Err(TransportError::InvalidPayload("unknown document kind")),
     }
@@ -72,7 +76,8 @@ pub enum TransportError {
     WebSocket(String),
     ConnectionClosed,
     /// Engine/storage failure surfaced at the transport boundary (LMDB
-    /// write, window open/recovery). The wire payload itself was valid.
+    /// write, window open/recovery, a frame of this machine's own that does
+    /// not encode, FIX 22179). The wire payload itself was valid.
     Storage(String),
     /// A Gate door refused the inbound bytes on policy grounds, carrying the
     /// door's own typed taxonomy. Distinct from [`Self::Storage`] on purpose:

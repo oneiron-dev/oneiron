@@ -3,10 +3,11 @@
 //!
 //! A [`QueueWork`] is a snapshot instruction, never a capability: the driver
 //! reads the queue again under its repository writer before it acts. A
-//! batch's [`QueueBatchDrive`] keeps only what the driver decided and must
-//! not decide twice: its custody pins, its overlap handoff, its survivor
-//! disposition and its last typed hold. Check status and receipts stay on
-//! the checker's own rows and are joined, never copied.
+//! batch's [`QueueBatchDrive`] keeps only what was decided and must not be
+//! decided twice: the driver's custody pins, overlap handoff and last typed
+//! hold, the survivor disposition the owner's requeue or the driver's
+//! writes, and the red diagnosis's trace (FIX 4362). Check status and
+//! receipts stay on the checker's own rows and are joined, never copied.
 use serde::{Deserialize, Serialize};
 
 use crate::merge_queue::tested_types::QueueExportHold;
@@ -57,7 +58,8 @@ pub enum QueueDriveHoldReason {
     WaitingCheck,
     /// A predecessor's symbol declaration still holds the run entry.
     WaitingSymbols,
-    /// A member lacks its unanimous critic review.
+    /// A member lacks its unanimous critic review, or a removed public name
+    /// waits for a person review (FIX 4365).
     WaitingReview,
     /// The reviewed landing refused its admission.
     WaitingAdmission,
@@ -114,7 +116,8 @@ pub struct QueueDriverTarget {
     pub branch_subject: EntityId,
 }
 
-/// A quarantined batch's survivor disposition, decided once.
+/// A quarantined batch's survivor disposition, decided once by the owner's
+/// requeue or the driver's, whichever writes first (FIX 4362).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QueueSurvivorLink {
     /// No member survived.
@@ -143,7 +146,24 @@ pub struct QueueConflictLink {
     pub superseded: bool,
 }
 
-/// What the driver decided for one batch.
+/// One mask decision a red diagnosis evaluated (FIX 4362). It binds the
+/// group the decision narrowed, the staged path it checked, that path's
+/// exact tree and the fast verdict its slot holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueDiagnosisDecision {
+    /// The group being narrowed. The first decision checks the full batch
+    /// as its own parent; the red-path scan narrows the full batch.
+    pub parent_mask: u64,
+    /// The staged path this decision checked.
+    pub checked_mask: u64,
+    /// That path's exact staged tree.
+    pub tree: String,
+    /// The fast verdict that path's slot holds.
+    pub verdict: String,
+}
+
+/// What was decided for one batch: by the driver, and its survivor links
+/// and diagnosis trace by an owner's call too (FIX 4362).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QueueBatchDrive {
     /// Its staged commits carry keep-refs; false again once a settled
@@ -157,6 +177,9 @@ pub struct QueueBatchDrive {
     pub hold: Option<QueueDriveHold>,
     /// Its tested-revision seal once green: pending, then sealed (G2 PR3).
     pub tested: Option<QueueRevisionLink>,
+    /// Every mask decision its red diagnosis evaluated, in order, saved
+    /// with the final quarantine (FIX 4362). Empty until then.
+    pub diagnosis_trace: Vec<QueueDiagnosisDecision>,
 }
 
 /// Where the automatic driver stands on one batch.

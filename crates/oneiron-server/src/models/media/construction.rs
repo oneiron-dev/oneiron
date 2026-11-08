@@ -65,7 +65,7 @@ impl OpenAiMediaTransport for MediaHttp {
             };
             let reply = self
                 .http
-                .send_media(&request.path, send)
+                .send_media_with_headers(&request.path, send, &request.headers)
                 .await
                 .map_err(transport)?;
             Ok::<_, LlmError>(OpenAiMediaHttpResponse {
@@ -83,12 +83,47 @@ impl OpenAiMediaTransport for MediaHttp {
         release: Option<oneiron::llm::DispatchRelease<'a>>,
     ) -> OpenAiMediaTransportFuture<'a> {
         Box::pin(async move {
-            let OpenAiMediaHttpRequest { method, path, body } = request;
+            let OpenAiMediaHttpRequest {
+                method,
+                path,
+                headers,
+                body,
+            } = request;
             match (method, body, release) {
                 (OpenAiMediaMethod::Post, OpenAiMediaBody::Json(body), Some(release)) => {
                     let reply = self
                         .http
-                        .send_json_released(&path, body, release, lease)
+                        .send_json_released_with_headers(&path, body, &headers, release, lease)
+                        .await
+                        .map_err(|error| match error {
+                            HttpReleaseError::Transport(failure) => transport(failure),
+                            HttpReleaseError::Release(error) => error,
+                        })?;
+                    Ok(OpenAiMediaHttpResponse {
+                        status: reply.status,
+                        headers: reply.headers,
+                        body: reply.body,
+                    })
+                }
+                (
+                    OpenAiMediaMethod::Post,
+                    OpenAiMediaBody::Multipart { fields, files },
+                    Some(release),
+                ) => {
+                    let mut form = reqwest::multipart::Form::new();
+                    for (name, value) in fields {
+                        form = form.text(name, value);
+                    }
+                    for file in files {
+                        let part = reqwest::multipart::Part::bytes(file.bytes)
+                            .file_name(file.filename)
+                            .mime_str(&file.media_type)
+                            .map_err(|_| FatalLlmError::InvalidRequest)?;
+                        form = form.part(file.name, part);
+                    }
+                    let reply = self
+                        .http
+                        .send_multipart_released(&path, form, release, lease)
                         .await
                         .map_err(|error| match error {
                             HttpReleaseError::Transport(failure) => transport(failure),
@@ -101,8 +136,16 @@ impl OpenAiMediaTransport for MediaHttp {
                     })
                 }
                 (method, body, _) => {
-                    self.execute(OpenAiMediaHttpRequest { method, path, body }, lease)
-                        .await
+                    self.execute(
+                        OpenAiMediaHttpRequest {
+                            method,
+                            path,
+                            headers,
+                            body,
+                        },
+                        lease,
+                    )
+                    .await
                 }
             }
         })

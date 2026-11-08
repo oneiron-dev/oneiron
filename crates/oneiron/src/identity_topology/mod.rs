@@ -29,10 +29,12 @@
 //! Consent (ARCH-0055 r3): `Auto` is the family default and applies
 //! immediately; `Approved` applies; `Proposed` PARKS — the event is
 //! recorded for legibility but carries zero topology effects until
-//! approved; `Rejected` is the consent no-op. The propose lane is an
-//! explicit caller choice, never an engine-imposed gate. Undo is a
-//! counter-event over the ledger, never a rewrite (r1); claim subjects are
-//! never eagerly rewritten (r6) — read-time canonicalization runs through
+//! approved; `Rejected` is the consent no-op. A parked facet records its
+//! specs and map and mints no FACET until its ruling approves it (FIX 7814).
+//! The propose lane is an explicit caller choice, never an engine-imposed
+//! gate. Undo is a counter-event over the ledger, never a rewrite (r1);
+//! claim subjects are never eagerly rewritten (r6) — read-time
+//! canonicalization runs through
 //! the redirect projection in [`crate::identity_redirect`] (ONE-1744).
 //! Reassignment-map application and FACET minting arm in ONE-1745.
 //!
@@ -91,6 +93,7 @@ mod op_apply;
 mod op_undo;
 mod op_vocabulary;
 mod operation_parts;
+mod post_hoc_review;
 mod proposal_resolution;
 mod proposer_scope;
 mod reassignment_map;
@@ -131,6 +134,17 @@ pub use op_apply::{IdentityOpOutcome, IdentityOpWrite};
 pub use op_vocabulary::{
     AssertDistinctOp, FacetOp, FacetSpec, IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp,
     SurvivorshipPlan,
+};
+#[cfg(feature = "sync")]
+pub(crate) use post_hoc_review::CoachTopologyAuditRows;
+pub use post_hoc_review::{
+    TopologyAuditAnswer, TopologyAuditCase, TopologyAuditCorrection, TopologyAuditDecider,
+    TopologyAuditEvidence, TopologyAuditIntent, TopologyAuditOutcome, TopologyAuditRecipe,
+    TopologyAuditReport, TopologyAuditResult, TopologyAuditReviewer, TopologyAuditScope,
+    TopologyAuditSelection,
+};
+pub(crate) use post_hoc_review::{
+    erase_topology_audit_actor_in_txn, erase_topology_audit_sources_in_txn, topology_audit_receipts,
 };
 pub use proposal_resolution::{decode_identity_op_amendment, encode_identity_op_amendment};
 pub use reassignment_map::{

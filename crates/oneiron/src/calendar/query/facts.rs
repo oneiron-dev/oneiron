@@ -1,5 +1,8 @@
 //! Lane admission and fail-closed fact reduction.
 
+use std::cell::RefCell;
+use std::collections::BTreeSet;
+
 use crate::batch::EntityMetadataHeader;
 use crate::calendar::claims::{
     CalendarBusyTransparency, CalendarOrigin, CalendarStatus, CalendarTimeKindValue,
@@ -9,8 +12,8 @@ use crate::calendar::claims::{
     decode_wall_time_value, is_calendar_claim_predicate,
 };
 use crate::claim::{
-    ClaimBody, ScopedRead, ScopedReadReceipt, ScopedReadResult, claim_surfaceable,
-    decode_claim_body,
+    ClaimBody, PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult,
+    claim_surfaceable, decode_claim_body,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -30,10 +33,21 @@ pub enum CalendarRead<'a> {
     Vault(&'a Vault),
     /// Actor lane used by every SDK/MCP surface, with the receipt every claim
     /// read on it folds into.
-    Scoped(
-        &'a ScopedRead<'a>,
-        &'a std::cell::RefCell<ScopedReadReceipt>,
-    ),
+    Scoped(&'a ScopedRead<'a>, &'a RefCell<CalendarQueryReceipt>),
+}
+
+/// The receipt one scoped calendar query folds its reads into, with every
+/// row a read of the query has counted as withheld (FIX 16175).
+///
+/// A query reads some claims more than once: an exception claim on an EVENT
+/// at the EVENT's read and again among the withheld exception series, a
+/// master's claims at its point read and again in the EVENT visit. Each row
+/// a read withholds counts once per query; what each read returns, and
+/// which rows the receipt says were withheld, are unchanged.
+pub struct CalendarQueryReceipt {
+    receipt: ScopedReadReceipt,
+    /// The rows a read of this query counted as withheld.
+    counted: BTreeSet<EntityId>,
 }
 
 /// Runs one projection on `read`'s actor lane and returns it with the receipt
@@ -42,12 +56,34 @@ pub(in crate::calendar) fn receipted<T>(
     read: &ScopedRead<'_>,
     project: impl FnOnce(&CalendarRead<'_>) -> Result<T>,
 ) -> Result<ScopedReadResult<T>> {
-    let receipt = std::cell::RefCell::new(read.read_receipt(None, 0)?);
+    let receipt = RefCell::new(CalendarQueryReceipt {
+        receipt: read.read_receipt(None, 0)?,
+        counted: BTreeSet::new(),
+    });
     let value = project(&CalendarRead::Scoped(read, &receipt))?;
     Ok(ScopedReadResult {
         value,
-        receipt: receipt.into_inner(),
+        receipt: receipt.into_inner().receipt,
     })
+}
+
+/// One point read on a query's actor lane, its rows projected in its own
+/// snapshot and its receipt folded into the query's: a row an earlier read
+/// of the query counted as withheld adds no second count (FIX 16175).
+fn read_folded<T>(
+    read: &ScopedRead<'_>,
+    receipt: &RefCell<CalendarQueryReceipt>,
+    reads: &[PointRead<'_>],
+    project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> Result<T>,
+) -> Result<T> {
+    let result = read.read_projected_opaque(
+        reads,
+        None,
+        |_, id| -> Result<bool> { Ok(!receipt.borrow_mut().counted.insert(*id)) },
+        project,
+    )?;
+    receipt.borrow_mut().receipt.restrict_with(&result.receipt);
+    Ok(result.value)
 }
 
 impl<'a> CalendarRead<'a> {
@@ -93,9 +129,10 @@ impl<'a> CalendarRead<'a> {
                 {
                     continue;
                 }
-                let result = read.read_projected(
-                    &[crate::claim::PointRead::id(*id)],
-                    None,
+                let value = read_folded(
+                    read,
+                    receipt,
+                    &[PointRead::id(*id)],
                     |txn, rows| -> Result<_> {
                         let Projected {
                             body: Some(body),
@@ -117,8 +154,7 @@ impl<'a> CalendarRead<'a> {
                         Ok(Some(((exception.master_ref, exception.uid), held)))
                     },
                 )?;
-                receipt.borrow_mut().restrict_with(&result.receipt);
-                if let Some((key, held)) = result.value {
+                if let Some((key, held)) = value {
                     *withheld.entry(key).or_insert(true) &= held;
                 }
             }
@@ -157,7 +193,7 @@ fn scoped_claim_in_txn(
     read: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
-    row: Option<crate::claim::ReadRow>,
+    row: Option<ReadRow>,
     check_hold: bool,
 ) -> Result<Projected> {
     let body = row
@@ -241,6 +277,23 @@ fn civil_seconds(wall: CalendarWallTimeValue) -> Option<u64> {
     u64::try_from(at.and_utc().timestamp()).ok()
 }
 
+/// Where an occurrence of a civil series starting at `start` (a key on the
+/// UTC carrier) can fall, `length` seconds of civil time long: from its start
+/// where that comes first to its end where that comes last, as
+/// [`CalendarEventFacts::wall_span`] spans a lone civil EVENT (FIX 16568).
+pub(in crate::calendar) fn civil_envelope(start: u64, length: u64) -> TimeRange {
+    TimeRange {
+        start: start.saturating_sub(EASTERNMOST_OFFSET_SECS),
+        end: start
+            .saturating_add(length)
+            .saturating_add(WESTERNMOST_OFFSET_SECS),
+    }
+}
+
+/// How far a civil occurrence's span reaches before and after its start key.
+pub(in crate::calendar) const CIVIL_REACH_SECS: (u64, u64) =
+    (EASTERNMOST_OFFSET_SECS, WESTERNMOST_OFFSET_SECS);
+
 /// The calendar facts one EVENT's admitted claims carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::calendar) struct CalendarEventFacts {
@@ -319,6 +372,50 @@ impl CalendarEventFacts {
             start: start.saturating_sub(EASTERNMOST_OFFSET_SECS),
             end: last.saturating_add(WESTERNMOST_OFFSET_SECS),
         })
+    }
+
+    /// The civil start (a key on the UTC carrier) and civil length of a
+    /// floating or all-day EVENT, read from its admitted wall time as
+    /// [`Self::wall_span`] reads it, before any zone's reach widens it: the
+    /// first occurrence of a civil series (FIX 16568).
+    pub(in crate::calendar) fn civil_extent(&self) -> Option<(u64, u64)> {
+        let LaneFact::Read(kind) = self.time_kind else {
+            return None;
+        };
+        if !matches!(
+            kind.kind,
+            crate::calendar::claims::CalendarTimeKind::Floating
+                | crate::calendar::claims::CalendarTimeKind::AllDay
+        ) {
+            return None;
+        }
+        let LaneFact::Read((start, end)) = self.wall_time else {
+            return None;
+        };
+        let start = civil_seconds(start)?;
+        let last = match end {
+            Some(end) => civil_seconds(end)?.saturating_sub(1).max(start),
+            None => start,
+        };
+        Some((start, last - start))
+    }
+
+    /// The civil time from a floating or all-day EVENT's start to its
+    /// exclusive end, `None` when it names no end (FIX 17869).
+    pub(in crate::calendar) fn civil_duration(&self) -> Option<u64> {
+        let LaneFact::Read((start, Some(end))) = self.wall_time else {
+            return None;
+        };
+        Some(civil_seconds(end)?.saturating_sub(civil_seconds(start)?))
+    }
+
+    /// Whether this EVENT is all-day (dates), as its admitted time kind
+    /// reads; a floating one names wall times (FIX 17869).
+    pub(in crate::calendar) fn civil_all_day(&self) -> bool {
+        matches!(
+            self.time_kind,
+            LaneFact::Read(kind) if kind.kind == crate::calendar::claims::CalendarTimeKind::AllDay
+        )
     }
 
     pub(in crate::calendar) fn origin(&self) -> Option<CalendarOrigin> {
@@ -579,9 +676,9 @@ fn event_rows_in(read: &CalendarRead<'_>, id: EntityId, hold: Hold) -> Result<Op
     let claim_ids = vault.claims_for_subject(&id)?;
     let reads: Vec<_> = std::iter::once(id)
         .chain(claim_ids.iter().copied())
-        .map(crate::claim::PointRead::id)
+        .map(PointRead::id)
         .collect();
-    let result = scoped.read_projected(&reads, None, |txn, rows| -> Result<_> {
+    read_folded(scoped, receipt, &reads, |txn, rows| -> Result<_> {
         let mut rows = rows.into_iter();
         let Some(event) = rows.next().flatten() else {
             return Ok(None);
@@ -608,9 +705,7 @@ fn event_rows_in(read: &CalendarRead<'_>, id: EntityId, hold: Hold) -> Result<Op
         event_rows(&header, id, name, &projected, hold, || {
             crate::calendar::origin::invalidated_in_txn(vault, txn, id)
         })
-    })?;
-    receipt.borrow_mut().restrict_with(&result.receipt);
-    Ok(result.value)
+    })
 }
 
 fn event_rows_in_txn(

@@ -161,6 +161,7 @@ impl PipelineBuilder<'_> {
         let mut ppr_expand_executed = false;
         let capture_retrieval_trace = self.capture_retrieval_trace;
         let capture_replay_enabled = self.captures_replay();
+        let mut replay_inputs_memory = None;
         let trace_candidate_limit = self.result_limit;
         let mut telemetry_signals = self.telemetry_signals();
         if occurred_range.is_some() && !telemetry_signals.contains(&RetrievalSignal::Temporal) {
@@ -543,12 +544,14 @@ impl PipelineBuilder<'_> {
                             occurred_range,
                             temporal_now,
                             rerank_query,
+                            &mut replay_inputs_memory,
                         )
                     }),
                     ppr_expand_executed: false,
                     early_empty_no_telemetry: !capture_replay_enabled,
                     temporal_report: metadata_cache.temporal_report,
                     critical: Default::default(),
+                    replay_inputs_memory,
                 });
             }
 
@@ -717,6 +720,25 @@ impl PipelineBuilder<'_> {
 
             let before_limit = scores.len();
             fusion::sort_scored_entities_desc(&mut scores);
+            // The effort's default now anchor is no query evidence; a window
+            // the query's words or the host named is (FIX 22182).
+            let temporal_is_query = self.temporal_search.as_ref().is_some_and(|config| {
+                !config.effort_anchor || config.query_occurred_range.is_some()
+            });
+            // In the blend's order, before the rerank block is taken: the
+            // block then holds the rows the query matched before the rows it
+            // did not, so no match is left outside it and cut (FIX 22182).
+            entity_rank::rank_unmatched_below_matches(
+                &mut scores,
+                &acc.signal_components,
+                entity_rank::MatchReading {
+                    temporal_is_query,
+                    every_kind: true,
+                },
+                &self.read,
+                rtxn,
+                &mut metadata_cache,
+            )?;
 
             let RerankApplied {
                 merged_components: rerank_merged_components,
@@ -738,9 +760,15 @@ impl PipelineBuilder<'_> {
                 },
             )?;
 
-            entity_rank::rank_unmatched_entities_below_matches(
+            // A reranked order stands, but for the named entities PPR pools
+            // a principal's mass into.
+            entity_rank::rank_unmatched_below_matches(
                 &mut scores,
                 &acc.signal_components,
+                entity_rank::MatchReading {
+                    temporal_is_query,
+                    every_kind: false,
+                },
                 &self.read,
                 rtxn,
                 &mut metadata_cache,
@@ -938,6 +966,7 @@ impl PipelineBuilder<'_> {
                     occurred_range,
                     temporal_now,
                     rerank_query,
+                    &mut replay_inputs_memory,
                 )
             });
             // A hit whose indexed revision cannot be read has no pin, so it
@@ -1025,6 +1054,7 @@ impl PipelineBuilder<'_> {
                 early_empty_no_telemetry: false,
                 temporal_report: metadata_cache.temporal_report,
                 critical,
+                replay_inputs_memory,
             })
         }
     }

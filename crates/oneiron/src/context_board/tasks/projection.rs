@@ -86,8 +86,9 @@ impl CancelRejectionPathology {
 pub struct ConsultWidening {
     /// The asking child run's attempt, as 32 hex.
     pub child: String,
-    /// The reach an earlier approval already gave the child; the comm widen
-    /// record keeps no other, so a child asking from its spawn dial has none.
+    /// The reach the child addressed with when it asked: its spawn dial or
+    /// an earlier approval (FIX 10413). `None` only on an ask reserved before
+    /// that reach was kept, with no earlier approval.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<crate::authority::CommReach>,
     /// The reach it asks to widen to.
@@ -95,8 +96,8 @@ pub struct ConsultWidening {
 }
 
 impl ConsultWidening {
-    /// The board token: `widening=<from>-><to>`, or `widening=<to>` with no
-    /// earlier approval to widen from.
+    /// The board token: `widening=<from>-><to>`, or `widening=<to>` when the
+    /// reach it asked from is not known.
     #[must_use]
     pub fn token(&self) -> String {
         match self.from {
@@ -135,6 +136,11 @@ pub struct TaskRow {
     /// widen ask; `None` on every other row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub widening: Option<ConsultWidening>,
+    /// FIX685: the hook-chosen due/deadline stamp, Unix seconds. Display
+    /// only: it never changes status, sort, dispatch or expiry. `None`
+    /// leaves every existing row byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_at: Option<u64>,
     /// The persons who `fits:` this open, unassigned task, as the reader's
     /// board names them. They render as the section's discovery rows, apart
     /// from [`Self::line`], so they shed with discovery (FIX 9756).
@@ -162,6 +168,7 @@ impl TaskRow {
             counter_task_ref: intent.counter_task_ref.clone(),
             cancel_pathology: intent_cancel_pathology(intent),
             widening: intent.widening.clone(),
+            due_at: intent.due_at,
             fits: intent.fits.clone(),
         }
     }
@@ -591,6 +598,9 @@ pub struct TaskIntentPresence {
     /// FIX 3901: the widening this consult asks for, when it is a comm widen
     /// ask.
     pub widening: Option<ConsultWidening>,
+    /// FIX685: the hook-chosen due/deadline stamp, Unix seconds. Display
+    /// only: it never changes status, sort, dispatch or expiry.
+    pub due_at: Option<u64>,
 }
 
 impl TaskIntentPresence {
@@ -625,6 +635,7 @@ impl TaskIntentPresence {
             fits: Vec::new(),
             children: Vec::new(),
             widening: None,
+            due_at: None,
         }
     }
 
@@ -651,9 +662,11 @@ impl TaskIntentPresence {
     ) -> TaskIntentPresence {
         let status = match task.outcome {
             Some(ConnectorSendTaskOutcome::Delivered) => TaskBoardStatus::Done,
-            Some(ConnectorSendTaskOutcome::Failed | ConnectorSendTaskOutcome::Ambiguous) => {
-                TaskBoardStatus::Failed
-            }
+            Some(
+                ConnectorSendTaskOutcome::Failed
+                | ConnectorSendTaskOutcome::Ambiguous
+                | ConnectorSendTaskOutcome::OwnerDeclinedResend,
+            ) => TaskBoardStatus::Failed,
             None => status,
         };
         let mut presence = Self::new(

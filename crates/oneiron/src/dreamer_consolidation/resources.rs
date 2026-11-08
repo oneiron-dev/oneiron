@@ -16,9 +16,12 @@ mod parts;
 mod pins;
 mod prior;
 mod restated;
+mod root;
 pub(super) use nightly_link_grant::require_nightly_link_write;
+pub use nightly_link_grant::{NightlyLinkGrantRequest, mint_nightly_link_grant};
 pub(super) use pins::{BranchPins, OwnedPins};
 pub(super) use prior::standing;
+use root::ResourceOrigin;
 pub(super) mod signals;
 pub(crate) use signals::facet as claim_facet;
 mod slices;
@@ -80,8 +83,8 @@ pub(super) struct BranchResources<'a> {
     actor: WriteActor,
     read: ScopedRead<'a>,
     prepared_wake: Option<&'a PreparedWake>,
-    /// The queued branch: its axes, thing and every conversation part.
-    branch: super::branch::QueuedBranch,
+    /// The admitted conversation branch or typed evidence root.
+    origin: ResourceOrigin,
     sources: BTreeMap<EntityId, SourcePin>,
     /// Each queued TURN's declared part, by that part's conversation.
     turns: BTreeMap<EntityId, EntityId>,
@@ -272,8 +275,8 @@ impl<'a> BranchResources<'a> {
     fn check_axes(&self, scope: &Scope) -> Result<()> {
         if !scope.readable.is_subset(&self.scope.readable)
             || !scope.writable.is_subset(&self.scope.writable)
-            || scope.world != self.branch.world_ref
-            || scope.facet != self.branch.facet_ref
+            || scope.world != self.origin.axes().world_ref
+            || scope.facet != self.origin.axes().facet_ref
             || scope.relationship != self.scope.relationship
             || scope.project != self.scope.project
         {
@@ -293,10 +296,15 @@ impl<'a> BranchResources<'a> {
         }
         let (entity_type, learned_at, body) = if pin.entity_type == ENTITY_TYPE_CLAIM {
             self.prior(*id)?;
-            let head = self.read.get_entity_parts_with_receipt(id, None)?;
-            self.fold_read_receipt(&head.receipt)?;
-            head.value
-                .ok_or_else(|| invalid_consolidation("admitted prior not readable"))?
+            match self.root_recovered_source(*id)? {
+                Some(row) => row,
+                None => {
+                    let head = self.read.get_entity_parts_with_receipt(id, None)?;
+                    self.fold_read_receipt(&head.receipt)?;
+                    head.value
+                        .ok_or_else(|| invalid_consolidation("admitted prior not readable"))?
+                }
+            }
         } else {
             let source = read_source(&self.read, id)?;
             self.fold_read_receipt(&source.receipt)?;
@@ -405,6 +413,7 @@ impl<'a> BranchResources<'a> {
         refs.iter()
             .zip(source_rows)
             .map(|(entry, row)| {
+                let row = self.root_recovered_source(entry.source_id)?.or(row);
                 let (kind, learned_at, body) =
                     row.ok_or_else(|| invalid_consolidation("branch evidence is not readable"))?;
                 let pin = &self.sources[&entry.source_id];
@@ -439,6 +448,15 @@ impl<'a> BranchResources<'a> {
                     turn_trust_class(role, facts.imported)
                         .ok_or_else(|| invalid_consolidation("inadmissible branch evidence role"))?
                 };
+                let mut trust_class = trust_class;
+                if let Some(binding) = self.origin.root_binding() {
+                    for pin in binding.pins() {
+                        if EntityId::from_hex(&pin.reference.source_id)? == entry.source_id {
+                            trust_class =
+                                super::provenance::source_meet(trust_class, pin.trust_class);
+                        }
+                    }
+                }
                 // The text a reply's check cites against too (FIX 7274).
                 let text = self.cited_text(&entry.source_id)?;
                 super::conflict::verify_swarm_evidence_bytes(*entry, kind, &body, text, trust_class)
@@ -474,7 +492,10 @@ impl<'a> BranchResources<'a> {
             if facts.world != scope.world
                 || facts.facet != scope.facet
                 || scope.relationship.as_ref().is_some_and(|bound| {
-                    !facts.rel.as_ref().is_some_and(|rel| rel.is_subset(bound))
+                    !facts
+                        .rel
+                        .as_ref()
+                        .is_some_and(|rel| rel.iter().all(|id| bound.contains(id)))
                 })
                 || candidate.supersedes.is_some()
                 || !candidate.provenance_chain.is_empty()
@@ -541,10 +562,11 @@ impl<'a> BranchResources<'a> {
             }
             persisted.push(gap);
         }
-        super::gap::upsert_branch_gap_queue(
+        super::gap::upsert_origin_gap_queue(
             self.read.vault(),
             scope,
-            &self.branch,
+            self.origin.gap_projection(scope),
+            self.origin.axes(),
             &self.write_fence(),
             persisted,
             now,

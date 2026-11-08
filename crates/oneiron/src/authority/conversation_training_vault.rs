@@ -43,6 +43,8 @@ use super::owner_choice::{
 };
 use super::*;
 
+mod connect_guest;
+
 /// What one setting choice states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct VaultTrainingChoice {
@@ -442,9 +444,10 @@ impl Vault {
     }
 
     /// Whether `person` reads the setting: a live PERSON who is the vault's
-    /// live owner, holds a live member or guest standing in this shared vault
-    /// (`Vault::membership_standing_in_txn`), or holds a live Delegate grant
-    /// over it (`Vault::delegate_standing_in_txn`).
+    /// live owner, stands here as a live Connect guest on a personal or
+    /// shared vault (`federation::connect_guest_standing_in_txn`, FIX 5538),
+    /// or holds a live member, Delegate or guest standing in this shared
+    /// vault (`Vault::membership_standing_in_txn`).
     ///
     /// # Errors
     /// Storage faults: never a reader.
@@ -456,19 +459,17 @@ impl Vault {
         if !crate::consent::person_is_live_in_txn(self, txn, &person)? {
             return Ok(false);
         }
-        if crate::policy_model::is_live_vault_owner_in_txn(self, txn, &person)? {
+        if crate::policy_model::is_live_vault_owner_in_txn(self, txn, &person)?
+            || crate::federation::connect_guest_standing_in_txn(self, txn, person)?
+        {
             return Ok(true);
         }
         let Some(creation) = self.shared_vault_creation_in_txn(txn)? else {
             return Ok(false);
         };
-        if self
+        Ok(self
             .membership_standing_in_txn(txn, creation.vault_id, &person)?
-            .is_some()
-        {
-            return Ok(true);
-        }
-        self.delegate_standing_in_txn(txn, creation.vault_id, &person)
+            .is_some())
     }
 
     /// The setting's view on `fold`, its line naming who set it.

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
+use crate::llm::BrokerIsolation;
 use crate::origin::secret_publication::RepoDestinationAudience;
 
 /// What the mirror's branch held when the request was made, read with the
@@ -68,35 +69,6 @@ impl OriginPublishState {
     }
 }
 
-/// The class an actor acted as.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OriginPublishActorClass {
-    Human,
-    Agent,
-    System,
-}
-
-impl From<EdgeActorClass> for OriginPublishActorClass {
-    fn from(class: EdgeActorClass) -> Self {
-        match class {
-            EdgeActorClass::Human => Self::Human,
-            EdgeActorClass::Agent => Self::Agent,
-            EdgeActorClass::System => Self::System,
-        }
-    }
-}
-
-impl From<OriginPublishActorClass> for EdgeActorClass {
-    fn from(class: OriginPublishActorClass) -> Self {
-        match class {
-            OriginPublishActorClass::Human => Self::Human,
-            OriginPublishActorClass::Agent => Self::Agent,
-            OriginPublishActorClass::System => Self::System,
-        }
-    }
-}
-
 /// What one act stood on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -112,7 +84,7 @@ pub enum OriginPublishAuthority {
 pub struct OriginPublishAct {
     /// Who acted; `None` once erased.
     pub actor: Option<EntityId>,
-    pub class: OriginPublishActorClass,
+    pub class: EdgeActorClass,
     pub authority: OriginPublishAuthority,
     /// Seconds, on the vault clock.
     pub at: u64,
@@ -241,6 +213,13 @@ pub struct OriginPublishRequestView {
     pub refusal: Option<OriginPublishRefusal>,
     pub created_at: u64,
     pub finished_at: Option<u64>,
+    /// How the credential broker its push's exchanges went through is kept
+    /// apart from the daemon (ARCH-0069 `#broker-isolation`; FIX 19083):
+    /// `same_user` shows the unproven badge. Recorded when the push's own
+    /// call settles it on a served host. `None` when no broker carried the
+    /// push: an embedded vault's direct push, or one that never reached it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broker_isolation: Option<BrokerIsolation>,
 }
 
 /// One item of a review page.

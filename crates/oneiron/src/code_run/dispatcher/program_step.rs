@@ -29,6 +29,30 @@ use crate::task_verb::sdk::{AgentVerb, RunVerb};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
+/// What a row-placing in-core write of a slip-woken program does when its
+/// slip narrows a position axis (FIX 10666; Engine 19:20, CALLS
+/// FIX-10666-narrowed-in-core-write): the in-core call carries no position
+/// to check, so it is refused, and the memory door that checks one takes
+/// the write. FIX 20094 tests the position in the write instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NarrowedSlipInCoreWrite {
+    Refuse,
+}
+
+const NARROWED_SLIP_IN_CORE_WRITE: NarrowedSlipInCoreWrite = NarrowedSlipInCoreWrite::Refuse;
+
+/// Whether `scope` narrows where a write may land: any of its worlds,
+/// facets, audience, bands or sensitivity short of the whole vault. Its
+/// verbs are the call's class, judged apart.
+fn narrows_position(scope: &oneiron_authority::federation::Scope) -> bool {
+    let whole = oneiron_authority::federation::Scope::top();
+    scope.worlds != whole.worlds
+        || scope.facets != whole.facets
+        || scope.audience != whole.audience
+        || scope.bands != whole.bands
+        || scope.sensitivity != whole.sensitivity
+}
+
 const PROGRAM_CALL_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-write-call:v1";
 
 /// The refusal a program's run gets for any callable but its pinned one.
@@ -115,6 +139,31 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(Some(MEMORY_CODE_FORBIDDEN.to_owned()))
     }
 
+    /// Refuses an in-core write that places a row (a claim, a fixture
+    /// claim, a supersession or an edge) for a slip-woken program whose slip
+    /// narrows where its writes may land (FIX 10666): the in-core call
+    /// proves no position, so the program places its claims through
+    /// `vault.claims.upsert`, whose door checks the position against the
+    /// slip. A run no slip woke, and a slip whose position is the whole
+    /// vault, write as before.
+    ///
+    /// # Errors
+    /// The refusal, when the slip narrows a position axis.
+    pub(super) fn refuse_narrowed_program_write(&self) -> Result<()> {
+        let Some(proof) = self.program_proof() else {
+            return Ok(());
+        };
+        match NARROWED_SLIP_IN_CORE_WRITE {
+            NarrowedSlipInCoreWrite::Refuse if narrows_position(proof.scope()) => Err(
+                Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority {
+                    reason: "a position-narrowed credential places claims through \
+                             vault.claims.upsert, which checks the position",
+                }),
+            ),
+            NarrowedSlipInCoreWrite::Refuse => Ok(()),
+        }
+    }
+
     /// `door`'s answer to `call`, unless a slip-woken program's slip does
     /// not admit it now: then the door's own refusal shape, kept as any
     /// refusal of it is (FIX 8717).
@@ -126,7 +175,10 @@ impl<'a> HostSelfDispatcher<'a> {
         invocation: InvocationId,
     ) -> Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
         if let Some(code) = self.program_authority_refusal(call.verb.as_str())? {
-            return Ok(Err(AgentVerbRefusal { code }));
+            return Ok(Err(AgentVerbRefusal {
+                hook_notice: None,
+                code,
+            }));
         }
         door.call(call, origin, invocation)
     }
@@ -240,17 +292,31 @@ impl<'a> HostSelfDispatcher<'a> {
         )
     }
 
-    /// Whether `record` holds the program's pinned callable finished: a
+    /// Whether `record` holds the program's pinned callable finished: an
+    /// entry's own root call, the first row of a step checkpoint's calls, a
     /// `self.skills.call` of the pinned SKILL that returned its result. A
-    /// run no program binds holds none.
+    /// call of that SKILL nested inside an entry is not its root: its result
+    /// never finishes the program (FIX 5878). A run no program binds holds
+    /// none.
     pub(crate) fn pinned_entry_finished(&self, record: &CodeRunReplayRecord) -> bool {
         let Some(program) = &self.program else {
             return false;
         };
-        record.bridge_calls.iter().any(|row| {
-            row.effect == SelfEffect::SkillsCall
+        record.step_checkpoints.iter().any(|checkpoint| {
+            let Some(range) = checkpoint.bridge_range() else {
+                return false;
+            };
+            let Some(root) = record
+                .bridge_calls
+                .get(range.start)
+                .filter(|_| !range.is_empty())
+            else {
+                return false;
+            };
+            root.seq == range.start as u64
+                && root.effect == SelfEffect::SkillsCall
                 && matches!(
-                    decode_self_dispatch_outcome(&row.outcome),
+                    decode_self_dispatch_outcome(&root.outcome),
                     Ok(SelfDispatchOutcome::SkillCall(result)) if result.skill == program.skill
                 )
         })

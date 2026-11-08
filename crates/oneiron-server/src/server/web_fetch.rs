@@ -5,8 +5,8 @@
 //! private origins the operator passed (`--hosted-private-origin`, FIX 7657):
 //! the engine refuses each page it is asked for and each hop, address and
 //! landing its rungs reach, typed, and the client the engine's
-//! [`build_web_fetch_client`] builds here refuses every address it connects
-//! to, a redirect's included, with the same [`HostedEgressGuard`]. The guard
+//! [`build_single_hop_client`] builds here refuses every address it connects
+//! to, each redirect hop's included, with the same [`HostedEgressGuard`]. The guard
 //! reads the node's own addresses afresh at each check, and a ladder the host
 //! supplied carries it too (FIX 6101). A self-hosted node fetches as before.
 //!
@@ -22,7 +22,7 @@ use std::sync::Arc;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::web_fetch::{
     HostedEgressGuard, NativeHeadlessRenderer, NativeReadabilityRenderer, WebFetchError,
-    WebFetcher, build_web_fetch_client,
+    WebFetcher, build_single_hop_client,
 };
 
 use super::{HandleLine, SyncServer};
@@ -35,13 +35,37 @@ impl SyncServer {
     /// a managed node it carries the hosted egress guard like the default
     /// ladder (FIX 6101), installed at first use. A managed host builds that
     /// ladder's readability client with
-    /// [`build_web_fetch_client`]`(Some(guard))`, so every redirect hop it
-    /// follows is checked too (FIX 7123); a client built otherwise is used
-    /// as supplied.
+    /// [`build_single_hop_client`]`(Some(guard))`, so every address it
+    /// connects to is checked too (FIX 7123); the rung follows and checks
+    /// each redirect hop itself (FIX 4734).
     #[must_use]
     pub fn with_web_fetcher(mut self, fetcher: WebFetcher) -> Self {
         self.web_fetcher = std::sync::OnceLock::from(Arc::new(fetcher));
         self
+    }
+
+    /// The guard a managed node checks every outbound fetch with, `None` on a
+    /// self-hosted node: the web fetcher's, and the OAuth server's fetch of a
+    /// client ID metadata document (FIX 4902). The managed switch every
+    /// hosted-only rule reads is set only by managed boot, which alone passes
+    /// the operator's private origins.
+    pub(crate) fn hosted_egress_guard(&self) -> Option<Arc<HostedEgressGuard>> {
+        self.managed_issuer.is_some().then(|| {
+            Arc::new(HostedEgressGuard::new(
+                node_addresses,
+                self.config.hosted_private_origins.clone(),
+            ))
+        })
+    }
+
+    /// The guard for a fetch of a URL an outside, unauthenticated party
+    /// names (an OAuth client's metadata document, FIX 4902), on every node:
+    /// it refuses this node's own addresses and every private network, with
+    /// no origin excepted. The managed node's `hosted_private_origins` are the
+    /// owner's own web fetcher's exceptions, never an outside caller's
+    /// (review #6478).
+    pub(crate) fn untrusted_url_egress_guard(&self) -> Arc<HostedEgressGuard> {
+        Arc::new(HostedEgressGuard::new(node_addresses, BTreeSet::new()))
     }
 
     /// Called off the async runtime. The default rung is a credential-free
@@ -50,14 +74,7 @@ impl SyncServer {
     /// ladder keeps that exact ladder. On a managed node every ladder, a
     /// supplied one included, carries the hosted egress guard.
     pub(crate) fn web_fetcher(&self) -> MemoryResult<Arc<WebFetcher>> {
-        // The managed switch every hosted-only rule reads: set only by
-        // managed boot, which alone passes the operator's private origins.
-        let guard = self.managed_issuer.is_some().then(|| {
-            Arc::new(HostedEgressGuard::new(
-                node_addresses,
-                self.config.hosted_private_origins.clone(),
-            ))
-        });
+        let guard = self.hosted_egress_guard();
         let fetcher = match self.web_fetcher.get() {
             Some(fetcher) => Arc::clone(fetcher),
             None => {
@@ -89,14 +106,15 @@ impl SyncServer {
     }
 }
 
-/// The default ladder: one credential-free native GET rung, its client
-/// checking every connection with the guard on a managed node, then the
-/// host's `headless` browser where a managed node has one.
+/// The default ladder: one credential-free native GET rung on a client that
+/// follows no redirect, checking every connection with the guard on a
+/// managed node, then the host's `headless` browser where a managed node has
+/// one.
 fn default_web_fetcher(
     guard: Option<&Arc<HostedEgressGuard>>,
     headless: Option<headless::GuestHeadless>,
 ) -> MemoryResult<WebFetcher> {
-    let client = build_web_fetch_client(guard.cloned())
+    let client = build_single_hop_client(guard.cloned())
         .map_err(|_| MemoryError::new("WEB_FETCH_FAILED", "web HTTP client unavailable", &[]))?;
     let failed =
         |error: WebFetchError| MemoryError::new("WEB_FETCH_FAILED", error.to_string(), &[]);

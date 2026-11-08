@@ -36,7 +36,8 @@ use crate::code_run::types::{
 use crate::error::{ArtifactError, Error, Result};
 use crate::federation::{RepoAccessIntent, RepoAccessRefusal};
 use crate::memory::repo_doors::{
-    NO_PATHS, RepoReviewPolicy, RepoRunAnswer, RepoRunBinding, is_repo_refusal_code, repo_target,
+    NO_PATHS, RepoReviewPolicy, RepoRunAnswer, RepoRunBinding, RepoRunSelection,
+    is_repo_refusal_code,
 };
 use crate::memory::{MemoryError, MemoryResult};
 use crate::{ClaimSubject, EntityId, Vault};
@@ -66,11 +67,14 @@ impl HostSelfDispatcher<'_> {
             Ok(binding) => binding,
             Err(refused) => return Ok(denied(effect, refused.public_code())),
         };
-        if call.writes()
-            && let Err(refused) = self.repo_operation_gate(vault, &binding, &call, site)?
-        {
-            return Ok(denied(effect, refused.public_code()));
-        }
+        let selection = if call.writes() {
+            match self.repo_operation_gate(vault, &binding, &call, site)? {
+                Ok(selection) => selection,
+                Err(refused) => return Ok(denied(effect, refused.public_code())),
+            }
+        } else {
+            None
+        };
         let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
         match call {
             RepoRunCall::SnapshotsGet(input) => {
@@ -82,6 +86,10 @@ impl HostSelfDispatcher<'_> {
             RepoRunCall::SymbolsDefinitions(input) => answered(
                 effect,
                 memory.repo_symbols_definitions_for_run(&binding, input),
+            ),
+            RepoRunCall::SymbolsNeighbors(input) => answered(
+                effect,
+                memory.repo_symbols_neighbors_for_run(&binding, input),
             ),
             RepoRunCall::ViewsGet(input) => {
                 answered(effect, memory.repo_views_get_for_run(&binding, input))
@@ -95,11 +103,12 @@ impl HostSelfDispatcher<'_> {
             ),
             RepoRunCall::SnapshotsIngest(input) => answered(
                 effect,
-                memory.repo_snapshots_ingest_for_run(&binding, input),
+                memory.repo_snapshots_ingest_for_run_selected(&binding, input, selection),
             ),
-            RepoRunCall::WorkOpen(input) => {
-                answered(effect, memory.repo_work_open_for_run(&binding, input))
-            }
+            RepoRunCall::WorkOpen(input) => answered(
+                effect,
+                memory.repo_work_open_for_run_selected(&binding, input, selection),
+            ),
             RepoRunCall::SymbolsDeclare(input) => {
                 answered(effect, memory.repo_symbols_declare_for_run(&binding, input))
             }
@@ -122,7 +131,37 @@ impl HostSelfDispatcher<'_> {
                     &binding,
                     input,
                     self.repo_review_policy.as_deref(),
-                    |stamp| match self.repo_run_sources(vault, stamp, &change) {
+                    |stamp| match self.repo_run_sources(vault, stamp, &change, effect) {
+                        Ok(sources) => sources,
+                        Err(error) => {
+                            *failed.borrow_mut() = Some(error);
+                            Err(MemoryError::new(
+                                crate::memory::MEMORY_CODE_INTERNAL,
+                                "the proposal's attribution was not minted",
+                                &[],
+                            ))
+                        }
+                    },
+                );
+                if let Some(error) = failed.into_inner() {
+                    return Err(error);
+                }
+                answered(effect, answer)
+            }
+            RepoRunCall::ProposalResolve(input) => {
+                let change = RepoChange {
+                    path: input.path.clone(),
+                    content_hash: *blake3::hash(&input.content).as_bytes(),
+                };
+                // A store or gate failure while the host mints the
+                // proposal's attribution ends the call as any memory
+                // write's does; it is not a door answer.
+                let failed = RefCell::new(None);
+                let answer = memory.repo_proposal_resolve_for_run(
+                    &binding,
+                    input,
+                    self.repo_review_policy.as_deref(),
+                    |stamp| match self.repo_run_sources(vault, stamp, &change, effect) {
                         Ok(sources) => sources,
                         Err(error) => {
                             *failed.borrow_mut() = Some(error);
@@ -227,13 +266,21 @@ impl HostSelfDispatcher<'_> {
         binding: &RepoRunBinding,
         call: &RepoRunCall,
         site: ExecutorCallSite<'_>,
-    ) -> Result<std::result::Result<(), RepoAccessRefusal>> {
+    ) -> Result<std::result::Result<Option<RepoRunSelection>, RepoAccessRefusal>> {
         let effect = call.effect();
-        let (repo, git_ref) = match call {
-            RepoRunCall::SnapshotsIngest(input) => (input.repo, input.git_ref.clone()),
-            RepoRunCall::WorkOpen(input) => (input.repo, input.git_ref.clone()),
-            RepoRunCall::CheckoutBind(input) => (input.repo, input.git_ref.clone()),
-            RepoRunCall::Export(input) => (input.repo, input.git_ref.clone()),
+        let (fallback, git_ref, portable) = match call {
+            RepoRunCall::SnapshotsIngest(input) => (
+                input.repo,
+                input.git_ref.clone(),
+                input.portable_repo.as_ref(),
+            ),
+            RepoRunCall::WorkOpen(input) => (
+                input.repo,
+                input.git_ref.clone(),
+                input.portable_repo.as_ref(),
+            ),
+            RepoRunCall::CheckoutBind(input) => (input.repo, input.git_ref.clone(), None),
+            RepoRunCall::Export(input) => (input.repo, input.git_ref.clone(), None),
             // A row on the run's own work is gated at that work's repo and
             // ref; a work that is not this run's is refused before any
             // decision is recorded.
@@ -251,15 +298,22 @@ impl HostSelfDispatcher<'_> {
                     NO_PATHS,
                     RepoAccessIntent::Read,
                 )? {
-                    Ok(own) => (own.stamp.repo, own.stamp.git_ref),
+                    Ok(own) => (own.stamp.repo, own.stamp.git_ref, None),
                     Err(refused) => return Ok(Err(refused)),
                 }
             }
         };
-        let target = repo_target(repo, &git_ref, NO_PATHS);
-        let admitted = {
+        let (repo, portable_hit, admitted) = {
             let txn = vault.store.env.read_txn()?;
-            vault.admit_repo_run_in_txn(&txn, binding, &target, RepoAccessIntent::Read)?
+            vault.admit_repo_run_with_portable_in_txn(
+                &txn,
+                binding,
+                fallback,
+                portable,
+                &git_ref,
+                NO_PATHS,
+                RepoAccessIntent::Read,
+            )?
         };
         if let Err(refused) = admitted {
             return Ok(Err(refused));
@@ -281,7 +335,12 @@ impl HostSelfDispatcher<'_> {
         )?;
         let id = repo_operation_gate_id(effect, site)?;
         check_write_gate_against_vault(vault, id, &body, &envelope, false, |_| Ok(()))?;
-        Ok(Ok(()))
+        let selection = matches!(
+            call,
+            RepoRunCall::SnapshotsIngest(_) | RepoRunCall::WorkOpen(_)
+        )
+        .then_some(RepoRunSelection { repo, portable_hit });
+        Ok(Ok(selection))
     }
 }
 
@@ -343,6 +402,7 @@ fn refused(effect: SelfEffect, error: &MemoryError) -> SelfDispatchOutcome {
 
 fn denied(effect: SelfEffect, code: &str) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Denied(SelfDeniedResult {
+        hook_notice: None,
         effect,
         outcome: code.to_owned(),
         reason_codes: Vec::new(),

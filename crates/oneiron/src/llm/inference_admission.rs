@@ -155,7 +155,7 @@ impl InferencePolicySnapshot {
             HostInferenceBinding::Advertised {
                 model, locality, ..
             } if model == selected => *locality,
-            HostInferenceBinding::SupervisedNativeLocal { model } if model == selected => {
+            HostInferenceBinding::SupervisedNativeLocal { model, .. } if model == selected => {
                 ModelLocality::OnDevice
             }
             HostInferenceBinding::Advertised { .. }

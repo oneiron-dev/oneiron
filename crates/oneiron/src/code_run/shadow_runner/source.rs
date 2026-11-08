@@ -15,28 +15,40 @@
 //! named (FIX 6352, `reads`). A reader admitted to the step's capture (FIX
 //! 8704, `admitted`) has its admission read again before each raw read of
 //! it: the request, the start, the record of its end and its replay
-//! context, each record a read context names, and each body frozen.
+//! context, each record a read context names, and each body frozen. A
+//! host's worker that prepares an arm's source again holds that admission
+//! as an owned witness (FIX 9446), and releases the arm's bodies to a model
+//! under it (FIX 20607).
 
 mod admitted;
 mod context;
 mod reads;
 
-pub(crate) use self::admitted::{ShadowSourceAdmission, prepare_admitted_shadow_step_source};
+pub(super) use self::admitted::lapsed;
+pub use self::admitted::{
+    ShadowSourceAdmission, ShadowSourceWitness, WitnessedRelease,
+    prepare_witnessed_shadow_step_source,
+};
+pub(crate) use self::admitted::{admission_lapsed, prepare_admitted_shadow_step_source};
 use self::context::ArmContext;
 use self::reads::ForeignBody;
+use super::store::ShadowBodyStore;
 use super::types::{
     ShadowBodyRef, ShadowDeterminism, ShadowRequestDigest, ShadowStepIdentity, ShadowUnavailable,
     ShadowUnavailableReason as Reason,
 };
+use crate::batch::secret_scan::BodySpool;
 use crate::code_run::{
     CapsuleRequest, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStepStart,
     ReplayRoutePin, SelfDispatchOutcome, StepReplayCapsule, StepStartBody, StoredRungBinding,
-    capsule_context_body, capsule_request, capsule_start_body, decode_code_run_replay_record,
-    resolve_result, route_prompt_at, step_replay_capsules_in_txn,
+    capsule_context_body, capsule_fold_words_withdrawn, capsule_request, capsule_start_body,
+    decode_code_run_replay_record, resolve_result, route_prompt_at, step_replay_capsules_in_txn,
 };
 use crate::engine_executor::{JsResultRef, is_result_output_path};
 use crate::limit_ask::EngineLimit;
 use crate::secret_rotation::ArtifactTaintState;
+use crate::store::result_memory::{ResultHold, ResultShare};
+use crate::store::{BodySink, LINE_INDEX_BLOCK_BYTES};
 use crate::{EntityId, LlmRequest, Result, Vault};
 
 /// An arm's source, or why it has none.
@@ -53,7 +65,29 @@ pub(crate) struct FrozenBody {
     pub(crate) output: CodeRunRawOutput,
     pub(crate) state: ArtifactTaintState,
     pub(crate) secret: Option<String>,
-    pub(crate) bytes: Option<Vec<u8>>,
+    pub(crate) bytes: Option<FrozenBodyBytes>,
+}
+
+/// Frozen clean bytes: retained RAM holds its pool charge; a spilled copy
+/// owns its unpublished temp file until the prepared source is dropped.
+pub(crate) enum FrozenBodyBytes {
+    Memory { bytes: Vec<u8>, _hold: ResultHold },
+    Spool(BodySpool),
+}
+
+impl FrozenBody {
+    /// Copies the same frozen bytes into an arm's store, never a live vault.
+    pub(crate) fn seed(&self, store: &ShadowBodyStore) -> Result<()> {
+        match &self.bytes {
+            Some(FrozenBodyBytes::Memory { bytes, .. }) => {
+                store.import(self.output.output_ref(), bytes)
+            }
+            Some(FrozenBodyBytes::Spool(spool)) => {
+                store.import_spool(self.output.output_ref(), spool)
+            }
+            None => Ok(()),
+        }
+    }
 }
 
 /// A stored reply produced during the captured step. It becomes visible to
@@ -225,6 +259,13 @@ fn prepare_step_source(
             crate::code_run::RESPONSE_ERASED,
         )));
     }
+    // FIX 18924: a source whose bodies copy withdrawn fold words is erased.
+    if capsule_fold_words_withdrawn(vault, capsule)? {
+        return Ok(Err(unavailable(
+            Reason::SourceErased,
+            crate::code_run::RESPONSE_ERASED,
+        )));
+    }
     let Some(request_digest) = ShadowRequestDigest::of_capsule(capsule) else {
         return Ok(Err(unavailable(Reason::SourceWithheld, "request_withheld")));
     };
@@ -266,15 +307,16 @@ fn prepare_step_source(
             "determinism_unknown",
         )));
     };
-    let frozen = match freeze_bodies(vault, capsule.run, &prefix, admits)? {
+    let share = vault.result_share();
+    let frozen = match freeze_bodies(vault, capsule.run, &prefix, &share, admits)? {
         Ok(frozen) => frozen,
         Err(unavailable) => return Ok(Err(unavailable)),
     };
-    let replies = match freeze_replies(vault, capsule.run, &prefix, &window, admits)? {
+    let replies = match freeze_replies(vault, capsule.run, &prefix, &window, &share, admits)? {
         Ok(replies) => replies,
         Err(unavailable) => return Ok(Err(unavailable)),
     };
-    let foreign = match reads::freeze_reader_bodies(vault, &context, admits)? {
+    let foreign = match reads::freeze_reader_bodies(vault, &context, &share, admits)? {
         Ok(foreign) => foreign,
         Err(unavailable) => return Ok(Err(unavailable)),
     };
@@ -435,17 +477,18 @@ fn freeze_bodies(
     vault: &Vault,
     run: crate::EntityId,
     prefix: &CodeRunReplayRecord,
+    share: &ResultShare,
     admits: Admits<'_>,
 ) -> Result<Outcome<Vec<FrozenBody>>> {
     let mut frozen = Vec::new();
     let mut frozen_bytes = 0_u64;
     for output in crate::engine_executor::shadow_readable_outputs(prefix) {
-        let body = match freeze_body(vault, run, output, admits, "prefix_body")? {
+        let body = match freeze_body(vault, run, output, share, admits, "prefix_body")? {
             Ok(body) => body,
             Err(unavailable) => return Ok(Err(unavailable)),
         };
-        if let Some(bytes) = &body.bytes {
-            frozen_bytes = frozen_bytes.saturating_add(bytes.len() as u64);
+        if body.bytes.is_some() {
+            frozen_bytes = frozen_bytes.saturating_add(body.output.raw_len);
         }
         frozen.push(body);
     }
@@ -457,6 +500,51 @@ fn freeze_bodies(
     Ok(Ok(frozen))
 }
 
+/// Copies one immutable body under its custody guard and before-snapshot
+/// pin. Each short range transaction ends before admission is asked again.
+fn freeze_body_spool(
+    vault: &Vault,
+    output: &CodeRunRawOutput,
+    admits: Admits<'_>,
+    missing: &'static str,
+) -> Result<Outcome<BodySpool>> {
+    crate::code_run::codec::validate_raw_output(output)?;
+    let _custody = vault.store.gate_custody_read_guard()?;
+    let _pin = vault.pin_result_body(output.raw_blake3);
+    let mut sink = BodySink::spooling(vault.store.body_dir()?, 0);
+    let mut offset = 0_u64;
+    loop {
+        if !admits()? {
+            return Ok(Err(admitted::lapsed()));
+        }
+        let take = usize::try_from((output.raw_len - offset).min(LINE_INDEX_BLOCK_BYTES))
+            .map_err(|_| crate::Error::ArithmeticOverflow("shadow frozen body frame"))?;
+        let frame = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault.read_code_run_raw_output_range_in_txn(&rtxn, output, offset, take)?
+        };
+        let Some(frame) = frame else {
+            return Ok(Err(unavailable(Reason::SourceMissing, missing)));
+        };
+        if frame.len() != take {
+            return Err(crate::Error::CorruptedIndex("shadow frozen body length"));
+        }
+        sink.write(&frame)?;
+        offset += take as u64;
+        if offset == output.raw_len {
+            break;
+        }
+    }
+    if sink.digest()? != output.raw_blake3 {
+        return Err(crate::Error::CorruptedIndex("shadow frozen body digest"));
+    }
+    let spool = sink.into_spool()?;
+    if spool.len() != output.raw_len {
+        return Err(crate::Error::CorruptedIndex("shadow frozen body length"));
+    }
+    Ok(Ok(spool))
+}
+
 /// Freezes only the exact result occurrence named by each stored reply in
 /// this step's bridge window. Future results and bindings stay invisible.
 fn freeze_replies(
@@ -464,6 +552,7 @@ fn freeze_replies(
     run: EntityId,
     prefix: &CodeRunReplayRecord,
     window: &CodeRunReplayRecord,
+    share: &ResultShare,
     admits: Admits<'_>,
 ) -> Result<Outcome<Vec<FrozenReply>>> {
     let mut replies = Vec::new();
@@ -507,7 +596,7 @@ fn freeze_replies(
                 "stored_reply_output",
             )));
         };
-        let body = match freeze_body(vault, run, output, admits, "stored_reply_body")? {
+        let body = match freeze_body(vault, run, output, share, admits, "stored_reply_body")? {
             Ok(body) => body,
             Err(unavailable) => return Ok(Err(unavailable)),
         };
@@ -529,6 +618,7 @@ fn freeze_body(
     vault: &Vault,
     run: EntityId,
     output: CodeRunRawOutput,
+    share: &ResultShare,
     admits: Admits<'_>,
     missing: &'static str,
 ) -> Result<Outcome<FrozenBody>> {
@@ -540,8 +630,17 @@ fn freeze_body(
         if !admits()? {
             return Ok(Err(admitted::lapsed()));
         }
-        let Some(bytes) = vault.get_code_run_raw_output(&output)? else {
-            return Ok(Err(unavailable(Reason::SourceMissing, missing)));
+        let bytes = if let Some(hold) = share.hold(output.raw_len, vault.limit_watch()) {
+            let Some(bytes) = vault.get_code_run_raw_output(&output)? else {
+                return Ok(Err(unavailable(Reason::SourceMissing, missing)));
+            };
+            FrozenBodyBytes::Memory { bytes, _hold: hold }
+        } else {
+            let spool = match freeze_body_spool(vault, &output, admits, missing)? {
+                Ok(spool) => spool,
+                Err(unavailable) => return Ok(Err(unavailable)),
+            };
+            FrozenBodyBytes::Spool(spool)
         };
         Some(bytes)
     };

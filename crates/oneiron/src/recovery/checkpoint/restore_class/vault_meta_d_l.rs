@@ -177,8 +177,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::EDIT_DISTANCE_PREFERENCE_PROPOSAL, CONTENT),
     (&t::EDIT_DISTANCE_PRINCIPAL_DECISION, CONTENT),
     (&t::EDIT_DISTANCE_PROPOSAL_ARTIFACT, CONTENT),
-    (&t::EDIT_DISTANCE_PROPOSAL_DOCUMENT, CONTENT),
     (&t::EDIT_DISTANCE_RESERVOIR_EXPORT, CONTENT),
+    (&t::EDIT_DISTANCE_ROUTING_OUTCOME, CONTENT),
+    (&t::EDIT_SETTLE_KEEP_LINK, CONTENT),
     (&t::EDIT_SETTLE_ORGAN_WAIT, LIVE),
     (&t::EDIT_SETTLE_PENDING_PROPOSAL, CONTENT),
     (&t::EDIT_SETTLE_STRANDED_PROPOSAL, CONTENT),
@@ -229,6 +230,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::FAILURE_SIGNALS_TIER1_COUNTED, LIVE),
     (&t::FAILURE_SIGNALS_TIER1_COUNTS, LIVE),
     (&t::FEDERATION_ACTOR_CONTENT_INFLIGHT, CONTENT),
+    (&t::FEDERATION_CONNECT_PROPOSAL, LIVE),
     (&t::FEDERATION_GUEST_REVOKE, LIVE),
     (&t::FEDERATION_PEER_CONFIDENCE, CONTENT),
     (&t::FEDERATION_RULING_WITNESS, CONTENT),
@@ -244,6 +246,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::FEEDBACK_REPORT_ROUTE, LIVE),
     (&t::FEEDBACK_TRIAGE_BINDING, CONTENT),
     (&t::FEEDBACK_TRIAGE_HANDOFF, CONTENT),
+    (&t::FEEDBACK_TRIAGE_HANDOFF_BY_EVIDENCE, CONTENT),
+    (&t::FEEDBACK_TRIAGE_HANDOFF_BY_SWEEP, CONTENT),
+    (&t::FEEDBACK_TRIAGE_HANDOFF_OPEN, CONTENT),
     (&t::FEEDBACK_TRIAGE_SOURCE, CONTENT),
     (&t::FOLDER_SOURCE, LIVE),
     (&t::FOLDER_SOURCE_FILE, CONTENT),
@@ -301,9 +306,18 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::HOOKS_PACED_VERB_WITNESS, LIVE),
     (&t::HOOKS_RECEIPT, CONTENT),
     (&t::HOOKS_REGEN, LIVE),
+    (&t::HOOKS_REGEN_RECEIPT, CONTENT),
     (&t::HOOKS_RUN_INDEX, CONTENT),
     (&t::HOOKS_SETTLED, CONTENT),
     (&t::HOOKS_SETTLED_NEXT, CONTENT),
+    // FIX 4749: the watcher feeds, the due index and the tick feed restore
+    // with the TASKs and cursors they stand beside.
+    (&t::HOOKS_SURFACE_INBOUND, CONTENT),
+    (&t::HOOKS_SURFACE_INBOUND_NEXT, CONTENT),
+    (&t::HOOKS_TASK_DUE, CONTENT),
+    (&t::HOOKS_TASK_DUE_REVERSE, CONTENT),
+    (&t::HOOKS_TICK, CONTENT),
+    (&t::HOOKS_TICK_NEXT, CONTENT),
     (&t::HOOKS_VERB_ASK, LIVE),
     (&t::HOOKS_VERB_ASK_WITNESS, LIVE),
     (&t::HOOKS_VERB_RUN, CONTENT),
@@ -363,6 +377,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::LINEAR_EFFECT_APPROVAL, LIVE),
     (&t::LINEAR_EFFECT_AUTHORIZED, LIVE),
     (&t::LINEAR_SYNC_LINK, CONTENT),
+    (&t::LINE_CHAT_ARCHIVE_PIN, CONTENT),
+    (&t::LINE_CHAT_ARCHIVE_RELEASE, LIVE),
     (&t::LLM_BINDING_PROPOSAL, LIVE),
     (&t::LLM_CATALOG_HEAD, LIVE),
     (&t::LLM_CATALOG_REVISION, LIVE),
@@ -373,6 +389,16 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::LLM_EXTRACTION_TEACHER_PROBE, LIVE),
     (&t::LLM_MANIFEST, LIVE),
     (&t::LLM_MODEL_DESCRIPTION, LIVE),
+    // FIX 5367: the followed-pack record travels with the install receipts it
+    // names; the owner's follow-or-pin preference stands as the live vault holds it.
+    (&t::LLM_MODEL_PACK_ACTIVE, CONTENT),
+    (&t::LLM_MODEL_PACK_PREFERENCE, LIVE),
+    // FIX 20192: a model pack's replaced version travels with the install
+    // receipts a revert puts it back among.
+    (&t::LLM_MODEL_PACK_REPLACED, CONTENT),
+    // FIX 5368: a retirement notice the owners were sent stays sent; a restore
+    // never sends it again.
+    (&t::LLM_MODEL_PACK_RETIREMENT_NOTICE, LIVE),
     (&t::LLM_MODEL_TRIAL, LIVE),
     (&t::LLM_ONEIRONER_BUNDLE_RECEIPT, LIVE),
     (&t::LLM_PURPOSE_DEFAULT_PROPOSAL, LIVE),

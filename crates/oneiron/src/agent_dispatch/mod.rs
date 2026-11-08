@@ -22,8 +22,11 @@
 
 mod agent_run;
 mod attenuation;
+mod brief;
 pub mod budget_doors;
 mod budget_hold;
+mod caller_origin;
+pub use caller_origin::CallerOrigin;
 mod codec;
 mod comm;
 pub(crate) use self::comm::{
@@ -34,7 +37,7 @@ pub use self::comm::{CommReach, comm_prompt_block};
 mod comm_widen;
 pub(crate) use self::comm_widen::{
     CommWidenDecision, CommWidenQuestion, CommWidenRecipient, CommWidenRequest, CommWidenState,
-    comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn,
+    comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn, effective_comm_in_txn,
     erase_comm_widen_actor_in_txn, put_comm_widen_in,
 };
 mod context;
@@ -72,9 +75,21 @@ mod requester;
 pub use self::requester::{QueuedRequester, RequesterStanding, RequesterWithdrawn};
 mod resident;
 mod room_join;
+mod run_handover;
+pub use self::run_handover::AgentRunLeaseReap;
 mod run_lineage;
 pub(crate) use run_lineage::delegation_lineage_parent_in_txn;
 mod run_objectives;
+mod run_task;
+pub(crate) use self::run_task::{
+    AGENT_RUN_FENCE_FIELD, AGENT_RUN_STOOD_DOWN, AgentRunFences, agent_run_fence_permits_effect,
+    erase_agent_run_tasks_in_txn, fence_agent_run_effect_in_txn, fence_agent_run_settlement_in_txn,
+    fence_agent_run_step_in_txn, is_agent_run_task_in, renew_agent_run_lease_in_txn,
+    settle_agent_run_task_in_txn,
+};
+pub use self::run_task::{
+    AGENT_RUN_TASK_SUBKIND, AgentRunExecutorLease, AgentRunFence, AgentRunOutcome,
+};
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
 mod skill_default;
@@ -130,8 +145,8 @@ pub use self::spend_calibration::{
 };
 pub(crate) use self::spend_lease::payer_binds_in_txn;
 pub use self::spend_record::{
-    ChildSpend, SpendCalibrationSample, SpendPayer, SpendRead, SpendRefused, SpendScope,
-    SpendScopeId, SpendSettlement, SpendSignal, SpendState,
+    ChildSpend, GrantSpendBinding, SpendCalibrationSample, SpendPayer, SpendRead, SpendRefused,
+    SpendScope, SpendScopeId, SpendSettlement, SpendSignal, SpendState,
 };
 
 pub use self::budget_hold::{

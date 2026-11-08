@@ -304,6 +304,7 @@ impl AgentDispatcher<'_> {
         let budget = narrowed(leader.budget, launch_budget(&plan.asked, &plan.plan));
         let leader = AgentSpawnContext {
             budget,
+            caller_origin: Some(current.caller_origin()),
             ..planned_context(leader, plan, leader_spec)
         };
         let members = member_specs

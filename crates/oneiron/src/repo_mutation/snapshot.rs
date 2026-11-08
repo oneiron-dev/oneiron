@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::secret_snapshot::{SnapshotExclusionSet, SnapshotWithhold};
 
-use super::git::{git_output_optional, run_git, validate_relative_repo_path};
+use super::git::{git_output_optional, repo_path_on_disk, run_git, validate_relative_repo_path};
 use super::oplog::{REPO_MUTATION_OPLOG_SCHEMA_VERSION, SNAPSHOT, repo_mutation_snapshot_key};
 use super::support::{path_arg, sha256_bytes, utf8_trimmed};
 use super::types::RepoForkHash;
@@ -24,9 +24,14 @@ use crate::error::CodeError;
 use crate::git_wire::bundle_tree::{
     BundleTreeEdit, gitlink_index_entries, gitlink_paths_at, stage_bundle_tree_edits,
 };
+use crate::git_wire::{git_path_string, git_path_text_of_os};
 use crate::store::code_tree_blob::MODE_GITLINK;
 
+mod capture;
+mod checkout;
 mod pinned;
+pub(crate) use capture::CaptureEntry;
+pub(crate) use checkout::visit_code_capture_files;
 pub(super) use pinned::RepoPinnedBase;
 
 /// The bytes one snapshot holds in memory: a machine floor, not a count.
@@ -211,53 +216,33 @@ fn collect_snapshot_entries(
     entries: &mut Vec<StoredRepoSnapshotEntry>,
     stats: &mut SnapshotStats,
 ) -> Result<()> {
-    let mut children = fs::read_dir(dir)?.collect::<std::result::Result<Vec<_>, _>>()?;
-    children.sort_by_key(std::fs::DirEntry::file_name);
-    for child in children {
-        if child.file_name() == OsStr::new(".git") {
-            continue;
-        }
-        let path = child.path();
-        let relative = repo_relative_path(repo_root, &path)?;
-        if indexed_paths.contains(&relative) {
-            continue;
-        }
-        let metadata = fs::symlink_metadata(&path)?;
-        if metadata.file_type().is_dir() {
-            if linked_paths.contains(&relative) || nested_repository(&path)? {
-                continue;
-            }
-            collect_snapshot_entries(
-                repo_root,
-                &path,
-                custody,
-                indexed_paths,
-                linked_paths,
-                entries,
-                stats,
-            )?;
-            continue;
-        }
-        if metadata.file_type().is_symlink() {
-            let target = fs::read_link(&path)?;
-            let target = path_arg(&target)?;
-            record_snapshot_entry_size(stats, target.len() as u64)?;
-            entries.push(custody.symlink(relative, target));
-        } else if metadata.file_type().is_file() {
-            if metadata.len() > MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES {
+    checkout::visit_checkout_entries(
+        repo_root,
+        dir,
+        indexed_paths,
+        linked_paths,
+        &mut |path, relative, metadata| {
+            if metadata.file_type().is_symlink() {
+                let target = fs::read_link(path)?;
+                let target = path_arg(&target)?;
+                record_snapshot_entry_size(stats, target.len() as u64)?;
+                entries.push(custody.symlink(relative, target));
+            } else if metadata.file_type().is_file() {
+                if metadata.len() > MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES {
+                    return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
+                        "repo mutation snapshot file exceeds max bytes",
+                    )));
+                }
+                record_snapshot_entry_size(stats, metadata.len())?;
+                entries.push(custody.file(relative, is_executable(metadata), fs::read(path)?));
+            } else {
                 return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
-                    "repo mutation snapshot file exceeds max bytes",
+                    "repo snapshot supports only files, directories, and symlinks",
                 )));
             }
-            record_snapshot_entry_size(stats, metadata.len())?;
-            entries.push(custody.file(relative, is_executable(&metadata), fs::read(&path)?));
-        } else {
-            return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
-                "repo snapshot supports only files, directories, and symlinks",
-            )));
-        }
-    }
-    Ok(())
+            Ok(())
+        },
+    )
 }
 
 pub(super) fn restore_repo_snapshot(
@@ -387,7 +372,7 @@ pub(super) fn restore_repo_snapshot(
     // The paths this restore changes: only their index entries are reset.
     let mut changed: BTreeSet<String> = current.difference(&desired).cloned().collect();
     for path in &changed {
-        remove_existing_path(&repo_root.join(path))?;
+        remove_existing_path(&repo_path_on_disk(repo_root, path)?)?;
     }
     remove_empty_dirs(dirs)?;
 
@@ -443,7 +428,7 @@ pub(super) fn restore_repo_snapshot(
                 mode,
             });
         }
-        let target = repo_root.join(&entry.path);
+        let target = repo_path_on_disk(repo_root, &entry.path)?;
         if checkout_holds_entry(&target, &entry)? {
             continue;
         }
@@ -568,11 +553,9 @@ fn reset_restored_index(
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
     {
-        paths.insert(String::from_utf8(path.to_vec()).map_err(|_| {
-            Error::Code(CodeError::InvalidRepoMutationRecord(
-                "repo restore path must be UTF-8",
-            ))
-        })?);
+        // A name outside UTF-8 keeps its bytes as a Git path's text; the
+        // bridged argv turns the pathspec back into them (FIX 21326).
+        paths.insert(git_path_string(path.to_vec())?);
     }
     let paths: Vec<String> = paths.into_iter().collect();
     for chunk in paths.chunks(RESTORE_INDEX_PATHS_PER_CALL) {
@@ -730,15 +713,13 @@ fn repo_relative_path(repo_root: &Path, path: &Path) -> Result<String> {
                 "repo snapshot path must be normal",
             )));
         };
-        let part = part
-            .to_str()
-            .ok_or(Error::Code(CodeError::InvalidRepoMutationRecord(
-                "repo snapshot path must be UTF-8",
-            )))?;
+        // A file name outside UTF-8 keeps its bytes as a Git path's text
+        // (FIX 21326), the text the pinned and tree walks give that name.
+        let part = git_path_text_of_os(part)?;
         if !out.is_empty() {
             out.push('/');
         }
-        out.push_str(part);
+        out.push_str(&part);
     }
     validate_relative_repo_path(&out)?;
     Ok(out)

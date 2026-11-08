@@ -23,8 +23,8 @@ use crate::web_connector::{
 use super::authority::OutboundBindingAuthority;
 use super::connector_call::{
     ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorCallOutcome,
-    ConnectorResultAbsence, ConnectorToolSchema, PendingConnectorCall, SettledConnectorCall,
-    UntrustedToolResult, now_ms,
+    ConnectorResultAbsence, ConnectorSource, ConnectorToolSchema, PendingConnectorCall,
+    SettledConnectorCall, UntrustedToolResult, now_ms,
 };
 use super::connector_call_dispatch::{escalation_code, step_from_host};
 use super::connector_call_erase::put_pending_call_in_txn;
@@ -77,6 +77,7 @@ pub(super) enum Step {
     AwaitingInput {
         intent: Option<[u8; 32]>,
         input: ConnectorAwaitingInput,
+        budget_steering: Vec<String>,
     },
     /// A full count-bound budget window paces the call until
     /// `next_eligible_at`, Unix seconds (FIX 8686): unsent and uncharged, it
@@ -162,21 +163,39 @@ impl Vault {
         name: &str,
         tool: &str,
     ) -> Result<ConnectorToolSchema, IntentLedgerError> {
+        self.connector_tool_schema_from(memory, name, tool, None)
+    }
+
+    /// Reads the selected interface's schema. An explicit catalog choice
+    /// uses its actual route, caller grant, governing manifest and slate,
+    /// including when that catalog entry is named `web`.
+    pub fn connector_tool_schema_from(
+        &self,
+        memory: &Memory<'_>,
+        name: &str,
+        tool: &str,
+        source: Option<ConnectorSource>,
+    ) -> Result<ConnectorToolSchema, IntentLedgerError> {
         if !std::ptr::eq(memory.vault(), self) {
             return Err(IntentLedgerError::InvalidInput(
                 "the caller's scope is bound to another vault",
             ));
         }
         let mut read = Vec::new();
-        let schema =
-            self.connector_tool_schema_reading(&memory.actor().to_hex(), name, tool, &mut read);
+        let schema = self.connector_tool_schema_reading(
+            &memory.actor().to_hex(),
+            name,
+            tool,
+            source,
+            &mut read,
+        );
         memory.produced_from(read);
         schema
     }
 
-    /// [`Self::connector_tool_schema`] for `principal_ref`, listing each row
-    /// it reads in `read`. An exact `web` name is intercepted before the
-    /// catalog route, as the server's call is: an unknown web tool is
+    /// [`Self::connector_tool_schema_from`] for `principal_ref`, listing each
+    /// row it reads in `read`. A selected builtin `web` is intercepted
+    /// before the catalog route, as the server's call is: an unknown tool is
     /// unavailable, a hub switch continues below under the configured
     /// connector's name, and provider tools answer their input contract.
     fn connector_tool_schema_reading(
@@ -184,13 +203,18 @@ impl Vault {
         principal_ref: &str,
         name: &str,
         tool: &str,
+        source: Option<ConnectorSource>,
         read: &mut Vec<EntityId>,
     ) -> Result<ConnectorToolSchema, IntentLedgerError> {
         let unavailable = |stop: Step| ConnectorToolSchema::Unavailable {
             reasons: stop.into_reasons(),
         };
-        // Match the served web branch before resolving catalog names.
-        let hub_target: Option<String> = if name == WEB_CONNECTOR_NAME {
+        // Match the served source choice before resolving catalog names.
+        let selected = ConnectorSource::resolve(source, name);
+        let hub_target: Option<String> = if selected == ConnectorSource::Builtin {
+            if name != WEB_CONNECTOR_NAME {
+                return Err(IntentLedgerError::InvalidInput("unknown builtin connector"));
+            }
             let Some(web_tool) = WebTool::parse(tool) else {
                 return Ok(unavailable(refused("connector_tool_unknown")));
             };
@@ -319,6 +343,9 @@ impl Vault {
                     && !input.uncertain
                 {
                     input.resume = resume.seal_in_txn(self, txn, call_ref);
+                    // What the send presented binds with the state a resume
+                    // takes it up from (fix list row 10550).
+                    input.sent = resume.sent.clone();
                 }
                 let withdrawn = if row.settled.is_some() || row.input.is_some() {
                     self.withdraw_call_owner_asks_in_txn(txn, call_ref, &mut row)
@@ -385,7 +412,11 @@ impl Vault {
             // call's row, kept for a first call too, holds the round for its
             // caller to poll, and the host keeps it current (FIX 3837).
             // A row that cannot keep them leaves no caller to answer them.
-            Step::AwaitingInput { intent, input } => {
+            Step::AwaitingInput {
+                intent,
+                input,
+                budget_steering,
+            } => {
                 let row = PendingConnectorCall {
                     held_reasons: Vec::new(),
                     input: Some(super::connector_call_input::PendingConnectorInput::kept(
@@ -404,6 +435,7 @@ impl Vault {
                     call_ref: resolved,
                     intent,
                     input,
+                    budget_steering,
                 };
                 host.bind_awaiting_call(&handle, resolved);
                 let resume = host.take_awaiting_resume(&handle, resolved);
@@ -704,6 +736,11 @@ impl Vault {
             now_ms(),
             &mut *host,
         )?;
+        // FIX 4747 slice 5: the run that made the call no longer runs here;
+        // nothing went, and the call names why.
+        if dispatch.agent_run_stood_down {
+            return Ok(refused(crate::agent_dispatch::AGENT_RUN_STOOD_DOWN));
+        }
         if let ScopedMcpConsentDecision::Escalate(reason) = dispatch.decision {
             *scope_evidence = crate::connector_key::connector_scope_evidence(
                 reason,
@@ -733,11 +770,25 @@ impl Vault {
         tool: &str,
         read: &mut Vec<EntityId>,
     ) -> crate::Result<(DataClass, bool, OutboundToolDescriptor)> {
-        let catalog_slate = self
-            .get_connector_key(&route.key_ref)?
-            .and_then(|key| key.slate_ref);
+        let txn = self.store.env.read_txn()?;
+        self.connector_tool_class_in_txn(&txn, governing, route, tool, read)
+    }
+
+    /// [`Self::connector_tool_class`] read in `txn`, a writer's included, so
+    /// a check inside one opens no read of its own (FIX 16029).
+    pub(super) fn connector_tool_class_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        governing: &ConnectorKeyRecord,
+        route: &ConnectorCallRoute,
+        tool: &str,
+        read: &mut Vec<EntityId>,
+    ) -> crate::Result<(DataClass, bool, OutboundToolDescriptor)> {
+        let catalog_slate =
+            crate::connector_key::read_key_for_pack_in_txn(self, txn, &route.key_ref)?
+                .and_then(|key| key.slate_ref);
         for slate_id in [governing.slate_ref, catalog_slate].into_iter().flatten() {
-            let slate = self.connector_slate(slate_id)?;
+            let slate = crate::connector_key::read_connector_slate_in_txn(self, txn, slate_id)?;
             if slate.is_some() {
                 read.push(slate_id);
             }
