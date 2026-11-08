@@ -36,19 +36,19 @@ use crate::{EntityId, Vault};
 
 /// FIX 4748 engine call (CALLS "FIX 4748 home down after"): how long a
 /// device's sessions with its home must go unserved in a row (a dial nobody
-/// answers, a refusal, a fault or a close before the home's root) before it
-/// counts its home down and syncs with its other machines.
+/// answers, a refusal, a fault or a close before the session's first round
+/// completes) before it counts its home down and syncs with its other
+/// machines.
 pub const HOME_DOWN_AFTER_SECS: u64 = 60;
 
 /// FIX 4748 engine call (CALLS "FIX 4748 home probe"): how often a peer
-/// session probes the home; the session ends once the home serves this
-/// machine's sync, as a home session's opening reads it.
+/// session probes the home; the session ends once the home sends a probe
+/// its root, and the next session tries the home's first round.
 pub const HOME_PROBE_SECS: u64 = 30;
 
 /// FIX 4748 engine call (CALLS "FIX 4748 home probe timeout"): how long one
-/// probe waits for the home to serve this machine's sync (the upgrade, the
-/// session's hello and the home's first frame) before it counts the home
-/// still down.
+/// probe waits for the home's root (the upgrade, the session's hello and the
+/// home's first frame) before it counts the home still down.
 pub const HOME_PROBE_TIMEOUT_SECS: u64 = 10;
 
 /// FIX 4748 engine call (CALLS "FIX 4748 peer order"): the machines a device

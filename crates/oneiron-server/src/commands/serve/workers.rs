@@ -275,6 +275,11 @@ pub(crate) async fn start_desktop_workers(
     ));
     // Checked built-in channels and their provider webhooks (OF-519).
     workers.push(crate::builtin_host::spawn(&sync_server, admitted()));
+    // Mail & Calendar pack sources sync as the local owner (FIX 12559).
+    workers.push(crate::mail_host::spawn_mail_source_syncs(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
     // Past the vault's deletion these two run on, to let its backups go at
     // their deadline (FIX 11979): every pass admitted, as today.
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
