@@ -152,6 +152,13 @@ pub(super) fn audit_and_stage_body(
     let message_birth = fixed.entity_type == crate::registry::ENTITY_TYPE_MESSAGE
         && crate::deletion::prospective_standing_in_txn(store, wtxn)?
         && crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &fixed.id)?.is_none();
+    // The filed row this put supersedes, read before its own row goes in:
+    // its file stays for the revision it becomes (FIX 22091).
+    let superseded = if fixed.entity_type == crate::registry::ENTITY_TYPE_ASSET {
+        crate::store::superseded_file_row_in_txn(store, wtxn, &fixed.id)?
+    } else {
+        None
+    };
     stage_entity_body_row(
         store,
         wtxn,
@@ -190,6 +197,7 @@ pub(super) fn audit_and_stage_body(
             &fixed.id,
             data,
             fixed.options.storage.asset_file,
+            superseded.as_deref(),
         )?;
     } else if fixed.options.storage.asset_file.is_some() {
         return Err(Error::InvariantViolation(
