@@ -53,6 +53,7 @@ mod live_voice;
 mod mesh;
 mod model_manifest;
 mod model_pack;
+mod model_settings;
 mod note_history;
 mod oauth_authorization;
 mod off_record;
@@ -316,10 +317,15 @@ pub struct TaskCreateRequest {
     pub parent_ref: Option<String>,
     /// When the TASK falls due, Unix seconds (FIX 4749). A due TASK is a
     /// watcher: it ticks once on `schedule.tick` after this time, and a hook
-    /// bound to that tick returns Nothing or Enqueue. Only a brief-less
-    /// standard task carries one; absent is no tick.
+    /// bound to that tick returns Nothing or Enqueue. A standard task, briefed
+    /// or not, carries one; absent is no tick.
     #[serde(default)]
     pub due_at: Option<u64>,
+    /// A watch TASK (FIX 22121): nothing realizes it at create; its `due_at`
+    /// tick runs its hooks and settles it Done. It needs `due_at`, and no
+    /// assignee or the Dreamer.
+    #[serde(default)]
+    pub watch: bool,
 }
 
 /// The create spec one `tasks.create` request names, owned by the
@@ -334,28 +340,17 @@ pub fn task_create_spec(
         .as_deref()
         .map(|reference| crate::memory::resolve_entity_ref(memory.vault(), reference))
         .transpose()?;
-    let spec = crate::task_verb::TaskCreateSpec::new(
+    let mut spec = crate::task_verb::TaskCreateSpec::new(
         crate::msgpack_value_from_json(&input.spec)?,
         input.label,
         Some(memory.actor()),
         Some(memory.vault().now_recorded_at()),
     );
-    let spec = match input.assignee {
-        Some(assignee) => spec.with_assignee(assignee),
-        None => spec,
-    };
-    let spec = match input.ttl {
-        Some(ttl) => spec.with_ttl(ttl),
-        None => spec,
-    };
-    let spec = match input.due_at {
-        Some(due_at) => spec.with_due_at(due_at),
-        None => spec,
-    };
-    let spec = match parent_ref {
-        Some(parent_ref) => spec.with_parent_ref(parent_ref),
-        None => spec,
-    };
+    spec.assignee = input.assignee;
+    spec.ttl = input.ttl;
+    spec.due_at = input.due_at;
+    spec.watch = input.watch;
+    spec.parent_ref = parent_ref;
     match (input.intent_key, input.brief) {
         (Some(intent_key), Some(brief)) => Ok(spec.with_brief(intent_key, brief)),
         (None, None) => Ok(spec),
@@ -504,6 +499,7 @@ pub use self::live_voice::*;
 pub use self::mesh::*;
 pub use self::model_manifest::*;
 pub use self::model_pack::*;
+pub use self::model_settings::*;
 pub use self::note_history::*;
 pub use self::oauth_authorization::*;
 pub use self::off_record::*;

@@ -384,6 +384,9 @@ pub struct MediaAsrAdapter<Q> {
 /// `bound_ms` of audio, and starts it at the rung's media gate before any
 /// audio leaves.
 pub trait VoiceStreamDoor: Send + Sync {
+    /// Rechecks a continuing stream before its next physical send, after any wait.
+    fn release_stream(&self) -> crate::llm::LlmResult<()>;
+
     fn open_stream<'a>(
         &'a self,
         request: MediaRequest,
