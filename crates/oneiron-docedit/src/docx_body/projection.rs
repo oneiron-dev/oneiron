@@ -3,7 +3,7 @@
 use crate::{ArchiveLimits, DoceditError, Document, preflight_with_limits};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use stemma::domain::CanonDoc;
+use stemma::domain::{CanonDoc, TrackedBlock};
 use stemma::edit::EditTransaction;
 use stemma::view::{
     BlockRole, BlockView, DocumentView, SegmentView, TrackStatus, build_story_blocks_view,
@@ -236,10 +236,10 @@ fn story_text_op(
     }
 }
 
-/// One story runs change as its native op: authored header/footer paragraphs
-/// only, as styled inlines for one whole-paragraph tracked redline. Notes take
-/// plain text only and comments have no write verb, so both refuse rather than
-/// silently dropping marks.
+/// One story runs change as its native op: an authored header/footer paragraph
+/// or one paragraph within a footnote/endnote story, as styled inlines for one
+/// whole-paragraph tracked redline. Comments have no write verb and refuse
+/// rather than silently dropping marks.
 fn story_runs_op(
     canonical: &CanonDoc,
     scope: &DocxStoryScope,
@@ -307,16 +307,58 @@ fn story_runs_op(
                 "semantic_hash": target.guard,
             }))
         }
-        DocxStoryScope::Footnote { id } => Err(DoceditError::InvalidTransaction(format!(
-            "footnote story {id} takes plain text only: marked runs would silently drop marks"
-        ))),
-        DocxStoryScope::Endnote { id } => Err(DoceditError::InvalidTransaction(format!(
-            "endnote story {id} takes plain text only: marked runs would silently drop marks"
-        ))),
+        DocxStoryScope::Footnote { id } => {
+            let story = canonical
+                .footnotes
+                .iter()
+                .find(|story| &story.id == id)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown footnote story {id}"))
+                })?;
+            note_runs_op(&story.blocks, &story.id, "footnote", block, runs)
+        }
+        DocxStoryScope::Endnote { id } => {
+            let story = canonical
+                .endnotes
+                .iter()
+                .find(|story| &story.id == id)
+                .ok_or_else(|| {
+                    DoceditError::InvalidTransaction(format!("unknown endnote story {id}"))
+                })?;
+            note_runs_op(&story.blocks, &story.id, "endnote", block, runs)
+        }
         DocxStoryScope::Comment { id } => Err(DoceditError::InvalidTransaction(format!(
             "comment story {id} is read-only: comment text has no native write verb"
         ))),
     }
+}
+
+/// One footnote/endnote runs change as its native `edit_note_runs` op. The
+/// block resolves by ordered story-local lookup over the ACTUAL note story,
+/// so any paragraph of the note (not just its first) is addressable; the
+/// guard it carries is that paragraph's own.
+fn note_runs_op(
+    blocks: &[TrackedBlock],
+    note_id: &str,
+    note_kind: &'static str,
+    block: &str,
+    runs: &[DocxRun],
+) -> Result<Value, DoceditError> {
+    let story_view = build_story_blocks_view(blocks);
+    let target = story_view
+        .blocks
+        .iter()
+        .find(|block_view| block_view.id.to_string() == block)
+        .ok_or_else(|| DoceditError::InvalidTransaction(format!("unknown block {block}")))?;
+    Ok(json!({
+        "op": "edit_note_runs",
+        "note_id": note_id,
+        "note_kind": note_kind,
+        "target": target.id.to_string(),
+        "expect": target.text,
+        "content": story_runs_content(runs),
+        "semantic_hash": target.guard,
+    }))
 }
 
 /// The v4 inline list for a story text change, through the same builder the

@@ -129,6 +129,20 @@ The exact-run parser registration correction (2026-11-05, FIX 14300) adds
 so the setting must be registered there as well as on the enum. Other fields,
 tags, unknown-field checks and schema validation stay unchanged.
 
+The marked note-runs change (2026-11-05, FIX 594) adds the native
+`edit_note_runs` op (`src/edit_v4.rs`, `src/edit_v4/catalog.rs`,
+`src/edit/mod.rs`, `src/edit/verbs/footnotes.rs`) and opens the wrapper
+`SetStoryRuns` footnote/endnote arms (`docx_body/projection.rs`). The new op
+edits one paragraph within the actual footnote/endnote `w:id` story as a
+whole-paragraph tracked redline with the exact six marks, paragraph-scoped
+across multi-paragraph notes. It reuses the shared segment builder, the exact
+post-pass (moved whole from `headers_footers.rs` to a parent-private helper
+with no visibility change), the header/footer guard/expect/opaque law, and the
+shared structural-marker offset law for bookmarks, comment ranges, and foreign
+markers; the auto-number glyph stays a leading Normal run. Existing `EditNote`
+plaintext behavior is byte-unchanged. No contract schema bump, no new error,
+format, default, cap, or Loro change.
+
 The wrapper's terminal final-deletion change (2026-11-05) preserves sequential
 actor attribution for one last-group paragraph delete when the only extra
 native id is its physical final-mark carrier. The existing snapshot and view
@@ -183,6 +197,13 @@ inferred from replacement prose. The same predicate now serves marker presence,
 stripping and this carrier. Native wire/schema versions and marker-free
 replacement semantics are unchanged; no Word-runtime comparison is claimed.
 
+The note/comment run marker correction (2026-11-07) repositions each retained
+Normal marker once between the old and replacement text readings, using the
+existing offset-placement helper only to plan the target positions. The planning
+copies are discarded, so accepted, rejected and unresolved output retain one
+marker identity rather than emitting both originals and replacement copies.
+The exact-marks pass still runs before any replacement text is split; the shared
+segment builder, marker offset law and note auto-number behavior are unchanged.
 
 ## Native deck transaction graphic ceilings (FIX 10653)
 

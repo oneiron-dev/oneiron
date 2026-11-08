@@ -954,6 +954,24 @@ pub enum Op {
         #[serde(default)]
         rationale: Option<String>,
     },
+    /// Edit one paragraph within a footnote/endnote story as marked runs
+    /// (§17.11). Mirrors `EditStep::EditNoteRuns`. `note_id` must be
+    /// non-empty; `note_kind` is `"footnote"` | `"endnote"`; `target` is the
+    /// story-local paragraph id; `expect` is the current-text precondition;
+    /// `content` is the v4 inline list (same shape as a paragraph replace).
+    /// Empty content empties the paragraph; new runs carry the exact six marks.
+    EditNoteRuns {
+        note_id: String,
+        /// `"footnote"` | `"endnote"`.
+        note_kind: String,
+        target: NodeId,
+        expect: String,
+        content: Vec<Inline>,
+        #[serde(default)]
+        semantic_hash: Option<String>,
+        #[serde(default)]
+        rationale: Option<String>,
+    },
     /// Set page-setup properties on a section (§17.6). Mirrors
     /// `EditStep::SetPageSetup`. `target` is the wire section target
     /// (`{"section":"body"}` or `{"paragraph":"<block_id>"}`); the patch fields
@@ -2404,6 +2422,18 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
     ("edit_note", &["note_id", "note_kind", "body", "rationale"]),
     ("delete_note", &["note_id", "note_kind", "rationale"]),
     (
+        "edit_note_runs",
+        &[
+            "note_id",
+            "note_kind",
+            "target",
+            "expect",
+            "content",
+            "semantic_hash",
+            "rationale",
+        ],
+    ),
+    (
         "set_page_setup",
         &[
             "target",
@@ -3677,6 +3707,15 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
                 }
             }
             Op::DeleteNote { note_id, .. } => {
+                if note_id.trim().is_empty() {
+                    return Err(SchemaError::NoteMissingId { op_index });
+                }
+            }
+            // `expect` needs no emptiness gate here: a blank expectation is
+            // the guarded empty-paragraph fill the projection sends with the
+            // actual semantic hash, and apply-time matching is the same
+            // substring law the header/footer story edits use.
+            Op::EditNoteRuns { note_id, .. } => {
                 if note_id.trim().is_empty() {
                     return Err(SchemaError::NoteMissingId { op_index });
                 }
@@ -5110,6 +5149,23 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
         } => Ok(EditStep::DeleteNote {
             note_id,
             note_kind: parse_note_kind(op_index, &note_kind)?,
+            rationale,
+        }),
+        Op::EditNoteRuns {
+            note_id,
+            note_kind,
+            target,
+            expect,
+            content,
+            semantic_hash,
+            rationale,
+        } => Ok(EditStep::EditNoteRuns {
+            note_id,
+            note_kind: parse_note_kind(op_index, &note_kind)?,
+            block_id: target,
+            expect,
+            semantic_hash,
+            content: v4_inlines_to_paragraph_content(op_index, &content)?,
             rationale,
         }),
         Op::SetPageSetup {
