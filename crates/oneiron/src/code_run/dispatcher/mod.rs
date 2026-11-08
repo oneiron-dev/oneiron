@@ -205,6 +205,11 @@ pub struct HostSelfDispatcher<'a> {
     /// The seats each open spawn call resolved (FIX 9180): host-only, one
     /// frame per call, taken by the recorder of the call's row.
     spawn_capture: spawn_capture::SpawnCapture,
+    /// The admitted MCP caller the host bound the run for (FIX 4606): only
+    /// [`Self::with_code_consent_origin`] sets it, from the request the
+    /// host admitted. A code consent wait the run mints keeps it. No guest
+    /// call reaches it.
+    code_consent_origin: Option<crate::code_run::CodeConsentRunOrigin>,
 }
 
 /// One bridge call's place in a durable engine-executor run.
