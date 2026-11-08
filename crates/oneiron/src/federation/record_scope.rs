@@ -37,7 +37,6 @@ mod stamping;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use comm_source::{ScopedCommRead, read_scoped_comm_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use self::birth_placement::{
     BirthPlacement, GuestPlacement, carries_birth_placement, stored_placement_in_txn,
@@ -50,6 +49,7 @@ pub(crate) use self::stamping::{
     stamp_leader_project, stamp_put, stamp_queue_check_exhaust_birth, stamp_task_birth,
     stamp_task_fact, unstage_session_position,
 };
+pub(crate) use comm_source::{ScopedCommRead, read_scoped_comm_in_txn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeView {
@@ -404,16 +404,16 @@ fn stamp_bound_on(
     } else if kind == crate::registry::ENTITY_TYPE_COMM_RECORD {
         use crate::ports::EntityStoreRead;
         let Some(row) = store.port_entity_record(txn, &id)? else {
-            return Ok(None);
+            return Ok(false);
         };
         if row.entity_type != kind {
-            return Ok(None);
+            return Ok(false);
         }
         if let Some(source) = crate::comm::ScopedTouchRecord::decode(id, &row.body)? {
             let mut position = source.position();
             position.verbs = ScopeAxis::Bottom;
             if stamp.scope != position {
-                return Ok(None);
+                return Ok(false);
             }
             Some(source.facet())
         } else {
@@ -480,8 +480,7 @@ pub(crate) fn record_world_in(
     if kind == crate::registry::ENTITY_TYPE_COMM_RECORD
         && let Some(source) = crate::comm::ScopedTouchRecord::decode(id, data)?
     {
-        return Ok(stored_scope(store, txn, id, kind)?
-            .map(|_| Some(source.world())));
+        return Ok(stored_scope(store, txn, id, kind)?.map(|_| Some(source.world())));
     }
     // A live pad rides its world's windows (`sync::types::entity_world`).
     if kind == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
