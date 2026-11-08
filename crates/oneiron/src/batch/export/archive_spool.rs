@@ -217,11 +217,11 @@ impl FileSpool {
             }
         })?;
         if *hasher.finalize().as_bytes() != digest {
-            self.discard_staged(staged)?;
+            staged.discard()?;
             return Err(Error::CorruptedIndex("attached file digest"));
         }
         let named = crate::entity_id::bytes_to_hex_lower(&digest);
-        self.commit_staged(named.clone(), staged)?;
+        staged.commit(named.clone())?;
         Ok(named)
     }
 
@@ -234,63 +234,33 @@ impl FileSpool {
         &mut self,
         bytes: u64,
         copy: impl FnOnce(&mut BufWriter<File>) -> Result<()>,
-    ) -> Result<StagedFile> {
+    ) -> Result<StagedFile<'_>> {
         let at = self.end;
         self.file.seek(SeekFrom::Start(at))?;
         let copied = match copy(&mut self.file) {
             Ok(()) => self.file.stream_position().map_err(Error::from),
             Err(error) => Err(error),
         };
-        let staged = StagedFile { at, bytes };
         match copied {
-            Ok(end) if end == at + bytes => Ok(staged),
+            Ok(end) if end == at + bytes => Ok(StagedFile {
+                spool: self,
+                at,
+                bytes,
+            }),
             failed => {
-                self.discard_staged(staged)?;
-                Err(failed.err().unwrap_or_else(spool_failed))
+                let error = failed.err().unwrap_or_else(spool_failed);
+                if let Err(cleanup_error) = self.truncate_from(at) {
+                    tracing::warn!(error = %cleanup_error, "export staged-body cleanup failed");
+                }
+                Err(error)
             }
         }
     }
 
-    /// Hands a staged body to `scan` as a reader over exactly its bytes, read
-    /// where they are spooled (FIX 7213); the spool writes on after it.
-    pub(crate) fn scan_staged<T>(
-        &mut self,
-        staged: &StagedFile,
-        scan: impl FnOnce(&mut StagedReader<'_>) -> Result<T>,
-    ) -> Result<T> {
-        self.file.flush()?;
-        let at = staged.at;
-        let file = self.file.get_mut();
-        file.seek(SeekFrom::Start(at))?;
-        let mut reader = StagedReader {
-            file,
-            at,
-            bytes: staged.bytes,
-            pos: 0,
-        };
-        let scanned = scan(&mut reader);
-        reader.file.seek(SeekFrom::Start(at + staged.bytes))?;
-        scanned
-    }
-
-    /// Indexes a staged body under `digest`, whose BLAKE3 and length the
-    /// caller has checked (FIX 7213). A body already spooled under it is cut
-    /// off instead, so no digest is spooled twice.
-    pub(crate) fn commit_staged(&mut self, digest: String, staged: StagedFile) -> Result<()> {
-        if self.index.contains_key(&digest) {
-            return self.discard_staged(staged);
-        }
-        self.end = staged.at + staged.bytes;
-        self.index.insert(digest, (staged.at, staged.bytes));
-        Ok(())
-    }
-
-    /// Cuts a staged body off the spool's end (FIX 7213): its bytes are
-    /// freed, and the next file is written where it started.
-    pub(crate) fn discard_staged(&mut self, staged: StagedFile) -> Result<()> {
-        self.file.seek(SeekFrom::Start(staged.at))?;
-        self.file.get_ref().set_len(staged.at)?;
-        self.end = staged.at;
+    fn truncate_from(&mut self, at: u64) -> Result<()> {
+        self.file.seek(SeekFrom::Start(at))?;
+        self.file.get_ref().set_len(at)?;
+        self.end = at;
         Ok(())
     }
 
@@ -322,15 +292,61 @@ impl FileSpool {
 }
 
 /// A body staged at the end of a [`FileSpool`] and not yet indexed
-/// (FIX 7213), until [`FileSpool::commit_staged`] keeps it or
-/// [`FileSpool::discard_staged`] cuts it off.
+/// (FIX 7213), until [`StagedFile::commit`] keeps it or
+/// [`StagedFile::discard`] cuts it off.
 #[must_use]
-pub(crate) struct StagedFile {
+pub(crate) struct StagedFile<'spool> {
+    spool: &'spool mut FileSpool,
     at: u64,
     bytes: u64,
 }
 
-/// A staged body read where it is spooled ([`FileSpool::scan_staged`]):
+impl StagedFile<'_> {
+    /// Hands a staged body to `scan` as a reader over exactly its bytes, read
+    /// where they are spooled (FIX 7213); the spool writes on after it.
+    pub(crate) fn scan<T>(
+        &mut self,
+        scan: impl FnOnce(&mut StagedReader<'_>) -> Result<T>,
+    ) -> Result<T> {
+        self.spool.file.flush()?;
+        let at = self.at;
+        let bytes = self.bytes;
+        let file = self.spool.file.get_mut();
+        file.seek(SeekFrom::Start(at))?;
+        let mut reader = StagedReader {
+            file,
+            at,
+            bytes,
+            pos: 0,
+        };
+        let scanned = scan(&mut reader);
+        reader.file.seek(SeekFrom::Start(at + bytes))?;
+        scanned
+    }
+
+    /// Indexes a staged body under `digest`, whose BLAKE3 and length the
+    /// caller has checked (FIX 7213). A body already spooled under it is cut
+    /// off instead, so no digest is spooled twice.
+    pub(crate) fn commit(self, digest: String) -> Result<()> {
+        if self.spool.index.contains_key(&digest) {
+            return self.discard();
+        }
+        let at = self.at;
+        let bytes = self.bytes;
+        self.spool.end = at + bytes;
+        self.spool.index.insert(digest, (at, bytes));
+        Ok(())
+    }
+
+    /// Cuts a staged body off the spool's end (FIX 7213): its bytes are
+    /// freed, and the next file is written where it started.
+    pub(crate) fn discard(self) -> Result<()> {
+        let at = self.at;
+        self.spool.truncate_from(at)
+    }
+}
+
+/// A staged body read where it is spooled ([`StagedFile::scan`]):
 /// exactly its bytes, through the file under the spool's writer.
 pub(crate) struct StagedReader<'f> {
     file: &'f mut File,

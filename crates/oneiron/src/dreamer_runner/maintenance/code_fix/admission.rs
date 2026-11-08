@@ -23,6 +23,8 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use super::publisher::{EngineAdmission, EngineCandidateRun, EngineNotRun, EnginePairState};
 use super::{CodeFixSettled, SealedRun};
 use crate::claim::ScopedReadActorKey;
@@ -40,7 +42,8 @@ use crate::ports::EntityStoreRead;
 use crate::{EntityId, Error, Result, Vault};
 
 /// Where a failure's captured source sits, read before any of its bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A kept owner pair keeps one per step, as proof data (FIX 20607).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct CaptureRefs {
     /// Every world the failing run touched.
     worlds: Vec<EntityId>,
@@ -358,27 +361,38 @@ pub(crate) fn admitting_grant_in(
     let now = vault.instant_in_txn(txn)?.secs();
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let mut lapsed = false;
-    'grants: for standing in vault.agent_grants_in_txn(txn)? {
+    let grants = vault.agent_grants_in_txn(txn)?;
+    // A verb class a Coach Grant names that admits `read` lists it (FIX 8735).
+    let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
+        &vault.store,
+        txn,
+        grants
+            .iter()
+            .filter(|standing| standing.grant.member_ref == coach)
+            .map(|standing| &standing.grant),
+    )?;
+    'grants: for standing in &grants {
         let grant = &standing.grant;
+        let read = grant.scope_for_verb("read", &classes);
         if only.is_some_and(|only| only != standing.id)
             || grant.member_ref != coach
             || !owners.contains(&standing.delegated_by)
-            || !grant.confers_at(now)
+            || !grant.confers_with_classes_at(now, &classes)
             || !refs
                 .worlds
                 .iter()
-                .all(|world| grant.authority_scope.worlds.contains(&ScopeId(*world)))
+                .all(|world| read.worlds.contains(&ScopeId(*world)))
         {
             continue;
         }
         for (id, raw) in &raws {
-            if !lane.grant_admits_position_in(txn, id, raw, &grant.authority_scope)? {
+            if !lane.grant_admits_position_in(txn, id, raw, &read)? {
                 continue 'grants;
             }
         }
         if let Some(scopes) = scopes.as_deref() {
             for scope in scopes {
-                if !grant.authority_scope.admits("read", scope, &Scope::top()) {
+                if !read.admits("read", scope, &Scope::top()) {
                     continue 'grants;
                 }
             }

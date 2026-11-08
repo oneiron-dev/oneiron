@@ -104,12 +104,24 @@ pub(super) fn campaign_envelope_bytes(
     step: &CampaignProgramStep,
     outbound: &CampaignProgramOutbound,
 ) -> Result<CampaignEnvelopeBytes> {
+    let txn = vault.store.env.read_txn()?;
+    campaign_envelope_bytes_in_txn(vault, &txn, event, step, outbound)
+}
+
+pub(super) fn campaign_envelope_bytes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &CampaignEnrollmentEvent,
+    step: &CampaignProgramStep,
+    outbound: &CampaignProgramOutbound,
+) -> Result<CampaignEnvelopeBytes> {
     let Some(target) =
-        super::target::resolve_campaign_member_target(vault, event.entity_ref, step)?
+        super::target::resolve_campaign_member_target_in_txn(vault, txn, event.entity_ref, step)?
     else {
         return Ok(CampaignEnvelopeBytes::UnresolvableTarget);
     };
-    let Some(content_ref) = vault.campaign_step_body_latest_ref_if_matches(
+    let Some(content_ref) = vault.campaign_step_body_latest_ref_if_matches_in_txn(
+        txn,
         step.program_ref,
         step.step_ref,
         outbound.call_seq,
@@ -202,12 +214,14 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         .ok_or(Error::EntityNotFound)?;
     let step = resolve_program_step(vault, &payload, &event)?;
     let Some(outbound) = step.outbound.as_ref() else {
+        super::held::observe_nothing_owed(vault, &event, &step);
         return Ok(EnrollmentOutboundLeg::NoOutboundStep);
     };
     // The send waits on the member's own state, read now (FIX 9662): an
     // applied or replayed consequence never reaches a paused, suppressed or
     // exited member.
     if !membership_sends(vault, &event) {
+        super::held::observe_nothing_owed(vault, &event, &step);
         return Ok(EnrollmentOutboundLeg::MembershipNotReady);
     }
     // The send waits on a resolvable target (FIX 11513 K12): without one
@@ -226,6 +240,7 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
                 step_ref = %step.step_ref.to_hex(),
                 "a campaign enrollment's member does not resolve to a sendable target on the step's pinned channel; nothing is sent (FIX 11513 K12)"
             );
+            super::held::observe_nothing_owed(vault, &event, &step);
             return Ok(EnrollmentOutboundLeg::UnresolvableTarget);
         }
         CampaignEnvelopeBytes::BodyUnpinned => {
@@ -235,10 +250,16 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
                 step_ref = %step.step_ref.to_hex(),
                 "a campaign enrollment's filed body does not pin to its program row; nothing is sent (FIX 11513 K11)"
             );
+            super::held::observe_nothing_owed(vault, &event, &step);
             return Ok(EnrollmentOutboundLeg::BodyUnpinned);
         }
     };
     let consequence_id = enrollment_consequence_id(&event, &step)?;
+    let held_request = super::held::PreparedHeldRequest {
+        key: super::approval::request_key(&event, &step, outbound, consequence_id),
+        owner_actor: event.owner_actor,
+        envelope_hash: crate::outbound_intent_ledger::hash_frozen_payload(&envelope_bytes),
+    };
     // FIX 6424 part 2a (Engine ruling 7): the request retained for this call
     // is read before its gate input is built; a new one is retained before
     // the chokepoint asks for it.
@@ -260,6 +281,7 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         suppression_receipt: None,
         admission_ceiling: None,
         co_actor: None,
+        exclusive_route: None,
     };
     let result = execute_outbound_effect(
         vault,
@@ -268,6 +290,7 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         now_ms,
         transport,
     )?;
+    super::held::observe_outbound_result(vault, attempt, &held_request, &result, now_ms);
     Ok(EnrollmentOutboundLeg::Dispatched(EnrollmentLegDispatch {
         effect: result,
         first_asked_event_ref: ask.first_event_ref,
@@ -428,14 +451,28 @@ pub fn enrollment_outbound_approval_digest(
     vault: &Vault,
     payload: &CampaignEnrollmentAttemptPayload,
 ) -> crate::error::Result<Option<crate::consent::EffectDigest>> {
-    let event = campaign_enrollment_event(vault, payload.membership_event_ref)?
-        .ok_or(Error::EntityNotFound)?;
-    let step = resolve_program_step(vault, payload, &event)?;
+    let txn = vault.store.env.read_txn()?;
+    enrollment_outbound_approval_digest_in_txn(vault, &txn, payload)
+}
+
+pub(super) fn enrollment_outbound_approval_digest_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    payload: &CampaignEnrollmentAttemptPayload,
+) -> crate::error::Result<Option<crate::consent::EffectDigest>> {
+    let event = super::detection::campaign_enrollment_event_and_hold_in_txn(
+        vault,
+        txn,
+        payload.membership_event_ref,
+    )?
+    .map(|(event, _)| event)
+    .ok_or(Error::EntityNotFound)?;
+    let step = super::runner::resolve_program_step_in_txn(vault, txn, payload, &event)?;
     let Some(outbound) = step.outbound.as_ref() else {
         return Ok(None);
     };
     let consequence_id = enrollment_consequence_id(&event, &step)?;
-    let ask = super::approval::leg_ask(vault, &event, &step, outbound, consequence_id, false);
+    let ask = super::approval::leg_ask_in_txn(vault, txn, &event, &step, outbound, consequence_id);
     let gate = enrollment_gate_input(&step, outbound, &event, ask.target);
     Ok(crate::gate::external_effect_approval_digest(&gate))
 }
@@ -487,4 +524,98 @@ fn enrollment_gate_input(
         policy_risk: ExternalEffectPolicyRisk::Normal,
         send_autonomy: None,
     }
+}
+
+/// The request an owner can review, read wholly through the caller's snapshot.
+pub(super) struct CampaignApprovalSnapshot {
+    pub(super) key: ([u8; 16], u64, [u8; 32]),
+    pub(super) owner_actor: EntityId,
+    pub(super) event_ref: EntityId,
+    pub(super) sender_ref: EntityId,
+    pub(super) approval_digest: crate::consent::EffectDigest,
+    pub(super) envelope_hash: [u8; 32],
+    pub(super) intent_id: Option<[u8; 32]>,
+}
+
+pub(super) fn campaign_approval_snapshot_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    payload: &CampaignEnrollmentAttemptPayload,
+) -> std::result::Result<Option<CampaignApprovalSnapshot>, IntentLedgerError> {
+    let Some(approval_digest) = enrollment_outbound_approval_digest_in_txn(vault, txn, payload)?
+    else {
+        return Ok(None);
+    };
+    let event = super::detection::campaign_enrollment_event_and_hold_in_txn(
+        vault,
+        txn,
+        payload.membership_event_ref,
+    )?
+    .map(|(event, _)| event)
+    .ok_or(Error::EntityNotFound)?;
+    let step = super::runner::resolve_program_step_in_txn(vault, txn, payload, &event)?;
+    let Some(outbound) = step.outbound.as_ref() else {
+        return Ok(None);
+    };
+    let consequence_id = enrollment_consequence_id(&event, &step)?;
+    let record = crate::outbound_intent_ledger::read_intent_for_attempt_in_txn(
+        vault,
+        txn,
+        consequence_id,
+        outbound.call_seq,
+    )?;
+    let frozen_event = if let Some(record) = record.as_ref() {
+        if record.state != crate::outbound_intent_ledger::IntentState::Pending
+            || record.server != step.channel
+            || record.tool != outbound.verb
+            || record.idempotency_supported != outbound.idempotency_supported
+        {
+            return Ok(None);
+        }
+        let envelope: serde_json::Value = serde_json::from_slice(record.payload())
+            .map_err(|_| IntentLedgerError::InvalidRecord("campaign frozen envelope"))?;
+        let trigger_ref = envelope
+            .get("trigger_ref")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|id| EntityId::from_hex(id).ok())
+            .ok_or(IntentLedgerError::InvalidRecord(
+                "campaign frozen event ref",
+            ))?;
+        let Some((frozen_event, _)) =
+            super::detection::campaign_enrollment_event_and_hold_in_txn(vault, txn, trigger_ref)?
+        else {
+            return Ok(None);
+        };
+        if frozen_event.owner_actor != event.owner_actor
+            || enrollment_consequence_id(&frozen_event, &step)? != consequence_id
+        {
+            return Ok(None);
+        }
+        frozen_event
+    } else {
+        event.clone()
+    };
+    let envelope = match campaign_envelope_bytes_in_txn(vault, txn, &frozen_event, &step, outbound)?
+    {
+        CampaignEnvelopeBytes::Resolved(bytes) => bytes,
+        CampaignEnvelopeBytes::UnresolvableTarget | CampaignEnvelopeBytes::BodyUnpinned => {
+            return Ok(None);
+        }
+    };
+    let envelope_hash = crate::outbound_intent_ledger::hash_frozen_payload(&envelope);
+    if record
+        .as_ref()
+        .is_some_and(|record| record.payload_hash != envelope_hash)
+    {
+        return Ok(None);
+    }
+    Ok(Some(CampaignApprovalSnapshot {
+        key: super::approval::request_key(&event, &step, outbound, consequence_id),
+        owner_actor: event.owner_actor,
+        event_ref: frozen_event.event_ref,
+        sender_ref: step.sender_ref,
+        approval_digest,
+        envelope_hash,
+        intent_id: record.as_ref().map(|record| record.id),
+    }))
 }

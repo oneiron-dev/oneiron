@@ -59,10 +59,13 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
     Ok(match verb {
         RunVerb::VaultSearch => {
             let args: MemorySearchInput = decode(input)?;
-            SelfCall::MemorySearch(SelfMemorySearchCall::new(
-                args.query,
-                args.limit.map_or(20, |limit| limit as usize),
-            ))
+            SelfCall::MemorySearch(
+                SelfMemorySearchCall::new(
+                    args.query,
+                    args.limit.map_or(20, |limit| limit as usize),
+                )
+                .with_read_filter(args.filter),
+            )
         }
         RunVerb::VaultClaimsPut => {
             let args: MemoryClaimInput = decode(input)?;
@@ -240,6 +243,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         verb @ (RunVerb::SelfCodeSnapshotsGet
         | RunVerb::SelfCodeSnapshotsRead
         | RunVerb::SelfCodeSymbolsDefinitions
+        | RunVerb::SelfCodeSymbolsNeighbors
         | RunVerb::SelfCodeViewsGet
         | RunVerb::SelfCodeViewsRead
         | RunVerb::SelfCodeMergeQueueObserve
@@ -252,10 +256,10 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         | RunVerb::SelfCodeProposalResolve
         | RunVerb::SelfCodeMergeQueueEnqueue
         | RunVerb::SelfCodeCheckoutBind
-        | RunVerb::SelfCodeExport) => SelfCall::Repo(
+        | RunVerb::SelfCodeExport) => SelfCall::Repo(Box::new(
             super::RepoRunCall::decode(verb, input)?
                 .ok_or_else(|| failure("invalid typed component arguments"))?,
-        ),
+        )),
     })
 }
 
