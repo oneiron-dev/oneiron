@@ -27,8 +27,8 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::task_verb::{
     AskAuthorityScope, ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason,
-    TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
-    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
+    TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason,
+    TaskAskSource, TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
 };
 use crate::write_envelope::WriteActor;
 
@@ -198,11 +198,11 @@ impl Memory<'_> {
         question.options = BTreeMap::from([
             (
                 TaskAskOptionId::new(ACCEPT)?,
-                "Accept: land these forks as you".to_owned(),
+                TaskAskOption::new("Accept: land these forks as you".to_owned()),
             ),
             (
                 TaskAskOptionId::new(REJECT)?,
-                "Reject: discard these forks as you".to_owned(),
+                TaskAskOption::new("Reject: discard these forks as you".to_owned()),
             ),
         ]);
         question.label = Some(format!(
