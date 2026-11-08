@@ -45,10 +45,13 @@ use super::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::federation::GitPushRepo;
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
+use crate::origin::RepoPortableId;
 use crate::origin::secret_marks::{
     RepoBlobAddress, RepoBlobMarks, RepoMarkFacts, RepoSecretMarkLookup,
 };
+use crate::origin::secret_projection::RepoRevealRecipient;
 use crate::secret_custody::RepoFileRevealTarget;
 use crate::secret_record::{RepoFileKeys, RepoFileOriginal};
 
@@ -337,4 +340,37 @@ pub(crate) fn recipient_repo_anchor(
     };
     let txn = vault.store.env.read_txn()?;
     vault.served_repo_anchor_in_txn(&txn, &canonical.identity().as_hex(), project)
+}
+
+/// The recipient's repo binding for this same canonical store. A known
+/// portable repo must name the requested live project and stored folder;
+/// it never falls through to a different private anchor. An unknown id
+/// keeps the recipient's original project and served-anchor lookup.
+/// Neither selection grants a read: the live per-file grants still decide.
+pub(crate) fn recipient_repo_binding(
+    vault: &Vault,
+    canonical: &GitWireRepo,
+    recipient: &RepoRevealRecipient,
+    portable: Option<(&RepoPortableId, EntityId)>,
+) -> Result<Option<RepoProjectionRevealBinding>> {
+    if let Some((portable, project)) = portable {
+        let txn = vault.store.env.read_txn()?;
+        if let Some(repo) = vault.resolve_repo_anchor_by_portable_in_txn(&txn, portable)? {
+            let Some(path) = vault.git_push_anchor_in_txn(&txn, &GitPushRepo { repo, project })?
+            else {
+                return Ok(None);
+            };
+            let identity = canonical.identity().as_hex();
+            if vault.git_push_store_identity(&path).as_deref() != Some(identity.as_str()) {
+                return Ok(None);
+            }
+            let mut binding = RepoProjectionRevealBinding::of(repo, recipient);
+            binding.project = binding.project.or(Some(project));
+            return Ok(Some(binding));
+        }
+    }
+    Ok(
+        recipient_repo_anchor(vault, canonical, recipient.project())?
+            .map(|repo| RepoProjectionRevealBinding::of(repo, recipient)),
+    )
 }
