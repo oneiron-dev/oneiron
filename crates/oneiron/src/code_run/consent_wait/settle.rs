@@ -471,7 +471,7 @@ pub(crate) fn prove_code_consent_holder_act_in_txn(
         refuse_code_consent_wait_in_txn(vault, txn, input.wait_id, &[CODE_WAIT_TARGET_CHANGED])?;
         return Ok(None);
     }
-    if !original_authority_holds_in_txn(vault, txn, &row.binding) {
+    if !original_authority_holds_in_txn(vault, txn, &row) {
         refuse_code_consent_wait_in_txn(
             vault,
             txn,

@@ -21,7 +21,7 @@ pub struct OrganOutcome {
     pub outputs: Vec<OrganOutput>,
     pub report: Value,
     pub receipt: CallReceipt,
-    /// The decoded reply's room, held while its body and report live.
+    /// The decoded reply's room, including its inline output bytes.
     pub(crate) _frame: Option<Lease>,
 }
 

@@ -31,7 +31,7 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeWaitRebindRequest,
     ) -> MemoryResult<CodeWaitRebindReceipt> {
-        self.code_wait_owner(owner)?;
+        self.code_wait_person(owner)?;
         if self.writes_generated() {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,

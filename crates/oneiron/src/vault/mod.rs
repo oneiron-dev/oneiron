@@ -263,6 +263,12 @@ pub struct Vault {
     /// ([`Vault::install_served_transports`]). In memory only.
     pub(crate) served_transports:
         std::sync::OnceLock<std::sync::Arc<crate::outbound::ServedTransports>>,
+    /// The host's isolated inspection of e-sign original PDFs, reached before
+    /// a field save's or a sign act's writer (FIX 9609,
+    /// [`Vault::install_esign_page_inspector`]). In memory only.
+    pub(crate) esign_page_inspector: std::sync::Mutex<
+        Option<std::sync::Arc<dyn crate::blob_artifact::esign::EsignPageInspector>>,
+    >,
     /// The served host's precision recalculator (LibreOffice headless) for
     /// the workbooks the native formula engine refuses (FIX 2462), installed
     /// by [`Vault::install_xlsx_precision_recalc`]. In memory only; with none,
@@ -283,8 +289,8 @@ pub struct Vault {
     /// wait for their consumption (FIX 7494). In memory only: it drops with
     /// the vault, and the next open reads the stored intents again.
     pub(crate) ask_forward_arrivals: std::sync::Mutex<crate::task_verb::AskForwardArrivals>,
-    /// The served host's transport an exact publish's mirror git goes
-    /// through, its credential broker installing the credential (FIX 19083),
+    /// The served host's transport an origin mirror's git goes through, its
+    /// credential broker installing the credential (FIX 19083),
     /// installed once per open vault
     /// ([`Vault::install_origin_git_transport`]). None on an embedded vault,
     /// which keeps the direct path. In memory only.

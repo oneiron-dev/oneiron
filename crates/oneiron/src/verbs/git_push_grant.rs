@@ -10,8 +10,14 @@
 //! repos (each a CODE anchor and its PROJECT, granted whole), until he
 //! revokes it or the expiry he set. A vault write grant never implies it.
 //! Each grant shows in `vault.consent.registry` with its own one-tap revoke.
+//!
+//! `vault.repo.anchor.bind` is also the owner's repository registration
+//! (FIX 4299, CODE-CUSTODY-01): it binds a served repo, or registers an
+//! external local Git repository, as one stable CODE anchor with its
+//! retained editable whitelist and portable id. It grants nobody membership.
 
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +28,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::federation::git_push::{GIT_PUSH_REVOKE_COMMAND, GitPushGrantStanding};
 use crate::federation::{GitPushBounds, GitPushRepo};
-use crate::memory::MemoryResult;
+use crate::memory::{MemoryError, MemoryResult};
+use crate::store::code_repo_registration::CodeRepoRegistration;
 
 /// `vault.repo.git_push.mint`'s input: the holder, the repos and an
 /// optional expiry. The host chooses the grant's vault scope, its mint time
@@ -144,46 +151,126 @@ pub fn revoke_git_push_grant_as(
     })
 }
 
-/// `vault.repo.anchor.bind`'s input (FIX 6867, G1 PR3b): one served repo,
-/// by its served name, and the live PROJECT it belongs to.
+/// `vault.repo.anchor.bind`'s input (FIX 6867, G1 PR3b; FIX 4299): one
+/// repository and the live PROJECT it belongs to. Exactly one of `repo` and
+/// `local_folder` names it.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoAnchorBindInput {
-    /// The served name, with no `.git` suffix, as `vault.code.origin.register`
-    /// registered it.
-    pub repo: String,
+    /// A served repo: its served name, with no `.git` suffix, as
+    /// `vault.code.origin.register` registered it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// An external local Git repository (FIX 4299): an absolute folder
+    /// inside it on the host that serves this vault, registered at the
+    /// repository's root as the importer opens it. It grants nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_folder: Option<String>,
     /// The live PROJECT (32 hex) the repo belongs to.
     pub project: EntityId,
+    /// The registered local repository a config update names (32 hex): the
+    /// anchor its first registration returned. Omitted: the folder's
+    /// registration in this PROJECT, else a new one. A served repo's anchor
+    /// is derived, never named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<EntityId>,
+    /// The editable whitelist (FIX 4299): exact normalized repo-relative
+    /// paths, no globs. Every change to the repo must be on it, beside the
+    /// Grant's editable globs. Empty: read-only. Omitted: the whitelist
+    /// stands as it is; a new local registration starts read-only, and a
+    /// served repo bound with none keeps no whitelist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editable: Option<Vec<String>>,
+}
+
+/// A registered repository's retained configuration (FIX 4299), shown to
+/// the owner only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepoRegistrationView {
+    /// Where the importer reads the repo: `local:<folder>` or
+    /// `served:<name>`. Config, never identity.
+    pub source: String,
+    /// The editable whitelist, ascending. Empty: read-only.
+    pub editable: Vec<String>,
 }
 
 /// `vault.repo.anchor.bind`'s answer: the CODE anchor and PROJECT a
-/// `git_push` Grant, a run's repo bounds or a publish names this repo by.
+/// `git_push` Grant, a run's repo bounds, a capture or a publish names this
+/// repo by, its portable id and its retained configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoAnchorBindOutput {
-    pub repo: String,
+    /// The served name, for a served repo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
     pub anchor: GitPushRepo,
-    /// False when the anchor and its PROJECT edge already stood and this
-    /// call changed nothing.
+    /// The repo's portable id (64 hex), minted in the same writer as the
+    /// anchor (FIX 4299, FIX 6870).
+    pub portable: String,
+    /// The retained configuration; absent for a served repo bound with no
+    /// whitelist, which keeps no edit ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration: Option<RepoRegistrationView>,
+    /// False when the anchor, its PROJECT edge, its configuration and its
+    /// portable id already stood and this call changed nothing.
     pub changed: bool,
 }
 
-/// `vault.repo.anchor.bind` under the owner's proof: binds the served repo
-/// to its CODE anchor in the PROJECT he names. A repeat changes nothing.
+/// `vault.repo.anchor.bind` under the owner's proof: binds the served repo,
+/// or registers the external local repository, as its CODE anchor in the
+/// PROJECT he names (FIX 4299). A repeat changes nothing. The repo's
+/// portable id is minted in the same writer; after it commits, a
+/// best-effort manifest refresh keeps that identity available without
+/// changing this door's answer.
+///
+/// # Errors
+/// A request that names both or neither of `repo` and `local_folder`, or
+/// an anchor beside a served repo; the owner refusal, `InvalidConfig` and
+/// store failures of the registration writer.
 pub fn bind_repo_anchor_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: RepoAnchorBindInput,
 ) -> MemoryResult<RepoAnchorBindOutput> {
-    let bound = vault.bind_served_repo_anchor(owner, &input.repo, input.project)?;
+    let editable = input.editable.as_deref();
+    let bound = match (&input.repo, &input.local_folder, input.anchor) {
+        (Some(repo), None, None) => {
+            vault.bind_served_repo_anchor_with(owner, repo, input.project, editable)?
+        }
+        (None, Some(folder), anchor) => vault.register_local_repository_as_owner(
+            owner,
+            Path::new(folder),
+            input.project,
+            anchor,
+            editable,
+        )?,
+        _ => {
+            return Err(MemoryError::bad_request_with(
+                "name exactly one of repo and local_folder; anchor names a local registration",
+                &[
+                    "Name a served repo by repo, or an external local Git repository by local_folder.",
+                ],
+            ));
+        }
+    };
     Ok(RepoAnchorBindOutput {
         repo: input.repo,
         anchor: GitPushRepo {
             repo: bound.repo,
             project: bound.project,
         },
-        changed: bound.created,
+        portable: bound.portable.to_hex(),
+        registration: bound.registration.as_ref().map(registration_view),
+        changed: bound.changed,
     })
+}
+
+fn registration_view(registration: &CodeRepoRegistration) -> RepoRegistrationView {
+    RepoRegistrationView {
+        source: registration.source().spelling(),
+        editable: registration.editable().to_vec(),
+    }
 }
 
 fn git_push_grant_view(standing: &GitPushGrantStanding, now: u64) -> GitPushGrantView {

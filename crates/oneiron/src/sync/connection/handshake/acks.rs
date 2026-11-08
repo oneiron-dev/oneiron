@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use tokio::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -56,10 +56,9 @@ impl SyncConnection {
                         .into_iter()
                         .filter(|frame| !client.frame_withheld(frame))
                     {
-                        write
-                            .send(Message::Binary(response.into()))
+                        self.send_document_response(write, client, response)
                             .await
-                            .map_err(|e| e.to_string())?;
+                            .map_err(super::super::document_response::response_error)?;
                     }
                     self.clear_residence_acks(client)?;
                 }

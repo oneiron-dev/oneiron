@@ -66,6 +66,7 @@ pub(super) struct ConnState {
     proven_machine: oneiron::authority::PeerMachine,
     /// Window pad envelopes still coming in on this socket (FIX 7107).
     pub(super) window_pads: oneiron::sync::transport::WindowPadAssembly,
+    pub(super) document_parts: oneiron::sync::transport::DocumentAssembly,
     /// Windows the peer could not install sealed pads for: they go to it as
     /// today's carrier.
     pub(super) window_pad_carrier: std::collections::HashSet<WindowKey>,
@@ -82,6 +83,17 @@ pub(super) struct ConnState {
     /// The peer asked for sealed world updates on this socket: stored ones
     /// are pushed to it from then on.
     pub(super) sealed_updates_live: bool,
+    /// This machine serves the socket as a peer of another machine of its
+    /// vault while their home is down (FIX 4748, `handler::peer_serve`): it
+    /// serves state only, and none of the home's residence lane, lease
+    /// registrar, sealed update relay or leaf-key relay.
+    pub(super) peer_served: bool,
+    /// On a socket served as a peer, the state-only copies the export door
+    /// cut for each window, the only window bytes the release door sends,
+    /// and the windows whose change it was told of (FIX 4748). The mutex
+    /// lets the release door and the fan-out, which read the state shared,
+    /// take a copy once and notice a change once.
+    pub(super) peer_exports: std::sync::Mutex<super::peer_serve::PeerExports>,
 }
 
 impl ConnState {
@@ -109,11 +121,14 @@ impl ConnState {
             countersigned: false,
             proven_machine: oneiron::authority::PeerMachine::Unknown,
             window_pads: oneiron::sync::transport::WindowPadAssembly::default(),
+            document_parts: oneiron::sync::transport::DocumentAssembly::default(),
             window_pad_carrier: std::collections::HashSet::new(),
             repo_copy_generations: std::sync::Mutex::default(),
             asset_bodies: std::sync::Mutex::default(),
             sealed_world_updates: false,
             sealed_updates_live: false,
+            peer_served: false,
+            peer_exports: std::sync::Mutex::default(),
         }
     }
 

@@ -150,6 +150,17 @@ impl<'s> LadderGraphAnswerer<'s> {
         self
     }
 
+    /// The answerer held to both its saved posture and another caller
+    /// ceiling, using the same stricter-posture rule as every graph call.
+    pub(crate) fn with_posture_ceiling(mut self, posture: Option<HostingPrivacyPosture>) -> Self {
+        self.posture = match (self.posture, question_posture(self.server, posture)) {
+            (Some(held), Some(caller)) => Some(stricter(held, caller)),
+            (Some(held), None) => Some(held),
+            (None, caller) => caller,
+        };
+        self
+    }
+
     /// `ladder` without the rungs that send unit text off the host, where
     /// the question's posture forbids that, judged on the route each call
     /// takes (FIX 9525, [`crate::decision_host::DecisionHost::under_posture`]).
