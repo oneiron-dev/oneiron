@@ -28,7 +28,10 @@ pub struct TaskCreateSpec {
     /// means no due annotation. It is display metadata only: never TTL
     /// expiry, never a not-before wait, and it changes no dispatch, order,
     /// readiness, status or settlement behavior. Carried by briefless creates;
-    /// briefed highway posts do not carry this annotation yet.
+    /// briefed highway posts do not carry this annotation yet. A standard
+    /// TASK that carries one is also a watcher (FIX 4749, ARCH-0080): it
+    /// ticks once on `schedule.tick` after this time, while it is open; the
+    /// tick is a hook event and changes none of the above.
     pub due_at: Option<u64>,
     /// OF-543: the one task-type stamp, placed once. Absent means the
     /// create path places it (unsure uses the root) — a landed TASK and
@@ -107,7 +110,8 @@ impl TaskCreateSpec {
         self
     }
 
-    /// Stamps the hook-chosen due/deadline annotation (FIX685).
+    /// Stamps the due/deadline annotation (FIX685); a standard TASK with one
+    /// ticks once on `schedule.tick` after it (FIX 4749).
     #[must_use]
     pub const fn with_due_at(mut self, due_at: u64) -> Self {
         self.due_at = Some(due_at);
