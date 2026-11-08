@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::wake::{PrepEvent, PrepPolicy, prep_is_eligible};
 use crate::calendar::claims::is_calendar_claim_predicate;
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
-use crate::context_pack::ContextEntity;
+use crate::context_pack::{ComposedFieldProducers, ContextEntity};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ppr::MAX_PPR_SEEDS;
@@ -243,18 +243,21 @@ fn build_prep_pack_read_by_all(
                     _: &heed::RoTxn<'_>,
                     _: &EntityId|
      -> Result<bool> { Ok(true) };
+    // A TURN's words are its messages': each one it joins is named beside it,
+    // so the erase of any of them reaches the card that copied it.
+    let mut producers = ComposedFieldProducers::default();
     let (scoped, _) = prep_context_builder(read.vault(), &request.event, request.fired_at)
         .authority_filter(plan_candidates)
         .filter_candidates(&admitted)
         .gate_candidates(&gate)
-        .run_scoped_with_run_status(read)?;
+        .run_scoped_listing_producers(read, &mut producers)?;
     let mut candidates = scoped.value.results;
     candidates.extend(scoped.value.neighbors);
     if !also.is_empty() {
         candidates = retrieved_by_every_lane(read, also, candidates)?;
     }
     Ok(crate::claim::ScopedReadResult {
-        value: pack_from_candidates(read.vault(), request, &candidates)?,
+        value: pack_from_candidates(read.vault(), request, &candidates, &producers)?,
         receipt: scoped.receipt,
     })
 }
@@ -315,8 +318,9 @@ fn pack_from_candidates(
     vault: &Vault,
     request: &PrepBuildRequest,
     candidates: &[ContextEntity],
+    producers: &ComposedFieldProducers,
 ) -> Result<Option<PrepPack>> {
-    let items = prep_items_from_candidates(vault, &request.event, candidates)?;
+    let items = prep_items_from_candidates(vault, &request.event, candidates, producers)?;
     Ok(assemble_prep_pack(
         &request.event,
         request.fired_at,
@@ -363,6 +367,7 @@ fn prep_items_from_candidates(
     vault: &Vault,
     event: &PrepEvent,
     candidates: &[ContextEntity],
+    producers: &ComposedFieldProducers,
 ) -> Result<Vec<(EntityId, PrepItem)>> {
     let mut seen: HashSet<EntityId> = HashSet::with_capacity(candidates.len());
     let mut items = Vec::with_capacity(candidates.len());
@@ -411,7 +416,10 @@ fn prep_items_from_candidates(
             PrepItem {
                 kind,
                 text,
-                source_refs: vec![candidate.id.to_hex()],
+                source_refs: std::iter::once(&candidate.id)
+                    .chain(producers.turn_text(&candidate.id).unwrap_or_default())
+                    .map(EntityId::to_hex)
+                    .collect(),
                 observed_at: header.learned_at,
             },
         ));
