@@ -21,7 +21,7 @@ use super::super::super::replay_capsule::{CapsuleContent, CapsuleRequest, StepRe
 use super::super::response_erase::erase_actor_responses_in_txn;
 use super::{CAPSULES, FORKS, ForkValue};
 use crate::compaction::output::OutputRef;
-use crate::ports::EntityStoreRead;
+pub(in crate::code_run::storage) use crate::ports::names_no_actor_in_txn as names_no_actor;
 use crate::provenance::body::release_body_in_txn;
 use crate::side_table::{Erased, ErasedForm, SideKey, SideTableDbs};
 use crate::store::Store;
@@ -198,26 +198,6 @@ fn release_bodies_in_txn(
         release_body_in_txn(&vault.store, wtxn, &owner, &occurrence.id())?;
     }
     Ok(())
-}
-
-/// Whether `id`'s entity is here and is no actor: a person, a machine or an
-/// agent is one, and an id with no entity here may have been one.
-pub(in crate::code_run::storage) fn names_no_actor(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    if let Some(raw) = store.port_entity_raw(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
 }
 
 /// Whether `actor` is gone here, as a turn program's step reads it (FIX
