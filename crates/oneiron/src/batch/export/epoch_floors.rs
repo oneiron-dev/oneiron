@@ -13,17 +13,20 @@ use super::document_import::parse_id;
 use super::{ArchiveRecordKind, ExportEpochFloor};
 use crate::compaction::EpochScope;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::serialize::DocumentWriter;
 use crate::store::Store;
 
 /// Writes every lineage's floor read in `rtxn`, each id it names a source.
-/// A floor whose session or conversation a device-local world keeps stays
-/// here, as that row does.
+/// A floor whose session or conversation the archive leaves here stays here,
+/// as that row does: one a world in `device_only` keeps, outside the owner's
+/// own export (`owner_export` false); his own export carries one his
+/// recipient choice alone keeps (owner ruling 1-EXPORT = B).
 pub(super) fn write_epoch_floors_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
     device_only: &BTreeSet<EntityId>,
+    owner_export: bool,
     sources: &mut BTreeSet<EntityId>,
     writer: &mut DocumentWriter<'_>,
 ) -> Result<()> {
@@ -33,11 +36,15 @@ pub(super) fn write_epoch_floors_in_txn(
             .collect();
         let mut withheld = false;
         for id in &ids {
-            withheld |= crate::settings::device_only_withholds(store, rtxn, device_only, id)
-                .or_else(|error| match error {
-                    Error::CorruptedIndex(_) => Ok(true),
-                    error => Err(error),
-                })?;
+            withheld |= super::document_snapshot::barred_worlds_carried(
+                store,
+                rtxn,
+                device_only,
+                id,
+                None,
+                owner_export,
+            )?
+            .is_none();
         }
         if withheld {
             continue;
