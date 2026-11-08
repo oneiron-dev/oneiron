@@ -26,6 +26,12 @@
 //! retires every copy of that content; a restore lists the pieces from the
 //! manifest and the nodes ([`manifest_content_pieces`]).
 //!
+//! FIX 19821: a capsule's writer holds the manifest and each node of every
+//! growing array inline whatever the inline bound, so a restore reads them
+//! all among its rows and finds every content piece of the start. The frame
+//! is content, which a checkpoint carries in the rest alone, so it keeps
+//! the bound as every other piece does.
+//!
 //! Byte sharing is not authority sharing. The capsule's run holds each
 //! piece at a path that names the actor and the piece's digest, apart from
 //! the request pieces, and each occurrence keeps its own marks. A writer
@@ -126,11 +132,14 @@ impl Shared {
 /// A step start cut into its pieces (FIX 4192): each shared piece once,
 /// the manifest, and the digest of each piece that holds the start's
 /// content (FIX 4192 review fix): its config, its record's frame and each
-/// element, or its one piece when it is kept whole.
+/// element, or its one piece when it is kept whole. FIX 19821: also the
+/// digest of each node of each growing array, which a capsule's writer
+/// holds inline whatever the bound, as it holds the manifest.
 pub(super) struct StartPieces {
     shared: Vec<(OutputRef, Vec<u8>)>,
     manifest: Vec<u8>,
     content: BTreeSet<[u8; 32]>,
+    inline_nodes: BTreeSet<[u8; 32]>,
 }
 
 impl StartPieces {
@@ -153,6 +162,7 @@ impl StartPieces {
             manifest: encode_piece(&StartManifest::Whole { start })?,
             shared: shared.pieces,
             content: BTreeSet::from([start.hash]),
+            inline_nodes: BTreeSet::new(),
         })
     }
 
@@ -173,6 +183,7 @@ impl StartPieces {
         let mut shared = Shared::default();
         let config = shared.add(rmpv_bytes(&Value::Map(body))?);
         let (mut arrays, mut content) = (Vec::new(), BTreeSet::from([config.hash]));
+        let mut inline_nodes = BTreeSet::new();
         for (key, value) in &mut frame {
             let (Some(_), Value::Array(elements)) = (growing(key), value) else {
                 continue;
@@ -185,7 +196,9 @@ impl StartPieces {
                     prior: last,
                     element,
                 };
-                last = Some(shared.add(encode_piece(&node)?));
+                let node = shared.add(encode_piece(&node)?);
+                inline_nodes.insert(node.hash);
+                last = Some(node);
             }
             arrays.push(last);
         }
@@ -201,6 +214,7 @@ impl StartPieces {
             shared: shared.pieces,
             manifest,
             content,
+            inline_nodes,
         }))
     }
 
@@ -232,8 +246,10 @@ impl StartPieces {
     }
 
     /// The length of each body [`Self::publish_in_txn`] publishes for
-    /// `scope` in `txn`: each piece the run does not hold yet, then the
-    /// manifest. The writer's spill must hold them.
+    /// `scope` in `txn` under the inline bound: each piece the run does not
+    /// hold yet. The writer's spill must hold them. FIX 19821: the manifest
+    /// and the nodes are held inline whatever the bound, so none of them is
+    /// here.
     ///
     /// # Errors
     ///
@@ -244,13 +260,12 @@ impl StartPieces {
         txn: &RoTxn<'_>,
         scope: PieceScope,
     ) -> Result<Vec<usize>> {
-        let mut lens: Vec<usize> = self
+        Ok(self
             .unheld_in_txn(store, txn, scope)?
             .into_iter()
+            .filter(|piece| !self.inline_nodes.contains(&piece.0.hash))
             .map(|piece| piece.1.len())
-            .collect();
-        lens.push(self.manifest.len());
-        Ok(lens)
+            .collect())
     }
 
     /// FIX 4192: publishes the start for `scope` in `wtxn` through the
@@ -258,7 +273,9 @@ impl StartPieces {
     /// becomes a body the run holds at its start piece path; a piece it
     /// holds already is named again, and nothing of it is written. The
     /// manifest becomes the capsule's own body at `path`. Returns the
-    /// manifest's ref.
+    /// manifest's ref. FIX 19821: the manifest and each node are held
+    /// inline whatever the bound, so a restore finds them among its rows.
+    /// Every other piece keeps the bound.
     ///
     /// # Errors
     ///
@@ -273,13 +290,18 @@ impl StartPieces {
     ) -> Result<OutputRef> {
         for (piece, bytes) in self.unheld_in_txn(&vault.store, wtxn, scope)? {
             let at = scope.start_path(&piece.hash);
-            if spill.publish_in_txn(vault, wtxn, scope.run, &at, bytes)? != *piece {
+            let published = if self.inline_nodes.contains(&piece.hash) {
+                spill.publish_inline_in_txn(vault, wtxn, scope.run, &at, bytes)?
+            } else {
+                spill.publish_in_txn(vault, wtxn, scope.run, &at, bytes)?
+            };
+            if published != *piece {
                 return Err(Error::InvariantViolation(
                     "a capsule start piece was published as other bytes",
                 ));
             }
         }
-        spill.publish_in_txn(vault, wtxn, scope.run, path, &self.manifest)
+        spill.publish_inline_in_txn(vault, wtxn, scope.run, path, &self.manifest)
     }
 }
 

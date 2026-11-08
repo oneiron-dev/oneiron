@@ -521,6 +521,17 @@ pub(crate) fn ensure_agent_person_in_txn(
     Ok(())
 }
 
+/// The rows seeded for one system agent, as (person, substrate claim,
+/// anchor claim): every id derives from the agent, so each device writes
+/// the same rows. The empty-vault join guard reads the same derivations.
+pub(crate) fn seeded_agent_person_ids(agent: EntityId) -> Result<(EntityId, EntityId, EntityId)> {
+    Ok((
+        EntityId::derive(AGENT_PERSON_DOMAIN, &[agent.as_bytes()])?,
+        EntityId::derive(SEEDED_SUBSTRATE_DOMAIN, &[agent.as_bytes()])?,
+        EntityId::derive(SEEDED_ANCHOR_DOMAIN, &[agent.as_bytes()])?,
+    ))
+}
+
 fn agent_person_body(name: &str) -> Result<Vec<u8>> {
     let mut body = Vec::new();
     rmpv::encode::write_value(
@@ -548,7 +559,7 @@ pub(crate) fn ensure_seeded_agent_person_in_txn(
         return Ok(());
     }
     let at = crate::agent_def::SEEDED_AGENT_DEFINITION_TIMESTAMP;
-    let person = EntityId::derive(AGENT_PERSON_DOMAIN, &[agent.as_bytes()])?;
+    let (person, substrate, anchor) = seeded_agent_person_ids(agent)?;
     // An anchor the agent holds from any time, its seeded one or a later
     // one, leaves it be: a write at the seed time would overlap it.
     if crate::subject_model::actor_subject_anchor_in_txn(vault, &*txn, &agent, u64::MAX)?.is_some()
@@ -577,8 +588,6 @@ pub(crate) fn ensure_seeded_agent_person_in_txn(
             .apply(txn)?;
     }
     let writer = WriteActor::new(agent, EdgeActorClass::Agent);
-    let substrate = EntityId::derive(SEEDED_SUBSTRATE_DOMAIN, &[agent.as_bytes()])?;
-    let anchor = EntityId::derive(SEEDED_ANCHOR_DOMAIN, &[agent.as_bytes()])?;
     crate::subject_model::seeded::ensure_seeded_model_person_in_txn(
         vault, txn, person, writer, substrate, at,
     )?;
