@@ -8,10 +8,11 @@
 //! ([`calendar_source_system`]). Its EVENTs take ids of their own, derived
 //! from the source and the UID (the UID stays in the passport), so two
 //! people's copies of one meeting never share a row; each EVENT, and each
-//! archived resource it was read from, is bound to the source's audience in
-//! its birth commit ([`bind_calendar_source_row_in_txn`]). Busy time is the
-//! calendar engine's own projection over the source's system, intervals
-//! only ([`calendar_source_occupancy`]).
+//! archived resource it was read from, is stamped with the source's
+//! audience and bound to it in its birth commit
+//! ([`calendar_source_landing_in`]). Busy time is the calendar engine's own
+//! projection over the source's system, intervals only
+//! ([`calendar_source_occupancy`]).
 
 use serde::{Deserialize, Serialize};
 
@@ -231,29 +232,98 @@ pub(crate) fn calendar_source_of_system_in(
     Ok(calendar_source_row_in(vault, txn, system)?.map(|(source, row)| (source, row.audience)))
 }
 
-/// Binds a freshly staged row of the calendar system `system` (an EVENT,
-/// the artifact its resource is archived in) to its pack calendar source's
-/// audience, in the row's birth commit; a no-op for any other system.
+/// One write of a pack calendar source's landing: the proof its rows (an
+/// EVENT, the artifact its resource is archived in) are stamped under, and
+/// the source's audience each is bound to in the same commit (fix list row
+/// 16256).
+#[derive(Debug)]
+pub(crate) struct CalendarSourceLanding {
+    birth: crate::source_audience::SourceAudienceBirth,
+    audience: EntityId,
+}
+
+/// The landing of the calendar system `system` in `txn`; `None` for any
+/// system without the pack's prefix, whose rows land unstamped and unbound.
 ///
 /// # Errors
 ///
 /// A pack system whose source is not an Active calendar while the pack is
-/// installed: its rows never land unbound.
-pub(crate) fn bind_calendar_source_row_in_txn(
+/// installed, or whose audience is no source policy: its rows never land
+/// unbound.
+pub(crate) fn calendar_source_landing_in(
     vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     system: &str,
-    record: &EntityId,
-) -> Result<()> {
+) -> Result<Option<CalendarSourceLanding>> {
     let Some((_, row)) = calendar_source_row_in(vault, txn, system)? else {
-        return Ok(());
+        return Ok(None);
     };
     if require_pack_active_in(vault, txn).is_err() || row.status != MailSourceStatus::Active {
         return Err(Error::InvalidConfig(
             "the calendar source is not an Active source of an installed pack".to_owned(),
         ));
     }
-    crate::source_audience::bind_record_in_txn(vault, txn, record, &row.audience)
+    let birth = crate::source_audience::SourceAudienceBirth::mint_in(vault, txn, &row.audience)?;
+    Ok(Some(CalendarSourceLanding {
+        birth,
+        audience: row.audience,
+    }))
+}
+
+impl CalendarSourceLanding {
+    /// The proof the landing's stamped rows are put under
+    /// ([`crate::batch::BatchBuilder::put_source_bound`]).
+    pub(crate) fn birth(&self) -> &crate::source_audience::SourceAudienceBirth {
+        &self.birth
+    }
+
+    /// `body`, the body the row `record` is staged with in `txn`, stamped
+    /// with the source-audience obligation; the row is marked born.
+    ///
+    /// # Errors
+    ///
+    /// A body that is not one unstamped MessagePack map; storage failures.
+    pub(crate) fn stamp_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        record: &EntityId,
+        body: &[u8],
+    ) -> Result<Vec<u8>> {
+        self.birth.stamp_in_txn(vault, txn, record, body)
+    }
+
+    /// Marks the stamped row `record` born again in `txn`, before a write
+    /// of its landing that keeps its stamp (an EVENT's drift), and answers
+    /// the proof that write is put under.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(crate) fn mark_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        record: &EntityId,
+    ) -> Result<&crate::source_audience::SourceAudienceBirth> {
+        crate::source_audience::mark_birth_in_txn(vault, txn, &self.birth, record)?;
+        Ok(&self.birth)
+    }
+
+    /// Binds the row `record`, staged stamped in `txn`, to the source's
+    /// audience; its birth mark goes.
+    ///
+    /// # Errors
+    ///
+    /// A row not stamped, or bound to another policy; storage failures.
+    pub(crate) fn bind_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        record: &EntityId,
+    ) -> Result<()> {
+        crate::source_audience::bind_record_in_txn(vault, txn, record, &self.audience)
+    }
 }
 
 /// The busy time of the pack's calendar sources `calendars` selects, over
