@@ -297,12 +297,14 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             let effect =
                 vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
             let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-            let (decision_id, decision, _) = gate::check_external_effect_policy(
+            // A parked send admits nothing, so its decision stays evidence
+            // only: its one-shot approval, standing grant and envelope slot
+            // are kept for the send that is admitted later (FIX 8754).
+            let (decision_id, decision) = gate::record_held_external_effect_policy(
                 &vault.store,
                 &mut wtxn,
                 &effect,
                 &policy,
-                false,
             )?;
             wtxn.commit().map_err(Error::from)?;
             vault.store.notify_attempt_observers();
