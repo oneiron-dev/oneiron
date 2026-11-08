@@ -10,6 +10,8 @@ use oneiron::sync::{
     transport::{self, document_sub_tags},
 };
 
+mod owner_body;
+
 pub(super) fn handle_document(
     server: &SyncServer,
     conn_id: u32,
@@ -131,7 +133,7 @@ fn handle_document_inner(
         return owner_request(server, state, entity, &payload[4..], direct);
     }
     if state.owner_documents.contains_key(&entity) {
-        return owner_document(server, state, entity, kind, payload, direct);
+        return owner_document(server, conn_id, state, entity, kind, payload, direct);
     }
     if kind == document_sub_tags::UPDATE {
         require_bound_app_auth(server, state)?
@@ -320,7 +322,9 @@ fn handle_document_inner(
 /// An own device's owner REQUEST: a v11 connection that is not
 /// selector-scoped, with a bound NOTE session whose principal is the vault
 /// owner. The connection is then an owner connection for good. A REQUEST for
-/// a NOTE this server does not hold yet waits for the NOTE's next notice.
+/// a NOTE this server does not hold yet waits for the NOTE's next notice. For
+/// an office artifact whose typed body it does not hold yet, the server asks
+/// the device for the device's own (FIX 2458).
 fn owner_request(
     server: &SyncServer,
     state: &mut ConnState,
@@ -339,25 +343,36 @@ fn owner_request(
         .vault
         .get_raw(&entity)
         .map_err(storage_error)?
-        .is_some()
+        .is_none()
     {
-        let frame = crate::server::blocking(|| {
+        return Ok(());
+    }
+    let held = server
+        .reassert_manager
+        .owner_document_held(entity)
+        .map_err(storage_error)?;
+    let frame = if held {
+        crate::server::blocking(|| {
             server
                 .reassert_manager
                 .export_owner_document_for(entity, remote_vv, peer)
         })
-        .map_err(storage_error)?;
-        let _ = direct.send(frame);
-        // The NOTE's pending forks follow its text (FIX 12789). A denial
-        // withholds them as it withholds the text.
-        if let Ok(forks) = crate::server::blocking(|| {
+    } else {
+        crate::server::blocking(|| server.reassert_manager.owner_document_request(entity))
+    }
+    .map_err(storage_error)?;
+    let _ = direct.send(frame);
+    // The NOTE's pending forks follow its text (FIX 12789). A denial
+    // withholds them as it withholds the text.
+    if held
+        && let Ok(forks) = crate::server::blocking(|| {
             server
                 .reassert_manager
                 .export_owner_note_forks_for(entity, peer)
-        }) {
-            for frame in forks {
-                let _ = direct.send(frame);
-            }
+        })
+    {
+        for frame in forks {
+            let _ = direct.send(frame);
         }
     }
     Ok(())
@@ -411,9 +426,10 @@ fn ask_past_row(server: &SyncServer, state: &mut ConnState, held: usize) {
     }
 }
 
-/// ACK and NOTE_OPS on an owner subscription.
+/// ACK, NOTE_OPS and a typed body's UPDATE on an owner subscription.
 fn owner_document(
     server: &SyncServer,
+    conn_id: u32,
     state: &mut ConnState,
     entity: EntityId,
     kind: u8,
@@ -426,6 +442,9 @@ fn owner_document(
                 .map_err(|e| ProtocolError::VvDecode(e.to_string()))?;
             state.owner_documents.insert(entity, payload.to_vec());
             Ok(())
+        }
+        document_sub_tags::UPDATE => {
+            owner_body::owner_body_update(server, conn_id, state, entity, payload, direct)
         }
         document_sub_tags::NOTE_OPS => {
             // FIX 4748: the NOTE authority is the home, never a peer.
@@ -488,7 +507,7 @@ fn owner_document(
             Ok(())
         }
         _ => Err(ProtocolError::InvalidPayload(
-            "owner lane carries requests, acks, NOTE operations and NOTE forks",
+            "owner lane carries requests, acks, NOTE operations, NOTE forks and typed body updates",
         )),
     }
 }
@@ -649,6 +668,12 @@ pub(super) fn document_delivery_retrying(
         let doc = doc.map_err(|_| ProtocolError::InvalidPayload("invalid document notice"))?;
         if let Some(remote_vv) = state.owner_documents.get(&doc.entity) {
             if owner_auth(server, state, false).is_err() {
+                continue;
+            }
+            // FIX 2458: a home's request for a device's typed body goes as
+            // it is; it carries the home's version, no text.
+            if doc.kind == document_sub_tags::REQUEST {
+                out.extend(notice(&doc));
                 continue;
             }
             if doc.kind == document_sub_tags::NOTE_RECEIPT {
@@ -862,7 +887,11 @@ pub(super) fn retry_later(
 /// The notice of one document, to queue again.
 pub(super) fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
     match doc.kind {
-        document_sub_tags::STATE | document_sub_tags::UPDATE | document_sub_tags::NOTE_RECEIPT => {
+        document_sub_tags::STATE
+        | document_sub_tags::UPDATE
+        | document_sub_tags::NOTE_RECEIPT
+        | document_sub_tags::NOTE_FORK_STATE
+        | document_sub_tags::NOTE_FORK_SET => {
             transport::encode_unsplit_document(doc.entity, doc.kind, doc.payload).ok()
         }
         _ => transport::encode_document(doc.entity, doc.kind, doc.payload)

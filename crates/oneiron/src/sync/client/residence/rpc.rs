@@ -97,6 +97,39 @@ pub(super) struct HomeRefused {
     pub(super) code: Option<String>,
 }
 
+/// Why a residence RPC failed, by the side the fault is on (FIX 22179),
+/// around the error the call tells.
+#[derive(Debug)]
+pub(super) enum RpcFault {
+    /// The home's: a refused upgrade or bind, a socket to it that broke or
+    /// timed out, its refusal, or a reply that breaks the RPC contract.
+    Remote(TransportError),
+    /// This machine's own: its actor session or selector, the endpoint it
+    /// chose, its upgrade's signing or header, a carrier it cannot set up for
+    /// the endpoint's URL (FIX 22217), its bind's or request's encode or
+    /// size, or its request ids running out.
+    Local(TransportError),
+}
+
+impl RpcFault {
+    /// The home's fault, told as [`refused`].
+    fn remote() -> Self {
+        Self::Remote(refused())
+    }
+
+    /// This machine's own fault, told as [`refused`].
+    fn local() -> Self {
+        Self::Local(refused())
+    }
+
+    /// The error the call tells, its side dropped.
+    pub(super) fn into_error(self) -> TransportError {
+        match self {
+            Self::Remote(error) | Self::Local(error) => error,
+        }
+    }
+}
+
 pub(super) struct ResidenceRpc {
     socket: Socket,
     next_id: u64,
@@ -113,43 +146,60 @@ pub(super) struct ResidenceRpc {
 }
 
 impl ResidenceRpc {
-    /// `None` is only a transport outage. A refused bind or malformed reply
-    /// is an error, not permission to label the search local-only.
+    /// `None` is only a transport outage, the home's: a call that needs the
+    /// home fails on it as [`TransportError::home_offline`] (FIX 22190). A
+    /// refused bind or malformed reply is an error, not permission to label
+    /// the search local-only.
     pub(super) async fn connect(
         vault: &crate::Vault,
         config: &SyncClientConfig,
         budgets: ResidenceOperationBudgets,
     ) -> Result<Option<Self>, TransportError> {
+        Self::connect_by_side(vault, config, budgets)
+            .await
+            .map_err(RpcFault::into_error)
+    }
+
+    /// [`Self::connect`], its fault told by the side it is on (FIX 22179): a
+    /// missing actor session or selector, the endpoint, the upgrade, the
+    /// carrier's setup (FIX 22217) and the bind's encode are this machine's
+    /// own; the home's answer is the home's.
+    pub(super) async fn connect_by_side(
+        vault: &crate::Vault,
+        config: &SyncClientConfig,
+        budgets: ResidenceOperationBudgets,
+    ) -> Result<Option<Self>, RpcFault> {
         let timeout = Duration::from_millis(budgets.rpc_timeout_ms);
         let deadline = tokio::time::Instant::now() + timeout;
-        let session = config.note_session.as_ref().ok_or_else(refused)?;
-        config.residence_selector.as_ref().ok_or_else(refused)?;
+        let session = config.note_session.as_ref().ok_or_else(RpcFault::local)?;
+        config
+            .residence_selector
+            .as_ref()
+            .ok_or_else(RpcFault::local)?;
         let Some((mut socket, home, address)) = Self::dial(vault, config, deadline).await? else {
             return Ok(None);
         };
-        tokio::time::timeout_at(
-            deadline,
-            socket.send(Message::Binary(
-                super::super::note_session::bind_frame(session)?.into(),
-            )),
-        )
-        .await
-        .map_err(|_| refused())?
-        .map_err(|_| refused())?;
+        let bind_frame =
+            super::super::note_session::bind_frame(session).map_err(RpcFault::Local)?;
+        tokio::time::timeout_at(deadline, socket.send(Message::Binary(bind_frame.into())))
+            .await
+            .map_err(|_| RpcFault::remote())?
+            .map_err(|_| RpcFault::remote())?;
         // A future server may send an ephemeral snapshot before the bind ack.
         // Only the exact fixed-ID null reply opens the RPC lane.
         for _ in 0..16 {
             let msg = tokio::time::timeout_at(deadline, socket.next())
                 .await
-                .map_err(|_| refused())?
-                .ok_or_else(refused)?
-                .map_err(|_| refused())?;
+                .map_err(|_| RpcFault::remote())?
+                .ok_or_else(RpcFault::remote)?
+                .map_err(|_| RpcFault::remote())?;
             let Message::Binary(frame) = msg else {
-                return Err(refused());
+                return Err(RpcFault::remote());
             };
             match frame.first() {
                 Some(&TAG_RPC) => {
-                    super::super::note_session::accept_bind_reply(&frame[1..])?;
+                    super::super::note_session::accept_bind_reply(&frame[1..])
+                        .map_err(RpcFault::Remote)?;
                     return Ok(Some(Self {
                         socket,
                         next_id: 1,
@@ -160,10 +210,10 @@ impl ResidenceRpc {
                     }));
                 }
                 Some(&transport::TAG_EPHEMERAL) | Some(&transport::TAG_SYNC_UPDATE) => continue,
-                _ => return Err(refused()),
+                _ => return Err(RpcFault::remote()),
             }
         }
-        Err(refused())
+        Err(RpcFault::remote())
     }
 
     /// The lane a home handoff or exact pad repair opens with no actor session.
@@ -181,7 +231,8 @@ impl ResidenceRpc {
         // answer it with the machine it is.
         config.transport_credential.as_ref().ok_or_else(refused)?;
         Ok(Self::dial(vault, config, deadline)
-            .await?
+            .await
+            .map_err(RpcFault::into_error)?
             .map(|(socket, home, address)| Self {
                 socket,
                 next_id: 1,
@@ -194,21 +245,25 @@ impl ResidenceRpc {
 
     /// Dials the residence endpoint and sends the residence hello; the
     /// socket, the machine the home proved on its upgrade, and the dialed
-    /// endpoint's route address, or `None` on a transport outage.
+    /// endpoint's route address, or `None` on a transport outage. The
+    /// endpoint, its URL and the upgrade's credential are this machine's own
+    /// (FIX 22179), and so is a carrier it cannot set up for that URL
+    /// ([`crate::sync::carrier::own_setup_fault`], FIX 22217); a refused
+    /// upgrade and the hello's send are the home's.
     async fn dial(
         vault: &crate::Vault,
         config: &SyncClientConfig,
         deadline: tokio::time::Instant,
-    ) -> Result<Option<(Socket, crate::authority::PeerMachine, [u8; 32])>, TransportError> {
+    ) -> Result<Option<(Socket, crate::authority::PeerMachine, [u8; 32])>, RpcFault> {
         // FIX 8862: the endpoint is read once, the carrier is chosen for
         // that endpoint, and both pass the credential check before any
         // header below is added.
-        let endpoint = ResidenceEndpoint::select(config).ok_or_else(refused)?;
+        let endpoint = ResidenceEndpoint::select(config).ok_or_else(RpcFault::local)?;
         let mut request = endpoint
             .url
             .as_str()
             .into_client_request()
-            .map_err(|_| refused())?;
+            .map_err(|_| RpcFault::local())?;
         // The upgrade proves the device's transport slip, as the sync
         // socket does, signed on the wall clock as it is; a bind then
         // attenuates it to the actor.
@@ -217,12 +272,12 @@ impl ResidenceRpc {
             binding = Some(
                 credential
                     .sign_upgrade(vault, vault.store.clock.wall_now(), &mut request)
-                    .map_err(|_| refused())?,
+                    .map_err(|_| RpcFault::local())?,
             );
         } else if !config.auth_token.is_empty() {
             let header = format!("Bearer {}", config.auth_token)
                 .parse()
-                .map_err(|_| refused())?;
+                .map_err(|_| RpcFault::local())?;
             request.headers_mut().insert(AUTHORIZATION, header);
         }
         let (mut socket, response) = match tokio::time::timeout_at(
@@ -232,7 +287,12 @@ impl ResidenceRpc {
         .await
         {
             Ok(Ok(connected)) => connected,
-            Ok(Err(tokio_tungstenite::tungstenite::Error::Http(_))) => return Err(refused()),
+            Ok(Err(tokio_tungstenite::tungstenite::Error::Http(_))) => {
+                return Err(RpcFault::remote());
+            }
+            Ok(Err(error)) if crate::sync::carrier::own_setup_fault(&error) => {
+                return Err(RpcFault::local());
+            }
             Ok(Err(_)) | Err(_) => return Ok(None),
         };
         tokio::time::timeout_at(
@@ -242,8 +302,8 @@ impl ResidenceRpc {
             )),
         )
         .await
-        .map_err(|_| refused())?
-        .map_err(|_| refused())?;
+        .map_err(|_| RpcFault::remote())?
+        .map_err(|_| RpcFault::remote())?;
         let home = crate::sync::home_proof::home_peer(vault, &response, binding.as_ref());
         let address: [u8; 32] = blake3::hash(endpoint.url.as_bytes()).into();
         Ok(Some((socket, home, address)))
@@ -254,13 +314,30 @@ impl ResidenceRpc {
         method: &str,
         params: Value,
     ) -> Result<Value, TransportError> {
-        self.call(method, params).await?.map_err(|refusal| {
-            if refusal.code.as_deref() == Some("INDEX_REVISION_CHANGED") {
-                TransportError::IndexRevisionChanged
-            } else {
-                TransportError::InvalidPayload("home refused residence RPC")
-            }
-        })
+        self.request_by_side(method, params)
+            .await
+            .map_err(RpcFault::into_error)
+    }
+
+    /// [`Self::request`], its fault told by the side it is on (FIX 22179):
+    /// the home's refusal is the home's, as [`Self::call_inner`] sides the
+    /// rest.
+    pub(super) async fn request_by_side(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, RpcFault> {
+        self.call_inner(method, params, None)
+            .await?
+            .map_err(|refusal| {
+                RpcFault::Remote(
+                    if refusal.code.as_deref() == Some("INDEX_REVISION_CHANGED") {
+                        TransportError::IndexRevisionChanged
+                    } else {
+                        TransportError::InvalidPayload("home refused residence RPC")
+                    },
+                )
+            })
     }
 
     /// [`Self::request`], with the home's refusal kept apart from a call that
@@ -270,7 +347,9 @@ impl ResidenceRpc {
         method: &str,
         params: Value,
     ) -> Result<Result<Value, HomeRefused>, TransportError> {
-        self.call_inner(method, params, None).await
+        self.call_inner(method, params, None)
+            .await
+            .map_err(RpcFault::into_error)
     }
 
     /// A bearer leaves only for the exact issuing machine, rejudged after
@@ -283,18 +362,22 @@ impl ResidenceRpc {
         params: Value,
     ) -> Result<Value, TransportError> {
         self.call_inner(method, params, Some((vault, machine)))
-            .await?
+            .await
+            .map_err(RpcFault::into_error)?
             .map_err(|_| TransportError::InvalidPayload("admitting machine refused bearer RPC"))
     }
 
+    /// One call on the socket, its fault told by the side it is on (FIX
+    /// 22179): its id, encode and size are this machine's own; the send, the
+    /// reply and the admitting machine's proof are the home's.
     async fn call_inner(
         &mut self,
         method: &str,
         params: Value,
         machine: Option<(&crate::Vault, crate::EntityId)>,
-    ) -> Result<Result<Value, HomeRefused>, TransportError> {
+    ) -> Result<Result<Value, HomeRefused>, RpcFault> {
         let id = self.next_id;
-        self.next_id = self.next_id.checked_add(1).ok_or_else(refused)?;
+        self.next_id = self.next_id.checked_add(1).ok_or_else(RpcFault::local)?;
         let request = RequestEnvelope {
             kind: "rpc.req",
             id,
@@ -302,9 +385,9 @@ impl ResidenceRpc {
             last: true,
             payload: json!({"method": method, "params": params}),
         };
-        let bytes = rmp_serde::to_vec_named(&request).map_err(|_| refused())?;
+        let bytes = rmp_serde::to_vec_named(&request).map_err(|_| RpcFault::local())?;
         if bytes.len() > transport::MAX_DECODED_PAYLOAD_BYTES {
-            return Err(refused());
+            return Err(RpcFault::local());
         }
         let mut frame = vec![TAG_RPC];
         frame.extend(bytes);
@@ -317,28 +400,28 @@ impl ResidenceRpc {
                 }),
             )
             .await
-            .map_err(|_| refused())?
-            .map_err(|_| refused())?;
+            .map_err(|_| RpcFault::remote())?
+            .map_err(|_| RpcFault::remote())?;
             if !matches!(
                 vault.peer_machine_stands(self.home),
                 crate::authority::PeerMachine::Proven { machine: proven, .. } if proven == machine
             ) {
-                return Err(TransportError::InvalidPayload(
+                return Err(RpcFault::Remote(TransportError::InvalidPayload(
                     "the option link's admitting machine did not prove this socket",
-                ));
+                )));
             }
             std::pin::Pin::new(&mut self.socket)
                 .start_send(Message::Binary(frame.into()))
-                .map_err(|_| refused())?;
+                .map_err(|_| RpcFault::remote())?;
             tokio::time::timeout_at(deadline, self.socket.flush())
                 .await
-                .map_err(|_| refused())?
-                .map_err(|_| refused())?;
+                .map_err(|_| RpcFault::remote())?
+                .map_err(|_| RpcFault::remote())?;
         } else {
             tokio::time::timeout_at(deadline, self.socket.send(Message::Binary(frame.into())))
                 .await
-                .map_err(|_| refused())?
-                .map_err(|_| refused())?;
+                .map_err(|_| RpcFault::remote())?
+                .map_err(|_| RpcFault::remote())?;
         }
         let mut chunks = Vec::new();
         let mut received = 0usize;
@@ -347,15 +430,15 @@ impl ResidenceRpc {
                 // A ready stream of opening frames must not outrun the same
                 // deadline by completing each individual next() immediately.
                 if tokio::time::Instant::now() >= deadline {
-                    return Err(refused());
+                    return Err(RpcFault::remote());
                 }
                 let msg = tokio::time::timeout_at(deadline, self.socket.next())
                     .await
-                    .map_err(|_| refused())?
-                    .ok_or_else(refused)?
-                    .map_err(|_| refused())?;
+                    .map_err(|_| RpcFault::remote())?
+                    .ok_or_else(RpcFault::remote)?
+                    .map_err(|_| RpcFault::remote())?;
                 let Message::Binary(frame) = msg else {
-                    return Err(refused());
+                    return Err(RpcFault::remote());
                 };
                 // FIX 6458: an unbound lane passes over the sync frames the
                 // home opens each socket with; a bound lane takes none.
@@ -368,11 +451,12 @@ impl ResidenceRpc {
                 }
             };
             if frame.first() != Some(&TAG_RPC) {
-                return Err(refused());
+                return Err(RpcFault::remote());
             }
-            let reply: ReplyEnvelope = rmp_serde::from_slice(&frame[1..]).map_err(|_| refused())?;
+            let reply: ReplyEnvelope =
+                rmp_serde::from_slice(&frame[1..]).map_err(|_| RpcFault::remote())?;
             if reply.id != id || reply.seq != seq {
-                return Err(refused());
+                return Err(RpcFault::remote());
             }
             if reply.kind == "rpc.err" {
                 let code = reply.payload.as_map().and_then(|fields| {
@@ -386,25 +470,25 @@ impl ResidenceRpc {
                 }));
             }
             if reply.kind != "rpc.res" {
-                return Err(refused());
+                return Err(RpcFault::remote());
             }
             let chunk = match reply.payload {
                 rmpv::Value::Binary(bytes) => bytes,
                 rmpv::Value::String(text) => text.into_bytes(),
-                _ => return Err(refused()),
+                _ => return Err(RpcFault::remote()),
             };
             if received.saturating_add(chunk.len()) > MAX_RPC_REPLY_BYTES {
-                return Err(refused());
+                return Err(RpcFault::remote());
             }
             received += chunk.len();
             chunks.push(chunk);
             if reply.last {
                 return rmp_serde::from_read(RpcChunks::new(chunks))
                     .map(Ok)
-                    .map_err(|_| refused());
+                    .map_err(|_| RpcFault::remote());
             }
         }
-        Err(refused())
+        Err(RpcFault::remote())
     }
 }
 

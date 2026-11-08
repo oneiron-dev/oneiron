@@ -6,12 +6,15 @@
 //!   `Vault::tune_retrieval_blend_weights` and prints the weight table entry
 //!   it persisted for live scoring to read.
 //!
-//! Both subcommands are explicit CLI invocations: no timer, no cadence and no
+//! * `eval route-calibration` measures route-conditioned calibration on
+//!   known-answer cases in a fresh vault (`route_calibration`).
+//!
+//! Every subcommand is an explicit CLI invocation: no timer, no cadence and no
 //! automatic trigger drives them. A row without explicit contributing run ids,
 //! gate, turn and cost inputs plus `evaluator`/`source` provenance is refused.
 //! Neither the gate approval nor the confirmed-fact hit is fabricated here.
 //!
-//! Both subcommands operate on an already-existing vault and share one
+//! `outcome-ingest` and `tune` operate on an already-existing vault and share one
 //! explicit vault-open contract ([`VaultOpenArgs`]): the caller names the
 //! persisted graph shape and embedding identity, the trusted dictionary roots
 //! whose bytes reproduce the vault's analyzer identity, and the LMDB map size
@@ -63,6 +66,8 @@ pub(crate) enum EvalError {
     Json(#[from] serde_json::Error),
     #[error("oneiron engine error: {0}")]
     Oneiron(#[from] oneiron::Error),
+    #[error("route calibration bench: {0}")]
+    RouteCalibration(String),
 }
 
 type EvalResult<T> = Result<T, EvalError>;
@@ -402,6 +407,9 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         }
         [sub, rest @ ..] if sub == "outcome-ingest" => report(run_outcome_ingest(rest)),
         [sub, rest @ ..] if sub == "tune" => report(run_tune(rest)),
+        [sub, rest @ ..] if sub == "route-calibration" => {
+            report(route_calibration::run_route_calibration(rest))
+        }
         [sub, ..] => {
             write_diagnostic(&format!("unknown eval subcommand: {sub}"));
             print_help();
@@ -634,11 +642,12 @@ fn print_help() {
         handle,
         "usage: oneiron-bench eval <subcommand> [flags]\n\
          \n\
-         Drives the telemetry-v0 retrieval-outcome loop from the eval side.\n\
-         Both subcommands are explicit invocations: nothing here runs on a\n\
-         timer, a cadence, or a wake hook.\n\
+         outcome-ingest and tune drive the telemetry-v0 retrieval-outcome\n\
+         loop from the eval side; route-calibration measures route-conditioned\n\
+         calibration on known-answer cases. Every subcommand is an explicit\n\
+         invocation: nothing here runs on a timer, a cadence, or a wake hook.\n\
          \n\
-         Both subcommands operate on an already-existing vault and take the\n\
+         outcome-ingest and tune operate on an already-existing vault and take the\n\
          same required vault-open configuration. Nothing is inferred from a\n\
          preset and nothing is read out of the vault's own bytes: these flags\n\
          name the configuration the vault was created with, and a value that\n\
@@ -647,7 +656,7 @@ fn print_help() {
          that is not already a vault root is refused without creating\n\
          anything in it.\n\
          \n\
-         vault configuration (required on both subcommands):\n\
+         vault configuration (required on outcome-ingest and tune):\n\
            --vault <PATH>                 existing vault root; never created here\n\
            --dimensions <N>               persisted embedding vector dimension\n\
            --fast-dims <N|none>           persisted MRL fast-lane prefix, or none\n\
@@ -674,12 +683,32 @@ fn print_help() {
              one JSON summary carrying the ingested count.\n\
            tune <VAULT CONFIG> [--max-runs N] [--learning-rate F] [--min-reward-count N]\n\
              Runs one bounded retrieval-blend tuning step over the persisted\n\
-             rewards and prints the weight table entry it persisted."
+             rewards and prints the weight table entry it persisted.\n\
+           route-calibration --models-toml <PATH> --vault <PATH>\n\
+                             --definition <PATH> --cases <PATH> --out <PATH>\n\
+             Creates a fresh vault at --vault (absent or empty, else refused)\n\
+             with its embedded owner, seeds one research NOTE per case from its\n\
+             body, and stores the one standing yes/no graph question the\n\
+             --definition JSON names over those units (units [], learning true,\n\
+             no refresh, a dial that spans escalation below human, and a\n\
+             bench.route_calibration.truth claim binding mapping true and false).\n\
+             Each case is prepared, answered by the real decision ladder whose\n\
+             escalation rung is the [models.decision_read] house read the\n\
+             --models-toml file binds (llama.cpp /tokenize and /completion), and\n\
+             admitted with its full receipt; only then is the case's gold\n\
+             written on its unit through the gated claim writer. Outcomes are\n\
+             projected and --out (a new file) receives the run header, the\n\
+             per-case table and route_calibration_report. Cases are JSONL lines\n\
+             of id, source, body and gold (bool); ids and sources are unique.\n\
+             Abstentions, failures and missing pairs are counted apart and\n\
+             never filled in. Cases, definition, vault and --out stay outside\n\
+             the source tree."
     )
     .expect("eval help writes to stdout");
 }
 
 mod outcome_ingest;
+mod route_calibration;
 use outcome_ingest::ingest_outcomes;
 
 #[cfg(test)]

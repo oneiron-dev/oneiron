@@ -96,6 +96,7 @@ selfGrantsAsk(input: unknown): unknown
 selfGrantsAsked(input: unknown): unknown
 vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
 selfGrantsAnswer(input: unknown): unknown
+vaultProactivityDigestGet(input: unknown): unknown
 vaultPersonasPreview(input: unknown): unknown
 vaultPersonasExport(input: unknown): unknown
 vaultPersonasEdit(input: unknown): unknown
@@ -456,6 +457,7 @@ vaultTrustedContactsConcernPropose(input: unknown): unknown
 vaultTrustedContactsConcernDeliver(input: unknown): unknown
 vaultGuestsShare(input: unknown): unknown
 vaultGuestsExportEnvelope(input: unknown): unknown
+vaultGuestsPropose(input: unknown): unknown
 vaultGuestsReshare(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
@@ -691,6 +693,7 @@ selfSecretsRenew(input: unknown): unknown
 selfSecretsTeardown(input: unknown): unknown
 selfSecretsUse(input: unknown): unknown
 vaultSharesCreate(input: unknown): unknown
+vaultSharesIssueViewLink(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
 hostCompact(input: unknown): unknown
@@ -700,7 +703,11 @@ vaultHooksChecks(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultHooksRegenDue(input: unknown): unknown
 vaultHooksRegenGet(input: unknown): unknown
+vaultHooksRegenHistory(input: unknown): unknown
+vaultHooksRegenRevert(input: unknown): unknown
+vaultHooksRegenRun(input: unknown): unknown
 vaultHooksRegenAdopt(input: unknown): unknown
+vaultHooksRegenCancel(input: unknown): unknown
 vaultArtifactsPublishApproval(input: unknown): unknown
 vaultArtifactsPublish(input: unknown): unknown
 vaultArtifactsRepoint(input: unknown): unknown
@@ -757,6 +764,8 @@ vaultCodeSessionModelHealCount(input: unknown): unknown
 vaultCodeCorrections(input: unknown): unknown
 vaultCodeStepEvidence(input: unknown): unknown
 vaultCodeTypeDiagnostics(input: unknown): unknown
+vaultCodeWaitsRebindPrepare(input: unknown): unknown
+vaultCodeWaitsRebind(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
 vaultCodeWaitsReceipt(input: unknown): unknown
 vaultResultsStatus(input: unknown): unknown
@@ -811,6 +820,7 @@ vaultCodeViewsBuild(input: unknown): unknown
 vaultCodeCacheGet(input: unknown): unknown
 vaultCodeCacheReuse(input: unknown): unknown
 vaultCodeSnapshotsIngest(input: unknown): unknown
+vaultCodeSnapshotsCapture(input: unknown): unknown
 vaultCodeSnapshotsGet(input: unknown): unknown
 vaultCodeSnapshotsRead(input: unknown): unknown
 vaultCodeSymbolsDefinitions(input: unknown): unknown
@@ -840,6 +850,7 @@ vaultAgentsGrantsMint(input: unknown): unknown
 vaultAgentsGrantsRevoke(input: unknown): unknown
 vaultAgentsVerbClassesGet(input: unknown): unknown
 vaultAgentsVerbClassesConfigure(input: unknown): unknown
+vaultOauthAuthorizationAnswer(input: unknown): unknown
 vaultRepoGitPushMint(input: unknown): unknown
 vaultRepoGitPushRevoke(input: unknown): unknown
 vaultConnectorsReadGrantsGrant(input: unknown): unknown
@@ -915,6 +926,7 @@ tasksAnswerForwardChallenge(input: unknown): unknown
 tasksAnswerForward(input: unknown): unknown
 tasksAnswerForwardStatus(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
+tasksOutcomesRouteCalibration(input: unknown): unknown
 vaultRoomsList(input: unknown): unknown
 vaultRoomsMessages(input: unknown): unknown
 vaultRoomsParticipants(input: unknown): unknown
@@ -1156,6 +1168,7 @@ vaultEsignSigningAct(input: unknown): unknown
 vaultEsignSigningPdf(input: unknown): unknown
 vaultEsignSigningImage(input: unknown): unknown
 vaultEsignSigningSignature(input: unknown): unknown
+vaultEsignSigningPreview(input: unknown): unknown
 vaultEsignSealGet(input: unknown): unknown
 vaultConversationsCreate(input: unknown): unknown
 vaultConversationsTurnsCreate(input: unknown): unknown
@@ -1288,6 +1301,8 @@ vaultTasksLinearProvenance(input: unknown): unknown
 selfRunAttach(input: unknown): unknown
 selfFoldsDescribe(input: unknown): unknown
 selfHistory(input: unknown): unknown
+selfHooksRegenAdopt(input: unknown): unknown
+selfHooksRegenGet(input: unknown): unknown
 vaultRunsReview(input: unknown): unknown
 vaultRunsSettle(input: unknown): unknown
 vaultRunsSettlement(input: unknown): unknown
@@ -1324,6 +1339,7 @@ vaultMailComplianceLog(input: unknown): unknown
 vaultMailSourcesSyncStatus(input: unknown): unknown
 vaultMailSourcesImportMbox(input: unknown): unknown
 vaultMailSourcesSync(input: unknown): unknown
+vaultMailSourcesSearch(input: unknown): unknown
 vaultMailInbox(input: unknown): unknown
 vaultMailThreadsRead(input: unknown): unknown
 vaultMailAttachmentsOpen(input: unknown): unknown
@@ -1377,6 +1393,7 @@ selfFocusUnsubscribe(input: unknown): unknown
   inOffRecordSession(sessionRef: string): NativeClient
   withReadCredential(credential: string): NativeClient
   lastReceiptRef(): string | null
+  lastHookNotice(): string | null
   /** What `openWithHostRoot` did with its root; `null` on every other handle. */
   hostRootProfile(): HostRootProfile | null
   /** The engine-limit crossings this client's own vault kept; `null` on a remote, attached, or rebound view. */

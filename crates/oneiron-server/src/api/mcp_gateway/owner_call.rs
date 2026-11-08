@@ -87,7 +87,10 @@ pub(crate) async fn resolve_mcp_caller(
 /// headers again. A caller that forwards none (owner grade, or no
 /// holder-bound slip) still forwards none, and a request the door kept no
 /// caller for keeps its headers' proof.
-fn with_admitted_proof(mut context: McpCallContext, connection: &Extensions) -> McpCallContext {
+pub(super) fn with_admitted_proof(
+    mut context: McpCallContext,
+    connection: &Extensions,
+) -> McpCallContext {
     if context.forwarded.is_some()
         && let Some(admitted) = context
             .actor
@@ -180,6 +183,38 @@ pub(super) fn owner_resume_context(
             context
         }),
     )
+}
+
+/// The console owner's own call of a code run parked on a code consent
+/// wait, built again for the run's automatic re-entry after a restart (FIX
+/// 4606) under `auth`, the owner as [`CoreAuth::for_attested_owner`]
+/// rebuilt him now: only while `connection`, the STREAM his call came by,
+/// is still his own ([`owner_stream_connection`]), and the vault records
+/// him as its live owner ([`owner_context_at`]). It sits on the endpoint,
+/// in the session and in the room turn his call named. `None` for a stream
+/// that is not his.
+pub(super) fn owner_code_run_context(
+    server: &Arc<SyncServer>,
+    auth: CoreAuth,
+    connection: &str,
+    mode: McpSurfaceMode,
+    request_id: &str,
+    session: Option<oneiron::EntityId>,
+    room_turn: Option<oneiron::EntityId>,
+) -> Option<Result<McpCallContext, McpGatewayError>> {
+    let owner = auth.managed_owner()?;
+    if owner_stream_connection(owner).0 != connection {
+        return None;
+    }
+    Some(owner_context_at(
+        mode,
+        request_id,
+        owner,
+        Some(auth),
+        session,
+        room_turn,
+        server,
+    ))
 }
 
 /// [`managed_owner_context`] once the call's placement is known.

@@ -12,8 +12,11 @@ use crate::entity_id::EntityId;
 use crate::runtime_hooks::verb::{VerbAskDoor, VerbAskInstrument, VerbHookPreSnapshot};
 use crate::store::GateDecisionId;
 
+use super::rebind_types::{CodeConsentRebind, CodeConsentRebindProposal};
+use super::resume::{CodeConsentResumeRefusal, CodeConsentRunOrigin};
+
 /// The binding row's schema version.
-pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 7;
+pub(super) const CODE_CONSENT_SCHEMA_VERSION: u32 = 8;
 
 pub(crate) use crate::consent::code_wait_state::CodeConsentCallSite;
 pub use crate::consent::code_wait_state::{
@@ -200,10 +203,15 @@ pub(crate) struct CodeConsentBinding {
     pub(crate) pending: CodeConsentPendingEffect,
     pub(crate) hold_reasons: Vec<String>,
     pub(crate) remember_offer: Option<CodeConsentRememberOffer>,
+    pub(crate) standing_offer: Option<super::CodeConsentStandingOffer>,
     pub(crate) question: CodeConsentQuestion,
     /// The policy manifest frontier the hold was decided under.
     pub(crate) policy_frontier: [u8; 32],
     pub(crate) created_at_ms: u64,
+    /// The admitted MCP caller the run can be entered again for once the
+    /// reply is delivered (FIX 4606), as its host bound it on the run;
+    /// `None` for a run no MCP host bound one on.
+    pub(crate) origin: Option<CodeConsentRunOrigin>,
 }
 
 /// The parked step's seal (1b writes it from the executor's commit).
@@ -240,6 +248,8 @@ pub(crate) struct CodeConsentAnswerStamp {
     pub(crate) decision: GateDecisionId,
     /// The native standing consent grant the stop-asking answer minted.
     pub(crate) remembered: Option<String>,
+    /// The explicit standing offer's grant and its separate creation receipt.
+    pub(crate) standing_grant: Option<(String, GateDecisionId)>,
     /// The policy manifest frontier the answer was judged under.
     pub(crate) policy_frontier: [u8; 32],
     /// Present only for an act admitted by the frozen holder settlement policy.
@@ -312,7 +322,14 @@ pub(crate) struct CodeConsentWaitRow {
     pub(crate) settlement: Option<CodeConsentSettlement>,
     #[serde(default)]
     pub(crate) consumption: Option<CodeConsentConsumption>,
+    /// Why its host refused the run's automatic re-entry for good (FIX
+    /// 4606): written once, apart from the answer, the settlement and the
+    /// consumption, and never cleared.
+    #[serde(default)]
+    pub(crate) resume_refusal: Option<CodeConsentResumeRefusal>,
     pub(crate) revision: u64,
+    pub(crate) rebind_proposal: Option<CodeConsentRebindProposal>,
+    pub(crate) rebinds: Vec<CodeConsentRebind>,
 }
 
 impl CodeConsentWaitRow {
@@ -366,6 +383,7 @@ pub struct CodeConsentWaitView {
     pub wait_id: EntityId,
     pub run_id: EntityId,
     pub state: CodeConsentWaitState,
+    pub revision: u64,
     /// The verb row the held effect is.
     pub verb: String,
     /// The catalog name and tool of the held connector call; empty for a
@@ -382,12 +400,18 @@ pub struct CodeConsentWaitView {
     pub ask: Option<EntityId>,
     /// The choices this wait offers.
     pub options: Vec<CodeConsentChoice>,
+    /// The exact server-wide standing scope offered, not authority by itself.
+    pub standing_offer: Option<super::CodeConsentStandingOffer>,
     /// The sealed parked step: its wait generation and step hash.
     pub sealed: Option<(u64, [u8; 32])>,
     pub answer: Option<CodeConsentChoice>,
     pub word_ref: Option<EntityId>,
     /// The consent act's receipt, `gate:<hex>`.
     pub answer_receipt: Option<String>,
+    /// The standing grant actually minted by the first answer, when any.
+    pub standing_grant_ref: Option<String>,
+    /// Its own creation receipt, separate from the one-shot approval.
+    pub standing_receipt_ref: Option<String>,
     pub outcome: Option<CodeConsentSettleOutcome>,
     /// The settlement receipt, `gate:<hex>`.
     pub settlement_receipt: Option<String>,
@@ -421,4 +445,6 @@ pub struct CodeConsentWaitView {
     pub remembered: Option<String>,
     /// This answer was not the first: the view is the first answer's.
     pub already_answered: bool,
+    pub(crate) rebind_proposal: Option<CodeConsentRebindProposal>,
+    pub(crate) rebinds: Vec<CodeConsentRebind>,
 }

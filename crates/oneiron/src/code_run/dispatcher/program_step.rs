@@ -175,7 +175,10 @@ impl<'a> HostSelfDispatcher<'a> {
         invocation: InvocationId,
     ) -> Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
         if let Some(code) = self.program_authority_refusal(call.verb.as_str())? {
-            return Ok(Err(AgentVerbRefusal { code }));
+            return Ok(Err(AgentVerbRefusal {
+                hook_notice: None,
+                code,
+            }));
         }
         door.call(call, origin, invocation)
     }
@@ -277,29 +280,68 @@ impl<'a> HostSelfDispatcher<'a> {
             expected,
             None,
             |wtxn| {
-                match digest {
-                    Some(digest) => settle_program_write_in_txn(vault, wtxn, write, digest, now),
-                    None => tracing::warn!(
-                        receipt = %write.receipt.to_hex(),
-                        "a program write's answer did not digest; its step stays issued"
-                    ),
+                settle_answer(vault, wtxn, write, digest, now);
+                Ok(())
+            },
+        )
+    }
+
+    /// Settles a canonical write's receipt in the writer publishing its reply.
+    /// The reservation already stamped its owner and bound its program step.
+    pub(super) fn put_write_receipt_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        receipt: &CodeRunReplayRecord,
+        expected: CodeRunReplayGeneration,
+        program: Option<&ProgramWrite>,
+    ) -> Result<CodeRunReplayGeneration> {
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(Error::InvariantViolation(
+                "a canonical reply receipt needs its vault writer",
+            ));
+        };
+        let now = vault.now_recorded_at();
+        let digest = answer_digest(receipt);
+        vault.put_code_run_replay_record_if_generation_in_txn(
+            wtxn,
+            receipt,
+            Some(expected),
+            None,
+            |_| Ok(()),
+            |wtxn| {
+                if let Some(write) = program {
+                    settle_answer(vault, wtxn, write, digest, now);
                 }
                 Ok(())
             },
         )
     }
 
-    /// Whether `record` holds the program's pinned callable finished: a
+    /// Whether `record` holds the program's pinned callable finished: an
+    /// entry's own root call, the first row of a step checkpoint's calls, a
     /// `self.skills.call` of the pinned SKILL that returned its result. A
-    /// run no program binds holds none.
+    /// call of that SKILL nested inside an entry is not its root: its result
+    /// never finishes the program (FIX 5878). A run no program binds holds
+    /// none.
     pub(crate) fn pinned_entry_finished(&self, record: &CodeRunReplayRecord) -> bool {
         let Some(program) = &self.program else {
             return false;
         };
-        record.bridge_calls.iter().any(|row| {
-            row.effect == SelfEffect::SkillsCall
+        record.step_checkpoints.iter().any(|checkpoint| {
+            let Some(range) = checkpoint.bridge_range() else {
+                return false;
+            };
+            let Some(root) = record
+                .bridge_calls
+                .get(range.start)
+                .filter(|_| !range.is_empty())
+            else {
+                return false;
+            };
+            root.seq == range.start as u64
+                && root.effect == SelfEffect::SkillsCall
                 && matches!(
-                    decode_self_dispatch_outcome(&row.outcome),
+                    decode_self_dispatch_outcome(&root.outcome),
                     Ok(SelfDispatchOutcome::SkillCall(result)) if result.skill == program.skill
                 )
         })
@@ -311,6 +353,22 @@ impl<'a> HostSelfDispatcher<'a> {
         if let ExecutorStorage::Canonical(vault) = &self.storage {
             note_program_write_uncertain(vault, write, vault.now_recorded_at());
         }
+    }
+}
+
+fn settle_answer(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    write: &ProgramWrite,
+    digest: Option<[u8; 32]>,
+    now: u64,
+) {
+    match digest {
+        Some(digest) => settle_program_write_in_txn(vault, wtxn, write, digest, now),
+        None => tracing::warn!(
+            receipt = %write.receipt.to_hex(),
+            "a program write's answer did not digest; its step stays issued"
+        ),
     }
 }
 

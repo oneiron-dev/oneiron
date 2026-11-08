@@ -110,6 +110,8 @@ pub fn outcome_labels(
 
 /// Labels are observations of immutable answer receipts. Current facts and
 /// authority are checked again within one read snapshot before returning them.
+/// Each pair names the question version, route, routing policy revision and
+/// answering pins its answer's receipt holds, beside its original probability.
 /// A window that closed in silence pairs its answer with the binding's
 /// silence label; such a pair names the answer as its own fact. Each answer a
 /// person changed pairs too ([`person_changed_pairs`]).
@@ -216,12 +218,12 @@ pub(crate) fn calibration_pairs_in_txn(
         let Some(probability) = answer.decision.probability else {
             continue;
         };
-        pairs.push(CalibrationPair {
-            prediction: answer.decision.answer.clone(),
+        pairs.push(super::route_calibration::answer_pair(
+            answer,
             probability,
             outcome,
             derived_from,
-        });
+        ));
     }
     // A window that closed in silence labels its answer by the binding's
     // silence label, unless a fact in the window has labelled it since.
@@ -261,10 +263,10 @@ pub(crate) fn calibration_pairs_in_txn(
         {
             continue;
         }
-        pairs.push(CalibrationPair {
-            prediction: answer.decision.answer.clone(),
+        pairs.push(super::route_calibration::answer_pair(
+            answer,
             probability,
-            outcome: OutcomeLabel {
+            OutcomeLabel {
                 answer: answer.claim,
                 fact: answer.claim,
                 fact_value_hash: super::windows::silence_hash()?,
@@ -273,7 +275,7 @@ pub(crate) fn calibration_pairs_in_txn(
                 occurred_at: close.ends_at,
             },
             derived_from,
-        });
+        ));
     }
     // A person who changed the model's answer labels it too (OF-516).
     pairs.extend(person_changed_pairs_in_txn(
@@ -334,6 +336,8 @@ fn person_changed_pairs_in_txn(
             crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &source)?
                 .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
                 .map_or(0, |header| header.occurred_start);
+        // The prior went up to the person rung; its record keeps the pin that read it, and no
+        // receipt.
         pairs.push(CalibrationPair {
             prediction: record.prior,
             probability,
@@ -345,6 +349,10 @@ fn person_changed_pairs_in_txn(
                 noise_weight: 1.0,
                 occurred_at,
             },
+            question_version: record.question_version,
+            route: DecisionRoute::Person,
+            policy: None,
+            providers: vec![record.prior_provider],
             derived_from,
         });
     }

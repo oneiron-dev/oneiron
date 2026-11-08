@@ -523,6 +523,17 @@ pub(crate) fn mcp_hook_stop(stop: oneiron::runtime_hooks::VerbHookStop) -> McpGa
         VerbHookStop::CompletedWithError { .. } => "verb_hook_completed_with_error",
     };
     let mut error = McpGatewayError::new(-32020, kind, stop.to_string());
+    error.hook_notice = matches!(
+        &stop,
+        VerbHookStop::Completed {
+            hook_notice: Some(true),
+            ..
+        } | VerbHookStop::CompletedWithError {
+            hook_notice: Some(true),
+            ..
+        }
+    )
+    .then(|| oneiron::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY.to_owned());
     error.hook = Some(Box::new(stop));
     error
 }
@@ -530,7 +541,7 @@ pub(crate) fn mcp_hook_stop(stop: oneiron::runtime_hooks::VerbHookStop) -> McpGa
 /// Resolves the short refs embedded in a notice before releasing its detail.
 /// Allowed detail keeps those rows in the reply's replay provenance, after an
 /// act's own detail narrowing; unknown or held detail stays content-free.
-fn mcp_hook_notice(
+pub(super) fn mcp_hook_notice(
     server: &SyncServer,
     actor: &McpCallContext,
     notice: Option<String>,

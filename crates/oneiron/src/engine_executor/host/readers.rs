@@ -135,6 +135,7 @@ impl RecordingJsHost<'_, '_> {
                 Err(reason) => {
                     return Ok((
                         SelfDispatchOutcome::Denied(SelfDeniedResult {
+                            hook_notice: None,
                             effect: SelfEffect::ReaderSpawn,
                             outcome: reason,
                             reason_codes: Vec::new(),
@@ -149,6 +150,7 @@ impl RecordingJsHost<'_, '_> {
             seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,
+            reply_publisher: None,
         };
         Ok((
             self.gated_write
@@ -184,6 +186,7 @@ impl RecordingJsHost<'_, '_> {
                             .unwrap_or("denied");
                         return Ok((
                             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                                hook_notice: None,
                                 effect: SelfEffect::Summarize,
                                 outcome: code.to_owned(),
                                 reason_codes: Vec::new(),
@@ -222,6 +225,7 @@ impl RecordingJsHost<'_, '_> {
             seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,
+            reply_publisher: None,
         };
         Ok((
             self.gated_write
@@ -284,6 +288,7 @@ impl RecordingJsHost<'_, '_> {
             seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,
+            reply_publisher: None,
         };
         Ok((
             self.gated_write

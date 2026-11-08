@@ -30,9 +30,19 @@ pub(crate) use archive_delete::{
 pub(crate) use archive_delete::ArchiveDeleteRole;
 mod connect_grant;
 pub use connect_grant::{ConnectGrantMinted, ConnectMemberLeaveConsent};
+pub(crate) use connect_grant::{connect_grant_stands_in_txn, connect_guest_standing_in_txn};
 pub(crate) use connect_grant::{
     grant_serves_selector, is_guest_slice, pact_admits_grant, require_connect_grant_in_txn,
     require_one_connect_per_peer,
+};
+mod connect_proposal;
+pub(crate) use connect_proposal::{
+    drop_pending_connect_proposals_in_txn, erase_connect_proposer_in_txn,
+};
+#[cfg(feature = "sync")]
+pub(crate) use connect_proposal::{
+    land_connect_proposal_in_txn, pending_connect_proposal_in_txn,
+    pending_connect_proposals_in_txn, settle_connect_proposal_in_txn,
 };
 mod content_write;
 pub(crate) use content_write::{ActorContentTxn, actor_for_txn};
@@ -89,10 +99,10 @@ pub use shared_act::{
     DetachRemainderReason, DetachReport, EraseAskKind, EraseAskStatus,
     NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS,
     ReceivedRemovalArchive, ReceivedRemovalArchiveState, RemovalExportCopy, RemovalExportDelivery,
-    RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN, SHARED_INVITATION_TTL_SECS,
-    SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind,
-    SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState, SharedVaultChange,
-    SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
+    RemovalExportFile, RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN,
+    SHARED_INVITATION_TTL_SECS, SharedActExecution, SharedActExecutionReceipt, SharedActExport,
+    SharedActKind, SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState,
+    SharedVaultChange, SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
     shared_act_outcome_transcript,
 };
 pub(crate) use shared_act::{DetachOutcome, SharedMemberDeparture};
