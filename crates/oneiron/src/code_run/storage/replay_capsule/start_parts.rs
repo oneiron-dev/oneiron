@@ -49,7 +49,7 @@ use crate::{EntityId, Error, Result};
 type CapsuleKey = (EntityId, u64, u64);
 
 /// An image's raw rows of one database, sorted by key.
-type Rows = Vec<(Vec<u8>, Vec<u8>)>;
+pub(super) type Rows = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// What a restore's republish of a start left among an image's rows (FIX
 /// 4192): the digests that rested without their bytes, and the digests
@@ -62,7 +62,7 @@ const BODY_ROWS: SideTable<(EntityId, EntityId), OwnedBody, Named> =
     SideTable::new(&side_table::PROVENANCE_BODY);
 
 /// Who holds a digest, as an image's raw rows hold it.
-const BODY_DIGEST_ROWS: SideTable<([u8; 32], EntityId), EntityId, Named> =
+pub(super) const BODY_DIGEST_ROWS: SideTable<([u8; 32], EntityId), EntityId, Named> =
     SideTable::new(&side_table::PROVENANCE_BODY_DIGEST);
 
 /// The file digests no descriptor holds, as an image's raw rows hold them.
@@ -170,7 +170,7 @@ fn kept_start_in_txn(
 
 /// The run and actor whose pieces a capsule's start names (FIX 4192);
 /// `None` for a capsule that holds its content no longer.
-fn capsule_scope(capsule: &StepReplayCapsule) -> Option<PieceScope> {
+pub(super) fn capsule_scope(capsule: &StepReplayCapsule) -> Option<PieceScope> {
     let actor = capsule.content.actor()?;
     Some(PieceScope {
         run: capsule.run,
@@ -337,7 +337,7 @@ pub(super) fn drop_unheld_body_in_txn(
 }
 
 /// The place of the row `key` among sorted `rows`, or where it goes.
-fn place(rows: &Rows, key: &[u8]) -> std::result::Result<usize, usize> {
+pub(super) fn place(rows: &Rows, key: &[u8]) -> std::result::Result<usize, usize> {
     rows.binary_search_by(|(row, _)| row.as_slice().cmp(key))
 }
 
@@ -364,6 +364,57 @@ fn inline_in_rows(rows: &Rows, piece: OutputRef) -> Option<Vec<u8>> {
             Some(bytes)
         }
         _ => None,
+    }
+}
+
+/// The rows that name a body a restore puts back among an image's raw rows
+/// (FIX 11415): its descriptor and its holder row, each a key and a value.
+pub(super) struct NamingRows {
+    pub(super) descriptor: (Vec<u8>, Vec<u8>),
+    pub(super) holder: (Vec<u8>, Vec<u8>),
+}
+
+/// FIX 11415: the rows that name the body `output` measures, as run `run`
+/// holds it at its path, held as `body`. The republish of a step start
+/// puts them, and the size of that republish before any body is read is
+/// counted from them, so the two use one codec.
+///
+/// # Errors
+///
+/// An occurrence that does not derive, and a row that does not encode.
+pub(super) fn naming_rows(
+    run: EntityId,
+    output: &CodeRunRawOutput,
+    body: &StoredBody,
+) -> Result<NamingRows> {
+    let occurrence = ResultOccurrence::of(Some(run), output)?.id();
+    let owned = owned_body(run, output, body)?;
+    Ok(NamingRows {
+        descriptor: (
+            BODY_ROWS.key_bytes(&(run, occurrence)),
+            BODY_ROWS.encode_value(&owned)?,
+        ),
+        holder: (
+            BODY_DIGEST_ROWS.key_bytes(&(output.raw_blake3, occurrence)),
+            BODY_DIGEST_ROWS.encode_value(&run)?,
+        ),
+    })
+}
+
+/// FIX 11415: the start a capsule names once a restore republishes it: its
+/// manifest `body` and `digest`, the digest of the whole start, unerased,
+/// and the rest as `start` names it. The republish and the size of it
+/// before any body is read both build it here.
+pub(super) fn republished_step_start(
+    start: ExecutorStepStart,
+    body: OutputRef,
+    digest: [u8; 32],
+) -> ExecutorStepStart {
+    ExecutorStepStart {
+        body,
+        digest,
+        erased: false,
+        ..start
     }
 }
 
@@ -445,12 +496,8 @@ pub(crate) fn republish_step_start_in_rows(
         rested.insert(before);
     }
     landed.insert(output.raw_blake3);
-    capsule.start = Some(ExecutorStepStart {
-        body: output.output_ref(),
-        digest: *blake3::hash(bytes).as_bytes(),
-        erased: false,
-        ..start
-    });
+    let digest = *blake3::hash(bytes).as_bytes();
+    capsule.start = Some(republished_step_start(start, output.output_ref(), digest));
     put_row(rows, row.to_vec(), CAPSULES.encode_value(&capsule)?);
     Ok(Some((rested, landed)))
 }
@@ -461,8 +508,8 @@ pub(crate) fn republish_step_start_in_rows(
 /// already (inline, or a file among `files`, the files the image carries),
 /// and the run's descriptor and holder row unless its descriptor holds it
 /// whole. A body it puts back inline turns every descriptor of it that
-/// names a file to name it inline (FIX 4192). A secret the scan finds marks the run's occurrence. Whether it
-/// put the body row.
+/// names a file to name it inline (FIX 4192). A secret the scan finds
+/// marks the run's occurrence. Whether it put the body row.
 fn land_piece_in_rows(
     rows: &mut Rows,
     run: EntityId,
@@ -501,21 +548,16 @@ fn land_piece_in_rows(
             body
         }
     };
-    let descriptor = BODY_ROWS.key_bytes(&(run, occurrence.id()));
-    let holds = place(rows, &descriptor)
+    let NamingRows { descriptor, holder } = naming_rows(run, &output, &body)?;
+    let holds = place(rows, &descriptor.0)
         .ok()
         .and_then(|at| BODY_ROWS.decode_value(&rows[at].1).ok())
         .is_some_and(|owned| {
             matches!(&owned.state, BodyState::Complete { body } if body.blake3 == output.raw_blake3)
         });
     if !holds {
-        let owned = owned_body(run, &output, &body)?;
-        put_row(rows, descriptor, BODY_ROWS.encode_value(&owned)?);
-        put_row(
-            rows,
-            BODY_DIGEST_ROWS.key_bytes(&(output.raw_blake3, occurrence.id())),
-            BODY_DIGEST_ROWS.encode_value(&run)?,
-        );
+        put_row(rows, descriptor.0, descriptor.1);
+        put_row(rows, holder.0, holder.1);
         take_row(rows, &BODY_RELEASED_ROWS.key_bytes(&output.raw_blake3));
     }
     let secret = RAW_OUTPUT_SECRETS.key_bytes(&occurrence.mark_key(&output.handle));
@@ -586,21 +628,13 @@ fn republish_manifest_in_rows(
         });
     let body = republished_start_body(bytes).holding(held);
     put_row(rows, key, RAW_OUTPUTS.encode_value(&body)?);
-    let descriptor = owned_body(run, &output, &body)?;
-    put_row(
-        rows,
-        BODY_ROWS.key_bytes(&(run, occurrence.id())),
-        BODY_ROWS.encode_value(&descriptor)?,
+    let (old_rows, new_rows) = (
+        naming_rows(run, &old, &body)?,
+        naming_rows(run, &output, &body)?,
     );
-    take_row(
-        rows,
-        &BODY_DIGEST_ROWS.key_bytes(&(old.raw_blake3, occurrence.id())),
-    );
-    put_row(
-        rows,
-        BODY_DIGEST_ROWS.key_bytes(&(output.raw_blake3, occurrence.id())),
-        BODY_DIGEST_ROWS.encode_value(&run)?,
-    );
+    put_row(rows, new_rows.descriptor.0, new_rows.descriptor.1);
+    take_row(rows, &old_rows.holder.0);
+    put_row(rows, new_rows.holder.0, new_rows.holder.1);
     take_row(rows, &BODY_RELEASED_ROWS.key_bytes(&output.raw_blake3));
     Ok((old.raw_blake3, output))
 }

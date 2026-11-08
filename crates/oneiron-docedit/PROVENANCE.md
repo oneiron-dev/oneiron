@@ -278,6 +278,18 @@ The comment-cell text settle also retains structural markers from a deleted
 text segment as Normal markers, including when the replacement is empty. It
 adds no refusal and does not change any other paragraph or cell.
 
+The nested-table identity change (2026-11-07, FIX 21302) touches `src/import.rs`.
+Rows, cells and content-control-wrapped cells pass the existing body/story
+`table_counter` into nested tables instead of resetting it in each cell.
+The existing `tbl_N` mint and derived row/cell names therefore identify every
+nested table within that parse scope without colliding with an ancestor or a
+table in another cell. Each story keeps its own counter; these are not global
+identities. A later outer table can receive a different native id after an
+earlier nested table. No old-id reader, new address field or format version is
+added. Paragraph counters, XML content, tracking, formatting, materialization
+and the direct-only story-cell editing surface are unchanged. This fixes the
+native producer identity only; it does not add nested story-cell editing.
+
 ## Native deck transaction graphic ceilings (FIX 10653)
 
 A deck transaction may carry `graphics` with the existing `svg_bytes`,
@@ -299,6 +311,12 @@ replacement. Existing held-media paths do not re-admit their bytes. Omitting the
 settings keeps the existing numeric defaults and the old profile/key serialization.
 An explicit setting is part of `ExportKey`, so a memo for another setting cannot
 stand in for it. The projector signature and export gate remain unchanged.
+The ideographic-space estimate change (2026-11-06, FIX 16557) touches
+`src/design_plan/capability.rs`. `Metrics::lines_in` measures a complete nonempty
+U+0020/U+3000 run through the same advance and greedy wrap at leading, trailing,
+and internal separators; other whitespace keeps its existing fallback. Advance,
+words, height, and emission are unchanged; no renderer comparison is claimed.
+
 The same-count later-paragraph fallback (2026-11-06, FIX 17480) touches
 `src/native_patch/table.rs`. When the rebuilt line count matches the original
 paragraph count, later lines reuse the same-index paragraph's properties;

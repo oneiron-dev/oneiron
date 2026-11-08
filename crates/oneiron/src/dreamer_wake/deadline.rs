@@ -6,6 +6,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron_model::llm::WorkCancel;
 
+use crate::attempt_queue::AttemptId;
+use crate::dreamer_runner::{AdmittedBudgetLine, DreamerAdmittedAttempt};
+
 use super::observation::{WakeBinding, WakeRef};
 
 /// Wake-pass wall-clock ceiling: the REAL ceiling (1184-D4-C), monotonic.
@@ -33,6 +36,7 @@ pub struct WakePassDeadline {
     origin_unix_ms: Option<u64>,
     /// The wake observation this pass's root committed, carried to clones.
     wake: Option<WakeBinding>,
+    admitted_budget_line: Option<AdmittedBudgetLine>,
 }
 
 impl WakePassDeadline {
@@ -52,6 +56,7 @@ impl WakePassDeadline {
             }),
             origin_unix_ms,
             wake: None,
+            admitted_budget_line: None,
         }
     }
 
@@ -69,7 +74,18 @@ impl WakePassDeadline {
             elapsed_ms,
             origin_unix_ms: None,
             wake: None,
+            admitted_budget_line: None,
         }
+    }
+
+    pub(super) fn for_admitted(&self, admitted: &DreamerAdmittedAttempt) -> Self {
+        let mut deadline = self.clone();
+        deadline.admitted_budget_line = Some(admitted.admitted_budget_line().clone());
+        deadline
+    }
+
+    pub(super) fn admitted_budget_line(&self, attempt_id: AttemptId) -> Option<&str> {
+        self.admitted_budget_line.as_ref()?.for_attempt(attempt_id)
     }
 
     fn elapsed(&self) -> u64 {
@@ -126,6 +142,7 @@ impl WakePassDeadline {
             elapsed_ms: Arc::clone(&self.elapsed_ms),
             origin_unix_ms: self.origin_unix_ms,
             wake: None,
+            admitted_budget_line: None,
         }
     }
 
