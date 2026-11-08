@@ -193,6 +193,11 @@ pub struct ChatCompletionUsage {
 pub struct ChatCompletionMemory {
     pub injected: bool,
     pub remembered: ChatCompletionRemembered,
+    /// Why recall did not run when the owner's setting withheld it:
+    /// `always_ask` on `vault.recall`, which a buffered call cannot ask
+    /// (FIX 4843). Absent when recall ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recall_skipped: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

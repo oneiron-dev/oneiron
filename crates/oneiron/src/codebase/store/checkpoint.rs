@@ -8,6 +8,14 @@
 //! hash keys is shared by every snapshot of that fork, so no one snapshot
 //! holds it and it is not compartmented. Nothing calls this until KS7-5, and
 //! only once CHECKPOINT_PAYLOADS_ENABLED is on.
+//!
+//! FIX 4299 (CODE-CUSTODY-01): a snapshot row now names the registered
+//! repository it belongs to, and its scope key derives from that anchor or
+//! from the commit-free locator. Both ride the snapshot row and its scope
+//! rows under the snapshot's own tree; `check` decodes each with the one
+//! snapshot codec, so a row of the old shape refuses rather than restores.
+//! The anchor's retained configuration is its CODE body, an ordinary entity
+//! row, never a row here.
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"

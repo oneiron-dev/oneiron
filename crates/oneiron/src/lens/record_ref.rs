@@ -75,12 +75,16 @@ impl RecordRef {
 }
 
 /// `vault.refs.resolve`'s one input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResolveRecordRefRequest {
     /// The ref to resolve: a short id or a 32-hex id, either one optionally
     /// pinned as `<ref>@<revision>`.
     pub reference: String,
+    /// The caller's retrieval filter (FIX 3977): a record it excludes
+    /// resolves as one the reader may not read.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 /// The bounded hover/open preview of one record.
@@ -106,6 +110,16 @@ impl Memory<'_> {
         &self,
         input: &ResolveRecordRefRequest,
     ) -> MemoryResult<ScopedReadResult<RecordRefPreview>> {
+        if let Some(filter) = &input.filter {
+            // Bind the caller's filter on this call's handle once (FIX 3977).
+            let bound = ResolveRecordRefRequest {
+                filter: None,
+                ..input.clone()
+            };
+            return self
+                .with_read_filter(Some(filter))
+                .resolve_record_ref(&bound);
+        }
         self.record_ref_preview(
             input,
             |reference| self.get_entity(reference),
@@ -202,7 +216,7 @@ pub(crate) const RECORD_LINKS_TEXTS_MAX_BYTES: usize = 1024 * 1024;
 /// read surface returned, or a TURN whose messages this reader may read, a
 /// page at a time. Exactly one of `text`, `texts` and `turn_ref` is named;
 /// `after` and `limit` page a turn only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RecordLinksRequest {
     /// Text to read for `oneiron://` Markdown links.
@@ -226,6 +240,10 @@ pub struct RecordLinksRequest {
     /// [`RECORD_LINKS_TURN_PAGE_MAX`] (also the default).
     #[serde(default)]
     pub limit: Option<u32>,
+    /// The caller's retrieval filter (FIX 3977): the turn's messages and
+    /// every link's record are read under it.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 /// One stretch of a text as one reader sees it. `start` and `end` are UTF-8
@@ -294,6 +312,14 @@ impl Memory<'_> {
     /// under this handle's own read. A turn this reader may not read, and one
     /// that does not exist, give the same `NOT_FOUND`.
     pub fn record_links(&self, input: &RecordLinksRequest) -> MemoryResult<RecordLinks> {
+        if let Some(filter) = &input.filter {
+            // Bind the caller's filter on this call's handle once (FIX 3977).
+            let bound = RecordLinksRequest {
+                filter: None,
+                ..input.clone()
+            };
+            return self.with_read_filter(Some(filter)).record_links(&bound);
+        }
         if let Some(texts) = &input.texts {
             if input.text.is_some() || input.turn_ref.is_some() {
                 return Err(MemoryError::bad_request_with(
@@ -491,6 +517,7 @@ impl Memory<'_> {
     fn linked_record(&self, reference: &str) -> MemoryResult<LinkedRecord> {
         let request = ResolveRecordRefRequest {
             reference: reference.to_owned(),
+            filter: None,
         };
         match self.resolve_record_ref(&request) {
             Ok(read) => Ok(Some((read.value.record, read.receipt))),

@@ -120,7 +120,8 @@ pub use self::correction::{
     ExecutorWireRepairs,
 };
 pub(crate) use self::dispatcher::{
-    ExecutorCallSite, check_write_gate_against_vault, recorded_verb_call,
+    ExecutorCallSite, agent_attempt_run_ref, check_write_gate_against_vault, recorded_verb_call,
+    write_receipt_may_have_run,
 };
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
@@ -129,7 +130,7 @@ pub use self::dispatcher::{
 pub(crate) use self::model_call::{
     erase_model_call_actor_as_in_txn, erase_model_call_actor_in_txn,
 };
-pub(crate) use self::payload::agent_verb_observations_of;
+pub(crate) use self::payload::{agent_verb_observations_of, push_fold_word, recorded_fold_words};
 pub use self::read_set::resident_tool_answer_rows;
 pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
@@ -164,13 +165,15 @@ pub(crate) use self::result_read::{
 };
 pub use self::storage::ReadWorldUnknown;
 pub(crate) use self::storage::SessionCheckpointBody;
+pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
-    CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply,
-    erase_settled_reply_of_erased_run_in_txn, replay_carriage, replay_owners,
-    response_erased_error, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,
-    wait_reply_in_txn,
+    CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply, WithdrawnFoldAnswer,
+    erase_settled_reply_of_erased_run_in_txn, redact_fold_answers,
+    release_settled_for_caller_in_txn, replay_carriage, replay_owners, response_erased_error,
+    retire_actor_responses_in_txn, retire_fold_answers_in_txn, retire_sourced_code_outputs_in_txn,
+    soft_delete_actor_responses_in_txn, wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
@@ -185,6 +188,7 @@ pub use self::storage::{
     CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
     CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
+pub(crate) use self::storage::{InheritedCompaction, StartCompaction};
 pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
     ReceiptSource, ReceiptTree,
@@ -208,8 +212,8 @@ pub(crate) use self::storage::{
     session_type_diagnostics_row,
 };
 pub(crate) use self::storage::{
-    StoredRunContinuation, actor_gone_in_txn, capsule_context_body, capsule_request,
-    capsule_route_prompt, capsule_start_body, continuation_seed_body_in_txn,
+    StoredRunContinuation, actor_gone_in_txn, capsule_context_body, capsule_fold_words_withdrawn,
+    capsule_request, capsule_route_prompt, capsule_start_body, continuation_seed_body_in_txn,
     contribution_pair_erase_candidates_in_txn, erase_capsule_actor_in_txn,
     erase_contribution_forks_in_txn, publish_continuation_output_in_txn,
     put_run_continuation_row_in_txn, route_prompt_at, run_continuation_in_txn,
@@ -237,7 +241,8 @@ pub(crate) use self::replay_parts::{
 pub(crate) use self::storage::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
-    settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
+    settle_start_bodies_in_rows, start_piece_held_apart_in_txn, step_capsule_row,
+    step_start_body_row, step_start_content_pieces, step_start_owners_in_txn,
 };
 // FIX 6588: a wait's replies in checkpoint images, as row-held responses.
 pub(crate) use self::storage::wait_delivery_owners;
@@ -295,8 +300,9 @@ use self::storage::canonical_speech_conversation_id;
 pub(crate) use self::storage::executor_speech_message_id;
 #[cfg(test)]
 pub(crate) use self::storage::require_facet_placement_in;
+pub(crate) use self::types::FoldWordRef;
 pub use self::types::{
-    SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
+    FoldAnswer, SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
     SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall, SelfContextResult,
     SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason,
     SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfLeaderCall, SelfMemoryEdgeWriteResult,
