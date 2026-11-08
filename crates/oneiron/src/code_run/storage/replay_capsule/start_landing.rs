@@ -112,6 +112,44 @@ impl StrippedPieces {
         *held = others;
         Ok(taken)
     }
+
+    /// FIX 4192 review fix: the pieces among `digests` that a run holds at
+    /// a start piece path of the run and actor of a capsule among `landed`,
+    /// the capsule rows a restore landed again or dropped. A census carried
+    /// each without its bytes. A restore rests every one of them, so the
+    /// settle prunes a piece no live start lands again, even one whose old
+    /// manifest and nodes retired before the restore could walk them. A run
+    /// and actor that a capsule among `kept`, one the restore left as it is,
+    /// also names keeps its pieces. A capsule row that does not read names
+    /// none.
+    ///
+    /// # Errors
+    ///
+    /// An occurrence that does not derive.
+    pub(crate) fn at_start_paths_in_rows(
+        rows: &Rows,
+        digests: &BTreeSet<[u8; 32]>,
+        landed: &[Vec<u8>],
+        kept: &[Vec<u8>],
+    ) -> Result<BTreeSet<[u8; 32]>> {
+        let scope_of = |row: &Vec<u8>| {
+            place(rows, row)
+                .ok()
+                .and_then(|at| CAPSULES.decode_value(&rows[at].1).ok())
+                .as_ref()
+                .and_then(capsule_scope)
+                .map(|scope| (scope.run, scope.actor))
+        };
+        let kept: BTreeSet<(EntityId, EntityId)> = kept.iter().filter_map(scope_of).collect();
+        let mut pieces = Self::of(rows, digests);
+        let mut at = BTreeSet::new();
+        for (run, actor) in landed.iter().filter_map(scope_of) {
+            if !kept.contains(&(run, actor)) {
+                at.extend(pieces.take(PieceScope { run, actor })?);
+            }
+        }
+        Ok(at)
+    }
 }
 
 /// FIX 11415: the length each row lands at once the republish of the step
