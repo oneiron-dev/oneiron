@@ -150,6 +150,7 @@ impl Vault {
             org_ref: None,
             grant_ref: Some(grant_ref.to_hex()),
             invitation_ref: None,
+            share_ref: None,
             delegation: None,
             comm,
             trusted_contact: None,
@@ -473,6 +474,8 @@ impl Vault {
             revoked_at,
         };
         WITHDRAWN.put(&self.store, txn, &grant_ref, &withdrawal)?;
+        // A Connect guest's pending proposals go with its grant (FIX 3684).
+        crate::federation::drop_pending_connect_proposals_in_txn(self, txn, &grant_ref)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         Ok(GuestRevokeOutcome {
             grant_ref,

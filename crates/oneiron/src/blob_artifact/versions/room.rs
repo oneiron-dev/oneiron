@@ -119,6 +119,7 @@ impl RoomResponseVersion {
             claim_id,
             actor,
             learned_at,
+            None,
         )?;
         let facet = crate::claim::default_facet_in(view.read().base(), txn)?;
         let claim = crate::claim::encode_claim_body(&candidate.into_claim_body(&envelope, facet)?)?;

@@ -49,6 +49,11 @@ pub(crate) fn erase_fork_actor_in_txn(
             forks.push((key, fork, opened));
         }
     }
+    // FIX 12470: each body whose fork changed takes the erased form into
+    // each live window that carries it once the erase commits.
+    #[cfg(feature = "sync")]
+    let bodies: std::collections::BTreeSet<EntityId> =
+        forks.iter().map(|((entity, _), _, _)| *entity).collect();
     for (key, fork, opened) in forks {
         if opened && fork.state == TypedForkState::Open {
             FORKS.delete(&vault.store, wtxn, &key)?;
@@ -57,5 +62,7 @@ pub(crate) fn erase_fork_actor_in_txn(
             FORKS.put(&vault.store, wtxn, &key, &fork)?;
         }
     }
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows(vault, wtxn, bodies);
     Ok(())
 }

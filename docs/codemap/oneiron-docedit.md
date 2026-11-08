@@ -34,10 +34,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/design_plan/mod.rs` | src | m | 16 struct · 12 enum · 11 fn · 1 re-export · 2 crate-vis | ApprovedInput, AssetBinding, CompileError, Composition, Content, Decision, DecisionOption, DesignPlan +20 | Compile a kept brief into a validated `DesignPlan` (ARCH-0077, "Create: an approved argument, then a design") |
 | `src/design_plan/tests.rs` | test | L | 8 crate-vis | — | ONE-2533 acceptance: the brief schema refuses design choices; content, boundaries, units and pins are… |
 | `src/docx_body.rs` | src | m | 6 struct · 5 enum · 7 fn · 1 const · 2 re-export | DocxAnchor, DocxBlock, DocxBlockKind, DocxCell, DocxCellParagraph, DocxChange, DocxLock, DocxMark +3 | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
-| `src/docx_body/cells.rs` | src | s | 1 crate-vis | — | Per-paragraph cell text, separate from the flat current-redline cell read |
+| `src/docx_body/cells.rs` | src | m | 5 crate-vis | — | Per-paragraph cell text, separate from the flat current-redline cell read |
 | `src/docx_body/projection.rs` | src | L | 2 struct · 6 fn · 3 crate-vis | DocxGroupEvents, DocxProjection | In-memory multi-revision DOCX projection and its shared op builder |
 | `src/docx_body/projection/story_cells.rs` | src | s | 1 crate-vis | — | Scoped native table-cell projection |
-| `src/docx_body/stories.rs` | src | s | 2 struct · 2 enum · 1 fn | DocxHeaderFooterBand, DocxRead, DocxStory, DocxStoryScope | Native non-body stories, kept separate from the document body's id space |
+| `src/docx_body/stories.rs` | src | s | 2 struct · 2 enum · 3 fn | DocxHeaderFooterBand, DocxRead, DocxStory, DocxStoryScope | Native non-body stories, kept separate from the document body's id space |
 | `src/edit/check.rs` | src | m | 16 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
 | `src/edit/geometry.rs` | src | s | 6 crate-vis | — | `set_preset` and `set_glue`: a shape's, picture's or connector's preset geometry, and a connector's glue |
 | `src/edit/media.rs` | src | m | 9 crate-vis | — | `set_picture`, `set_notes` and `release_media`: verbs whose write sets reach beyond the slide part |
@@ -146,11 +146,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/reshape/workbook/slots.rs` | src | m | 3 crate-vis | — | A rewritten chart's held and new series planned into its own workbook: each sequence at its own cells, a… |
 | `src/live/svg_fallback.rs` | src | m | 4 crate-vis | — | A held SVG picture written as Office writes one (OF-510, FIX 5672): PowerPoint shows an SVG through a raster… |
 | `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 6 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |
-| `src/native_patch/chart/cache.rs` | src | s | 1 crate-vis | — | A series cache written in place (FIX 7987): only the points whose values the write changes, and the count… |
+| `src/native_patch/chart/cache.rs` | src | s | 2 crate-vis | — | A series cache written in place (FIX 7987): only the points whose values the write changes, and the count… |
 | `src/native_patch/chart/categories.rs` | src | s | 7 crate-vis | — | Multi-level categories (`c:multiLvlStrRef`, FIX 3493): a hierarchy's cache read level by level, leaf first… |
 | `src/native_patch/chart/placeholder.rs` | src | s | 1 crate-vis | — | A stock plot's placeholder series (OF-510, FIX 9374): a `c:ser` of a `c:stockChart` holding neither… |
 | `src/native_patch/mod.rs` | src | m | 5 struct · 4 enum · 1 fn · 1 re-export · 4 crate-vis | CellWrite, ChartFamily, Frame, Merge, NativeEdit, NativeRefusal, NativeReport, Target +1 | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
 | `src/native_patch/table.rs` | src | m | 12 crate-vis | — | Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes; a cell a merge… |
+| `src/native_patch/table/rebuilt.rs` | src | m | 1 crate-vis | — | Paragraph-preserving fallback for a native table cell text write |
 | `src/native_patch/tests.rs` | test | m | — | — | — |
 | `src/native_patch/workbook.rs` | src | m | 18 crate-vis | — | The embedded workbook: direct A1 ranges, a SpreadsheetML cell reader, and a writer that rebuilds only the… |
 | `src/native_patch/workbook/cells.rs` | src | s | 1 crate-vis | — | A worksheet's cells written in place (FIX 7987): a written cell keeps its own attributes and children (its… |
@@ -166,7 +167,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pptx_comments/model.rs` | src | m | 8 struct · 5 enum · 6 fn · 17 crate-vis | PptxAnchorOutcome, PptxAuthor, PptxCommentAction, PptxCommentEdit, PptxCommentEffects, PptxCommentLimits, PptxCommentTarget, PptxDriftReason +5 | PowerPoint comment requests, inspection facts, codec limits and typed refusals |
 | `src/pptx_comments/xml.rs` | src | s | 17 crate-vis | — | PPTX comment XML spans, queries and surgery |
 | `src/pptx_comments/xml/parse.rs` | src | m | 5 crate-vis | — | Namespace-aware parsing for PPTX comment XML |
-| `src/resource.rs` | src | m | 4 struct · 2 enum · 1 trait · 27 fn · 1 const | CapacityHit, Dimension, Hold, MeasuringPort, ResourcePort, ResourceRefusal, Resources | The memory one document operation reserves before it allocates, and the deadline it runs within (Rule 5; FIX… |
+| `src/resource.rs` | src | m | 4 struct · 2 enum · 2 trait · 28 fn · 1 const | CapacityHit, Dimension, Hold, MeasuringPort, ResourceAllocation, ResourcePort, ResourceRefusal, Resources | The memory one document operation reserves before it allocates, and the deadline it runs within (Rule 5; FIX… |
 | `src/retained_opc/mod.rs` | src | s | 1 enum · 2 fn · 1 type · 1 re-export · 2 crate-vis | Error | Bounded, retained OPC archives |
 | `src/retained_opc/package.rs` | src | m | 2 struct · 1 enum · 8 fn · 1 re-export · 1 crate-vis | Editability, Limits, Package | Retained OPC package state and copy-through writing |
 | `src/retained_opc/package/open.rs` | src | m | 1 fn · 5 crate-vis | — | Retained ZIP admission, metadata inspection and expansion |
@@ -188,7 +189,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/xlsx_body/insert.rs` | src | m | 1 struct · 2 fn · 3 crate-vis | XlsxLines | What inserted rows and columns take from their neighbours, as Excel's insert gives it by default (FIX 3695)… |
 | `src/xlsx_body/layout.rs` | src | m | 6 crate-vis | — | Worksheet layout and pivot/formula retargeting |
 | `src/xlsx_body/links.rs` | src | s | 3 crate-vis | — | The workbook's links to itself (FIX 9080) |
-| `src/xlsx_body/model.rs` | src | m | 10 struct · 4 enum · 14 fn · 2 const · 7 crate-vis | XlsxArea, XlsxBook, XlsxCell, XlsxChange, XlsxLock, XlsxName, XlsxProjection, XlsxSheet +6 | SpreadsheetML model, validation and A1 rules |
+| `src/xlsx_body/model.rs` | src | m | 10 struct · 5 enum · 14 fn · 2 const · 7 crate-vis | XlsxArea, XlsxBook, XlsxCell, XlsxCellRecalc, XlsxChange, XlsxLock, XlsxName, XlsxProjection +7 | SpreadsheetML model, validation and A1 rules |
 | `src/xlsx_body/project.rs` | src | m | 2 fn · 5 crate-vis | — | Workbook format, cell and name projection |
 | `src/xlsx_body/read.rs` | src | m | 1 fn · 6 crate-vis | — | Workbook cells, tables, styles, names and shared-string reads |
 | `src/xlsx_body/retain.rs` | src | s | 4 crate-vis | — | Writing into a stored cell or defined name (FIX 8571, FIX 8572): only what a change names is written, and… |

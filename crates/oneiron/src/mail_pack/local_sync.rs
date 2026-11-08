@@ -9,6 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::caldav_calendar::HttpCalDavCalendarWire;
 use super::gmail::{HttpGmailMailWire, reads_google_mail};
 use super::google_calendar::HttpGoogleCalendarWire;
 use super::ics_calendar::HttpIcsCalendarWire;
@@ -108,9 +109,12 @@ impl Vault {
                 let wire = HttpIcsCalendarWire::new(self)?;
                 return self.mail_calendar_sync_step(source, &wire, 1);
             }
-            return Err(MemoryError::bad_request_with(
-                "this host reads Google, Microsoft 365 and ICS calendars so far",
-                &["CalDAV calendars follow; connect another calendar meanwhile."],
+            if calendar.provider == MailProvider::Caldav {
+                let wire = HttpCalDavCalendarWire::new(self)?;
+                return self.mail_calendar_sync_step(source, &wire, CALENDAR_PAGES_PER_STEP);
+            }
+            return Err(MemoryError::bad_request(
+                "this host reads Google, Microsoft 365, CalDAV and ICS calendars",
             ));
         }
         let snapshot = self

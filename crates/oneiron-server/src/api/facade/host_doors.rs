@@ -58,6 +58,8 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 pub(crate) use super::agent_definition_doors::*;
 // The owner's agent grant doors (FIX 5628) too.
 pub(crate) use super::agent_grant_doors::*;
+// The owner's answer to an OAuth sign-in request (FIX 4902) too.
+pub(crate) use super::oauth_authorization_doors::*;
 // The owner's answer to a send that may have gone out (FIX 4747) too.
 pub(crate) use super::uncertain_send_doors::*;
 // The owner's git_push Grant doors (FIX 6867, G1-PUSH) too.
@@ -136,6 +138,7 @@ pub(crate) use super::mail_pack_doors::*;
 // The owner's pack preview door (FIX 5493), likewise.
 pub(crate) use super::pack_preview_doors::*;
 pub(crate) use super::persona_doors::*;
+pub(crate) use super::proactivity_digest_doors::*;
 // The general access request answer (FIX 1379), likewise.
 pub(crate) use super::grants_doors::*;
 pub(crate) use super::residence_doors::*;

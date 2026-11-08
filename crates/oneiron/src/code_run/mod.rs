@@ -59,7 +59,6 @@ mod team_submit;
 mod type_diagnostics;
 mod types;
 mod wait_rows;
-
 #[cfg(test)]
 mod tests;
 
@@ -81,22 +80,27 @@ pub use self::compaction_home::{
     bind_compaction_caller, compaction_home_budget, load_compaction_home,
     resolve_compaction_identity,
 };
+pub(crate) use self::compaction_home::{
+    bound_self_model_in, erase_self_model_binding_actor_in_txn,
+};
 pub use self::consent_wait::{
     AdmittedBrowserAct, CodeConsentAnswerInput, CodeConsentBrowserAction,
-    CodeConsentBrowserOutcome, CodeConsentChoice, CodeConsentEffectHost,
-    CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentWaitState,
-    CodeConsentWaitView,
+    CodeConsentBrowserOutcome, CodeConsentChoice, CodeConsentEffectHost, CodeConsentParkedRun,
+    CodeConsentRunEndpoint, CodeConsentRunOrigin, CodeConsentRunPeer, CodeConsentSavedCredential,
+    CodeConsentSettleOutcome, CodeConsentStandingOffer, CodeConsentWaitState, CodeConsentWaitView,
 };
 pub(crate) use self::consent_wait::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, CodeConsentCallSite, CodeConsentConnectorCall,
-    CodeConsentDraft, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentRememberOffer,
-    CodeConsentResume, CodeConsentWaitRow, ParkedWait, attach_code_consent_ask_in_txn,
-    code_consent_admission_in_txn, code_consent_resume_evidence, consume_code_consent_wait_in_txn,
-    mint_code_consent_wait_in_txn, offered_choices, original_authority_holds_in_txn,
-    prove_code_consent_holder_act_in_txn, read_code_consent_wait_in_txn,
-    record_code_consent_admission_in_txn, refuse_code_consent_wait_in_txn,
-    seal_parked_code_consent_in_txn, settle_code_consent_wait_listing_in_txn,
-    verify_code_consent_consumed, verify_parked_code_consent,
+    CodeConsentDraft, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentRebind,
+    CodeConsentRebindProposal, CodeConsentRebindTarget, CodeConsentRememberOffer,
+    CodeConsentResume, CodeConsentWaitRow, ParkedWait, active_authority_holds_in_txn,
+    attach_code_consent_ask_in_txn, code_consent_admission_in_txn, code_consent_resume_evidence,
+    consume_code_consent_wait_in_txn, mint_code_consent_wait_in_txn, offered_choices,
+    original_authority_holds_in_txn, prove_code_consent_holder_act_in_txn,
+    read_code_consent_wait_in_txn, record_code_consent_admission_in_txn,
+    refuse_code_consent_wait_in_txn, seal_parked_code_consent_in_txn,
+    settle_code_consent_wait_listing_in_txn, verify_code_consent_consumed,
+    verify_parked_code_consent,
 };
 pub(crate) use self::contribution::matched_contribution_facts_in_txn;
 pub use self::contribution::{
@@ -120,8 +124,8 @@ pub use self::correction::{
     ExecutorWireRepairs,
 };
 pub(crate) use self::dispatcher::{
-    ExecutorCallSite, agent_attempt_run_ref, check_write_gate_against_vault, recorded_verb_call,
-    write_receipt_may_have_run,
+    ExecutorCallSite, ExecutorReply, ExecutorReplyPublisher, agent_attempt_run_ref,
+    check_write_gate_against_vault, recorded_verb_call, write_receipt_may_have_run,
 };
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
@@ -157,14 +161,14 @@ pub(crate) use self::replay_context::{
 };
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
-pub(crate) use self::result_read::unmarked_secret;
+pub(crate) use self::result_read::{unmarked_secret, unplaced_answer};
 pub(crate) use self::result_read::{
     DeliveredRanges, Reply as ResultReply, ResultRead, cannot as result_cannot,
     card as result_card, read_result_in, refusal as result_refusal, resolve as resolve_result,
     result_cards_in, unknown_handle,
 };
 pub use self::storage::ReadWorldUnknown;
-pub(crate) use self::storage::SessionCheckpointBody;
+pub(crate) use self::storage::{ReplyBody, SessionCheckpointBody};
 pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
@@ -177,8 +181,8 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
-    SessionInstanceBind, executor_compaction_session_id, executor_speech_message_id_in_run,
-    executor_speech_turn_id_for_run,
+    SessionInstanceBind, epoch_execution_in, executor_compaction_session_id,
+    executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
 };
 pub use self::storage::{
     CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,
@@ -195,8 +199,9 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
-    ProgramResumeWait, ProgramRowAnswer, load_program_checkpoint_tail, program_resume_call,
-    program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
+    ProgramResumeKind, ProgramResumeWait, ProgramRowAnswer, load_program_checkpoint_tail,
+    program_resume_call, program_resume_calls_in_txn, program_resume_head_in_txn,
+    wait_delivered_in_txn,
 };
 pub(crate) use self::storage::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1335 facade rows, 4808 declarations.
-Inputs: 1264 of 1335 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1164 of 1335 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1351 facade rows, 4858 declarations.
+Inputs: 1280 of 1351 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1180 of 1351 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
@@ -1440,6 +1440,98 @@ class GrantAnswered(TypedDict):
     excess_request: NotRequired[EntityId | None]
     decided_by: NotRequired[EntityId | None]
     decided_at: NotRequired[int | None]
+class DigestReadRequest(TypedDict):
+    id: str
+class DigestPrivateSource(TypedDict):
+    root: str
+    turn: str
+class DigestProposal(TypedDict):
+    claim_ref: str
+    revision: list[int]
+    summary: str
+    private_sources: NotRequired[list[DigestPrivateSource]]
+    unverified: NotRequired[bool]
+JudgeAskReason = Literal["revision_disagreement", "uncertainty", "rubric_recheck", "rubric_regrade"]
+class JudgeRegrade(TypedDict):
+    label: list[int]
+    rubric: list[int]
+class JudgeAsk(TypedDict):
+    id: list[int]
+    skill: str
+    responsible: str
+    campaign: str
+    evidence: str
+    reason: JudgeAskReason
+    option_a: str
+    option_b: str
+    delivered_at: NotRequired[int | None]
+    regrade: NotRequired[JudgeRegrade | None]
+class EvalSeatNamed(TypedDict):
+    named: str
+EvalSeat = Literal["companion", "decision", "extraction_tagger", "embedder", "router"] | EvalSeatNamed
+class EvalLabelAsk(TypedDict):
+    id: EntityId
+    seat: EvalSeat
+    case: EntityId
+    decision: str
+    responsible: EntityId
+    option_a: str
+    option_b: str
+    minutes: int
+    asked_at: int
+    delivered_at: NotRequired[int | None]
+    chosen: NotRequired[str | None]
+    answered_at: NotRequired[int | None]
+class DigestOffer(TypedDict):
+    offer: str
+    digest: str
+    summary: str
+class DigestCleanup(TypedDict):
+    decisions: list[str]
+    archived: int
+    skipped: int
+    proposals: list[str]
+    proposed: int
+    view: str
+class DigestNoteTombstones(TypedDict):
+    proposals: list[str]
+    view: str
+class DigestAppliedItem(TypedDict):
+    target: str
+    kind: str
+    facet: str
+    applied_at: int
+    receipt_ref: str
+class DigestApplied(TypedDict):
+    items: list[DigestAppliedItem]
+    view: str
+class DigestDrafterItem(TypedDict):
+    event: str
+    kind: str
+    versions: list[str]
+    reason: NotRequired[str | None]
+    at: int
+class DigestDrafter(TypedDict):
+    items: list[DigestDrafterItem]
+    nights: NotRequired[dict[str, int]]
+    through: str
+    view: str
+class ProactivityDigestView(TypedDict):
+    id: list[int]
+    created_at: int
+    recipient: str | None
+    urgent: bool
+    groups: dict[str, list[DigestProposal]]
+    judge_asks: list[JudgeAsk]
+    eval_label_asks: list[EvalLabelAsk]
+    offers: NotRequired[list[DigestOffer]]
+    cleanup: NotRequired[DigestCleanup | None]
+    note_tombstones: NotRequired[DigestNoteTombstones | None]
+    applied: NotRequired[DigestApplied | None]
+    drafter: NotRequired[DigestDrafter | None]
+    health_cards: NotRequired[list[ConcernCardSummary]]
+    rendered: str
+    voice_style: str
 class PersonaSnapshotPreviewRequest(TypedDict):
     subject: EntityId
 class PersonaSnapshotPreviewRow(TypedDict):
@@ -5231,96 +5323,6 @@ class WeaveDigestRendered(TypedDict):
     narrowing: ScopedReadReceipt
 class ProactivityDigestRequest(TypedDict):
     id: NotRequired[str | None]
-class DigestPrivateSource(TypedDict):
-    root: str
-    turn: str
-class DigestProposal(TypedDict):
-    claim_ref: str
-    revision: list[int]
-    summary: str
-    private_sources: NotRequired[list[DigestPrivateSource]]
-    unverified: NotRequired[bool]
-JudgeAskReason = Literal["revision_disagreement", "uncertainty", "rubric_recheck", "rubric_regrade"]
-class JudgeRegrade(TypedDict):
-    label: list[int]
-    rubric: list[int]
-class JudgeAsk(TypedDict):
-    id: list[int]
-    skill: str
-    responsible: str
-    campaign: str
-    evidence: str
-    reason: JudgeAskReason
-    option_a: str
-    option_b: str
-    delivered_at: NotRequired[int | None]
-    regrade: NotRequired[JudgeRegrade | None]
-class EvalSeatNamed(TypedDict):
-    named: str
-EvalSeat = Literal["companion", "decision", "extraction_tagger", "embedder", "router"] | EvalSeatNamed
-class EvalLabelAsk(TypedDict):
-    id: EntityId
-    seat: EvalSeat
-    case: EntityId
-    decision: str
-    responsible: EntityId
-    option_a: str
-    option_b: str
-    minutes: int
-    asked_at: int
-    delivered_at: NotRequired[int | None]
-    chosen: NotRequired[str | None]
-    answered_at: NotRequired[int | None]
-class DigestOffer(TypedDict):
-    offer: str
-    digest: str
-    summary: str
-class DigestCleanup(TypedDict):
-    decisions: list[str]
-    archived: int
-    skipped: int
-    proposals: list[str]
-    proposed: int
-    view: str
-class DigestNoteTombstones(TypedDict):
-    proposals: list[str]
-    view: str
-class DigestAppliedItem(TypedDict):
-    target: str
-    kind: str
-    facet: str
-    applied_at: int
-    receipt_ref: str
-class DigestApplied(TypedDict):
-    items: list[DigestAppliedItem]
-    view: str
-class DigestDrafterItem(TypedDict):
-    event: str
-    kind: str
-    versions: list[str]
-    reason: NotRequired[str | None]
-    at: int
-class DigestDrafter(TypedDict):
-    items: list[DigestDrafterItem]
-    nights: NotRequired[dict[str, int]]
-    through: str
-    view: str
-class ProactivityDigestView(TypedDict):
-    id: list[int]
-    created_at: int
-    recipient: str | None
-    urgent: bool
-    groups: dict[str, list[DigestProposal]]
-    judge_asks: list[JudgeAsk]
-    eval_label_asks: list[EvalLabelAsk]
-    offers: NotRequired[list[DigestOffer]]
-    cleanup: NotRequired[DigestCleanup | None]
-    note_tombstones: NotRequired[DigestNoteTombstones | None]
-    applied: NotRequired[DigestApplied | None]
-    drafter: NotRequired[DigestDrafter | None]
-    health_cards: NotRequired[list[ConcernCardSummary]]
-    rendered: str
-    voice_style: str
 class InboxLensRequest(TypedDict):
     identity: NotRequired[str | None]
     agent: NotRequired[str | None]
@@ -6227,10 +6229,16 @@ HookReplayOutcome = HookReplayOutcomeRan | HookReplayOutcomeWithheld | HookRepla
 class HookReplayRow(TypedDict):
     case: HookReplayCase
     result: HookReplayOutcome
+class HubHookGoldenRun(TypedDict):
+    index: int
+    verb: str
+    ran: bool
+    passed: bool
 class HubHookReplay(TypedDict):
     hook: str
     entries: list[HookReplayRow]
     unreplayed: bool
+    golden: list[HubHookGoldenRun]
 class HubHookQualificationReceipt(TypedDict):
     put: PackPutReceipt
     replays: list[HubHookReplay]
@@ -7338,7 +7346,7 @@ class SharedActExport(TypedDict):
     records: int
     digest: str
     diary_reads: list[ExportDiaryRead]
-ErrorKind = Literal["storage", "verb_hook_stopped", "io", "dimension_mismatch", "invalid_vector", "invalid_edge_weight", "invalid_vad", "embedding_model_changed", "hnsw_config_changed", "storage_abi_version_changed", "storage_schema_version_changed", "db_manifest_mismatch", "vault_root_preflight", "map_full", "invalid_config", "invalid_temporal_expression", "entity_not_found", "access_grant_already_exists", "outbound_grant_already_exists", "connector_key_already_exists", "channel_identity_already_exists", "counterparty_contact_already_exists", "concurrent_write", "arithmetic_overflow", "invariant_violation", "invalid_key", "invalid_federation_grant_body", "invalid_authority_log_body", "authority_refused", "checkpoint_policy_refused", "checkpoint_policy_revision_stale", "world_recipient_limit", "world_placement_unverifiable", "invalid_access_grant_body", "invalid_outbound_grant_body", "invalid_connector_key_body", "connector_charter_compile", "connector_charter_approval_mismatch", "connector_charter_missing", "invalid_channel_identity_body", "workspace_mailbox_autonomy_not_ready", "work_companion_required", "invalid_counterparty_contact_body", "invalid_comm_record_body", "invalid_diagnostic_body", "invalid_disclosure_scope", "disclosure_clamp_violation", "invalid_consent_bound", "invalid_consent_grant_row", "invalid_consent_effect_facts", "consent_owner_not_authenticated", "consent_unauthenticated_actor", "consent_guest_not_recorded", "consent_catastrophe_not_rememberable", "consent_grant_not_found", "consent_grant_revoked", "consent_approve_once_spent", "invalid_task_body", "ask_dependency_pending", "corrupted_index", "context_pack_validation", "index_overflow", "missing_posting_entry", "invalid_entity_type", "invalid_facet", "invalid_relationship", "invalid_facet_of_edge", "facet_stamp_immutable", "invalid_claim_body", "invalid_psych_profile_body", "invalid_persona_snapshot", "persona_snapshot_consent_stale", "invalid_code_artifact_body", "invalid_blob_artifact_body", "invalid_lfs_object", "invalid_note_body", "invalid_witness_message_body", "invalid_anchor", "annotation_thread_not_found", "invalid_edit_manifest", "edit_roundtrip_failed", "live_deck_refused", "memory_floor_refused", "edit_proposal_already_settled", "edit_proposal_stale", "settle_not_authorized", "invalid_skill_body", "skill_edit_gate_retry", "skill_content_anchor_type_mismatch", "skill_package_unavailable", "invalid_agent_def_body", "invalid_embedding_setup_body", "embedding_setup_dependency_pending", "agent_definition_not_found", "agent_definition_disabled", "seeded_agent_definition_conflict", "agent_not_dispatchable", "invalid_agent_dispatch_input", "model_pin_unavailable", "invalid_recovery_artifact", "body_key_custody_unavailable", "known_value_history_unavailable", "recovery_artifact_quarantine_exhausted", "invalid_codebase_snapshot_body", "hosted_media_hash_match_known_match", "invalid_code_symbol_manifest_body", "invalid_repo_mutation_record", "repo_mutation_failed", "repo_mutation_recovery_diverged", "invalid_predicate", "reserved_predicate", "source_not_trusted_for_auto", "gate_write_rejected", "share_create_paced", "family_requires_auto_grant", "actor_lacks_claim_authority", "guest_claim_withheld", "gate_consent_stale", "maintenance_kind_not_writable", "structural_kind_zone_violation", "structural_kind_collision", "invalid_structural_kind_registration", "invalid_attempt_queue_record", "invalid_attempt_queue_transition", "surface_event_correlation_kind_collision", "entity_type_immutable", "invalid_time_range", "edge_not_found", "provenance_on_structural_edge", "actor_class_mismatch", "invalid_provenance_body", "invalid_model_substrate", "emit_adjacent_receipt_required", "claim_already_closed", "write_verb_target_stale", "claim_self_supersession", "provenance_claim_lifecycle", "not_a_provenance_claim", "provenance_claim_already_closed", "provenance_claim_id_in_use", "provenance_subject_mismatch", "provenance_self_supersession", "provenance_precedence_violation", "edge_is_provenanced", "cycle_detected", "child_of_cardinality", "incompatible_analyzer", "bm25_field_schema_changed", "invalid_rank_profile", "analyzer_asset_missing", "analyzer_error", "indexed_text_too_large", "upstream_tool_failure", "retrieval_stage_cut", "provider_unavailable", "durable_step_trapped", "agent_run_executor_moved", "refused", "legal_hold", "crdt_decode_error", "window_not_found", "window_busy", "live_document_waited_out", "sync_protocol_error", "sync_engine_error", "held_facet_stamps_full", "invalid_redaction_receipt_body", "kill_switch_disabled", "off_record_session_already_exists", "off_record_session_not_found", "off_record_session_closing", "off_record_overlay_full", "off_record_overlay_lease_closed", "off_record_promote_unauthenticated", "off_record_tainted_base_write", "off_record_witness_door_rejected", "off_record_guest_turn_ref_rejected", "off_record_talk_only", "off_record_turn_not_in_journal", "off_record_promote_author_missing", "off_record_not_in_room", "off_record_saving_stopped", "off_record_copy_conflict", "redaction_receipt_divergence", "receipt_attestation_invalid", "receipt_lease_unknown", "receipt_lease_revoked", "identity_topology_rejected", "identity_topology_unarmed", "identity_proposal_amendment_out_of_scope", "delta_capture_unavailable", "invalid_identity_topology_event_body", "reserved_edge_kind", "identity_topology_event_divergence", "authority_log_append_only_violation", "authority_log_store_key_mismatch", "authority_log_signer_pending", "authority_log_full", "authority_history_required", "authority_clock_corrupt", "seal_standing_unverifiable", "hold_target_erased", "invalid_secret_custody_body", "secret_name_in_use", "secret_custody_not_active", "credential_leaf_unreadable", "credential_custody_unavailable", "secret_binding_denied", "manifest_widens_floor", "secret_tier_denied", "secret_door_policy_refused", "sealed_file_withheld", "masked_copy_withheld", "secret_ref_not_found", "secret_wider_than_manifest", "secret_manifest_not_found", "secret_lease_not_found", "secret_lease_not_active", "secret_lease_path_not_declared", "secret_lease_path_conflict", "secret_lease_path_refused", "secret_lease_receipt_write_failed", "invalid_secret_lease_body", "secret_grant_stale", "secret_grant_target_mismatch", "secret_grant_spent", "secret_host_delivery_refused", "secret_grant_cleanup_kept", "invalid_secret_rotation_body", "tainted_artifact_stale", "world_key_refused", "keystore_unavailable", "unverified_kit_restore", "kit_confirmation_stale", "micro_vm_backend_unavailable", "micro_vm_backend_error", "sandbox_proposal_disk_floor", "micro_vm_overlay_error", "micro_vm_credential_destination_denied", "code_step_cancelled", "response_erased", "relay_attestation_invalid_service_identity", "relay_attestation_class_mismatch", "relay_attestation_edge_service_conflict", "relay_hosted_legal_policy_invalid", "policy_manifest_invalid", "code_emission_missing_dreamer_run_id", "code_review_context_required", "code_review_unsupported_operation", "code_review_missing_reviewer_run_id", "code_review_run_id_not_distinct", "code_review_missing_artifact_refs", "code_review_authoring_run_id_mismatch", "code_blast_radius_missing_touched_symbols", "code_blast_radius_unknown_symbol", "relay_vault_receipt_untrusted", "policy_verdict_not_in_force", "code_memory_invalid_anchor", "code_memory_invalid_anchor_transfer", "code_memory_blocks_cycle", "code_memory_blocks_actor_denied", "code_memory_blocks_source_untrusted", "code_memory_always_on_invalid", "code_memory_limit_exceeded", "compaction_packet_rejected", "git_http_invalid_repo_name", "git_http_repo_not_found", "git_http_serve_failed", "git_http_exchange_idle", "git_http_repository_busy", "lfs_read_room_waited_out", "receive_pack_door_rejected", "git_push_capability_required", "receive_pack_landing_refused", "origin_publication_beyond_owner", "vault_cleanup_restore_not_archived", "vault_cleanup_archive_marker_undecodable", "vault_cleanup_proposal_not_found", "vault_cleanup_wake_trigger_rejected", "vault_read", "invalid_project_body", "invalid_project_room_body", "project_dependency_pending", "project_revision_collision", "project_revision_write", "identity_unsettled", "project_history_over_budget", "project_authority_unresolved", "invalid_conversation_body", "conversation_state", "conversation_denied", "message_stream_recovery_failed", "key_value_write_requires_owned_door", "stream_already_active", "stream_not_active", "stream_limit", "dag_parent_outside_conversation", "head_advance_off_trunk", "invalid_conversation_dag", "invalid_scope_summary", "invalid_pairing_scope", "overlay_limit", "cooperative_deletion_requires_terminal_pact", "invalid_cooperative_deletion_request", "write_concurrent_with_revocation", "pack_kind_name_collision", "pack_kind_not_installed", "invalid_pack_byte_map", "invalid_suppression_receipt_body", "suppression_receipt_divergence", "pack_predicate_name_collision", "dreamer_actor_immutable", "pack_install_rule_blocked", "resident_owner_dependency_pending", "invalid_machine_claim_proof", "machine_claim_history_incomplete", "remote_machine_history_pending", "engine_identities_not_provisioned", "side_table_row", "side_table_key_undeclared", "scoped_read_owner_not_live", "embedding_transform_changed", "archived_vault", "host_action_requires_support_grant", "vault_served_elsewhere"]
+ErrorKind = Literal["storage", "verb_hook_stopped", "io", "dimension_mismatch", "invalid_vector", "invalid_edge_weight", "invalid_vad", "embedding_model_changed", "hnsw_config_changed", "storage_abi_version_changed", "storage_schema_version_changed", "db_manifest_mismatch", "vault_root_preflight", "map_full", "invalid_config", "invalid_temporal_expression", "entity_not_found", "access_grant_already_exists", "outbound_grant_already_exists", "connector_key_already_exists", "channel_identity_already_exists", "counterparty_contact_already_exists", "concurrent_write", "arithmetic_overflow", "invariant_violation", "invalid_key", "invalid_federation_grant_body", "invalid_authority_log_body", "authority_refused", "checkpoint_policy_refused", "checkpoint_policy_revision_stale", "world_recipient_limit", "world_placement_unverifiable", "invalid_access_grant_body", "invalid_outbound_grant_body", "invalid_connector_key_body", "connector_charter_compile", "connector_charter_approval_mismatch", "connector_charter_missing", "invalid_channel_identity_body", "workspace_mailbox_autonomy_not_ready", "work_companion_required", "invalid_counterparty_contact_body", "invalid_comm_record_body", "invalid_diagnostic_body", "invalid_disclosure_scope", "disclosure_clamp_violation", "invalid_consent_bound", "invalid_consent_grant_row", "invalid_consent_effect_facts", "consent_owner_not_authenticated", "consent_unauthenticated_actor", "consent_guest_not_recorded", "consent_catastrophe_not_rememberable", "consent_grant_not_found", "consent_grant_revoked", "consent_approve_once_spent", "invalid_task_body", "ask_dependency_pending", "corrupted_index", "context_pack_validation", "index_overflow", "missing_posting_entry", "invalid_entity_type", "invalid_facet", "invalid_relationship", "invalid_facet_of_edge", "facet_stamp_immutable", "invalid_claim_body", "invalid_psych_profile_body", "invalid_persona_snapshot", "persona_snapshot_consent_stale", "invalid_code_artifact_body", "invalid_blob_artifact_body", "invalid_lfs_object", "invalid_note_body", "invalid_witness_message_body", "invalid_anchor", "annotation_thread_not_found", "invalid_edit_manifest", "edit_roundtrip_failed", "live_deck_refused", "memory_floor_refused", "edit_proposal_already_settled", "edit_proposal_stale", "settle_not_authorized", "invalid_skill_body", "skill_edit_gate_retry", "skill_content_anchor_type_mismatch", "skill_package_unavailable", "invalid_agent_def_body", "invalid_embedding_setup_body", "embedding_setup_dependency_pending", "agent_definition_not_found", "agent_definition_disabled", "seeded_agent_definition_conflict", "agent_not_dispatchable", "invalid_agent_dispatch_input", "model_pin_unavailable", "invalid_recovery_artifact", "body_key_custody_unavailable", "known_value_history_unavailable", "recovery_artifact_quarantine_exhausted", "invalid_codebase_snapshot_body", "hosted_media_hash_match_known_match", "invalid_code_symbol_manifest_body", "invalid_repo_mutation_record", "repo_mutation_failed", "repo_mutation_recovery_diverged", "invalid_predicate", "reserved_predicate", "source_not_trusted_for_auto", "gate_write_rejected", "share_create_paced", "family_requires_auto_grant", "actor_lacks_claim_authority", "guest_claim_withheld", "gate_consent_stale", "maintenance_kind_not_writable", "structural_kind_zone_violation", "structural_kind_collision", "invalid_structural_kind_registration", "invalid_attempt_queue_record", "invalid_attempt_queue_transition", "surface_event_correlation_kind_collision", "entity_type_immutable", "invalid_time_range", "edge_not_found", "provenance_on_structural_edge", "actor_class_mismatch", "invalid_provenance_body", "invalid_model_substrate", "emit_adjacent_receipt_required", "claim_already_closed", "write_verb_target_stale", "claim_self_supersession", "provenance_claim_lifecycle", "not_a_provenance_claim", "provenance_claim_already_closed", "provenance_claim_id_in_use", "provenance_subject_mismatch", "provenance_self_supersession", "provenance_precedence_violation", "edge_is_provenanced", "cycle_detected", "child_of_cardinality", "incompatible_analyzer", "bm25_field_schema_changed", "invalid_rank_profile", "analyzer_asset_missing", "analyzer_error", "indexed_text_too_large", "upstream_tool_failure", "retrieval_stage_cut", "provider_unavailable", "durable_step_trapped", "agent_run_executor_moved", "refused", "legal_hold", "crdt_decode_error", "window_not_found", "window_busy", "live_document_waited_out", "sync_protocol_error", "sync_engine_error", "held_facet_stamps_full", "invalid_redaction_receipt_body", "kill_switch_disabled", "off_record_session_already_exists", "off_record_session_not_found", "off_record_session_closing", "off_record_overlay_full", "off_record_overlay_lease_closed", "off_record_promote_unauthenticated", "off_record_tainted_base_write", "off_record_witness_door_rejected", "off_record_guest_turn_ref_rejected", "off_record_talk_only", "off_record_turn_not_in_journal", "off_record_promote_author_missing", "off_record_not_in_room", "off_record_saving_stopped", "off_record_copy_conflict", "redaction_receipt_divergence", "receipt_attestation_invalid", "receipt_lease_unknown", "receipt_lease_revoked", "identity_topology_rejected", "identity_topology_unarmed", "identity_proposal_amendment_out_of_scope", "delta_capture_unavailable", "invalid_identity_topology_event_body", "reserved_edge_kind", "identity_topology_event_divergence", "authority_log_append_only_violation", "authority_log_store_key_mismatch", "authority_log_signer_pending", "authority_log_full", "authority_history_required", "authority_clock_corrupt", "seal_standing_unverifiable", "hold_target_erased", "invalid_secret_custody_body", "secret_name_in_use", "secret_custody_not_active", "credential_leaf_unreadable", "credential_custody_unavailable", "secret_binding_denied", "manifest_widens_floor", "secret_tier_denied", "secret_door_policy_refused", "sealed_file_withheld", "masked_copy_withheld", "secret_ref_not_found", "secret_wider_than_manifest", "secret_manifest_not_found", "secret_lease_not_found", "secret_lease_not_active", "secret_lease_path_not_declared", "secret_lease_path_conflict", "secret_lease_path_refused", "secret_lease_receipt_write_failed", "invalid_secret_lease_body", "secret_grant_stale", "secret_grant_target_mismatch", "secret_grant_spent", "secret_host_delivery_refused", "secret_grant_cleanup_kept", "invalid_secret_rotation_body", "tainted_artifact_stale", "world_key_refused", "keystore_unavailable", "unverified_kit_restore", "kit_confirmation_stale", "micro_vm_backend_unavailable", "micro_vm_backend_error", "sandbox_proposal_disk_floor", "micro_vm_overlay_error", "micro_vm_credential_destination_denied", "code_step_cancelled", "response_erased", "relay_attestation_invalid_service_identity", "relay_attestation_class_mismatch", "relay_attestation_edge_service_conflict", "relay_hosted_legal_policy_invalid", "policy_manifest_invalid", "code_emission_missing_dreamer_run_id", "code_review_context_required", "code_review_unsupported_operation", "code_review_missing_reviewer_run_id", "code_review_run_id_not_distinct", "code_review_missing_artifact_refs", "code_review_authoring_run_id_mismatch", "code_blast_radius_missing_touched_symbols", "code_blast_radius_unknown_symbol", "relay_vault_receipt_untrusted", "policy_verdict_not_in_force", "code_memory_invalid_anchor", "code_memory_invalid_anchor_transfer", "code_memory_blocks_cycle", "code_memory_blocks_actor_denied", "code_memory_blocks_source_untrusted", "code_memory_always_on_invalid", "code_memory_limit_exceeded", "compaction_packet_rejected", "git_http_invalid_repo_name", "git_http_repo_not_found", "git_http_serve_failed", "git_http_exchange_idle", "git_http_repository_busy", "lfs_read_room_waited_out", "receive_pack_door_rejected", "git_push_capability_required", "receive_pack_landing_refused", "origin_publication_beyond_owner", "vault_cleanup_restore_not_archived", "vault_cleanup_archive_marker_undecodable", "vault_cleanup_proposal_not_found", "vault_cleanup_wake_trigger_rejected", "vault_read", "invalid_project_body", "invalid_project_room_body", "project_dependency_pending", "project_revision_collision", "project_revision_write", "identity_unsettled", "project_history_over_budget", "project_authority_unresolved", "invalid_conversation_body", "conversation_state", "conversation_denied", "message_stream_recovery_failed", "key_value_write_requires_owned_door", "stream_already_active", "stream_not_active", "stream_limit", "dag_parent_outside_conversation", "head_advance_off_trunk", "invalid_conversation_dag", "invalid_scope_summary", "invalid_pairing_scope", "overlay_limit", "cooperative_deletion_requires_terminal_pact", "invalid_cooperative_deletion_request", "write_concurrent_with_revocation", "pack_kind_name_collision", "pack_kind_not_installed", "invalid_pack_byte_map", "invalid_suppression_receipt_body", "suppression_receipt_divergence", "pack_predicate_name_collision", "dreamer_actor_immutable", "pack_install_rule_blocked", "resident_owner_dependency_pending", "invalid_machine_claim_proof", "machine_claim_history_incomplete", "remote_machine_history_pending", "engine_identities_not_provisioned", "side_table_row", "side_table_key_undeclared", "scoped_read_owner_not_live", "embedding_transform_changed", "archived_vault", "host_action_requires_support_grant", "storage_id_mismatch", "vault_served_elsewhere"]
 class DetachRemainderReasonWithdrawalFailedBody(TypedDict):
     kind: ErrorKind
 class DetachRemainderReasonWithdrawalFailed(TypedDict):
@@ -7753,7 +7761,7 @@ class FederationBurstPolicy(TypedDict):
 class FederationBurstPolicySetRequest(TypedDict):
     peer: FederationBurstPeerRequest
     policy: FederationBurstPolicy
-QuarantineContainer = Literal["entities", "edges", "tombstones", "leases"]
+QuarantineContainer = Literal["entities", "edges", "tombstones", "leases", "office_proposals", "typed_body_rows"]
 class SyncHeldEditEvidence(TypedDict):
     window_key: str
     container: QuarantineContainer
@@ -8150,6 +8158,16 @@ class GuestDocumentEnvelope(TypedDict):
     signer: str
     signature: list[int]
     travel_receipt: NotRequired[GuestWindowTravelNote | None]
+class ConnectProposeRequest(TypedDict):
+    grant_ref: EntityId
+    world_ref: EntityId
+    entity_ref: EntityId
+    update: list[int]
+class ConnectProposalLanded(TypedDict):
+    proposal_ref: EntityId
+    grant_ref: EntityId
+    entity_ref: EntityId
+    proposed_at: int
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]
@@ -11362,6 +11380,7 @@ class SourceTrustRow(TypedDict):
     actor_ref: NotRequired[str | None]
     max_auto_sensitivity: NotRequired[SensitivityBand | None]
     auto: NotRequired[bool | None]
+    auto_checker: NotRequired[str | None]
     receipted: NotRequired[bool]
     warned: NotRequired[bool]
 SourceTrust = SourceTrustRow | list[SourceTrustRow] | bool | SensitivityBand
@@ -12382,6 +12401,18 @@ class ShareCreated(TypedDict):
     created_at: int
     expires_at: NotRequired[int | None]
     travel: TravelChoice
+class ShareViewLinkRequest(TypedDict):
+    share_ref: str
+    actor_class: str
+    slip_lifetime_secs: int
+class PairingPinRef(TypedDict):
+    challenge: list[int]
+    digest: list[int]
+class PairingLink(TypedDict):
+    code: str
+    expires_at: int
+    pin: NotRequired[PairingPinRef | None]
+    comm: CommReach
 class ShareRevokeRequest(TypedDict):
     share_ref: str
 class ShareRevokeReceipt(TypedDict):
@@ -12491,6 +12522,15 @@ class HookGoldenDiff(TypedDict):
     execution_failed: list[str]
     withheld: list[str]
     missing_history: list[str]
+class HookGoldenFingerprint(TypedDict):
+    cases: dict[str, str]
+    execution_failed: dict[str, str]
+    withheld: list[str]
+    missing_history: list[str]
+class HookGoldenManifest(TypedDict):
+    runs: list[str]
+    last_good: HookGoldenFingerprint
+    candidate: HookGoldenFingerprint
 HookRegenFailurePhase = Literal["intent", "generate", "validate", "golden_replay"]
 class HookRegenFailure(TypedDict):
     phase: HookRegenFailurePhase
@@ -12500,26 +12540,90 @@ class HookRegenOutcomeAutoAdopt(TypedDict):
     candidate: str
     target: HookContractStamp
     diff: HookGoldenDiff
+    golden: HookGoldenManifest
 class HookRegenOutcomeNeedsHumanStamp(TypedDict):
     outcome: Literal["needs_human_stamp"]
     candidate: str
     target: HookContractStamp
     diff: HookGoldenDiff
+    golden: HookGoldenManifest
 class HookRegenOutcomeRolledBack(TypedDict):
     outcome: Literal["rolled_back"]
     failure: HookRegenFailure
+    target: HookContractStamp
 HookRegenOutcome = HookRegenOutcomeAutoAdopt | HookRegenOutcomeNeedsHumanStamp | HookRegenOutcomeRolledBack
+class HookRegenPrior(TypedDict):
+    body: str
+    body_hash: str
+    stamp: HookContractStamp
 class HookRegenRecord(TypedDict):
     body_hash: str
     stamp: HookContractStamp
     intent: NotRequired[str | None]
     pending: NotRequired[HookRegenOutcome | None]
+    previous: NotRequired[HookRegenPrior | None]
+    declined: NotRequired[HookContractStamp | None]
 class HookRegenView(TypedDict):
     record: HookRegenRecord
     candidate_hash: NotRequired[str | None]
+class HookRegenHistoryRequest(TypedDict):
+    binding: EntityId
+    before: NotRequired[int | None]
+    limit: NotRequired[int | None]
+class HookRegenActorEngine(TypedDict):
+    by: Literal["engine"]
+class HookRegenActorOwner(TypedDict):
+    by: Literal["owner"]
+    actor: str
+class HookRegenActorAgent(TypedDict):
+    by: Literal["agent"]
+    agent: str
+HookRegenActor = HookRegenActorEngine | HookRegenActorOwner | HookRegenActorAgent
+HookRegenDecision = Literal["auto_adopt", "needs_human_stamp", "rolled_back"]
+class HookRegenEventDecided(TypedDict):
+    event: Literal["decided"]
+    decision: HookRegenDecision
+    candidate_hash: NotRequired[str | None]
+    target: HookContractStamp
+    diff: NotRequired[HookGoldenDiff | None]
+    golden: NotRequired[HookGoldenManifest | None]
+    failure: NotRequired[HookRegenFailure | None]
+class HookRegenEventAdopted(TypedDict):
+    event: Literal["adopted"]
+    candidate_hash: str
+    target: HookContractStamp
+    stamped: bool
+    rebound: NotRequired[str | None]
+class HookRegenEventCancelled(TypedDict):
+    event: Literal["cancelled"]
+    candidate_hash: NotRequired[str | None]
+    declined: HookContractStamp
+class HookRegenEventReverted(TypedDict):
+    event: Literal["reverted"]
+    from_hash: str
+    to_hash: str
+    declined: HookContractStamp
+    rebound: NotRequired[str | None]
+HookRegenEvent = HookRegenEventDecided | HookRegenEventAdopted | HookRegenEventCancelled | HookRegenEventReverted
+class HookRegenReceipt(TypedDict):
+    sequence: int
+    binding: str
+    recorded_at: int
+    actor: HookRegenActor
+    body_hash: str
+    event: HookRegenEvent
+class HookRegenRevertRequest(TypedDict):
+    binding: EntityId
+    adopted_hash: str
 class HookRegenAdoptRequest(TypedDict):
     binding: EntityId
     candidate_hash: str
+class HookRegenCancelRequest(TypedDict):
+    binding: EntityId
+    candidate_hash: NotRequired[str | None]
+class HookRegenCancel(TypedDict):
+    candidate_hash: NotRequired[str | None]
+    declined: HookContractStamp
 ArtifactPointerChannel = Literal["published", "preview"]
 CodebaseForkHash = list[int]
 class ArtifactExportRefForkHash(TypedDict):
@@ -12633,12 +12737,37 @@ class ArtifactUnitsRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
     path: NotRequired[str | None]
+DocxHeaderFooterBand = Literal["default", "first", "even"]
+class DocxStoryScopeHeader(TypedDict):
+    kind: Literal["header"]
+    part_name: str
+    band: DocxHeaderFooterBand
+class DocxStoryScopeFooter(TypedDict):
+    kind: Literal["footer"]
+    part_name: str
+    band: DocxHeaderFooterBand
+class DocxStoryScopeFootnote(TypedDict):
+    kind: Literal["footnote"]
+    id: str
+class DocxStoryScopeEndnote(TypedDict):
+    kind: Literal["endnote"]
+    id: str
+class DocxStoryScopeComment(TypedDict):
+    kind: Literal["comment"]
+    id: str
+DocxStoryScope = DocxStoryScopeHeader | DocxStoryScopeFooter | DocxStoryScopeFootnote | DocxStoryScopeEndnote | DocxStoryScopeComment
 class AnnotationLocatorXlsx(TypedDict):
     format: Literal["xlsx"]
     sheet: str
     range: str
 class AnnotationLocatorDocx(TypedDict):
     format: Literal["docx"]
+    para_path: str
+    char_start: int
+    char_end: int
+class AnnotationLocatorDocxStory(TypedDict):
+    format: Literal["docx_story"]
+    scope: DocxStoryScope
     para_path: str
     char_start: int
     char_end: int
@@ -12662,7 +12791,7 @@ class AnnotationLocatorCode(TypedDict):
     file_hash: str
     char_start: int
     char_end: int
-AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx | AnnotationLocatorHtml | AnnotationLocatorText | AnnotationLocatorCode
+AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorDocxStory | AnnotationLocatorPptx | AnnotationLocatorHtml | AnnotationLocatorText | AnnotationLocatorCode
 class ArtifactUnitView(TypedDict):
     locator: AnnotationLocator
     quote: NotRequired[str | None]
@@ -12948,8 +13077,10 @@ class CodeProposalSubmitRequest(TypedDict):
     message: str
     op_provenance: CodeOpProvenance
     catalog: NotRequired[LensCatalog | None]
+    repair_of: NotRequired[EntityId | None]
 class CodeProposalSubmitted(TypedDict):
     proposal: EntityId
+    admission_receipt: EntityId
     repo: EntityId
     actor: EntityId
     session: EntityId
@@ -13030,6 +13161,11 @@ class RepoProposalSettlement(TypedDict):
     actor: NotRequired[EntityId | None]
     decision: RepoProposalDecision
     settled_at: int
+class CodeProposalReplacementView(TypedDict):
+    receipt: EntityId
+    source: EntityId
+    replacement: EntityId
+    replacement_base: str
 class CodeProposalSettlementView(TypedDict):
     proposal: EntityId
     status: RepoProposalStatus
@@ -13040,6 +13176,10 @@ class CodeProposalSettlementView(TypedDict):
     parents: list[EntityId]
     mutation_seq: NotRequired[int | None]
     resolution: NotRequired[EntityId | None]
+    admission_receipt: NotRequired[EntityId | None]
+    attempt_receipts: list[EntityId]
+    repair_of: NotRequired[CodeProposalReplacementView | None]
+    replaced_by: NotRequired[CodeProposalReplacementView | None]
 class CodeProposalSettleRequest(TypedDict):
     proposal: EntityId
     decision: RepoProposalDecision
@@ -13304,6 +13444,37 @@ class CodeWaitTarget(TypedDict):
     generation: int
     step_hash: str
     effect_digest: str
+class CodeWaitRebindPrepareRequest(TypedDict):
+    target: CodeWaitTarget
+    revision: int
+class CodeWaitRebindPrepared(TypedDict):
+    target: CodeWaitTarget
+    proposal_ref: EntityId
+    revision: int
+    predecessor: str
+    successor: str
+class CodeWaitRebindRequest(TypedDict):
+    target: CodeWaitTarget
+    revision: int
+    proposal_ref: EntityId
+class CodeWaitRebindReceipt(TypedDict):
+    target: CodeWaitTarget
+    proposal_ref: EntityId
+    prepared_revision: int
+    predecessor: str
+    successor: str
+    binding_digest: str
+    effect_digest: str
+    previous_effect_digest: str
+    intent_id: str
+    original_approval_ref: str
+    previous_marker_ref: str
+    prior_rebind_ref: NotRequired[str | None]
+    owner_ref: EntityId
+    authentication_ref: str
+    receipt_ref: str
+    confirmed_at_ms: int
+    already_rebound: bool
 CodeWaitChoice = Literal["approve_once", "approve_and_stop_asking", "deny"]
 CodeWaitRememberScope = Literal["connection", "asking_lineage"]
 class CodeWaitResolveRequest(TypedDict):
@@ -13313,6 +13484,11 @@ class CodeWaitResolveRequest(TypedDict):
     word_ref: EntityId
 CodeWaitState = Literal["waiting", "settling", "settled", "consumed"]
 CodeWaitBrowserAction = TypedDict("CodeWaitBrowserAction", {"act": str, "class": str, "role": str, "name": str, "locator": str, "page": NotRequired[str | None], "press": str})
+class CodeConsentStandingOffer(TypedDict):
+    actor_ref: str
+    verb_class: str
+    selectors: list[str]
+    target: NotRequired[str | None]
 class CodeWaitAnswerView(TypedDict):
     answer: CodeWaitChoice
     word_ref: EntityId
@@ -13320,6 +13496,8 @@ class CodeWaitAnswerView(TypedDict):
     remembered_grant_ref: NotRequired[str | None]
     decision_ref: str
     answered_at_ms: int
+    standing_grant_ref: NotRequired[str | None]
+    standing_receipt_ref: NotRequired[str | None]
 CodeWaitSettleOutcome = Literal["delivered", "refused", "delivery_unknown"]
 class CodeWaitLedgerLinks(TypedDict):
     prior_ref: NotRequired[str | None]
@@ -13341,6 +13519,7 @@ class CodeWaitConsumptionView(TypedDict):
 class CodeWaitReceiptView(TypedDict):
     target: CodeWaitTarget
     state: CodeWaitState
+    revision: int
     verb: str
     connector: str
     tool: str
@@ -13348,10 +13527,13 @@ class CodeWaitReceiptView(TypedDict):
     hold_reasons: list[str]
     ask_ref: NotRequired[EntityId | None]
     allowed_answers: list[CodeWaitChoice]
+    standing_offer: NotRequired[CodeConsentStandingOffer | None]
     answer: NotRequired[CodeWaitAnswerView | None]
     settlement: NotRequired[CodeWaitSettlementView | None]
     consumption: NotRequired[CodeWaitConsumptionView | None]
     already_answered: bool
+    rebind_proposal: NotRequired[CodeWaitRebindPrepared | None]
+    rebinds: list[CodeWaitRebindReceipt]
 class CodeWaitReceiptRequest(TypedDict):
     run_id: EntityId
     wait_id: EntityId
@@ -14009,14 +14191,14 @@ class OriginPublishRemoteAt(TypedDict):
     commit: str
 OriginPublishRemote = OriginPublishRemoteAbsent | OriginPublishRemoteAt
 OriginPublishState = Literal["pending", "approved", "dispatching", "published", "observed_published", "refused", "cancelled", "expired"]
-OriginPublishActorClass = Literal["human", "agent", "system"]
+EdgeActorClass = Literal["human", "agent", "system"]
 class OriginPublishAuthorityOwner(TypedDict):
     kind: Literal["owner"]
 class OriginPublishAuthorityGrant(TypedDict):
     kind: Literal["grant"]
     grant: EntityId
 OriginPublishAuthority = OriginPublishAuthorityOwner | OriginPublishAuthorityGrant
-OriginPublishAct = TypedDict("OriginPublishAct", {"actor": NotRequired[EntityId | None], "class": OriginPublishActorClass, "authority": OriginPublishAuthority, "at": int})
+OriginPublishAct = TypedDict("OriginPublishAct", {"actor": NotRequired[EntityId | None], "class": EdgeActorClass, "authority": OriginPublishAuthority, "at": int})
 OriginPublishRefusalReason = Literal["destination_changed", "remote_moved", "rejected", "outcome_unknown", "authority_changed", "objects_missing", "marked_live_secret", "secret_history_unknown"]
 class OriginPublishRefusal(TypedDict):
     reason: OriginPublishRefusalReason
@@ -14332,6 +14514,9 @@ class CodeSnapshotView(TypedDict):
     files: list[CodeSnapshotFile]
     repository: NotRequired[EntityId | None]
     capture_receipt: NotRequired[str | None]
+class CodeSnapshotCaptureRequest(TypedDict):
+    project_id: str
+    local_folder: str
 class CodeSnapshotRequest(TypedDict):
     repo: EntityId
     snapshot: str
@@ -14408,6 +14593,9 @@ class MergeQueueBatchView(TypedDict):
     slow_verdict_ref: NotRequired[str | None]
     quarantine: NotRequired[Quarantine | None]
     selected_tests: AffectedTests
+    admission_receipt: NotRequired[EntityId | None]
+    completion_receipt: NotRequired[EntityId | None]
+    proposal_admission_receipts: list[EntityId]
 class MergeQueueBatchRequest(TypedDict):
     repo: EntityId
     batch_ref: str
@@ -14581,6 +14769,7 @@ class ArtifactExportFile(TypedDict):
     content_hash: str
     born_with: BornWith
     content_base64: str
+    notices: NotRequired[list[WorldRecipientNotice]]
 class AgentSkillInput(TypedDict):
     skill_id: str
     min_version: NotRequired[str | None]
@@ -14692,6 +14881,19 @@ class AgentVerbClassesConfigureRequest(TypedDict):
 class AgentVerbClassesReceipt(TypedDict):
     configuration: AgentVerbClassesView
     receipt_ref: str
+AgentTier = Literal["read", "propose", "full"]
+class OAuthAuthorizationAnswer(TypedDict):
+    request_ref: EntityId
+    allow: bool
+    tier: NotRequired[AgentTier | None]
+    world_ref: NotRequired[EntityId | None]
+class OAuthAuthorizationAnswered(TypedDict):
+    request_ref: EntityId
+    allowed: bool
+    agent: NotRequired[EntityId | None]
+    grant_ref: NotRequired[EntityId | None]
+    tier: NotRequired[AgentTier | None]
+    world_ref: NotRequired[EntityId | None]
 class GitPushRepo(TypedDict):
     repo: EntityId
     project: EntityId
@@ -14841,6 +15043,9 @@ class RepoQueueEntryView(TypedDict):
     expected_head: str
     landed_head: NotRequired[str | None]
     blockers: list[EntityId]
+    admission_receipt: NotRequired[EntityId | None]
+    completion_receipt: NotRequired[EntityId | None]
+    proposal_admission_receipts: list[EntityId]
 class RepoMergeQueueObserveOutput(TypedDict):
     work: EntityId
     repo: EntityId
@@ -14890,8 +15095,10 @@ class RepoProposalSubmitInput(TypedDict):
     content: list[int]
     message: str
     declaration: NotRequired[EntityId | None]
+    repair_of: NotRequired[EntityId | None]
 class RepoProposalSubmitOutput(TypedDict):
     proposal: EntityId
+    admission_receipt: EntityId
     work: EntityId
     path: str
     base_green: str
@@ -15674,6 +15881,7 @@ class ArtifactAskUnitsSheetRows(TypedDict):
 class ArtifactAskUnitsParagraphs(TypedDict):
     kind: Literal["paragraphs"]
     blocks: list[str]
+    scope: NotRequired[DocxStoryScope | None]
     author: str
     labels: SlideReviewLabels
 class ArtifactAskUnitsFolderItems(TypedDict):
@@ -15705,6 +15913,7 @@ class ArtifactAskOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     abstained: list[UnitAbstention]
     refused: list[UnitRefusal]
+    next_sheet_row: NotRequired[int | None]
 class ArtifactAdmitSubmit(TypedDict):
     ask: ArtifactAskSubmit
     decisions: list[TypedDecision]
@@ -16498,6 +16707,7 @@ class VersionReconciliation(TypedDict):
     kept_head: ArtifactVersionView
 class ParagraphJudgment(TypedDict):
     block: str
+    scope: NotRequired[DocxStoryScope | None]
     text_hash: str
     decision: TypedDecision
     answer_contract: AnswerContract
@@ -16640,10 +16850,84 @@ class OutcomeLabel(TypedDict):
     label: bool
     noise_weight: float
     occurred_at: int
+class DecisionRouteRule(TypedDict):
+    kind: Literal["rule"]
+class DecisionRouteDirect(TypedDict):
+    kind: Literal["direct"]
+    rung: DecisionRung
+class DecisionRouteSteppedUp(TypedDict):
+    kind: Literal["stepped_up"]
+    rung: DecisionRung
+class DecisionRouteStepUnfinished(TypedDict):
+    kind: Literal["step_unfinished"]
+    rung: DecisionRung
+class DecisionRoutePerson(TypedDict):
+    kind: Literal["person"]
+class DecisionRouteUnrouted(TypedDict):
+    kind: Literal["unrouted"]
+DecisionRoute = DecisionRouteRule | DecisionRouteDirect | DecisionRouteSteppedUp | DecisionRouteStepUnfinished | DecisionRoutePerson | DecisionRouteUnrouted
+class RoutingPolicy(TypedDict):
+    band_version: int
+    think_row: NotRequired[int | None]
+    person_row: NotRequired[int | None]
+    rule: NotRequired[HostRuleRef | None]
 class CalibrationPair(TypedDict):
     prediction: DecisionAnswer
     probability: float
     outcome: OutcomeLabel
+    question_version: int
+    route: DecisionRoute
+    policy: NotRequired[RoutingPolicy | None]
+    providers: list[ProviderPin]
+class RouteGroupKey(TypedDict):
+    question_version: int
+    route: DecisionRoute
+    policy: NotRequired[RoutingPolicy | None]
+    providers: list[ProviderPin]
+class CalibrationMetrics(TypedDict):
+    brier_score: float
+    calibration_error: float
+class CalibrationPairRef(TypedDict):
+    answer: str
+    fact: str
+class MapKnot(TypedDict):
+    raw: float
+    fitted: float
+class RouteCalibrationMap(TypedDict):
+    question: str
+    key: RouteGroupKey
+    fit: list[CalibrationPairRef]
+    knots: list[MapKnot]
+class AcceptanceAtCut(TypedDict):
+    cut: float
+    raw: float
+    accepted: int
+    coverage: float
+    accepted_error: NotRequired[float | None]
+class RouteFitRefusalTooFewFitPairs(TypedDict):
+    kind: Literal["too_few_fit_pairs"]
+    needed: int
+class RouteFitRefusalWeightlessFit(TypedDict):
+    kind: Literal["weightless_fit"]
+RouteFitRefusal = RouteFitRefusalTooFewFitPairs | RouteFitRefusalWeightlessFit
+class RouteFitFitted(TypedDict):
+    state: Literal["fitted"]
+    map: RouteCalibrationMap
+    fitted: NotRequired[CalibrationMetrics | None]
+    acceptance: list[AcceptanceAtCut]
+class RouteFitRefused(TypedDict):
+    state: Literal["refused"]
+    reason: RouteFitRefusal
+RouteFit = RouteFitFitted | RouteFitRefused
+class RouteCalibrationGroup(TypedDict):
+    key: RouteGroupKey
+    fit_pairs: int
+    check_pairs: int
+    raw: NotRequired[CalibrationMetrics | None]
+    fit: RouteFit
+class RouteCalibrationReport(TypedDict):
+    question: str
+    groups: list[RouteCalibrationGroup]
 class RoomOriginCard(TypedDict):
     room: str
     thread: str
@@ -18873,7 +19157,6 @@ DecisionQuestionInput = TypedDict("DecisionQuestionInput", {"text": str, "class"
 QuestionDefinitionInput = QuestionDefinition[DecisionQuestionInput]
 class QuestionCreateRequest(TypedDict):
     definition: QuestionDefinitionInput
-QuestionAskerClass = Literal["human", "agent", "system"]
 class FrozenReadLane(TypedDict):
     credential: NotRequired[list[int] | None]
     authority: NotRequired[Scope | None]
@@ -18886,7 +19169,7 @@ class QuestionRecord(TypedDict):
     principal: str
     definition: QuestionDefinition[DecisionQuestion]
     created_at: int
-    asker_class: NotRequired[QuestionAskerClass | None]
+    asker_class: NotRequired[EdgeActorClass | None]
     read_lane: FrozenReadLane
 class QuestionEditRequest(TypedDict):
     id: EntityId
@@ -18990,6 +19273,7 @@ class ArtifactAskRecord(TypedDict):
     parent_proposal_ref: NotRequired[str | None]
     details_omitted: NotRequired[bool]
     units: NotRequired[list[ArtifactUnitReceipt]]
+    next_sheet_row: NotRequired[int | None]
 class QuestionAnswerGraph(AnswerRecord):
     kind: Literal["graph"]
 class QuestionAnswerArtifact(ArtifactAskRecord):
@@ -19186,7 +19470,7 @@ class ConnectorCallStatusAwaitingInput(TypedDict):
     generation: int
     asked: int
     uncertain: NotRequired[bool]
-    reply: ConnectorCallReply
+    reply: ActAnswer[ConnectorCallReply]
 ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled | ConnectorCallStatusAwaitingInput
 class ScopedCommitRequest(TypedDict):
     claims: list[ScopedClaimInput]
@@ -19555,6 +19839,10 @@ class CalendarOccurrencesPageRequest(TypedDict):
     range: CalendarRangeDto
     deadline_ms: NotRequired[int | None]
     resume_from: NotRequired[int | None]
+class CalendarCivilSpan(TypedDict):
+    time_kind: str
+    start: str
+    end: str
 class CalendarOccurrenceView(TypedDict):
     event_ref: str
     master_ref: str
@@ -19562,6 +19850,7 @@ class CalendarOccurrenceView(TypedDict):
     original_start_utc: int
     start_utc: int
     end_utc: int
+    civil: NotRequired[CalendarCivilSpan | None]
 class CalendarOccurrencesPage(TypedDict):
     occurrences: list[CalendarOccurrenceView]
     complete: bool
@@ -19585,6 +19874,7 @@ class CalendarEventView(TypedDict):
     end_utc: NotRequired[int | None]
     calendar_systems: list[str]
     blocks_time: bool
+    civil: NotRequired[CalendarCivilSpan | None]
 class CalendarSel(TypedDict):
     system: NotRequired[str | None]
 class CalendarSearchPageRequest(TypedDict):
@@ -20269,12 +20559,14 @@ class VerbHookStopCompleted(TypedDict):
     status: Literal["completed"]
     invocation: str
     result: Any
+    hook_notice: NotRequired[bool | None]
 class VerbHookStopCompletedWithError(TypedDict):
     status: Literal["completed_with_error"]
     invocation: str
     code: str
     message: str
     receipt_ref: NotRequired[str | None]
+    hook_notice: NotRequired[bool | None]
 VerbHookStop = VerbHookStopSkipped | VerbHookStopPending | VerbHookStopHidden | VerbHookStopCompleted | VerbHookStopCompletedWithError
 class RoomJoinHold(TypedDict):
     room: EntityId
@@ -20448,6 +20740,48 @@ class EsignSigningSignatureRequest(TypedDict):
 class EsignSigningSignatureView(TypedDict):
     image_ref: str
     image_base64: str
+class EsignSigningPreviewRequest(TypedDict):
+    token: str
+    item: int
+class PageGeometry(TypedDict):
+    crop: list[float]
+    rotation: int
+    user_unit: float
+class PdfFieldRect(TypedDict):
+    x: float
+    y: float
+    width: float
+    height: float
+class FieldMarkText(TypedDict):
+    kind: Literal["text"]
+    value: str
+    x: float
+    y: float
+    size: float
+class FieldMarkRectangle(TypedDict):
+    kind: Literal["rectangle"]
+    x: float
+    y: float
+    width: float
+    height: float
+class FieldMarkLine(TypedDict):
+    kind: Literal["line"]
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+class FieldMarkSignature(TypedDict):
+    kind: Literal["signature"]
+    image_ref: str
+    rect: PdfFieldRect
+FieldMark = FieldMarkText | FieldMarkRectangle | FieldMarkLine | FieldMarkSignature
+class FieldLayout(TypedDict):
+    presentation: FieldPresentation
+    rect: PdfFieldRect
+    marks: list[FieldMark]
+class EsignSigningPreviewView(TypedDict):
+    pages: list[PageGeometry]
+    fields: list[FieldLayout]
 class EsignSealGetRequest(TypedDict):
     document_ref: str
 class EsignSealAttemptView(TypedDict):
@@ -20603,25 +20937,6 @@ class DocxBlockView(TypedDict):
     text: str
     runs: list[DocxRun]
     cells: list[DocxCellView]
-DocxHeaderFooterBand = Literal["default", "first", "even"]
-class DocxStoryScopeHeader(TypedDict):
-    kind: Literal["header"]
-    part_name: str
-    band: DocxHeaderFooterBand
-class DocxStoryScopeFooter(TypedDict):
-    kind: Literal["footer"]
-    part_name: str
-    band: DocxHeaderFooterBand
-class DocxStoryScopeFootnote(TypedDict):
-    kind: Literal["footnote"]
-    id: str
-class DocxStoryScopeEndnote(TypedDict):
-    kind: Literal["endnote"]
-    id: str
-class DocxStoryScopeComment(TypedDict):
-    kind: Literal["comment"]
-    id: str
-DocxStoryScope = DocxStoryScopeHeader | DocxStoryScopeFooter | DocxStoryScopeFootnote | DocxStoryScopeEndnote | DocxStoryScopeComment
 class DocxStoryParagraphView(TypedDict):
     id: str
     locked: bool
@@ -21567,6 +21882,9 @@ class HeldDeckId(TypedDict):
     node: int
     native_id: NotRequired[int | None]
     creation_id: NotRequired[str | None]
+class OfficeRecalcFailure(TypedDict):
+    code: str
+    detail: str
 class OfficeRecalcZone(TypedDict):
     utc_offset_minutes: int
     iana_timezone: NotRequired[str | None]
@@ -21583,6 +21901,7 @@ class OfficeBodyExportRecord(TypedDict):
     at: int
     changes: int
     recalc: NotRequired[str | None]
+    recalc_failure: NotRequired[OfficeRecalcFailure | None]
     recalc_zone: NotRequired[OfficeRecalcZone | None]
     effects: list[str]
 class OfficeBodyExportView(TypedDict):
@@ -21592,6 +21911,7 @@ class OfficeBodyPreviewRequest(TypedDict):
     artifact_ref: str
     utc_offset_minutes: NotRequired[int | None]
     iana_timezone: NotRequired[str | None]
+XlsxCellRecalc = Literal["cached_after_failure"]
 class XlsxCell(TypedDict):
     col: int
     row: int
@@ -21599,6 +21919,7 @@ class XlsxCell(TypedDict):
     formula: NotRequired[str | None]
     style: NotRequired[int | None]
     locked: NotRequired[XlsxLock | None]
+    recalc: NotRequired[XlsxCellRecalc | None]
 class XlsxSheet(TypedDict):
     name: str
     cells: list[XlsxCell]
@@ -21622,6 +21943,7 @@ class XlsxPreview(TypedDict):
     frontier: list[int]
     book: XlsxBook
     recalc: NotRequired[str | None]
+    recalc_failure: NotRequired[OfficeRecalcFailure | None]
 class NodeMove(TypedDict):
     node: NodeId
     old_parent: NotRequired[NodeId | None]
@@ -24005,6 +24327,10 @@ class MailSyncStatusView(TypedDict):
     bodies: int
     bodies_waiting: int
     deleted_at_provider: int
+    claim_rechecks_pending: int
+    claim_rechecks_checked: int
+    claim_rechecks_review_needed: int
+    claim_rechecks_obsolete: int
     last_step_at: NotRequired[int | None]
     last_error: NotRequired[str | None]
 class MailMboxImportRequest(TypedDict):
@@ -24034,6 +24360,18 @@ class MailSyncReport(TypedDict):
     anchor_expired: bool
     copy_done: bool
     attachments_stored: NotRequired[int]
+class MailSourceSearchRequest(TypedDict):
+    source_ref: str
+    query: str
+    page: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class MailSearchReport(TypedDict):
+    source_ref: str
+    found: int
+    landed: int
+    same: int
+    skipped: int
+    next_page: NotRequired[str | None]
 class MailInboxRequest(TypedDict):
     source_ref: NotRequired[str | None]
     include_source_deleted: NotRequired[bool]

@@ -224,19 +224,24 @@ impl Vault {
                 "commit tree could not be read",
             ))
         })?;
-        // A run keeps the namespace its existing repository admission names.
-        let repo_path = if select.is_some() {
-            std::fs::canonicalize(&config.repo_path)
-        } else {
-            // Commit-only imports also work when the checkout is unavailable.
-            std::fs::canonicalize(repo.workdir().unwrap_or_else(|| repo.path()))
-                .or_else(|_| std::fs::canonicalize(repo.path()))
-        }
-        .map_err(|_| {
+        let invalid_repo_path = |_| {
             Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "repo_path must be a canonicalizable local path",
             ))
-        })?;
+        };
+        // Absolute custody declarations follow the commit tree's actual root.
+        // Commit-only imports also work when the checkout is unavailable.
+        let custody_path = std::fs::canonicalize(repo.workdir().unwrap_or_else(|| repo.path()))
+            .or_else(|_| std::fs::canonicalize(repo.path()))
+            .map_err(invalid_repo_path)?;
+        // A run keeps the namespace its existing repository admission names.
+        let repo_path = if select.is_some() {
+            std::fs::canonicalize(&config.repo_path).map_err(invalid_repo_path)?
+        } else {
+            custody_path.clone()
+        };
+        let custody_path = custody_path.to_string_lossy();
+        let custody_root = Some(custody_path.trim_end_matches('/'));
         let repo_ref = RepoRef::LocalFolder {
             path: repo_path.to_string_lossy().into_owned(),
             commit: commit_hash.clone(),
@@ -252,8 +257,9 @@ impl Vault {
         }
         check_hosted_media_hash_matches(&project_id, &blobs, hash_match_provider)?;
 
-        let snapshot = Self::build_ingest_snapshot(project_id, &repo_ref, &commit_hash, &blobs)?
-            .with_repository(repository.map(|capture| capture.anchor))?;
+        let snapshot =
+            Self::build_ingest_snapshot(project_id, &repo_ref, Some(&commit_hash), &blobs)?
+                .with_repository(repository.map(|capture| capture.anchor))?;
         // The read pass is useful for early quarantine but does not authorize
         // any writes: a declaration can arrive after it releases its snapshot.
         scan_codebase_snapshot_metadata(&snapshot)?;
@@ -264,7 +270,7 @@ impl Vault {
                 .map(|index| blobs[index].data.clone())
         };
         let rtxn = self.store.env.read_txn()?;
-        self.apply_custody_to_snapshot(&rtxn, &snapshot, &contents)?;
+        self.apply_custody_to_snapshot(&rtxn, &snapshot, custody_root, &contents)?;
         drop(rtxn);
         after_first_pass()?;
         // Keep main's vault-scoped, test-only writer rendezvous: a registration
@@ -286,10 +292,9 @@ impl Vault {
         self.commit_ingest_snapshot(
             &snapshot,
             &blobs,
-            &repo_ref,
-            &commit_hash,
             (occurred, learned_at),
             repository.as_ref(),
+            custody_root,
             &contents,
             owner,
             admit,
@@ -297,10 +302,10 @@ impl Vault {
     }
 
     /// The first-pass snapshot of the import: an entry for every kept blob.
-    fn build_ingest_snapshot(
+    pub(super) fn build_ingest_snapshot(
         project_id: String,
         repo_ref: &RepoRef,
-        commit_hash: &str,
+        commit_hash: Option<&str>,
         blobs: &[RepoIngestBlob],
     ) -> Result<CodebaseSnapshot> {
         let files = blobs
@@ -315,7 +320,7 @@ impl Vault {
         let snapshot = CodebaseSnapshot::new(
             project_id,
             repo_ref.clone(),
-            Some(commit_hash.to_owned()),
+            commit_hash.map(str::to_owned),
             files,
         )?;
         Ok(snapshot)
@@ -327,14 +332,13 @@ impl Vault {
         clippy::too_many_arguments,
         reason = "the final writer takes the first pass as it stood"
     )]
-    fn commit_ingest_snapshot<R>(
+    pub(super) fn commit_ingest_snapshot<R>(
         &self,
         snapshot: &CodebaseSnapshot,
         blobs: &[RepoIngestBlob],
-        repo_ref: &RepoRef,
-        commit_hash: &str,
         (occurred, learned_at): (TimeRange, u64),
         repository: Option<&CaptureRepository>,
+        custody_root: Option<&str>,
         contents: &dyn Fn(&str) -> Option<Vec<u8>>,
         owner: Option<&AuthenticatedOwner>,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
@@ -348,7 +352,7 @@ impl Vault {
             // The anchor the capture belongs to stands, with the folder this
             // import read (FIX 4299).
             if let Some(capture) = repository {
-                self.require_capture_repository_in_txn(wtxn, capture, repo_ref)?;
+                self.require_capture_repository_in_txn(wtxn, capture, &snapshot.repo_ref)?;
             }
             let capture_actor = owner
                 .map(|owner| owner.revalidate_in_txn(self, wtxn))
@@ -356,8 +360,13 @@ impl Vault {
             // Repo-marked files stay in the snapshot; their index copies
             // are masked (FIX 7608 slice 3).
             let repo_marks = RepoIndexMarks::read_in_txn(self, wtxn)?;
-            let (files, custody_report) =
-                self.repo_snapshot_inputs_in_txn(wtxn, &repo_marks, snapshot, contents)?;
+            let (files, custody_report) = self.repo_snapshot_inputs_in_txn(
+                wtxn,
+                &repo_marks,
+                snapshot,
+                custody_root,
+                contents,
+            )?;
             let filtered_snapshot = snapshot.rebuilt_with_files(files)?;
             let retained_paths = filtered_snapshot
                 .files
@@ -386,7 +395,7 @@ impl Vault {
             let code_body = CodeArtifactBody::new(
                 "Summarize the repository snapshot.",
                 filtered_snapshot.fork_hash,
-                repo_ref.canonical(),
+                snapshot.repo_ref.canonical(),
             );
             let code_body = crate::code_artifact::encode_code_artifact_body(&code_body)?;
 
@@ -444,7 +453,8 @@ impl Vault {
             // as this writer reads it (FIX 7809), under the repository
             // identity resolved once in this snapshot (FIX 12761).
             let read: &RoTxn<'_> = wtxn;
-            let identity = crate::codebase::resolve_repo_identity_in_txn(self, read, repo_ref)?;
+            let identity =
+                crate::codebase::resolve_repo_identity_in_txn(self, read, &snapshot.repo_ref)?;
             let symbol_sources = symbol_texts
                 .iter()
                 .map(|(path, text)| {
@@ -455,9 +465,9 @@ impl Vault {
                 .collect::<Result<Vec<_>>>()?;
             // Symbol rows first, then every edge a working batch at a time.
             let mut symbol_graph = prepare_code_symbol_graph(
-                repo_ref.clone(),
+                snapshot.repo_ref.clone(),
                 identity,
-                Some(commit_hash.to_owned()),
+                snapshot.commit_hash.clone(),
                 symbol_sources,
             )?;
             // Each symbol names the operations that wrote it, read from its

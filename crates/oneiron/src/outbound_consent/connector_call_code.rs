@@ -18,11 +18,12 @@ use crate::code_run::CodeConsentDraft;
 use crate::code_run::CodeConsentPendingEffect;
 use crate::code_run::CodeConsentPrincipal;
 use crate::code_run::CodeConsentRememberOffer;
+use crate::code_run::CodeConsentStandingOffer;
 use crate::code_run::CodeConsentWaitView;
+use crate::code_run::active_authority_holds_in_txn;
 use crate::code_run::code_consent_admission_in_txn;
 use crate::code_run::mint_code_consent_wait_in_txn;
 use crate::code_run::offered_choices;
-use crate::code_run::original_authority_holds_in_txn;
 use crate::code_run::read_code_consent_wait_in_txn;
 use crate::code_run::refuse_code_consent_wait_in_txn;
 use crate::code_run::settle_code_consent_wait_listing_in_txn;
@@ -245,6 +246,15 @@ impl Vault {
             facts.grant_id,
             &facts.call,
         );
+        let standing_offer = if remember_offer.is_none()
+            && !reasons.iter().any(|reason| reason == SLATE_ALWAYS_ASK)
+        {
+            crate::gate::code_wait_standing_bound(&gate_input)
+                .as_ref()
+                .and_then(CodeConsentStandingOffer::from_bound)
+        } else {
+            None
+        };
         Ok(Some((
             CodeConsentDraft {
                 site: site.clone(),
@@ -255,6 +265,7 @@ impl Vault {
                 holder_settlement: None,
                 hold_reasons: reasons.to_vec(),
                 remember_offer,
+                standing_offer,
             },
             gate_input,
         )))
@@ -375,11 +386,18 @@ impl Vault {
             .collect::<Vec<_>>()
             .join(", ");
         let days = CONNECTOR_CALL_PENDING_TTL_MS / (24 * 60 * 60 * 1000);
+        let standing = row
+            .binding
+            .standing_offer
+            .as_ref()
+            .map_or_else(String::new, |offer| {
+                format!(" Standing offer: {}.", offer.scope_description())
+            });
         Ok(format!(
             "A code run asks before it calls tool \"{tool}\" on connector \"{name}\" (code \
              consent wait {wait}). Its own gate held the call because: {reasons}. Answer one of: \
              {choices}. Nothing is sent until you answer, and the call expires {days} days after \
-             it was held.",
+             it was held.{standing}",
             tool = clip(&call.tool),
             name = clip(&call.name),
             wait = wait_id.to_hex(),
@@ -426,7 +444,7 @@ impl Vault {
             read_code_consent_wait_in_txn(self, &txn, wait_id)?.map(|row| {
                 (
                     row.approved_unsettled(),
-                    original_authority_holds_in_txn(self, &txn, &row.binding),
+                    active_authority_holds_in_txn(self, &txn, &row),
                     row,
                 )
             })
@@ -443,18 +461,37 @@ impl Vault {
                 return Ok((held, pending.source_rows));
             }
             if !authority_holds {
-                self.with_write_txn(|txn| {
-                    refuse_code_consent_wait_in_txn(
-                        self,
-                        txn,
-                        wait_id,
-                        &[CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED],
-                    )
+                let refused = self.with_write_txn(|txn| {
+                    let current = read_code_consent_wait_in_txn(self, txn, wait_id)?;
+                    if current.as_ref().is_some_and(|current| {
+                        current.approved_unsettled()
+                            && current.active_credential() == row.active_credential()
+                    }) {
+                        refuse_code_consent_wait_in_txn(
+                            self,
+                            txn,
+                            wait_id,
+                            &[CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED],
+                        )?;
+                        Ok(true)
+                    } else {
+                        Ok(false)
+                    }
                 })?;
-                self.signal_code_owned_call_asks();
-                let stopped = ConnectorCallOutcome::Refused {
-                    decision_ref: None,
-                    reasons: vec![CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED.to_owned()],
+                let stopped = if refused {
+                    self.signal_code_owned_call_asks();
+                    ConnectorCallOutcome::Refused {
+                        decision_ref: None,
+                        reasons: vec![CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED.to_owned()],
+                    }
+                } else {
+                    // A newer credential or settlement won the writer race.
+                    ConnectorCallOutcome::Held {
+                        call_ref: *call_ref,
+                        decision_ref: None,
+                        reasons: vec![CODE_WAIT_SETTLING.to_owned()],
+                        approval_digest: None,
+                    }
                 };
                 return Ok((stopped, pending.source_rows));
             }
@@ -535,13 +572,16 @@ impl Vault {
     pub fn refuse_answered_code_consent_wait(
         &self,
         wait_id: EntityId,
+        expected: &crate::code_run::CodeConsentSavedCredential,
         refusal: VerbAskRefusal,
     ) -> Result<CodeConsentWaitView, IntentLedgerError> {
         if refusal.names_credential() {
             let code = refusal.code().to_ascii_lowercase();
             self.with_write_txn(|txn| {
-                let answered = read_code_consent_wait_in_txn(self, txn, wait_id)?
-                    .is_some_and(|row| row.approved_unsettled());
+                let answered =
+                    read_code_consent_wait_in_txn(self, txn, wait_id)?.is_some_and(|row| {
+                        row.approved_unsettled() && row.active_credential() == Some(expected)
+                    });
                 if answered {
                     refuse_code_consent_wait_in_txn(
                         self,

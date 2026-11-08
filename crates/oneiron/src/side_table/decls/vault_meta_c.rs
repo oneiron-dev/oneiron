@@ -81,11 +81,13 @@ side_tables! {
     CHANNEL_IDENTITY_SELECTION_RULES: VaultMeta b"channel_identity_selection:v1:rules" Raw
         => crate::channel_identity_selection::erase_rule_actor_in_txn;
     /// A self agent's per-reply chat breakpoint (FIX 4465 D): the answering agent, its reader,
-    /// the conversation and branch, the request its rung sent and the digest of its offer, and
-    /// the retained turns and summaries it was read from, by revision. Host-only; read only to
-    /// reuse the prefix for the reply's Continue and Retry. Key: id16(conversation) +
-    /// id16(message) + id16(stream generation).
-    CHAT_BREAKPOINT: VaultMeta b"chat_breakpoint:v1:" Named Authored [accepts: crate::conversation::chat_breakpoint_accepts_masked];
+    /// the conversation and branch, the request its rung sent and the digest of its offer, the
+    /// retained turns and summaries it was read from, by revision, and the user turn it answers
+    /// (FIX 5033). Host-only; read only to reuse the prefix for the reply's Continue and Retry.
+    /// A hard erase of its reader or its agent drops the row (FIX 5033). Key:
+    /// id16(conversation) + id16(message) + id16(stream generation).
+    CHAT_BREAKPOINT: VaultMeta b"chat_breakpoint:v1:" Named Authored [accepts: crate::conversation::chat_breakpoint_accepts_masked]
+        => crate::conversation::scrub_chat_breakpoint_actor_in_txn;
     /// Per-repository environment blueprint. Key: bytes32.
     CHECKOUT_ENV_BLUEPRINT: VaultMeta b"checkout:env_blueprint:v1:" VersionedNamed;
     /// Checkout lease act. Key: hex32.
@@ -116,6 +118,13 @@ side_tables! {
     /// (32 bytes), then the content hash (32 bytes) of the handoff packet the move signed for it.
     /// Written by that move only; retired with the history on delete. Key: id16 (target claim).
     CLAIM_MACHINE_HISTORY_CARRY: VaultMeta b"claim:machine-history-carry:v1:" Raw;
+    /// The memoized gate verdict over one MACHINE claim's history (FIX 12374): the seal
+    /// (40 bytes), the pin's content hash (32 bytes), the gate sequence (u64 BE) and the
+    /// settled verdict (1 byte) the carrier loop proved. Key: id16 (target claim).
+    CLAIM_MACHINE_HISTORY_GATE_FINGERPRINT: VaultMeta b"claim:machine-history-gate-fingerprint:v1:" Raw;
+    /// The vault-wide gate sequence (FIX 12374): how many gate writes landed since the
+    /// last clear. Key: ().
+    CLAIM_MACHINE_HISTORY_GATE_SEQUENCE: VaultMeta b"claim:machine-history-gate-sequence:v1" Raw;
     /// The pinned signed handoff (encoded `ClaimHistoryHandoff`) that roots one MACHINE claim's
     /// signed birth and transition history. Key: id16 (target claim).
     CLAIM_MACHINE_HISTORY_PIN: VaultMeta b"claim:machine-history-pin:v1:" Raw;
@@ -517,10 +526,20 @@ side_tables! {
     COMMITMENT_SERIES_INSTANCE: VaultMeta b"commitment_series_instance:v1:" Raw;
     /// Pending Project due row of a series. Key: id16.
     COMMITMENT_SERIES_PROJECT: VaultMeta b"commitment_series_project:v1:" Raw;
+    /// A conversation summary's check material (FIX 5040): the sealed gate request, the
+    /// backend's whole reply and the gate policy of the accepted try, owned by the SUMMARY and
+    /// every source of its window. The reply is a model's words: the side-row wall admits the
+    /// material before its ref binds the receipt. An erase leaves the refs and digest only.
+    /// Key: id16(summary).
+    COMPACTION_CHECK_MATERIAL: VaultMeta b"compaction:check_material:v1:" Named Authored [accepts: crate::compaction::compaction_check_material_accepts_masked];
     /// A conversation's landed self-written summary (FIX 4465 D): its epoch, the SESSION's turn
     /// range and the host's record of what wrote it, conversation evidence included; no words.
     /// Key: id16(summary).
     COMPACTION_CONVERSATION_RECEIPT: VaultMeta b"compaction:conversation_receipt:v1:" Named Engine;
+    /// Each landing receipt under its conversation (FIX 5032), written with the receipt in its
+    /// mint's own writer. Ids only: the receipt is the evidence, and this row names it and grants
+    /// nothing. Key: id16(conversation) + id16(summary).
+    COMPACTION_CONVERSATION_RECEIPT_BY_CONVERSATION: VaultMeta b"compaction:conversation_receipt_by_conversation:v1:" Raw Engine;
     /// The place a removed epoch summary held in its session's count: the highest removed epoch
     /// and the turn it ended at, no words (OF-013). Key: id16(session).
     COMPACTION_EPOCH_FLOOR: VaultMeta b"compaction:epoch_floor:v1:" Named;

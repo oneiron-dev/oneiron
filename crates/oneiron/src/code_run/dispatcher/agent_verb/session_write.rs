@@ -92,7 +92,7 @@ impl HostSelfDispatcher<'_> {
         let receipt = match site {
             Some(site) => match self.session_write_identity(site)? {
                 (_, KeptWrite::Ran(kept)) => {
-                    return self.kept_session_write_answer(*kept, call);
+                    return self.kept_session_write_answer(*kept, call, site);
                 }
                 (id, KeptWrite::Fresh(stopped)) => Some((
                     CodeRunReplayRecord::new(id, CodeRunDeterminism::new(0, [0; 32])),
@@ -135,6 +135,7 @@ impl HostSelfDispatcher<'_> {
             // keeps. A hidden result is the write's kept answer.
             Err(Error::VerbHook(stop)) if matches!(*stop, VerbHookStop::Hidden { .. }) => {
                 return refuse(answered(Err(AgentVerbRefusal {
+                    hook_notice: None,
                     code: VERB_HOOK_HIDDEN.to_owned(),
                 })));
             }
@@ -157,7 +158,10 @@ impl HostSelfDispatcher<'_> {
             Some(Ok(stage)) => stage,
             Some(Err(refused)) => {
                 self.session_write_keep(call.verb.as_str(), pre)?;
-                return refuse(answered(Err(AgentVerbRefusal { code: refused.code })));
+                return refuse(answered(Err(AgentVerbRefusal {
+                    hook_notice: None,
+                    code: refused.code,
+                })));
             }
             None => {
                 self.session_write_keep(call.verb.as_str(), pre)?;
@@ -197,6 +201,7 @@ impl HostSelfDispatcher<'_> {
                 self.session_write_keep(call.verb.as_str(), pre)?;
                 return refuse(answered(Err(ceiling.take().unwrap_or_else(|| {
                     AgentVerbRefusal {
+                        hook_notice: None,
                         code: MemoryError::from(refused).code,
                     }
                 }))));
@@ -244,12 +249,13 @@ impl HostSelfDispatcher<'_> {
         &self,
         kept: CodeRunReplayRecord,
         call: SelfAgentVerbCall,
+        site: ExecutorCallSite<'_>,
     ) -> Result<SelfDispatchOutcome> {
         let view = match kept.bridge_calls.first() {
             Some(row) => kept_caller_view(&row.outcome)?,
             None => KeptCallerView::Unchanged,
         };
-        let outcome = self.kept_write_answer(self.agent_verbs.as_deref(), kept, call)?;
+        let outcome = self.kept_write_answer(self.agent_verbs.as_deref(), kept, call, site)?;
         let SelfDispatchOutcome::AgentVerb(answer) = &outcome else {
             return Ok(outcome);
         };
@@ -298,6 +304,7 @@ impl HostSelfDispatcher<'_> {
 /// A session-bound run's verb call that its room keeps no write for.
 fn session_bound() -> SelfDispatchOutcome {
     answered(Err(AgentVerbRefusal {
+        hook_notice: None,
         code: AGENT_VERB_SESSION_BOUND.to_owned(),
     }))
 }

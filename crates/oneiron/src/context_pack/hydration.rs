@@ -442,6 +442,15 @@ fn pins_indexed_frontier(
     .is_some_and(|text| text.revision == revision))
 }
 
+/// Release an admitted claim's fields without retrieval-only ranking gates.
+pub(crate) fn released_claim_fields(raw_body: &[u8]) -> Option<HashMap<String, serde_json::Value>> {
+    if crate::batch::export::write_door_refuses_body(raw_body) {
+        return None;
+    }
+    let body = crate::claim::decode_claim_body(raw_body, true).ok()?;
+    Some(claim_fields_to_json(&body))
+}
+
 /// Projects an already-decoded CLAIM body into the hydrated-fields map —
 /// the same shape `decode_entity_fields` produces from the raw MessagePack
 /// map (pinned D11 short keys; `subj` is binary on disk so it projects as

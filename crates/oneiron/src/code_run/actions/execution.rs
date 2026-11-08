@@ -295,6 +295,7 @@ impl ActionRegistry {
                     seq: 0,
                     step_start: 0,
                     earlier: &[],
+                    reply_publisher: None,
                 },
                 call.clone(),
             )
@@ -307,6 +308,7 @@ impl ActionRegistry {
                 outcome,
                 reason_codes,
             })) => SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
                 effect: call.effect(),
                 outcome: (*outcome).to_owned(),
                 reason_codes: reason_codes.iter().map(|r| (*r).to_owned()).collect(),
