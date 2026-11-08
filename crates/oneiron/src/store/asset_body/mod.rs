@@ -250,7 +250,7 @@ pub(crate) const ASSET_FILE_PLANE: bool = true;
 /// What the file plane may hold `body` as, judged whole; `None` keeps it in
 /// its row. Neither kind is UTF-8 text, a body an owning adapter reads (the
 /// serializer would attach it as a file), a container the secret mask reads
-/// into, or a refinement carrier.
+/// into, a refinement carrier, or a shape seed, whose reader reads its row.
 ///
 /// - [`AssetFileKind::Opaque`]: no MessagePack map with a string key leads
 ///   it, so no reader of ASSET bodies interprets it.
@@ -265,6 +265,8 @@ fn asset_file_kind(body: &[u8]) -> Option<AssetFileKind> {
     if !crate::serialize::attaches_as_file(ENTITY_TYPE_ASSET, body)
         || crate::batch::secret_scan::is_container(body)
         || crate::store::refinement_carrier::refinement_carrier_payload(body).is_some()
+        // A shape seed's reader reads its row (FIX 22091).
+        || crate::vault_shape::names_shape_seed(body)
     {
         return None;
     }
