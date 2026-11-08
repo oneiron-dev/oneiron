@@ -53,18 +53,39 @@ use loro::{CommitOptions, LoroDoc};
 /// A file-plane ASSET packs as the carrier of its manifest, its body
 /// reference beside it (FIX 5489, `asset_body::references::mirror_ref`).
 ///
-/// A row bound to a source audience, or whose words came from one, stays on
-/// this vault: its binding does not travel (FIX 12559,
-/// `source_audience::withheld_from_replication_in`).
+/// A row bound to a source audience packs on this full window when its own
+/// binding and policy closure resolve, and rides beside them
+/// (`source_audiences::mirror_record`); one whose binding does not resolve,
+/// or whose words came from a row bound otherwise, stays on this vault
+/// (Engine A, 6 Nov 03:46; `source_audience::withheld_from_replication_in`).
+/// A packing pass asks it through [`window_packing_excludes_entity_with`].
+#[cfg(test)]
 pub(super) fn window_packing_excludes_entity(
     vault: &Vault,
     device_only: &std::collections::BTreeSet<EntityId>,
     id: &EntityId,
 ) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
-    if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, id)?
-        || crate::settings::device_only_withholds(&vault.store, &rtxn, device_only, id)?
-        || crate::source_audience::withheld_from_replication_in(vault, &rtxn, id)?
+    let mut lineage = crate::source_audience::LineagePass::new(vault, &rtxn)?;
+    window_packing_excludes_entity_with(vault, &mut lineage, device_only, id)
+}
+
+/// `window_packing_excludes_entity` in one packing pass's read snapshot,
+/// `lineage`'s: the source-audience verdicts on the rows' ancestry are
+/// kept across the rows and edge ends of the pass (FIX 16254).
+pub(super) fn window_packing_excludes_entity_with(
+    vault: &Vault,
+    lineage: &mut crate::source_audience::LineagePass<'_, '_>,
+    device_only: &std::collections::BTreeSet<EntityId>,
+    id: &EntityId,
+) -> Result<bool> {
+    let rtxn = lineage.txn();
+    if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, rtxn, id)?
+        || crate::settings::device_only_withholds(&vault.store, rtxn, device_only, id)?
+        || lineage.withheld_from_replication(
+            id,
+            crate::source_audience::ReplicationScope::FullOwnerWindow,
+        )?
     {
         return Ok(true);
     }
@@ -201,6 +222,7 @@ pub(super) fn scrub_local_only_carriers(
     }
     if removed {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        crate::sync::origin_positions::drop_unbound(doc)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(removed)
@@ -336,6 +358,7 @@ pub(super) fn scrub_local_claim_carriers(
     removed |= delete_edges_touching_entities(&edges, &ids)?;
     if removed {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        crate::sync::origin_positions::drop_unbound(doc)?;
         crate::sync::ingest::forget_stale_peer_origins(doc, ids)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
@@ -439,6 +462,7 @@ pub(super) fn scrub_withdrawn_delete_carriers(
         map_delete(&entities, raw_key)?;
     }
     crate::sync::row_birth::drop_orphan_births(doc)?;
+    crate::sync::origin_positions::drop_unbound(doc)?;
     crate::sync::ingest::forget_stale_peer_origins(doc, withdrawn.into_iter().map(|(_, id)| id))?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(pin)
@@ -484,6 +508,7 @@ pub(super) fn scrub_redacted_attribution_carriers(
     }
     if !keys.is_empty() {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        crate::sync::origin_positions::drop_unbound(doc)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(!keys.is_empty())
@@ -530,14 +555,31 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     crate::sync::origin_claims::scrub_section_fit_receipts(vault, doc, Some(key))?;
     // FIX 6279: and a birth carrier whose maker this vault erased.
     crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(key))?;
+    crate::sync::origin_positions::scrub_stale(vault, doc, key)?;
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;
     // And a removed session's epoch floor.
     crate::sync::withdrawn_cutoffs::scrub_removed_epoch_floors(vault, doc, Some(key))?;
+    // Last of the removals: the source audiences the rows left carried need,
+    // each at this vault's current revision (Engine A, 6 Nov 03:46).
+    crate::sync::source_audiences::refresh_and_scrub(vault, doc, Some(key))?;
     // A persisted or returned snapshot carries the same project history as
     // a delta does (Astra #1434 r9 F5).
     if super::project_history::carry_project_history(vault, doc)? {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
+    persisted_window_snapshot(vault, key, doc)
+}
+
+/// The snapshot a scrubbed window state is stored as: a window pinned history-free keeps only the
+/// history [`super::history_free::HistoryCheck`] ships where a root allows it, else the strict cut
+/// at its newest operation ([`super::history_free::persisted_history_free_snapshot`]); every
+/// other window all it holds. Window persist stores it, and so does the sealed mirror of a private
+/// world's window once the erased-actor scrubs ran over it (FIX 19525).
+pub(crate) fn persisted_window_snapshot(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<Vec<u8>> {
     if history_free_window_required(vault, key)? {
         let check = super::history_free::HistoryCheck::read(vault, key, doc)?;
         super::history_free::persisted_history_free_snapshot(vault, key, doc, &check)
@@ -621,6 +663,10 @@ fn replay_mirrors(
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let edges_map = doc.get_map("edges");
     let device_only = super::device_only::canonical_withheld_worlds(vault, window_key)?;
+    // One snapshot for the pass's source-audience verdicts, kept across its
+    // rows and edge ends (FIX 16254).
+    let lineage_txn = vault.store.env.read_txn()?;
+    let mut lineage = crate::source_audience::LineagePass::new(vault, &lineage_txn)?;
 
     let mut replayed = 0u32;
 
@@ -646,7 +692,7 @@ fn replay_mirrors(
         // Defer-sync egress door: a live overlay member is device-local until
         // explicit promotion. Keep the pending marker so the promoted turn can
         // flow through this ordinary path later.
-        if window_packing_excludes_entity(vault, &device_only, id)? {
+        if window_packing_excludes_entity_with(vault, &mut lineage, &device_only, id)? {
             continue;
         }
 
@@ -722,7 +768,12 @@ fn replay_mirrors(
                 if !super::types::edge_belongs_to_window(vault, id, &edge.target, window_key)?
                     || !local_claim_sync_allowed(vault, &edge.target)?
                     || tombstones.contains(&edge.target)
-                    || window_packing_excludes_entity(vault, &device_only, &edge.target)?
+                    || window_packing_excludes_entity_with(
+                        vault,
+                        &mut lineage,
+                        &device_only,
+                        &edge.target,
+                    )?
                 {
                     continue;
                 }
@@ -742,6 +793,10 @@ fn replay_mirrors(
             // The same crash window can fall between the entity and its
             // Rule A birth.
             if crate::sync::row_birth::mirror_local_birth(vault, doc, id)? {
+                wrote_edges = true;
+            }
+            // And between the entity and its binding and policy closure.
+            if crate::sync::source_audiences::mirror_record(vault, doc, id)? {
                 wrote_edges = true;
             }
             if wrote_edges {
@@ -776,7 +831,12 @@ fn replay_mirrors(
             if !super::types::edge_belongs_to_window(vault, id, &edge.target, window_key)?
                 || !local_claim_sync_allowed(vault, &edge.target)?
                 || tombstones.contains(&edge.target)
-                || window_packing_excludes_entity(vault, &device_only, &edge.target)?
+                || window_packing_excludes_entity_with(
+                    vault,
+                    &mut lineage,
+                    &device_only,
+                    &edge.target,
+                )?
             {
                 continue;
             }
@@ -791,6 +851,8 @@ fn replay_mirrors(
         }
         // Rule A: the birth rides in the same bridge commit as its row.
         crate::sync::row_birth::mirror_local_birth(vault, doc, id)?;
+        // Engine A: so do its binding and policy closure.
+        crate::sync::source_audiences::mirror_record(vault, doc, id)?;
 
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
 
@@ -838,4 +900,78 @@ pub(super) fn push_terminal_quarantine_marker(
     if let Some(id) = quarantine::remat_marker_entity_for_quarantine(container, crdt_key) {
         terminal_quarantines.push(id);
     }
+}
+
+/// Takes out of `doc` each row it carries that the owner's full window would
+/// not pack now (Engine A; Sol AUD-2): a row whose binding no longer
+/// publishes, or one a later DerivedFrom edge made the words of a row bound
+/// otherwise. Its carrier, edges, birth and binding go, and a withholding
+/// marker naming this machine takes their place, so a peer that already
+/// holds the row reads it to no one; the row stays here. `pin` names the
+/// window pinned history-free before anything goes; the sweep passes
+/// `None`. A vault that holds no policy carries no such row. Whether
+/// anything went, committed.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(in crate::sync) fn withhold_audience_carriers(
+    vault: &Vault,
+    doc: &LoroDoc,
+    pin: Option<&WindowKey>,
+) -> Result<bool> {
+    let (withheld, by) = {
+        let rtxn = vault.store.env.read_txn()?;
+        if !crate::source_audience::any_policy_in(vault, &rtxn)?
+            && !crate::source_audience::any_landed_in(vault, &rtxn)?
+        {
+            return Ok(false);
+        }
+        let mut carried = Vec::new();
+        map_for_each_value_bytes(&doc.get_map("entities"), |key, _| {
+            if let Ok(id) = EntityId::from_hex(key)
+                && id.to_hex() == key
+            {
+                carried.push(id);
+            }
+        });
+        // By this vault's own lineage, not its holds: a row held back here,
+        // or one whose words came from a held row, stays as its source
+        // carried it, and its holders are not told (Sol AUD-3).
+        // One pass over the carried rows: each verdict on an ancestry is
+        // read once (FIX 17212).
+        let mut lineage = crate::source_audience::LineagePass::new(vault, &rtxn)?;
+        let mut withheld = Vec::new();
+        for id in carried {
+            if !lineage.lineage_held(&id)?
+                && lineage.withheld_by_lineage(
+                    &id,
+                    crate::source_audience::ReplicationScope::FullOwnerWindow,
+                )?
+            {
+                withheld.push(id);
+            }
+        }
+        (
+            withheld,
+            crate::identity::read_machine_id_in_txn(vault, &rtxn)?,
+        )
+    };
+    if withheld.is_empty() {
+        return Ok(false);
+    }
+    if let Some(key) = pin {
+        require_history_free_window(vault, key)?;
+    }
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    for id in &withheld {
+        remove_entity_crdt_carriers(&entities, &edges, id)?;
+    }
+    // A peer that already holds one of these rows reads it to no one once
+    // it lands this marker (REVIEW-5911), rather than under the binding it
+    // travelled with.
+    crate::sync::source_audiences::mark_withheld(doc, &withheld, by.as_ref())?;
+    doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    Ok(true)
 }

@@ -25,12 +25,15 @@
 //! Busy, offline, missing keys, a refused upload or an uncertain ack leave it
 //! pending for the next pass. Each pass keeps what it saw for the owner's
 //! diagnostics (FIX 4784, 4785): the home it reached, or why none, and how
-//! the newest generation's outer capsules opened here. It decides nothing:
-//! who executes and what is carried stay as they are.
+//! the newest generation's outer capsules opened here. An upload it assembles
+//! notes the sections it carries unmerged in the record the slot's own upload
+//! notes too (`relay_observation`, FIX 19525), which outlives the request. It
+//! decides nothing: who executes and what is carried stay as they are.
 
 use std::sync::Arc;
 
 use super::attempt::{self, AttemptKey};
+use super::publication_access;
 use super::work;
 use super::{
     PartSource, ResidenceRpc, fetch_generation, list_generations_for, put_object, refused,
@@ -183,7 +186,12 @@ async fn publish_one(
     // An attempt this install persisted and has not resolved comes first
     // (CALLS BUNDLE_PUBLISH_RECONCILE).
     match work::reconcile_request(rpc, vault, request, home).await? {
-        work::WorkFate::Committed(_) => return enact(manager, request).await,
+        work::WorkFate::Committed(attempt) => {
+            // What it carries unmerged stays shown to the owner once the
+            // request has its result (FIX 19525).
+            super::relay_observation::restore_upload(vault, &attempt);
+            return enact(manager, request).await;
+        }
         work::WorkFate::Uncertain => return Ok(()),
         work::WorkFate::Open => {}
     }
@@ -201,7 +209,7 @@ async fn publish_one(
     };
     // A commit whose ack was lost: the newest names the request, sealed here.
     // How its outer capsules open here is kept for the owner (FIX 4785).
-    let (named, read) = match held.take() {
+    let (mut named, mut read) = match held.take() {
         None => (false, LatestRead::NoneKept),
         Some((bundle, pads)) => {
             let reading = Arc::clone(manager);
@@ -217,6 +225,26 @@ async fn publish_one(
             read.map_err(storage)?
         }
     };
+    let mut grant = None;
+    if !named
+        && publication_access::needs_grant(&read)
+        && let Some(generation) = latest
+        && let Some(supplied) = publication_access::get(rpc, generation, request).await?
+        && let Some((bundle, pads)) = held.take()
+    {
+        let reading = Arc::clone(manager);
+        let (reading_result, bundle, pads, supplied) = tokio::task::spawn_blocking(move || {
+            let reading_result = reading
+                .vault()
+                .read_latest_for_request_with_grant(&bundle, &pads, holder, request, &supplied);
+            (reading_result, bundle, pads, supplied)
+        })
+        .await
+        .map_err(stopped)?;
+        (named, read) = reading_result.map_err(storage)?;
+        held = Some((bundle, pads));
+        grant = Some(supplied);
+    }
     observe(
         vault,
         request,
@@ -227,6 +255,12 @@ async fn publish_one(
     );
     if named {
         return enact(manager, request).await;
+    }
+    if !publication_access::opened(&read)
+        && let Some(grant) = &grant
+        && let Err(error) = publication_access::invalidate(rpc, grant).await
+    {
+        tracing::warn!(%error, "an unusable publication grant remains offered");
     }
     // An asked publication goes on in a slot that has a generation already
     // (FIX 8885); only a newest of a later slot than this clock's waits.
@@ -241,13 +275,20 @@ async fn publish_one(
     };
     let assembling = Arc::clone(manager);
     let upload = turn::renewing_turn(rpc, move || {
-        assembling.assemble_sealed_bundle(
-            slot,
-            holder,
-            held.as_ref().map(|(bundle, pads)| (bundle, pads)),
-            Some(request),
-            materialize,
-        )
+        let latest = held.as_ref().map(|(bundle, pads)| (bundle, pads));
+        match &grant {
+            Some(grant) => assembling.assemble_sealed_bundle_with_publication_grant(
+                slot,
+                holder,
+                latest,
+                request,
+                materialize,
+                grant,
+            ),
+            None => {
+                assembling.assemble_sealed_bundle(slot, holder, latest, Some(request), materialize)
+            }
+        }
     })
     .await?;
     let upload = match upload {
@@ -268,6 +309,14 @@ async fn publish_one(
         upload.incomplete_authority.clone(),
     );
     let generation = upload.bundle.generation();
+    // And each readable section it carries unmerged, in the one record the
+    // slot's own upload notes too, which outlives the request (FIX 19525).
+    super::relay_observation::observe_upload(
+        vault,
+        Some(home),
+        generation,
+        &upload.unmerged_sections,
+    );
     let staged = put_object(
         rpc,
         &generation,
@@ -283,7 +332,7 @@ async fn publish_one(
         )
         .await?;
     if staged {
-        let attempt = attempt::BundleAttempt {
+        let mut attempt = attempt::BundleAttempt {
             home: Some(home),
             executor,
             generation,
@@ -296,10 +345,12 @@ async fn publish_one(
             pads_digest: upload.pads.digest(),
             incomplete_authority: upload.incomplete_authority.clone(),
             awaiting_reader: Vec::new(),
+            unmerged_sections: upload.unmerged_sections.clone(),
+            assembled_at: Some(vault.store.clock.peek_recorded_at()),
         };
         // The exact attempt persists before the first commit send, so an ack
         // lost on the way resumes, never reuploads.
-        attempt::persist(vault, AttemptKey::Request(request), &attempt).map_err(storage)?;
+        attempt::persist(vault, AttemptKey::Request(request), &mut attempt).map_err(storage)?;
         match work::begin_work(rpc, &attempt).await? {
             work::WorkOutcome::Accepted(status) => match status.state {
                 work::WorkState::Pending => return Ok(()),

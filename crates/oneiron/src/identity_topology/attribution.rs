@@ -31,9 +31,11 @@ pub(crate) type AttributionKey = (EntityId, [u8; 32]);
 
 /// The author carriers this vault wrote itself, by carrier row: a digest of
 /// the row's body. Local truth that never replicates, so no peer can make its
-/// own carrier read as this vault's. A restore keeping this vault's authority
-/// takes it from this vault, never from the image (`restore_class`), and keeps
-/// only the marks whose carrier the restored vault holds.
+/// own carrier read as this vault's. No checkpoint image keeps it: the digest
+/// could confirm a guess of the author after the actor's erase (FIX 17143). A
+/// restore keeps this vault's marks (`recovery::checkpoint::tiers`, Runtime,
+/// carried from the live vault), and only those whose carrier the restored
+/// vault holds.
 const AUTHORED_HERE: SideTable<HexId, [u8; 32], Raw> =
     SideTable::new(&side_table::IDENTITY_TOPOLOGY_AUTHORED_HERE);
 
@@ -49,6 +51,23 @@ struct Carrier {
 struct AttributionState {
     carriers: BTreeMap<AttributionKey, Vec<Carrier>>,
     redacted: BTreeSet<AttributionKey>,
+}
+
+/// The actor an author carrier attributes, when `row` (a raw entity row,
+/// header included) is one: an identity-topology event row whose body
+/// decodes as an [`StoredIdentityOpAction::AuthorAttribution`]. A checkpoint puts such a
+/// row, and every row that hashes it, under that actor (FIX 17143), so an
+/// erase of the actor reaches an image that holds it.
+pub(crate) fn author_carrier_actor(row: &[u8]) -> Option<EntityId> {
+    let header = EntityMetadataHeader::parse(row)?;
+    if header.entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        return None;
+    }
+    let body = row.get(ENTITY_METADATA_HEADER_LEN..)?;
+    match decode_identity_topology_event_body(body).ok()?.action {
+        StoredIdentityOpAction::AuthorAttribution { actor, .. } => Some(actor.entity_ref()),
+        _ => None,
+    }
 }
 
 fn scan_in_txn(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<AttributionState> {
@@ -186,6 +205,51 @@ pub(crate) fn admitted_author_in_txn(
     target: EntityId,
 ) -> Result<Option<WriteActor>> {
     author_in_txn(store, rtxn, target, true)
+}
+
+/// Every distinct actor the carriers of `target` name, this vault's own
+/// first (FIX 9869): the writers an undo judges the event's forks against.
+/// Each fork's birth names its writer, so the actor that re-derives the forks
+/// exactly is theirs; a peer's disagreeing carrier then neither vetoes an
+/// undo nor names a writer the forks do not carry. A redacted decision, or
+/// one no carrier names, has none. This vault's own carriers disagreeing is
+/// corruption, as for [`admitted_author_in_txn`].
+pub(crate) fn carrier_authors_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    target: EntityId,
+) -> Result<Vec<WriteActor>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, &target)? else {
+        return Ok(Vec::new());
+    };
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("identity topology core header"))?;
+    if header.entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
+        return Err(Error::InvalidEntityType(header.entity_type));
+    }
+    let core = decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+        .map_err(|_| Error::CorruptedIndex("identity topology core body"))?;
+    let key = (target, super::admission_disposition::core_digest(&core)?);
+    let mut state = scan_in_txn(store, rtxn)?;
+    if state.redacted.contains(&key) {
+        return Ok(Vec::new());
+    }
+    let carriers = state.carriers.remove(&key).unwrap_or_default();
+    let mut actors: Vec<WriteActor> = Vec::new();
+    for carrier in carriers.iter().filter(|carrier| carrier.here) {
+        if actors.first().is_some_and(|first| *first != carrier.actor) {
+            return Err(Error::CorruptedIndex("conflicting identity attribution"));
+        }
+        if actors.is_empty() {
+            actors.push(carrier.actor);
+        }
+    }
+    for carrier in carriers.iter().filter(|carrier| !carrier.here) {
+        if !actors.contains(&carrier.actor) {
+            actors.push(carrier.actor);
+        }
+    }
+    Ok(actors)
 }
 
 fn author_in_txn(

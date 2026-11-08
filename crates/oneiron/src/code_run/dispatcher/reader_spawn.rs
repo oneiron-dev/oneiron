@@ -6,7 +6,7 @@
 //!
 //! [`ExecutorStorage::reader_txn`]: crate::code_run::ExecutorStorage::reader_txn
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -33,8 +33,8 @@ use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Error, Result};
 
 /// The refusal a reader child meets at every call but its report,
-/// `self.context` and `self.think`: no verbs, writes, ambient reads or
-/// children of its own.
+/// `self.context` and `self.think`: no verbs, writes or ambient reads. A
+/// native reader-spawn seat also lends spawning and waiting on its own children.
 pub(crate) const READER_CHILD_READ_ONLY: &str = "reader_child_read_only";
 
 /// What the wait a not-done `tasks.wait` parks on says, before its set's id.
@@ -57,41 +57,67 @@ fn matches_occurrence(owner: EntityId, path: &str, wanted: &str) -> bool {
     ResultOccurrence::owned(owner, path).is_ok_and(|occurrence| occurrence.id().to_hex() == wanted)
 }
 
+/// The input `reference` names for a reader child that reads `source`, by
+/// its name (`by_name`) or by its handle, with the name it is read by: a read
+/// child's one source as `src`; a scoped child's lent `inputs` only
+/// (`scoped_child_input`). Any other reference names nothing. A shadow arm
+/// resolves a captured binding by the same rule (FIX 6352).
+pub(crate) fn delegated_input<'s>(
+    source: &'s DelegatedSource,
+    inputs: Option<&'s BTreeMap<String, DelegatedSource>>,
+    by_name: bool,
+    reference: &str,
+) -> Option<(&'s str, &'s DelegatedSource)> {
+    if let Some(inputs) = inputs {
+        return scoped_child_input(inputs, by_name, reference);
+    }
+    let names = if by_name {
+        reference == READER_SOURCE_NAME
+    } else {
+        reference == source.handle
+    };
+    names.then_some((READER_SOURCE_NAME, source))
+}
+
+/// The delegated source an `occurrence:<hex>` ref names for a reader child
+/// that reads `source`, with the name it is read by: the child's authorized
+/// sources only, a scoped child's lent `inputs` or the read child's one
+/// source, each matched by the occurrence of its owner at its path. The
+/// caller keeps the source's delegated range.
+pub(crate) fn delegated_occurrence_input<'s>(
+    source: &'s DelegatedSource,
+    inputs: Option<&'s BTreeMap<String, DelegatedSource>>,
+    wanted: &str,
+) -> Option<(&'s str, &'s DelegatedSource)> {
+    if let Some(inputs) = inputs {
+        return inputs.iter().find_map(|(name, source)| {
+            matches_occurrence(source.owner, &source.path, wanted)
+                .then_some((name.as_str(), source))
+        });
+    }
+    matches_occurrence(source.owner, &source.path, wanted).then_some((READER_SOURCE_NAME, source))
+}
+
 impl ReaderChildBinding {
     /// The input `reference` names for this child, by its name (`by_name`)
-    /// or by its handle, with the name it is read by: a read child's one
-    /// source as `src`; a scoped child's lent inputs only
-    /// (`scoped_child_input`). Any other reference names nothing.
+    /// or by its handle, with the name it is read by ([`delegated_input`]).
     pub(crate) fn delegated(
         &self,
         by_name: bool,
         reference: &str,
     ) -> Option<(&str, &DelegatedSource)> {
-        if let Some(spec) = &self.scoped {
-            return scoped_child_input(spec, by_name, reference);
-        }
-        let names = if by_name {
-            reference == READER_SOURCE_NAME
-        } else {
-            reference == self.source.handle
-        };
-        names.then_some((READER_SOURCE_NAME, &self.source))
+        delegated_input(&self.source, self.scoped_inputs(), by_name, reference)
     }
 
     /// The delegated source an `occurrence:<hex>` ref names for this child,
-    /// with the name it is read by: the child's authorized sources only, a
-    /// scoped child's lent inputs or the read child's one source, each
-    /// matched by the occurrence of its owner at its path. The caller keeps
-    /// the source's delegated range.
+    /// with the name it is read by ([`delegated_occurrence_input`]).
     pub(crate) fn delegated_occurrence(&self, wanted: &str) -> Option<(&str, &DelegatedSource)> {
-        if let Some(spec) = &self.scoped {
-            return spec.inputs.iter().find_map(|(name, source)| {
-                matches_occurrence(source.owner, &source.path, wanted)
-                    .then_some((name.as_str(), source))
-            });
-        }
-        matches_occurrence(self.source.owner, &self.source.path, wanted)
-            .then_some((READER_SOURCE_NAME, &self.source))
+        delegated_occurrence_input(&self.source, self.scoped_inputs(), wanted)
+    }
+
+    /// The inputs a scoped child was lent, by name; `None` for a read child.
+    fn scoped_inputs(&self) -> Option<&BTreeMap<String, DelegatedSource>> {
+        self.scoped.as_ref().map(|spec| &spec.inputs)
     }
 }
 
@@ -107,8 +133,9 @@ impl HostSelfDispatcher<'_> {
 
     /// Binds this dispatcher to reader child `task`, as its runner claimed
     /// it at `generation`: the run reads its parent's source as `src`, and
-    /// makes no call but its report, `self.context` and `self.think`. The
-    /// job's run is the run it is bound to.
+    /// makes no call but its report, `self.context` and `self.think`, unless
+    /// its host also lends a reader-spawn seat. The job's run is the run it
+    /// is bound to.
     ///
     /// # Errors
     ///
@@ -259,7 +286,10 @@ impl HostSelfDispatcher<'_> {
         let admitted = matches!(
             effect,
             SelfEffect::ReaderReport | SelfEffect::Context | SelfEffect::Think
-        ) || (effect == SelfEffect::AgentVerb && self.scoped_child_spec().is_some());
+        ) || (effect == SelfEffect::AgentVerb && self.scoped_child_spec().is_some())
+            || (self.scoped_child_spec().is_none()
+                && self.reader_spawn_seat().is_some()
+                && matches!(effect, SelfEffect::ReaderSpawn | SelfEffect::TasksWaitSet));
         (self.reader_child.is_some() && !admitted).then(|| {
             SelfDispatchOutcome::Denied(SelfDeniedResult {
                 effect,

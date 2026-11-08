@@ -20,12 +20,14 @@ use oneiron_docedit::{DocxAnchorBlock, docx_anchor_blocks};
 use serde::{Deserialize, Serialize};
 
 use super::anchor_text::{TextLimits, UnitFormat, anchor_text, find_text, html_blocks, remap_span};
+use super::code_units::code_span_words_in_txn;
 use super::codec::{ThreadHead, decode_locator, encode_locator};
 use super::model::{AnnotationThread, Locator, ReanchorOutcome, ReanchorSummary};
 use super::threads::thread_from_head;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::secret_custody::SecretSight;
 use crate::side_table::{self, Named, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -54,6 +56,31 @@ struct UnattachedRow {
     detached_at_version: u64,
     snapshot: Option<String>,
     detached_at: u64,
+}
+
+/// Clears, in the owner's discard of a world copy, the words each comment on
+/// `artifact`'s Unattached list keeps of the spot it was anchored on (FIX
+/// 14534, Engine 11-06 08:34 call 4 = A): that quote is the artifact's own
+/// text, and the artifact left this machine with the discarded world. Each
+/// row stays, with its versions and times, so the list still names the
+/// comment; only its snapshot goes.
+pub(crate) fn discard_snapshot_payload_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    artifact: &EntityId,
+) -> Result<()> {
+    let mut cleared = Vec::new();
+    for (key, mut row) in UNATTACHED.scan_from(store, txn, artifact.as_bytes())? {
+        if key.0 != *artifact || row.snapshot.is_none() {
+            continue;
+        }
+        row.snapshot = None;
+        cleared.push((key, row));
+    }
+    for (key, row) in cleared {
+        UNATTACHED.put(store, txn, &key, &row)?;
+    }
+    Ok(())
 }
 
 /// One comment on the Unattached list.
@@ -408,13 +435,27 @@ impl Vault {
         detached_at: u64,
     ) -> Result<()> {
         let pinned = thread.anchor.version;
-        let snapshot = match self.read_blob_artifact_version_in_txn(wtxn, artifact_id, pinned)? {
-            Some(bytes) => {
-                let limits = self.text_limits_in_txn(wtxn)?;
-                // A resource refusal is the engine's error (FIX 10587), never a missing snapshot.
-                anchor_text(&bytes, &thread.anchor.locator, &limits)?
+        let snapshot = if matches!(thread.anchor.locator, Locator::Code { .. }) {
+            // A code span's words read from the file its hash names, through
+            // the masked projection (FIX 7905): the stored snapshot reaches
+            // every reader of the Unattached list, so it never holds a
+            // repo-marked secret. An owner reads the exact bytes by the hash.
+            code_span_words_in_txn(
+                self,
+                wtxn,
+                artifact_id,
+                &thread.anchor.locator,
+                SecretSight::Masked,
+            )?
+        } else {
+            match self.read_blob_artifact_version_in_txn(wtxn, artifact_id, pinned)? {
+                Some(bytes) => {
+                    let limits = self.text_limits_in_txn(wtxn)?;
+                    // A resource refusal is the engine's error (FIX 10587), never a missing snapshot.
+                    anchor_text(&bytes, &thread.anchor.locator, &limits)?
+                }
+                None => None,
             }
-            None => None,
         };
         UNATTACHED.put(
             &self.store,
