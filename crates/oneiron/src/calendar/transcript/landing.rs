@@ -21,6 +21,7 @@ pub(super) fn ingest_parsed_transcript_in_txn(
         fail_after_turns,
         source_version,
         None,
+        None,
     )
     .map(|landed| landed.outcome)
 }
@@ -48,7 +49,58 @@ pub(super) fn ingest_prepared_transcript_in_txn(
         false,
         Some(source_version),
         Some((hint, pre)),
+        None,
     )
+}
+
+pub(crate) fn ingest_meeting_transcript_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    request: TranscriptFileDropRequest<'_>,
+    parsed: &ParsedTranscript,
+    session_key: crate::session_lifecycle::SessionKey,
+    source_version: &crate::blob_artifact::BlobArtifactVersion,
+    source: &crate::ingest::meeting_audio::MeetingImportProvenance,
+) -> crate::Result<TranscriptIngestOutcome> {
+    land(
+        vault,
+        wtxn,
+        request,
+        parsed,
+        session_key,
+        false,
+        Some(source_version),
+        None,
+        Some(source),
+    )
+    .map(|landed| landed.outcome)
+}
+
+pub(crate) fn ingest_prepared_meeting_transcript_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    request: TranscriptFileDropRequest<'_>,
+    parsed: &ParsedTranscript,
+    hint: &crate::session_lifecycle::SessionImportHint,
+    pre: &crate::session_lifecycle::SessionImportPre,
+    source_version: &crate::blob_artifact::BlobArtifactVersion,
+    source: &crate::ingest::meeting_audio::MeetingImportProvenance,
+) -> crate::Result<(
+    TranscriptIngestOutcome,
+    Option<crate::session_lifecycle::EndedSession>,
+)> {
+    land(
+        vault,
+        wtxn,
+        request,
+        parsed,
+        hint.key(),
+        false,
+        Some(source_version),
+        Some((hint, pre)),
+        Some(source),
+    )
+    .map(|landed| (landed.outcome, landed.ended))
 }
 
 pub(super) fn land(
@@ -63,6 +115,7 @@ pub(super) fn land(
         &crate::session_lifecycle::SessionImportHint,
         &crate::session_lifecycle::SessionImportPre,
     )>,
+    meeting_source: Option<&crate::ingest::meeting_audio::MeetingImportProvenance>,
 ) -> crate::Result<TranscriptLanding> {
     let hint = crate::session_lifecycle::SessionHintTimestamp {
         claimed_ms: parsed.claimed_started_ms,
@@ -81,15 +134,27 @@ pub(super) fn land(
             ended: None,
         }),
         crate::session_lifecycle::SessionMintOutcome::Minted(session_ref) => {
-            let turn_refs = persist_turns(
-                vault,
-                wtxn,
-                request.source_blob_ref,
-                session_ref,
-                &parsed.turns,
-                request.arrived_at_ms,
-                source_version,
-            )?;
+            let turn_refs = match meeting_source {
+                Some(source) => super::persist_turns_with_source(
+                    vault,
+                    wtxn,
+                    request.source_blob_ref,
+                    session_ref,
+                    &parsed.turns,
+                    request.arrived_at_ms,
+                    source_version,
+                    Some(source),
+                ),
+                None => persist_turns(
+                    vault,
+                    wtxn,
+                    request.source_blob_ref,
+                    session_ref,
+                    &parsed.turns,
+                    request.arrived_at_ms,
+                    source_version,
+                ),
+            }?;
             let wake = vault.plan_session_end_wake_in_txn(wtxn, &session_ref)?;
             let wake_turn_refs = wake.planned_turn_ids.clone();
             let end_hint = crate::session_lifecycle::SessionHintTimestamp {
