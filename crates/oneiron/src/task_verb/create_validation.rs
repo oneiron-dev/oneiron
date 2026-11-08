@@ -59,6 +59,12 @@ pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Val
                 )])
             }),
         ),
+        // FIX685: the due annotation travels with the proposal too, so an
+        // approved hook create lands carrying the stamp it asked for.
+        (
+            Value::from("due_at"),
+            spec.due_at.map_or(Value::Nil, Value::from),
+        ),
         (
             Value::from("type_ref"),
             spec.type_ref
@@ -87,6 +93,10 @@ pub(super) struct ValidatedTaskCreate {
     pub(super) assignee: Option<TaskAssignee>,
     pub(super) consult: Option<ConsultPayload>,
     pub(super) ttl: Option<TaskTtl>,
+    /// FIX685: the hook-chosen due/deadline stamp, Unix seconds. Carried
+    /// through validation unchanged: a past stamp is an overdue display,
+    /// never a born-expired refusal (that rule is `ttl`'s alone).
+    pub(super) due_at: Option<u64>,
     pub(super) spec: Value,
     /// OF-543: the one placed type stamp; always settled before the write.
     pub(super) type_ref: crate::task_type::TaskTypeRef,
@@ -181,6 +191,7 @@ pub(super) fn validate_task_create_in(
                 assignee: Some(*assignee),
                 consult: Some(payload.clone()),
                 ttl: Some(*ttl),
+                due_at: spec.due_at,
                 spec: Value::Nil,
                 type_ref,
             })
@@ -206,6 +217,7 @@ pub(super) fn validate_task_create_in(
                 assignee: *assignee,
                 consult: None,
                 ttl: *ttl,
+                due_at: spec.due_at,
                 spec: spec.spec.clone(),
                 type_ref,
             })
@@ -375,6 +387,7 @@ pub(super) fn consult_refusal(code: &str, message: &str, suggestion: &str) -> Me
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
         legal_hold: None,
+        room_join_hold: None,
     }
 }
 
