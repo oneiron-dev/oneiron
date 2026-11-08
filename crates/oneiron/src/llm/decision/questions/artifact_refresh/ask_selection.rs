@@ -42,6 +42,7 @@ pub(super) fn ask_selection(
         ),
         Selection::Paragraphs {
             blocks,
+            scope,
             author,
             labels,
         } => vault.ask_blob_artifact_paragraphs(
@@ -52,6 +53,7 @@ pub(super) fn ask_selection(
                     Some(Changed::Blocks(changed)) => changed.as_slice(),
                     _ => *blocks,
                 },
+                scope: *scope,
                 author,
                 labels,
             },

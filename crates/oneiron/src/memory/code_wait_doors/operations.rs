@@ -195,6 +195,8 @@ fn receipt_view(view: CodeConsentWaitView) -> Option<CodeWaitReceiptView> {
                 remembered_grant_ref: view.remembered,
                 decision_ref,
                 answered_at_ms,
+                standing_grant_ref: view.standing_grant_ref,
+                standing_receipt_ref: view.standing_receipt_ref,
             })
         }
         _ => None,
@@ -252,6 +254,7 @@ fn receipt_view(view: CodeConsentWaitView) -> Option<CodeWaitReceiptView> {
         hold_reasons: view.hold_reasons,
         ask_ref: view.ask,
         allowed_answers: view.options.into_iter().map(wire_choice).collect(),
+        standing_offer: view.standing_offer,
         answer,
         settlement,
         consumption,

@@ -3282,6 +3282,11 @@ export_facade! {
     let output = client.vault_shares_create(&input)?;
     crate::codec::lift_record("vault.shares.create", &output)
 };
+"vault.shares.issue_view_link" => fn vault_shares_issue_view_link(&self, input: ShareViewLinkRequest) -> PairingLink = |client| {
+    let input: oneiron::task_verb::sdk::ShareViewLinkRequest = crate::codec::lower_record("vault.shares.issue_view_link", input)?;
+    let output = client.vault_shares_issue_view_link(&input)?;
+    crate::codec::lift_record("vault.shares.issue_view_link", &output)
+};
 "vault.shares.revoke" => fn vault_shares_revoke(&self, input: ShareRevokeRequest) -> ShareRevokeReceipt = |client| {
     let input: oneiron::task_verb::sdk::ShareRevokeRequest = crate::codec::lower_record("vault.shares.revoke", input)?;
     let output = client.vault_shares_revoke(&input)?;
@@ -3881,6 +3886,11 @@ export_facade! {
     let input: oneiron::memory::codebase_doors::CodeSnapshotIngestRequest = crate::codec::lower_record("vault.code.snapshots.ingest", input)?;
     let output = client.vault_code_snapshots_ingest(&input)?;
     crate::codec::lift_record("vault.code.snapshots.ingest", &output)
+};
+"vault.code.snapshots.capture" => fn vault_code_snapshots_capture(&self, input: CodeSnapshotCaptureRequest) -> CodeSnapshotView = |client| {
+    let input: oneiron::memory::codebase_doors::CodeSnapshotCaptureRequest = crate::codec::lower_record("vault.code.snapshots.capture", input)?;
+    let output = client.vault_code_snapshots_capture(&input)?;
+    crate::codec::lift_record("vault.code.snapshots.capture", &output)
 };
 "vault.code.snapshots.get" => fn vault_code_snapshots_get(&self, input: CodeSnapshotRequest) -> Option<CodeSnapshotView> = |client| {
     let input: oneiron::memory::codebase_doors::CodeSnapshotRequest = crate::codec::lower_record("vault.code.snapshots.get", input)?;
