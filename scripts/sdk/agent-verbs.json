@@ -1150,7 +1150,8 @@
         "intent_key": "intent_key",
         "brief": "brief",
         "ttl": "ttl",
-        "parent_ref": "parent_ref"
+        "parent_ref": "parent_ref",
+        "due_at": "due_at"
       },
       "mcp_required_fields": [
         "spec"
@@ -6068,6 +6069,40 @@
       "openapi": true
     },
     {
+      "name": "vault.sync.documents.copy_edit.review",
+      "description": "The owner reviews the edit a retained document copy holds for one source document: why it is held, the masked text the copy submitted, and the revision to settle it under; the revision is a token, not authority.",
+      "input": "crate::task_verb::sdk::RepoCopyEditReviewRequest",
+      "output": "Option<crate::task_verb::sdk::RepoCopyEditReviewView>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.sync.documents.copy_edit.review\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": false,
+      "rust_feature": "sync",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sync.documents.copy_edit.settle",
+      "description": "The owner settles that held copy edit to an exact replacement text, under the revision they reviewed; a changed or settled edit answers stale. Answers the committed document frame, a local commit, not a delivery.",
+      "input": "crate::task_verb::sdk::RepoCopyEditSettleRequest",
+      "output": "crate::task_verb::sdk::RepoCopyEditSettleView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.sync.documents.copy_edit.settle\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": false,
+      "rust_feature": "sync",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.sync.retained_work.wait.set",
       "description": "The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait.",
       "input": "crate::task_verb::sdk::RetainedWorkWaitSetRequest",
@@ -8705,6 +8740,36 @@
       "input": "crate::consent::lifecycle::ApproveOnceRequest",
       "output": "crate::consent::lifecycle::ConsentActReceipt",
       "call": "crate::consent::lifecycle::approve_once(memory.vault(), &memory.embedded_owner(\"vault.consent.approve_once\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.campaign.held",
+      "description": "The owner reviews the last-observed campaign enrollment holds and their queued redrives; a redrive is not a sent or completed call.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::campaign::enrollment::CampaignEnrollmentHeldCall>",
+      "call": "crate::task_verb::sdk::campaign_enrollment_held(memory.vault(), &memory.embedded_owner(\"vault.campaign.held\")?, _input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.campaign.approve_once",
+      "description": "The owner approves exactly one current campaign enrollment hold by its call ref and reviewed digest, queuing the original work without a standing grant or bypassing its ordinary send checks.",
+      "input": "CampaignEnrollmentApproveOnceRequest",
+      "output": "crate::consent::lifecycle::ConsentActReceipt",
+      "call": "crate::task_verb::sdk::approve_campaign_enrollment_once(memory.vault(), &memory.embedded_owner(\"vault.campaign.approve_once\")?, input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -12730,7 +12795,7 @@
       "description": "The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run.",
       "input": "crate::task_verb::sdk::WorkflowDispatchRequest",
       "output": "crate::task_verb::sdk::WorkflowRunView",
-      "call": "crate::task_verb::sdk::dispatch_workflow_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.dispatch\")?, input)?",
+      "call": "crate::task_verb::sdk::dispatch_workflow_as_with_origin(memory.vault(), &memory.embedded_owner(\"vault.workflows.dispatch\")?, input, memory.caller_origin())?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -20422,6 +20487,24 @@
       "input": "crate::note::NoteReadRequest",
       "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>",
       "call": "memory.read_note(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.read_indexed",
+      "description": "Reads the independently indexed NOTE text and stable edit anchors in the same scoped snapshot.",
+      "input": "crate::note::NoteIndexedReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>",
+      "call": "memory.read_indexed_note(&input)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true
