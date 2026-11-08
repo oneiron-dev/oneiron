@@ -616,11 +616,15 @@ impl RecordingJsHost<'_, '_> {
         };
         // A read its live cutoff cut answers `reader_task_settled`, whatever
         // the cut left; a cut selection is never published (FIX 8233).
-        let reply = read.read(storage, facet, input, sink.as_mut());
+        let reply = read.read_delivered(storage, facet, input, sink.as_mut());
         if self.live_cutoff_reached() {
             return Ok(result_refusal(READER_TASK_SETTLED));
         }
-        Ok(match reply? {
+        let (reply, delivered) = reply?;
+        // Past every check, a scoped child's witness keeps the source bytes
+        // the reply shows before the reply leaves (FIX 7735).
+        self.commit_source_delivery(storage, &read, &delivered)?;
+        Ok(match reply {
             ResultReply::Output(output) => json!({"output": output}),
             ResultReply::Denied(refused) => refused,
             ResultReply::Spilled { count, next } => {
