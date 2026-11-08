@@ -741,9 +741,18 @@ impl PipelineBuilder<'_> {
                 },
             )?;
 
-            entity_rank::rank_unmatched_entities_below_matches(
+            // The effort's default now anchor is no query evidence; a window
+            // the query's words or the host named is (FIX 22182).
+            let temporal_is_query = self.temporal_search.as_ref().is_some_and(|config| {
+                !config.effort_anchor || config.query_occurred_range.is_some()
+            });
+            entity_rank::rank_unmatched_below_matches(
                 &mut scores,
                 &acc.signal_components,
+                entity_rank::MatchReading {
+                    temporal_is_query,
+                    blend_order: rerank_merged_components.is_none(),
+                },
                 &self.read,
                 rtxn,
                 &mut metadata_cache,
