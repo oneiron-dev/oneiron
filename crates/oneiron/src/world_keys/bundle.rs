@@ -93,7 +93,7 @@ use self::bodies::{
     encode_pads_body, encode_section_body, section_digest, section_digest_into, section_kek,
     section_padded_len, signed_digest,
 };
-pub use self::carrier::{SealedVaultUpload, WorldCapsuleImport};
+pub use self::carrier::{SealedVaultUpload, UnmergedSection, UnmergedStage, WorldCapsuleImport};
 use self::codec::{
     AEAD, BODY_RECIPIENT, BUNDLE, BUNDLE_LABEL, CHUNK, Cursor, DeletedWorldPads, FRAME_VERSION,
     Frame, HYBRID, KEM, KEY_ID_LEN, Kind, OpenedOuter, PADS, PADS_LABEL, PART_HEADER_LEN,
@@ -111,6 +111,8 @@ use self::plan::{SealPlan, seal_object};
 pub(crate) use self::publication::bundle_publish_executor;
 #[cfg(feature = "sync")]
 pub use self::publication_grant::SealedPublicationGrant;
+#[cfg(feature = "sync")]
+pub(crate) use self::publication_grant::publication_grant_requests;
 pub use self::retirement::{
     SEALED_BUNDLE_KEEP, SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS,
     SealedBundleGeneration, retired_bundle_generations, sealed_bundle_slot,

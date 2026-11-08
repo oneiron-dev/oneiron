@@ -281,43 +281,55 @@ pub(super) fn land_moved_xlsx(
 /// Recalculate a projected workbook in process at `at`, read in `zone`'s
 /// local time, seeded by the projected package, so the result is
 /// deterministic in all three and no vault frontier reaches the file
-/// (OF-491). A workbook the engine refuses is marked to recalculate when it
-/// is opened instead.
+/// (OF-491). A workbook the engine refuses goes to the host's `precision`
+/// fallback when it installed one ([`takes_precision_fallback`]), whose
+/// calculator the result then names; with none, or when it fails, the
+/// workbook is marked to recalculate when it is opened instead.
 pub(super) fn recalc_xlsx(
     bytes: &[u8],
     limits: Limits,
     at: u64,
     zone: &OfficeRecalcZone,
+    precision: Option<&XlsxPrecisionRecalc>,
 ) -> Result<(Vec<u8>, Option<CalcEngineStamp>)> {
     let mut seed = [0u8; 8];
     seed.copy_from_slice(&blake3::hash(bytes).as_bytes()[..8]);
-    let clock = RecalcClock::new(
-        timestamp(at)?,
-        zone.utc_offset_minutes,
-        u64::from_le_bytes(seed),
-    )
-    .ok_or_else(|| invalid("office body recalc clock"))?;
-    match FormualizerEngine::new().recalculate_xlsx(
+    let seed = u64::from_le_bytes(seed);
+    let clock = RecalcClock::new(timestamp(at)?, zone.utc_offset_minutes, seed)
+        .ok_or_else(|| invalid("office body recalc clock"))?;
+    let refusal = match FormualizerEngine::new().recalculate_xlsx(
         bytes,
         limits,
         &clock,
         None,
         &crate::office_body::document_resources(),
     ) {
-        Ok(report) => Ok((
-            report.bytes,
-            Some(CalcEngineStamp::new(
-                report.engine.engine,
-                report.engine.version,
-            )?),
-        )),
-        Err(_) => Ok((
-            mark_full_calc(bytes, limits, &crate::office_body::document_resources()).map_err(
-                |_| invalid("the projected workbook could not be marked to recalculate"),
-            )?,
-            None,
-        )),
+        Ok(report) => {
+            return Ok((
+                report.bytes,
+                Some(CalcEngineStamp::new(
+                    report.engine.engine,
+                    report.engine.version,
+                )?),
+            ));
+        }
+        Err(refusal) => refusal,
+    };
+    if let Some(port) = precision.filter(|_| takes_precision_fallback(&refusal)) {
+        match precision_recalc(port, bytes, limits, (at, zone), seed) {
+            Ok((bytes, stamp)) => return Ok((bytes, Some(stamp))),
+            Err(reason) => tracing::warn!(
+                native = %refusal,
+                %reason,
+                "the precision fallback did not recalculate the workbook; it is marked to recalculate when opened"
+            ),
+        }
     }
+    Ok((
+        mark_full_calc(bytes, limits, &crate::office_body::document_resources())
+            .map_err(|_| invalid("the projected workbook could not be marked to recalculate"))?,
+        None,
+    ))
 }
 
 /// The calculator and the local time it read, as the export record and the

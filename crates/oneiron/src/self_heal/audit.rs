@@ -162,7 +162,7 @@ fn reference(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_confession(confession: &AttemptConfession) -> Result<()> {
+pub(crate) fn validate_confession(confession: &AttemptConfession) -> Result<()> {
     confession.type_ref.validate()?;
     if confession.objectives.is_empty() {
         return Err(invalid("a confession covers at least one objective"));

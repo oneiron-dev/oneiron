@@ -15,6 +15,9 @@ pub enum PackKind {
     Capability,
     Connector,
     Agent,
+    /// A seasonal model pack (FIX 5365): data only, its roles, variants,
+    /// changelog and bench evidence in `knowledge/model-pack.json`.
+    Model,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -135,6 +138,7 @@ impl PackManifest {
             "capability" => PackKind::Capability,
             "connector" => PackKind::Connector,
             "agent" => PackKind::Agent,
+            "model" => PackKind::Model,
             _ => return Err(invalid("unsupported pack kind")),
         };
         let adapter = fields
@@ -197,6 +201,14 @@ impl PackManifest {
             }
         } else if agent_facets.is_some() {
             return Err(invalid("only agent packs declare agent facets"));
+        }
+        if kind == PackKind::Model
+            && (adapter.is_some()
+                || super::model_pack::MODEL_PACK_RUNTIME_FIELDS
+                    .iter()
+                    .any(|key| fields.contains_key(key)))
+        {
+            return Err(invalid("a model pack carries data only"));
         }
         let name = required("name", kind == PackKind::Agent)?;
         if kind == PackKind::Agent {

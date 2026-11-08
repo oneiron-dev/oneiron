@@ -256,6 +256,7 @@ pub(crate) fn admit_calendar_invite_in_txn(
         uid: payload.uid.clone(),
         last_sequence: payload.sequence,
         content_hash,
+        source: None,
         // Our own writes are outbound-bearing, so the CAL-02 absence law never
         // counts them as a feed vote (`is_inbound_bearing` is false).
         direction: CalendarPassportDirection::Outbound,

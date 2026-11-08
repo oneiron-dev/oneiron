@@ -67,8 +67,21 @@ enum Request {
     },
     RosterChanged,
     /// All of a generation's audio, up to its `generation_end`, played.
+    /// `played_samples`: how many of its samples the client played, counted
+    /// over its `pcm` frames in order (FIX 4899); what the person heard rests
+    /// on it, and on the server's count without it.
     Drained {
         generation: u64,
+        #[serde(default)]
+        played_samples: Option<u64>,
+    },
+    /// The client applied a generation's `flush` and `playout_stop`, having
+    /// played `played_samples` of its samples (FIX 4899); without the count,
+    /// what the person heard rests on the server's.
+    Stopped {
+        generation: u64,
+        #[serde(default)]
+        played_samples: Option<u64>,
     },
     /// Diarized segment embeddings the sibling heard, matched into the
     /// hello's voice roster (FIX 3344).
@@ -99,6 +112,12 @@ enum Response {
         context: RetrievalContext,
     },
     Closed,
+    /// A final heard as a backchannel while the agent held the floor (FIX
+    /// 4899): its utterance closed, and no reply starts.
+    Backchannel {
+        handle: String,
+        revision: u64,
+    },
     Error {
         code: &'static str,
     },
@@ -359,8 +378,8 @@ impl VoiceHost {
                             MediaEvent::Verdict(verdict) => self.verdict(verdict, bridge, outputs),
                             MediaEvent::Tick => self.speech_tick(bridge, outputs)?,
                             // Spoken audio plays only for the session's current generation.
-                            MediaEvent::Out(VoiceMediaOutput::Pcm { frame, .. }) => {
-                                self.spoken(frame, bridge)?;
+                            MediaEvent::Out(VoiceMediaOutput::Pcm { submission, frame, alignment }) => {
+                                self.spoken(submission, frame, alignment, bridge)?;
                             }
                             // A sentence that was not spoken stops its generation.
                             MediaEvent::Out(VoiceMediaOutput::SpeechFailed { generation, .. }) => {
@@ -370,14 +389,14 @@ impl VoiceHost {
                             MediaEvent::Out(VoiceMediaOutput::Cancelled { .. }) => {}
                             MediaEvent::Out(VoiceMediaOutput::Heard { event, .. }) => {
                                 // A heard final replaces any enrichment in flight, as a wire final does.
-                                if let Some((handle, work)) = self.heard(bridge, event) {
+                                if let Some((handle, work)) = self.heard(bridge, event, outputs) {
                                     pending = Some(Box::pin(async move { (handle, HEARD_REVISION, work.run().await) }));
                                     pending_final = true;
                                 }
                             }
                             MediaEvent::Live(Ok(updates)) => {
                                 // A live hypothesis replaces partial work in flight, never a final's.
-                                if let Some(heard) = self.live_heard(bridge, updates, pending_final) {
+                                if let Some(heard) = self.live_heard(bridge, updates, pending_final, outputs).work {
                                     pending_final = heard.final_text;
                                     pending = Some(heard_pending(heard));
                                 }
@@ -409,32 +428,56 @@ impl VoiceHost {
                                 Err(error) => response_error(&error),
                             },
                             Ok(Request::Partial { handle, revision, text }) => {
-                                match self.prepare(&handle, revision, text, false) {
-                                    Ok(work) => {
+                                // Words that took the agent's floor stop its output first (FIX 4899).
+                                let mut stops = Vec::new();
+                                let prepared = self.prepare_words(&handle, revision, text, false, &mut stops);
+                                super::speech::interrupted(stops, bridge.as_deref_mut(), outputs);
+                                match prepared {
+                                    Ok(Some(work)) => {
                                         // Prepare invalidates old work first. Dropping its
                                         // future then releases only its own reservation.
                                         pending = Some(Box::pin(async move { (handle, revision, work.run().await) }));
                                         pending_final = false;
                                         continue;
                                     }
+                                    Ok(None) => Response::Error { code: "stale_request" },
                                     Err(error) => response_error(&error),
                                 }
                             }
                             Ok(Request::Final { handle, revision, text }) => {
-                                match self.prepare(&handle, revision, text, true) {
-                                    Ok(work) => {
+                                let mut stops = Vec::new();
+                                let prepared = self.prepare_words(&handle, revision, text, true, &mut stops);
+                                super::speech::interrupted(stops, bridge.as_deref_mut(), outputs);
+                                match prepared {
+                                    Ok(Some(work)) => {
                                         pending = Some(Box::pin(async move { (handle, revision, work.run().await) }));
                                         pending_final = true;
                                         continue;
+                                    }
+                                    // A backchannel while the agent holds the floor closed its
+                                    // utterance and starts no reply (FIX 4899).
+                                    Ok(None) => {
+                                        pending = None;
+                                        pending_final = false;
+                                        Response::Backchannel { handle, revision }
                                     }
                                     Err(error) => response_error(&error),
                                 }
                             }
                             // An early or stale acknowledgement changes nothing.
-                            Ok(Request::Drained { generation }) => {
+                            Ok(Request::Drained { generation, played_samples }) => {
                                 let generation = wire.as_ref().and_then(|wire| wire.drained(generation));
                                 if let (Some(bridge), Some(generation)) = (bridge.as_deref_mut(), generation) {
-                                    self.media_in(VoiceMediaIn::Drained(generation), bridge, outputs);
+                                    self.media_in(VoiceMediaIn::Drained { generation, played_samples }, bridge, outputs);
+                                }
+                                continue;
+                            }
+                            // The client's playout-stop acknowledgement settles what the
+                            // person heard (FIX 4899); a stale one changes nothing.
+                            Ok(Request::Stopped { generation, played_samples }) => {
+                                let generation = wire.as_ref().and_then(|wire| wire.stopped(generation));
+                                if let (Some(bridge), Some(generation)) = (bridge.as_deref_mut(), generation) {
+                                    self.media_in(VoiceMediaIn::Stopped { generation, played_samples }, bridge, outputs);
                                 }
                                 continue;
                             }
@@ -528,7 +571,7 @@ impl VoiceHost {
                         // The final consumed its handle: what was heard live after it goes next.
                         if was_final
                             && let Some(bridge) = bridge.as_deref_mut()
-                            && let Some(heard) = self.live_resume(bridge)
+                            && let Some(heard) = self.live_resume(bridge, outputs).work
                         {
                             pending_final = heard.final_text;
                             pending = Some(heard_pending(heard));
@@ -709,6 +752,9 @@ fn control_response(event: ControlEvent) -> Vec<Response> {
             generation,
             memories,
         } => return memories_frames(generation, memories),
+        // The sibling counts what it played itself; the heard record goes
+        // to the brain and the public journal, not the wire (FIX 4899).
+        ControlEvent::Heard { .. } => return Vec::new(),
     }]
 }
 
