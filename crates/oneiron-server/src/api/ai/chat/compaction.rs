@@ -284,10 +284,13 @@ pub(super) struct TurnMeter {
     pub(super) budget_units: u64,
 }
 
-/// The answer's breakpoint, right before its stream: a provisional seed is
-/// kept for `handle`'s generation before the call is sent (FIX 5028). Once
-/// the answer ends, [`keep`] binds its seed and any flight of its log to the
-/// rung that answered it (FIX 4933). `sources` is every row `admitted` was
+/// The answer's breakpoint, right before its stream: held until the answer
+/// ends, when [`keep`] binds the rung that answered it (FIX 4933), never the
+/// rung its walk would take now. A reuse's seed, its source's again, is
+/// known now: it is kept for `handle`'s generation right before the call is
+/// sent (FIX 5028). A chat turn that compacts its log, or a reused prefix
+/// that compacts its own action log (FIX 5027), keeps a copy of its own
+/// `admitted` call for its flight. `sources` is every row `admitted` was
 /// read from, `None` when not all were witnessed.
 pub(super) fn enter(
     vault: &Arc<Vault>,
@@ -297,6 +300,10 @@ pub(super) fn enter(
     meter: TurnMeter,
     sources: Option<Vec<EntityId>>,
 ) -> PendingSeed {
+    let admitted = matches!(breakpoint.log, Some(BreakpointLog::Compact(_))).then(|| RoleCall {
+        request: admitted.request.clone(),
+        ladder: Arc::clone(&admitted.ladder),
+    });
     PendingSeed::new(vault, handle, breakpoint, admitted, meter, sources)
 }
 
