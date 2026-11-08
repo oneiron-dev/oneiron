@@ -2,22 +2,26 @@
 //! per inbound connector SurfaceEvent (OF-247), appended in the write that
 //! admits the event to its attempt queue. The sequence is drawn there, so
 //! feed order is commit order, and a provider's re-delivery, which admits
-//! nothing new, appends nothing. A row keeps ids and tokens only, never
-//! provider text: a hook that wants more reads it under its own grant. The
-//! runner prunes the rows every hook binding has passed, and an erase
-//! leaves a row that names an erased entity at its sequence with no ids or
-//! tokens in it.
+//! nothing new, appends nothing; nor does an event no fact binding reads
+//! (FIX 22141). A row keeps ids and tokens only, never provider text: a
+//! hook that wants more reads it under its own grant. The runner prunes the
+//! rows every hook binding has passed, and an erase leaves a row that names
+//! an erased entity at its sequence with no ids or tokens in it.
 
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
+use crate::runtime_hooks::{filter, store};
 use crate::side_table::{self, Named, SideTable};
+use crate::skill_hub::pack_catalog::HookPhase;
 use crate::surface_event::{SurfaceEvent, SurfaceEventAction, SurfaceInteractionKind};
 use crate::{EntityId, Error, Result, Vault};
 
-use super::{FactEntry, FactKind, FactOp, FactPosition, SourceBatch, SurfaceInboundPosition};
+use super::{
+    FactEntry, FactKind, FactOp, FactPosition, FactSource, SourceBatch, SurfaceInboundPosition,
+};
 
 /// The inbound feed: one row per admitted surface event, by its sequence.
 const SURFACE_INBOUND: SideTable<u64, InboundFeedRow, Named> =
@@ -79,7 +83,8 @@ impl SurfaceInboundRow {
 
 /// Appends `event`, which `attempt` now carries, to the inbound feed in the
 /// admitting write. An event whose identity or actor is no entity id is one
-/// no hook's grant can place, so it appends nothing.
+/// no hook's grant can place, and one admitted with no reader
+/// ([`has_reader_in_txn`]) is one no hook reads, so either appends nothing.
 pub(crate) fn record_surface_inbound_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -92,6 +97,9 @@ pub(crate) fn record_surface_inbound_in_txn(
     ) else {
         return Ok(());
     };
+    if !has_reader_in_txn(vault, txn)? {
+        return Ok(());
+    }
     let last = SURFACE_INBOUND_NEXT
         .get(&vault.store, txn, &())?
         .unwrap_or(0);
@@ -110,6 +118,40 @@ pub(crate) fn record_surface_inbound_in_txn(
     };
     SURFACE_INBOUND.put(&vault.store, txn, &sequence, &InboundFeedRow::Admitted(row))?;
     SURFACE_INBOUND_NEXT.put(&vault.store, txn, &(), &sequence)
+}
+
+/// Whether an event admitted in `txn` has a reader (FIX 22141): hooks are
+/// on, and an enabled fact binding whose selector takes `surface.inbound`
+/// follows the feed from an unpaused cursor. No other binding takes the
+/// event: one with no cursor there, or a paused one, starts past it at the
+/// feed head; a disabled one takes nothing; one whose selector takes no
+/// inbound event skips it. While hooks are off no event is recorded, so a
+/// binding that kept its cursor reads none admitted then, and a selector
+/// widened to take inbound events reads none admitted before. It reads the
+/// switch, the cursor rows and, up to the first reader, the claims of the
+/// bindings they name: no binding list scan per event.
+fn has_reader_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    if !vault.hooks_enabled_in_txn(txn)? {
+        return Ok(false);
+    }
+    for binding in store::unpaused_cursor_bindings_in_txn(vault, txn, FactSource::SurfaceInbound)? {
+        // A binding claim that does not read counts as a reader: the runner
+        // judges it on its pass, and a connector's admission never fails on
+        // a hook's claim.
+        let reads = vault
+            .pack_hook_binding_in_txn(txn, &binding)
+            .map_or(true, |row| {
+                row.is_some_and(|row| {
+                    row.enabled
+                        && row.selector.phase == HookPhase::Fact
+                        && filter::verbs_admit_kind(&row.selector.verbs, FactKind::SurfaceInbound)
+                })
+            });
+        if reads {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The action token a hook's input carries.

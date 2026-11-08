@@ -1,7 +1,7 @@
-//! The runner's work on the two watcher feeds (FIX 4749): a pass releases
-//! the due watcher TASKs into the tick feed, and at its end prunes the tick
-//! and inbound rows every binding has passed (FIX 22121). The claim
-//! changelog and the settlement feed are not pruned here.
+//! The runner's work on the engine's own hook feeds: a pass releases the
+//! due watcher TASKs into the tick feed (FIX 4749), and at its end prunes
+//! the settlement, tick and inbound rows every binding has passed
+//! (FIX 22121, FIX 22141). The claim changelog is not pruned here.
 
 use crate::runtime_hooks::filter;
 use crate::runtime_hooks::source::{self, FactKind, FactPosition, FactSource};
@@ -31,17 +31,17 @@ impl Pass<'_, '_> {
         Ok(())
     }
 
-    /// Prunes both watcher feeds once at the end of each pass, retained or
-    /// not (FIX 22121): the rows at or below the lowest stored cursor of
-    /// `bindings`, every enabled fact binding of the vault, at most
-    /// `max_rows` a feed, planned in a snapshot and deleted in one write only
-    /// when there are any. Each such binding moves its cursor past each row
-    /// it takes or skips, so a row below the floor is one no binding reads
-    /// again, and a feed no binding reads is pruned too. A binding enabled
-    /// meanwhile starts at the feed head, or, new to the tick feed, before
-    /// the earliest open TASK's tick, which the tick prune keeps. Nothing
-    /// goes from a feed while a binding stands at its start.
-    pub(super) fn prune_watcher_feeds(
+    /// Prunes the three hook feeds once at the end of each pass, retained
+    /// or not (FIX 22121, FIX 22141): the rows at or below the lowest stored
+    /// cursor of `bindings`, every enabled fact binding of the vault, at
+    /// most `max_rows` a feed, planned in a snapshot and deleted in one
+    /// write only when there are any. Each such binding moves its cursor
+    /// past each row it takes or skips, so a row below the floor is one no
+    /// binding reads again, and a feed no binding reads is pruned too. A
+    /// binding enabled meanwhile starts at the feed head, or, new to the tick
+    /// feed, before the earliest open TASK's tick, which the tick prune
+    /// keeps. Nothing goes from a feed while a binding stands at its start.
+    pub(super) fn prune_hook_feeds(
         &self,
         bindings: &[(EntityId, PackHookBinding)],
         max_rows: usize,
@@ -49,7 +49,11 @@ impl Pass<'_, '_> {
         let planned = {
             let rtxn = self.vault.store.env.read_txn()?;
             let mut planned = Vec::new();
-            for source in [FactSource::Schedule, FactSource::SurfaceInbound] {
+            for source in [
+                FactSource::Settlement,
+                FactSource::Schedule,
+                FactSource::SurfaceInbound,
+            ] {
                 let Some(floor) = floor_in_txn(self.vault, &rtxn, bindings, source)? else {
                     continue;
                 };
