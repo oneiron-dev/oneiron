@@ -19,7 +19,10 @@ mod builders;
 mod constructors;
 mod refs;
 mod transactions;
+mod transcript_caller;
 mod wire;
+
+pub(crate) use transcript_caller::TranscriptRetainedCaller;
 
 pub(crate) use self::actors::*;
 pub use self::refs::*;
@@ -114,6 +117,9 @@ pub struct Memory<'v> {
     /// host bound one (`with_origin_conversation`, OF-221): context, not
     /// authority.
     pub(super) origin_conversation: Option<EntityId>,
+    /// Host-stamped caller provenance, kept apart from read locality and
+    /// destination so recording it never changes what this handle reads.
+    pub(super) caller_origin: Option<crate::agent_dispatch::CallerOrigin>,
     /// The running agent attempt a host bound as this surface's TASK creator
     /// (`with_task_host`, OF-532).
     pub(super) task_host: Option<crate::task_verb::HostBinding>,

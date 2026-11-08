@@ -62,6 +62,7 @@ impl Vault {
             if !self.clipboard_world_exists_in_txn(txn, world)? {
                 return Err(Error::EntityNotFound);
             }
+            body.scope_facet = self.default_facet_in_txn(txn)?;
             self.put_claim_in_txn(
                 txn,
                 &clip,

@@ -7,18 +7,21 @@
 //! head drops its thread, and no older head stands in for it. The thread's
 //! pinned version must be admitted, and the words it was on are read again
 //! from that version through the reader's sight, never from the stored
-//! snapshot, which was read from raw bytes. An offer reads the head the same
-//! way, once the head's own rows are admitted. A held task shows only when
-//! the thread's newest brief and its TASK are both admitted; otherwise the
-//! thread shows without it. An offer is still only an offer.
+//! snapshot, which was read from raw bytes; a code thread's words are read
+//! again from the file its hash names, once that file's ASSET is admitted.
+//! An offer reads the head the same way, once the head's own rows are
+//! admitted. A held task shows only when the thread's newest brief and its
+//! TASK are both admitted; otherwise the thread shows without it. An offer
+//! is still only an offer.
 
 use super::super::anchor_text::{UnitFormat, anchor_text, find_text};
-use super::super::model::AnnotationThread;
+use super::super::code_units::{CodeFile, code_span_words_in_txn};
+use super::super::model::{AnnotationThread, Locator};
 use super::super::threads::{newest_thread_brief, threads_from_active_claims};
 use super::{ReattachOffer, UNATTACHED, UnattachedThread};
 use crate::Vault;
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
-use crate::claim::ScopedRead;
+use crate::claim::{ClaimBody, ScopedRead};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::secret_custody::SecretSight;
@@ -133,6 +136,14 @@ impl Vault {
             if !admits(&thread.head_claim_id)? {
                 continue;
             }
+            if matches!(thread.anchor.locator, Locator::Code { .. }) {
+                if let Some(unattached) =
+                    self.code_unattached_in_txn(rtxn, admits, artifact_id, &claims, thread, sight)?
+                {
+                    out.push(unattached);
+                }
+                continue;
+            }
             let pinned = thread.anchor.version;
             let Some(rows) = self.blob_artifact_version_rows_in_txn(rtxn, artifact_id, pinned)?
             else {
@@ -174,5 +185,52 @@ impl Vault {
             });
         }
         Ok(out)
+    }
+
+    /// One drifted code thread as `admits` serves it, read in `rtxn` (FIX
+    /// 7905). A code artifact keeps no version rows: the artifact's row is
+    /// admitted with the list, and the file the locator's hash names must
+    /// have its ASSET row admitted. Its words are read again from that file
+    /// through `sight`, as the blob arm reads its version: the stored
+    /// snapshot holds the owner's words. `None` when the lane withholds the
+    /// file.
+    fn code_unattached_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        admits: Admits<'_>,
+        artifact_id: &EntityId,
+        claims: &[(EntityId, ClaimBody)],
+        thread: AnnotationThread,
+        sight: SecretSight,
+    ) -> Result<Option<UnattachedThread>> {
+        let Some(file) = CodeFile::of(&thread.anchor.locator) else {
+            return Ok(None);
+        };
+        let asset = crate::store::code_snapshot::codebase_asset_entity_id(&file.hash)?;
+        if !admits(&asset)? {
+            return Ok(None);
+        }
+        let row = UNATTACHED.get(&self.store, rtxn, &(*artifact_id, thread.thread_id))?;
+        let snapshot = match row.as_ref().and_then(|row| row.snapshot.as_ref()) {
+            Some(_) => {
+                code_span_words_in_txn(self, rtxn, artifact_id, &thread.anchor.locator, sight)?
+            }
+            None => None,
+        };
+        let held_task = match newest_thread_brief(*artifact_id, claims, &thread.thread_id) {
+            Some((brief_claim, brief)) => {
+                (admits(&brief_claim)? && admits(&brief.task_id)?).then_some(brief.task_id)
+            }
+            None => None,
+        };
+        Ok(Some(UnattachedThread {
+            snapshot,
+            detached_at_version: row.as_ref().map_or_else(
+                || thread.drift.map_or(0, |drift| drift.drifted_at_version),
+                |row| row.detached_at_version,
+            ),
+            held_task,
+            thread,
+        }))
     }
 }
