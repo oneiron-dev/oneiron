@@ -404,6 +404,23 @@ paragraph. Direct and comment settlement still touch only that paragraph.
 This is retained source work for FIX 14487/594. It does not claim parent PRs
 merged, a production compile, Word behavior, or complete story/live-unit closure.
 
+The multi-level native series change (2026-11-06, FIX 18217;
+FIX 9163 remainder) touches `src/native_patch/chart.rs` and `chart/cache.rs`.
+A direct category write uses the leaf-first, level-major cell order already
+returned by the native reader. Direct and overlapping writes splice the retained
+`c:lvl` point values without inserting a point count inside a level or rewriting
+the outer count, formulas, level order or unrelated XML. An unchanged level,
+including a self-closed one, retains its bytes. Single-level caches keep their
+existing count and point-splice path. Length, kind, date, workbook and fresh
+read-back checks remain unchanged. No native wire/schema version changes;
+source qualification is not a compiler, runtime or PowerPoint fidelity proof.
+
+The same chart pack (FIX 18236) removes every direct cached point at an
+index written as Missing, including duplicate indices. Deletion spans are
+collected in the existing point-index pass; nonmissing writes and insertion
+anchors keep their last-wins map and prior byte-preserving behavior. The fresh
+cache/workbook read-back remains the landing check.
+
 The ideographic-space estimate change (2026-11-06, FIX 16557) touches
 `src/design_plan/capability.rs`. `Metrics::lines_in` measures a complete nonempty
 U+0020/U+3000 run through the same advance and greedy wrap at leading, trailing,
