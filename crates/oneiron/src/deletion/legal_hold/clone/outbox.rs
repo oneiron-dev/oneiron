@@ -210,8 +210,8 @@ pub(crate) struct ProspectiveAttempts {
     finishing: AtomicBool,
 }
 
-/// The attached attempts, and whether managed stop closed registration: an
-/// attempt that would attach after stop cancelled all is refused instead.
+/// The attached attempts, and whether the final drain or managed stop closed
+/// registration: an attempt that would attach after either is refused instead.
 #[derive(Default)]
 struct Registered {
     attempts: Vec<Arc<ProspectiveAttempt>>,
@@ -245,14 +245,15 @@ impl ProspectiveAttempts {
 
     /// Starts the final drain: every attempt drains its outbox to empty,
     /// sends its final batch and ends. Returns the attached attempts, for the
-    /// caller that waits for them.
+    /// caller that waits for them. It closes registration under the lock that
+    /// takes that snapshot, so a connection that would attach after it is
+    /// refused and stands nothing; its order's outbox stays for the next start
+    /// (FIX 21898).
     pub(super) fn finish(&self) -> Vec<Arc<ProspectiveAttempt>> {
+        let mut registered = self.attempts.lock().unwrap_or_else(PoisonError::into_inner);
+        registered.closed = true;
         self.finishing.store(true, Ordering::Release);
-        self.attempts
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .attempts
-            .clone()
+        registered.attempts.clone()
     }
 
     /// Cancels every attempt of `key` (every attempt when `None`, which also

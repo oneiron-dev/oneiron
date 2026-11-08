@@ -1,7 +1,7 @@
 use crate::cmap_section::{
     ArrayOfTargetStrings, CMapParseError, CMapSection, CodeLen, SourceCode, SourceRangeMapping,
 };
-use crate::parser::{NomResult, ParserInput, comment, dict_dup, dictionary, eol, hex_char, name};
+use crate::parser::{NomResult, ParserInput, comment, dict_dup, dictionary, eol, hex_char, name_skip};
 use nom::Parser;
 use nom::branch::alt;
 pub use nom::bytes::complete::tag;
@@ -144,7 +144,7 @@ fn cmap_name(input: ParserInput) -> NomResult<()> {
     (
         tag(&b"/CMapName"[..]),
         space0,
-        name,
+        name_skip,
         space1,
         tag(&b"def"[..]),
         multispace1,
