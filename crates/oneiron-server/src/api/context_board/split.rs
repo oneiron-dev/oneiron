@@ -171,12 +171,18 @@ pub(crate) async fn next_state_part(
         .and_then(|reference| oneiron::EntityId::from_hex(reference).ok());
     // The changed line as the next board would read it, from a copy of the
     // session's read set: the copy is never acknowledged or observed.
-    let reads = super::session_read_set(server, caller, session_id.as_deref())
+    let mut reads = super::session_read_set(server, caller, session_id.as_deref())
         .await
         .ok()?
         .as_deref()
         .cloned()
         .unwrap_or_default();
+    reads.retain_loaded_skills(|id| {
+        oneiron::EntityId::from_hex(id)
+            .ok()
+            .and_then(|id| read.is_ref_readable(&id).ok())
+            .unwrap_or(false)
+    });
     let mut changed = reads.refresh(&read, 16).ok()?;
     let installs = reads.pack_changes(
         &installed_packs,
