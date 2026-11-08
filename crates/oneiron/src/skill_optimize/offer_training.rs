@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     EvalSeat, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferIntent, OfferModelPin,
-    training_offer,
+    SwitchOwner, training_offer,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
@@ -36,7 +36,9 @@ pub struct OfferTrainingHandoff {
     pub offer_digest: String,
     pub run: EntityId,
     pub spec_blake3: [u8; 32],
-    pub owner: EntityId,
+    /// Who authorized the run, or no one once that actor was erased
+    /// (FIX 20774).
+    pub owner: SwitchOwner,
     pub at: u64,
 }
 
@@ -147,7 +149,7 @@ pub(super) fn hand_off_in_txn(
         offer_digest: answer.offer_digest.clone(),
         run: run.id,
         spec_blake3: run.spec_blake3,
-        owner: actor,
+        owner: SwitchOwner::Actor(actor),
         at,
     };
     HANDOFF.put(&vault.store, txn, &answer.offer, &handoff)?;
@@ -190,6 +192,33 @@ pub fn check_offer_training_plan(
         return Err(invalid("a stock offer trains no run"));
     };
     plan_matches(&row.seat, base, plan)
+}
+
+/// Erasing `actor` from the training handoffs (FIX 20774): each handoff it
+/// authorized keeps its offer, digest, run, spec and time, and names no one.
+/// The run it started stays handed off. One-way, in the erase's own
+/// transaction, rewriting only the handoffs that named it. An id whose entity
+/// is no actor scans nothing.
+/// # Errors
+/// Storage errors, or a handoff row that cannot be read.
+pub(crate) fn erase_offer_training_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut handoffs = Vec::new();
+    for (offer, mut handoff) in HANDOFF.scan(&vault.store, wtxn)? {
+        if handoff.owner.forget(*actor) {
+            handoffs.push((offer, handoff));
+        }
+    }
+    for (offer, handoff) in handoffs {
+        HANDOFF.put(&vault.store, wtxn, &offer, &handoff)?;
+    }
+    Ok(())
 }
 
 /// The run an approved Train offer handed off, if any.

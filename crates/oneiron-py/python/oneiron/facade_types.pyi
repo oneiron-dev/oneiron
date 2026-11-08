@@ -9434,6 +9434,7 @@ class TrainingOffer(TypedDict):
     source_rows: NotRequired[list[EntityId] | None]
     digest: str
 OfferAnswer = Literal["keep_baseline", "approve_switch", "approve_train", "decline", "postpone"]
+SwitchOwner = str
 OfferIntentSwitchBody = TypedDict("OfferIntentSwitchBody", {"seat": EvalSeat, "from": OfferModelPin, "to": OfferModelPin})
 class OfferIntentSwitch(TypedDict):
     switch: OfferIntentSwitchBody
@@ -9448,8 +9449,8 @@ OfferIntent = OfferIntentSwitch | OfferIntentTrain
 class OfferAnswerRecord(TypedDict):
     offer: EntityId
     answer: OfferAnswer
-    owner: EntityId
-    authentication: str
+    owner: SwitchOwner
+    authentication: NotRequired[str | None]
     offer_digest: str
     intent: NotRequired[OfferIntent | None]
     at: int
@@ -9465,7 +9466,6 @@ class OfferCheck(TypedDict):
     note: NotRequired[str | None]
     at: int
     source_rows: NotRequired[list[EntityId] | None]
-SwitchOwner = str
 TrainingOwner = str
 ModelRole = Literal["retrieval_embedder", "media_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "decision_head", "decision_band", "decision_escalation", "policy_safeguard", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach", "browser_planner"]
 ModelTierRef = str
