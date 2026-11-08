@@ -475,15 +475,6 @@ fn outbound_class(scope: &StandingOutboundGrantScope) -> (String, Vec<BriefPerAc
             crate::calendar::CALENDAR_INVITE_VERB.to_owned(),
             vec![BriefPerActCheck::BoundContainment, BriefPerActCheck::Budget],
         ),
-        StandingOutboundGrantScope::ChannelIdentityEnvelope { verb_class, .. } => (
-            verb_class.clone(),
-            vec![
-                BriefPerActCheck::EnvelopeWindow,
-                BriefPerActCheck::CounterpartyOptOut,
-                BriefPerActCheck::CampaignCompliance,
-                BriefPerActCheck::Budget,
-            ],
-        ),
     }
 }
 
