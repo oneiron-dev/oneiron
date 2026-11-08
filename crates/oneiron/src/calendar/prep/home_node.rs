@@ -175,7 +175,7 @@ pub(in crate::calendar) fn run_due_person_prep_with_sources(
 /// The lane `person`'s own handle reads under with no credential, at the
 /// surfaceable claim status a retrieval reads: the vault owner's key for a
 /// vault owner, else that person's own grants.
-fn person_lane(vault: &Vault, person: EntityId) -> Result<ScopedRead<'_>> {
+pub(in crate::calendar) fn person_lane(vault: &Vault, person: EntityId) -> Result<ScopedRead<'_>> {
     let owner = {
         let txn = vault.store.env.read_txn()?;
         crate::policy_model::owners_in_txn(vault, &txn)?.contains(&person)
