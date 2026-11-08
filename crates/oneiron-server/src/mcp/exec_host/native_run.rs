@@ -44,6 +44,7 @@ pub(super) fn run_engine_native_code_mode(
     verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
     opener: Option<&oneiron::authority::VerifiedSlip>,
     worlds: Vec<EntityId>,
+    birth_position: oneiron::federation::record_scope::BirthPosition,
     reader_seat: Option<SpawnHostSeat>,
     compaction: Option<&mut RunCompaction>,
     git_door_base: Option<String>,
@@ -52,6 +53,7 @@ pub(super) fn run_engine_native_code_mode(
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
         .with_agent_verb_door(verbs)
+        .with_birth_position(birth_position)
         .with_bound_run(config.run_id)
         .with_git_door_base(git_door_base)
         // The caller's own task text, verbatim (FIX 7087).
