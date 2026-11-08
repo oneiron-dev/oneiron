@@ -825,6 +825,22 @@ pub(super) async fn mcp_drain_polls<F: std::future::Future>(
     .await
 }
 
+/// The paced context a paced host door takes for a tool-first MCP call on
+/// `memory`, the row's surface (FIX 22259): its invocation, the MCP door it
+/// came in by and, on the drain's run of it, the drain's permit. `None`
+/// when the surface names no invocation.
+pub(super) fn mcp_paced_call(
+    actor: &McpCallContext,
+    memory: &oneiron::Memory<'_>,
+) -> Option<crate::api::facade::FacadePacedCall> {
+    let invocation = memory.invocation()?;
+    Some(crate::api::facade::FacadePacedCall::mcp(
+        invocation,
+        verb_hooks::mcp_verb_ask_door(actor, Some(invocation)),
+        mcp_drain_permit(actor).cloned(),
+    ))
+}
+
 /// The caller's surface a retry of `invocation` is looked up on before an
 /// admission intent starts again (FIX 19034): its credential at its
 /// locality, under that invocation, with the door a paced call of it holds

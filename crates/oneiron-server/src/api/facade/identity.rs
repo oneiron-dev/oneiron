@@ -118,15 +118,16 @@ pub(super) fn facade_invocation<'v>(
     })
 }
 
-/// What a paced host door keeps of its facade call (FIX 8753): the
-/// invocation, the door the call came in by and, on the drain's run of a
-/// held call, the drain's permit. Owned, so the door's blocking hop carries
-/// it: a full budget window holds the call in its caller's paced line, and
-/// the drain's run of it runs there as its turn.
+/// What a paced host door keeps of its call (FIX 8753): the invocation,
+/// the door the call came in by and, on the drain's run of a held call, the
+/// drain's permit. Owned, so the door's blocking hop carries it: a full
+/// budget window holds the call in its caller's paced line, and the drain's
+/// run of it runs there as its turn. A facade call keeps its facade door; a
+/// tool-first MCP call keeps its MCP door (FIX 22259).
 #[derive(Clone)]
 pub(crate) struct FacadePacedCall {
     invocation: Option<InvocationId>,
-    room: Option<oneiron::EntityId>,
+    door: VerbAskDoor,
     drain: Option<VerbAskDrainPermit>,
 }
 
@@ -135,18 +136,35 @@ impl FacadePacedCall {
     pub(super) fn of(call: &FacadeCall<'_>) -> Result<Self, FacadeApiError> {
         Ok(Self {
             invocation: call.invocation()?,
-            room: call.room_turn()?,
+            door: VerbAskDoor::Facade {
+                room: call.room_turn()?,
+            },
             drain: call.drain().cloned(),
         })
     }
 
-    /// `memory` bound to this call's invocation and the facade door it came
-    /// in by, as [`facade_invocation`] binds a plain row's.
+    /// The paced context of a tool-first MCP call under `invocation`, by
+    /// `door`, with the drain's permit on its run of that invocation (FIX
+    /// 22259).
+    pub(crate) fn mcp(
+        invocation: InvocationId,
+        door: VerbAskDoor,
+        drain: Option<VerbAskDrainPermit>,
+    ) -> Self {
+        Self {
+            invocation: Some(invocation),
+            door,
+            drain,
+        }
+    }
+
+    /// `memory` bound to this call's invocation and the door it came in by,
+    /// as [`facade_invocation`] binds a plain row's.
     pub(in crate::api::facade) fn bind<'v>(
         &self,
         memory: oneiron::Memory<'v>,
     ) -> oneiron::Memory<'v> {
-        let memory = memory.with_credential_door(VerbAskDoor::Facade { room: self.room });
+        let memory = memory.with_credential_door(self.door.clone());
         match self.invocation {
             Some(invocation) => memory.with_invocation(invocation),
             None => memory,
