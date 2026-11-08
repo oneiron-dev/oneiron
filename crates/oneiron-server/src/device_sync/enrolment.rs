@@ -4,7 +4,9 @@
 //! pairs its owner-grade credential, and this install keeps what it dials
 //! with: the home's MACHINE, sync node id and `/ws` URL, the credential, and
 //! the authority checkpoint pin the link named (OF-469), which the first
-//! connection adopts.
+//! connection adopts. The home also binds this machine's mesh endpoint and
+//! grants it the sync ALPN, and names its own mesh address, which serve
+//! dials first (FIX 3374).
 //!
 //! The record and the credential sit beside this install's key directory,
 //! outside the vault, one pair per vault id, so a copy of the vault never
@@ -19,6 +21,9 @@ use crate::commands::credential_file;
 use crate::config::KeystoreConfig;
 use crate::config::device_sync::{parse_machine, validate_home_url};
 
+pub(crate) mod home_bind;
+pub(crate) mod join;
+
 /// What a device keeps from its enrolment, beside its credential.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,6 +37,10 @@ pub(crate) struct DeviceEnrolment {
     /// The checkpoint the link pinned, when the home had an attested one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) authority_checkpoint_pin: Option<oneiron::authority::AuthorityCheckpointPin>,
+    /// The home's mesh address, when its mesh listener ran at enrolment
+    /// (FIX 3374): serve dials it first, and the home's URL after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) home_mesh: Option<oneiron::authority::MeshMachineAddress>,
 }
 
 impl DeviceEnrolment {
@@ -154,6 +163,22 @@ struct Paired {
     /// (FIX 8636): this machine's identity and class stand as they were.
     #[serde(default)]
     re_paired: bool,
+    /// The home's own mesh address, once it bound this machine's endpoint
+    /// and its listener runs (FIX 3374).
+    #[serde(default)]
+    mesh: Option<oneiron::authority::MeshMachineAddress>,
+    /// The mesh binding the home made, or why it made none (L02 04:5x).
+    #[serde(default)]
+    mesh_bind: Option<serde_json::Value>,
+}
+
+/// What an enrolment stored, and what the home answered beside it.
+pub(crate) struct Enrolled {
+    pub(crate) record: DeviceEnrolment,
+    /// The home paired again a machine it already held (FIX 8636).
+    pub(crate) re_paired: bool,
+    /// The home's receipt of the mesh binding, as it worded it.
+    pub(crate) mesh_bind: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -172,12 +197,17 @@ const REDEEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// possession of that request over the same redemption, and a pin the home
 /// returns must be exactly the one the link names. With the possession proof
 /// a home that already holds this machine live in its class pairs it again,
-/// credential only (FIX 8636); the answer says whether it did.
+/// credential only (FIX 8636); the answer says whether it did. This machine's
+/// mesh endpoint key and its two binding proofs go along, for the home to
+/// bind and grant the sync ALPN (FIX 3374). A vault that joins from empty
+/// (`join`, FIX 3375) enrols for the genesis its verified pin names, and the
+/// pin and slip the home answers must match that pin, field by field.
 pub(crate) fn enrol(
     vault: &oneiron::Vault,
     files: &EnrolmentFiles,
     link: &str,
-) -> anyhow::Result<(DeviceEnrolment, bool)> {
+    join: Option<&join::JoinPin>,
+) -> anyhow::Result<Enrolled> {
     use base64::Engine as _;
     use ed25519_dalek::Signer;
 
@@ -210,12 +240,7 @@ pub(crate) fn enrol(
     if !base.path().ends_with('/') {
         base.set_path(&format!("{}/", base.path()));
     }
-    let vault_id = vault.authority_fold()?.vault_id.ok_or_else(|| {
-        anyhow::anyhow!(
-            "this vault has no authority root yet, so it is not the home's vault; a device \
-             enrols a copy of its home's vault"
-        )
-    })?;
+    let vault_id = enrolment_vault_id(vault, join)?;
     let request =
         vault.machine_enrolment_request(vault_id, vault.machine_encryption_key(vault_id)?)?;
     let key = ed25519_dalek::SigningKey::generate(&mut rand_core::OsRng);
@@ -227,6 +252,7 @@ pub(crate) fn enrol(
         pin_ref.as_ref(),
     )?;
     let possession = vault.machine_possession_proof(&request, &transcript)?;
+    let mesh = mesh_identity(vault);
     let body = serde_json::json!({
         "code": code,
         "holder_ref": holder_ref,
@@ -243,6 +269,7 @@ pub(crate) fn enrol(
             "machine_proof": hex(&request.machine_proof),
         },
         "machine_possession": hex(&possession),
+        "mesh": mesh,
     });
     let response = reqwest::blocking::Client::builder()
         // A redirect would send the code and the signed request on to
@@ -280,6 +307,12 @@ pub(crate) fn enrol(
         "the home's checkpoint pin is not the one the pairing link names; enrol again with a \
          new link from the owner"
     );
+    if let Some(join) = join {
+        let slip_vault_id = oneiron::authority::CapabilitySlip::from_token(&paired.token)?
+            .claims
+            .vault_id;
+        join::check_answered(join, paired.pin.as_ref(), slip_vault_id)?;
+    }
     let home = paired.home.ok_or_else(|| {
         anyhow::anyhow!(
             "the home named neither its MACHINE nor its sync node id; pass a link made with \
@@ -291,10 +324,43 @@ pub(crate) fn enrol(
         home_node_id: home.sync_node_id,
         home_url,
         authority_checkpoint_pin: paired.pin,
+        home_mesh: paired.mesh,
     };
     record.validate()?;
     files.write(&format!("v2.cred.{slip}.{}", hex(key.as_bytes())), &record)?;
-    Ok((record, paired.re_paired))
+    Ok(Enrolled {
+        record,
+        re_paired: paired.re_paired,
+        mesh_bind: paired.mesh_bind,
+    })
+}
+
+/// The vault id this machine's enrolment request signs for: the home's
+/// genesis its verified pin names when it joins from empty, else the
+/// authority root its copy of the home's vault holds.
+pub(crate) fn enrolment_vault_id(
+    vault: &oneiron::Vault,
+    join: Option<&join::JoinPin>,
+) -> anyhow::Result<[u8; 32]> {
+    if let Some(join) = join {
+        return Ok(join.genesis());
+    }
+    vault.authority_fold()?.vault_id.ok_or_else(|| {
+        anyhow::anyhow!(
+            "this vault has no authority root yet, so it is not the home's vault; a device \
+             enrols a copy of its home's vault, or joins from an empty one with a link that \
+             pins a checkpoint"
+        )
+    })
+}
+
+/// This machine's mesh endpoint key and the two proofs that bind it to its
+/// MACHINE, read as the vault's local owner, for the home to bind with the
+/// enrolment. `None` when they cannot be read: the machine enrols as before
+/// and dials the home at its URL.
+fn mesh_identity(vault: &oneiron::Vault) -> Option<oneiron::authority::MeshBindingIdentity> {
+    let owner = crate::owner::local_owner(vault).ok()?;
+    vault.mesh_binding_identity_as_owner(&owner).ok()
 }
 
 /// Whether a redemption may go to `origin`: `https`, whose certificate and

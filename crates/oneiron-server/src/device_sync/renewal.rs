@@ -4,7 +4,8 @@
 //! sent on an async client of the renewal's own, so a stopping link aborts it
 //! where it stands and waits for its end (FIX 5772). A link that dials its
 //! home over the mesh posts the same request on one mesh stream instead (FIX
-//! 3561): the home's sync route serves the whole router.
+//! 3561): the home's sync route serves the whole router. A mesh renewal that
+//! fails is sent to the origin itself, when the origin may take it (FIX 3374).
 //!
 //! It renews once at start, then at half each new slip's lifetime, which it
 //! reads from that slip's own claims: never the home's `expires_at` against
@@ -177,7 +178,19 @@ impl Renewal {
                 let dialer = self.dialer.clone();
                 self.in_flight = Some(tokio::spawn(async move {
                     match dialer {
-                        Some(dialer) => renew_mesh(&origin, &path, &vault, dialer.as_ref()).await,
+                        Some(dialer) => match renew_mesh(&origin, &path, &vault, dialer.as_ref())
+                            .await
+                        {
+                            // A mesh that fails falls back to the origin
+                            // itself (FIX 3374); when that does not land
+                            // either, the mesh failure stands.
+                            Err(Failure::Failed(reason)) if renew_url(&origin).is_ok() => {
+                                renew(&origin, &path, &vault)
+                                    .await
+                                    .map_err(|_| Failure::Failed(reason))
+                            }
+                            renewed => renewed,
+                        },
                         None => renew(&origin, &path, &vault).await,
                     }
                 }));
