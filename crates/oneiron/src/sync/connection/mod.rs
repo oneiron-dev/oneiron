@@ -44,6 +44,7 @@
 mod batch_admission;
 mod converge;
 mod directives;
+mod document_response;
 mod handshake;
 mod home_handoff;
 mod home_search;
@@ -764,61 +765,6 @@ impl SyncConnection {
         client.search_resident_page(query, limit, cursor).await
     }
 
-    /// Clear the queued updates whose bytes the home has durably
-    /// acknowledged, window by window. In each window only the contiguous
-    /// acknowledged rows clear: a different digest fails the clear, and a
-    /// missing earlier ACK or a Held reply retains the rest of that window's
-    /// rows, delete markers included. Windows are separate documents, so a row the home
-    /// never acknowledged (a window it refused to grant again, say) holds
-    /// back only its own window. A row a device-only world keeps here is
-    /// never sent, so never acknowledged: it clears, and its operations stay
-    /// in the window's durable doc for the promoted vector exchange once the
-    /// flag clears. A row that cannot be judged is retained like an
-    /// unacknowledged one.
-    fn clear_residence_acks(&self, client: &mut crate::sync::SyncClient) -> Result<(), String> {
-        let mut held_back = std::collections::HashSet::new();
-        let mut confirmed = Vec::new();
-        let mut retained = std::collections::HashSet::new();
-        for queued in self.queue.drain_updates().map_err(|e| e.to_string())? {
-            if held_back.contains(&queued.window_key) {
-                retained.insert(queued.seq);
-                continue;
-            }
-            let Some(ack) = client.residence_acks.get(&queued.seq) else {
-                if client.update_verdict(&queued.window_key, &queued.encoded)
-                    == crate::sync::window::UpdateVerdict::Withheld
-                {
-                    confirmed.push(queued.seq);
-                    continue;
-                }
-                retained.insert(queued.seq);
-                held_back.insert(queued.window_key);
-                continue;
-            };
-            if ack.digest() != blake3::hash(&queued.encoded).as_bytes() {
-                return Err("home residence acknowledgment digest mismatch".into());
-            }
-            if !ack.is_durable()
-                && client.update_verdict(&queued.window_key, &queued.encoded)
-                    != crate::sync::window::UpdateVerdict::Withheld
-            {
-                retained.insert(queued.seq);
-                held_back.insert(queued.window_key);
-                continue;
-            }
-            confirmed.push(queued.seq);
-        }
-        if !confirmed.is_empty() {
-            self.queue
-                .retire_confirmed(&confirmed)
-                .map_err(|e| e.to_string())?;
-        }
-        client
-            .residence_acks
-            .retain(|seq, _| retained.contains(seq));
-        Ok(())
-    }
-
     /// Returns a reference to the offline queue for external inspection.
     pub fn queue(&self) -> &SyncQueue {
         &self.queue
@@ -859,8 +805,8 @@ enum LoopExit {
     /// The residence mode changed (FIX 8869): what was buffered is queued,
     /// and the next connect sends the new mode's hello.
     Renegotiate,
-    /// A peer session's probe found the home answering (FIX 4748): what was
-    /// buffered is queued, and the next connect is the home's.
+    /// A peer session's probe received the home's root (FIX 4748): what was
+    /// buffered is queued, and the next connect tries the home's first round.
     HomeReturned,
 }
 

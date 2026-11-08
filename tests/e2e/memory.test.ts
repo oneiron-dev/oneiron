@@ -1,10 +1,13 @@
 import { afterAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { mkdir, copyFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { Facade, FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
-import { EngineFixture } from "./support/engine.ts";
+import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { credentialParts, PublicHttpClient } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
-import { defineFile } from "./support/run.ts";
+import { ScriptedProviders, openaiText } from "./support/providers.ts";
+import { BlockedDoor, defineFile } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -71,7 +74,7 @@ interface Cases {
 type Case = Cases[keyof Cases];
 interface Data { fixture: Roles; cases: (Case | { id: "MEMORY-03" | "MEMORY-06" })[] }
 interface World {
-  engine: EngineFixture; data: Data; refs: Map<string, string>; conversation: string;
+  engine: EngineFixture; providers: ScriptedProviders; data: Data; refs: Map<string, string>; conversation: string;
   scope: Position; occurred: number;
 }
 // Chosen public input ids, not purported existing engine handles. Every one
@@ -103,9 +106,6 @@ async function entity(client: PublicHttpClient, entity_ref: string): Promise<Ent
   const result = await client.call("vault.get", { entity_ref });
   if (!result.value) throw new Error(`Public entity missing: ${entity_ref}`);
   return result.value;
-}
-async function doors(engine: EngineFixture, verbs: readonly FacadeVerb[]): Promise<void> {
-  for (const verb of verbs) await engine.requireHttpDoor(`/v1/core/facade/${verb}`, "POST");
 }
 async function witnessed(w: World, role: string, content: string, at = w.occurred): Promise<string> {
   const receipt = await w.engine.client.call("vault.witness", {
@@ -149,17 +149,150 @@ async function agent(w: World, role: string) {
   return paired;
 }
 function scenarioName(w: World): string { return w.engine.options.id! }
+const PROJECT_LEADER = "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1709"; // seeded sys.team_lead (system_agent_definitions.v1.json)
+const memoryModels = (providers: ScriptedProviders) => `
+[models.providers.drafter]
+kind = "local-openai-compat"
+base_url = "${providers.urls.drafter}"
+revision = "e2e-v1"
+[models.providers.decider]
+kind = "local-openai-compat"
+base_url = "${providers.urls.decider}"
+revision = "e2e-v1"
+[models.roles.generative_reasoner]
+model = "drafter:project-drafter"
+[models.roles.checker]
+model = "decider:project-decider"
+[models.decisions.big]
+role = "checker"
+version = "e2e-v1"
+wording = "You answer one typed question about the state you are given."
+reply = "json"
+[models.code_mode]
+prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/prompts"))}
+[models.dreamer]
+enabled = false
+`;
+function git(cwd: string, args: string[]): string {
+  const run = Bun.spawnSync(["git", "-c", "user.name=oneiron-e2e", "-c", "user.email=e2e@oneiron.invalid", ...args],
+    { cwd, stdout: "pipe", stderr: "pipe" });
+  if (run.exitCode !== 0) throw new Error(`git ${args[0]} failed: ${run.stderr.toString()}`);
+  return run.stdout.toString().trim();
+}
+/** Imports the repo's project-proposal skill through the default hub, repointed
+ * at a local Git folder at one full commit (#6711), and reads its activation back. */
+async function installProjectProposal(engine: EngineFixture): Promise<void> {
+  // Fixture input inside the engine's own temporary root, as HOOKS-05 does
+  // (hooks.test.ts about lines 1034-1046): never a project repository, never pushed.
+  const dir = resolve(engine.root, "project-proposal-hub");
+  await mkdir(resolve(dir, "skills", "project-proposal"), { recursive: true });
+  await copyFile(resolve(import.meta.dir, "../../skills/project-proposal/SKILL.md"), resolve(dir, "skills", "project-proposal", "SKILL.md"));
+  git(dir, ["init", "-q"]);
+  git(dir, ["add", "skills/project-proposal/SKILL.md"]);
+  git(dir, ["commit", "-q", "-m", "project-proposal"]);
+  const commit = git(dir, ["rev-parse", "HEAD"]);
+  const { hub } = await engine.client.call("vault.skill_hubs.default.get", {});
+  const configured = await engine.client.call("vault.skill_hubs.put", {
+    hub, kind: "local-dir", endpoint: dir, trust_tier: "community", sync_policy: "pinned-commit" });
+  expect(configured.consent.outcome).toBe("approved");
+  await engine.client.call("vault.skill_hubs.refs.set", {
+    hub_ref: { hub_id: hub, ref_string: "skills", pin: { type: "commit", value: commit } }, sync_policy: "pinned-commit" });
+  const hub_ref = { hub_id: hub, ref_string: "skills/project-proposal", pin: { type: "commit" as const, value: commit } };
+  const { entity } = await engine.client.call("vault.skills.import", { hub_ref, publisher: "oneiron-e2e-local" });
+  const latest = async () => (await engine.client.call("vault.skills.receipts", { entity })).imports.at(-1)?.disposition;
+  if (await latest() === "pending_permission") await engine.client.call("vault.skills.permissions.approve", { entity, hub_ref });
+  const disposition = await latest();
+  if (disposition !== "installed" && disposition !== "already_installed") {
+    throw new Error(`project-proposal import not active: ${JSON.stringify(disposition)}`);
+  }
+}
+/** One real project: source turn, typed YES, house-dispatched drafter
+ * propose, owner confirm, and the leader's goal-intake run. */
+async function mintProject(engine: EngineFixture, providers: ScriptedProviders, row: { ref: string; name: string },
+  index: number, occurred: number): Promise<string> {
+  const client = engine.client;
+  const conversation = await client.call("vault.conversations.create", {
+    body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred });
+  const decide = `project-decide-${index}`;
+  providers.enqueue({ id: `project-yes-${index}`, origin: "decider", role: "checker", purpose: "project question",
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-decider" }, barrier: decide,
+    response: openaiText(`project-yes-${index}`, "project-decider", JSON.stringify({ answer: true, probability: 0.9 }),
+      { inputTokens: 256, outputTokens: 16 }) });
+  const witnessed = await client.call("vault.witness", { conversation_ref: conversation.id, occurred_at: occurred,
+    messages: [{ author: "user", message_type: "text", is_visible: true, order: 0,
+      content: `I am starting ${row.name}, a project I will plan, build and review over several weeks of sittings.` }] });
+  const message = (await entity(client, witnessed.message_short_ids[0]!)).id_hex;
+  try {
+    await providers.awaitBarrier(decide);
+  } catch (error) {
+    await engine.artifacts.json(`diagnostic-project-decide-${index}-timeout.json`, {
+      conversation_ref: conversation.id, message_ref: message,
+      seenFixtureCalls: providers.seenFixtureCalls.map(call => ({
+        origin: call.origin, fixtureId: call.fixtureId, path: call.path,
+        model: (call.body as {model?:unknown})?.model,
+      })),
+    });
+    if(process.env.E2E_MEMORY_RETAIN_VAULT==="1") await engine.close({retainVault:true});
+    throw error;
+  }
+  const card_id = `project-${message}`;
+  const proposal = { card_id, source_message_ref: message,
+    goal: { goal: `Build ${row.name}`, why: `${row.name} is the owner's stated multi-week project.`, axes: ["plan", "build", "review"] },
+    picks: { leader_agent_def_ref: PROJECT_LEADER, board_human_refs: [engine.pairedActor.principalRef],
+      budget_share_bps: 1000, starting_skill_refs: [] } };
+  providers.enqueue({ id: `project-draft-${index}`, origin: "drafter", role: "generative_reasoner", purpose: "house project drafter",
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-drafter" },
+    response: openaiText(`project-draft-${index}`, "project-drafter",
+      `await vault.projects.propose(${JSON.stringify(proposal)});\nfinish(${JSON.stringify(card_id)});`,
+      { inputTokens: 512, outputTokens: 128 }) });
+  providers.releaseBarrier(decide);
+  await awaitPublic(async () => client.call("vault.projects.proposals", { conversation_ref: conversation.id }),
+    cards => cards.some(card => card.card.card_id === card_id && card.state === "proposed"),
+    { label: `house-drafted project card ${card_id}` });
+  const intake = `project-intake-${index}`;
+  providers.enqueue({ id: `project-intake-${index}`, origin: "drafter", role: "generative_reasoner", purpose: "leader goal intake",
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-drafter" }, barrier: intake,
+    response: openaiText(`project-intake-${index}`, "project-drafter", `finish("goal intake waits for the owner");`,
+      { inputTokens: 512, outputTokens: 16 }) });
+  const minted = await client.call("vault.projects.confirm", { card_id, action_id: "mint_project", occurred_at: occurred });
+  expect(minted.card_id).toBe(card_id);
+  await providers.awaitBarrier(intake);
+  providers.releaseBarrier(intake);
+  expect((await entity(client, minted.project_id)).kind).toBe("PROJECT");
+  return minted.project_id;
+}
+async function closeWorld(w: World): Promise<void> {
+  const errors: string[] = [];
+  const text = (error: unknown): string => error instanceof Error ? error.message : String(error);
+  try { await w.engine.close({retainVault:process.env.E2E_MEMORY_RETAIN_VAULT==="1"}); } catch (error) { errors.push(text(error)); }
+  try { await w.providers.close(); } catch (error) { errors.push(text(error)); }
+  if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
+}
 async function setup(id: string): Promise<World> {
   const data = await (await loadFixtures()).readJson<Data>("memory-canonical-cases");
-  const engine = await EngineFixture.start({ id, profile });
+  const providers = await ScriptedProviders.start({ id: `memory-projects-${id}`, origins: ["decider", "drafter"], steps: [] });
+  const engine = await EngineFixture.start({ id, profile, serverConfig: memoryModels(providers),
+    serverLog: "info,oneiron::workflow_pump=debug,oneiron_server::ai_host=debug,oneiron_server::big_rung=debug,oneiron_server::decision_host=debug,oneiron::agent_dispatch=debug,oneiron::llm::decision=debug,oneiron::workspace_roster=debug" });
   const occurred = 1769947200; // Public setup input, never an engine clock override.
+  await installProjectProposal(engine);
+  const projects = new Map<string, string>();
+  for (const [index, row] of data.fixture.projects.entries()) {
+    projects.set(row.ref, await mintProject(engine, providers, row, index, occurred));
+  }
+  // Every later witness stages a project question on its own conversation:
+  // the house answers no, so no further card or project appears.
+  providers.enqueue({ id: "project-no", origin: "decider", role: "checker", purpose: "project question (not a project)",
+    standing: true, request: { method: "POST", path: "/v1/chat/completions", model: "project-decider" },
+    response: openaiText("project-no", "project-decider", JSON.stringify({ answer: false, probability: 0.9 }),
+      { inputTokens: 256, outputTokens: 16 }) });
   const conversation = await engine.client.call("vault.conversations.create", {
     body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
   });
   const base = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
-  const w: World = { engine, data, refs: new Map(), conversation: conversation.id,
+  const w: World = { engine, providers, data, refs: new Map(), conversation: conversation.id,
     scope: base, occurred };
   w.refs.set("@base", base.world_id);
+  for (const [ref, id] of projects) w.refs.set(ref, id);
   for (const row of data.fixture.people) await person(w, row.ref, row.name);
   const mask = applied(await engine.client.call("vault.identity.facet", {
     entity: ref(w, "@person-a"), facets: [{ label: "work" }], reassignment_map: [],
@@ -168,14 +301,6 @@ async function setup(id: string): Promise<World> {
   if (mask.receipt.action.op !== "facet") throw new Error("Wrong facet receipt action");
   expect(mask.receipt.action.facets).toHaveLength(1);
   w.refs.set("@facet-work", mask.receipt.action.facets[0]!);
-  for (const row of data.fixture.projects) {
-    const result = await engine.client.call("vault.structural.put", {
-      kind: "PROJECT", body: { name: row.name, role: row.role }, occurred_at: occurred,
-      text_fields: [{ field: "name", value: row.name }],
-    });
-    expect((await entity(engine.client, result.entity_ref)).kind).toBe("PROJECT");
-    w.refs.set(row.ref, result.id_hex);
-  }
   for (const row of data.fixture.worlds) {
     const result = await engine.client.call("vault.structural.put", {
       kind: "WORLD", body: { name: row.name, kind: row.kind }, occurred_at: occurred,
@@ -250,8 +375,6 @@ async function timeline(w: World, id: string): Promise<Timeline> {
 suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work", async () => {
   const w = await setup("MEMORY-01");
   try {
-    await doors(w.engine, ["vault.claims.seed", "vault.claims.review", "vault.claims.settle",
-      "vault.claims.upsert", "vault.claims.retract", "vault.claims.history"]);
     const c = scenario(w, "MEMORY-01");
     await witnessed(w, "@name-statement", `The name is ${c.current.value.value}.`);
     await witnessed(w, "@name-correction", `The name is now ${c.alternative.value.value}.`);
@@ -291,22 +414,16 @@ suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work
     await w.engine.awaitReceipt(settled.receipt_ref);
     // Current ordinary-owner supersession is upsert-driven. Reuse the
     // approved row's public id; no caller-set approval or run-id substitute.
+    // FIX 22041: the owner's own correction of the original lands at once
+    // and closes it in the same write. No proposal opens, so nothing is
+    // settled a second time.
     const supersession = await w.engine.client.call("vault.claims.upsert", claimInput(w, c.alternative, newId));
     expect((await entity(w.engine.client, supersession.claim_short_id)).id_hex).toBe(newId);
+    expect(supersession.approval).toBe("auto");
     expect(supersession.superseded_short_id).toBe(original.claim_short_id);
-    // A replacement re-proposes: the superseding upsert lands proposed and
-    // closes the original, so the holder settles the same proposal again.
-    expect((await claim(w, newId)).approval).toBe("proposed");
-    expect(values(await recalled(w, "Morgan name"), c.current.predicate)).toEqual([]);
-    const review2 = await w.engine.client.call("vault.claims.review", { claim_ref: newId });
-    expect(review2.proposal_ref).toBe(newId);
-    const settled2 = await w.engine.client.call("vault.claims.settle", {
-      claim_ref: newId, review_id: review2.review_id, decision: "approve",
-    });
-    expect(settled2.verdict).toBe("landed");
-    expect(settled2.changes).toEqual([{ claim_ref: newId, verdict: "landed" }]);
-    await w.engine.awaitReceipt(settled2.receipt_ref);
-    expect((await claim(w, newId)).approval).toBe("approved");
+    expect(supersession.superseded?.id).toBe(oldId);
+    await w.engine.awaitReceipt(supersession.receipt_ref);
+    expect((await claim(w, newId)).approval).toBe("auto");
     expect(values(await recalled(w, "Morgan name"), c.current.predicate))
       .toEqual(c.expected.recallAfterAuthorizedApprovalAndSupersession);
     const retracted = await w.engine.client.call("vault.claims.retract", { claim_ref: newId });
@@ -318,7 +435,7 @@ suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work
     expect(old.value).toBe(c.current.value.value);
     expect(old.lifecycle).toBe("superseded"); expect(old.approval).toBe("auto");
     expect(current.value).toBe(c.alternative.value.value);
-    expect(current.lifecycle).toBe("retracted"); expect(current.approval).toBe("approved");
+    expect(current.lifecycle).toBe("retracted"); expect(current.approval).toBe("auto");
     for (const [row, evidence, actor] of [[old, ref(w, "@name-statement"), w.engine.pairedActor.principalRef],
       [current, ref(w, "@name-correction"), ref(w, "@agent-a")]] as const) {
       expect(row.valid_from).not.toBeNull(); expect(row.valid_to).not.toBeNull();
@@ -332,8 +449,8 @@ suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work
     expect(newer.state).toBe("retracted"); expect(newer.supersedes).toContain(oldId);
     expect(full.records.find(row => row.id === oldId)?.superseded_by).toContain(newId);
     await w.engine.artifacts.json("lifecycle.json", { original, alternative, review, refusal: refused.body,
-      settled, supersession, review2, settled2, retracted, history, timeline: full });
-  } finally { await w.engine.close() }
+      settled, supersession, retracted, history, timeline: full });
+  } finally { await closeWorld(w) }
 });
 
 /* ARCH-0003 D18 and four required axes; ARCH-0040 host authorship.
@@ -369,8 +486,6 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
   let primaryFailed = false;
   let primary: unknown;
   try {
-    await doors(w.engine, ["vault.claims.upsert", "vault.claims.seed", "vault.claims.list",
-      "vault.claims.history", "vault.structural.put", "vault.get", "vault.neighbors", "vault.recall"]);
     await w.engine.mcp.initialize();
     type McpTool = { name: string; inputSchema: { properties: { schema_version: { const: string } } } };
     type McpTools = { surfaceMode: string; tools: McpTool[] };
@@ -736,7 +851,8 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
     primary = error;
   } finally {
     const cleanups: string[] = [];
-    try { await w.engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await w.engine.close({retainVault:process.env.E2E_MEMORY_RETAIN_VAULT==="1"}); } catch (error) { cleanups.push(errorText(error)); }
+    try { await w.providers.close(); } catch (error) { cleanups.push(errorText(error)); }
     if (primaryFailed) {
       if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
       throw primary;
@@ -748,22 +864,26 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
 /* ARCH-0003 observed/stated disagreement; ARCH-0040 source trust.
  * The extraction and run-bound supersession doors NOW EXIST:
  * vault.memory.signal_extraction/result, self.run.attach, vault.claims.supersede.
- * The full ID still needs a publicly established, leased generated-writing
- * run owned by the paired agent and registered on the serving host. The
- * resident pump can create runs, but holds the entry guard while it calls
- * the model; attach waits on that same guard. No typed public between-entry
- * hold/setup door is supplied here that leaves that run leased and attachable.
- * The shared fixture has no runner binding for such a hold. A provider barrier
- * inside the entry, an inert AGENT_DEF, a queued task or a guessed run id is
- * not this setup. execute_code is not a permitted substitute.
+ * Engine 2026-11-07 07:12 JST confirms the real run composition: agents.spawn,
+ * pair the genuine agent_def_ref holder, read agents.spawn.get until leased,
+ * then self.run.attach and claims.supersede as that agent. A queue receipt
+ * alone does not let the human owner borrow the agent's run.
+ * Engine 07:32 keeps this WHOLE/BLOCKED on the production Observed/language
+ * producer FIX 21842. Model JSON is not a host-stamped Observed producer;
+ * any source/value/scope oracle change is an Engine decision, not this suite's.
+ * This fixture has not established deterministic timing for one attach while
+ * the real run keeps its lease. A barrier inside the model entry holds the
+ * same guard attach needs. Do not invent a new registration/hold API, retry
+ * a Busy mutating attach, or substitute an inert AGENT_DEF, queued task,
+ * guessed run id, execute_code or a weaker attach-only smoke test.
  * Keep the complete journey: English/user_stated; three Japanese requests
  * over two sessions; exact scripted production extraction; both active with
  * stated first and an exact conflict pair; a genuine generated supersession
  * attempt with refusal/held-proposal receipt and unchanged stated source,
  * evidence and lifecycle. Never directly upsert an observed result instead.
  */
-suite.todo(test, "MEMORY-03",
-  "waits on public leased live-run ownership/registration setup for the generated supersession leg; extraction and attach calls exist");
+suite.skip(test, "MEMORY-03",
+  "waits on merged FIX 21842 production Observed/language producer and qualification of the whole original leased supersession fixture; spawn/agent-pair/leased-get/attach composition exists, not a new registration API [FIX 3958]");
 
 /* MEMORY-04: ARCH-0032 writers, ARCH-0002 NOTE beside CLAIM, OF-330.
  * author_take NOW EXISTS as AuthorTakeRequest -> EntityRefReceipt, and real
@@ -781,8 +901,8 @@ suite.todo(test, "MEMORY-03",
  * edge's source revision. Raw entity/export byte comparison would not prove
  * that link-level invariant, so do not arm an attribution-only partial test.
  */
-suite.todo(test, "MEMORY-04",
-  "waits on typed per-edge author/source-revision provenance read; author_take and real agent pairing already exist");
+suite.skip(test, "MEMORY-04",
+  "waits on typed per-edge author/source-revision provenance read; author_take and real agent pairing already exist [FIX 3959]");
 
 interface TimedPackRequest {
   query: string; limit: number; edge_hop: number; view: "full";
@@ -796,7 +916,6 @@ interface TimedPackReply {
 suite.test(test, "MEMORY-05", "Bitemporal entity history should work", async () => {
   const w = await setup("MEMORY-05");
   try {
-    await doors(w.engine, ["vault.claims.upsert", "vault.get", "vault.claims.history"]);
     await w.engine.requireHttpDoor("/v1/core/context-pack", "POST");
     const c = scenario(w, "MEMORY-05");
     const rows: { role: string; id: string; input: typeof c.statements[number]; view: Entity; receipt: Receipt }[] = [];
@@ -848,32 +967,29 @@ suite.test(test, "MEMORY-05", "Bitemporal entity history should work", async () 
       await w.engine.artifacts.json(`history-${row.role.replace(/[^a-z0-9]/gi, "-")}.json`, { row, current, timeline: full });
     }
     await w.engine.artifacts.json("bitemporal-windows.json", windows);
-  } finally { await w.engine.close() }
+  } finally { await closeWorld(w) }
 });
 
 /* ARCH-0067 TASK roles and ARCH-0003 productivity vocabulary.
- * Role creation/tree and immutable check-in doors NOW EXIST. But install
- * takes HubImportRequest {hub_ref:{hub_id,ref_string,pin},publisher}, not a
- * built-in pack name. This checkout/fixture has neither the actual
- * oneiron-productivity pack files nor its pinned hub record/publisher.
- * No typed built-in vocabulary-install call accepts this name. A pack made
- * up here, an arbitrary hub ref or omission of install would change the ID.
+ * Role creation/tree and immutable check-in doors NOW EXIST. Install takes
+ * HubImportRequest {hub_ref:{hub_id,ref_string,pin},publisher}, not a name.
+ * Engine 2026-11-07 07:36 JST names the real pack oneiron.productivity.
+ * Keep this whole journey BLOCKED until OPUS-L06's hub PR AND engine pin
+ * PR merge and supply the exact HubImportRequest/pin/publisher. No invented
+ * pack, arbitrary hub ref, new built-in install door, or omitted install.
  * Keep the full journey: install the declared pack; project scope plus
  * Goal -> Milestone -> routed Task and Habit; reject Goal/Task/Habit -> Task
  * with unchanged trees and no partial child; repeat the same check-in id
  * and immutable payload; refuse changed payload; one HabitCheckin child,
  * original clocks/data, current_streak=1 and longest_streak=1; task readback.
  */
-suite.todo(test, "MEMORY-06",
-  "waits on actual pinned oneiron-productivity pack/hub setup or a typed built-in vocabulary-install door; role/tree/check-in calls exist");
+suite.skip(test, "MEMORY-06",
+  "waits on merged engine pin PR #6668 and qualification of the complete authored oneiron.productivity fixture: canonical projects, stable check-in id and valid routedTask spec; real hub pack commit 5407656fbe1e94241bf3e4b15defbfb9ff259166 is merged, and install/role/tree/check-in calls exist [FIX 3961; qualif 17747]");
 
 // ARCH-0055 redirect shells, evidence-guided split, masks and counter-events.
 suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async () => {
   const w = await setup("MEMORY-07");
   try {
-    await doors(w.engine, ["vault.identity.merge", "vault.identity.split", "vault.identity.facet",
-      "vault.identity.resolve", "vault.identity.undo", "vault.identity.events.get",
-      "vault.identity.assert_distinct", "vault.identity.propose", "vault.identity.proposals.for_pair"]);
     const c = scenario(w, "MEMORY-07");
     const originals: { id: string; subject: string; before: Claim }[] = [];
     for (const input of c.evidence) {
@@ -979,7 +1095,7 @@ suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async
     expect((await entity(w.engine.client, facetId)).kind).toBe("FACET");
     await w.engine.artifacts.json("identity-topology.json", { mask, merged, bMerged, split, shell, chain,
       undoSplit, undoMerge, distinct, proposal: { status: proposal.status, body: proposal.body }, suggestions, originals });
-  } finally { await w.engine.close() }
+  } finally { await closeWorld(w) }
 });
 
 // ARCH-0022 four explicit axes; ARCH-0004 labelled world partitions;
@@ -987,7 +1103,6 @@ suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async
 suite.test(test, "MEMORY-08", "World and project separation should work", async () => {
   const w = await setup("MEMORY-08");
   try {
-    await doors(w.engine, ["vault.claims.upsert", "vault.recall", "self.credential.attenuate", "vault.scope.ceiling"]);
     const c = scenario(w, "MEMORY-08");
     const ids: string[] = [];
     for (const input of c.claims) {
@@ -1081,5 +1196,5 @@ suite.test(test, "MEMORY-08", "World and project separation should work", async 
     expect((await w.engine.client.call("vault.get", { entity_ref: missing.id! })).value).toBeNull();
     expect((await claims(w)).filter(row => row.predicate === c.claims[0]!.predicate)).toHaveLength(6);
     await w.engine.artifacts.json("world-project-scopes.json", { ids, all, positive: readable, receipts, refusal: rejected.body });
-  } finally { await w.engine.close() }
+  } finally { await closeWorld(w) }
 });

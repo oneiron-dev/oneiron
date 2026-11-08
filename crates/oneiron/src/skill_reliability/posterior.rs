@@ -16,7 +16,7 @@ use super::ledger::AttributedOutcome;
 /// that threshold is `c ≈ 0.285`; 0.25 sits under it, so two lucky pulls never
 /// outrank a hundred observed ones, while an arm with an EQUAL mean and wider
 /// posterior still ranks above the well-pulled one (anti-shadowing).
-const SELECTION_EXPLORATION: f64 = 0.25;
+pub(super) const SELECTION_EXPLORATION: f64 = 0.25;
 
 pub(super) const KEY_ALPHA: &str = "alpha";
 

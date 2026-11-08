@@ -157,9 +157,9 @@ pub struct ActionDispatch {
 }
 impl ActionDispatch {
     /// The outcome as the run's replay record spells it, as JSON for a host
-    /// reply.
+    /// reply, less a fold answer's host-only word references (FIX 18924).
     pub fn outcome_value(&self) -> Result<serde_json::Value> {
-        let value = super::payload::self_dispatch_outcome_value(&self.outcome)?;
+        let value = super::payload::self_dispatch_outcome_value(&self.outcome.host_reply())?;
         rmpv::ext::from_value(value).map_err(|_| invalid("action outcome encoding"))
     }
 }
