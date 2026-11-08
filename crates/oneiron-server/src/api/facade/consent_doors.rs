@@ -110,6 +110,23 @@ pub(crate) async fn vault_consent_create_auto_weave_grant(
     .await
 }
 
+/// The owner's standing grant for this vault's Dreamer's nightly SameAs links.
+pub(crate) async fn vault_consent_create_nightly_link_grant(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::dreamer_consolidation::NightlyLinkGrantRequest,
+) -> Listed<ConsentActReceipt> {
+    as_owner(
+        server,
+        auth,
+        "vault.consent.create_nightly_link_grant",
+        move |vault, owner| {
+            oneiron::dreamer_consolidation::mint_nightly_link_grant(vault, owner, input)
+        },
+    )
+    .await
+}
+
 pub(crate) async fn vault_consent_registry(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

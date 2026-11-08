@@ -14,6 +14,10 @@ pub(super) struct MediaQueries {
 }
 
 impl MediaQueries {
+    pub(super) fn memory(&self) -> Option<&MachineMemory> {
+        self.accounting.as_ref().map(|(memory, _)| memory)
+    }
+
     pub(super) fn bind_memory(&mut self, memory: &MachineMemory) {
         let mut lease = memory.empty_lease();
         lease.materialized(0, self.retained_bytes());

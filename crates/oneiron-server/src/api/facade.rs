@@ -85,6 +85,7 @@ mod decision_ask_doors;
 mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod deck_creation_doors;
+mod device_succession_doors;
 mod disclosure_doors;
 #[path = "facade/generated/dispatch.rs"]
 mod dispatch;
@@ -100,6 +101,7 @@ mod federation_connect_doors;
 mod feedback_doors;
 mod files_doors;
 mod fold_doors;
+mod follower_keyframe_doors;
 mod foreign_code_doors;
 pub(super) mod free_time_doors;
 mod gate_policy_doors;
