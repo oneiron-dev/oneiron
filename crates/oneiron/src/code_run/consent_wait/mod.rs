@@ -48,9 +48,10 @@ pub(crate) use self::replay::{
     verify_parked_code_consent,
 };
 pub(crate) use self::settle::{
-    CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, code_consent_admission_in_txn, offered_choices,
-    original_authority_holds_in_txn, prove_code_consent_holder_act_in_txn,
-    refuse_code_consent_wait_in_txn, settle_code_consent_wait_listing_in_txn,
+    CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, active_authority_holds_in_txn,
+    code_consent_admission_in_txn, offered_choices, original_authority_holds_in_txn,
+    prove_code_consent_holder_act_in_txn, refuse_code_consent_wait_in_txn,
+    settle_code_consent_wait_listing_in_txn,
 };
 pub use self::types::{
     CodeConsentAnswerInput, CodeConsentBrowserAction, CodeConsentChoice,
