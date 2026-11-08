@@ -24,6 +24,20 @@ pub(crate) async fn vault_code_snapshots_ingest(
     .await
 }
 
+pub(crate) async fn vault_code_snapshots_capture(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeSnapshotCaptureRequest,
+) -> Listed<CodeSnapshotView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.snapshots.capture",
+        move |memory, owner| memory.code_snapshot_capture_as(owner, input),
+    )
+    .await
+}
+
 pub(crate) async fn vault_code_snapshots_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -80,6 +94,21 @@ pub(crate) async fn vault_code_symbols_definitions(
         auth,
         "vault.code.symbols.definitions",
         move |memory, owner| memory.code_snapshot_definitions_as(owner, input),
+    )
+    .await
+}
+
+/// The owner's credential-bound one-hop symbol relation read.
+pub(crate) async fn vault_code_symbols_neighbors(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeSnapshotNeighborsRequest,
+) -> Listed<CodeSnapshotNeighborsView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.symbols.neighbors",
+        move |memory, owner| memory.code_snapshot_neighbors_as(owner, input),
     )
     .await
 }

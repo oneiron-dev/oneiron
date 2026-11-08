@@ -103,7 +103,9 @@ fn read_upload(
 
 /// Owner-authorized import of one complete uploaded feed, including the
 /// existing complete-empty-feed absence law. No poll is scheduled by a file.
-/// The owner's safeguard dial selects the supplied host screener, just as for polls.
+/// The owner's CAL-09 dial decides whether `screener` (or its recorded
+/// absence) screens each imported admission, as an installed feed's poll
+/// screens; with the dial off the receipt reports `skipped`.
 pub fn import_ics_as_owner(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
@@ -160,6 +162,7 @@ pub fn move_instance_as_owner(
         .ok_or_else(|| MemoryError::not_found("series master is absent or not admitted"))?;
     let visible = memory.calendar_read(&CalendarReadRequest {
         event_ref: master.to_hex(),
+        filter: None,
     })?;
     if visible.value.is_none()
         || !memory.calendar_instance_admitted(master, &input.uid, input.original_start_utc)?
@@ -217,6 +220,7 @@ pub fn move_instance_as_owner(
     ) {
         let current = memory.calendar_read(&CalendarReadRequest {
             event_ref: target.to_hex(),
+            filter: None,
         })?;
         if current.value.as_ref().is_none_or(|view| {
             view.start_utc != Some(input.start_utc) || view.end_utc != Some(input.end_utc)

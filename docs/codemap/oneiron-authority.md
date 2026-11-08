@@ -16,7 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/checkpoint_policy.rs` | src | s | 2 struct · 5 fn · 2 const · 2 crate-vis | CheckpointPolicySet, CheckpointRootChoice | The owner's choice of his vault's checkpoint root policy (mesh PR2c, §A 06, K06), and its wire codec |
 | `src/authority/comm_reach.rs` | src | s | 1 enum · 3 fn | CommReach | FIX 1380 / FIX 3899: the comm reach, whom an agent may address |
 | `src/authority/confirm.rs` | src | s | 3 struct · 3 enum · 6 fn · 2 const | AuthorityConfirmAction, AuthorityConfirmKind, CriticalWriteConfirmAction, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState | Owner-confirm and critical-write-confirm action and state types |
-| `src/authority/constants.rs` | src | s | 1 type · 106 const · 1 re-export | — | Pinned AUTHORITY_LOG constant table |
+| `src/authority/constants.rs` | src | s | 1 type · 107 const · 1 re-export | — | Pinned AUTHORITY_LOG constant table |
 | `src/authority/conversation_training.rs` | src | s | 1 struct · 2 fn · 2 const · 2 crate-vis | ConversationTrainingSet | A person's own "Learn from my conversations" opt-out (FIX 4489, FIX 5502 owner rulings, OF-420), and its… |
 | `src/authority/conversation_training_vault.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | ConversationTrainingVaultSet | The vault's "Learn from my conversations" setting (FIX 5502 owner rulings, OF-420), and its wire codec |
 | `src/authority/crypto.rs` | src | s | 2 struct · 3 enum · 14 fn | AuthorityAttestation, AuthorityKey, AuthoritySignature, AuthoritySignatureSuite, AuthorityTier | Authority key material and signature verification |
@@ -41,7 +41,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/owner_root.rs` | src | s | 2 struct · 3 fn · 1 const · 3 crate-vis | OwnerRootRecord, RecoveryRootId | The owner's recovery root record and its wire codec (world privacy P6b) |
 | `src/authority/owner_work.rs` | src | m | 2 struct · 4 enum · 14 fn · 4 const · 7 re-export · 7 crate-vis | OwnerWorkBody, OwnerWorkKind, OwnerWorkRequest, RootChange, WorldKeyMode, WorldPrivacyWorkBasis | The owner's work requests and their results, and their wire codec: the key, custody or root work an owner… |
 | `src/authority/owner_work/cancel.rs` | src | s | 1 struct · 2 fn · 2 const · 3 crate-vis | OwnerWorkCancel | The owner's cancel of one pending root request, and its wire codec (FIX 4739, CALLS ROOT_WORK_CANCEL) |
-| `src/authority/owner_work/custody.rs` | src | m | 3 struct · 2 enum · 8 fn · 2 const · 9 crate-vis | CustodyChange, CustodyPermitPieces, CustodyRecipientPermit, CustodyRecipientPermits, CustodyRequestAuthority | A custody work map: one change to one portable secret's custody (WILL L04 row 04), asked of the install the… |
+| `src/authority/owner_work/custody.rs` | src | m | 5 struct · 2 enum · 19 fn · 2 const · 9 crate-vis | CustodyChange, CustodyPermitPieces, CustodyPermitSet, CustodyPermitSetIter, CustodyRecipientPermit, CustodyRecipientPermits, CustodyRequestAuthority | A custody work map: one change to one portable secret's custody (WILL L04 row 04), asked of the install the… |
 | `src/authority/owner_work/export.rs` | src | s | 1 struct · 3 crate-vis | ExportSecretWork | An export secret work map (FIX 4624(b)): one custody secret the owner's whole-vault export met that its… |
 | `src/authority/owner_work/import_mark.rs` | src | s | 1 struct · 2 fn · 2 const · 3 crate-vis | ExportSupplementImported | The owner's mark that he imported one export secret supplement, and its wire codec (FIX 12062) |
 | `src/authority/owner_work/permit_piece.rs` | src | s | 1 struct · 2 fn · 1 const · 3 crate-vis | CustodyPermitPiece | One numbered piece of a custody request's permit set, and its wire codec (FIX 11866) |
@@ -51,7 +51,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/recovery_ceremony.rs` | src | s | 1 enum · 4 fn · 1 const | GenesisRecoveryStep | Explicit genesis recovery-secret acknowledgement and its visible fragile flag |
 | `src/authority/residence.rs` | src | m | 2 struct · 2 enum · 5 fn · 4 const · 5 crate-vis | ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus | The owner's residence directives to one of their machines, and each machine's result for one (OF-534) |
 | `src/authority/seat_claim_binding.rs` | src | s | 1 struct · 1 fn · 1 const | SeatClaimSlipBinding | FIX 10624: the seat claim a seat-child slip carries, signed in its claims beside `grant_ref` and… |
-| `src/authority/slip_claims.rs` | src | s | 2 struct · 5 fn · 2 const | SlipClaims, SlipMintAction | Capability-slip payloads as the authority log commits them: the claims a host mints and their shape and… |
+| `src/authority/slip_claims.rs` | src | m | 2 struct · 5 fn · 2 const | SlipClaims, SlipMintAction | Capability-slip payloads as the authority log commits them: the claims a host mints and their shape and… |
 | `src/authority/slip_wire.rs` | src | m | 2 fn · 2 crate-vis | — | Field-by-field signed capability claims and six-axis Scope wire codec |
 | `src/authority/support_delegation.rs` | src | s | 1 struct · 1 enum · 5 fn · 5 const | SupportDelegation, SupportRepair | OF-606: the support delegation a customer's support slip carries, signed in its claims beside `grant_ref`… |
 | `src/authority/trusted_contact_binding.rs` | src | s | 1 struct · 1 fn | TrustedContactSlipBinding | FIX 4325: the trusted-contact binding a contact-bound slip carries, signed in its claims beside `grant_ref`… |
@@ -68,12 +68,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/credential_door.rs` | src | s | 1 fn · 1 const | — | Credential-door bounds the authority log's slip checks share with the door itself |
 | `src/federation/codec.rs` | src | s | 6 fn | — | Shared MessagePack and entity-ref decoding helpers for the federation module |
 | `src/federation/git_push.rs` | src | s | 2 struct · 1 enum · 5 fn · 2 const | FederationGrantKind, GitPushBounds, GitPushRepo | The `git_push` Grant capability (FIX 6867, owner ruling G1-PUSH = D, as the owner refined it 10-21): raw git… |
-| `src/federation/mod.rs` | src | s | 7 mod · 4 re-export | — | Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction… |
+| `src/federation/mod.rs` | src | s | 9 mod · 7 re-export | — | Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction… |
 | `src/federation/pact_scope.rs` | src | m | 4 struct · 17 fn · 1 const · 1 re-export | Ceiling, FederationDirectionScope, FederationPactScope, Position | Pact direction scope: the worlds, facets and bands axes as `ScopeAxis` lattices, and their one canonical codec |
 | `src/federation/repo_scope.rs` | src | m | 2 struct · 2 enum · 11 fn · 4 const | RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget | Repo access bounds on an owner's agent Grant, and the pure admission of a repo target under them (FIX 6867… |
 | `src/federation/scope.rs` | src | m | 2 struct · 3 enum · 1 trait · 13 fn · 1 const | Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling | One Scope: six-axis audience lattice with explicit bottom on every wire axis |
 | `src/federation/scope_codec.rs` | src | s | 5 fn | — | Canonical MessagePack bridge for six-axis Scope positions and grant presets |
 | `src/federation/selector_kind.rs` | src | s | 1 enum · 6 fn | SelectorRange | Replication vocabulary keyed on declared classification and family, never byte ranges |
+| `src/federation/verb_classes.rs` | src | s | 3 fn · 1 const | — | The verb classes an owner's agent Grant names beside its exact verbs (FIX 8735, Engine 18:26 = A), in the… |
+| `src/federation/wallet_ref.rs` | src | s | 2 fn · 1 const | — | The host wallet an owner's agent Grant names (FIX 7766, Engine 19:59 = A), in the one codec the Grant body… |
 | `src/lib.rs` | src | s | 9 mod | — | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… |
 | `src/share_travel.rs` | src | s | 1 struct · 2 enum · 6 fn · 1 type | BornWithField, TravelChoice, TravelKind | The values of what travels with a body when it leaves the vault (OF-491): the text fields born with a body… |
 | `tests/widened_seams.rs` | test | m | — | — | Direct calls into the authority-log checks `oneiron-authority` made `pub` so `oneiron`'s fold and checkpoint… |

@@ -18,6 +18,8 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 mod body;
+mod body_admission;
+pub(crate) use body_admission::resolve_record_body_with_utf8_admission;
 mod history;
 mod repo_index;
 pub(crate) use body::body_with_document;
@@ -46,10 +48,10 @@ pub(super) struct Head {
     /// (FIX 8942); `None` for a document carried from another machine,
     /// rebuilt or born of anything else.
     pub birth_frontier: Option<Vec<u8>>,
-    /// What a canonical restore left here (FIX 3553); `None` for a document
-    /// no restore rebuilt.
+    /// The history this incarnation replaces, when a canonical restore
+    /// rebuilt the document, here or on the machine it came from (FIX 3553).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub restored: Option<super::succession::Restored>,
+    pub succeeds: Option<super::succession::Succession>,
 }
 
 /// Pointer from an entity to its owning document, plus generation/pending
@@ -104,7 +106,7 @@ pub(super) fn load(
 ) -> Result<EntityDoc> {
     let slot = DocumentSlot::from_hex(&h.document)?;
     let bytes = store
-        .port_document_row(txn, slot, DocumentRow::Snapshot)?
+        .port_document_row_borrowed(txn, slot, DocumentRow::Snapshot)?
         .ok_or(Error::CorruptedIndex("entity document snapshot missing"))?;
     let doc = EntityDoc::from_snapshot(&bytes)?;
     if doc.birth().entity != h.entity {
@@ -112,7 +114,7 @@ pub(super) fn load(
     }
     // Strictly replay snapshot then updates. Fixed-width keys preserve order.
     let mut count = 0_u64;
-    for update in store.port_document_updates(txn, slot)? {
+    for update in store.port_document_updates_borrowed(txn, slot)? {
         let status = doc
             .doc
             .import(&update.bytes)
@@ -227,7 +229,7 @@ pub(super) fn persist_scanned(
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
     // The stamp tokens its new changes name, for the hold check (FIX 11965).
     super::token_uses::record_token_uses_in_txn(store, txn, entity, doc, before)?;
-    crate::vault::entity_revision::capture_entity_document(store, txn, entity, &doc.doc, birth)?;
+    history::capture_document_revision_in_txn(store, txn, entity, h, doc, birth)?;
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::embed::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
@@ -445,7 +447,7 @@ impl Vault {
                 generation: 0,
                 pending: 0,
                 birth_frontier: Some(doc.frontier()),
-                restored: None,
+                succeeds: None,
             };
             persist(self, txn, entity, &mut h, &doc, None)?;
             // A MESSAGE's quotes taken of its atomic text are pinned at the

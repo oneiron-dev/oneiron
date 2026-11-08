@@ -48,7 +48,7 @@ pub(crate) use default_hub::MODEL_PACK_SUBTREE;
 pub use default_hub::{
     DefaultSkillHub, FIRST_PARTY_PACK_PUBLISHER, MODEL_PACK_NAME, ModelCatalogSync,
     PRODUCTIVITY_PACK_NAME, PRODUCTIVITY_PACK_SUBTREE, REVIEW_BUNDLE_EXPLAINER_SUBTREE,
-    default_skill_hub_commit, default_skill_hub_id,
+    WRITE_A_WATCHER_SUBTREE, default_skill_hub_commit, default_skill_hub_id,
 };
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
@@ -139,7 +139,8 @@ pub(crate) use self::index::{
 pub(crate) use self::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 pub(crate) use self::verdict::{
     scan_verdict_row_risk, skill_scan_verdict_heads_for_content_hash_in_store,
-    skill_scan_verdict_heads_sourced_in_store, skill_scan_verdicts_for_content_hash_in_store,
+    skill_scan_verdict_heads_sourced_in_store, skill_scan_verdict_stands_in_store,
+    skill_scan_verdicts_for_content_hash_in_store,
 };
 
 // The flat skill_hub.rs module used to provide these names to the test module

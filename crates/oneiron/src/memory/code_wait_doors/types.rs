@@ -107,6 +107,10 @@ pub struct CodeWaitAnswerView {
     /// The consent act's receipt, `gate:<hex>`.
     pub decision_ref: String,
     pub answered_at_ms: u64,
+    /// The actual native standing grant, not the one-shot approval.
+    pub standing_grant_ref: Option<String>,
+    /// The standing grant's separate creation receipt, `gate:<hex>`.
+    pub standing_receipt_ref: Option<String>,
 }
 
 /// A receipt's joins as the consent Gate ledger holds them.
@@ -191,6 +195,9 @@ pub struct CodeWaitReceiptView {
     pub ask_ref: Option<EntityId>,
     /// The answers this wait offers.
     pub allowed_answers: Vec<CodeWaitChoice>,
+    /// The exact server-wide actor/action/selectors/target offered to the owner.
+    /// An offer alone is not a standing grant.
+    pub standing_offer: Option<crate::code_run::CodeConsentStandingOffer>,
     pub answer: Option<CodeWaitAnswerView>,
     pub settlement: Option<CodeWaitSettlementView>,
     pub consumption: Option<CodeWaitConsumptionView>,

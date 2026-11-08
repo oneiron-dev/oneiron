@@ -13,7 +13,7 @@
 //! for the owner to land or drop, never lost; and a pin twin with the same
 //! quote, span and version text is held (the window's side, in `sync`).
 
-use super::document::{META, map_insert_bytes};
+use super::document::{META, map_get_bytes, map_insert_bytes};
 use super::invalid;
 use crate::EntityId;
 use crate::error::Result;
@@ -34,18 +34,6 @@ pub(crate) struct Succession {
     pub(crate) version: Vec<u8>,
 }
 
-/// What a canonical restore left on its document's head here: the history
-/// it replaces and the version it rebuilt. A capture of the document
-/// unchanged since names the history it came from, so its recapture is its
-/// snapshot.
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct Restored {
-    pub(super) replaces: Succession,
-    /// The rebuilt document's version vector, encoded.
-    pub(super) version: Vec<u8>,
-}
-
 impl Succession {
     /// The history `origin` names: an incarnation that is an id, and a
     /// version with each peer once, in peer order.
@@ -60,14 +48,17 @@ impl Succession {
         })
     }
 
-    /// The origin a capture names for this history.
-    pub(super) fn origin(&self) -> Result<CanonicalDocumentOrigin> {
-        let version = VersionVector::decode(&self.version)
-            .map_err(|_| invalid("entity document succession version"))?;
-        Ok(CanonicalDocumentOrigin {
-            incarnation: *EntityId::from_hex(&self.incarnation)?.as_bytes(),
-            version: origin_version(&version),
-        })
+    /// The proof `doc` holds in its meta map: `None` for a document no
+    /// restore rebuilt, or one whose proof is not whole.
+    #[cfg(feature = "sync")]
+    pub(super) fn read(doc: &LoroDoc) -> Option<Self> {
+        let bytes = map_get_bytes(&doc.get_map(META), SUCCEEDS)?;
+        let proof: Self = super::storage::decode(&bytes).ok()?;
+        EntityId::from_hex(&proof.incarnation)
+            .ok()
+            .filter(|id| id.to_hex() == proof.incarnation)?;
+        VersionVector::decode(&proof.version).ok()?;
+        Some(proof)
     }
 
     /// Writes the proof into `doc`'s meta map; the caller commits it.
@@ -76,6 +67,22 @@ impl Succession {
             .map_err(|_| invalid("entity document succession encoding"))?;
         map_insert_bytes(&doc.get_map(META), SUCCEEDS, &bytes)
     }
+}
+
+/// The version `entity`'s document here replaces, when a canonical restore
+/// rebuilt it or it came here as a restore's successor (FIX 3553).
+#[cfg(feature = "sync")]
+pub(super) fn replaced_version_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Option<VersionVector>> {
+    if !super::storage::has_record_head(store, txn, entity)? {
+        return Ok(None);
+    }
+    Ok(super::storage::head(store, txn, entity)?
+        .succeeds
+        .and_then(|succeeds| VersionVector::decode(&succeeds.version).ok()))
 }
 
 /// `version` as a canonical snapshot carries it: (peer, counter) pairs in

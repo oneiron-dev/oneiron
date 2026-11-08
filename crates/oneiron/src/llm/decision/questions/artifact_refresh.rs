@@ -98,6 +98,7 @@ enum Selection<'a> {
     },
     Paragraphs {
         blocks: &'a [String],
+        scope: Option<&'a oneiron_docedit::docx_body::DocxStoryScope>,
         author: &'a str,
         labels: SlideReviewLabels,
     },
@@ -127,10 +128,12 @@ impl<'a> Selection<'a> {
             },
             ArtifactAskUnits::Paragraphs {
                 blocks,
+                scope,
                 author,
                 labels,
             } => Self::Paragraphs {
                 blocks,
+                scope: scope.as_ref(),
                 author,
                 labels: labels.clone(),
             },
@@ -561,7 +564,7 @@ impl Asking<'_> {
                         .collect(),
                 ))
             }
-            Selection::Paragraphs { blocks, .. } => {
+            Selection::Paragraphs { blocks, scope, .. } => {
                 let limits = {
                     let txn = vault.store.env.read_txn()?;
                     vault.docx_archive_limits_in_txn(&txn, Some(self.record.principal))?
@@ -570,9 +573,9 @@ impl Asking<'_> {
                 // refusal is the engine's error, never a quiet re-ask of all (FIX 10587).
                 let resources = crate::office_body::document_resources();
                 let texts = |bytes: &[u8]| {
-                    let read = match resources
-                        .docx(|| oneiron_docedit::docx_body::read_docx_blocks(bytes, limits))
-                    {
+                    let read = match resources.docx(|| {
+                        oneiron_docedit::docx_body::read_docx_scoped_blocks(bytes, limits, *scope)
+                    }) {
                         Ok(read) => read,
                         Err(error) => {
                             if let Some(refusal) = error.resource() {
@@ -594,9 +597,10 @@ impl Asking<'_> {
                     return Ok(None);
                 };
                 let exported_units = match (&exported, artifact_pin) {
-                    (Some(span), Some(pin)) => vault.live_paragraphs_until(
+                    (Some(span), Some(pin)) => vault.live_scoped_paragraphs_until(
                         &artifact,
                         Some(pin),
+                        *scope,
                         Some(span.frontier.as_slice()),
                     )?,
                     _ => None,
