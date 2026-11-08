@@ -196,7 +196,8 @@ impl RecordingJsHost<'_, '_> {
 
     /// A callable skill's checked answer as the guest gets it: its JSON up
     /// to the inline reply size, else its card, the answer copied whole from
-    /// the call's spool into a body of the run, never read into one value.
+    /// the call's spool into a body of the run; only the large-answer copy
+    /// here streams in frames without reading into one value.
     pub(super) fn skill_answer(
         &mut self,
         seq: u64,
