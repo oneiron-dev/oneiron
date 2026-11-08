@@ -13,8 +13,14 @@ path and puts nothing new on the wire.
 The app shares its already-open device vault with the server's ordinary
 paired-device sync connection. It reads the same resolved `[device_sync]`
 configuration and enrollment files as `oneiron serve`, and dials the home at
-its configured URL (`wss`, or loopback `ws`). It starts no HTTP server, mesh
-listener, model worker or Dreamer. The section's `always_on` and `primary`
+its configured URL (`wss`, or loopback `ws`). With an explicit existing
+`ONEIRON_MESH_BIND`, it also binds a client-only paired-mesh endpoint on that
+address, using `ONEIRON_MESH_RELAYS` when supplied. A paired home in the same
+vault's machine roster then uses the existing sync, residence and renewal
+carrier over that endpoint, including a home without a directly usable URL.
+The endpoint advertises no inbound application ALPN and serves no HTTP router,
+mesh service, model worker or Dreamer. Without a configured bind, or if binding
+fails, the original URL/TLS path remains. The section's `always_on` and `primary`
 flags remain serving-host settings; this recorder never declares its own
 home candidacy. With no configured or enrolled home it keeps recording locally;
 a sync configuration or connection failure is logged without blocking capture. The device vault's preset, platform keystore and
@@ -22,8 +28,12 @@ host-root profile selection are unchanged.
 
 On every final app exit, capture stops and flushes its last local segment
 before the sync connection, credential renewal and removal-archive receiver
-are stopped and joined. This guarantees local landing, not remote delivery
-before exit: the normal durable sync path carries pending writes on reconnect.
+are stopped and joined, then the optional mesh endpoint closes and flushes
+its path receipts. Cleanup runs on the original Tokio runtime even if its
+caller drops the stop future; dropping the handle schedules the same ordered
+cleanup. The app must keep that runtime alive until explicit stop completes.
+This guarantees local landing, not remote delivery before exit: the normal
+durable sync path carries pending writes on reconnect.
 
 ## Shape
 
