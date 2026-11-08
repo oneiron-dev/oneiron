@@ -14255,7 +14255,7 @@
      "purpose": "Native message fields and the common outbound sink's JMAP submission",
      "surface": {
       "const": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -20918,8 +20918,48 @@
      "path": "src/codebase/mod.rs",
      "purpose": "Repository snapshot ingestion, storage and file access",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/codebase/registration/capture.rs",
+     "purpose": "The repository a capture belongs to (FIX 4299, CODE-CUSTODY-01), judged again in the import's final writer",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/codebase/registration/ceiling.rs",
+     "purpose": "The retained edit ceiling of a registered repository (FIX 4299, CODE-CUSTODY-01), judged in each final write…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/codebase/registration/local.rs",
+     "purpose": "The owner's registration of an external local Git repository (FIX 4299, CODE-CUSTODY-01…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/codebase/registration/mod.rs",
+     "purpose": "FIX 4299 (CODE-CUSTODY-01): a registered repository with a stable identity and an enforced editable whitelist",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -22594,7 +22634,7 @@
      "purpose": "Effector budget windows, usage rows and the budget charge facade",
      "surface": {
       "const": 4,
-      "crate-vis": 23,
+      "crate-vis": 25,
       "fn": 1,
       "re-export": 2,
       "struct": 6
@@ -22607,7 +22647,7 @@
      "path": "src/connector_key/meter/charge.rs",
      "purpose": "Effector budget preflight and charge: the pooled and per-key passes over the budget rows a dispatch spends",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -22617,20 +22657,23 @@
      "path": "src/connector_key/meter/rate_window.rs",
      "purpose": "Whether a key's exhausted rows only pace its next effect (FIX 8788, FIX 8686)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "EffectorBudgetDebit"
+      "EffectorBudgetApproval",
+      "EffectorBudgetDebit",
+      "EffectorSpendReservationRow"
      ],
      "path": "src/connector_key/meter/reservation.rs",
      "purpose": "An outbound send's reserved budget (FIX 7964): the usage entries its admission charge wrote, and their…",
      "surface": {
-      "crate-vis": 1,
-      "struct": 1
+      "crate-vis": 6,
+      "enum": 1,
+      "struct": 2
      }
     },
     {
@@ -22640,7 +22683,8 @@
       "EffectorBudgetLadderEvent",
       "EffectorBudgetLocation",
       "EffectorBudgetRowId",
-      "EffectorBudgetRowSource"
+      "EffectorBudgetRowSource",
+      "EffectorBudgetSettlementEvents"
      ],
      "path": "src/connector_key/meter/row.rs",
      "purpose": "Effector budget row identity: the source (key budget row or compiled charter cap) and the ordinal a usage…",
@@ -22648,7 +22692,7 @@
       "crate-vis": 7,
       "enum": 1,
       "fn": 4,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -22659,6 +22703,16 @@
      "purpose": "Spend reserved before a call (FIX 8689)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/meter/usage.rs",
+     "purpose": "Identity and lifecycle of one native effector usage debit",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -50370,7 +50424,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/codebase_doors/snapshots.rs",
@@ -57758,7 +57812,7 @@
      "purpose": "FIX 6870 phase 1 (G5, ARCH-0068 RA2): a repo's portable identity and its manifest",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 18,
       "fn": 6,
       "struct": 3
      }
@@ -58324,13 +58378,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/origin/smart_http/intent/projection.rs",
      "purpose": "The receive seams of a projection-bound push (FIX 7608 slice 2b-ii-B2)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -58935,7 +58989,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 2,
-      "fn": 33,
+      "fn": 34,
       "re-export": 2,
       "struct": 5,
       "trait": 1
@@ -59254,7 +59308,7 @@
      "path": "src/outbound/served_sink/email.rs",
      "purpose": "Email (OF-187, OF-519): a send from a native mail identity leaves through the host's own mail server, the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -59919,7 +59973,7 @@
      "surface": {
       "crate-vis": 7,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -60234,7 +60288,7 @@
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
       "crate-vis": 15,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -60255,6 +60309,18 @@
      "purpose": "Original Gate-selected pinned proofs live on the intent row whose spend admitted them",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeliveryReadBack"
+     ],
+     "path": "src/outbound_intent_ledger/read_back.rs",
+     "purpose": "What a provider's own record says became of one call (FIX 8814 follow-up): the read-back a transport can…",
+     "surface": {
+      "enum": 1
      }
     },
     {
@@ -60296,15 +60362,16 @@
       "ProviderWaitKind",
       "RemoteTaskHandle",
       "RemoteTaskObservation",
+      "RemoteTaskSettlement",
       "ReservationStatus"
      ],
      "path": "src/outbound_intent_ledger/settlement.rs",
      "purpose": "What a ledger row's send came to beside its state (FIX 7960, 7964, 8818, 11662): the remote task a provider…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "enum": 3,
-      "fn": 4,
-      "struct": 4
+      "fn": 5,
+      "struct": 5
      }
     },
     {
@@ -60314,7 +60381,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
@@ -60383,9 +60450,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/outbound_intent_ledger/store/transition.rs",
-     "purpose": "One ledger row's transition in the caller's writer (FIX 7188): the body the ledger's own transition doors…",
+     "purpose": "One ledger row's transition and completion commit (FIX 7188)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -77431,7 +77498,7 @@
      "surface": {
       "crate-vis": 163,
       "mod": 68,
-      "re-export": 87
+      "re-export": 88
      }
     },
     {
@@ -89564,13 +89631,14 @@
       "GitPushGrantRevokeOutput",
       "GitPushGrantView",
       "RepoAnchorBindInput",
-      "RepoAnchorBindOutput"
+      "RepoAnchorBindOutput",
+      "RepoRegistrationView"
      ],
      "path": "src/verbs/git_push_grant.rs",
      "purpose": "The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`…",
      "surface": {
       "fn": 3,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -95722,7 +95790,7 @@
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set"
     },
     "codebase": {
-     "files": 17,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95792,7 +95860,7 @@
      "purpose": "Connect delivery and rejoin wire vocabulary"
     },
     "connector_key": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -96415,7 +96483,7 @@
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5"
     },
     "outbound_intent_ledger": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -97033,7 +97101,7 @@
    },
    "over_bar": 208,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6884,
+   "source_files": 6890,
    "test_files": 895
   },
   "oneiron-android": {
@@ -105648,7 +105716,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DocxGroupEvents",
@@ -107757,7 +107825,7 @@
     "docx_body": {
      "files": 5,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
@@ -107895,7 +107963,7 @@
      "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its named cell style…"
     }
    },
-   "over_bar": 6,
+   "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
    "source_files": 178,
    "test_files": 14
@@ -138347,9 +138415,9 @@
      "path": "src/code_artifact_body.rs",
      "purpose": "Code artifact body values and the pinned MessagePack codec",
      "surface": {
-      "const": 9,
+      "const": 10,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -138474,6 +138542,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CodeRepoRegistration",
+      "CodeRepoSource"
+     ],
+     "path": "src/code_repo_registration.rs",
+     "purpose": "The retained configuration of a registered repository (FIX 4299, CODE-CUSTODY-01), nested in its…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 9,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/code_revision_identity.rs",
      "purpose": "Deterministic aggregation-session, tested-revision and provenance identifiers",
@@ -138567,7 +138651,7 @@
      "surface": {
       "const": 2,
       "enum": 1,
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -138581,7 +138665,7 @@
      "purpose": "Codebase snapshot value type, MessagePack codec, fork/scope hashing, and manifest validation",
      "surface": {
       "const": 8,
-      "fn": 8,
+      "fn": 10,
       "struct": 2,
       "type": 2
      }
@@ -140774,7 +140858,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 222
+      "mod": 223
      }
     },
     {
@@ -145956,6 +146040,13 @@
      "layout": "file",
      "purpose": "Reasons a tested revision lacks reviewed promotion"
     },
+    "code_repo_registration": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The retained configuration of a registered repository (FIX 4299, CODE-CUSTODY-01), nested in its…"
+    },
     "code_revision_identity": {
      "files": 1,
      "impl_vault": false,
@@ -147226,7 +147317,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 639,
+   "source_files": 640,
    "test_files": 4
   },
   "oneiron-uniffi": {
@@ -150984,6 +151075,7 @@
       "RepoProposalSubmitInput",
       "RepoProposalSubmitOutput",
       "RepoQueueEntryView",
+      "RepoRegistrationView",
       "RepoSecretPurgeIdRequest",
       "RepoSecretPurgeKeepRoot",
       "RepoSecretPurgeOutstanding",
@@ -152413,7 +152505,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1171,
-      "struct": 3608
+      "struct": 3609
      }
     },
     {

@@ -37,13 +37,7 @@ impl ScopedRead<'_> {
     ) -> Result<ScopedReadResult<Vec<String>>> {
         let rtxn = self.grant_read_txn()?;
         let admission = self.reaction_admission_in(&rtxn, None)?;
-        let value = self.reaction_lines_in(
-            &rtxn,
-            &admission,
-            record,
-            counted,
-            &mut Vec::new(),
-        )?;
+        let value = self.reaction_lines_in(&rtxn, &admission, record, counted, &mut Vec::new())?;
         Ok(ScopedReadResult {
             value,
             receipt: admission.receipt,
@@ -215,13 +209,8 @@ impl ScopedRead<'_> {
                 continue;
             }
             let (mut counted, mut named) = (Vec::new(), Vec::new());
-            let mut lines = self.reaction_lines_in(
-                &rtxn,
-                &admission,
-                &entity.id,
-                &mut counted,
-                &mut named,
-            )?;
+            let mut lines =
+                self.reaction_lines_in(&rtxn, &admission, &entity.id, &mut counted, &mut named)?;
             for message in quoted.get(&entity.id).into_iter().flatten() {
                 if self.row_admitted_in(&rtxn, &admission, message)? {
                     lines.extend(self.reaction_lines_in(

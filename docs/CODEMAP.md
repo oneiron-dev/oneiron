@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6884 | 895 | 208 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6890 | 895 | 208 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 67 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 34 | 2 | 1 |
@@ -27,7 +27,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 66 | 1 | 2 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 25 | 8 | 0 |
 | [oneiron-delivery-vocabulary](codemap/oneiron-delivery-vocabulary.md) | Delivery-window vocabulary of the oneiron engine: the quiet-hours and channel claim keys, decisions and… | 4 | 0 | 0 |
-| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 178 | 14 | 6 |
+| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 178 | 14 | 7 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 37 | 10 | 3 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 13 | 1 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 11 | 2 | 0 |
@@ -59,7 +59,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1767 | 182 | 59 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
-| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 639 | 4 | 0 |
+| [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 640 | 4 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 41 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 58 | 1 | 1 |
 | [oneiron-web-fetch](codemap/oneiron-web-fetch.md) | Web acquisition of the oneiron engine | 14 | 1 | 0 |
@@ -110,7 +110,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `code_sandbox` | dir | 58 | L | yes | Sandbox boundary contract for code-mode execution |
 | `code_symbol` | dir | 15 | m | yes | Code-symbol manifests, semantic changes and producing-operation views |
 | `code_view` | dir | 5 | m | — | Per-agent file views over codebase blobs, with one owned shared service set |
-| `codebase` | dir | 17 | m | yes | Repository snapshot ingestion, storage and file access |
+| `codebase` | dir | 21 | m | yes | Repository snapshot ingestion, storage and file access |
 | `comm` | dir | 18 | m | yes | Communication standing-state claims and the ARCH-0035 projector |
 | `commitment` | dir | 7 | m | yes | Commitment claim substrate (CMT-1) |
 | `commitment_ledger` | file | 1 | s | yes | Counterparty commitment ledger projection (CMT-5) |
@@ -120,7 +120,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `compaction` | file+dir | 36 | m | yes | DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must… |
 | `companion` | dir | 11 | m | yes | Companion task queue and PERSON/FACET persona compilation |
 | `connect_delivery` | file | 1 | s | — | Connect delivery and rejoin wire vocabulary |
-| `connector_key` | dir | 59 | XL | yes | Connector-key registry records with effector budgets for OF-277 GOV-01 |
+| `connector_key` | dir | 60 | XL | yes | Connector-key registry records with effector budgets for OF-277 GOV-01 |
 | `consent` | dir | 47 | L | yes | DEC-0006 unified consent-mode — bounded standing grants |
 | `consent_graduation` | dir | 9 | m | yes | DEC-0006 consent-graduation ramp (ARCH-0055 r7 / ONE-1748, MS-06): the per-scope outcome statistics that… |
 | `consult_ladder` | dir | 5 | m | — | Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer… |
@@ -209,7 +209,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `outbound_chokepoint` | dir | 13 | L | yes | Replay-first outbound effect execution |
 | `outbound_consent` | dir | 36 | m | yes | Payload-aware consent and transport boundary for scoped outbound tools |
 | `outbound_grant` | dir | 10 | m | yes | Standing outbound-grant records for OF-367 RS6.2/RS6.5 |
-| `outbound_intent_ledger` | dir | 22 | L | yes | Device-local durable intent ledger for effectful outbound calls |
+| `outbound_intent_ledger` | dir | 23 | L | yes | Device-local durable intent ledger for effectful outbound calls |
 | `own_rate` | file | 1 | s | yes | Node-local OF-520 own-rate windows |
 | `persona_snapshot` | dir | 9 | m | yes | OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A) |
 | `phone_line` | dir | 1 | m | yes | Owner-enabled phone-line arrival metadata |
@@ -528,7 +528,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `contract` | dir | 2 | L | The document engine's contract (ARCH-0075 section 2, "an organ crate with a hosted API"): one versioned… |
 | `deck` | dir | 10 | m | Typed, read-only deck views over a retained OPC package (ARCH-0077, "The typed deck model") |
 | `design_plan` | dir | 6 | L | Compile a kept brief into a validated `DesignPlan` (ARCH-0077, "Create: an approved argument, then a design") |
-| `docx_body` | file+dir | 5 | m | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
+| `docx_body` | file+dir | 5 | L | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
 | `edit` | dir | 26 | m | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
 | `emit` | dir | 4 | m | Emit a checked deck candidate from a `DesignPlan` (ARCH-0077 "Creation result and checks") |
 | `fonts` | file | 1 | m | Real font metrics for fit estimates (ARCH-0077, "Fit estimate"): a bounded sfnt reader for TrueType and CFF… |
@@ -956,6 +956,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `code_import_manifest` | file | 1 | s | Reviewed repository import anchors, manifest digests and raw claim codecs |
 | `code_memory_values` | dir | 3 | m | Symbol-anchored memory values, deterministic union rules and row codecs |
 | `code_promotion_gap` | file | 1 | s | Reasons a tested revision lacks reviewed promotion |
+| `code_repo_registration` | file | 1 | s | The retained configuration of a registered repository (FIX 4299, CODE-CUSTODY-01), nested in its… |
 | `code_revision_identity` | file | 1 | s | Deterministic aggregation-session, tested-revision and provenance identifiers |
 | `code_revision_record` | dir | 4 | s | Code revision records, canonical codecs and pure complete-tree vocabulary |
 | `code_snapshot` | file+dir | 6 | m | Store-layer modules of core `store::code_snapshot`; core re-exports each one at its old path |
