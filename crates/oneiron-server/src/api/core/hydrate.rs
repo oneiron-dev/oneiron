@@ -1,28 +1,22 @@
-//! Hydrate and short-id hydrate DTOs, routes, and mappers.
+//! Hydrate and short-id hydrate DTOs and mappers; the routes are in `routes`.
 
 use super::super::core_engine_error;
-use super::super::json_payload;
-use super::super::scoped_read_for_core_auth;
 use crate::auth::CoreAuth;
-use crate::auth::CoreScope;
 use crate::error::ApiError;
 use crate::error::ApiErrorDetails;
-use crate::error::ApiErrorEnvelope;
-use crate::error::EnvelopedApiError;
 use crate::projection;
 use crate::projection::View;
 use crate::server::SyncServer;
-use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
-use axum::response::Json;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
-use std::sync::Arc;
 use utoipa::ToSchema;
 
 mod frames;
+mod routes;
 mod use_restricted;
+
+pub(crate) use routes::*;
 
 /// Short-id hydrate request.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -63,6 +57,11 @@ pub(crate) struct CoreHydrateRequest {
     /// Session receiving this body. Defaults to the caller's current board session.
     #[serde(default)]
     session_id: Option<String>,
+    /// The caller's retrieval filter (FIX 3977, `#t-filter`): it only
+    /// narrows the vault's floor for this read.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>)]
+    filter: Option<oneiron::memory::ReadFilterInput>,
 }
 
 /// Short-id hydrate status.
@@ -190,6 +189,11 @@ pub(crate) struct CoreBatchShortIdHydrateRequest {
     /// Session receiving this body. Defaults to the caller's current board session.
     #[serde(default)]
     session_id: Option<String>,
+    /// The caller's retrieval filter (FIX 3977, `#t-filter`): it only
+    /// narrows the vault's floor for this read.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>)]
+    filter: Option<oneiron::memory::ReadFilterInput>,
 }
 
 /// Batch short-id hydrate response.
@@ -254,198 +258,6 @@ pub(crate) enum CoreShortIdHydrateErrorKind {
     UseRestricted,
 }
 
-/// Hydrate an entity by context-pack short reference.
-#[utoipa::path(
-    post,
-    path = "/v1/core/hydrate",
-    request_body(content = CoreHydrateRequest, content_type = "application/json"),
-    responses(
-        (status = 200, description = "Short ref resolved to a live or deleted entity.", body = CoreHydrateResponse, content_type = "application/json"),
-        (status = 400, description = "Malformed short ref.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 404, description = "Short ref was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 409, description = "A legal order keeps the named record from use.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 500, description = "Hydrate lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
-    )
-)]
-pub(crate) async fn core_hydrate(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CoreHydrateRequest>, JsonRejection>,
-) -> Result<Json<CoreHydrateResponse>, EnvelopedApiError> {
-    auth.require(CoreScope::Read)?;
-    let req = json_payload(payload)?;
-    let (short_id, content_hash, mode) = parse_short_ref_request(&req)?;
-    let content_hash_hex = format!("{content_hash:02x}");
-    let view = req.view.unwrap_or(View::Full);
-    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
-    let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
-    let pick = hydrate_pick(
-        &server,
-        &auth,
-        req.task,
-        takes_images(req.image_input, view),
-    );
-    let reader = hydrate_reader(req.image_input, view);
-    let mut served = Vec::new();
-    let mut project = || {
-        hydrate_short_id_response_with_mode(
-            &scoped_read,
-            short_id.clone(),
-            content_hash,
-            view,
-            &reader,
-            mode,
-            pick.as_ref(),
-            &mut served,
-        )
-    };
-    // A pick asks the host's models: off the async runtime.
-    let (mut read, observe) = if pick.is_some() {
-        crate::server::blocking(project)
-    } else {
-        project()
-    }?;
-    // Stage the observation after projection and any model pick. Publish
-    // it only after its served forms commit, without replacing a concurrent
-    // session update between staging and publication.
-    let mut observations =
-        super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
-    let mut staged_observations = observations.as_deref().cloned();
-    if let (Some(staged), Some(observe), Some(response)) =
-        (staged_observations.as_mut(), observe, read.value.as_mut())
-        && let Some(successor) = observe.record(staged, &scoped_read)?
-    {
-        response.narrowing.restrict_with(&successor);
-        read.receipt.restrict_with(&successor);
-    }
-    scoped_read
-        .commit_served_forms(&served)
-        .map_err(|error| core_engine_error("core short hydrate failed", error))?;
-    if let (Some(target), Some(staged)) = (observations.as_deref_mut(), staged_observations) {
-        *target = staged;
-    }
-    drop(observations);
-    let Some(response) = read.value else {
-        return Err(EnvelopedApiError::from(ApiError::not_found(
-            "short_id",
-            Some(&format!("{short_id}:{content_hash_hex}")),
-        ))
-        .with_read_receipt(read.receipt));
-    };
-
-    Ok(Json(response))
-}
-
-/// Batch-hydrate entities by context-pack short references.
-#[utoipa::path(
-    post,
-    path = "/v1/core/batch/shortId/hydrate",
-    request_body(content = CoreBatchShortIdHydrateRequest, content_type = "application/json"),
-    responses(
-        (status = 200, description = "Short refs hydrated with per-item typed results/errors.", body = CoreBatchShortIdHydrateResponse, content_type = "application/json"),
-        (status = 400, description = "Malformed batch request.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 500, description = "Hydrate lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
-    )
-)]
-pub(crate) async fn core_batch_short_id_hydrate(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CoreBatchShortIdHydrateRequest>, JsonRejection>,
-) -> Result<Json<CoreBatchShortIdHydrateResponse>, EnvelopedApiError> {
-    auth.require(CoreScope::Read)?;
-    let req = json_payload(payload)?;
-    if req.refs.is_empty() {
-        return Err(ApiError::bad_request("refs must not be empty", Some("refs")).into());
-    }
-
-    let view = req.view.unwrap_or(View::Full);
-    let reader = hydrate_reader(req.image_input, view);
-    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
-    let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
-    let pick = hydrate_pick(
-        &server,
-        &auth,
-        req.task,
-        takes_images(req.image_input, view),
-    );
-    let parsed: Vec<_> = req
-        .refs
-        .iter()
-        .map(|reference| parse_revision_short_ref(reference))
-        .collect();
-    let valid_refs: Vec<_> = parsed
-        .iter()
-        .filter_map(|item| item.as_ref().ok())
-        .map(|(id, hash, mode)| oneiron::claim::PointRead::short(id, *hash).at(*mode))
-        .collect();
-    // FIX 11125: a batch past one frame is read frame by frame, never refused.
-    let hydrated = frames::read_named_frames(&scoped_read, &valid_refs)
-        .map_err(|error| core_engine_error("batch hydrate failed", error))?;
-    let narrowing = hydrated.receipt;
-    // Each item starts from the bulk read's receipt; a successor an item's
-    // observation reads narrows that item and the batch.
-    let mut batch_narrowing = narrowing.clone();
-    let mut served = Vec::new();
-    let mut observed = Vec::new();
-    let project = || {
-        project_short_id_batch(
-            &server,
-            &scoped_read,
-            req.refs,
-            parsed,
-            hydrated.value,
-            BatchItems {
-                view,
-                reader: &reader,
-                pick: pick.as_ref(),
-                narrowing: &narrowing,
-                response: &mut batch_narrowing,
-                served: &mut served,
-                observed: &mut observed,
-            },
-        )
-    };
-    // A pick asks the host's models: off the async runtime.
-    let mut results = if pick.is_some() {
-        crate::server::blocking(project)
-    } else {
-        project()
-    }?;
-    // The session observes the batch's bodies under the server's guard,
-    // taken once every item, and any pick it asked, is projected.
-    let mut observations =
-        super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
-    let mut staged_observations = observations.as_deref().cloned();
-    if let Some(staged) = staged_observations.as_mut() {
-        for (index, observe) in observed {
-            if let Some(successor) = observe.record(staged, &scoped_read)? {
-                if let Some(result) = results[index].result.as_mut() {
-                    result.narrowing.restrict_with(&successor);
-                }
-                batch_narrowing.restrict_with(&successor);
-            }
-        }
-    }
-
-    // A failed observation or receipt write leaves the live read set
-    // unchanged. Keep the guard until the staged batch is published.
-    scoped_read
-        .commit_served_forms(&served)
-        .map_err(|error| core_engine_error("batch hydrate failed", error))?;
-    if let (Some(target), Some(staged)) = (observations.as_deref_mut(), staged_observations) {
-        *target = staged;
-    }
-    drop(observations);
-    Ok(Json(CoreBatchShortIdHydrateResponse {
-        narrowing: batch_narrowing,
-        results,
-    }))
-}
-
 /// What every item of a batch hydrate shares: its view and reader, the
 /// host's per-image pick, the bulk read's receipt each item starts from, the
 /// response receipt, and the forms and bodies the batch records once its
@@ -459,6 +271,12 @@ struct BatchItems<'a, 'p> {
     served: &'a mut Vec<oneiron::receipt::ServedForm>,
     /// Each observed body, by its item's index.
     observed: &'a mut Vec<(usize, Observed)>,
+    /// The rows the projected items were derived from (FIX 1435).
+    producers: &'a mut Vec<oneiron::EntityId>,
+    /// Set when a slot answers from a row `producers` cannot name: a ref a
+    /// legal order keeps from use answers that order's refusal, which tells
+    /// of its row, and the named read keeps no id for it (FIX 1435).
+    unlisted: &'a mut bool,
 }
 
 /// A batch's items projected in order under one body budget; a single
@@ -479,6 +297,8 @@ fn project_short_id_batch(
         response,
         served,
         observed,
+        producers,
+        unlisted,
     } = items;
     let mut bodies =
         projection::BodyBudget::new(&server.vault, server.config.limits.projection_body_bytes);
@@ -492,6 +312,7 @@ fn project_short_id_batch(
                 let row = match values.next().unwrap_or(Ok(None)) {
                     Ok(row) => row,
                     Err(refusal) => {
+                        *unlisted = true;
                         results.push(use_restricted::item(reference, &refusal));
                         continue;
                     }
@@ -509,6 +330,7 @@ fn project_short_id_batch(
                         start: narrowing.clone(),
                         response: &mut *response,
                         served: &mut *served,
+                        producers: &mut *producers,
                     },
                     Some(&mut bodies),
                 )? {
@@ -624,10 +446,11 @@ impl Observed {
 /// One short ref hydrated for `reader`, an image picked by `pick`. A form it
 /// serves in place of an image's body joins `served`, for the caller to
 /// record before it answers; the body it decoded comes back for the caller to
-/// observe into its session.
+/// observe into its session. The rows its answer was derived from join
+/// `producers` (FIX 1435).
 #[expect(
     clippy::too_many_arguments,
-    reason = "one short ref: its view, reader, mode, image pick and served forms"
+    reason = "one short ref: its view, reader, mode, image pick, served forms and producer rows"
 )]
 pub(crate) fn hydrate_short_id_response_with_mode(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
@@ -638,6 +461,7 @@ pub(crate) fn hydrate_short_id_response_with_mode(
     mode: oneiron::memory::ReadMode,
     pick: Option<&oneiron::memory::ImagePick<'_>>,
     served: &mut Vec<oneiron::receipt::ServedForm>,
+    producers: &mut Vec<oneiron::EntityId>,
 ) -> Result<
     (
         oneiron::claim::ScopedReadResult<Option<CoreHydrateResponse>>,
@@ -669,6 +493,7 @@ pub(crate) fn hydrate_short_id_response_with_mode(
             start: receipt.clone(),
             response: &mut receipt,
             served,
+            producers,
         },
         None,
     )?
@@ -679,10 +504,13 @@ pub(crate) fn hydrate_short_id_response_with_mode(
 /// The receipt one hydrated item starts from, the response receipt that
 /// also takes the item's image read, and the forms the response serves in
 /// place of an image's body, which its door records before it answers.
+/// `producers` takes the rows the item's answer was derived from (FIX
+/// 1435): its own row, and the ASSET_TEXT an image's served form names.
 pub(crate) struct ItemReceipts<'a> {
     pub(crate) start: oneiron::claim::ScopedReadReceipt,
     pub(crate) response: &'a mut oneiron::claim::ScopedReadReceipt,
     pub(crate) served: &'a mut Vec<oneiron::receipt::ServedForm>,
+    pub(crate) producers: &'a mut Vec<oneiron::EntityId>,
 }
 
 #[expect(
@@ -705,6 +533,7 @@ pub(crate) fn project_hydrated_short_id(
         start: mut narrowing,
         response,
         served: served_forms,
+        producers,
     } = receipts;
     let content_hash_hex = format!("{content_hash:02x}");
     let Some(oneiron::claim::ReadRow {
@@ -718,6 +547,9 @@ pub(crate) fn project_hydrated_short_id(
     else {
         return Ok(None);
     };
+    // The admitted row is the answer's source, its deleted shell's metadata
+    // and a Summary or omitted body included (FIX 1435).
+    producers.push(id);
     let Some(body) = body else {
         return Ok(Some((
             CoreHydrateResponse {
@@ -762,6 +594,14 @@ pub(crate) fn project_hydrated_short_id(
     } else {
         oneiron::memory::HydratedAsset::Stored
     };
+    // A served form's body names its ASSET_TEXT, and the item is projected
+    // from that body (FIX 1435).
+    if let oneiron::memory::HydratedAsset::Served {
+        text: Some(text), ..
+    } = &served
+    {
+        producers.push(*text);
+    }
     let decoded = decoded && !matches!(served, oneiron::memory::HydratedAsset::Omitted { .. });
     let item = match bodies {
         Some(bodies) if !decoded => bodies.omitted(&id, entity_type, learned_at, &body, view, mode),

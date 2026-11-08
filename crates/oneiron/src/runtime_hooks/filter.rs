@@ -43,11 +43,13 @@ pub(super) fn verbs_admit_kind(verbs: &[String], kind: FactKind) -> bool {
 }
 
 /// Whether the runner delivers `entry` to a binding whose selector names
-/// `verbs`: [`verbs_admit_kind`], and for a tick, its TASK still open at that
-/// due time (FIX 4749). A binding fresh to the tick feed starts before the
-/// earliest open TASK's tick, so this keeps it to the ticks of TASKs still
-/// open; a TASK that settled or moved its due time wants no run on its old
-/// tick, as its release would have dropped it.
+/// `verbs`: [`verbs_admit_kind`], and for a tick, its TASK open at that due
+/// time (FIX 4749): still open, or a watch TASK settled at or after it, as
+/// the release of its tick settles it (FIX 22121). A binding fresh to the
+/// tick feed starts before the earliest open TASK's tick, so this keeps it
+/// to the ticks of TASKs open at them; a TASK that settled otherwise or
+/// moved its due time wants no run on its old tick, as its release would
+/// have dropped it.
 pub(super) fn admits_entry(vault: &Vault, verbs: &[String], entry: &FactEntry) -> Result<bool> {
     if !verbs_admit_kind(verbs, entry.kind) {
         return Ok(false);
@@ -56,7 +58,7 @@ pub(super) fn admits_entry(vault: &Vault, verbs: &[String], entry: &FactEntry) -
         return Ok(true);
     };
     let txn = vault.store.env.read_txn()?;
-    Ok(crate::task_verb::open_task_due_at_in_txn(vault, &txn, entry.entity)? == Some(tick.due_at))
+    Ok(crate::task_verb::tick_due_at_in_txn(vault, &txn, entry.entity)? == Some(tick.due_at))
 }
 
 /// A selector entry is `<fact kind>:<glob>`, or a bare predicate glob that

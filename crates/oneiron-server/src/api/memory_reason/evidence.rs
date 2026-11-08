@@ -7,6 +7,7 @@ use oneiron::retrieval_depth::DepthSearchResult;
 use serde_json::{Map, Value};
 
 use super::MemoryReasonEvidence;
+use super::read_rows::{ReadRequests, ReadRows};
 use crate::error::ApiError;
 use crate::projection::{BodyBudget, PreparedOmittedBody, View};
 
@@ -101,20 +102,22 @@ pub(super) fn collect_evidence(
                 .map(|revision| PointRead::id(hit.id).at(ReadMode::Pinned(*revision)))
         })
         .collect();
+    let refs = ReadRequests::new(memory, refs);
     let requested = retrieved
         .narrowing
         .last()
         .map(|receipt| receipt.applied.as_filter());
     let projected = scoped_read
         .read_frames(
-            &refs,
+            refs.as_slice(),
             requested.as_ref(),
             EvidenceProjection {
-                evidence: CollectedEvidence::with_capacity(memory, refs.len()),
+                evidence: CollectedEvidence::with_capacity(memory, refs.as_slice().len()),
                 actions: Vec::new(),
             },
             |offset, rows, state| {
-                for (read, row) in refs[offset..].iter().zip(rows) {
+                let mut frame = ReadRows::new(memory, rows);
+                for (read, row) in refs.as_slice()[offset..].iter().zip(frame.drain()) {
                     let Some(oneiron::claim::ReadRow {
                         id,
                         entity_type: kind,
@@ -175,6 +178,7 @@ pub(super) fn collect_evidence(
                 ApiError::internal_server_error("memory evidence has no revision")
             }
         })?;
+    drop(refs);
     retrieved.narrowing.push(projected.receipt);
     let EvidenceProjection {
         mut evidence,
