@@ -1108,7 +1108,7 @@ fn place_json(locator: &Locator) -> Value {
         Locator::Pptx { slide, shape_id } => {
             json!({ "pptx": { "slide": slide, "shape_id": shape_id } })
         }
-        Locator::File {
+        Locator::Text {
             char_start,
             char_end,
         } => json!({ "file": {
@@ -1131,7 +1131,7 @@ fn place_locator(place: PlaceInput) -> Result<Locator, ApiError> {
         PlaceInput::File {
             char_start,
             char_end,
-        } => Locator::file(char_start, char_end),
+        } => Locator::text(char_start, char_end),
     }
     .map_err(|_| ApiError::bad_request("place is not a valid locator", Some("place")))
 }
