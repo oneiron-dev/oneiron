@@ -287,8 +287,9 @@ async fn open(
     let listener = mesh;
     // Over the mesh when the home has a paired or enrolled (FIX 3374) address
     // and this host has a transport; otherwise at the home's URL.
-    let enrolled = mesh.is_some_and(|mesh| mesh.pins_home(home));
-    let transport = host.transport(mesh).filter(|_| paired || enrolled);
+    let transport = host
+        .transport(mesh)
+        .filter(|_| paired || mesh.is_some_and(|mesh| mesh.pins_home(home)));
     if transport.is_none() {
         direct(&url)?;
     }
