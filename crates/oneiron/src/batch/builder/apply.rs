@@ -183,7 +183,9 @@ impl BatchBuilder<'_> {
             .with_asset_files(std::mem::take(&mut self.asset_files))
             .with_replicated_puts(std::mem::take(&mut self.replicated_puts))
             .with_marked_carriers(std::mem::take(&mut self.marked_carriers))
-            .with_caller_envelopes(std::mem::take(&mut self.caller_envelopes));
+            .with_caller_envelopes(std::mem::take(&mut self.caller_envelopes))
+            .with_prepared_person_substrate(self.prepared_person_substrate.take())
+            .with_prepared_agent_birth(self.prepared_agent_birth.take());
         let deferred =
             if matches!(lane, crate::core_write::CoreWriteLaneRef::Read(_)) && !gated.is_empty() {
                 let mut decisions = Vec::new();

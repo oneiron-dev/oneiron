@@ -3941,6 +3941,12 @@ pub struct ShapeApplyItem {
         skip_serializing_if = "Option::is_none"
     )]
     pub receipt_refs: Option<Vec<String>>,
+    #[serde(
+        rename = "setup_decision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub setup_decision: Option<String>,
 }
 
 /// `oneiron::vault_shape::run::ShapeApplyRun`.
