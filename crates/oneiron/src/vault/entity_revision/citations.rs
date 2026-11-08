@@ -5,7 +5,7 @@ use super::storage::{
     read_entity_revision_from_store_in_txn, read_entity_revision_in_txn,
 };
 use super::{PinnedCitation, ReadMode, ResolvedCitation, RevisionRef};
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, parse_short_id_value};
+use crate::batch::parse_short_id_value;
 use crate::error::{Error, Result};
 use crate::store::ManifestDbs;
 use crate::{EntityId, Vault};
@@ -26,7 +26,9 @@ impl Vault {
         let revision = selected_revision(self, &txn, id, mode, live)?;
         let raw = read_entity_revision_in_txn(self, &txn, id, ReadMode::Pinned(revision))?
             .ok_or(Error::EntityNotFound)?;
-        let hash = (xxhash_rust::xxh32::xxh32(&raw[ENTITY_METADATA_HEADER_LEN..], 0) % 256) as u8;
+        // A file-plane ASSET's hash is its body's, as every pinned reference
+        // is minted and checked (FIX 22091).
+        let hash = crate::store::revision_content_hash_in_txn(&self.store, &txn, id, &raw)?;
         let reference =
             match crate::ports::ShortIdStoreRead::port_short_id_reference(&self.store, &txn, id)? {
                 Some((short, _)) => format!("{short}:{hash:02x}@{}", revision.to_hex()),
@@ -81,8 +83,8 @@ impl Vault {
                 let pinned_raw =
                     read_entity_revision_in_txn(self, &txn, id, ReadMode::Pinned(revision))?
                         .ok_or(Error::EntityNotFound)?;
-                let hash = (xxhash_rust::xxh32::xxh32(&pinned_raw[ENTITY_METADATA_HEADER_LEN..], 0)
-                    % 256) as u8;
+                let hash =
+                    crate::store::revision_content_hash_in_txn(&self.store, &txn, id, &pinned_raw)?;
                 format!("{short}:{hash:02x}")
             }
             None => id.to_hex(),
@@ -232,7 +234,7 @@ fn resolve_reference(
     let Ok((short, hash)) = crate::entity_id::parse_short_ref_syntax(reference) else {
         return Ok(None);
     };
-    if hash != (xxhash_rust::xxh32::xxh32(&raw[ENTITY_METADATA_HEADER_LEN..], 0) % 256) as u8 {
+    if hash != crate::store::revision_content_hash_in_txn(&vault.store, txn, &id, &raw)? {
         return Ok(None);
     }
     let Some((name, _)) =
@@ -300,7 +302,7 @@ pub(crate) fn resolve_room_pinned_alias_in_txn(
         return Ok(None);
     };
     // The hash a room's read names this revision by (`AdmittedRevision`).
-    let pinned = crate::store::short_content_hash_in_txn(&vault.store, txn, &id, &raw)?;
+    let pinned = crate::store::revision_content_hash_in_txn(&vault.store, txn, &id, &raw)?;
     Ok((pinned == hash).then_some(id))
 }
 

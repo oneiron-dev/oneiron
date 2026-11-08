@@ -40,6 +40,16 @@ pub(super) fn encode(source: &PackSource) -> Result<Vec<u8>> {
     .map_err(|_| invalid("source encoding failed"))
 }
 
+/// Whether [`decode`] reads `bytes` as a pack source, valid or not: its
+/// marker names this codec's format (FIX 22091).
+pub(crate) fn names_pack_source(bytes: &[u8]) -> bool {
+    #[derive(Deserialize)]
+    struct Marker {
+        format: String,
+    }
+    rmp_serde::from_slice::<Marker>(bytes).is_ok_and(|marker| marker.format == FORMAT)
+}
+
 pub(crate) fn decode(bytes: &[u8]) -> Result<Option<PackSource>> {
     #[derive(Deserialize)]
     struct Marker {

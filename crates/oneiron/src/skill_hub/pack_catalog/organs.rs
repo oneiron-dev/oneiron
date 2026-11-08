@@ -515,6 +515,9 @@ impl Vault {
     /// picks a node of the owner's by.
     pub fn pack_organs(&self) -> Result<Vec<PackOrganEntry>> {
         let installed = self.installed_packs()?;
+        // A carrier's body file stays on disk while this snapshot reads it
+        // (FIX 22091).
+        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let mut entries = Vec::new();
         for receipt in installed {
@@ -550,6 +553,9 @@ impl Vault {
         organ: &str,
         platform: &str,
     ) -> Result<PackOrganBinary> {
+        // A carrier's body file stays on disk while this snapshot reads it
+        // (FIX 22091).
+        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         let receipt = self
             .mounted_pack_in_txn(&txn, pack_name)?

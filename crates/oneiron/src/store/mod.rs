@@ -410,8 +410,8 @@ pub(crate) use archive_scratch::ScratchEnv;
 pub(crate) use asset_body::{
     ASSET_FILE_PLANE, ASSET_INLINE_BODY_BYTES, AssetBodyFacts, AssetFileKind, AssetFileManifest,
     CheckedAssetBody, asset_body_file_of_row, asset_carrier_body_in_txn, asset_file_in_txn,
-    asset_file_of_raw_in_txn, file_put_body_in_txn, short_content_hash_in_txn,
-    stage_asset_body_in_txn,
+    asset_file_of_raw_in_txn, file_put_body_in_txn, revision_content_hash_in_txn,
+    short_content_hash_in_txn, stage_asset_body_in_txn, superseded_file_row_in_txn,
 };
 #[cfg(unix)]
 #[allow(
