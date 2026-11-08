@@ -3,7 +3,7 @@
 //! mailbox source.
 //!
 //! Each provider call reads the source's own credential at its door
-//! ([`Vault::with_mail_source_token_at_door`]), effector `connector:gmail`.
+//! ([`Vault::with_source_token_at_door`]), effector `connector:gmail`.
 //! HTTPS only, no redirects; the Bearer header exists only inside the door
 //! callback, marked sensitive. Refreshing the token is the host's custody
 //! job. Inside each door, before the credential presented there reads
@@ -20,6 +20,7 @@ use base64::Engine as _;
 use reqwest::header::AUTHORIZATION;
 use serde_json::Value;
 
+use super::credential::WireReads;
 use super::rest::{
     self, RestAnswer, VerifiedCredentials, array, bearer_header, header_value, html_text, refused,
     text_of,
@@ -88,8 +89,9 @@ impl<'v> HttpGmailMailWire<'v> {
             return Err(refused("gmail_mail_wire_reads_google_mailboxes_only"));
         }
         let mut answer: Option<RestAnswer> = None;
-        let _receipt = self.vault.with_mail_source_token_at_door(
+        let _receipt = self.vault.with_source_token_at_door(
             source,
+            WireReads::Mailbox,
             GMAIL_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
                 let auth = bearer_header(token)?;
@@ -321,6 +323,60 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
             anchor: reached,
         }))
     }
+
+    fn attachment(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+        attachment: &MailAttachmentRef,
+    ) -> Result<Option<Vec<u8>>> {
+        let message_url = Self::message_url(provider_id)?;
+        // An attachment Gmail keeps apart is fetched by its id; a small one
+        // rides inline in its part of the whole message.
+        if let Some(id) = &attachment.provider_attachment_id {
+            let plain = id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
+            if id.is_empty() || !plain {
+                return Err(refused("gmail_mail_attachment_id_not_plain"));
+            }
+            let url = format!("{message_url}/attachments/{id}");
+            let Some(answer) = self.get(source, &url, &[])? else {
+                return Ok(None);
+            };
+            let data = answer
+                .get("data")
+                .and_then(Value::as_str)
+                .ok_or_else(|| refused("gmail_mail_attachment_without_data"))?;
+            return base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(data.trim_end_matches('='))
+                .map(Some)
+                .map_err(|_| refused("gmail_mail_attachment_data_unreadable"));
+        }
+        let params = [("format", "full".to_owned())];
+        let Some(message) = self.get(source, &message_url, &params)? else {
+            return Ok(None);
+        };
+        Ok(message
+            .get("payload")
+            .and_then(|payload| part_bytes(payload, &attachment.part_id, 0)))
+    }
+}
+
+/// The bytes of one part of a Gmail `full` answer, by its part id.
+fn part_bytes(part: &Value, part_id: &str, depth: usize) -> Option<Vec<u8>> {
+    if depth > MAX_PART_DEPTH {
+        return None;
+    }
+    if part.get("partId").and_then(Value::as_str) == Some(part_id) {
+        let data = part.pointer("/body/data").and_then(Value::as_str)?;
+        return base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(data.trim_end_matches('='))
+            .ok();
+    }
+    array(part, "parts")
+        .iter()
+        .find_map(|child| part_bytes(child, part_id, depth + 1))
 }
 
 /// Whether the Gmail wire reads `provider`'s mailboxes.

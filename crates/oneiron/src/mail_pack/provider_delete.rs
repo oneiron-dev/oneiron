@@ -4,11 +4,14 @@
 //! searchable by its readers. "Forget too" forgets every revision of it in
 //! the vault through the ordinary user delete, and keeps only the provider id
 //! as a fence, so a later listing never brings it back: its sender, subject
-//! and labels go from the pack's own rows too. A message moved to
-//! trash or spam counts as deleted at the provider.
+//! and labels go from the pack's own rows too. A message moved to trash or
+//! spam counts as deleted at the provider; one taken out of the trash or
+//! spam again is live again, when its copy was kept.
 
 use super::source::{MailProviderDeleteSetting, MailSourceRow};
-use super::state::{BODY_QUEUE, MailPresence, OCCURRENCES, SYNC, body_queue_key, occurrence_key};
+use super::state::{
+    BODY_QUEUE, MailPresence, MailStage, OCCURRENCES, SYNC, body_queue_key, occurrence_key,
+};
 use crate::deletion::DeleteReason;
 use crate::{EntityId, Result, Vault};
 
@@ -41,11 +44,16 @@ pub(super) fn apply_provider_delete(
     let outcome = match row.on_provider_delete {
         MailProviderDeleteSetting::KeepInMemory => ProviderDeleteOutcome::Kept,
         MailProviderDeleteSetting::ForgetToo => {
+            // The opened attachments' artifacts go first: their rows name
+            // them, and the message's erase removes the rows.
+            for artifact in super::attachments::message_artifacts(vault, source, provider_id)? {
+                vault.delete_entity_with_reason(&artifact, DeleteReason::UserDelete)?;
+            }
             for message in &occurrence.messages {
                 vault.delete_entity_with_reason(message, DeleteReason::UserDelete)?;
             }
             // One provider message is one TURN; its CONVERSATION stays while
-            // the thread holds other messages.
+            // the thread holds other messages, and goes with the last.
             vault.delete_entity_with_reason(&occurrence.turn, DeleteReason::UserDelete)?;
             ProviderDeleteOutcome::Forgotten
         }
@@ -71,7 +79,32 @@ pub(super) fn apply_provider_delete(
         sync.deleted_at_provider += 1;
         SYNC.put(&vault.store, txn, &source, &sync)
     })?;
+    // The thread's CONVERSATION goes with its last message, so "forget too"
+    // leaves no thread behind.
+    if outcome == ProviderDeleteOutcome::Forgotten
+        && !conversation_holds_messages(vault, source, &occurrence.conversation)?
+    {
+        vault.delete_entity_with_reason(&occurrence.conversation, DeleteReason::UserDelete)?;
+    }
     Ok(outcome)
+}
+
+/// Whether any message of `source` in `conversation` is not forgotten.
+fn conversation_holds_messages(
+    vault: &Vault,
+    source: EntityId,
+    conversation: &EntityId,
+) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    for row in OCCURRENCES.iter_from(&vault.store, &txn, source.as_bytes())? {
+        let (_, occurrence) = row?;
+        if occurrence.conversation == *conversation
+            && !matches!(occurrence.presence, MailPresence::Forgotten { .. })
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Records a message's new provider labels, when it is still present.
@@ -93,5 +126,42 @@ pub(super) fn update_labels(
         current.labels = labels.to_vec();
         current.updated_at = at;
         OCCURRENCES.put(&vault.store, txn, &key, &current)
+    })
+}
+
+/// Brings back a message the provider took out of its trash or spam again:
+/// a kept source-deleted copy is live again, its body queued again when it
+/// landed with its headers only. A forgotten one stays forgotten: its rows
+/// are gone, and its fence keeps a listing from bringing it back. Answers
+/// whether it was brought back.
+pub(super) fn restore_from_provider_trash(
+    vault: &Vault,
+    source: EntityId,
+    provider_id: &str,
+    at: u64,
+) -> Result<bool> {
+    let key = occurrence_key(source, provider_id);
+    vault.with_write_txn_grouped(|txn| {
+        let Some(mut current) = OCCURRENCES.get(&vault.store, txn, &key)? else {
+            return Ok(false);
+        };
+        if !matches!(current.presence, MailPresence::SourceDeleted { .. }) {
+            return Ok(false);
+        }
+        current.presence = MailPresence::Present;
+        current.updated_at = at;
+        if current.stage == MailStage::Headers {
+            BODY_QUEUE.put(
+                &vault.store,
+                txn,
+                &body_queue_key(source, current.received_at, provider_id),
+                &provider_id.to_owned(),
+            )?;
+        }
+        OCCURRENCES.put(&vault.store, txn, &key, &current)?;
+        let mut sync = SYNC.get(&vault.store, txn, &source)?.unwrap_or_default();
+        sync.deleted_at_provider = sync.deleted_at_provider.saturating_sub(1);
+        SYNC.put(&vault.store, txn, &source, &sync)?;
+        Ok(true)
     })
 }

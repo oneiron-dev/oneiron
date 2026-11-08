@@ -21,7 +21,9 @@ use serde::{Deserialize, Serialize};
 
 use super::landing::{LandOutcome, Landing};
 use super::pack::require_pack_active_in;
-use super::provider_delete::{ProviderDeleteOutcome, apply_provider_delete, update_labels};
+use super::provider_delete::{
+    ProviderDeleteOutcome, apply_provider_delete, restore_from_provider_trash, update_labels,
+};
 use super::source::{MailCopySetting, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{
     MailPresence, MailSyncState, OCCURRENCES, SYNC, bodies_waiting_in, occurrence_key,
@@ -48,6 +50,8 @@ pub struct MailSyncBudget {
     pub list_pages: u32,
     /// Bodies filled in.
     pub bodies: u32,
+    /// Opened attachments fetched.
+    pub attachments: u32,
 }
 
 impl Default for MailSyncBudget {
@@ -56,6 +60,7 @@ impl Default for MailSyncBudget {
             history_pages: 10,
             list_pages: 2,
             bodies: 50,
+            attachments: 10,
         }
     }
 }
@@ -82,6 +87,9 @@ pub struct MailSyncReport {
     pub anchor_expired: bool,
     /// Whether the newest-first copy has reached the oldest message it keeps.
     pub copy_done: bool,
+    /// Opened attachments fetched into their artifacts.
+    #[serde(default)]
+    pub attachments_stored: u64,
 }
 
 impl MailSyncReport {
@@ -171,6 +179,56 @@ impl Step<'_> {
         Ok(())
     }
 
+    /// A message the change feed reports added: one that never landed lands
+    /// under the copy setting, and a kept copy the provider deleted is live
+    /// again when the provider's headers say it is out of trash and spam.
+    fn added(&mut self, provider_id: &str) -> MemoryResult<()> {
+        if !self.source_deleted(provider_id)? {
+            if self.row.copy != MailCopySetting::SearchOnly {
+                self.land_headers(provider_id)?;
+            }
+            return Ok(());
+        }
+        if let Some(headers) = self.wire.headers(&self.wire_source, provider_id)?
+            && !headers.trash_or_spam
+        {
+            update_labels(
+                self.vault,
+                self.source,
+                provider_id,
+                &headers.labels,
+                self.at,
+            )?;
+            restore_from_provider_trash(self.vault, self.source, provider_id, self.at)?;
+        }
+        Ok(())
+    }
+
+    /// Whether the message's copy is a kept one the provider deleted.
+    fn source_deleted(&self, provider_id: &str) -> Result<bool> {
+        let txn = self.vault.store.env.read_txn()?;
+        Ok(OCCURRENCES
+            .get(
+                &self.vault.store,
+                &txn,
+                &occurrence_key(self.source, provider_id),
+            )?
+            .is_some_and(|occurrence| {
+                matches!(occurrence.presence, MailPresence::SourceDeleted { .. })
+            }))
+    }
+
+    /// A message out of the provider's trash or spam: a kept copy is live
+    /// again.
+    fn restore(&mut self, provider_id: &str) -> MemoryResult<()> {
+        // One that never landed comes as its own Added, under the copy
+        // setting: a label change alone fetches nothing.
+        if self.known(provider_id)? {
+            restore_from_provider_trash(self.vault, self.source, provider_id, self.at)?;
+        }
+        Ok(())
+    }
+
     fn delete(&mut self, provider_id: &str) -> MemoryResult<()> {
         let outcome =
             apply_provider_delete(self.vault, self.source, &self.row, provider_id, self.at)?;
@@ -251,11 +309,7 @@ impl Step<'_> {
             };
             for change in read.changes {
                 match change {
-                    MailHistoryChange::Added(message) => {
-                        if self.row.copy != MailCopySetting::SearchOnly {
-                            self.land_headers(&message.provider_id)?;
-                        }
-                    }
+                    MailHistoryChange::Added(message) => self.added(&message.provider_id)?,
                     MailHistoryChange::Deleted { provider_id } => self.delete(&provider_id)?,
                     MailHistoryChange::Labels {
                         provider_id,
@@ -266,6 +320,7 @@ impl Step<'_> {
                             self.delete(&provider_id)?;
                         } else {
                             update_labels(self.vault, self.source, &provider_id, &labels, self.at)?;
+                            self.restore(&provider_id)?;
                         }
                     }
                     MailHistoryChange::LabelGone { label } => self.label_gone(&label)?,
@@ -456,6 +511,8 @@ impl Vault {
                 ..MailSyncReport::default()
             },
         };
+        // An erased message's attachment artifacts owed their delete go first.
+        super::attachments::collect_after_delete(self);
         // Header revisions a body superseded and whose delete did not return
         // go first, whether or not the provider lists them again (FIX 15413).
         super::header_retire::retire_superseded_headers(self, source_ref);
@@ -467,6 +524,15 @@ impl Vault {
             step.history(budget.history_pages)?;
             step.backfill(budget.list_pages)?;
             step.bodies(budget.bodies)?;
+            let stored = super::attachments::fetch_waiting_attachments(
+                step.vault,
+                step.source,
+                &step.wire_source,
+                step.wire,
+                step.landing.actor(),
+                budget.attachments,
+            )?;
+            step.report.attachments_stored += stored;
             Ok(())
         })();
         let error = outcome.as_ref().err().map(|error| error.message.clone());
@@ -499,6 +565,9 @@ impl crate::memory::Memory<'_> {
             && super::compliance::manages_in(vault, &txn, self.actor())?;
         if !reads && !manages {
             return Err(unknown());
+        }
+        if row.kind == MailSourceKind::Calendar {
+            return Ok(super::calendar::calendar_status_view_in(vault, &txn, id)?);
         }
         Ok(super::state::status_view_in(vault, &txn, id)?)
     }

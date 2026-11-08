@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1327 facade rows, 4788 declarations.
-Inputs: 1256 of 1327 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1156 of 1327 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1328 facade rows, 4792 declarations.
+Inputs: 1257 of 1328 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1157 of 1328 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
@@ -23941,6 +23941,7 @@ class MailSyncReport(TypedDict):
     forgotten: int
     anchor_expired: bool
     copy_done: bool
+    attachments_stored: NotRequired[int]
 class MailInboxRequest(TypedDict):
     source_ref: NotRequired[str | None]
     include_source_deleted: NotRequired[bool]
@@ -23956,7 +23957,13 @@ class MailPresenceForgottenBody(TypedDict):
 class MailPresenceForgotten(TypedDict):
     forgotten: MailPresenceForgottenBody
 MailPresence = Literal["present"] | MailPresenceSourceDeleted | MailPresenceForgotten
-MailInboxItem = TypedDict("MailInboxItem", {"source_ref": str, "thread_ref": str, "turn_ref": str, "message_ref": str, "from": NotRequired[str | None], "subject": NotRequired[str | None], "received_at": int, "labels": list[str], "stage": MailStage, "presence": MailPresence, "shared_with_reader": bool})
+class MailAttachmentRef(TypedDict):
+    part_id: str
+    provider_attachment_id: NotRequired[str | None]
+    filename: NotRequired[str | None]
+    media_type: str
+    size_bytes: int
+MailInboxItem = TypedDict("MailInboxItem", {"source_ref": str, "thread_ref": str, "turn_ref": str, "message_ref": str, "from": NotRequired[str | None], "subject": NotRequired[str | None], "received_at": int, "labels": list[str], "stage": MailStage, "presence": MailPresence, "shared_with_reader": bool, "attachments": NotRequired[list[MailAttachmentRef]]})
 class MailInboxPage(TypedDict):
     items: list[MailInboxItem]
     next_cursor: NotRequired[str | None]
@@ -23967,6 +23974,19 @@ class MailThreadView(TypedDict):
     source_ref: str
     messages: list[MailInboxItem]
     shared_with: NotRequired[list[str]]
+class MailAttachmentOpenRequest(TypedDict):
+    source_ref: str
+    turn_ref: str
+    part_id: str
+MailAttachmentState = Literal["waiting", "stored", "failed"]
+class MailAttachmentView(TypedDict):
+    state: MailAttachmentState
+    filename: NotRequired[str | None]
+    media_type: str
+    size_bytes: int
+    artifact_ref: NotRequired[str | None]
+    version: NotRequired[int | None]
+    reason: NotRequired[str | None]
 class MailComplianceSearchRequest(TypedDict):
     query: str
     purpose: str

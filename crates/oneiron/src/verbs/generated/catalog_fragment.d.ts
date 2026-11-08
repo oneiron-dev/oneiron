@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1381 code-mode rows (1338 host rows, 43 run rows), 4847 declarations.
-// Replies: 1189 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1382 code-mode rows (1339 host rows, 43 run rows), 4851 declarations.
+// Replies: 1190 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -4688,14 +4688,18 @@ declare namespace Sdk {
   type MailComplianceEventView = { sequence: number; kind: MailComplianceEventKind; by_ref?: string | null; at: number; purpose: string; query_digest?: string | null; result_count?: number | null };
   type MailSyncStatusView = { source_ref: string; live: boolean; copy_done: boolean; landed: number; bodies: number; bodies_waiting: number; deleted_at_provider: number; last_step_at?: number | null; last_error?: string | null };
   type MailSourceSyncRequest = { source_ref: string; bodies?: number | null };
-  type MailSyncReport = { source_ref: string; landed: number; same: number; refused: number; refusal_reasons?: string[]; kept_deleted: number; forgotten: number; anchor_expired: boolean; copy_done: boolean };
+  type MailSyncReport = { source_ref: string; landed: number; same: number; refused: number; refusal_reasons?: string[]; kept_deleted: number; forgotten: number; anchor_expired: boolean; copy_done: boolean; attachments_stored?: number };
   type MailInboxRequest = { source_ref?: string | null; include_source_deleted?: boolean; cursor?: string | null; limit?: number | null };
   type MailStage = "headers" | "body";
   type MailPresence = "present" | { source_deleted: { at: number } } | { forgotten: { at: number } };
-  type MailInboxItem = { source_ref: string; thread_ref: string; turn_ref: string; message_ref: string; from?: string | null; subject?: string | null; received_at: number; labels: string[]; stage: MailStage; presence: MailPresence; shared_with_reader: boolean };
+  type MailAttachmentRef = { part_id: string; provider_attachment_id?: string | null; filename?: string | null; media_type: string; size_bytes: number };
+  type MailInboxItem = { source_ref: string; thread_ref: string; turn_ref: string; message_ref: string; from?: string | null; subject?: string | null; received_at: number; labels: string[]; stage: MailStage; presence: MailPresence; shared_with_reader: boolean; attachments?: MailAttachmentRef[] };
   type MailInboxPage = { items: MailInboxItem[]; next_cursor?: string | null };
   type MailThreadRequest = { thread_ref: string };
   type MailThreadView = { thread_ref: string; source_ref: string; messages: MailInboxItem[]; shared_with?: string[] };
+  type MailAttachmentOpenRequest = { source_ref: string; turn_ref: string; part_id: string };
+  type MailAttachmentState = "waiting" | "stored" | "failed";
+  type MailAttachmentView = { state: MailAttachmentState; filename?: string | null; media_type: string; size_bytes: number; artifact_ref?: string | null; version?: number | null; reason?: string | null };
   type MailComplianceSearchRequest = { query: string; purpose: string; limit?: number | null };
   type MailComplianceHit = { source_ref: string; thread_ref: string; message_ref: string; score: number; text?: string | null };
   type MailComplianceSearchReply = { log_sequence: number; hits: MailComplianceHit[] };
@@ -6901,6 +6905,10 @@ declare const vault: Sdk.VaultHost & {
     select(input: Sdk.LensSelectRequest): Promise<Sdk.LensSelection | StoredResult>;
   };
   mail: {
+    attachments: {
+      /** A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers. */
+      open(input: Sdk.MailAttachmentOpenRequest): Promise<Sdk.MailAttachmentView | StoredResult>;
+    };
     compliance: {
       /** The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it. */
       log(input: Sdk.EmptyRequest): Promise<Sdk.MailComplianceEventView[] | StoredResult>;
@@ -6914,7 +6922,7 @@ declare const vault: Sdk.VaultHost & {
     /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
     inbox(input: Sdk.MailInboxRequest): Promise<Sdk.MailInboxPage | StoredResult>;
     pack: {
-      /** The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing. */
+      /** The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing. */
       install(input: Sdk.EmptyRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
     };
     sources: {
@@ -6932,7 +6940,7 @@ declare const vault: Sdk.VaultHost & {
         /** Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address. */
         set(input: Sdk.MailSourceSettingsRequest): Promise<Sdk.MailSourceView | StoredResult>;
       };
-      /** The vault's owner runs one bounded import step of a Google or Microsoft 365 mailbox source on this device: changes since its anchor, the next newest-first pages under its copy setting, then waiting bodies. */
+      /** The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner. */
       sync(input: Sdk.MailSourceSyncRequest): Promise<Sdk.MailSyncReport | StoredResult>;
       /** Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers. */
       sync_status(input: Sdk.MailSourceRef): Promise<Sdk.MailSyncStatusView | StoredResult>;

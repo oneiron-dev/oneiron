@@ -3,7 +3,7 @@
 //! Microsoft 365 mailbox source.
 //!
 //! Each provider call reads the source's own credential at its door
-//! ([`Vault::with_mail_source_token_at_door`]), effector
+//! ([`Vault::with_source_token_at_door`]), effector
 //! `connector:microsoft365`. HTTPS to Graph only, no redirects; a link Graph
 //! answers with is followed only on Graph's own origin. Inside each door,
 //! before the credential presented there reads anything, the wire checks
@@ -40,10 +40,12 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
+use base64::Engine as _;
 use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::credential::WireReads;
 use super::rest::{
     self, RestAnswer, VerifiedCredentials, array, bearer_header, header_value, html_text, refused,
     text_of, tidy_text,
@@ -225,8 +227,9 @@ impl<'v> HttpGraphMailWire<'v> {
             return Err(refused("graph_mail_link_not_on_graph"));
         }
         let mut answer: Option<RestAnswer> = None;
-        let _receipt = self.vault.with_mail_source_token_at_door(
+        let _receipt = self.vault.with_source_token_at_door(
             source,
+            WireReads::Mailbox,
             MICROSOFT365_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
                 let auth = bearer_header(token)?;
@@ -588,7 +591,8 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                 }
             };
             // A move of the folder itself is reconciled when the round ends.
-            let now_skipped = self.tree_knowing(source, folder)?.skipped(folder)?;
+            let tree = self.tree_knowing(source, folder)?;
+            let now_skipped = tree.skipped(folder)?;
             if was_skipped && !now_skipped {
                 cursor.met_copied.insert(folder.clone());
             }
@@ -600,11 +604,21 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
                 let provider_id = graph_id(entry.get("id"))?;
                 if entry.get("@removed").is_some() {
                     changes.extend(self.removal(source, provider_id, from_skipped)?);
-                } else if !(was_skipped && now_skipped) && !older_than_kept(entry, source) {
-                    changes.push(MailHistoryChange::Added(MailMessageRef {
-                        provider_id,
-                        thread_id: text_of(entry.get("conversationId")),
-                    }));
+                } else if !(was_skipped && now_skipped) {
+                    // A change to a message copied already (its categories)
+                    // reaches its labels, whatever its age; one not copied
+                    // yet is filed when the copy setting keeps it.
+                    changes.push(MailHistoryChange::Labels {
+                        provider_id: provider_id.clone(),
+                        labels: folder_labels(entry, tree.names.get(folder).copied(), folder),
+                        trash_or_spam: tree.trash(folder)?,
+                    });
+                    if !older_than_kept(entry, source) {
+                        changes.push(MailHistoryChange::Added(MailMessageRef {
+                            provider_id,
+                            thread_id: text_of(entry.get("conversationId")),
+                        }));
+                    }
                 }
             }
             if let Some(next) = text_of(listed.get("@odata.nextLink")) {
@@ -670,6 +684,36 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
             next_page: Some(encode(&cursor)?),
             anchor: anchor.to_owned(),
         }))
+    }
+
+    fn attachment(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+        attachment: &MailAttachmentRef,
+    ) -> Result<Option<Vec<u8>>> {
+        let id = attachment
+            .provider_attachment_id
+            .as_deref()
+            .unwrap_or(attachment.part_id.as_str());
+        require_graph_id(id)?;
+        let url = format!(
+            "{}/attachments/{}",
+            message_url(provider_id)?,
+            path_segment(id)
+        );
+        let Some(answer) = self.found(source, &url, &[], PREFER_IMMUTABLE_IDS)? else {
+            return Ok(None);
+        };
+        // A file attachment carries its bytes; an item or reference
+        // attachment carries none.
+        let Some(bytes) = answer.get("contentBytes").and_then(Value::as_str) else {
+            return Err(refused("graph_mail_attachment_carries_no_bytes"));
+        };
+        base64::engine::general_purpose::STANDARD
+            .decode(bytes.trim())
+            .map(Some)
+            .map_err(|_| refused("graph_mail_attachment_bytes_unreadable"))
     }
 }
 
@@ -809,7 +853,7 @@ fn delta_link(folder: &str) -> Result<String> {
     ))
     .map_err(|_| refused("graph_mail_folder_link_unreadable"))?;
     url.query_pairs_mut()
-        .append_pair("$select", "id,conversationId,receivedDateTime");
+        .append_pair("$select", "id,conversationId,receivedDateTime,categories");
     Ok(url.into())
 }
 
