@@ -4480,6 +4480,8 @@ class Oneiron:
             """The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place."""
         def sync(self, spec: Facade.MailSourceSyncRequest) -> Facade.MailSyncReport:
             """The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
+        def search(self, spec: Facade.MailSourceSearchRequest) -> Facade.MailSearchReport:
+            """The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience."""
     class _VaultMailSourcesSettingsVerbs:
         def set(self, spec: Facade.MailSourceSettingsRequest) -> Facade.MailSourceView:
             """Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address."""
