@@ -2179,6 +2179,7 @@ class TaskCreateRequest(TypedDict):
     brief: NotRequired[QueueTaskBrief | None]
     ttl: NotRequired[TaskTtl | None]
     parent_ref: NotRequired[str | None]
+    due_at: NotRequired[int | None]
 class TaskCreateReceipt(TypedDict):
     task_ref: NotRequired[EntityId | None]
     proposal_ref: NotRequired[EntityId | None]
@@ -6158,9 +6159,9 @@ class HookGrantRequest(TypedDict):
     binding: EntityId
 class HubHookQualifyRequest(TypedDict):
     source: EntityId
-FactSource = Literal["claim_changelog", "settlement"]
+FactSource = Literal["claim_changelog", "settlement", "schedule", "surface_inbound"]
 FactPositionHex = str
-FactKind = Literal["claim.landed", "claim.superseded", "proposal.settled"]
+FactKind = Literal["claim.landed", "claim.superseded", "proposal.settled", "schedule.tick", "surface.inbound"]
 class HookReplayCaseFact(TypedDict):
     on: Literal["fact"]
     source: FactSource
