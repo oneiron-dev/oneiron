@@ -31,9 +31,10 @@ pub(in crate::api::facade) async fn as_owner<T: Send + 'static>(
 }
 
 /// [`as_owner`] for a door a budget window paces (FIX 8753): the handle
-/// carries the facade call's invocation and door, so a full window holds
-/// the call in its caller's line, and the drain's run of it enters as its
-/// turn. `None` (an MCP call) answers as [`as_owner`] does.
+/// carries the call's invocation and door, a facade call's or a tool-first
+/// MCP call's (FIX 22259), so a full window holds the call in its caller's
+/// line, and the drain's run of it enters as its turn. `None` answers as
+/// [`as_owner`] does.
 pub(in crate::api::facade) async fn as_owner_paced<T: Send + 'static>(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

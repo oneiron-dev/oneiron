@@ -168,6 +168,7 @@ impl BatchBuilder<'_> {
         let vault = self.vault;
         let mut gated =
             super::reference_read::admit_lane_before_staging(vault, lane, wtxn, &self.ops)?;
+        let note_births = std::mem::take(&mut self.note_births);
         // Preserve original-position admission before routing removes a Put.
         // Actual head changes and the remaining ops get their own final checks.
         let original = actor
@@ -345,6 +346,11 @@ impl BatchBuilder<'_> {
         }
         if let Some(pending) = deferred {
             return Err(pending.err);
+        }
+        // Each NOTE's document is born with its core row (FIX 7783), once
+        // the batch's reference checks have passed.
+        for (id, markdown) in &note_births {
+            crate::note::birth_document_in_txn(vault, wtxn, *id, markdown)?;
         }
         derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;
         crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;

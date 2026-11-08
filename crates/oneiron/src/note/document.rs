@@ -2,12 +2,12 @@
 
 use std::collections::BTreeMap;
 
+use crate::EntityId;
 use crate::entity_doc::{decode_metadata_value, encode_metadata_value};
 use crate::error::{Error, RecordError, Result};
 use crate::memory::CommitReceipt;
 use crate::ports::{is_metadata_field, validate_metadata_shape};
 use crate::provenance::ActorStamp;
-use crate::{EntityId, WriteActor};
 use loro::cursor::{Cursor, Side};
 use loro::{
     CommitOptions, Container, ExportMode, Frontiers, LoroDoc, LoroMap, LoroValue, ValueOrContainer,
@@ -238,8 +238,48 @@ pub(super) struct NoteDocument {
     pub(super) id: EntityId,
 }
 
+/// The deterministic peer of NOTE `id`'s birth operations, the same on every
+/// replica. Every later operation is made on a document loaded from storage,
+/// under a peer of its own, so the birth's operations are the only ones
+/// under this peer.
+fn birth_peer(id: EntityId) -> u64 {
+    let seed = blake3::hash(id.as_bytes());
+    let mut peer = [0; 8];
+    peer.copy_from_slice(&seed.as_bytes()[..8]);
+    u64::from_le_bytes(peer)
+}
+
+/// The text NOTE `id`'s document `doc` was born with (FIX 7783): its body at
+/// the version of its birth's operations, the only ones under its birth peer.
+/// `None` when `doc` no longer holds that version: its history before a
+/// later version was dropped (a purge, or a masked write's stored state).
+/// Whether NOTE `id`'s document `doc` holds nothing but its birth (FIX
+/// 7783): no operation was made on it after its birth's.
+pub(super) fn holds_only_birth(id: EntityId, doc: &LoroDoc) -> bool {
+    let peer = birth_peer(id);
+    doc.oplog_vv()
+        .get(&peer)
+        .and_then(|count| count.checked_sub(1))
+        .is_some_and(|last| doc.oplog_frontiers() == Frontiers::from_id(loro::ID::new(peer, last)))
+}
+
+pub(super) fn birth_text(id: EntityId, doc: &LoroDoc) -> Option<String> {
+    let peer = birth_peer(id);
+    let last = doc.oplog_vv().get(&peer)?.checked_sub(1)?;
+    let frontier = Frontiers::from_id(loro::ID::new(peer, last));
+    if doc.oplog_frontiers() == frontier {
+        return Some(doc.get_text(BODY).to_string());
+    }
+    if doc.is_shallow() {
+        return None;
+    }
+    let born = doc.fork_at(&frontier).ok()?;
+    Some(born.get_text(BODY).to_string())
+}
+
 impl NoteDocument {
-    pub(super) fn birth(id: EntityId, body: &str, actor: &WriteActor) -> Result<Self> {
+    #[cfg(all(test, feature = "sync"))]
+    pub(super) fn birth(id: EntityId, body: &str, actor: &crate::WriteActor) -> Result<Self> {
         Self::birth_by(id, body, super::NoteActor::Actor(actor.entity_ref()))
     }
 
@@ -252,12 +292,9 @@ impl NoteDocument {
     /// measure it (`EngineScan::NoteDocumentBytes`, `note::scan`).
     pub(super) fn birth_by(id: EntityId, body: &str, author: super::NoteActor) -> Result<Self> {
         let doc = LoroDoc::new();
-        // The birth record is immutable, so lazy creation on different peers
-        // must give its initial operations the same identity.
-        let seed = blake3::hash(id.as_bytes());
-        let mut peer = [0; 8];
-        peer.copy_from_slice(&seed.as_bytes()[..8]);
-        doc.set_peer_id(u64::from_le_bytes(peer))
+        // The birth record is immutable, so a birth on any peer gives its
+        // initial operations the same identity.
+        doc.set_peer_id(birth_peer(id))
             .map_err(|_| invalid("NOTE birth peer"))?;
         let meta = doc.get_map(META);
         meta.insert(ID, id.to_hex())
