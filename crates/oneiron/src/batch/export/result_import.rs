@@ -7,7 +7,7 @@ use std::io::{Read, Seek};
 
 use super::archive_index::{IndexedArchive, Tag};
 use super::document_import::{invalid, parse_id};
-use super::{ArchiveRecordKind, ExportRun};
+use super::{ArchiveFiles, ArchiveRecordKind, ExportRun};
 use crate::Vault;
 use crate::error::Result;
 
