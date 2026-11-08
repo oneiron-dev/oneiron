@@ -15,6 +15,7 @@ use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::write_envelope::ClaimCandidate;
 
+mod asset_file_bodies;
 mod edge;
 mod indexes;
 mod ops_claim;
@@ -304,6 +305,7 @@ pub(super) fn apply_ops_with_authority_beside(
     let text_births = std::mem::take(&mut gate_mode.text_births);
     let births = std::mem::take(&mut gate_mode.births);
     let mut asset_files = std::mem::take(&mut gate_mode.asset_files);
+    let asset_file_bodies = std::mem::take(&mut gate_mode.asset_file_bodies);
     let replicated_puts = std::mem::take(&mut gate_mode.replicated_puts);
     let marked_carriers = std::mem::take(&mut gate_mode.marked_carriers);
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
@@ -326,8 +328,12 @@ pub(super) fn apply_ops_with_authority_beside(
     // its bytes and is marked. A batch of nothing but a marked carrier's own
     // bytes, scanned whole by its writer, is stored as it is: a detection on
     // them is the carrier's mark (FIX 9034).
-    let (masked_files, masked_claim_pre) = if marked_carriers_only(&marked_carriers, &ops.ops) {
-        (secret_scan::MaskedFiles::default(), Vec::new())
+    // An interpreted body file is read by the scan and the mask as the bytes
+    // it holds, never as its manifest, and its put keeps the manifest after
+    // (FIX 22075).
+    let manifests = asset_file_bodies::read_file_bodies(&mut ops.ops, asset_file_bodies);
+    let masked = if marked_carriers_only(&marked_carriers, &ops.ops) {
+        Ok((secret_scan::MaskedFiles::default(), Vec::new()))
     } else {
         secret_scan::mask_batch_ops(
             store,
@@ -340,8 +346,10 @@ pub(super) fn apply_ops_with_authority_beside(
                 || matches!(origin, BaseWriteOrigin::PromoteReplay(grant)
                     if grant.selected_saver().is_some()),
             mutation_recorded_at,
-        )?
+        )
     };
+    asset_file_bodies::restore_manifests(&mut ops.ops, manifests);
+    let (masked_files, masked_claim_pre) = masked?;
     // The pre-mask body of each MACHINE candidate the mask rewrote in this
     // transaction (FIX 11356), in op order per id: the candidate apply
     // renews a proof only over its verified pre-mask body. A replayed batch

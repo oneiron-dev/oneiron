@@ -73,6 +73,7 @@ impl Vault {
             explicit_fork: false,
             next_sheet_row: work.next_sheet_row,
             new_bytes: Vec::new(),
+            new_file: None,
             body: PendingBody::SheetAnswers {
                 bundle: work.bundle().clone(),
             },
@@ -80,7 +81,7 @@ impl Vault {
             deck: None,
             delta_receipt: None,
         };
-        self.put_pending_in_txn(wtxn, artifact, &row)?;
+        self.put_pending_in_txn(wtxn, artifact, &row, None)?;
         Ok(row.view(*artifact))
     }
 

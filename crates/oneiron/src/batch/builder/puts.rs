@@ -207,6 +207,16 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// FIX 22075: hands the batch door the bytes of ASSET `id`'s
+    /// interpreted body file, queued by [`Self::put_asset_file`] or
+    /// [`Self::put_replicated_asset_file`]: its secret scan and mask read
+    /// them in place of the manifest, as they read a body in its row, and
+    /// mark the file by its digest. The row keeps the manifest.
+    pub(crate) fn with_asset_file_body(mut self, id: &EntityId, body: Vec<u8>) -> Self {
+        self.asset_file_bodies.insert(*id, body);
+        self
+    }
+
     /// FIX 5489: [`Self::put_replicated`] of ASSET `id` whose body is the
     /// body file `file` names, published before this batch, as
     /// [`Self::put_asset_file`] puts a local one: the row keeps `manifest`,

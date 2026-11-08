@@ -114,11 +114,21 @@ impl AgentBirthSource {
         Ok(())
     }
 }
+/// The one field a body is read for to tell an agent's birth source.
+#[derive(Deserialize)]
+struct Marker {
+    format: String,
+}
+
+/// Whether `reader` holds what [`decode_birth_source`] reads as an agent's
+/// birth source, valid or not: one JSON value whose `format` names it. Such
+/// a body stays in its ASSET row, where its validator and readers read it,
+/// whatever its length or its shape (FIX 22075).
+pub(crate) fn is_birth_source_candidate(reader: impl std::io::Read) -> bool {
+    serde_json::from_reader::<_, Marker>(reader).is_ok_and(|marker| marker.format == FORMAT)
+}
+
 pub(crate) fn decode_birth_source(bytes: &[u8]) -> Result<Option<AgentBirthSource>> {
-    #[derive(Deserialize)]
-    struct Marker {
-        format: String,
-    }
     let Ok(marker) = serde_json::from_slice::<Marker>(bytes) else {
         return Ok(None);
     };

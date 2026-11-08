@@ -1,8 +1,10 @@
 //! Staging an ASSET body from a reader before the transaction that puts it
 //! (FIX 3677): the body streams into the body directory, measured as it
-//! passes, and is published as a file only when it is long and opaque, or
-//! long MessagePack the whole-body classification files, a record its
-//! stored-row readers read nothing from among them (FIX 12150). On a
+//! passes, and is published as a file only when it is long and opaque, long
+//! MessagePack the whole-body classification files, a record its stored-row
+//! readers read nothing from among them (FIX 12150), or long text, a
+//! container or a body a stream rule hits, which the batch door reads from
+//! its file (FIX 22075). An owning adapter's carrier stays in its row. On a
 //! sealed vault it spills sealed as it streams and is published as an
 //! envelope, whose key row the put commits (FIX 5348). While the file plane
 //! is on, the values custody holds are found in the stream too, and marked
@@ -39,6 +41,8 @@ const HEAD_BYTES: usize = 64;
 pub(crate) struct StagedAssetBody {
     facts: AssetBodyFacts,
     mime: Option<String>,
+    /// Whether the whole body is UTF-8 text (FIX 22075).
+    text: bool,
     body: Staged,
     /// A sealed file's key row, committed with the put (FIX 5348).
     key: Option<StagedBodyKey>,
@@ -55,6 +59,18 @@ pub(crate) struct StagedAssetBody {
 pub(crate) struct StagedHold {
     _key: Option<StagedBodyKey>,
     _pin: Option<ResultBodyPin>,
+}
+
+impl StagedHold {
+    /// The hold on a body file staged for a row other than an ASSET put
+    /// (a waiting native output, FIX 20812): its instance's lease and its
+    /// digest's pin.
+    pub(crate) fn of_file(key: StagedBodyKey, pin: ResultBodyPin) -> Self {
+        Self {
+            _key: Some(key),
+            _pin: Some(pin),
+        }
+    }
 }
 
 enum Staged {
@@ -81,6 +97,11 @@ impl StagedAssetBody {
         }
     }
 
+    /// Whether the whole body is UTF-8 text, wherever it is held (FIX 22075).
+    pub(crate) const fn is_text(&self) -> bool {
+        self.text
+    }
+
     /// The body's bytes when it stays in its row: `None` for a published
     /// body file, whose bytes are read only from the file (FIX 12091).
     pub(crate) fn inline_bytes(&self) -> Option<&[u8]> {
@@ -88,6 +109,28 @@ impl StagedAssetBody {
             Staged::Inline(bytes) => Some(bytes),
             Staged::File { .. } => None,
         }
+    }
+
+    /// `put`, the batch that puts this body as its file, with the file's
+    /// bytes for the batch door's secret scan and mask when the file is
+    /// interpreted: they read them in place of its manifest, as they read a
+    /// body in its row (FIX 22075).
+    ///
+    /// # Errors
+    ///
+    /// The file's read error.
+    fn read_by_batch_door<'b>(
+        &self,
+        id: &EntityId,
+        put: crate::batch::BatchBuilder<'b>,
+    ) -> Result<crate::batch::BatchBuilder<'b>> {
+        Ok(match &self.body {
+            Staged::File {
+                kind: AssetFileKind::Interpreted,
+                ..
+            } => put.with_asset_file_body(id, self.to_vec()?),
+            _ => put,
+        })
     }
 
     /// The whole body, read back from its file when it has one.
@@ -148,27 +191,23 @@ impl StageMeter {
         }
     }
 
-    /// The body's facts, what its stream shows it, and the values custody
-    /// holds that it carries. A body with UTF-8 text in it, or a hit of the
-    /// write door's stream rules, stays in its row ([`StreamShape::Row`]);
-    /// any other is as its head shows it ([`stream_shape`]). A body the
-    /// stream cannot show opaque is read whole: the batch door judges one
-    /// that stays in its row.
-    fn finish(mut self) -> (AssetBodyFacts, StreamShape, StreamKnown) {
+    /// The body's facts, what its stream shows it, whether it is UTF-8
+    /// text, and the values custody holds that it carries. A body with
+    /// UTF-8 text in it, or a hit of the write door's stream rules, is
+    /// interpreted ([`StreamShape::Interpreted`]) unless an owning adapter's
+    /// tag leads it; any other is as its head shows it ([`stream_shape`]).
+    fn finish(mut self) -> (AssetBodyFacts, StreamShape, bool, StreamKnown) {
         let facts = AssetBodyFacts {
             blake3: *self.hasher.finalize().as_bytes(),
             len: self.len,
             xxh32: self.xxh32.digest(),
         };
-        let shape = if self.utf8.text() || self.secrets.finish().is_some() {
-            StreamShape::Row
-        } else {
-            stream_shape(&self.head)
-        };
+        let text = self.utf8.text();
+        let shape = stream_shape(&self.head, text, self.secrets.finish().is_some());
         let known = self
             .known
             .map_or_else(StreamKnown::default, KnownStreamFinder::finish);
-        (facts, shape, known)
+        (facts, shape, text, known)
     }
 }
 
@@ -180,25 +219,37 @@ enum StreamShape {
     /// A MessagePack map or array leads it (a record, or a pack source's
     /// envelope): judged whole before it is a body file (FIX 12150).
     MessagePack,
-    /// A body a reader interprets: it stays in its row.
+    /// Text, a container or a body a stream rule hits: a body file the
+    /// batch door's secret scan and mask read whole (FIX 22075).
+    Interpreted,
+    /// An owning adapter's carrier, whose readers read its row: it stays in
+    /// its row.
     Row,
 }
 
-/// What a body's `head` shows it: an owning adapter's tag (each names
-/// itself `oneiron.` at the head, one byte in at most) or a ZIP, gzip or
-/// PDF container stays in its row; a MessagePack map or array is judged
-/// whole; any other head is opaque.
-fn stream_shape(head: &[u8]) -> StreamShape {
+/// What a body's `head` shows it. An owning adapter's carrier stays in its
+/// row: each names itself `oneiron.` at the head, one byte in at most, or,
+/// an agent's birth source, in its canonical JSON's leading format. Text and
+/// a ZIP, gzip or PDF container are interpreted. A body a stream rule of the
+/// write door hits (`hit`) is interpreted too, unless MessagePack leads it:
+/// that one stays in its row, as before, where the batch door judges it and
+/// a record's stored-row readers read it. Any other MessagePack map or
+/// array is judged whole; any other head is opaque.
+fn stream_shape(head: &[u8], text: bool, hit: bool) -> StreamShape {
     let Some(&lead) = head.first() else {
         return StreamShape::Row;
     };
     let tagged = |bytes: &[u8]| bytes.starts_with(b"oneiron.");
+    let messagepack = matches!(lead, 0x80..=0x9f | 0xdc..=0xdf);
     if tagged(head)
         || head.get(1..).is_some_and(tagged)
-        || crate::batch::secret_scan::is_container(head)
+        || head.starts_with(b"{\"format\":\"oneiron.")
+        || (hit && messagepack && !text)
     {
         StreamShape::Row
-    } else if matches!(lead, 0x80..=0x9f | 0xdc..=0xdf) {
+    } else if text || hit || crate::batch::secret_scan::is_container(head) {
+        StreamShape::Interpreted
+    } else if messagepack {
         StreamShape::MessagePack
     } else {
         StreamShape::Opaque
@@ -260,6 +311,16 @@ fn judge_messagepack(file: &BodyFile, len: u64) -> Result<Judged> {
     } else {
         Judged::Row(None)
     })
+}
+
+/// Whether a staged text body is what an agent's birth source decoder reads
+/// as one, valid or not, read through as it does: its validator and
+/// readers read its row, so it stays there (FIX 22075).
+fn names_birth_source(file: &BodyFile, len: u64) -> bool {
+    crate::agent_def::is_birth_source_candidate(io::BufReader::with_capacity(
+        LINE_INDEX_BLOCK_BYTES as usize,
+        FileFromStart::new(file, len),
+    ))
 }
 
 /// A body file read from its start by range, whatever its descriptor's
@@ -491,10 +552,11 @@ impl crate::Vault {
                 spill = Some(opened);
             }
         }
-        let (facts, shape, known) = meter.finish();
+        let (facts, shape, text, known) = meter.finish();
         let staged = |body| StagedAssetBody {
             facts,
             mime: mime.map(str::to_owned),
+            text,
             body,
             key: None,
             known: StreamKnown::default(),
@@ -518,6 +580,13 @@ impl crate::Vault {
         };
         let kind = match shape {
             StreamShape::Opaque if ASSET_FILE_PLANE && mint.is_some() => AssetFileKind::Opaque,
+            StreamShape::Interpreted
+                if ASSET_FILE_PLANE
+                    && mint.is_some()
+                    && !(text && names_birth_source(&held, facts.len)) =>
+            {
+                AssetFileKind::Interpreted
+            }
             StreamShape::MessagePack if ASSET_FILE_PLANE && mint.is_some() => {
                 match judge_messagepack(&held, facts.len)
                     .inspect_err(|_| dir.discard(spilled.temp()))?
@@ -545,7 +614,14 @@ impl crate::Vault {
         let key = spilled.publish(&dir)?;
         Ok(StagedAssetBody {
             key,
-            known,
+            // An interpreted file's values are placed by the batch door, in
+            // its text and in each member, as a body in its row is (FIX
+            // 22075): its stream's root matches mark nothing.
+            known: if kind == AssetFileKind::Interpreted {
+                StreamKnown::default()
+            } else {
+                known
+            },
             _pin: Some(pin),
             ..staged(Staged::File { file: held, kind })
         })
@@ -597,8 +673,11 @@ impl crate::Vault {
                 mime: staged.mime.clone(),
             }
             .encode()?;
-            batch
-                .put_asset_file(id, occurred, learned_at, &manifest, staged.facts)
+            staged
+                .read_by_batch_door(
+                    id,
+                    batch.put_asset_file(id, occurred, learned_at, &manifest, staged.facts),
+                )?
                 .apply(txn)?;
             // A file's new mask spans refresh the repo index copies its bytes
             // derive (FIX 7608 slice 3).
@@ -666,14 +745,17 @@ impl crate::Vault {
                 mime: staged.mime.clone(),
             }
             .encode()?;
-            batch.put_replicated_asset_file(
+            staged.read_by_batch_door(
                 id,
-                occurred,
-                learned_at,
-                Some(row_version),
-                &manifest,
-                staged.facts,
-            )
+                batch.put_replicated_asset_file(
+                    id,
+                    occurred,
+                    learned_at,
+                    Some(row_version),
+                    &manifest,
+                    staged.facts,
+                ),
+            )?
         } else {
             let bytes = match &staged.body {
                 Staged::Inline(bytes) => std::borrow::Cow::Borrowed(bytes.as_slice()),
