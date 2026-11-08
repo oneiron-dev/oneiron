@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1380 code-mode rows (1337 host rows, 43 run rows), 4846 declarations.
-// Replies: 1188 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1383 code-mode rows (1340 host rows, 43 run rows), 4849 declarations.
+// Replies: 1191 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -326,7 +326,7 @@ declare namespace Sdk {
   type TasksSection = { rows: TaskRow[]; overflow?: TasksOverflow | null };
   type ShapeCard = { seed_id?: string | null; counts: Record<string, number>; open_applies: number; reach: ShapeReach; line: string };
   type AttemptId = { bytes: number[] };
-  type TaskRouteOutcome = { DreamerAttempt: { attempt_ref: AttemptId } } | { AgentDispatch: { attempt_ref: AttemptId; agent_def_ref: EntityId } } | { PeerSyncedOnly: { actor_ref: EntityId } } | { ChildAddressed: { actor_ref: EntityId } } | { HumanFollowup: { actor_ref: EntityId } };
+  type TaskRouteOutcome = { DreamerAttempt: { attempt_ref: AttemptId } } | { AgentDispatch: { attempt_ref: AttemptId; agent_def_ref: EntityId } } | { PeerSyncedOnly: { actor_ref: EntityId } } | { ChildAddressed: { actor_ref: EntityId } } | { HumanFollowup: { actor_ref: EntityId } } | { WatchTick: { due_at: number } };
   type TaskAskHandle = { group_ref: EntityId };
   type TaskPhase = { phase: "proposed"; pending: boolean } | { phase: "rejected" } | { phase: "queued" } | { phase: "working"; started_at: number } | { phase: "blocked"; since: number; on: EntityId[] } | { phase: "interrupted" } | { phase: "terminal"; disposition: TaskTerminalDisposition } | { phase: "asked"; settled: boolean };
   type TypeRef = { node_id: EntityId; tree_version: number };
@@ -412,7 +412,7 @@ declare namespace Sdk {
   type ComposerStamp = { seat: string; one_liner_digest: string; lens_refs?: EntityId[]; at: number };
   type QueueTaskBrief = { schema: number; type_ref: TypeRef; objective: string; intent: BriefIntent; constraints?: BriefConstraints; context?: BriefContext; success: DoneMeans; settled?: EntityId[]; escalation: EscalationRule; project_ref?: EntityId | null; composed?: ComposerStamp | null };
   type TaskTtl = { deadline_at: number };
-  type TaskCreateRequest = { spec: unknown; label?: string | null; assignee?: TaskAssignee | null; intent_key?: string | null; brief?: QueueTaskBrief | null; ttl?: TaskTtl | null; parent_ref?: string | null; due_at?: number | null };
+  type TaskCreateRequest = { spec: unknown; label?: string | null; assignee?: TaskAssignee | null; intent_key?: string | null; brief?: QueueTaskBrief | null; ttl?: TaskTtl | null; parent_ref?: string | null; due_at?: number | null; watch?: boolean };
   type TaskCreateReceipt = { task_ref?: EntityId | null; proposal_ref?: EntityId | null; approval: ClaimApprovalStatus; effected: boolean; route?: TaskRouteOutcome | null; task_record?: RecordRef | null; proposal_record?: RecordRef | null };
   type TaskWaveRequest = { epic_task_ref: string; planner_ref: string; objective: string; constraints?: unknown };
   type TaskWaveReceipt = { attempt_ref: string; state: string };
@@ -2612,8 +2612,8 @@ declare namespace Sdk {
   type CodeOpProvenance = { turn?: EntityId | null; activity?: EntityId | null; intent?: EntityId | null; substrate_ref?: EntityId | null; reasoning_effort?: string | null };
   type CriticLens = { id: string; prompt_contract: string; output_schema: string; hard_check: boolean; domain: string };
   type LensCatalog = { schema_version: number; lenses: CriticLens[] };
-  type CodeProposalSubmitRequest = { repo: EntityId; session: EntityId; provenance_claim: EntityId; path: string; content: number[]; message: string; op_provenance: CodeOpProvenance; catalog?: LensCatalog | null; repair_of?: EntityId | null };
-  type CodeProposalSubmitted = { proposal: EntityId; admission_receipt: EntityId; repo: EntityId; actor: EntityId; session: EntityId; provenance_claim: EntityId; base: string; status: RepoProposalStatus };
+  type CodeProposalSubmitRequest = { repo: EntityId; session: EntityId; provenance_claim: EntityId; path: string; content: number[]; message: string; op_provenance: CodeOpProvenance; catalog?: LensCatalog | null };
+  type CodeProposalSubmitted = { proposal: EntityId; repo: EntityId; actor: EntityId; session: EntityId; provenance_claim: EntityId; base: string; status: RepoProposalStatus };
   type CodeProposalRereviewRequest = { original: EntityId; change: CodeProposalSubmitRequest };
   type CodeConflictRecordRequest = { repo: EntityId; branch_subject: EntityId; branch: string; left_proposal: EntityId; right_proposal: EntityId };
   type CodeConflictView = { open: boolean; conflict: EntityId; branch_subject: EntityId; repo_ref: string; branch: string; base_tree: string; left_tree: string; right_tree: string; paths: string[]; proposals: EntityId[]; task?: EntityId | null; held?: string | null };
@@ -2629,8 +2629,7 @@ declare namespace Sdk {
   type CodeProposalReviewRequest = { proposal: EntityId; artifact_id: string; run_id: string; attempt: EntityId; lens_id: string; domain: string; model_id: string; model_revision?: string | null; calibration: LearningCell; verdict: CritiqueVerdict; severity: CritiqueSeverity; hard_check_passed?: boolean | null; evidence: EntityId[]; suggested_edit?: string | null };
   type RepoProposalDecision = "approve" | "reject";
   type RepoProposalSettlement = { receipt: EntityId; actor?: EntityId | null; decision: RepoProposalDecision; settled_at: number };
-  type CodeProposalReplacementView = { receipt: EntityId; source: EntityId; replacement: EntityId; replacement_base: string };
-  type CodeProposalSettlementView = { proposal: EntityId; status: RepoProposalStatus; reviews: number; settlement?: RepoProposalSettlement | null; conflict?: EntityId | null; task?: EntityId | null; parents: EntityId[]; mutation_seq?: number | null; resolution?: EntityId | null; admission_receipt?: EntityId | null; attempt_receipts: EntityId[]; repair_of?: CodeProposalReplacementView | null; replaced_by?: CodeProposalReplacementView | null };
+  type CodeProposalSettlementView = { proposal: EntityId; status: RepoProposalStatus; reviews: number; settlement?: RepoProposalSettlement | null; conflict?: EntityId | null; task?: EntityId | null; parents: EntityId[]; mutation_seq?: number | null; resolution?: EntityId | null };
   type CodeProposalSettleRequest = { proposal: EntityId; decision: RepoProposalDecision };
   type CodeProposalSettlementRequest = { proposal: EntityId };
   type CodeRepoRequest = { repo: EntityId };
@@ -2896,7 +2895,7 @@ declare namespace Sdk {
   type BatchState = "Queued" | "Staged" | "Ready" | "Landing" | "HeadAdvanced" | "GreenAdvanced" | "Quarantined" | "RollingBack" | "RolledBack" | "Cancelled";
   type MergeQueuePathView = { mask: number; commit: string; tree: string; verdict_ref?: string | null };
   type AffectedTests = { packages: string[]; targets: Record<string, string[]> };
-  type MergeQueueBatchView = { batch_ref: string; baseline_ref: string; expected_head: string; base_green: string; proposals: string[]; state: BatchState; paths: MergeQueuePathView[]; landed_head?: string | null; slow_verdict_ref?: string | null; quarantine?: Quarantine | null; selected_tests: AffectedTests; admission_receipt?: EntityId | null; completion_receipt?: EntityId | null; proposal_admission_receipts: EntityId[] };
+  type MergeQueueBatchView = { batch_ref: string; baseline_ref: string; expected_head: string; base_green: string; proposals: string[]; state: BatchState; paths: MergeQueuePathView[]; landed_head?: string | null; slow_verdict_ref?: string | null; quarantine?: Quarantine | null; selected_tests: AffectedTests };
   type MergeQueueBatchRequest = { repo: EntityId; batch_ref: string };
   type MergeQueueObserveRequest = { repo: EntityId; batches: string[] };
   type CommandOutput = { status: number; stdout: number[]; stderr: number[] };
@@ -2956,6 +2955,9 @@ declare namespace Sdk {
   type AgentVerbClassesView = { manifest_ref: string; body_hash: string; classes: AgentVerbClassRow[] };
   type AgentVerbClassesConfigureRequest = { expected_body_hash: string; classes: AgentVerbClassRow[] };
   type AgentVerbClassesReceipt = { configuration: AgentVerbClassesView; receipt_ref: string };
+  type AgentTier = "read" | "propose" | "full";
+  type OAuthAuthorizationAnswer = { request_ref: EntityId; allow: boolean; tier?: AgentTier | null; world_ref?: EntityId | null };
+  type OAuthAuthorizationAnswered = { request_ref: EntityId; allowed: boolean; agent?: EntityId | null; grant_ref?: EntityId | null; tier?: AgentTier | null; world_ref?: EntityId | null };
   type GitPushRepo = { repo: EntityId; project: EntityId };
   type GitPushGrantMintInput = { member: EntityId; repos: GitPushRepo[]; expires_at?: number | null };
   type GitPushGrantView = { grant_ref: EntityId; member: EntityId; repos: GitPushRepo[]; delegated_by: EntityId; expires_at?: number | null; stands: boolean; revoke_command: string };
@@ -2986,7 +2988,7 @@ declare namespace Sdk {
   type RepoViewsReadInput = { work: EntityId; path: string; why?: string | null };
   type RepoViewsReadOutput = { work: EntityId; path: string; bytes: number[]; sha256: string };
   type RepoMergeQueueObserveInput = { work: EntityId };
-  type RepoQueueEntryView = { batch: string; work: EntityId; proposals: EntityId[]; declaration?: EntityId | null; state: BatchState; base_green: string; expected_head: string; landed_head?: string | null; blockers: EntityId[]; admission_receipt?: EntityId | null; completion_receipt?: EntityId | null; proposal_admission_receipts: EntityId[] };
+  type RepoQueueEntryView = { batch: string; work: EntityId; proposals: EntityId[]; declaration?: EntityId | null; state: BatchState; base_green: string; expected_head: string; landed_head?: string | null; blockers: EntityId[] };
   type RepoMergeQueueObserveOutput = { work: EntityId; repo: EntityId; ref: string; base_green: string; head_commit: string; green_commit: string; green_moved: boolean; entries: RepoQueueEntryView[] };
   type RepoSnapshotsIngestInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string };
   type RepoSnapshotsIngestOutput = RepoSnapshotView;
@@ -2999,8 +3001,8 @@ declare namespace Sdk {
   type RepoSymbolsRenewOutput = RepoSymbolDeclarationView;
   type RepoSymbolsReleaseInput = { work: EntityId; declaration: EntityId };
   type RepoSymbolsReleaseOutput = { work: EntityId; declaration: EntityId; task: EntityId };
-  type RepoProposalSubmitInput = { work: EntityId; path: string; content: number[]; message: string; declaration?: EntityId | null; repair_of?: EntityId | null };
-  type RepoProposalSubmitOutput = { proposal: EntityId; admission_receipt: EntityId; work: EntityId; path: string; base_green: string; base_snapshot: string; session: EntityId; provenance_claim: EntityId; declaration?: EntityId | null; status: RepoProposalStatus };
+  type RepoProposalSubmitInput = { work: EntityId; path: string; content: number[]; message: string; declaration?: EntityId | null };
+  type RepoProposalSubmitOutput = { proposal: EntityId; work: EntityId; path: string; base_green: string; base_snapshot: string; session: EntityId; provenance_claim: EntityId; declaration?: EntityId | null; status: RepoProposalStatus };
   type RepoMergeQueueEnqueueInput = { work: EntityId; proposals: EntityId[]; declaration?: EntityId | null };
   type RepoMergeQueueEnqueueOutput = RepoQueueEntryView;
   type RepoExportInput = { repo: EntityId; ref: string; checkout: string; epoch: number; revision: EntityId; expected_old_oid?: string | null };
@@ -3422,6 +3424,7 @@ declare namespace Sdk {
   type SkillPackOutcomeRequest = { attempt_receipt: string; outcome_receipt: string; succeeded: boolean; axis: string; at: number; goal_revision?: string | null };
   type SkillPackOutcomeProjection = { receipt: LateCreditReceipt; persisted: boolean };
   type SkillPackCreditRequest = { receipt_id: string };
+  type ModelResponsesStoreSettings = { responses_store: boolean };
   type SeatPrecedence = "narrow_only" | "seat_override";
   type DescriptionSource = "owner" | "measured" | "benchmarks" | "vendor";
   type SeatPolicy = { default_reasoning_ladder: ReasoningEffort[]; default_plain_ladder: ReasoningEffort[]; gemini_ladder: ReasoningEffort[]; model_ladders?: Record<string, ReasoningEffort[]>; vault_default?: ReasoningEffort | null; purpose_defaults?: Record<string, ReasoningEffort>; global_default?: ReasoningEffort | null; vault_ceiling: ReasoningEffort; precedence: SeatPrecedence; evidence_order: DescriptionSource[]; facet_max_bytes: number; line_max_bytes: number };
@@ -6037,7 +6040,7 @@ declare const vault: Sdk.VaultHost & {
       observe(input: Sdk.MergeQueueObserveRequest): Promise<Sdk.MergeQueueObservation | StoredResult>;
       /** Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased. */
       recover(input: Sdk.MergeQueueRepoRequest): Promise<Sdk.MergeQueuePointersView | StoredResult>;
-      /** Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. The two batches are linked once; a retry returns the same batch. */
+      /** Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written. */
       requeue_survivors(input: Sdk.MergeQueueBatchRequest): Promise<Sdk.MergeQueueRequeueView | StoredResult>;
       review_policy: {
         /** Read the vault's opt-in review policy for merge queue work and the mode inherited work is in: none set lands on green through the same checks; an unreadable row holds. A live Owner, or one covering Grant. */
@@ -6149,7 +6152,7 @@ declare const vault: Sdk.VaultHost & {
       definitions(input: Sdk.CodeSnapshotDefinitionsRequest): Promise<Sdk.CodeSnapshotDefinitionsView | StoredResult>;
       /** Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes. */
       neighbors(input: Sdk.CodeSnapshotNeighborsRequest): Promise<Sdk.CodeSnapshotNeighborsView | StoredResult>;
-      /** Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver. */
+      /** Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing. */
       release(input: Sdk.CodeSymbolsTaskRequest): Promise<Sdk.CodeSymbolsReleased | StoredResult>;
       /** Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only. */
       renew(input: Sdk.CodeSymbolsTaskRequest): Promise<Sdk.CodeSymbolLeaseView | StoredResult>;
@@ -7132,6 +7135,12 @@ declare const vault: Sdk.VaultHost & {
     /** Reads NOTE birth, current version, fork parent and frontier links, proposal membership, verdicts and durable head-move receipts. */
     version_tree(input: Sdk.NoteAccessRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteVersionTree | null> | StoredResult>;
   };
+  oauth: {
+    authorization: {
+      /** The owner allows, at a tier and optional world, or denies one outside app's pending OAuth sign-in request for this vault's MCP endpoint. */
+      answer(input: Sdk.OAuthAuthorizationAnswer): Promise<Sdk.OAuthAuthorizationAnswered | StoredResult>;
+    };
+  };
   off_record: {
     artifacts: {
       /** A holder of this vault's write grant explicitly saves one selected scratch NOTE/CLAIM and its full document, keeping original authorship and supplied evidence; after commit the room sees a typed notice naming the saver. */
@@ -7807,6 +7816,14 @@ declare const vault: Sdk.VaultHost & {
     model_pack: ((input: Sdk.EmptyRequest) => Promise<Sdk.ModelPackSetting | StoredResult>) & {
       /** Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice. */
       replace(input: Sdk.ModelPackPreference): Promise<Sdk.ModelPackSetting | StoredResult>;
+    };
+    models: {
+      responses_store: {
+        /** Reads the owner's Responses store switch from the serving vault. */
+        read(input: Sdk.EmptyRequest): Promise<Sdk.ModelResponsesStoreSettings | StoredResult>;
+        /** Sets the owner's Responses store switch, persisting it before updating this server's live providers. */
+        set(input: Sdk.ModelResponsesStoreSettings): Promise<Sdk.ModelResponsesStoreSettings | StoredResult>;
+      };
     };
     wake_policy: {
       /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. */

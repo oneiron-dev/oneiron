@@ -841,6 +841,7 @@ vaultAgentsGrantsMint(input: unknown): unknown
 vaultAgentsGrantsRevoke(input: unknown): unknown
 vaultAgentsVerbClassesGet(input: unknown): unknown
 vaultAgentsVerbClassesConfigure(input: unknown): unknown
+vaultOauthAuthorizationAnswer(input: unknown): unknown
 vaultRepoGitPushMint(input: unknown): unknown
 vaultRepoGitPushRevoke(input: unknown): unknown
 vaultConnectorsReadGrantsGrant(input: unknown): unknown
