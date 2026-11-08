@@ -47,6 +47,7 @@ impl HostSelfDispatcher<'_> {
     ) -> Result<SelfDispatchOutcome> {
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
                 effect: SelfEffect::WorkflowDispatch,
                 outcome: AGENT_VERB_SESSION_BOUND.to_owned(),
                 reason_codes: Vec::new(),

@@ -327,6 +327,9 @@ pub enum ArtifactAskUnits {
     /// lands as a Word comment quoting it.
     Paragraphs {
         blocks: Vec<String>,
+        /// Native story for these local ids, omitted for the document body.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<oneiron_docedit::docx_body::DocxStoryScope>,
         /// The comments' author name.
         author: String,
         /// The display words, severity words included.
@@ -1012,6 +1015,7 @@ impl Memory<'_> {
             )?,
             ArtifactAskUnits::Paragraphs {
                 blocks,
+                scope,
                 author,
                 labels,
             } => vault.ask_blob_artifact_paragraphs(
@@ -1019,6 +1023,7 @@ impl Memory<'_> {
                 &ParagraphAsk {
                     ask,
                     blocks,
+                    scope: scope.as_ref(),
                     author,
                     labels,
                 },
