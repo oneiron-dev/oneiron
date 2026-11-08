@@ -17,15 +17,13 @@ use oneiron::EntityId;
 use oneiron::claim::ScopedReadReceipt;
 use oneiron::code_run::vault_read::VaultReadMethod;
 use oneiron::memory::{MemoryError, RewriteAdmit};
-use oneiron::runtime_hooks::InvocationId;
-use oneiron::runtime_hooks::verb::InvocationRelease;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 use super::facade::{
-    FacadeApiError, FacadeCall, details_on_device, facade_hooks_pre_admitting, replayed_value,
-    row_hooks_abort, row_hooks_post,
+    FacadeApiError, FacadeCall, details_on_device, facade_hooks_pre_admitting, released_hook_stop,
+    released_saved_result, row_hooks_abort, row_hooks_post,
 };
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, EnvelopedApiError};
@@ -211,7 +209,7 @@ impl RouteControls {
 /// facade's refusal. A retry of a read that settlement's drain already ran
 /// gets the drained result in a `Completed` stop, and that result is
 /// released for the caller now before the stop is answered
-/// (`released_stop`, FIX 1435). A request with route controls saves no
+/// (`released_completed`, FIX 1435). A request with route controls saves no
 /// credential: an ask saves only the native args, so only the caller's
 /// retry runs it again.
 pub(crate) async fn native_read_hooked<T, A, F, Fut>(
@@ -251,7 +249,11 @@ where
     let (hooks, _) =
         facade_hooks_pre_admitting(server, call, method.tool_name(), args, check, durable)
             .await
-            .map_err(|stopped| released_stop(server, call.auth(), method, stopped))?;
+            .map_err(|stopped| {
+                released_hook_stop(server, stopped, |rows, saved| {
+                    released_completed(server, call.auth(), method, rows, saved)
+                })
+            })?;
     let accepted = accepted
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -280,28 +282,11 @@ where
     }
 }
 
-/// A hook's `stopped` refusal of a read of `method`, for `auth`, its caller
-/// now. A `Completed` stop carries the result settlement's drain saved for
-/// this retry: it is released by [`released_completed`] before the stop is
-/// answered (FIX 1435). Any other refusal stays as it is.
-fn released_stop(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    method: VaultReadMethod,
-    mut stopped: FacadeApiError,
-) -> FacadeApiError {
-    if let Some((invocation, result)) = stopped.completed_hook_result() {
-        let saved = std::mem::take(result);
-        *result = released_completed(server, auth, method, invocation, saved);
-    }
-    stopped
-}
-
-/// The `result` that settlement's drain saved under `invocation` for a
-/// read of `method`, as `auth`, its caller now, may read it (FIX 1435). The
-/// rows the route listed it derived from are restored from the saved call
-/// (`Vault::verb_hook_saved_producers`). The result and those rows meet the
-/// facade's release of a kept answer ([`replayed_value`]): a row the
+/// The `result` that settlement's drain saved for a retry of a read of
+/// `method`, as `auth`, its caller now, may read it (FIX 1435). `rows` are
+/// the rows the route listed it derived from, restored from the saved call
+/// ([`released_hook_stop`]). The result and those rows meet the facade's
+/// release of a saved answer ([`released_saved_result`]): a row the
 /// caller's credential no longer reads, a row erased since, or a row a
 /// world withheld from where the answer goes keeps the result on this
 /// device. A result saved with no rows is withheld on this device too: its
@@ -312,28 +297,13 @@ fn released_completed(
     server: &SyncServer,
     auth: &CoreAuth,
     method: VaultReadMethod,
-    invocation: &str,
+    rows: Option<Vec<EntityId>>,
     result: Value,
 ) -> Value {
-    let producers = InvocationId::parse_hex(invocation).and_then(|invocation| {
-        server
-            .vault
-            .verb_hook_saved_producers(invocation)
-            .inspect_err(
-                |error| tracing::warn!(%error, "a drained native read's rows did not read"),
-            )
-            .ok()
-            .flatten()
-    });
-    if producers.is_none() {
+    if rows.is_none() {
         return details_on_device();
     }
-    let release = InvocationRelease {
-        peer: auth.peer(),
-        value: result,
-        rows: producers,
-    };
-    replayed_value(&server.vault, auth, method.tool_name(), release)
+    released_saved_result(&server.vault, auth, method.tool_name(), rows, result)
 }
 
 /// The rewrite `args` the pre chain left, admitted by the route's own

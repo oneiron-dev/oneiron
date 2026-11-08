@@ -247,7 +247,11 @@ pub(super) async fn facade_hooks_pre(
 
 /// [`facade_hooks_pre`], beside each hook `ai.verdict` decision the chain
 /// answered (FIX 10425), for a row whose answer counts its hooks' decisions
-/// among its own ([`facade_hooks_post_counted`]).
+/// among its own ([`facade_hooks_post_counted`]). A retry's `Completed`
+/// stop carries the result settlement's drain saved for it. That result is
+/// released for the caller now, by the rows it was saved beside, before the
+/// stop reaches the row's door or the wire ([`released_saved_result`], FIX
+/// 21054).
 pub(super) async fn facade_hooks_pre_counted(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -255,7 +259,13 @@ pub(super) async fn facade_hooks_pre_counted(
     value: serde_json::Value,
 ) -> Result<(VerbHookPre, Vec<serde_json::Value>), FacadeApiError> {
     let check = facade_rewrite_admit(server, call.auth(), &value);
-    facade_hooks_pre_admitting(server, call, verb, value, check, true).await
+    facade_hooks_pre_admitting(server, call, verb, value, check, true)
+        .await
+        .map_err(|stopped| {
+            released_hook_stop(server, stopped, |rows, saved| {
+                released_saved_result(server.vault(), call.auth(), verb, rows, saved)
+            })
+        })
 }
 
 /// [`facade_hooks_pre_counted`], with `check` as the admission a rewrite
