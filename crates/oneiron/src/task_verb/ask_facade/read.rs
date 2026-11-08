@@ -248,6 +248,36 @@ impl Memory<'_> {
         &self,
         handle: &TaskAskHandle,
     ) -> MemoryResult<Vec<crate::llm::decision::questions::CalibrationPair>> {
+        self.require_outcome_owner(handle)?;
+        Ok(crate::llm::decision::questions::calibration_pairs(
+            self.vault(),
+            self.actor(),
+            handle.group_ref,
+            self.destination(),
+        )?)
+    }
+
+    /// Owner-scoped calibration per route: the ask's calibration pairs, read
+    /// as [`Self::tasks_ask_outcomes`] reads them, grouped by how each answer
+    /// was returned, each group's isotonic map fitted on half its source
+    /// cases and measured on the other half. Advice only; nothing reads it
+    /// back.
+    pub fn tasks_ask_route_calibration(
+        &self,
+        handle: &TaskAskHandle,
+    ) -> MemoryResult<crate::llm::decision::questions::RouteCalibrationReport> {
+        self.require_outcome_owner(handle)?;
+        Ok(crate::llm::decision::questions::route_calibration_report(
+            self.vault(),
+            self.actor(),
+            handle.group_ref,
+            self.destination(),
+        )?)
+    }
+
+    /// The caller is the bound actor that asked `handle`: only it reads the
+    /// ask's outcomes.
+    fn require_outcome_owner(&self, handle: &TaskAskHandle) -> MemoryResult<()> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let txn = self
             .vault()
@@ -263,13 +293,7 @@ impl Memory<'_> {
                 "only the asking actor may read outcomes",
             ));
         }
-        drop(txn);
-        Ok(crate::llm::decision::questions::calibration_pairs(
-            self.vault(),
-            self.actor(),
-            handle.group_ref,
-            self.destination(),
-        )?)
+        Ok(())
     }
 }
 
