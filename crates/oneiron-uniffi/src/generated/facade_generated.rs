@@ -305,6 +305,11 @@ export_facade! {
     let output = client.self_grants_answer(&input)?;
     crate::codec::lift_record("self.grants.answer", &output)
 };
+"vault.proactivity.digest.get" => fn vault_proactivity_digest_get(&self, input: DigestReadRequest) -> Option<ProactivityDigestView> = |client| {
+    let input: oneiron::dreamer_runner::maintenance::digest::DigestReadRequest = crate::codec::lower_record("vault.proactivity.digest.get", input)?;
+    let output = client.vault_proactivity_digest_get(&input)?;
+    crate::codec::lift_record("vault.proactivity.digest.get", &output)
+};
 "vault.personas.preview" => fn vault_personas_preview(&self, input: PersonaSnapshotPreviewRequest) -> PersonaSnapshotPreview = |client| {
     let input: oneiron::task_verb::sdk::PersonaSnapshotPreviewRequest = crate::codec::lower_record("vault.personas.preview", input)?;
     let output = client.vault_personas_preview(&input)?;
@@ -3332,10 +3337,30 @@ export_facade! {
     let output = client.vault_hooks_regen_get(&input)?;
     crate::codec::lift_record("vault.hooks.regen.get", &output)
 };
+"vault.hooks.regen.history" => fn vault_hooks_regen_history(&self, input: HookRegenHistoryRequest) -> Vec<HookRegenReceipt> = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenHistoryRequest = crate::codec::lower_record("vault.hooks.regen.history", input)?;
+    let output = client.vault_hooks_regen_history(&input)?;
+    crate::codec::lift_record("vault.hooks.regen.history", &output)
+};
+"vault.hooks.regen.revert" => fn vault_hooks_regen_revert(&self, input: HookRegenRevertRequest) -> PackPutReceipt = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenRevertRequest = crate::codec::lower_record("vault.hooks.regen.revert", input)?;
+    let output = client.vault_hooks_regen_revert(&input)?;
+    crate::codec::lift_record("vault.hooks.regen.revert", &output)
+};
+"vault.hooks.regen.run" => fn vault_hooks_regen_run(&self, input: HookRegenBindingRequest) -> Option<HookRegenView> = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenBindingRequest = crate::codec::lower_record("vault.hooks.regen.run", input)?;
+    let output = client.vault_hooks_regen_run(&input)?;
+    crate::codec::lift_record("vault.hooks.regen.run", &output)
+};
 "vault.hooks.regen.adopt" => fn vault_hooks_regen_adopt(&self, input: HookRegenAdoptRequest) -> PackPutReceipt = |client| {
     let input: oneiron::memory::hook_regen_doors::HookRegenAdoptRequest = crate::codec::lower_record("vault.hooks.regen.adopt", input)?;
     let output = client.vault_hooks_regen_adopt(&input)?;
     crate::codec::lift_record("vault.hooks.regen.adopt", &output)
+};
+"vault.hooks.regen.cancel" => fn vault_hooks_regen_cancel(&self, input: HookRegenCancelRequest) -> HookRegenCancel = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenCancelRequest = crate::codec::lower_record("vault.hooks.regen.cancel", input)?;
+    let output = client.vault_hooks_regen_cancel(&input)?;
+    crate::codec::lift_record("vault.hooks.regen.cancel", &output)
 };
 "vault.artifacts.publish_approval" => fn vault_artifacts_publish_approval(&self, input: ArtifactPublishRequest) -> ArtifactPublishApproval = |client| {
     let input: oneiron::artifact_hosting::door_types::ArtifactPublishRequest = crate::codec::lower_record("vault.artifacts.publish_approval", input)?;
@@ -6281,6 +6306,16 @@ export_facade! {
     let input: oneiron::code_run::fold_api::FoldHistoryRequest = crate::codec::lower_record("self.history", input)?;
     let output = client.self_history(&input)?;
     crate::codec::lift_record("self.history", &output)
+};
+"self.hooks.regen.adopt" => fn self_hooks_regen_adopt(&self, input: HookRegenAdoptRequest) -> PackPutReceipt = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenAdoptRequest = crate::codec::lower_record("self.hooks.regen.adopt", input)?;
+    let output = client.self_hooks_regen_adopt(&input)?;
+    crate::codec::lift_record("self.hooks.regen.adopt", &output)
+};
+"self.hooks.regen.get" => fn self_hooks_regen_get(&self, input: HookRegenBindingRequest) -> Option<HookRegenView> = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenBindingRequest = crate::codec::lower_record("self.hooks.regen.get", input)?;
+    let output = client.self_hooks_regen_get(&input)?;
+    crate::codec::lift_record("self.hooks.regen.get", &output)
 };
 "vault.runs.review" => fn vault_runs_review(&self, input: RunReviewRequest) -> RunReview = |client| {
     let input: oneiron::memory::run_review::RunReviewRequest = crate::codec::lower_record("vault.runs.review", input)?;

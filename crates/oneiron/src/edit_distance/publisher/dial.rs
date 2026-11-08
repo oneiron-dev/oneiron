@@ -87,6 +87,27 @@ pub(crate) fn publisher_enabled_in_txn(
     Ok(PUBLISHER_ENABLED_COMPILED_DEFAULT)
 }
 
+/// The key of the vault row the effective dial reads from: the owner's
+/// explicit dial, else the install profile's default. `None`: no row holds
+/// the dial and the compiled default stands.
+///
+/// # Errors
+///
+/// As [`publisher_enabled`].
+pub(crate) fn publisher_dial_row_ref_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<Option<String>> {
+    for table in [&ENABLED, &INSTALL_DEFAULT] {
+        if table.get(&vault.store, txn, &())?.is_some() {
+            return Ok(Some(
+                String::from_utf8_lossy(table.decl().prefix).into_owned(),
+            ));
+        }
+    }
+    Ok(None)
+}
+
 /// Sets the owner's explicit dial position.
 ///
 /// # Errors

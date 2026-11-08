@@ -274,7 +274,11 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultHooksReplay
         | Row::VaultHooksRegenDue
         | Row::VaultHooksRegenGet
+        | Row::VaultHooksRegenHistory
+        | Row::VaultHooksRegenRun
         | Row::VaultHooksRegenAdopt
+        | Row::VaultHooksRegenRevert
+        | Row::VaultHooksRegenCancel
         | Row::VaultLensesActivate
         | Row::VaultLensesDeactivate
         | Row::VaultAuthorityHandoffAlarms
