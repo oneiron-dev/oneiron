@@ -275,7 +275,7 @@ impl SyncConnection {
             .await?
         {
             return Err(SessionFault::Remote(format!(
-                "Promoted re-bootstrap not confirmed: {MAX_CONVERGENCE_ROUNDS} rounds in a row \
+                "Promoted re-bootstrap not confirmed: {MAX_CONVERGENCE_ROUNDS} asks in a row \
                  brought no window level"
             )));
         }
@@ -290,9 +290,11 @@ impl SyncConnection {
     }
 
     /// Strict server-frame pumps until `holds` is true of every key in
-    /// `keys`. The budget follows progress, so each of many windows gets its
-    /// answer: it ends only after `MAX_CONVERGENCE_ROUNDS` pumps in a row add
-    /// no key. `true` once every key holds.
+    /// `keys`. The home answers this socket's frames in order, so what these
+    /// keys wait for may come behind its answers to every earlier request,
+    /// for windows outside `keys` too: it reads on while the home sends
+    /// anything, and gives up only after `MAX_CONVERGENCE_ROUNDS` pumps in a
+    /// row read nothing. `true` once every key holds.
     async fn pump_until_each(
         &self,
         write: &mut WsSink,
@@ -302,31 +304,29 @@ impl SyncConnection {
         keys: &[WindowKey],
         holds: impl Fn(&SyncClient, &WindowKey) -> bool,
     ) -> Result<bool, SessionFault> {
-        let count = |client: &SyncClient| keys.iter().filter(|key| holds(client, key)).count();
-        let mut held = count(&*client);
-        let mut idle = 0;
-        while held < keys.len() {
-            if idle >= MAX_CONVERGENCE_ROUNDS {
+        let mut quiet = 0;
+        while !keys.iter().all(|key| holds(&*client, key)) {
+            if quiet >= MAX_CONVERGENCE_ROUNDS {
                 return Ok(false);
             }
-            self.pump_server_frames(read, write, client, event_tx, PumpBudget::standard(), true)
+            let received = self
+                .pump_server_frames(read, write, client, event_tx, PumpBudget::standard(), true)
                 .await?;
-            let now = count(&*client);
-            if now > held {
-                held = now;
-                idle = 0;
+            if received == 0 {
+                quiet += 1;
             } else {
-                idle += 1;
+                quiet = 0;
             }
         }
         Ok(true)
     }
 
-    /// Strict VV confirmation of `session`'s windows, its budget following
-    /// progress as [`Self::pump_until_each`]'s does: it reads on while any
-    /// window comes level, asks again for every window still pending only
-    /// after a pump brought none level, and gives up after
-    /// `MAX_CONVERGENCE_ROUNDS` such asks in a row. `true` once all confirm.
+    /// Strict VV confirmation of `session`'s windows. As in
+    /// [`Self::pump_until_each`], it reads on while the home sends anything:
+    /// the answers may come behind its answers to earlier requests. Only once
+    /// a pump reads nothing with windows still pending does it ask again for
+    /// each of them, and it gives up after `MAX_CONVERGENCE_ROUNDS` such asks
+    /// in a row that bring no window level. `true` once all confirm.
     async fn confirm_each(
         &self,
         write: &mut WsSink,
@@ -336,20 +336,24 @@ impl SyncConnection {
         session: &mut ConvergenceSession,
     ) -> Result<bool, SessionFault> {
         session.note_progress(client);
-        let mut idle = 0;
+        let mut asked = 0;
         while !session.all_converged() {
             let before = session.pending.len();
-            self.pump_server_frames(read, write, client, event_tx, PumpBudget::standard(), true)
+            let received = self
+                .pump_server_frames(read, write, client, event_tx, PumpBudget::standard(), true)
                 .await?;
             session.note_progress(client);
             if session.pending.len() < before {
-                idle = 0;
+                asked = 0;
                 continue;
             }
-            if idle >= MAX_CONVERGENCE_ROUNDS {
+            if received > 0 {
+                continue;
+            }
+            if asked >= MAX_CONVERGENCE_ROUNDS {
                 return Ok(false);
             }
-            idle += 1;
+            asked += 1;
             let frames = session.vector_requests(client).map_err(|e| {
                 SessionFault::Local(format!("Promoted re-bootstrap round failed: {e}"))
             })?;
