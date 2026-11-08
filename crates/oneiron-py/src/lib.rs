@@ -7006,6 +7006,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_devices_predecessor_name(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.devices.predecessor.name")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.devices.predecessor.name", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_origin_authority_get(
         &self,
         py: Python<'_>,

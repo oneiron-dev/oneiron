@@ -3676,6 +3676,11 @@ export_facade! {
     let output = client.vault_code_origin_publish_cancel(&input)?;
     crate::codec::lift_record("vault.code.origin.publish.cancel", &output)
 };
+"vault.devices.predecessor.name" => fn vault_devices_predecessor_name(&self, input: DevicePredecessor) -> DevicePredecessor = |client| {
+    let input: oneiron::memory::device_succession::DevicePredecessor = crate::codec::lower_record("vault.devices.predecessor.name", input)?;
+    let output = client.vault_devices_predecessor_name(&input)?;
+    crate::codec::lift_record("vault.devices.predecessor.name", &output)
+};
 "vault.code.origin.authority.get" => fn vault_code_origin_authority_get(&self, input: OriginRepoRequest) -> OriginAuthorityView = |client| {
     let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.authority.get", input)?;
     let output = client.vault_code_origin_authority_get(&input)?;

@@ -830,6 +830,9 @@ class Oneiron:
         def results(self) -> "Oneiron._VaultResultsVerbs":
             return Oneiron._VaultResultsVerbs(self._client)
         @property
+        def devices(self) -> "Oneiron._VaultDevicesVerbs":
+            return Oneiron._VaultDevicesVerbs(self._client)
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
         @property
@@ -4630,6 +4633,18 @@ class Oneiron:
         def slice(self, spec):
             """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
             return json.loads(_translate(lambda: self._client.vault_results_slice(json.dumps(spec))))
+    class _VaultDevicesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def predecessor(self) -> "Oneiron._VaultDevicesPredecessorVerbs":
+            return Oneiron._VaultDevicesPredecessorVerbs(self._client)
+    class _VaultDevicesPredecessorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def name(self, spec):
+            """Name a predecessor device key for this install under the owner's proof; pending predecessor sweeps run separately."""
+            return json.loads(_translate(lambda: self._client.vault_devices_predecessor_name(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

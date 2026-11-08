@@ -2558,6 +2558,12 @@ export class Oneiron {
       /** The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding. */
       slice: (input: Facade.ResultSliceRequest): Facade.ResultSliceView => this.#call(() => this.#client.vaultResultsSlice(input) as Facade.ResultSliceView),
     },
+    devices: {
+      predecessor: {
+        /** Name a predecessor device key for this install under the owner's proof; pending predecessor sweeps run separately. */
+        name: (input: Facade.DevicePredecessor): Facade.DevicePredecessor => this.#call(() => this.#client.vaultDevicesPredecessorName(input) as Facade.DevicePredecessor),
+      },
+    },
     agents: {
       /** The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
       create: (input: Facade.AgentDefinitionCreateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsCreate(input) as Facade.AgentDefinitionView),
