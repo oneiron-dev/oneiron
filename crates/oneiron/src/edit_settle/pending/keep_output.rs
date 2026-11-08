@@ -35,7 +35,7 @@ impl Vault {
         let provenance = BlobVersionProvenance::AgentRun {
             run_ref: row.proposal_ref.clone(),
         };
-        let (version, record, reconciliation) = self.with_write_txn_grouped(|wtxn| {
+        let (version, record, reconciliation, rebound) = self.with_write_txn_grouped(|wtxn| {
             let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
             if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
                 return Err(already_settled(&existing));
@@ -65,8 +65,9 @@ impl Vault {
                 learned_at,
                 row.producer_position(),
             )?;
+            let mut rebound = false;
             if let Some(hold) = &row.deck {
-                self.keep_deck_export_in_txn(
+                rebound = self.keep_deck_export_in_txn(
                     wtxn,
                     artifact_id,
                     hold,
@@ -90,8 +91,13 @@ impl Vault {
                 LINK.put(&self.store, wtxn, &key, &stamp.to_owned())?;
             }
             let reconciliation = VersionReconciliation::of(fork_parent, head.as_ref());
-            Ok((version, record, reconciliation))
+            Ok((version, record, reconciliation, rebound))
         })?;
+        let _ = rebound;
+        #[cfg(feature = "sync")]
+        if rebound {
+            self.notify_typed_body_document(*artifact_id);
+        }
         Ok(SettleSelectOutcome {
             stranded_proposal: None,
             version,
