@@ -14,13 +14,24 @@
 //! a new label is built by hand. One proposal per pattern; an approved,
 //! declined or deleted one suppresses the pattern's next filing.
 //!
+//! A proposal's claim stands where its notes were frozen (FIX 21886): its
+//! project stamp is their project, and its claim scope carries their consent
+//! scope, so a scoped reader admits it only where that project is admitted.
+//!
+//! A proposal stands only while what it quotes does (FIX 21885). One the owner
+//! has not reviewed is withdrawn, as an erase withdraws it, when a note it
+//! quotes is re-judged, cleared or withdrawn in the ledger's write, or when the
+//! judge revision that wrote one is displaced. Its pattern then files afresh
+//! from the notes it still holds, at the next pass. A note by a displaced
+//! judge revision never counts toward a filing.
+//!
 //! No clustering table holds note text. A re-judged note leaves its pattern
 //! in the ledger's write; an erased one also takes the proposal that quoted it
 //! (`erase_unclear_note_copies_in_txn`). A filed proposal keeps the entities
 //! its notes named, so an erase of one still takes it after a re-judgment
-//! removed the notes from the ledger (`erase_label_proposals_naming_in_txn`). A choice no rung answered (an
-//! exhausted budget, an outage) parks the pass where it stands; the next night
-//! resumes there.
+//! removed the notes from the ledger (`erase_label_proposals_naming_in_txn`).
+//! A choice no rung answered (an exhausted budget, an outage) parks the pass
+//! where it stands; the next night resumes there.
 
 mod store;
 
@@ -31,7 +42,8 @@ use serde_json::{Value, json};
 
 use self::store::{
     CURSOR, LabelCursor, MEMBER, NoteMember, NotePattern, NoteSupport, PATTERN, SUPPORT,
-    member_key, member_note, pattern_key, support_key, take_members_in_txn, unlink_in_txn,
+    member_key, member_note, note_prefix, pattern_key, support_key, take_members_in_txn,
+    unlink_in_txn,
 };
 use super::coach::{COACH_ATTRIBUTION_LABEL_PROPOSAL_PREDICATE, COACH_ATTRIBUTION_LABELS_FACET};
 use super::proposals;
@@ -50,7 +62,6 @@ use crate::skill_attribution::{
     UnclearAttribution, UnclearNote, UnclearReason, unclear_key, unclear_page_in_txn,
     unclear_row_in_txn,
 };
-use crate::store::Store;
 use crate::{Vault, WriteEnvelope};
 
 /// How many distinct outcomes a pattern's live notes must come from before
@@ -264,8 +275,8 @@ fn field(hash: &mut blake3::Hasher, bytes: &[u8]) {
     hash.update(bytes);
 }
 
-/// The scope a note is clustered within: its lane, consent scope and project.
-/// Two scopes never share a pattern, however alike their words.
+/// The scope a note is clustered within: its lane, consent scope, project and
+/// world. Two scopes never share a pattern, however alike their words.
 fn group_key(row: &UnclearAttribution) -> [u8; 32] {
     let mut hash = blake3::Hasher::new_derive_key("oneiron coach attribution-label group v1");
     field(&mut hash, row.lane.as_str().as_bytes());
@@ -287,7 +298,47 @@ fn group_key(row: &UnclearAttribution) -> [u8; 32] {
             hash.update(&[0]);
         }
     }
+    // A known world splits the group (FIX 22064); a note with none keeps the
+    // group it always had.
+    if let Some(world) = &row.context.world {
+        hash.update(&[1]);
+        hash.update(world.as_bytes());
+    }
     *hash.finalize().as_bytes()
+}
+
+/// Where a pattern's proposal claim stands (FIX 21886, 22064): the consent
+/// scope, project and world its notes were frozen in, which every note of one
+/// group shares. The project is the claim's project stamp (`scopeProjectId`);
+/// the consent scope rides as the claim scope's `scope`, as an edit-cost
+/// row's does; a world other than base reality is the claim's world. A note
+/// with none of them leaves the claim where an unscoped finding stands.
+fn claim_place(row: &UnclearAttribution) -> Option<proposals::FindingPlace> {
+    let world = row
+        .context
+        .world
+        .filter(|world| *world != crate::claim::base_world_id());
+    let scope = claim_scope(row);
+    (scope.is_some() || world.is_some()).then_some(proposals::FindingPlace { scope, world })
+}
+
+/// The opaque claim scope of a pattern's proposal: its notes' consent scope
+/// and project, or none when they recorded neither.
+fn claim_scope(row: &UnclearAttribution) -> Option<rmpv::Value> {
+    let mut entries = Vec::new();
+    if let Some(scope) = &row.context.scope {
+        entries.push((
+            rmpv::Value::from("scope"),
+            rmpv::Value::from(scope.as_str()),
+        ));
+    }
+    if let Some(project) = row.context.project {
+        entries.push((
+            rmpv::Value::from("scopeProjectId"),
+            rmpv::Value::Binary(project.as_bytes().to_vec()),
+        ));
+    }
+    (!entries.is_empty()).then_some(rmpv::Value::Map(entries))
 }
 
 /// The outcome a note counts as: the attempt it is about, else its own
@@ -463,6 +514,7 @@ impl Pass<'_> {
                             proposal: None,
                             filed: Vec::new(),
                             sources: Vec::new(),
+                            refile: false,
                         },
                     )?;
                     Some(id)
@@ -526,6 +578,9 @@ impl Pass<'_> {
         for (key, support) in SUPPORT.scan_from(&vault.store, &*txn, &held)? {
             let member = key[held.len()..].to_vec();
             match live_note_in_txn(vault, &*txn, &member)? {
+                // A displaced judge's note keeps its place and counts for
+                // nothing (FIX 21885).
+                Some((row, _)) if judged_by_displaced_in_txn(vault, &*txn, &row)? => {}
                 Some((row, index)) => live.push((member, support.outcome, row, index)),
                 None => stale.push(key),
             }
@@ -602,16 +657,41 @@ impl Pass<'_> {
             "installs_label": false,
         });
         let evidence: Vec<EntityId> = evidence.into_iter().collect();
-        let proposal = proposals::emit_in_txn(
+        let coach = crate::dreamer_runner::authority::coach_actor_id()?;
+        // A withdrawn proposal's content is erased: the pattern waits until
+        // its notes say something it has not filed (FIX 21885).
+        if proposals::finding_erased_in_txn(
             vault,
-            txn,
-            crate::dreamer_runner::authority::coach_actor_id()?,
+            &*txn,
+            coach,
             COACH_ATTRIBUTION_LABEL_PROPOSAL_PREDICATE,
             &value,
-            &evidence,
-            &self.envelope,
-            self.now,
-        )?;
+        )? {
+            return Ok(false);
+        }
+        let proposal = match claim_place(exemplar_row) {
+            Some(place) => proposals::emit_scoped_in_txn(
+                vault,
+                txn,
+                coach,
+                COACH_ATTRIBUTION_LABEL_PROPOSAL_PREDICATE,
+                &value,
+                &evidence,
+                &place,
+                &self.envelope,
+                self.now,
+            )?,
+            None => proposals::emit_in_txn(
+                vault,
+                txn,
+                coach,
+                COACH_ATTRIBUTION_LABEL_PROPOSAL_PREDICATE,
+                &value,
+                &evidence,
+                &self.envelope,
+                self.now,
+            )?,
+        };
         let named: BTreeSet<[u8; 16]> = live
             .iter()
             .flat_map(|(_, _, row, _)| {
@@ -620,6 +700,12 @@ impl Pass<'_> {
                     .iter()
                     .chain(&row.context.skill)
                     .chain(&row.context.project)
+                    .chain(
+                        row.context
+                            .world
+                            .iter()
+                            .filter(|world| **world != crate::claim::base_world_id()),
+                    )
                     .chain(&row.context.sources)
                     .map(|id| *id.as_bytes())
                     .collect::<Vec<_>>()
@@ -628,8 +714,47 @@ impl Pass<'_> {
         pattern.proposal = Some(*proposal.as_bytes());
         pattern.sources = named.into_iter().collect();
         pattern.filed = live.into_iter().map(|(member, ..)| member).collect();
+        pattern.refile = false;
         PATTERN.put(&vault.store, txn, &held, &pattern)?;
         Ok(true)
+    }
+
+    /// Files afresh each pattern whose proposal was withdrawn (FIX 21885):
+    /// its notes may not change again, so no settle would reach it. Each
+    /// pattern in its own write; one not due yet, or whose filing fails,
+    /// waits for the next pass. Answers how many it filed.
+    fn refile_withdrawn(&self) -> Result<usize> {
+        let vault = self.vault;
+        let owed: Vec<Vec<u8>> = {
+            let rtxn = vault.store.env.read_txn()?;
+            PATTERN
+                .iter_raw_from(&vault.store, &rtxn, &[])?
+                .filter_map(|row| {
+                    let (key, value) = row.ok()?;
+                    let pattern = PATTERN.decode_value(&value).ok()?;
+                    (pattern.refile && pattern.proposal.is_none()).then_some(key)
+                })
+                .collect()
+        };
+        let mut filed = 0;
+        for key in owed {
+            let (Some(group), Some(id)) = (
+                key.get(..32)
+                    .and_then(|group| <[u8; 32]>::try_from(group).ok()),
+                key.get(32..48).and_then(|id| <[u8; 16]>::try_from(id).ok()),
+            ) else {
+                continue;
+            };
+            match vault.with_write_txn_grouped(|txn| self.file_if_due_in_txn(txn, &group, &id)) {
+                Ok(true) => filed += 1,
+                Ok(false) => {}
+                Err(error) => tracing::warn!(
+                    error = %error,
+                    "a withdrawn label proposal's pattern waits for the next pass (FIX 21885)"
+                ),
+            }
+        }
+        Ok(filed)
     }
 }
 
@@ -741,6 +866,7 @@ impl Vault {
                 after = Some(key);
             }
         }
+        report.filed += pass.refile_withdrawn()?;
         self.with_write_txn(|txn| {
             CURSOR.put(&self.store, txn, &(), &LabelCursor { after })?;
             Ok(())
@@ -750,21 +876,173 @@ impl Vault {
 }
 
 /// Takes the notes of the outcome under unclear-ledger key `outcome` out of
-/// the clustering: a re-judgment withdrew or replaced them. A proposal that
-/// quoted one stands; it was true when filed.
+/// the clustering: a re-judgment withdrew them. A proposal that quoted one
+/// and waits on its owner is withdrawn with them (FIX 21885); one the owner
+/// approved or declined stands.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub(crate) fn forget_unclear_notes_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     outcome: &str,
 ) -> Result<()> {
-    for (key, member) in take_members_in_txn(store, txn, outcome)? {
-        unlink_in_txn(store, txn, &key, &member)?;
+    for (key, member) in take_members_in_txn(&vault.store, txn, outcome)? {
+        withdraw_pending_quoting_in_txn(vault, txn, &key, &member)?;
+        unlink_in_txn(&vault.store, txn, &key, &member)?;
     }
     Ok(())
+}
+
+/// Withdraws each proposal waiting on its owner that quoted a note of the
+/// outcome under unclear-ledger key `outcome`: a re-judgment replaced the
+/// outcome's row with another (FIX 21885). The notes stay in their patterns
+/// until a pass judges them again.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn withdraw_label_proposals_quoting_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    outcome: &str,
+) -> Result<()> {
+    let members = MEMBER
+        .iter_raw_from(&vault.store, &*txn, &note_prefix(outcome))?
+        .collect::<Result<Vec<_>>>()?;
+    for (key, value) in members {
+        if let Ok(member) = MEMBER.decode_value(&value) {
+            withdraw_pending_quoting_in_txn(vault, txn, &key, &member)?;
+        }
+    }
+    Ok(())
+}
+
+/// Withdraws each proposal waiting on its owner that quoted a note written
+/// by the judge revision `displaced` (FIX 21885), in the write that fences
+/// that revision off.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn withdraw_label_proposals_judged_by_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    displaced: &str,
+) -> Result<()> {
+    let rows = PATTERN
+        .iter_raw_from(&vault.store, &*txn, &[])?
+        .collect::<Result<Vec<_>>>()?;
+    for (held, value) in rows {
+        let Ok(pattern) = PATTERN.decode_value(&value) else {
+            continue;
+        };
+        if pattern.proposal.is_none() {
+            continue;
+        }
+        let mut quotes = false;
+        for filed in &pattern.filed {
+            let Some((outcome, _)) = member_note(filed) else {
+                continue;
+            };
+            if unclear_row_in_txn(vault, &*txn, &outcome)?
+                .is_some_and(|row| row.context.judge_revision.as_deref() == Some(displaced))
+            {
+                quotes = true;
+                break;
+            }
+        }
+        if quotes {
+            withdraw_pending_in_txn(vault, txn, &held, pattern)?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether `row`'s notes were written by a judge revision since displaced.
+fn judged_by_displaced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &UnclearAttribution,
+) -> Result<bool> {
+    match row.context.judge_revision.as_deref() {
+        Some(revision) => Ok(crate::skill_attribution::displacing_revision_in_txn(
+            vault, txn, revision,
+        )?
+        .is_some()),
+        None => Ok(false),
+    }
+}
+
+/// [`withdraw_pending_in_txn`] for the pattern `member` joined, when its
+/// filed proposal quotes the note under member key `key`.
+fn withdraw_pending_quoting_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &[u8],
+    member: &NoteMember,
+) -> Result<()> {
+    let Some(pattern_id) = member.pattern else {
+        return Ok(());
+    };
+    let held = pattern_key(&member.group, &pattern_id);
+    let Some(pattern) = PATTERN.get(&vault.store, &*txn, &held)? else {
+        return Ok(());
+    };
+    if pattern.filed.iter().any(|filed| filed.as_slice() == key) {
+        withdraw_pending_in_txn(vault, txn, &held, pattern)?;
+    }
+    Ok(())
+}
+
+/// Withdraws `pattern`'s filed proposal as an erase does, while it waits on
+/// its owner: Active and Proposed (FIX 21885). Its pattern keeps its notes and
+/// files afresh at the next pass. A proposal the owner approved or declined,
+/// or one gone, stands as it is.
+fn withdraw_pending_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    held: &[u8],
+    pattern: NotePattern,
+) -> Result<()> {
+    let Some(proposal) = pattern.proposal else {
+        return Ok(());
+    };
+    if waits_on_owner_in_txn(vault, &*txn, &EntityId::from_bytes(proposal)?)? {
+        withdraw_filed_in_txn(
+            &crate::secret_custody::CustodyWrite::of(vault),
+            txn,
+            held,
+            pattern,
+        )?;
+    }
+    Ok(())
+}
+
+/// Whether `proposal` is a claim still waiting on its owner: Active and
+/// Proposed.
+fn waits_on_owner_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    proposal: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, proposal)?
+    else {
+        return Ok(false);
+    };
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+        return Ok(false);
+    };
+    let Some(body) = raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) else {
+        return Ok(false);
+    };
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM || body.is_empty() {
+        return Ok(false);
+    }
+    let body = crate::claim::decode_claim_body(body, true)?;
+    Ok(body.approval == crate::ClaimApprovalStatus::Proposed
+        && body.lifecycle == crate::ClaimLifecycleStatus::Active)
 }
 
 /// Takes the erased outcome under unclear-ledger key `outcome` out of the
@@ -827,7 +1105,8 @@ pub(crate) fn erase_label_proposals_naming_in_txn(
 }
 
 /// Erases `pattern`'s filed proposal and forgets what it quoted; the pattern
-/// keeps its notes and may file again from them, or goes with none left.
+/// keeps its notes and files again from them at the next pass
+/// ([`Pass::refile_withdrawn`]), or goes with none left.
 fn withdraw_filed_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
@@ -841,6 +1120,7 @@ fn withdraw_filed_in_txn(
         erase_proposal_copy_in_txn(write, txn, &EntityId::from_bytes(proposal)?)?;
     }
     if pattern.exemplar.is_some() {
+        pattern.refile = true;
         PATTERN.put(store, txn, &held.to_vec(), &pattern)?;
     } else {
         PATTERN.delete(store, txn, &held.to_vec())?;
