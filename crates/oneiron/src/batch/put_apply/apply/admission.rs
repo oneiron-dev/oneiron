@@ -32,6 +32,9 @@ pub(super) struct FixedPut<'a> {
     pub(super) hub_sync_imported: bool,
     pub(super) claim_gate_prechecked: bool,
     pub(super) mutation_recorded_at: u64,
+    /// The bytes an ASSET body file holds when the row is its manifest
+    /// ([`PutRow::file_body`], FIX 22091).
+    pub(super) file_body: Option<&'a [u8]>,
 }
 
 /// Body buffers the staged `data` slice borrows, in shadow order. The parent
@@ -94,6 +97,7 @@ pub(super) fn admit_put<'a>(
                 learned_at,
                 data,
                 row_version,
+                file_body,
             },
         options,
         context:
@@ -159,10 +163,18 @@ pub(super) fn admit_put<'a>(
             .project_writes
             .capture_project_put(store, wtxn, id, entity_type, data)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+    // An owning adapter's checks read what a body file holds, never its
+    // manifest (FIX 22091).
     super::super::put_staging::validate_source_carriers(
         store,
         wtxn,
-        (id, entity_type, data, occurred, learned_at),
+        (
+            id,
+            entity_type,
+            file_body.unwrap_or(data),
+            occurred,
+            learned_at,
+        ),
     )?;
     let portable_agent_source = None;
     store.guard_pack_map_carrier_put_in_txn(wtxn, &id, entity_type, data)?;
@@ -262,6 +274,7 @@ pub(super) fn admit_put<'a>(
             hub_sync_imported,
             claim_gate_prechecked,
             mutation_recorded_at,
+            file_body,
         },
         owners: Owners {
             normalized_policy,
