@@ -65,7 +65,7 @@ impl Dial {
                 crate::config::device_sync::parse_machine(&record.home_machine).ok()
                     == Some(named.machine)
             });
-            pin_mesh(server, enrolment.as_ref().map(|(_, record)| record));
+            pin_mesh(vault, enrolment.as_ref().map(|(_, record)| record));
             let pin = enrolment.and_then(|(_, record)| record.authority_checkpoint_pin);
             return Ok(Some(Self {
                 home: named.machine,
@@ -87,7 +87,7 @@ impl Dial {
             );
             return Ok(None);
         };
-        pin_mesh(server, Some(&record));
+        pin_mesh(vault, Some(&record));
         Ok(Some(Self {
             home: crate::config::device_sync::parse_machine(&record.home_machine)?,
             url: record.home_url,
@@ -107,7 +107,7 @@ impl Dial {
 /// it on sync, and the dial goes over the mesh first. A record with no mesh
 /// address, or an install with no MACHINE yet, pins nothing.
 #[cfg(feature = "mesh")]
-fn pin_mesh(server: &SyncServer, record: Option<&DeviceEnrolment>) {
+fn pin_mesh(vault: &oneiron::Vault, record: Option<&DeviceEnrolment>) {
     let Some(record) = record else {
         return;
     };
@@ -117,11 +117,11 @@ fn pin_mesh(server: &SyncServer, record: Option<&DeviceEnrolment>) {
     ) else {
         return;
     };
-    if let Ok(Some(local)) = server.vault.local_machine() {
+    if let Ok(Some(local)) = vault.local_machine() {
         crate::handler::mesh::pin_home(local.id, home, address);
     }
 }
 
 /// A build without the `mesh` feature runs no listener to pin a home on.
 #[cfg(not(feature = "mesh"))]
-fn pin_mesh(_server: &SyncServer, _record: Option<&DeviceEnrolment>) {}
+fn pin_mesh(_vault: &oneiron::Vault, _record: Option<&DeviceEnrolment>) {}
