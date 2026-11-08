@@ -68291,7 +68291,10 @@ async fn mcp_verb_row_vault_channel_identities_provision(row: McpVerbRow<'_>) ->
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
         crate::api::facade::host_doors::vault_channel_identities_provision(
-            server, auth, None, input,
+            server,
+            auth,
+            super::mcp_paced_call(actor, &memory),
+            input,
         ),
     )
     .await;
@@ -68345,7 +68348,12 @@ async fn mcp_verb_row_vault_channel_identities_bind(row: McpVerbRow<'_>) -> McpV
     let input: oneiron::memory::channel_doors::ChannelIdentityBindRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
-        crate::api::facade::host_doors::vault_channel_identities_bind(server, auth, None, input),
+        crate::api::facade::host_doors::vault_channel_identities_bind(
+            server,
+            auth,
+            super::mcp_paced_call(actor, &memory),
+            input,
+        ),
     )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -68451,7 +68459,12 @@ async fn mcp_verb_row_vault_channel_identities_rotate(row: McpVerbRow<'_>) -> Mc
     let input: oneiron::memory::channel_doors::ChannelIdentityRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
-        crate::api::facade::host_doors::vault_channel_identities_rotate(server, auth, None, input),
+        crate::api::facade::host_doors::vault_channel_identities_rotate(
+            server,
+            auth,
+            super::mcp_paced_call(actor, &memory),
+            input,
+        ),
     )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -68504,7 +68517,12 @@ async fn mcp_verb_row_vault_channel_identities_release(row: McpVerbRow<'_>) -> M
     let input: oneiron::memory::channel_doors::ChannelIdentityReleaseRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
-        crate::api::facade::host_doors::vault_channel_identities_release(server, auth, None, input),
+        crate::api::facade::host_doors::vault_channel_identities_release(
+            server,
+            auth,
+            super::mcp_paced_call(actor, &memory),
+            input,
+        ),
     )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -68560,7 +68578,10 @@ async fn mcp_verb_row_vault_channel_identities_route_inbound(
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
         crate::api::facade::host_doors::vault_channel_identities_route_inbound(
-            server, auth, None, input,
+            server,
+            auth,
+            super::mcp_paced_call(actor, &memory),
+            input,
         ),
     )
     .await;

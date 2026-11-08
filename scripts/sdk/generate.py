@@ -146,7 +146,8 @@ for row in ROWS:
     # (FIX 8753): its invocation, the door it came in by and, on the drain's
     # run of a held call, the drain's permit, so a full budget window holds
     # the call in its caller's paced line and the drain runs it there again.
-    # An MCP call hands `None` and answers its paced receipt as before.
+    # A tool-first MCP call hands its own: its invocation, its MCP door and
+    # the drain's permit on the drain's run of it (FIX 22259).
     if row.get('host_door_paced') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door takes a paced context')
     # `host_door_lens_owner` hands a live lens door the owner its card is held
@@ -903,7 +904,7 @@ def mcp_input_dispatch(row):
         # a call that keeps no record hands its hidden id (FIX 5381).
         caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, {json.dumps(name)}), '
         fold_hooks_arg = ', pre_hooked_fold' if name == 'self.fold' else ''
-        paced_arg = 'None, ' if row.get('host_door_paced') else ''
+        paced_arg = 'super::mcp_paced_call(actor, &memory), ' if row.get('host_door_paced') else ''
         door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}input{fold_hooks_arg})).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
