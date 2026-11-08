@@ -931,6 +931,22 @@
       "section": false
     },
     {
+      "name": "vault.proactivity.digest.get",
+      "description": "Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant.",
+      "input": "crate::dreamer_runner::maintenance::digest::DigestReadRequest",
+      "output": "Option<crate::dreamer_runner::maintenance::digest::ProactivityDigestView>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.proactivity.digest.get\", &input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.personas.preview",
       "description": "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp.",
       "input": "crate::task_verb::sdk::PersonaSnapshotPreviewRequest",
@@ -5053,7 +5069,7 @@
     },
     {
       "name": "vault.connectors.subscriptions.put",
-      "description": "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer.",
+      "description": "The owner subscribes an agent to the messages a built-in channel (slack, line or threaded email) routes to it, so each one wakes the agent to answer.",
       "input": "ChannelSubscriptionRequest",
       "output": "crate::connector_key::ChannelMessageSubscription",
       "call": "crate::task_verb::sdk::subscribe_channel_embedded(memory, input)?",
@@ -10284,11 +10300,71 @@
       "openapi": true
     },
     {
+      "name": "vault.hooks.regen.history",
+      "description": "Read, as the authenticated owner, one hook binding's regen receipts newest first, across its rebinds: each decision with its golden manifest, and each adoption, cancel and revert. Changes nothing.",
+      "input": "crate::memory::hook_regen_doors::HookRegenHistoryRequest",
+      "output": "Vec<crate::runtime_hooks::HookRegenReceipt>",
+      "call": "memory.hooks_regen_history_as(&memory.embedded_owner(\"vault.hooks.regen.history\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.hooks.regen.revert",
+      "description": "Revert, as the authenticated owner, the last regen adoption on one hook binding, named by the adopted body hash: the body it replaced installs again through the owner's pack put. Answers the put receipt.",
+      "input": "crate::memory::hook_regen_doors::HookRegenRevertRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "memory.hooks_regen_revert_as(&memory.embedded_owner(\"vault.hooks.regen.revert\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.hooks.regen.run",
+      "description": "Run, as the authenticated owner, one hook binding's intent again against this engine's contract on the serving host's model seat; the golden replay decides and the decision waits on the record. Enacts nothing.",
+      "input": "crate::memory::hook_regen_doors::HookRegenBindingRequest",
+      "output": "Option<crate::memory::hook_regen_doors::HookRegenView>",
+      "call": "memory.hooks_regen_run_unhosted(&memory.embedded_owner(\"vault.hooks.regen.run\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.hooks.regen.adopt",
       "description": "Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record.",
       "input": "crate::memory::hook_regen_doors::HookRegenAdoptRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "memory.hooks_regen_adopt_as(&memory.embedded_owner(\"vault.hooks.regen.adopt\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.hooks.regen.cancel",
+      "description": "Set aside, as the authenticated owner, the regen decision waiting on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. The hook keeps its body; its contract is declined until it moves again.",
+      "input": "crate::memory::hook_regen_doors::HookRegenCancelRequest",
+      "output": "crate::runtime_hooks::HookRegenCancel",
+      "call": "memory.hooks_regen_cancel_as(&memory.embedded_owner(\"vault.hooks.regen.cancel\")?, input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -11206,6 +11282,34 @@
       "output": "Option<crate::code_run::ProgramStepFeedbackRelease>",
       "call": "memory.code_run_type_diagnostics_as(&memory.embedded_owner(\"vault.code.type_diagnostics\")?, input)?",
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.waits.rebind_prepare",
+      "description": "Propose the original holder's actual successor credential for one admitted, unsettled code consent wait. Stores no active authorization; a separate owner rebind act must confirm it.",
+      "input": "crate::memory::code_wait_doors::CodeWaitRebindPrepareRequest",
+      "output": "crate::memory::code_wait_doors::CodeWaitRebindPrepared",
+      "call": "memory.code_wait_rebind_prepare(input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.code.waits.rebind",
+      "description": "Explicitly authorize one exact holder-proposed successor as the independent authenticated owner. Only an admitted, unsettled wait continues under the same intent; its original answer, admission and delivery stay unchanged.",
+      "input": "crate::memory::code_wait_doors::CodeWaitRebindRequest",
+      "output": "crate::memory::code_wait_doors::CodeWaitRebindReceipt",
+      "call": "memory.code_wait_rebind_as(&memory.embedded_owner(\"vault.code.waits.rebind\")?, input)?",
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -13982,6 +14086,34 @@
       }
     },
     {
+      "name": "tasks.outcomes.route_calibration",
+      "description": "Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only.",
+      "input": "crate::task_verb::TaskAskHandle",
+      "output": "crate::llm::decision::questions::RouteCalibrationReport",
+      "mcp_served": "[input.group_ref]",
+      "mcp_served_output": "output.derived_from.iter().copied()",
+      "call": "memory.tasks_ask_route_calibration(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": true,
+      "binding": {
+        "generic": true,
+        "args": [
+          {
+            "name": "handle",
+            "field": "$",
+            "type": "crate::task_verb::TaskAskHandle"
+          }
+        ]
+      }
+    },
+    {
       "name": "vault.rooms.list",
       "description": "The caller's rooms its own grants admit; inside a room turn, only that room.",
       "input": "EmptyRequest",
@@ -16487,7 +16619,11 @@
       "output": "crate::task_verb::sdk::ConnectorCallStatus",
       "call": "crate::task_verb::sdk::connector_call_status_read(memory, input)?",
       "scope": "Read",
-      "section": false
+      "section": false,
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "host_door_caller": true
     },
     {
       "name": "connector.answer",
@@ -18549,6 +18685,23 @@
       "input": "crate::blob_artifact::esign::EsignSigningSignatureRequest",
       "output": "crate::blob_artifact::esign::EsignSigningSignatureView",
       "call": "memory.esign_signing_signature(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.esign.signing.preview",
+      "description": "The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields.",
+      "input": "crate::blob_artifact::esign::EsignSigningPreviewRequest",
+      "output": "crate::blob_artifact::esign::EsignSigningPreviewView",
+      "call": "memory.esign_signing_preview(&input)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true
@@ -21692,6 +21845,32 @@
       "openapi": true
     },
     {
+      "name": "self.hooks.regen.adopt",
+      "description": "Adopt the identical-fingerprint regen pending on a hook this agent authored, named by its candidate_hash, through the agent's own put of the local pack; the hook stays the agent's. A diff waits for the owner.",
+      "input": "crate::memory::hook_regen_doors::HookRegenAdoptRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "memory.own_hook_regen_adopt(input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.hooks.regen.get",
+      "description": "Read the regen record of a hook this agent authored: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash its adopt names. Changes nothing.",
+      "input": "crate::memory::hook_regen_doors::HookRegenBindingRequest",
+      "output": "Option<crate::memory::hook_regen_doors::HookRegenView>",
+      "call": "memory.own_hook_regen_record(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.runs.review",
       "description": "The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer.",
       "input": "crate::memory::run_review::RunReviewRequest",
@@ -22194,6 +22373,19 @@
       "input": "crate::mail_pack::MailSourceSyncRequest",
       "output": "crate::mail_pack::MailSyncReport",
       "call": "memory.mail_sources_sync(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true
+    },
+    {
+      "name": "vault.mail.sources.search",
+      "description": "The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience.",
+      "input": "crate::mail_pack::MailSourceSearchRequest",
+      "output": "crate::mail_pack::MailSearchReport",
+      "call": "memory.mail_sources_search(&input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true

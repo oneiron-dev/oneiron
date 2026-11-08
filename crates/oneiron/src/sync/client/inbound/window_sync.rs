@@ -125,6 +125,11 @@ impl SyncClient {
                 {
                     return Err(TransportError::InvalidPayload("unpromoted window control"));
                 }
+                // The home's grant on this socket, which a per-window
+                // re-bootstrap waits for before it asks for the window (FIX 20202).
+                if sub_tag == window_sub_tags::PROMOTION_GRANTED {
+                    self.promotions_granted.insert(key.clone());
+                }
                 // The setup window's catch-up asks for the window only once the home granted it.
                 if sub_tag == window_sub_tags::PROMOTION_GRANTED && !catch_up {
                     return Ok(Vec::new());
@@ -312,6 +317,11 @@ impl SyncClient {
                 // one witnesses nothing about the new one.
                 self.server_vvs.remove(window_key);
                 self.kept_out_peer_copies.remove(window_key);
+                // The home's replacement installed, the evidence a per-window
+                // re-bootstrap waits for (FIX 20202); a peer's copy is not it.
+                if self.peer_session.is_none() {
+                    self.replacements_installed.insert(key.clone());
+                }
                 let vv = doc_version_vector(&window.doc);
                 drop(window);
                 Ok(vec![

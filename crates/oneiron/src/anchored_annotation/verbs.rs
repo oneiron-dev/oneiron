@@ -1,6 +1,8 @@
 //! Credential-bound adapters over the engine's anchored annotation lifecycle.
 
-use super::anchor_text::{UnitFormat, anchor_text, unit_texts};
+use super::anchor_text::{
+    UnitFormat, anchor_text, text_quote_for_sight, text_units_for_sight, unit_texts,
+};
 use super::code_units::{
     CodeFile, CodeSpace, code_file_unit, code_line_units, code_span_shown,
     file_bytes_and_space_by_hash,
@@ -20,6 +22,7 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::memory::{Memory, MemoryError, MemoryResult, resolve_entity_ref};
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
+use crate::secret_custody::SecretSight;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -55,13 +58,43 @@ impl Memory<'_> {
         if kind == ArtifactKind::Code {
             return self.code_artifact_units(artifact, input);
         }
+        let sight = self.secret_sight()?;
         let file = self
             .vault()
-            .export_blob_artifact_as_raw(&artifact, input.version, self.secret_sight()?)?
+            .export_blob_artifact_as_raw(&artifact, input.version, sight)?
             .ok_or_else(|| MemoryError::not_found("artifact version not found"))?;
         let Some(format) = UnitFormat::from_media_type(&file.media_type) else {
             return Ok(unsupported(file.kind));
         };
+        if matches!(format, UnitFormat::Text) {
+            // Main's per-line units keep raw coordinates. Only their quotes
+            // are projected to this caller's sight, from the same resolved
+            // version rather than from a moving head.
+            let raw = self
+                .vault()
+                .export_blob_artifact_raw(&artifact, Some(file.version))?
+                .ok_or_else(|| MemoryError::not_found("artifact version not found"))?;
+            let sighted = if sight == SecretSight::Masked {
+                file.bytes.as_slice()
+            } else {
+                raw.bytes.as_slice()
+            };
+            let units = text_units_for_sight(&raw.bytes, sighted)
+                .ok_or_else(|| MemoryError::bad_request("artifact units could not be read"))?
+                .into_iter()
+                .map(|(locator, quote)| ArtifactUnitView {
+                    locator: (&locator).into(),
+                    quote,
+                })
+                .collect();
+            return Ok(ArtifactUnitsView::Supported {
+                artifact_id: artifact,
+                version: file.version,
+                content_hash: crate::blob_artifact::hash_hex(&file.content_hash),
+                kind: file.kind,
+                units,
+            });
+        }
         let limits = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             self.vault().text_limits_in_txn(&txn)?
@@ -181,24 +214,41 @@ impl Memory<'_> {
         if self.vault().get_entity_type(&anchor.artifact_id)? == Some(ENTITY_TYPE_CODE_ARTIFACT) {
             return self.code_anchor_view(anchor);
         }
+        let sight = self.secret_sight()?;
         let file = self
             .vault()
-            .export_blob_artifact_as_raw(
-                &anchor.artifact_id,
-                Some(anchor.version),
-                self.secret_sight()?,
-            )?
+            .export_blob_artifact_as_raw(&anchor.artifact_id, Some(anchor.version), sight)?
             .ok_or_else(|| MemoryError::not_found("anchor version not found"))?;
         let limits = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             self.vault().text_limits_in_txn(&txn)?
         };
         // A resource refusal is the engine's error (FIX 10587), never a missing quote.
+        // A text span names raw coordinates; its quote is the door's sighted
+        // copy there for masked readers, never raw bytes.
+        let quote = if let Locator::Text {
+            char_start,
+            char_end,
+        } = &anchor.locator
+        {
+            let raw = self
+                .vault()
+                .export_blob_artifact_raw(&anchor.artifact_id, Some(anchor.version))?
+                .ok_or_else(|| MemoryError::not_found("anchor version not found"))?;
+            let sighted = if sight == SecretSight::Masked {
+                file.bytes.as_slice()
+            } else {
+                raw.bytes.as_slice()
+            };
+            text_quote_for_sight(&raw.bytes, sighted, *char_start, *char_end)
+        } else {
+            anchor_text(&file.bytes, &anchor.locator, &limits)?
+        };
         Ok(AnnotationAnchorView {
             artifact_id: anchor.artifact_id,
             version: anchor.version,
             locator: (&anchor.locator).into(),
-            quote: anchor_text(&file.bytes, &anchor.locator, &limits)?,
+            quote,
             body: anchor.body.as_ref().map(Into::into),
         })
     }

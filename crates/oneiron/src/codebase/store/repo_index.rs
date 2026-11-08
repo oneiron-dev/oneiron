@@ -42,9 +42,11 @@ impl Vault {
         txn: &RoTxn<'_>,
         marks: &RepoIndexMarks,
         snapshot: &CodebaseSnapshot,
+        custody_root: Option<&str>,
         file_contents: &dyn Fn(&str) -> Option<Vec<u8>>,
     ) -> Result<(Vec<CodebaseFileEntry>, SnapshotCustodyReport)> {
-        let (files, mut report) = self.apply_custody_to_snapshot(txn, snapshot, file_contents)?;
+        let (files, mut report) =
+            self.apply_custody_to_snapshot(txn, snapshot, custody_root, file_contents)?;
         if marks.is_empty() || report.quarantined_paths.is_empty() {
             return Ok((files, report));
         }

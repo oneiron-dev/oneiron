@@ -107,6 +107,7 @@ pub(crate) fn append_queue_check_output_in_txn(
         Some(&made_by),
         false,
         true,
+        None,
         crate::federation::record_scope::BirthPosition::default(),
         crate::core_write::CoreWriteLaneRef::Unbound,
     )?;
