@@ -632,6 +632,7 @@ impl HeldOutput {
         Ok(JsCodeModeStepOutcome {
             done: false,
             observation,
+            console: String::new(),
             outputs: self
                 .files
                 .into_iter()
@@ -641,16 +642,22 @@ impl HeldOutput {
     }
 
     /// The step's outcome with what was held: the answer of a finished
-    /// step, else its console lines, and its files.
+    /// step, else its console lines, and its files. A finished step's
+    /// console lines ride beside its answer (FIX 6885), as the engine
+    /// executor keeps them.
     fn into_outcome(self, mut outcome: JsCodeModeStepOutcome) -> Result<JsCodeModeStepOutcome> {
-        let text = if outcome.done {
-            self.finish
+        let (text, console) = if outcome.done {
+            (self.finish, self.console)
         } else {
-            self.console
+            (self.console, Vec::new())
         };
         if outcome.observation.is_empty() {
             outcome.observation = String::from_utf8(text)
                 .map_err(|_| failure("streamed observation is not UTF-8"))?;
+        }
+        if outcome.console.is_empty() && !console.is_empty() {
+            outcome.console =
+                String::from_utf8(console).map_err(|_| failure("streamed console is not UTF-8"))?;
         }
         outcome.outputs.extend(
             self.files

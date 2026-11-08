@@ -12,6 +12,7 @@ use super::types::{OriginPublishDestination, OriginPublishReview, OriginPublishR
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::llm::BrokerIsolation;
 use crate::origin::mirror_auto::OriginMirrorPendingCheck;
 use crate::origin::mirror_strategy::OriginMirrorSyncStrategy;
 
@@ -96,6 +97,13 @@ pub struct OriginMirrorPlanBatchView {
     pub refs: Vec<u32>,
     /// The redacted cause of its last child that did not succeed.
     pub detail: Option<String>,
+    /// How the credential broker the last push of its refs went through is
+    /// kept apart from the daemon (ARCH-0069 `#broker-isolation`; FIX
+    /// 19083): `same_user` shows the unproven badge. `None` when no broker
+    /// carried one: an embedded vault's direct push, or one that never
+    /// reached it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broker_isolation: Option<BrokerIsolation>,
 }
 
 impl Vault {
@@ -156,6 +164,7 @@ impl Vault {
                             claim: progress.claim,
                             refs: progress.refs,
                             detail: progress.detail,
+                            broker_isolation: progress.broker_isolation,
                         })
                         .collect(),
                     pending_checks: plan

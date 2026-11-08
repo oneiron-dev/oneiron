@@ -28,7 +28,13 @@ impl HostSelfDispatcher<'_> {
         let Some(door) = &self.agent_verbs else {
             return Ok(Ok(None));
         };
-        let admitted = door.admit_run_call(call);
+        // Speech is admitted with where this run's storage lands it.
+        let admitted = match call {
+            RunCall::Bridge(effect) if effect.is_speech() => {
+                door.admit_run_speech(effect, self.storage.speech_destination())
+            }
+            RunCall::Bridge(_) | RunCall::RecordedOutput => door.admit_run_call(call),
+        };
         if let Err(refusal) = &admitted
             && let Some(rejected) = gate_rejection(&refusal.code)
         {

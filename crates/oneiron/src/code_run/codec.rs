@@ -33,7 +33,7 @@ use self::checkpoint::{decode_step_checkpoint, encode_step_checkpoint, validate_
 pub(super) use self::pending_step::pending_step_digest;
 use self::pending_step::{decode_pending_step, encode_pending_step, validate_pending_step};
 
-pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 11] = [
+pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 12] = [
     "schema_version",
     "run_id",
     "determinism",
@@ -44,6 +44,7 @@ pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 11] = [
     "bindings",
     "live_run",
     "callable_rows",
+    "birth_world",
     "pending_step",
 ];
 pub const CODE_RUN_DETERMINISM_KEYS: [&str; 2] = ["frozen_unix_ms", "rng_seed"];
@@ -96,7 +97,8 @@ const KEY_ABI_LAYOUT_CHECKS: &str = CODE_RUN_REPLAY_RECORD_KEYS[6];
 const KEY_BINDINGS: &str = CODE_RUN_REPLAY_RECORD_KEYS[7];
 const KEY_LIVE_RUN: &str = CODE_RUN_REPLAY_RECORD_KEYS[8];
 const KEY_CALLABLE_ROWS: &str = CODE_RUN_REPLAY_RECORD_KEYS[9];
-const KEY_PENDING_STEP: &str = CODE_RUN_REPLAY_RECORD_KEYS[10];
+const KEY_BIRTH_WORLD: &str = CODE_RUN_REPLAY_RECORD_KEYS[10];
+const KEY_PENDING_STEP: &str = CODE_RUN_REPLAY_RECORD_KEYS[11];
 
 const KEY_FROZEN_UNIX_MS: &str = CODE_RUN_DETERMINISM_KEYS[0];
 const KEY_RNG_SEED: &str = CODE_RUN_DETERMINISM_KEYS[1];
@@ -225,6 +227,12 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
             encode_optional_entity_rows(&record.callable_rows),
         ),
         (
+            Value::from(KEY_BIRTH_WORLD),
+            record
+                .birth_world
+                .map_or(Value::Nil, |world| Value::Binary(world.as_bytes().to_vec())),
+        ),
+        (
             Value::from(KEY_PENDING_STEP),
             record
                 .pending_step
@@ -291,7 +299,11 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
         live_run: decode_live_run(required(fields[8], "missing replay live_run")?)?,
         // A pre-carrier record cannot prove its callable/result reads.
         callable_rows: decode_optional_entity_rows(fields[9])?,
-        pending_step: decode_pending_step(fields[10])?,
+        birth_world: match required(fields[10], "missing replay birth_world")? {
+            Value::Nil => None,
+            value => Some(entity_value(value)?),
+        },
+        pending_step: decode_pending_step(fields[11])?,
         verb_rows_cache: Default::default(),
     };
     validate_code_run_replay_record(&record)?;
