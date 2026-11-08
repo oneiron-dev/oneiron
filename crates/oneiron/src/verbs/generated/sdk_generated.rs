@@ -1860,6 +1860,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.members.accept_with_credential",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest,
+                >(),
+            ),
+            (
                 "vault.members.decline",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SharedInvitationRequest,
@@ -4060,6 +4066,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.secrets.purge.request",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::RepoSecretPurgeRequest,
+                >(),
+            ),
+            (
+                "vault.code.secrets.purge.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::RepoSecretPurgeIdRequest,
+                >(),
+            ),
+            (
+                "vault.code.secrets.purge.execute",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::RepoSecretPurgeIdRequest,
+                >(),
+            ),
+            (
                 "vault.code.checkout.holder.bind",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::repo_doors::RepoCheckoutBindInput,
@@ -6025,6 +6049,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<NeighborsRequest>(),
             ),
             (
+                "vault.edges.provenance",
+                crate::code_run::vault_read::request_schema::<crate::memory::EdgeProvenanceRequest>(
+                ),
+            ),
+            (
                 "vault.structural.put",
                 crate::code_run::vault_read::request_schema::<crate::memory::StructuralPutInput>(),
             ),
@@ -7057,6 +7086,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.dreamer.follower.keyframe",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ConnectorAnswerRequest,
@@ -8009,6 +8043,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.origin.authority.get",
     "vault.code.origin.authority.set",
     "vault.code.origin.publications",
+    "vault.code.secrets.purge.request",
+    "vault.code.secrets.purge.get",
+    "vault.code.secrets.purge.execute",
     "vault.code.checkout.holder.bind",
     "vault.code.checkout.bind",
     "vault.code.checkout.claim",
@@ -8207,6 +8244,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.vectors.put",
     "vault.search.hybrid",
     "vault.search.temporal",
+    "vault.edges.provenance",
     "vault.productivity.create",
     "vault.productivity.tree",
     "vault.esign.notices.dispatch",
@@ -8325,6 +8363,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.files.sources.convert",
     "vault.sync.repo_manifests.conflict.review",
     "vault.sync.repo_manifests.conflict.discard",
+    "vault.dreamer.follower.keyframe",
     "self.browser.open",
     "self.browser.observe",
     "self.browser.find",
@@ -10006,6 +10045,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.origin.publications" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginPublicationsView,
         >(),
+        "vault.code.secrets.purge.request" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::RepoSecretPurgePlan,
+        >(),
+        "vault.code.secrets.purge.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::RepoSecretPurgeView,
+        >(),
+        "vault.code.secrets.purge.execute" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::RepoSecretPurgeReceipt,
+        >(),
         "vault.code.checkout.holder.bind" => crate::code_run::vault_read::request_schema::<
             crate::memory::repo_doors::RepoCheckoutBindOutput,
         >(),
@@ -10614,6 +10662,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.search.temporal" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<crate::memory::TemporalSearchResult>,
         >(),
+        "vault.edges.provenance" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Vec<crate::memory::EdgeProvenanceView>>,
+        >(),
         "vault.productivity.create" => {
             crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
         }
@@ -10978,6 +11029,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
                 crate::task_verb::sdk::RepoManifestConflictDiscardView,
             >()
         }
+        "vault.dreamer.follower.keyframe" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::DreamerFollowerKeyframeResult,
+        >(),
         "self.browser.open" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserObservationPage,
         >(),
@@ -13716,6 +13770,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.members.accept_with_credential" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.members.decline" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -16300,6 +16361,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.secrets.purge.request" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.secrets.purge.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.secrets.purge.execute" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.checkout.holder.bind" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -18674,6 +18756,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.edges.provenance" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.structural.put" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19985,6 +20074,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.dreamer.follower.keyframe" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20688,6 +20784,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.members.leave" => validate_input_vault_members_leave(value)?,
         "vault.members.invitations" => validate_input_vault_members_invitations(value)?,
         "vault.members.accept" => validate_input_vault_members_accept(value)?,
+        "vault.members.accept_with_credential" => {
+            validate_input_vault_members_accept_with_credential(value)?
+        }
         "vault.members.decline" => validate_input_vault_members_decline(value)?,
         "vault.members.withdraw_invitation" => {
             validate_input_vault_members_withdraw_invitation(value)?
@@ -21244,6 +21343,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.origin.authority.get" => validate_input_vault_code_origin_authority_get(value)?,
         "vault.code.origin.authority.set" => validate_input_vault_code_origin_authority_set(value)?,
         "vault.code.origin.publications" => validate_input_vault_code_origin_publications(value)?,
+        "vault.code.secrets.purge.request" => {
+            validate_input_vault_code_secrets_purge_request(value)?
+        }
+        "vault.code.secrets.purge.get" => validate_input_vault_code_secrets_purge_get(value)?,
+        "vault.code.secrets.purge.execute" => {
+            validate_input_vault_code_secrets_purge_execute(value)?
+        }
         "vault.code.checkout.holder.bind" => validate_input_vault_code_checkout_holder_bind(value)?,
         "vault.code.checkout.bind" => validate_input_vault_code_checkout_bind(value)?,
         "vault.code.checkout.claim" => validate_input_vault_code_checkout_claim(value)?,
@@ -21670,6 +21776,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.search.temporal" => validate_input_vault_search_temporal(value)?,
         "vault.search.bm25" => validate_input_vault_search_bm25(value)?,
         "vault.neighbors" => validate_input_vault_neighbors(value)?,
+        "vault.edges.provenance" => validate_input_vault_edges_provenance(value)?,
         "vault.structural.put" => validate_input_vault_structural_put(value)?,
         "vault.habits.checkin" => validate_input_vault_habits_checkin(value)?,
         "vault.productivity.create" => validate_input_vault_productivity_create(value)?,
@@ -21927,6 +22034,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.sync.repo_manifests.conflict.discard" => {
             validate_input_vault_sync_repo_manifests_conflict_discard(value)?
         }
+        "vault.dreamer.follower.keyframe" => validate_input_vault_dreamer_follower_keyframe(value)?,
         "connector.answer" => validate_input_connector_answer(value)?,
         "self.browser.open" => validate_input_self_browser_open(value)?,
         "self.browser.observe" => validate_input_self_browser_observe(value)?,
@@ -22594,7 +22702,6 @@ fn validate_input_vault_claims_upsert(value: &serde_json::Value) -> MemoryResult
 #[inline(never)]
 fn validate_input_vault_recall(value: &serde_json::Value) -> MemoryResult<()> {
     let input: RecallRequest = decode(value.clone())?;
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(
         input
             .limit
@@ -23893,6 +24000,14 @@ fn validate_input_vault_members_invitations(value: &serde_json::Value) -> Memory
 #[inline(never)]
 fn validate_input_vault_members_accept(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::SharedInvitationRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_members_accept_with_credential(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest =
+        decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -25943,6 +26058,21 @@ fn validate_input_vault_code_origin_publications(value: &serde_json::Value) -> M
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_code_secrets_purge_request(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::origin_doors::RepoSecretPurgeRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_code_secrets_purge_get(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::origin_doors::RepoSecretPurgeIdRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_code_secrets_purge_execute(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::origin_doors::RepoSecretPurgeIdRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_code_checkout_holder_bind(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::repo_doors::RepoCheckoutBindInput = decode(value.clone())?;
     Ok(())
@@ -27840,7 +27970,6 @@ fn validate_input_vault_search_temporal(value: &serde_json::Value) -> MemoryResu
 #[inline(never)]
 fn validate_input_vault_search_bm25(value: &serde_json::Value) -> MemoryResult<()> {
     let input: QueryBm25Request = decode(value.clone())?;
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(input.limit)?;
     Ok(())
 }
@@ -27848,6 +27977,11 @@ fn validate_input_vault_search_bm25(value: &serde_json::Value) -> MemoryResult<(
 fn validate_input_vault_neighbors(value: &serde_json::Value) -> MemoryResult<()> {
     let input: NeighborsRequest = decode(value.clone())?;
     crate::memory::caps::check_limit_nonzero(input.opts.limit)?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_edges_provenance(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::EdgeProvenanceRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -28835,6 +28969,11 @@ fn validate_input_vault_sync_repo_manifests_conflict_discard(
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_dreamer_follower_keyframe(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_connector_answer(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::ConnectorAnswerRequest = decode(value.clone())?;
     Ok(())
@@ -29651,6 +29790,9 @@ pub fn invoke(
         "vault.members.leave" => invoke_vault_members_leave(memory, value),
         "vault.members.invitations" => invoke_vault_members_invitations(memory, value),
         "vault.members.accept" => invoke_vault_members_accept(memory, value),
+        "vault.members.accept_with_credential" => {
+            invoke_vault_members_accept_with_credential(memory, value)
+        }
         "vault.members.decline" => invoke_vault_members_decline(memory, value),
         "vault.members.withdraw_invitation" => {
             invoke_vault_members_withdraw_invitation(memory, value)
@@ -30207,6 +30349,13 @@ pub fn invoke(
         "vault.code.origin.authority.get" => invoke_vault_code_origin_authority_get(memory, value),
         "vault.code.origin.authority.set" => invoke_vault_code_origin_authority_set(memory, value),
         "vault.code.origin.publications" => invoke_vault_code_origin_publications(memory, value),
+        "vault.code.secrets.purge.request" => {
+            invoke_vault_code_secrets_purge_request(memory, value)
+        }
+        "vault.code.secrets.purge.get" => invoke_vault_code_secrets_purge_get(memory, value),
+        "vault.code.secrets.purge.execute" => {
+            invoke_vault_code_secrets_purge_execute(memory, value)
+        }
         "vault.code.checkout.holder.bind" => invoke_vault_code_checkout_holder_bind(memory, value),
         "vault.code.checkout.bind" => invoke_vault_code_checkout_bind(memory, value),
         "vault.code.checkout.claim" => invoke_vault_code_checkout_claim(memory, value),
@@ -30611,6 +30760,7 @@ pub fn invoke(
         "vault.search.temporal" => invoke_vault_search_temporal(memory, value),
         "vault.search.bm25" => invoke_vault_search_bm25(memory, value),
         "vault.neighbors" => invoke_vault_neighbors(memory, value),
+        "vault.edges.provenance" => invoke_vault_edges_provenance(memory, value),
         "vault.structural.put" => invoke_vault_structural_put(memory, value),
         "vault.habits.checkin" => invoke_vault_habits_checkin(memory, value),
         "vault.productivity.create" => invoke_vault_productivity_create(memory, value),
@@ -30868,6 +31018,7 @@ pub fn invoke(
         "vault.sync.repo_manifests.conflict.discard" => {
             invoke_vault_sync_repo_manifests_conflict_discard(memory, value)
         }
+        "vault.dreamer.follower.keyframe" => invoke_vault_dreamer_follower_keyframe(memory, value),
         "connector.answer" => invoke_connector_answer(memory, value),
         "self.browser.open" => invoke_self_browser_open(memory, value),
         "self.browser.observe" => invoke_self_browser_observe(memory, value),
@@ -33472,6 +33623,16 @@ fn invoke_vault_members_accept(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_members_accept(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_members_accept_with_credential(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_members_accept_with_credential(
+        memory,
+        decode(value)?,
+    )?)
 }
 #[inline(never)]
 fn invoke_vault_members_decline(
@@ -36205,6 +36366,27 @@ fn invoke_vault_code_origin_publications(
     encode(vault_code_origin_publications(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_code_secrets_purge_request(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_secrets_purge_request(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_code_secrets_purge_get(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_secrets_purge_get(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_code_secrets_purge_execute(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_secrets_purge_execute(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_code_checkout_holder_bind(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -38578,6 +38760,13 @@ fn invoke_vault_neighbors(
     encode(vault_neighbors(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_edges_provenance(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_edges_provenance(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_structural_put(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -39920,6 +40109,13 @@ fn invoke_vault_sync_repo_manifests_conflict_discard(
         memory,
         decode(value)?,
     )?)
+}
+#[inline(never)]
+fn invoke_vault_dreamer_follower_keyframe(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_dreamer_follower_keyframe(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_connector_answer(
@@ -41435,7 +41631,6 @@ pub fn vault_recall(
     memory: &Memory<'_>,
     input: RecallRequest,
 ) -> MemoryResult<crate::memory::MemoryPack> {
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(
         input
             .limit
@@ -43466,6 +43661,12 @@ pub fn vault_members_accept(
         &memory.embedded_owner("vault.members.accept")?,
         input,
     )
+}
+pub fn vault_members_accept_with_credential(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest,
+) -> MemoryResult<crate::task_verb::sdk::SharedInvitationAcceptedWithCredential> {
+    crate::task_verb::sdk::accept_shared_invitation_with_credential_embedded(memory, input)
 }
 pub fn vault_members_decline(
     memory: &Memory<'_>,
@@ -46606,6 +46807,33 @@ pub fn vault_code_origin_publications(
         input,
     )
 }
+pub fn vault_code_secrets_purge_request(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::RepoSecretPurgeRequest,
+) -> MemoryResult<crate::memory::origin_doors::RepoSecretPurgePlan> {
+    memory.code_secrets_purge_request_as(
+        &memory.embedded_owner("vault.code.secrets.purge.request")?,
+        input,
+    )
+}
+pub fn vault_code_secrets_purge_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::RepoSecretPurgeIdRequest,
+) -> MemoryResult<crate::memory::origin_doors::RepoSecretPurgeView> {
+    memory.code_secrets_purge_get_as(
+        &memory.embedded_owner("vault.code.secrets.purge.get")?,
+        input,
+    )
+}
+pub fn vault_code_secrets_purge_execute(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::RepoSecretPurgeIdRequest,
+) -> MemoryResult<crate::memory::origin_doors::RepoSecretPurgeReceipt> {
+    memory.code_secrets_purge_execute_as(
+        &memory.embedded_owner("vault.code.secrets.purge.execute")?,
+        input,
+    )
+}
 pub fn vault_code_checkout_holder_bind(
     memory: &Memory<'_>,
     input: crate::memory::repo_doors::RepoCheckoutBindInput,
@@ -49411,7 +49639,6 @@ pub fn vault_search_bm25(
     memory: &Memory<'_>,
     input: QueryBm25Request,
 ) -> MemoryResult<crate::task_verb::sdk::Bm25Search> {
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(input.limit)?;
     crate::task_verb::sdk::search_bm25(memory, input)
 }
@@ -49421,6 +49648,12 @@ pub fn vault_neighbors(
 ) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::NeighborHit>>> {
     crate::memory::caps::check_limit_nonzero(input.opts.limit)?;
     memory.neighbors(&input.entity_ref, &input.opts)
+}
+pub fn vault_edges_provenance(
+    memory: &Memory<'_>,
+    input: crate::memory::EdgeProvenanceRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::EdgeProvenanceView>>> {
+    memory.edge_provenance(&input)
 }
 pub fn vault_structural_put(
     memory: &Memory<'_>,
@@ -50576,7 +50809,7 @@ pub fn vault_notes_author_take(
         memory,
         "vault.notes.author_take",
         &input,
-        &["/target/subject", "/target/claim"],
+        &["/target/subject", "/target/claim", "/source_ref"],
     )?;
     memory_requests::author_take(memory, input)
 }
@@ -51077,6 +51310,16 @@ pub fn vault_sync_repo_manifests_conflict_discard(
     crate::task_verb::sdk::repo_manifest_conflict_discard_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.sync.repo_manifests.conflict.discard")?,
+        input,
+    )
+}
+pub fn vault_dreamer_follower_keyframe(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::DreamerFollowerKeyframeResult> {
+    crate::task_verb::sdk::dreamer_follower_keyframe_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.dreamer.follower.keyframe")?,
         input,
     )
 }

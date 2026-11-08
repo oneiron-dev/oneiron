@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1298 facade rows, 4707 declarations.
-Inputs: 1227 of 1298 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1127 of 1298 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1304 facade rows, 4733 declarations.
+Inputs: 1233 of 1304 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1133 of 1304 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -1605,6 +1605,7 @@ class TaskRow(TypedDict):
     counter_task_ref: NotRequired[str | None]
     cancel_pathology: NotRequired[CancelRejectionPathology | None]
     widening: NotRequired[ConsultWidening | None]
+    due_at: NotRequired[int | None]
     fits: NotRequired[list[str]]
 class TasksOverflow(TypedDict):
     known_omitted_rows: int
@@ -7513,6 +7514,17 @@ class SharedInvitation(TypedDict):
 class SharedInvitationRequest(TypedDict):
     vault_id: str
     invitation: str
+class SharedInvitationAcceptWithCredentialRequest(TypedDict):
+    vault_id: str
+    invitation: str
+    expires_at: int
+class MemberSlip(TypedDict):
+    slip_id: str
+    slip: str
+    expires_at: int
+class SharedInvitationAcceptedWithCredential(TypedDict):
+    receipt: SharedActExecutionReceipt
+    credential: MemberSlip
 class SharedInvitationWithdrawRequest(TypedDict):
     vault_id: str
     member: str
@@ -8202,6 +8214,10 @@ class FileReadinessNameOnlyBody(TypedDict):
 class FileReadinessNameOnly(TypedDict):
     name_only: FileReadinessNameOnlyBody
 FileReadiness = Literal["text"] | FileReadinessNameOnly
+class FileOriginal(TypedDict):
+    artifact: EntityId
+    version: int
+    content_hash: str
 class FilesFileView(TypedDict):
     handle: FileHandle
     state: FilesFileState
@@ -8209,6 +8225,7 @@ class FilesFileView(TypedDict):
     note: NotRequired[EntityId | None]
     fork: NotRequired[EntityId | None]
     revision: NotRequired[str | None]
+    original: NotRequired[FileOriginal | None]
     bytes: NotRequired[int | None]
     modified_at: NotRequired[int | None]
     first_seen_at: NotRequired[int | None]
@@ -12611,6 +12628,7 @@ class GraphFsLinkView(TypedDict):
     mount: GraphFsMountRequest
     path: str
     target: NotRequired[str | None]
+    read_receipt: NotRequired[ScopedReadReceipt | None]
 class GraphFsLsRequest(TypedDict):
     mount: GraphFsMountRequest
     path: str
@@ -12838,7 +12856,7 @@ class CodeProposalReviewRequest(TypedDict):
 RepoProposalDecision = Literal["approve", "reject"]
 class RepoProposalSettlement(TypedDict):
     receipt: EntityId
-    actor: EntityId
+    actor: NotRequired[EntityId | None]
     decision: RepoProposalDecision
     settled_at: int
 class CodeProposalSettlementView(TypedDict):
@@ -13514,7 +13532,13 @@ class ExternalImportRequest(TypedDict):
     source: ExternalImportSource
     source_binding: NotRequired[str | None]
     door: ExternalImportDoor
-ExternalImportReceipt = TypedDict("ExternalImportReceipt", {"import": EntityId, "repo": str, "code_repo": EntityId, "source": ExternalImportSource, "imported_ref": str, "base_revision": EntityId, "importer": NotRequired[EntityId | None], "seed_publication": NotRequired[EntityId | None], "receive_provenance": NotRequired[EntityId | None], "publication": NotRequired[EntityId | None], "lfs_daemon_residual": bool})
+ExternalImportLfsRoute = Literal["broker"]
+BrokerIsolation = Literal["separate_user", "same_user"]
+class ExternalImportLfsTransfer(TypedDict):
+    route: ExternalImportLfsRoute
+    broker_isolation: NotRequired[BrokerIsolation | None]
+    credential_rewrites: NotRequired[int]
+ExternalImportReceipt = TypedDict("ExternalImportReceipt", {"import": EntityId, "repo": str, "code_repo": EntityId, "source": ExternalImportSource, "imported_ref": str, "base_revision": EntityId, "importer": NotRequired[EntityId | None], "seed_publication": NotRequired[EntityId | None], "receive_provenance": NotRequired[EntityId | None], "publication": NotRequired[EntityId | None], "lfs_transfer": NotRequired[ExternalImportLfsTransfer | None]})
 ExternalImportLookup = TypedDict("ExternalImportLookup", {"repo": str, "code_repo": EntityId, "import": EntityId, "door": ExternalImportDoor})
 ExternalImportPhase = Literal["pending", "fetch_refused", "source_moved", "held_base", "door_refused", "transport_unknown", "received"]
 class ReceivedFileOperation(TypedDict):
@@ -13604,12 +13628,18 @@ class OriginMirrorReadinessNotReady(TypedDict):
     objects: list[OriginMirrorLfsObject]
     omitted_objects: int
 OriginMirrorReadiness = OriginMirrorReadinessReady | OriginMirrorReadinessNotReady
+OriginMirrorLfsRoute = Literal["broker", "daemon"]
+class OriginMirrorLfsTransfer(TypedDict):
+    route: OriginMirrorLfsRoute
+    broker_isolation: NotRequired[BrokerIsolation | None]
+    credential_rewrites: NotRequired[int]
 class OriginMirrorRun(TypedDict):
     at: int
     refs: int
     deleted: int
     failure: NotRequired[str | None]
     readiness: NotRequired[OriginMirrorReadiness | None]
+    lfs_transfer: NotRequired[OriginMirrorLfsTransfer | None]
 OriginMirrorSyncStrategy = Literal["ask_me", "schedule", "full_auto"]
 OriginMirrorHoldCause = Literal["storage", "decode", "review", "remote_read"]
 class OriginMirrorHold(TypedDict):
@@ -13705,6 +13735,7 @@ class OriginMirrorPlanBatchView(TypedDict):
     claim: MirrorBatchClaim
     refs: list[int]
     detail: NotRequired[str | None]
+    broker_isolation: NotRequired[BrokerIsolation | None]
 class OriginPublishReviewItemCommit(TypedDict):
     kind: Literal["commit"]
     commit: str
@@ -13788,7 +13819,6 @@ class OriginPublishRefusal(TypedDict):
     observed: NotRequired[OriginPublishRemote | None]
     changed_fields: list[str]
     detail: NotRequired[str | None]
-BrokerIsolation = Literal["separate_user", "same_user"]
 class OriginPublishRequestView(TypedDict):
     request_id: EntityId
     repo: str
@@ -13853,6 +13883,53 @@ class OriginPublicationsRequest(TypedDict):
 class OriginPublicationsView(TypedDict):
     repo: str
     publications: list[OriginPublicationView]
+class RepoSecretPurgeRequest(TypedDict):
+    repo: str
+    marks: NotRequired[list[EntityId] | None]
+class RepoSecretPurgeRefMove(TypedDict):
+    ref_name: str
+    old_oid: str
+    new_oid: str
+class RepoSecretPurgeKeepRoot(TypedDict):
+    kind: str
+    owner: str
+    oid: str
+    releases: bool
+RepoSecretPurgeOutstanding = Literal["backups_and_checkpoints", "outside_copies", "repo_snapshots", "code_documents", "lfs_objects"]
+class RepoSecretPurgePlan(TypedDict):
+    plan: EntityId
+    owner: EntityId
+    repo: str
+    store: EntityId
+    marks: list[EntityId]
+    moves: list[RepoSecretPurgeRefMove]
+    purged_blobs: list[str]
+    rewritten_objects: int
+    signatures_dropped: int
+    keep_roots: list[RepoSecretPurgeKeepRoot]
+    outstanding: list[RepoSecretPurgeOutstanding]
+    planned_at: int
+class RepoSecretPurgeIdRequest(TypedDict):
+    plan: EntityId
+RepoSecretPurgeState = Literal["complete_local", "partial", "stale"]
+class RepoSecretPurgeRefOutcome(TypedDict):
+    ref_name: str
+    old_oid: str
+    new_oid: str
+    moved: bool
+    failure: NotRequired[str | None]
+class RepoSecretPurgeReceipt(TypedDict):
+    receipt: EntityId
+    plan: EntityId
+    state: RepoSecretPurgeState
+    refs: list[RepoSecretPurgeRefOutcome]
+    released: list[RepoSecretPurgeKeepRoot]
+    still_present: list[str]
+    outstanding: list[RepoSecretPurgeOutstanding]
+    executed_at: int
+class RepoSecretPurgeView(TypedDict):
+    plan: RepoSecretPurgePlan
+    receipt: NotRequired[RepoSecretPurgeReceipt | None]
 class RepoCheckoutBindInput(TypedDict):
     repo: EntityId
     ref: str
@@ -15958,6 +16035,7 @@ class DeckProposeRequest(TypedDict):
     run_ref: str
     context: NotRequired[DeckEditContext]
     made_by: NotRequired[MadeBy | None]
+    delta_receipt: NotRequired[str | None]
 class DeckInspection(TypedDict):
     slides: list[DeckSlideInspection]
     ambiguities: list[DeckIdentityAmbiguity]
@@ -16139,6 +16217,7 @@ class NativeOutputRequest(TypedDict):
     report: NotRequired[Any]
     made_by: NotRequired[MadeBy | None]
     read_rows: NotRequired[list[str]]
+    delta_receipt: NotRequired[str | None]
 class VersionReconciliation(TypedDict):
     base_version: int
     kept_head: ArtifactVersionView
@@ -19510,6 +19589,36 @@ class NeighborHit(TypedDict):
     weight: float
     direction: str
     record: NotRequired[RecordRef | None]
+class EdgeProvenanceRequest(TypedDict):
+    source_ref: str
+    edge_kind: str
+    target_ref: str
+    filter: NotRequired[ReadFilterInput | None]
+EdgeProvenanceActorClass = Literal["human", "agent", "system"]
+EdgeProvenanceSupersession = Literal["proposed", "confirmed", "disputed", "retracted"]
+EdgeProvenanceLifecycle = Literal["active", "superseded", "retracted"]
+class EdgeProvenanceView(TypedDict):
+    claim_ref: str
+    short_ref: NotRequired[str | None]
+    source_ref: str
+    edge_kind: str
+    target_ref: str
+    actor_entity_ref: str
+    actor_class: EdgeProvenanceActorClass
+    source_revision_ref: NotRequired[str | None]
+    body_snapshot_ref: NotRequired[str | None]
+    confidence: float
+    supersession_status: EdgeProvenanceSupersession
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+    substrate_ref: NotRequired[str | None]
+    reasoning_effort: NotRequired[str | None]
+    lifecycle: EdgeProvenanceLifecycle
+    stale: bool
+    learned_at: int
+    occurred_start: int
+    occurred_end: int
+    winner: bool
 class TextIndexField(TypedDict):
     field: str
     value: str
@@ -19958,7 +20067,7 @@ class EsignSigningRequest(TypedDict):
     action: SigningAction
 class FieldControlText(TypedDict):
     kind: Literal["text"]
-    max_bytes: int
+    max_bytes: NotRequired[int | None]
     server_computed: bool
 class FieldControlCheckbox(TypedDict):
     kind: Literal["checkbox"]
@@ -19982,6 +20091,12 @@ class SigningPage(TypedDict):
     fields: list[EsignField]
     presentations: list[FieldPresentation]
     values: dict[str, SignatureRow]
+class SealActiveContentFacts(TypedDict):
+    javascript: bool
+    launch: bool
+class SigningSealedItem(TypedDict):
+    sha256: str
+    active_content: SealActiveContentFacts
 class SigningOutcomePage(TypedDict):
     outcome: Literal["page"]
     data: SigningPage
@@ -19990,6 +20105,7 @@ class SigningOutcomeNotYourTurn(TypedDict):
 class SigningOutcomeTerminalContent(TypedDict):
     status: DocumentStatus
     item_count: int
+    sealed_items: NotRequired[list[SigningSealedItem] | None]
 class SigningOutcomeTerminal(TypedDict):
     outcome: Literal["terminal"]
     data: SigningOutcomeTerminalContent
@@ -20081,6 +20197,7 @@ class EsignSealedItemView(TypedDict):
     sealed_version: int
     sha256: str
     profile: SealProfileEvidence
+    active_content: SealActiveContentFacts
 class EsignSealedView(TypedDict):
     attempt_ref: str
     audit_chain_sha256: str
@@ -22724,6 +22841,7 @@ class ForkRecord(TypedDict):
     status: ForkStatus
     read_refs: list[str]
     keep: NotRequired[str | None]
+    delta_receipt: NotRequired[str | None]
 class ProposalBundle(TypedDict):
     proposal: str
     author: DocActor
@@ -22794,6 +22912,7 @@ AuthorTakeTarget = AuthorTakeTargetSubject | AuthorTakeTargetClaim
 class AuthorTakeRequest(TypedDict):
     target: AuthorTakeTarget
     markdown: str
+    source_ref: NotRequired[str | None]
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str
@@ -23579,6 +23698,8 @@ class RepoManifestConflictDiscardViewStale(TypedDict):
 class RepoManifestConflictDiscardViewWindowLive(TypedDict):
     state: Literal["window_live"]
 RepoManifestConflictDiscardView = RepoManifestConflictDiscardViewDiscarded | RepoManifestConflictDiscardViewStale | RepoManifestConflictDiscardViewWindowLive
+class DreamerFollowerKeyframeResult(TypedDict):
+    sessions_marked: int
 ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
 class ConnectorQuestionAnswer(TypedDict):
     key: str

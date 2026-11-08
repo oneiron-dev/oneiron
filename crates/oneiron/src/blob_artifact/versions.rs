@@ -309,6 +309,7 @@ impl Vault {
             actor,
             learned_at,
             fork_base,
+            None,
         )
         .map(BlobArtifactAppendOutcome::Proposed)
         .map_err(E::from)

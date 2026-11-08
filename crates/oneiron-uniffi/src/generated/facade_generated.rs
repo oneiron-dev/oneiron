@@ -1806,6 +1806,11 @@ export_facade! {
     let output = client.vault_members_accept(&input)?;
     crate::codec::lift_record("vault.members.accept", &output)
 };
+"vault.members.accept_with_credential" => fn vault_members_accept_with_credential(&self, input: SharedInvitationAcceptWithCredentialRequest) -> SharedInvitationAcceptedWithCredential = |client| {
+    let input: oneiron::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest = crate::codec::lower_record("vault.members.accept_with_credential", input)?;
+    let output = client.vault_members_accept_with_credential(&input)?;
+    crate::codec::lift_record("vault.members.accept_with_credential", &output)
+};
 "vault.members.decline" => fn vault_members_decline(&self, input: SharedInvitationRequest) -> SharedActExecutionReceipt = |client| {
     let input: oneiron::task_verb::sdk::SharedInvitationRequest = crate::codec::lower_record("vault.members.decline", input)?;
     let output = client.vault_members_decline(&input)?;
@@ -3686,6 +3691,21 @@ export_facade! {
     let output = client.vault_code_origin_publications(&input)?;
     crate::codec::lift_record("vault.code.origin.publications", &output)
 };
+"vault.code.secrets.purge.request" => fn vault_code_secrets_purge_request(&self, input: RepoSecretPurgeRequest) -> RepoSecretPurgePlan = |client| {
+    let input: oneiron::memory::origin_doors::RepoSecretPurgeRequest = crate::codec::lower_record("vault.code.secrets.purge.request", input)?;
+    let output = client.vault_code_secrets_purge_request(&input)?;
+    crate::codec::lift_record("vault.code.secrets.purge.request", &output)
+};
+"vault.code.secrets.purge.get" => fn vault_code_secrets_purge_get(&self, input: RepoSecretPurgeIdRequest) -> RepoSecretPurgeView = |client| {
+    let input: oneiron::memory::origin_doors::RepoSecretPurgeIdRequest = crate::codec::lower_record("vault.code.secrets.purge.get", input)?;
+    let output = client.vault_code_secrets_purge_get(&input)?;
+    crate::codec::lift_record("vault.code.secrets.purge.get", &output)
+};
+"vault.code.secrets.purge.execute" => fn vault_code_secrets_purge_execute(&self, input: RepoSecretPurgeIdRequest) -> RepoSecretPurgeReceipt = |client| {
+    let input: oneiron::memory::origin_doors::RepoSecretPurgeIdRequest = crate::codec::lower_record("vault.code.secrets.purge.execute", input)?;
+    let output = client.vault_code_secrets_purge_execute(&input)?;
+    crate::codec::lift_record("vault.code.secrets.purge.execute", &output)
+};
 "vault.code.checkout.holder.bind" => fn vault_code_checkout_holder_bind(&self, input: RepoCheckoutBindInput) -> RepoCheckoutBindOutput = |client| {
     let input: oneiron::memory::repo_doors::RepoCheckoutBindInput = crate::codec::lower_record("vault.code.checkout.holder.bind", input)?;
     let output = client.vault_code_checkout_holder_bind(&input)?;
@@ -5366,6 +5386,11 @@ export_facade! {
     let output = client.vault_neighbors(&input)?;
     Lift::lift(output)
 };
+"vault.edges.provenance" => fn vault_edges_provenance(&self, input: EdgeProvenanceRequest) -> ScopedReadResultEdgeProvenanceViewList = |client| {
+    let input: oneiron::memory::EdgeProvenanceRequest = crate::codec::lower_record("vault.edges.provenance", input)?;
+    let output = client.vault_edges_provenance(&input)?;
+    crate::codec::lift_record("vault.edges.provenance", &output)
+};
 "vault.structural.put" => fn vault_structural_put(&self, input: StructuralPutInput) -> EntityRefReceipt = |client| {
     let input: oneiron::memory::StructuralPutInput = input.lower()?;
     let output = client.vault_structural_put(&input)?;
@@ -6300,6 +6325,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::RepoManifestConflictDiscardRequest = crate::codec::lower_record("vault.sync.repo_manifests.conflict.discard", input)?;
     let output = client.vault_sync_repo_manifests_conflict_discard(&input)?;
     crate::codec::lift_record("vault.sync.repo_manifests.conflict.discard", &output)
+};
+"vault.dreamer.follower.keyframe" => fn vault_dreamer_follower_keyframe(&self) -> DreamerFollowerKeyframeResult = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.dreamer.follower.keyframe")?;
+    let output = client.vault_dreamer_follower_keyframe(&input)?;
+    crate::codec::lift_record("vault.dreamer.follower.keyframe", &output)
 };
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;

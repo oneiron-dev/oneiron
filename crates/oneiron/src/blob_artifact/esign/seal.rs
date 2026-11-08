@@ -54,6 +54,7 @@ pub struct SealedItem {
     pub sealed_version: u64,
     pub sha256: [u8; 32],
     pub profile: SealProfileEvidence,
+    pub active_content: super::sealer::SealActiveContentFacts,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedDocument {
@@ -305,6 +306,7 @@ impl Vault {
                     sealed_version: version.version,
                     sha256: outputs[index].sha256(),
                     profile: outputs[index].profile().clone(),
+                    active_content: outputs[index].active_content(),
                 });
             }
             let manifest = SealedDocument {
