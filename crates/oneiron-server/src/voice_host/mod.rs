@@ -311,9 +311,9 @@ impl VoiceHost {
                             && auth.invocation_slip().is_none()
                             && auth.actor_class() == Some("human")
                             && auth.managed_owner().is_some_and(|holder| {
-                                auth.principal_ref()
-                                    .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
-                                    == Some(holder)
+                                auth.principal_ref().and_then(|principal| {
+                                    oneiron::EntityId::from_hex(principal).ok()
+                                }) == Some(holder)
                             })) =>
                 {
                     // The owner door proved this ordinary slip or managed
