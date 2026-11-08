@@ -122,6 +122,7 @@ impl<'a> HostSelfDispatcher<'a> {
             repo_review_policy: None,
             git_door_base: None,
             spawn_capture: spawn_capture::SpawnCapture::default(),
+            code_consent_origin: None,
         })
     }
 
@@ -209,6 +210,21 @@ impl<'a> HostSelfDispatcher<'a> {
         self.opener_lineage = std::iter::once(claims.slip_id)
             .chain(claims.parent_id)
             .collect();
+        self
+    }
+
+    /// Binds the admitted MCP caller this run serves (FIX 4606): its handle,
+    /// the exact instrument and door it was admitted on, and where it sat,
+    /// as the host admitted its request. A code consent wait the run mints
+    /// keeps it, so its host can enter the parked run again for that caller
+    /// once the reply is delivered, after a restart too. It is no authority:
+    /// the host verifies the instrument again first. `None` binds none.
+    #[must_use]
+    pub fn with_code_consent_origin(
+        mut self,
+        origin: Option<crate::code_run::CodeConsentRunOrigin>,
+    ) -> Self {
+        self.code_consent_origin = origin;
         self
     }
 

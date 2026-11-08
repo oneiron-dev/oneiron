@@ -80,6 +80,16 @@ impl<'a> HostSelfDispatcher<'a> {
         self
     }
 
+    /// The task its host declared the caller's own text for `run` (FIX
+    /// 7087), which the run's first entry keeps as its caller-task body
+    /// (FIX 4606). `None` for a run its host declared no task for.
+    pub(crate) fn declared_caller_task(&self, run: EntityId) -> Option<&str> {
+        self.caller_task
+            .as_ref()
+            .filter(|(caller_run, _)| *caller_run == run)
+            .map(|(_, task)| task.as_str())
+    }
+
     /// Enters a capture epoch of `run`'s ledger for one entry of the run,
     /// which runs `task`. Only a task its host declared the caller's own,
     /// byte for byte, is spared the host-task mark (FIX 7087).
