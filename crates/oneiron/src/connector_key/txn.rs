@@ -260,16 +260,11 @@ pub(crate) fn governing_keys_for_actor_in_txn(
     let principal_ref = actor.to_hex();
     let frontier = crate::gate::resolve_policy_manifest(store, txn)?.read_frontier_hash()?;
     let mut live_scoped_tokens = BTreeSet::new();
-    for grant_id in crate::outbound_grant::standing_outbound_grant_ids_for_principal(
+    for grant in crate::outbound_grant::standing_outbound_grants_for_principal_in_txn(
         store,
         txn,
         &principal_ref,
     )? {
-        let Some(grant) =
-            crate::outbound_grant::standing_outbound_grant_in_txn(store, txn, &grant_id)?
-        else {
-            continue;
-        };
         if grant.principal_ref != principal_ref || !grant.is_active_under_policy(&frontier) {
             continue;
         }
@@ -277,7 +272,7 @@ pub(crate) fn governing_keys_for_actor_in_txn(
             continue;
         };
         if let Some(capability) =
-            super::record::ScopedCapabilityProvenance::mint(scope.server, &grant_id)
+            super::record::ScopedCapabilityProvenance::mint(scope.server, &grant.id)
         {
             live_scoped_tokens.insert(capability.connector().to_owned());
         }

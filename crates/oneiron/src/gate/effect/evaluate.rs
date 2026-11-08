@@ -55,6 +55,10 @@ pub(crate) fn evaluate_external_effect_policy(
 /// counterparty's send-override expiry (`None` samples the store clock there, as a
 /// writer's judgment does). Every recipient of one mail message is judged on this
 /// same snapshot and folded before the writer allocates its one decision id.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one effect's read-only judgment under its approval context and clock"
+)]
 pub(crate) fn judge_external_effect_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
