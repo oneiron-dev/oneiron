@@ -260,6 +260,22 @@ pub(crate) const FIRST_PARTY_MEMBER_ROLES: [FederationGrantRole; 5] = [
 ];
 
 impl Vault {
+    /// Whether `person` currently holds roster membership here. This reports
+    /// standing only: it grants no read, write or owner authority.
+    pub fn is_live_member_person(&self, person: &crate::EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        if !crate::consent::person_is_live_in_txn(self, &txn, person)? {
+            return Ok(false);
+        }
+        let Some(creation) = self.shared_vault_creation_in_txn(&txn)? else {
+            return self.recorded_owner_is_live_in_txn(&txn, *person);
+        };
+        Ok(matches!(
+            self.membership_standing_in_txn(&txn, creation.vault_id, person)?,
+            Some(MembershipStanding::Member { .. })
+        ))
+    }
+
     /// `person`'s standing in shared vault `vault_id` in the caller's
     /// snapshot; a deleted vault holds no standing. A live Delegate grant over
     /// this vault is roster standing (FIX 8738), read only when the person
