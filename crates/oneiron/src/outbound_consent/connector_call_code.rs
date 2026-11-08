@@ -19,10 +19,10 @@ use crate::code_run::CodeConsentPendingEffect;
 use crate::code_run::CodeConsentPrincipal;
 use crate::code_run::CodeConsentRememberOffer;
 use crate::code_run::CodeConsentWaitView;
+use crate::code_run::active_authority_holds_in_txn;
 use crate::code_run::code_consent_admission_in_txn;
 use crate::code_run::mint_code_consent_wait_in_txn;
 use crate::code_run::offered_choices;
-use crate::code_run::original_authority_holds_in_txn;
 use crate::code_run::read_code_consent_wait_in_txn;
 use crate::code_run::refuse_code_consent_wait_in_txn;
 use crate::code_run::settle_code_consent_wait_listing_in_txn;
@@ -426,7 +426,7 @@ impl Vault {
             read_code_consent_wait_in_txn(self, &txn, wait_id)?.map(|row| {
                 (
                     row.approved_unsettled(),
-                    original_authority_holds_in_txn(self, &txn, &row),
+                    active_authority_holds_in_txn(self, &txn, &row),
                     row,
                 )
             })

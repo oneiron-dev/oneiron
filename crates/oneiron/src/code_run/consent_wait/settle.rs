@@ -397,7 +397,7 @@ fn answer_in_txn(
     put_code_consent_wait_in_txn(vault, txn, &mut row)?;
     if input.choice == CodeConsentChoice::Deny {
         refuse_code_consent_wait_in_txn(vault, txn, input.wait_id, &[CODE_WAIT_DENIED])?;
-    } else if !original_authority_holds_in_txn(vault, txn, &row) {
+    } else if !active_authority_holds_in_txn(vault, txn, &row) {
         refuse_code_consent_wait_in_txn(
             vault,
             txn,
@@ -471,7 +471,7 @@ pub(crate) fn prove_code_consent_holder_act_in_txn(
         refuse_code_consent_wait_in_txn(vault, txn, input.wait_id, &[CODE_WAIT_TARGET_CHANGED])?;
         return Ok(None);
     }
-    if !original_authority_holds_in_txn(vault, txn, &row) {
+    if !active_authority_holds_in_txn(vault, txn, &row) {
         refuse_code_consent_wait_in_txn(
             vault,
             txn,
@@ -525,16 +525,15 @@ fn code_consent_policy_basis_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Res
     crate::gate::resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()
 }
 
-/// Whether the original caller's active credential still stands at this
-/// snapshot: the original pair or its explicit, confirmed successor. A
-/// caller no credential was bound for has none to
+/// Whether the original caller's own credential still stands at this
+/// snapshot: the same slip verifies now, and it is the very instrument the
+/// call was admitted on. A caller no credential was bound for has none to
 /// lose: its grant alone limits it, at the effect's own gate.
 pub(crate) fn original_authority_holds_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    row: &CodeConsentWaitRow,
+    binding: &CodeConsentBinding,
 ) -> bool {
-    let binding = row.active_binding();
     let Some(credential) = &binding.original.credential else {
         return true;
     };
@@ -549,6 +548,16 @@ pub(crate) fn original_authority_holds_in_txn(
         && credential.instrument.as_ref().is_none_or(|instrument| {
             instrument.slip() == Some(claims.slip_id) && instrument.vault == claims.vault_id
         })
+}
+
+/// Whether the original caller's active credential still stands at this
+/// snapshot: the original pair or its explicit, confirmed successor.
+pub(crate) fn active_authority_holds_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &CodeConsentWaitRow,
+) -> bool {
+    original_authority_holds_in_txn(vault, txn, row.active_binding())
 }
 
 /// The code-bound approval wait `wait_id` admits its effect under, proved
@@ -577,7 +586,7 @@ pub(crate) fn code_consent_admission_in_txn(
     if row.binding.frozen_input_digest != *frozen_digest {
         return Err(Error::ConcurrentWrite("code consent target changed"));
     }
-    if !original_authority_holds_in_txn(vault, txn, &row) {
+    if !active_authority_holds_in_txn(vault, txn, &row) {
         return Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
             "the original caller credential of this code consent wait no longer stands",
         )));
