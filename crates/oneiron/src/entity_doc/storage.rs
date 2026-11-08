@@ -112,7 +112,7 @@ pub(super) fn load(
     }
     // Strictly replay snapshot then updates. Fixed-width keys preserve order.
     let mut count = 0_u64;
-    for update in store.port_document_updates(txn, slot)? {
+    for update in store.port_document_updates_borrowed(txn, slot)? {
         let status = doc
             .doc
             .import(&update.bytes)
@@ -227,7 +227,7 @@ pub(super) fn persist_scanned(
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
     // The stamp tokens its new changes name, for the hold check (FIX 11965).
     super::token_uses::record_token_uses_in_txn(store, txn, entity, doc, before)?;
-    crate::vault::entity_revision::capture_entity_document(store, txn, entity, &doc.doc, birth)?;
+    history::capture_document_revision_in_txn(store, txn, entity, h, doc, birth)?;
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::embed::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
