@@ -7,6 +7,8 @@ use crate::calendar::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ParsedCalendarProperties {
+    /// The original start a recurrence exception replaces: a UTC instant,
+    /// or for a date or floating id its civil time on the UTC carrier.
     pub recurrence_id_utc: Option<u64>,
     pub time_kind: Option<CalendarTimeKind>,
     pub wall_time: Option<CalendarWallTimeValue>,
@@ -26,10 +28,16 @@ pub(super) fn parse(
         recurrence_id_utc: super::optional_datetime_prop(component, "RECURRENCE-ID")?,
         ..ParsedCalendarProperties::default()
     };
-    if component.find_prop("RECURRENCE-ID").is_some() && properties.recurrence_id_utc.is_none() {
-        return Err(ics_parse(
-            "recurrence exception requires a UTC instant or explicit TZID",
-        ));
+    if let Some(original) = component.find_prop("RECURRENCE-ID")
+        && properties.recurrence_id_utc.is_none()
+    {
+        // A date or floating recurrence id names civil time: it keys its
+        // occurrence on the UTC carrier an all-day or floating series steps
+        // on (FIX 16568), a recurrence coordinate rather than an instant.
+        let fields = parse_datetime_fields(original.val.as_str().trim())?;
+        properties.recurrence_id_utc = Some(super::unix_seconds(&fields).ok_or_else(|| {
+            ics_parse("recurrence exception date is outside the supported range")
+        })?);
     }
     if let Some(start) = component.find_prop("DTSTART") {
         let text = start.val.as_str().trim();
