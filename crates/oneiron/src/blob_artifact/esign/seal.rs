@@ -190,9 +190,18 @@ impl Vault {
             (state, rows, originals, images)
         };
         let fingerprint = snapshot_hash(&rows)?;
-        let mut outputs = Vec::new();
+        let pinned_inputs = originals.iter().fold(0u64, |held, (_, bytes)| {
+            held.saturating_add(bytes.capacity() as u64)
+        });
+        let pinned_inputs = images.values().fold(pinned_inputs, |held, image| {
+            held.saturating_add(image.rgba.capacity() as u64)
+        });
+        let mut outputs: Vec<VerifiedSealOutput> = Vec::new();
         let document_hex = document.to_hex();
         for (index, (_, original)) in originals.iter().enumerate() {
+            let pinned_buffer_bytes = outputs.iter().fold(pinned_inputs, |held, output| {
+                held.saturating_add(output.buffer_capacity() as u64)
+            });
             let prep = PdfPreparation {
                 document_ref: &document_hex,
                 item: index as u32,
@@ -200,6 +209,7 @@ impl Vault {
                 audit: &rows,
                 canonical_url,
                 signature_images: &images,
+                pinned_buffer_bytes,
             };
             let (chain, trail) = replay_esign_audit(&prep)?;
             let prepared = match sealer.prepare_esign_pdf(original, &prep, chain, &trail)? {

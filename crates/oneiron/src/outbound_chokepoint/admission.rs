@@ -155,6 +155,147 @@ fn sibling_route_holds_send_in_txn(
     ))
 }
 
+/// What a `New` or `Park` command proves on `txn` before its ledger read:
+/// the owner its proof names, revalidated, its verified actor's binding, and
+/// its booking effect. Returns that owner, which the Pending row keeps
+/// (FIX 11591). Reads only.
+fn admit_prepared_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    prepared: &PreparedEffect,
+) -> Result<Option<crate::entity_id::EntityId>, IntentLedgerError> {
+    let mut authorizing_owner = None;
+    if let Some(owner) = &prepared.owner_proof {
+        authorizing_owner = Some(owner.revalidate_in_txn(vault, txn)?);
+    }
+    if let Some((actor, actor_class)) = prepared.verified_actor {
+        if vault.port_tombstone_is_deleted(txn, &actor)? {
+            return Err(IntentLedgerError::InvalidBoundActor);
+        }
+        let entity_type = vault
+            .get_entity_type_in_txn(txn, &actor)?
+            .ok_or(IntentLedgerError::InvalidBoundActor)?;
+        crate::provenance::validate_actor_class(entity_type, actor_class)?;
+        if prepared.gate.provenance.actor_entity_ref != Some(actor)
+            || prepared.gate.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
+            || prepared.gate.actor.actor_class != actor_class.gate_actor_class()
+        {
+            return Err(IntentLedgerError::InvalidBoundActor);
+        }
+    }
+    verify_booking_effect(vault, txn, prepared.attempt_id, &prepared.payload)?;
+    Ok(authorizing_owner)
+}
+
+/// What a fresh `New` admission settles on its snapshot before its
+/// external-effect judgment: the resident policy, the grant the effect must
+/// run under, the effect as its space posting check frames it, and the code
+/// consent wait that owns it, if one does.
+struct FreshAdmission {
+    policy: gate::PolicyManifestResolution,
+    required_grant_id: Option<crate::entity_id::EntityId>,
+    posting_gate: gate::ExternalEffectGateInput,
+    code_wait: Option<(crate::entity_id::EntityId, [u8; 32])>,
+}
+
+impl FreshAdmission {
+    /// The phase the judgment runs in: the answer of the code consent wait
+    /// that owns the effect, else a first admission.
+    fn approval_context(&self) -> gate::ApprovalContext {
+        self.code_wait.map_or(
+            gate::ApprovalContext::FirstAdmission,
+            |(_, binding_digest)| gate::ApprovalContext::CodeWait(binding_digest),
+        )
+    }
+}
+
+/// The checks a fresh `New` admission of `prepared` runs on `txn` between its
+/// calendar admission and its external-effect judgment, in their order: the
+/// campaign leg, the policy, the step-failure policy, the required grant
+/// (`invite_admission`'s page grant, else the scoped one), the space posting
+/// check and the code consent wait. Reads only.
+fn fresh_admission_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    prepared: &PreparedEffect,
+    invite_admission: Option<&crate::calendar::CalendarInviteAdmission>,
+) -> Result<FreshAdmission, IntentLedgerError> {
+    // P1-2 #4499: a prepared campaign leg re-proves its lifecycle under
+    // this writer before any decision is recorded; other effects pass through.
+    crate::campaign::enrollment::admit_campaign_leg_in_txn(vault, txn, &prepared.gate)?;
+
+    let policy = gate::resolve_policy_manifest(&vault.store, txn)?;
+    enforce_step_failure_policy(
+        vault,
+        txn,
+        &policy,
+        &prepared.payload,
+        prepared.gate.provenance.actor_entity_ref,
+    )?;
+    let required_grant_id = invite_admission
+        .and_then(crate::calendar::CalendarInviteAdmission::page_grant)
+        .or_else(|| required_grant_id(&prepared.authorization));
+    let posting_gate = vault.space_posting_gate_in_txn(txn, &prepared.payload, &prepared.gate)?;
+    // DOOR-079 1a: a held connector call a code consent wait owns is
+    // admitted under that wait's answer, proved from the rows under this
+    // writer: its code-bound approval, its bound bytes, its original
+    // caller's own credential. Any other effect admits as before.
+    let code_wait = crate::outbound_consent::code_wait_admission_in_txn(vault, txn, prepared)?;
+    Ok(FreshAdmission {
+        policy,
+        required_grant_id,
+        posting_gate,
+        code_wait,
+    })
+}
+
+/// The prepared tool call a scoped effect's judgment reads; `None` for any
+/// other authorization.
+fn prepared_tool_call(
+    authorization: &PreparedAuthorization,
+) -> Option<&crate::outbound_consent::tool_call::PreparedToolCall> {
+    match authorization {
+        PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
+        PreparedAuthorization::None | PreparedAuthorization::PublisherSignature(_) => None,
+    }
+}
+
+/// The judgment a fresh `New` admission of `prepared` would make on `txn`,
+/// dated `at`, read-only (FIX 22102): its owner-proof, actor and booking
+/// checks, its sibling-route hold, its calendar admission, the fresh
+/// admission's checks, then the external-effect judgment. A fresh call has no
+/// intent row, so no replay is read. `transport.admit_in` belongs to a
+/// sending transport, and a preflight has none (the scoped transport's is a
+/// no-op). Nothing is recorded, debited or committed.
+pub(crate) fn judge_new_effect_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    prepared: &PreparedEffect,
+    at: u64,
+) -> Result<gate::ExternalEffectJudgment, IntentLedgerError> {
+    admit_prepared_in_txn(vault, txn, prepared)?;
+    if let Some(sibling) = prepared.exclusive_route
+        && sibling_route_holds_send_in_txn(vault, txn, sibling)?
+    {
+        return Err(IntentLedgerError::InvalidInput(
+            "a sibling route of this send holds it",
+        ));
+    }
+    let invite_admission = calendar_admission_at_in_txn(vault, txn, prepared, at)?;
+    let fresh = fresh_admission_in_txn(vault, txn, prepared, invite_admission.as_ref())?;
+    Ok(gate::judge_external_effect_in_txn(
+        &vault.store,
+        txn,
+        &fresh.posting_gate,
+        &fresh.policy,
+        fresh.required_grant_id,
+        prepared_tool_call(&prepared.authorization),
+        fresh.approval_context(),
+        at,
+        Some(at),
+    )?)
+}
+
 pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
@@ -182,25 +323,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     // row keeps it, and every later send of the row rechecks it (FIX 11591).
     let mut authorizing_owner = None;
     if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command {
-        if let Some(owner) = &prepared.owner_proof {
-            authorizing_owner = Some(owner.revalidate_in_txn(vault, &wtxn)?);
-        }
-        if let Some((actor, actor_class)) = prepared.verified_actor {
-            if vault.port_tombstone_is_deleted(&wtxn, &actor)? {
-                return Err(IntentLedgerError::InvalidBoundActor);
-            }
-            let entity_type = vault
-                .get_entity_type_in_txn(&wtxn, &actor)?
-                .ok_or(IntentLedgerError::InvalidBoundActor)?;
-            crate::provenance::validate_actor_class(entity_type, actor_class)?;
-            if prepared.gate.provenance.actor_entity_ref != Some(actor)
-                || prepared.gate.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
-                || prepared.gate.actor.actor_class != actor_class.gate_actor_class()
-            {
-                return Err(IntentLedgerError::InvalidBoundActor);
-            }
-        }
-        verify_booking_effect(vault, &wtxn, prepared.attempt_id, &prepared.payload)?;
+        authorizing_owner = admit_prepared_in_txn(vault, &wtxn, prepared)?;
     }
     // Payload-derived ids alone are not unique logical calls. Resolve the
     // attempt under the SAME writer lock as the gate, debit, and Pending insert.
@@ -291,42 +414,22 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         }
     };
 
-    // P1-2 #4499: a prepared campaign leg re-proves its lifecycle under
-    // this writer before any decision is recorded; other effects pass through.
-    crate::campaign::enrollment::admit_campaign_leg_in_txn(vault, &wtxn, &prepared.gate)?;
-
-    let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-    enforce_step_failure_policy(
-        vault,
-        &wtxn,
-        &policy,
-        &prepared.payload,
-        prepared.gate.provenance.actor_entity_ref,
-    )?;
-    let required_grant_id = invite_admission
-        .as_ref()
-        .and_then(crate::calendar::CalendarInviteAdmission::page_grant)
-        .or_else(|| required_grant_id(&prepared.authorization));
-    let posting_gate = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
-    // DOOR-079 1a: a held connector call a code consent wait owns is
-    // admitted under that wait's answer, proved from the rows under this
-    // writer: its code-bound approval, its bound bytes, its original
-    // caller's own credential. Any other effect admits as before.
-    let code_wait = crate::outbound_consent::code_wait_admission_in_txn(vault, &wtxn, &prepared)?;
+    let fresh = fresh_admission_in_txn(vault, &wtxn, &prepared, invite_admission.as_ref())?;
+    let approval_context = fresh.approval_context();
+    let FreshAdmission {
+        policy,
+        required_grant_id,
+        posting_gate,
+        code_wait,
+    } = fresh;
     let mut governance = gate::evaluate_external_effect_policy(
         &vault.store,
         &mut wtxn,
         &posting_gate,
         &policy,
         required_grant_id,
-        match &prepared.authorization {
-            PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
-            PreparedAuthorization::None | PreparedAuthorization::PublisherSignature(_) => None,
-        },
-        code_wait.map_or(
-            gate::ApprovalContext::FirstAdmission,
-            |(_, binding_digest)| gate::ApprovalContext::CodeWait(binding_digest),
-        ),
+        prepared_tool_call(&prepared.authorization),
+        approval_context,
     )?;
     if governance.outcome() != GateOutcome::Allow {
         let ask_consent = governance.ask_consent().cloned();
@@ -777,13 +880,25 @@ pub(super) fn calendar_admission_in_txn(
     txn: &heed::RoTxn<'_>,
     prepared: &PreparedEffect,
 ) -> Result<Option<crate::calendar::CalendarInviteAdmission>, IntentLedgerError> {
+    calendar_admission_at_in_txn(vault, txn, prepared, vault.store.clock.now_recorded_at())
+}
+
+/// [`calendar_admission_in_txn`] judged at `now`, recording-time seconds: the
+/// writer passes the store clock's reading, a preflight the recording time
+/// its judgment is dated by.
+fn calendar_admission_at_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    prepared: &PreparedEffect,
+    now: u64,
+) -> Result<Option<crate::calendar::CalendarInviteAdmission>, IntentLedgerError> {
     crate::calendar::invite::admit_frozen_calendar_invite_in_txn(
         vault,
         txn,
         &prepared.tool,
         prepared.gate.provenance.actor_entity_ref,
         &prepared.payload,
-        vault.store.clock.now_recorded_at(),
+        now,
     )
     .map_err(|_| IntentLedgerError::InvalidInput("calendar.invite failed calendar admission"))
 }
