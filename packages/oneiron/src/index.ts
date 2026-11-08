@@ -1564,6 +1564,8 @@ export class Oneiron {
         /** The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit. */
         replay: (input: Facade.FederationBurstReplayRequest): Facade.FederationBurstReceipt => this.#call(() => this.#client.vaultFederationBurstReplay(input) as Facade.FederationBurstReceipt),
       },
+      /** The owner reads this install's pact activation, consent epoch and local inactivity reason. */
+      status: (input: Facade.EmptyRequest): Facade.FederationStatus => this.#call(() => this.#client.vaultFederationStatus(input) as Facade.FederationStatus),
       connect: {
         /** The owner reads this vault identity and the host key used for reciprocal Connect consent. */
         identity: (input: Facade.EmptyRequest): Facade.ConnectIdentity => this.#call(() => this.#client.vaultFederationConnectIdentity(input) as Facade.ConnectIdentity),

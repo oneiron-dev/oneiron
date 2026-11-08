@@ -1956,6 +1956,11 @@ export_facade! {
     let output = client.vault_federation_burst_replay(&input)?;
     crate::codec::lift_record("vault.federation.burst.replay", &output)
 };
+"vault.federation.status" => fn vault_federation_status(&self) -> FederationStatus = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.federation.status")?;
+    let output = client.vault_federation_status(&input)?;
+    crate::codec::lift_record("vault.federation.status", &output)
+};
 "vault.federation.connect.identity" => fn vault_federation_connect_identity(&self) -> ConnectIdentity = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.federation.connect.identity")?;
     let output = client.vault_federation_connect_identity(&input)?;

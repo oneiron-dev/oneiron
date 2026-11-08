@@ -500,6 +500,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultFederationBurstReview
         | Row::VaultFederationBurstReviewRelease
         | Row::VaultFederationBurstReviewReject
+        | Row::VaultFederationStatus
         | Row::VaultFederationConnectIdentity
         | Row::VaultFederationConnectGrantsMint
         | Row::VaultFederationConnectOffer
