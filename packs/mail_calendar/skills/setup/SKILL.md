@@ -55,6 +55,13 @@ company server), connect it with provider `imap`:
   upgrade), `port` (only when the server uses another), `username`, and
   either `password` (an app password where the provider offers one) or
   `access_token` (OAuth, `XOAUTH2`).
+- For drafted replies to send, the same credential also names the mailbox's
+  submission server: `submission`, an object with `host` (for example
+  `smtp.fastmail.com`), `security` (`starttls`, the default, port 587; or
+  `tls`, port 465) and `port` (only when the server uses another). The same
+  username and password, or token, sign in there. The person binds the
+  credential to effector `connector:smtp` as well: a credential bound only to
+  `connector:imap` reads mail and sends none.
 - The provider account is `<username>@<host>`, exactly as stored: a credential
   for another account never fills the source.
 - Every folder is read but drafts; trash and junk are only looked in.

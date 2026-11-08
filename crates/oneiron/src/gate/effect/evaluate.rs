@@ -107,6 +107,11 @@ pub(crate) fn evaluate_external_effect_policy(
         &hydrated_effect,
     )?;
     let mail_once = mail_cold || member_mail;
+    // Fix list rows 17872, 17643: a drafted mail-pack reply sent as its
+    // mailbox's own account names no sender identity; the owner's one press
+    // for exactly that send releases it, as a member-mail press does.
+    let source_reply =
+        crate::mail_pack::approved_source_reply_in_txn(store, &*wtxn, &hydrated_effect)?;
     let mail_graduated = crate::channel_identity_provider::native_mail::mail_graduated_in_txn(
         store,
         &*wtxn,
@@ -301,7 +306,8 @@ pub(crate) fn evaluate_external_effect_policy(
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
         effect.mail_graduated = mail_graduated;
-        effect.mail_approve_once = mail_retry_authorized || (mail_once && approve_once.is_some());
+        effect.mail_approve_once =
+            mail_retry_authorized || ((mail_once || source_reply) && approve_once.is_some());
         // Only a still-available marker looked up by the engine-computed,
         // exact publish digest can release this one proposed public effect.
         effect.artifact_publish_approve_once = approve_once.is_some()
