@@ -6,7 +6,11 @@ use std::sync::{Arc, PoisonError, RwLock};
 use oneiron::llm::model_pack::AccessSnapshot;
 use oneiron::{LlmCatalogEntry, ModelId, ModelLocality};
 
+use super::catalog::engine_model_id;
 use super::ladder::OfferLadder;
+use super::offer::provider_offer;
+use super::{referenced_models, reranker_models};
+use crate::config::models::ModelsConfig;
 
 /// Each model by id: where it runs and the ladder that serves it.
 pub(super) type Routes = BTreeMap<ModelId, (ModelLocality, Arc<OfferLadder>)>;
@@ -175,6 +179,42 @@ impl ModelRouter {
             for offer in ladder.offer_bindings() {
                 if offer.model == *model {
                     snapshot.insert_offer(offer);
+                }
+            }
+        }
+        snapshot
+    }
+
+    /// The access the configured routes of a router built from `config`
+    /// hold, as [`Self::access_snapshot`] reads them (FIX 22059): each model
+    /// a role's ladder names on a provider that generates, and each the
+    /// reranker's ladder names on one that reranks, with the offer its route
+    /// binds. What `oneiron maintain` lends the model pack retirement sweep,
+    /// from the `[models]` config `serve` builds its router from. Read from
+    /// `config` alone: no backend is built, no key is read and nothing is
+    /// sent, so a provider that would not start (its key variable unset,
+    /// say) still counts. The models the owner's other nodes offer, which a
+    /// serving host reaches over its mesh, and the on-device views of the
+    /// workers a serving host launches are left out.
+    pub(crate) fn configured_access_snapshot(config: &ModelsConfig) -> AccessSnapshot {
+        let mut snapshot = AccessSnapshot::new();
+        for (name, provider) in &config.providers {
+            let chat_routes = provider
+                .kind
+                .generates()
+                .then(|| (referenced_models(config, name), false));
+            let rerank_routes = provider
+                .kind
+                .reranks()
+                .then(|| (reranker_models(config, name), true));
+            for (models, rerank) in chat_routes.into_iter().chain(rerank_routes) {
+                for model in &models {
+                    let Ok(id) = engine_model_id(model, provider) else {
+                        continue;
+                    };
+                    if let Ok(offer) = provider_offer(provider, id, rerank) {
+                        snapshot.insert_offer(&offer);
+                    }
                 }
             }
         }
