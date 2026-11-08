@@ -7,6 +7,7 @@ use std::time::Instant;
 use rmpv::Value;
 
 use super::facts::{CalendarEventRow, CalendarRead, event_row, receipted, visit_calendar_events};
+use super::occurrences::SeriesCursors;
 use super::pages::{CalendarSearchPage, Slices};
 use super::requests::{
     CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
@@ -87,7 +88,11 @@ fn search_events_in(
     let Some(prepared) = prepare_search(read, req)? else {
         return Ok(Vec::new());
     };
-    let mut matched = prepared.matched(req.range.map(CalendarRangeDto::to_time_range), None)?;
+    let mut matched = prepared.matched(
+        req.range.map(CalendarRangeDto::to_time_range),
+        None,
+        &mut SeriesCursors::default(),
+    )?;
     matched.sort_unstable_by_key(|(key, _)| *key);
     matched.truncate(prepared.limit);
     Ok(views(matched))
@@ -119,7 +124,7 @@ fn search_events_page_in(
         return Ok(CalendarSearchPage::of(Vec::new(), None));
     };
     let Some(window) = req.range.map(CalendarRangeDto::to_time_range) else {
-        let mut matched = prepared.matched(None, None)?;
+        let mut matched = prepared.matched(None, None, &mut SeriesCursors::default())?;
         matched.sort_unstable_by_key(|(key, _)| *key);
         matched.truncate(prepared.limit);
         return Ok(CalendarSearchPage::of(views(matched), None));
@@ -134,10 +139,12 @@ fn search_events_page_in(
     // that still overlap it.
     let mut lookback = resume_from.is_none();
     let mut matched = Vec::new();
+    // Each series' walk carries from one slice to the next (FIX 16174).
+    let mut cursors = SeriesCursors::default();
     while let Some(slice) = slices.next_slice() {
         let owned_from = (!lookback).then_some(slice.start);
         lookback = false;
-        let mut found = prepared.matched(Some(slice), owned_from)?;
+        let mut found = prepared.matched(Some(slice), owned_from, &mut cursors)?;
         found.sort_unstable_by_key(|(key, _)| *key);
         matched.extend(found);
         if matched.len() > prepared.limit {
@@ -230,11 +237,13 @@ impl PreparedSearch {
     /// starts at or after it: a slice past the first owns only the starts
     /// it holds); with no window, each row once. Rows are projected and
     /// expanded in their read order, so the first failing row's error is
-    /// the one returned.
+    /// the one returned. A series, timed or floating or all-day, expands
+    /// under `cursors`, which a page's slices share.
     fn matched(
         &self,
         window: Option<TimeRange>,
         owned_from: Option<u64>,
+        cursors: &mut SeriesCursors,
     ) -> Result<Vec<(PageKey, CalendarEventView)>> {
         let mut matched = Vec::new();
         for row in &self.rows {
@@ -254,6 +263,7 @@ impl PreparedSearch {
                     window,
                     &self.exceptions,
                     &self.withheld,
+                    cursors,
                 )? {
                     for (at, civil) in named {
                         if intersects(at, window) && owned_from.is_none_or(|from| at.start >= from)
@@ -265,8 +275,13 @@ impl PreparedSearch {
                     }
                     continue;
                 }
-                let occurrences =
-                    super::occurrences::occurrences(row, window, &self.exceptions, &self.withheld)?;
+                let occurrences = super::occurrences::occurrences(
+                    row,
+                    window,
+                    &self.exceptions,
+                    &self.withheld,
+                    cursors,
+                )?;
                 for at in occurrences {
                     if intersects(at, window) && owned_from.is_none_or(|from| at.start >= from) {
                         let mut occurrence = view.clone();

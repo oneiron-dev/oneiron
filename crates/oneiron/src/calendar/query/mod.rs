@@ -26,7 +26,7 @@
 mod civil;
 mod facts;
 mod occurrences;
-pub(in crate::calendar) use occurrences::occurrences;
+pub(in crate::calendar) use occurrences::{SeriesCursors, occurrences};
 mod pages;
 pub(in crate::calendar) use pages::Slices;
 pub use pages::{
@@ -40,11 +40,11 @@ mod window;
 pub use window::{CalendarOccurrenceView, CalendarOccurrencesRequest, read_occurrences_scoped};
 
 pub use self::civil::CalendarCivilSpan;
-pub use self::facts::CalendarRead;
 pub(crate) use self::facts::visit_calendar_events_for_effect;
 pub(in crate::calendar) use self::facts::{
     CalendarEventRow, receipted, visit_calendar_events_busy,
 };
+pub use self::facts::{CalendarQueryReceipt, CalendarRead};
 pub use self::requests::{
     CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
     MAX_CALENDAR_SEARCH_LIMIT,

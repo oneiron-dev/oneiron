@@ -82,6 +82,7 @@ pub enum StreamFinality {
 #[serde(rename_all = "snake_case")]
 pub enum StreamFinalityReason {
     ExplicitFinalize,
+    #[serde(rename = "idle_timeout_30s")]
     IdleTimeout30s,
     IdleTimeout { timeout_ms: u64 },
     ProcessCrashRecovery,

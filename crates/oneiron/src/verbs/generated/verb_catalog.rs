@@ -570,6 +570,7 @@ pub enum AgentVerb {
     VaultConsentDeny,
     VaultConsentCreateStandingGrant,
     VaultConsentCreateAutoWeaveGrant,
+    VaultConsentCreateNightlyLinkGrant,
     VaultConsentRegistry,
     VaultConsentFailureSignalsHeld,
     VaultConsentRevoke,
@@ -1900,6 +1901,7 @@ impl AgentVerb {
         Self::VaultConsentDeny,
         Self::VaultConsentCreateStandingGrant,
         Self::VaultConsentCreateAutoWeaveGrant,
+        Self::VaultConsentCreateNightlyLinkGrant,
         Self::VaultConsentRegistry,
         Self::VaultConsentFailureSignalsHeld,
         Self::VaultConsentRevoke,
@@ -3251,6 +3253,7 @@ impl AgentVerb {
             Self::VaultConsentDeny => "vault.consent.deny",
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
             Self::VaultConsentCreateAutoWeaveGrant => "vault.consent.create_auto_weave_grant",
+            Self::VaultConsentCreateNightlyLinkGrant => "vault.consent.create_nightly_link_grant",
             Self::VaultConsentRegistry => "vault.consent.registry",
             Self::VaultConsentFailureSignalsHeld => "vault.consent.failure_signals_held",
             Self::VaultConsentRevoke => "vault.consent.revoke",
@@ -4603,6 +4606,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
+                | Self::VaultConsentCreateNightlyLinkGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
@@ -5962,6 +5966,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
+                | Self::VaultConsentCreateNightlyLinkGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
@@ -7474,6 +7479,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
+                | Self::VaultConsentCreateNightlyLinkGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
@@ -8509,6 +8515,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
+                | Self::VaultConsentCreateNightlyLinkGrant
                 | Self::VaultConsentRevoke
                 | Self::VaultConsentCreateBypassGrant
                 | Self::VaultConsentGraduationPolicySet
@@ -9562,6 +9569,7 @@ impl AgentVerb {
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
+            Self::VaultConsentCreateNightlyLinkGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentFailureSignalsHeld => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
@@ -10893,6 +10901,7 @@ impl AgentVerb {
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
+            Self::VaultConsentCreateNightlyLinkGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentFailureSignalsHeld => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
@@ -13330,6 +13339,9 @@ impl AgentVerb {
             }
             Self::VaultConsentCreateAutoWeaveGrant => {
                 "The owner grants a writer auto-weave in one project, research campaign or governed skill: a standing research.auto_weave grant the claim door records past Proposed."
+            }
+            Self::VaultConsentCreateNightlyLinkGrant => {
+                "The owner lets this vault's Dreamer apply the SameAs links its nightly continuations propose; nothing is granted by default."
             }
             Self::VaultConsentRegistry => {
                 "The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."
