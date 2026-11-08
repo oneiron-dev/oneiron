@@ -71,6 +71,42 @@ impl RecordingJsHost<'_, '_> {
         Ok(outcome)
     }
 
+    /// Retain a fresh decline's released reason without changing its outcome.
+    fn capture_task_refusal_output(&mut self, seq: u64, outcome: &SelfDispatchOutcome) {
+        let Some(bytes) = self.gated_write.take_task_refusal_output() else {
+            return;
+        };
+        if !matches!(outcome, SelfDispatchOutcome::TaskRefusal(refusal)
+            if refusal.declined() && !refusal.replay)
+        {
+            return;
+        }
+        let capture = || -> Result<Option<CodeRunRawOutput>> {
+            let Some(storage) = self.storage else {
+                return Ok(None);
+            };
+            let mut sink = storage.code_run_reply_spool()?;
+            sink.write(&bytes)?;
+            Ok(storage
+                .publish_code_run_reply(
+                    bridge_result_output_path(seq),
+                    sink,
+                    self.run_id,
+                    &[],
+                    None,
+                )?
+                .ok())
+        };
+        match capture() {
+            Ok(Some(output)) => self.captured.push(output),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(run = %self.run_id.to_hex(), seq, error = %error,
+                    "accepted task refusal output is unavailable");
+            }
+        }
+    }
+
     /// Registers the write receipt's already-published body as this run's result.
     fn import_write_answer(&mut self, output: CodeRunRawOutput) -> serde_json::Value {
         let name = self.next_auto_name();
@@ -641,6 +677,7 @@ impl RecordingJsHost<'_, '_> {
         // its row keeps them, a failure's included (FIX 9180).
         let seats = self.gated_write.take_spawn_seats();
         let (outcome, rewritten) = match dispatched.and_then(|(outcome, rewritten)| {
+            self.capture_task_refusal_output(seq, &outcome);
             self.store_large_answer(seq, outcome)
                 .map(|outcome| (outcome, rewritten))
         }) {
