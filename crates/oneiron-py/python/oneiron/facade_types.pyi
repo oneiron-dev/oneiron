@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1302 facade rows, 4718 declarations.
-Inputs: 1231 of 1302 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1131 of 1302 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 121; unread shapes: 0.
+Census: 1307 facade rows, 4732 declarations.
+Inputs: 1236 of 1307 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1136 of 1307 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -681,6 +681,7 @@ class AgentHealthCard(TypedDict):
     opened_at: int
     updated_at: int
     coach: NotRequired[AgentHealthCoachAsk | None]
+    legacy_draft_scrubbed: NotRequired[bool]
     observed_brief: NotRequired[HealthBriefPin | None]
     reviewer: str
     reviewer_revision: NotRequired[EntityId | None]
@@ -1801,6 +1802,9 @@ class TaskAskTargetPeople(TypedDict):
 class TaskAskTargetGuests(TypedDict):
     guests: dict[str, TaskAskGuest]
 TaskAskTarget = TaskAskTargetAuthority | TaskAskTargetResponder | TaskAskTargetPeople | TaskAskTargetGuests
+class TaskAskOption(TypedDict):
+    label: str
+    then: NotRequired[str | None]
 class OutcomeSourceClaim(TypedDict):
     kind: Literal["claim"]
     predicate: str
@@ -1828,13 +1832,16 @@ class TaskAskLadderPrediction(TypedDict):
 class TaskAskQuestion(TypedDict):
     reference: ConsultPayloadRef
     revision: int
-    options: dict[str, str]
+    options: dict[str, TaskAskOption]
     context_refs: list[ConsultPayloadRef]
     label: NotRequired[str | None]
     outcome_binding: NotRequired[OutcomeBinding | None]
     ladder_answer: NotRequired[TaskAskLadderPrediction | None]
     class_key: NotRequired[str | None]
     commitment: NotRequired[bool]
+class TaskAskRec(TypedDict):
+    option: TaskAskOptionId
+    why: str
 class TaskAskNeed(TypedDict):
     count: int
     of: NotRequired[TaskAskElectorate]
@@ -1843,7 +1850,7 @@ TaskAskBranch = Literal["hold", "proceed"]
 class TaskAskDisagree(TypedDict):
     branch: TaskAskBranch
     surface: TaskAskSurface
-TaskAskSpec = TypedDict("TaskAskSpec", {"intent_key": str, "task_ref": NotRequired[EntityId | None], "class": NotRequired[TaskAskClass | None], "who": NotRequired[TaskAskTarget | None], "what": TaskAskQuestion, "until": NotRequired[int | None], "default": NotRequired[TaskAskDefault], "need": NotRequired[TaskAskNeed], "decide": NotRequired[TaskAskDecide | None], "provisional": NotRequired[TaskAskProvisional], "on_disagree": NotRequired[TaskAskDisagree], "remind": NotRequired[list[int] | None]})
+TaskAskSpec = TypedDict("TaskAskSpec", {"intent_key": str, "task_ref": NotRequired[EntityId | None], "class": NotRequired[TaskAskClass | None], "who": NotRequired[TaskAskTarget | None], "what": TaskAskQuestion, "rec": NotRequired[TaskAskRec | None], "until": NotRequired[int | None], "default": NotRequired[TaskAskDefault], "need": NotRequired[TaskAskNeed], "decide": NotRequired[TaskAskDecide | None], "provisional": NotRequired[TaskAskProvisional], "on_disagree": NotRequired[TaskAskDisagree], "remind": NotRequired[list[int] | None]})
 class TaskAskSettlement(TypedDict):
     group_ref: EntityId
     reference: EntityId
@@ -1864,6 +1871,8 @@ class TaskAskResult(TypedDict):
     effect_authorization: TaskAskEffectAuthorization
     coverage: TaskAskCoverage
     decision: TaskAskDecision
+    picked: NotRequired[TaskAskOptionId | None]
+    was_rec: bool
     fallback: NotRequired[TaskAskFallback | None]
     evidence: list[TaskAskEvidence]
     settlement: TaskAskSettlement
@@ -2674,6 +2683,11 @@ class FanoutAckRequest(TypedDict):
     plan_digest: str
     answer: FanoutCheckChoice
     remembered_cap: NotRequired[int | None]
+class ObjectiveConfession(TypedDict):
+    objective: str
+    met: NotRequired[bool | None]
+    flaw: NotRequired[str | None]
+    uncertainty: NotRequired[str | None]
 class TaskReportBodyProgressBody(TypedDict):
     evidence_refs: NotRequired[list[EntityId]]
     renew_lease: NotRequired[bool]
@@ -2688,6 +2702,7 @@ class TaskReportBodyBlocked(TypedDict):
 class TaskReportBodyDoneBody(TypedDict):
     result_ref: EntityId
     confession: NotRequired[str | None]
+    confession_structured: NotRequired[list[ObjectiveConfession] | None]
 class TaskReportBodyDone(TypedDict):
     done: TaskReportBodyDoneBody
 class TaskReportBodyFailedBody(TypedDict):
@@ -2785,7 +2800,7 @@ class StreamFinalityReasonIdleTimeout(TypedDict):
     idle_timeout: StreamFinalityReasonIdleTimeoutBody
 class StreamFinalityReasonCustom(TypedDict):
     custom: str
-StreamFinalityReason = Literal["explicit_finalize", "idle_timeout30s", "process_crash_recovery", "user_interrupted", "agent_aborted", "external_signal"] | StreamFinalityReasonIdleTimeout | StreamFinalityReasonCustom
+StreamFinalityReason = Literal["explicit_finalize", "idle_timeout_30s", "process_crash_recovery", "user_interrupted", "agent_aborted", "external_signal"] | StreamFinalityReasonIdleTimeout | StreamFinalityReasonCustom
 IncompleteReason = Literal["terminal_disagreement"]
 class FinishReasonOtherBody(TypedDict):
     name: str
@@ -2891,6 +2906,7 @@ class ContentPartToolCall(TypedDict):
     call_id: str
     name: str
     input: Any
+    signature: NotRequired[str | None]
 class ContentPartToolResult(TypedDict):
     kind: Literal["tool_result"]
     call_id: str
@@ -8222,6 +8238,10 @@ class FileReadinessNameOnlyBody(TypedDict):
 class FileReadinessNameOnly(TypedDict):
     name_only: FileReadinessNameOnlyBody
 FileReadiness = Literal["text"] | FileReadinessNameOnly
+class FileOriginal(TypedDict):
+    artifact: EntityId
+    version: int
+    content_hash: str
 class FilesFileView(TypedDict):
     handle: FileHandle
     state: FilesFileState
@@ -8229,6 +8249,7 @@ class FilesFileView(TypedDict):
     note: NotRequired[EntityId | None]
     fork: NotRequired[EntityId | None]
     revision: NotRequired[str | None]
+    original: NotRequired[FileOriginal | None]
     bytes: NotRequired[int | None]
     modified_at: NotRequired[int | None]
     first_seen_at: NotRequired[int | None]
@@ -11024,6 +11045,8 @@ class AutoWeaveGrantRequest(TypedDict):
     writer_class: AutoWeaveWriterClass
     scope: str
     scope_id: str
+class NightlyLinkGrantRequest(TypedDict):
+    ...
 class ConsentRegistryQuery(TypedDict):
     limit: int
     include_revoked: NotRequired[bool]
@@ -11523,11 +11546,6 @@ class LateCreditReceipt(TypedDict):
     shares: list[LateCreditShare]
 class LearningProjectionView(TypedDict):
     receipt: NotRequired[LateCreditReceipt | None]
-class ObjectiveConfession(TypedDict):
-    objective: str
-    met: NotRequired[bool | None]
-    flaw: NotRequired[str | None]
-    uncertainty: NotRequired[str | None]
 class AttemptConfession(TypedDict):
     attempt: AttemptId
     subject: EntityId
@@ -11856,6 +11874,7 @@ class WidenProposalAnswer(TypedDict):
     proposal_id: str
 class ClaimProposalReviewRequest(TypedDict):
     claim_ref: str
+    grant_ref: NotRequired[str | None]
 class ClaimProposalReview(TypedDict):
     review_id: str
     proposal_ref: str
@@ -11867,14 +11886,19 @@ class ClaimSettleRequest(TypedDict):
     claim_ref: str
     review_id: str
     decision: ClaimSettleDecision
+    grant_ref: NotRequired[str | None]
 ClaimSettlementVerdict = Literal["landed", "rejected"]
 class ClaimChangeVerdict(TypedDict):
     claim_ref: str
     verdict: ClaimSettlementVerdict
-class ClaimSettlementAnswer(TypedDict):
+class ClaimSettlementAnswerWord(TypedDict):
     kind: Literal["word"]
     person_ref: str
-ClaimSettlementReason = Literal["gate.claim.settle.approved", "gate.claim.settle.declined"]
+class ClaimSettlementAnswerGrant(TypedDict):
+    kind: Literal["grant"]
+    grant_ref: str
+ClaimSettlementAnswer = ClaimSettlementAnswerWord | ClaimSettlementAnswerGrant
+ClaimSettlementReason = Literal["gate.claim.settle.approved", "gate.claim.settle.declined", "gate.claim.settle.holder_approved", "gate.claim.settle.holder_declined"]
 class ClaimSettlementRevert(TypedDict):
     verb: str
     claim_ref: str
@@ -11937,7 +11961,7 @@ class LensScope(TypedDict):
 class LensProposeRequest(TypedDict):
     slot: LensSlot
     pack_content_hash: str
-    compiled: Any
+    compiled: GeneratedLens
     intent_prompt: str
     trigger: NotRequired[MadeByTrigger | None]
     scope: NotRequired[LensScope | None]
@@ -12797,6 +12821,9 @@ class CodeProposalSubmitted(TypedDict):
     provenance_claim: EntityId
     base: str
     status: RepoProposalStatus
+class CodeProposalRereviewRequest(TypedDict):
+    original: EntityId
+    change: CodeProposalSubmitRequest
 class CodeConflictRecordRequest(TypedDict):
     repo: EntityId
     branch_subject: EntityId
@@ -12832,6 +12859,9 @@ class CodeProposalResolveRequest(TypedDict):
     branch_subject: EntityId
     conflict: EntityId
     branch: str
+class CodeProposalResolveRereviewRequest(TypedDict):
+    original: EntityId
+    change: CodeProposalResolveRequest
 LearningPredicate = Literal["reliability", "edit_cost", "retest_noise", "setting"]
 class LearningCell(TypedDict):
     predicate: LearningPredicate
@@ -12862,7 +12892,7 @@ class CodeProposalReviewRequest(TypedDict):
 RepoProposalDecision = Literal["approve", "reject"]
 class RepoProposalSettlement(TypedDict):
     receipt: EntityId
-    actor: EntityId
+    actor: NotRequired[EntityId | None]
     decision: RepoProposalDecision
     settled_at: int
 class CodeProposalSettlementView(TypedDict):
@@ -13538,7 +13568,13 @@ class ExternalImportRequest(TypedDict):
     source: ExternalImportSource
     source_binding: NotRequired[str | None]
     door: ExternalImportDoor
-ExternalImportReceipt = TypedDict("ExternalImportReceipt", {"import": EntityId, "repo": str, "code_repo": EntityId, "source": ExternalImportSource, "imported_ref": str, "base_revision": EntityId, "importer": NotRequired[EntityId | None], "seed_publication": NotRequired[EntityId | None], "receive_provenance": NotRequired[EntityId | None], "publication": NotRequired[EntityId | None], "lfs_daemon_residual": bool})
+ExternalImportLfsRoute = Literal["broker"]
+BrokerIsolation = Literal["separate_user", "same_user"]
+class ExternalImportLfsTransfer(TypedDict):
+    route: ExternalImportLfsRoute
+    broker_isolation: NotRequired[BrokerIsolation | None]
+    credential_rewrites: NotRequired[int]
+ExternalImportReceipt = TypedDict("ExternalImportReceipt", {"import": EntityId, "repo": str, "code_repo": EntityId, "source": ExternalImportSource, "imported_ref": str, "base_revision": EntityId, "importer": NotRequired[EntityId | None], "seed_publication": NotRequired[EntityId | None], "receive_provenance": NotRequired[EntityId | None], "publication": NotRequired[EntityId | None], "lfs_transfer": NotRequired[ExternalImportLfsTransfer | None]})
 ExternalImportLookup = TypedDict("ExternalImportLookup", {"repo": str, "code_repo": EntityId, "import": EntityId, "door": ExternalImportDoor})
 ExternalImportPhase = Literal["pending", "fetch_refused", "source_moved", "held_base", "door_refused", "transport_unknown", "received"]
 class ReceivedFileOperation(TypedDict):
@@ -13628,12 +13664,18 @@ class OriginMirrorReadinessNotReady(TypedDict):
     objects: list[OriginMirrorLfsObject]
     omitted_objects: int
 OriginMirrorReadiness = OriginMirrorReadinessReady | OriginMirrorReadinessNotReady
+OriginMirrorLfsRoute = Literal["broker", "daemon"]
+class OriginMirrorLfsTransfer(TypedDict):
+    route: OriginMirrorLfsRoute
+    broker_isolation: NotRequired[BrokerIsolation | None]
+    credential_rewrites: NotRequired[int]
 class OriginMirrorRun(TypedDict):
     at: int
     refs: int
     deleted: int
     failure: NotRequired[str | None]
     readiness: NotRequired[OriginMirrorReadiness | None]
+    lfs_transfer: NotRequired[OriginMirrorLfsTransfer | None]
 OriginMirrorSyncStrategy = Literal["ask_me", "schedule", "full_auto"]
 OriginMirrorHoldCause = Literal["storage", "decode", "review", "remote_read"]
 class OriginMirrorHold(TypedDict):
@@ -13725,7 +13767,6 @@ class MirrorBatchClaimSent(TypedDict):
 class MirrorBatchClaimPaused(TypedDict):
     state: Literal["paused"]
 MirrorBatchClaim = MirrorBatchClaimPending | MirrorBatchClaimClaimed | MirrorBatchClaimSent | MirrorBatchClaimPaused
-BrokerIsolation = Literal["separate_user", "same_user"]
 class OriginMirrorPlanBatchView(TypedDict):
     claim: MirrorBatchClaim
     refs: list[int]
@@ -13855,6 +13896,9 @@ class OriginPublishApproveRequest(TypedDict):
     request_id: EntityId
     review_digest: str
     code_repo: NotRequired[EntityId | None]
+class DevicePredecessor(TypedDict):
+    client: str
+    device_key: str
 OriginResidence = Literal["local-vault", "cloud-vault"]
 class OriginAuthority(TypedDict):
     epoch: int
@@ -16028,6 +16072,7 @@ class DeckProposeRequest(TypedDict):
     run_ref: str
     context: NotRequired[DeckEditContext]
     made_by: NotRequired[MadeBy | None]
+    delta_receipt: NotRequired[str | None]
 class DeckInspection(TypedDict):
     slides: list[DeckSlideInspection]
     ambiguities: list[DeckIdentityAmbiguity]
@@ -16209,6 +16254,7 @@ class NativeOutputRequest(TypedDict):
     report: NotRequired[Any]
     made_by: NotRequired[MadeBy | None]
     read_rows: NotRequired[list[str]]
+    delta_receipt: NotRequired[str | None]
 class VersionReconciliation(TypedDict):
     base_version: int
     kept_head: ArtifactVersionView
@@ -17604,6 +17650,7 @@ class LlmStreamEventToolCallEnd(TypedDict):
     call_id: str
     name: str
     input: Any
+    signature: NotRequired[str | None]
 class LlmStreamEventToolResultStart(TypedDict):
     event: Literal["tool_result_start"]
     part_id: str
@@ -19367,10 +19414,17 @@ class TranscriptIngestOutcomeSession(TypedDict):
 class TranscriptIngestOutcomeRetryOpenSession(TypedDict):
     outcome: Literal["retry_open_session"]
     open_session_ref: EntityId
+class TranscriptIngestOutcomeHookPending(TypedDict):
+    outcome: Literal["hook_pending"]
+    session_ref: EntityId
+    ask: EntityId
+class TranscriptIngestOutcomeQueued(TypedDict):
+    outcome: Literal["queued"]
+    attempt_ref: str
 class TranscriptIngestOutcomeNoteFallback(TypedDict):
     outcome: Literal["note_fallback"]
     note_ref: EntityId
-TranscriptIngestOutcome = TranscriptIngestOutcomeSession | TranscriptIngestOutcomeRetryOpenSession | TranscriptIngestOutcomeNoteFallback
+TranscriptIngestOutcome = TranscriptIngestOutcomeSession | TranscriptIngestOutcomeRetryOpenSession | TranscriptIngestOutcomeHookPending | TranscriptIngestOutcomeQueued | TranscriptIngestOutcomeNoteFallback
 class ClaimListFilter(TypedDict):
     subject_ref: NotRequired[str | None]
     predicate: NotRequired[str | None]
@@ -20058,7 +20112,7 @@ class EsignSigningRequest(TypedDict):
     action: SigningAction
 class FieldControlText(TypedDict):
     kind: Literal["text"]
-    max_bytes: int
+    max_bytes: NotRequired[int | None]
     server_computed: bool
 class FieldControlCheckbox(TypedDict):
     kind: Literal["checkbox"]
@@ -20082,6 +20136,12 @@ class SigningPage(TypedDict):
     fields: list[EsignField]
     presentations: list[FieldPresentation]
     values: dict[str, SignatureRow]
+class SealActiveContentFacts(TypedDict):
+    javascript: bool
+    launch: bool
+class SigningSealedItem(TypedDict):
+    sha256: str
+    active_content: SealActiveContentFacts
 class SigningOutcomePage(TypedDict):
     outcome: Literal["page"]
     data: SigningPage
@@ -20090,6 +20150,7 @@ class SigningOutcomeNotYourTurn(TypedDict):
 class SigningOutcomeTerminalContent(TypedDict):
     status: DocumentStatus
     item_count: int
+    sealed_items: NotRequired[list[SigningSealedItem] | None]
 class SigningOutcomeTerminal(TypedDict):
     outcome: Literal["terminal"]
     data: SigningOutcomeTerminalContent
@@ -20139,6 +20200,7 @@ class EsignSealedItemView(TypedDict):
     sealed_version: int
     sha256: str
     profile: SealProfileEvidence
+    active_content: SealActiveContentFacts
 class EsignSealedView(TypedDict):
     attempt_ref: str
     audit_chain_sha256: str
@@ -22094,7 +22156,7 @@ class WakeRecipeJobView(TypedDict):
     parked_at: NotRequired[int | None]
     result_ref: NotRequired[str | None]
     conclusions: list[EntityId]
-WakeOutcomeState = Literal["running", "succeeded", "partial", "failed"]
+WakeOutcomeState = Literal["running", "awaiting_host", "succeeded", "partial", "failed"]
 class WakeParkedJob(TypedDict):
     attempt: EntityId
     cause: NotRequired[DreamerParkCauseView | None]
@@ -22190,6 +22252,7 @@ class WakeRecipePolicy(TypedDict):
     narrative_instruction: str
     arc_min_new_statements: int
     arc_child_calls_per_wake: int
+    arc_synopsis_enabled: bool
     audit_window_instruction: str
     follower_enabled: bool
     follower_instruction: str
@@ -22393,6 +22456,7 @@ class ChannelIdentityLifecycleReceipt(TypedDict):
     identity_retiring: bool
     approval_digest: NotRequired[str | None]
     request_ref: NotRequired[EntityId | None]
+    paced_until: NotRequired[int | None]
 DelegatedGrantScope = Literal["mail.read", "mail.metadata", "mail.send"]
 class DelegatedGrant(TypedDict):
     custody_record_ref: str
@@ -22775,6 +22839,7 @@ class ForkRecord(TypedDict):
     status: ForkStatus
     read_refs: list[str]
     keep: NotRequired[str | None]
+    delta_receipt: NotRequired[str | None]
 class ProposalBundle(TypedDict):
     proposal: str
     author: DocActor
@@ -23631,6 +23696,8 @@ class RepoManifestConflictDiscardViewStale(TypedDict):
 class RepoManifestConflictDiscardViewWindowLive(TypedDict):
     state: Literal["window_live"]
 RepoManifestConflictDiscardView = RepoManifestConflictDiscardViewDiscarded | RepoManifestConflictDiscardViewStale | RepoManifestConflictDiscardViewWindowLive
+class DreamerFollowerKeyframeResult(TypedDict):
+    sessions_marked: int
 ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
 class ConnectorQuestionAnswer(TypedDict):
     key: str

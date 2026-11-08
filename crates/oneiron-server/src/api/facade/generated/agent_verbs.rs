@@ -634,6 +634,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.consent.deny", post(facade_route))
         .route("/vault.consent.create_standing_grant", post(facade_route))
         .route("/vault.consent.create_auto_weave_grant", post(facade_route))
+        .route(
+            "/vault.consent.create_nightly_link_grant",
+            post(facade_route),
+        )
         .route("/vault.consent.registry", post(facade_route))
         .route("/vault.consent.failure_signals_held", post(facade_route))
         .route("/vault.consent.revoke", post(facade_route))
@@ -776,9 +780,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.symbols.renew", post(facade_route))
         .route("/vault.code.symbols.release", post(facade_route))
         .route("/vault.code.proposal_submit", post(facade_route))
+        .route("/vault.code.proposal_rereview", post(facade_route))
         .route("/vault.code.conflict_record", post(facade_route))
         .route("/vault.code.conflict_view", post(facade_route))
         .route("/vault.code.proposal_resolve", post(facade_route))
+        .route("/vault.code.proposal_resolve_rereview", post(facade_route))
         .route("/vault.code.proposal_review", post(facade_route))
         .route("/vault.code.proposal_settle", post(facade_route))
         .route("/vault.code.proposal_settlement", post(facade_route))
@@ -818,6 +824,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.origin.publish.approve", post(facade_route))
         .route("/vault.code.origin.publish.execute", post(facade_route))
         .route("/vault.code.origin.publish.cancel", post(facade_route))
+        .route("/vault.devices.predecessor.name", post(facade_route))
         .route("/vault.code.origin.authority.get", post(facade_route))
         .route("/vault.code.origin.authority.set", post(facade_route))
         .route("/vault.code.origin.publications", post(facade_route))
@@ -1388,6 +1395,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.sync.repo_manifests.conflict.discard",
             post(facade_route),
         )
+        .route("/vault.dreamer.follower.keyframe", post(facade_route))
         .route("/connector.answer", post(facade_route))
         .route("/self.browser.open", post(facade_route))
         .route("/self.browser.observe", post(facade_route))

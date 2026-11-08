@@ -760,6 +760,9 @@ pub(super) fn decode_output(output: &str, limit: usize) -> Result<JsCodeModeStep
     Ok(JsCodeModeStepOutcome {
         done: output.done,
         observation: output.observation,
+        // The component output has no console channel: streamed console
+        // lines join in `HeldOutput::into_outcome` (FIX 6885).
+        console: String::new(),
         outputs,
     })
 }
