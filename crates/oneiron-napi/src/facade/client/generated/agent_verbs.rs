@@ -6806,6 +6806,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_symbols_neighbors(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.symbols.neighbors", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_merge_queue_enqueue(
         &self,
         input: serde_json::Value,
@@ -7090,6 +7099,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.repo.symbols.definitions", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_repo_symbols_neighbors(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.repo.symbols.neighbors", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

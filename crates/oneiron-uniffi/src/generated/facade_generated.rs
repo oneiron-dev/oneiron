@@ -3887,6 +3887,11 @@ export_facade! {
     let output = client.vault_code_symbols_definitions(&input)?;
     crate::codec::lift_record("vault.code.symbols.definitions", &output)
 };
+"vault.code.symbols.neighbors" => fn vault_code_symbols_neighbors(&self, input: CodeSnapshotNeighborsRequest) -> CodeSnapshotNeighborsView = |client| {
+    let input: oneiron::memory::codebase_doors::CodeSnapshotNeighborsRequest = crate::codec::lower_record("vault.code.symbols.neighbors", input)?;
+    let output = client.vault_code_symbols_neighbors(&input)?;
+    crate::codec::lift_record("vault.code.symbols.neighbors", &output)
+};
 "vault.code.merge_queue.enqueue" => fn vault_code_merge_queue_enqueue(&self, input: MergeQueueEnqueueRequest) -> MergeQueueBatchView = |client| {
     let input: oneiron::memory::merge_queue_doors::MergeQueueEnqueueRequest = crate::codec::lower_record("vault.code.merge_queue.enqueue", input)?;
     let output = client.vault_code_merge_queue_enqueue(&input)?;
@@ -4041,6 +4046,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoSymbolsDefinitionsInput> = crate::codec::lower_record("vault.repo.symbols.definitions", input)?;
     let output = client.vault_repo_symbols_definitions(&input)?;
     crate::codec::lift_record("vault.repo.symbols.definitions", &output)
+};
+"vault.repo.symbols.neighbors" => fn vault_repo_symbols_neighbors(&self, input: LiveRunRequestRepoSymbolsNeighborsInput) -> RepoSymbolsNeighborsOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoSymbolsNeighborsInput> = crate::codec::lower_record("vault.repo.symbols.neighbors", input)?;
+    let output = client.vault_repo_symbols_neighbors(&input)?;
+    crate::codec::lift_record("vault.repo.symbols.neighbors", &output)
 };
 "vault.repo.views.get" => fn vault_repo_views_get(&self, input: LiveRunRequestRepoViewsGetInput) -> RepoWorkView = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::memory::repo_doors::RepoViewsGetInput> = crate::codec::lower_record("vault.repo.views.get", input)?;

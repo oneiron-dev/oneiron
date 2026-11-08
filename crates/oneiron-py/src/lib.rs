@@ -7416,6 +7416,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_symbols_neighbors(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.symbols.neighbors")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.symbols.neighbors", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_merge_queue_enqueue(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.enqueue")?;
         let output = py
@@ -7715,6 +7722,13 @@ impl NativeClient {
                 self.inner
                     .agent_verb("vault.repo.symbols.definitions", input)
             })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_symbols_neighbors(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.symbols.neighbors")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.symbols.neighbors", input))
             .map_err(raise)?;
         encode(&output)
     }
