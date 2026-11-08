@@ -332,8 +332,6 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultWritesCriticalConfirmClear
         | Row::VaultWritesCriticalConfirmDecline
         | Row::VaultWritesCriticalConfirmReceipt
-        | Row::VaultClaimsReview
-        | Row::VaultClaimsSettle
         | Row::VaultPacksSectionsGrant
         | Row::VaultPacksSectionsRevoke
         | Row::VaultPacksSectionsSuggestionsGet
@@ -665,6 +663,9 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultMessageStreamsRefused
         | Row::VaultStepUpPasskeysReset
         | Row::VaultOutboundCallsRequestErase => owner_proof(auth, server, verb).map(drop),
+        Row::VaultClaimsReview | Row::VaultClaimsSettle => {
+            crate::api::facade::claim_settle_doors::settler_admits(server, auth, verb)
+        }
         Row::VaultSharedProposeDelete
         | Row::VaultSharedProposeTransfer
         | Row::VaultSharedProposeRemoveOwner
