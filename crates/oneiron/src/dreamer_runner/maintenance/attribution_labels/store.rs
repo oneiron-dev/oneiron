@@ -54,6 +54,10 @@ pub(super) struct NotePattern {
     /// read rows), frozen at filing: an erase of any of them erases the
     /// proposal, even once its notes have left the ledger.
     pub(super) sources: Vec<[u8; 16]>,
+    /// Its proposal was withdrawn and it has not filed since (FIX 21885):
+    /// each pass tries it again, though none of its notes changed.
+    #[serde(default)]
+    pub(super) refile: bool,
 }
 
 /// One note's support for its pattern: the outcome it counts as, so two notes
