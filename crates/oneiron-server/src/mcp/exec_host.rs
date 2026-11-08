@@ -273,6 +273,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         &self,
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
+        _caller: Option<(EntityId, Option<String>)>,
         _listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
@@ -287,6 +288,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
         _lease: Option<LiveLeaseState>,
+        _caller: Option<(EntityId, Option<String>)>,
         _listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
@@ -523,6 +525,7 @@ pub type ReaderMeter = Arc<
             BudgetGuard,
             Option<PayerPerson>,
             Option<LiveLeaseState>,
+            Option<(EntityId, Option<String>)>,
             Vec<AgentModel>,
         ) -> Arc<dyn LlmBackend>
         + Send
@@ -1011,6 +1014,7 @@ pub(crate) fn enter_engine_native_run(
                 guard.clone(),
                 payer.clone(),
                 Some(scoped.clone()),
+                None,
                 listed.clone(),
             )
         });
@@ -1023,7 +1027,7 @@ pub(crate) fn enter_engine_native_run(
             .and_then(|planned| {
                 provider.planned_backend(guard.clone(), payer.clone(), planned, listed.clone())
             })
-            .or_else(|| provider.reader_backend(guard.clone(), payer, listed)),
+            .or_else(|| provider.reader_backend(guard.clone(), payer, None, listed)),
     };
     let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())

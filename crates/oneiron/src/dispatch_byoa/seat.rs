@@ -492,10 +492,10 @@ impl SeatSpent {
 }
 
 /// Reads a runner's exhaust for a spent seat: a structured error event the
-/// CLI printed (an `error` field, a `type: "error"` event, or a result
-/// flagged `is_error`) whose words read as a limit. A nonzero exit or free
-/// text is never one. Each stream is read whole from its start, stdout
-/// first, one complete event at a time.
+/// CLI printed (an `error` field, a `type: "error"` event, a result flagged
+/// `is_error`, or OpenCode's nested `APIError`) whose words read as a limit.
+/// A nonzero exit or free text is never one. Each stream is read whole
+/// from its start, stdout first, one complete event at a time.
 ///
 /// # Errors
 ///
@@ -554,11 +554,15 @@ fn spent_in_line(line: &str) -> Option<SeatSpent> {
     }
     let mut spent = SeatSpent::from_retryable(&limit::limit_refusal(429, &BTreeMap::new(), &body))?;
     spent.resets_at.extend(epoch_reset(&body));
+    spent.resets_at.extend(opencode_retry_reset(&event));
     Some(spent)
 }
 
 /// The error an event carries, shaped as an API error body.
 fn error_body(event: &JsonValue) -> Option<JsonValue> {
+    if let Some(body) = opencode_error_body(event) {
+        return Some(body);
+    }
     if event.get("error").is_some_and(|error| !error.is_null()) {
         return Some(event.clone());
     }
@@ -570,6 +574,75 @@ fn error_body(event: &JsonValue) -> Option<JsonValue> {
         return Some(json!({ "error": { "message": message } }));
     }
     None
+}
+
+/// OpenCode's run-json API error nests its provider message and headers in
+/// `error.data`. Keep the native limit words and refusal classification.
+fn opencode_error_body(event: &JsonValue) -> Option<JsonValue> {
+    if event.get("type")?.as_str()? != "error" {
+        return None;
+    }
+    let error = event.get("error")?;
+    if error.get("name")?.as_str()? != "APIError" {
+        return None;
+    }
+    let data = error.get("data")?;
+    let message = data.get("message")?.as_str()?;
+    let mut body = json!({ "error": { "message": message } });
+    if let Some(seconds) = opencode_retry_after(data) {
+        body["error"]["retry_after"] = json!(seconds);
+    }
+    if let Some(response_body) = data.get("responseBody").and_then(JsonValue::as_str) {
+        body["error"]["responseBody"] = json!(response_body);
+    }
+    Some(body)
+}
+
+/// Numeric OpenCode retry headers, milliseconds first, rounded up to the
+/// native seconds unit. A missing or nonnumeric wait stays unknown.
+fn opencode_retry_after(data: &JsonValue) -> Option<u64> {
+    let headers = data.get("responseHeaders")?;
+    [("retry-after-ms", 1000.0), ("retry-after", 1.0)]
+        .into_iter()
+        .find_map(|(key, units_per_second)| {
+            let value = headers.get(key)?.as_str()?.trim().parse::<f64>().ok()?;
+            if !value.is_finite() || value < 0.0 {
+                return None;
+            }
+            let seconds = (value / units_per_second).ceil();
+            (seconds < u64::MAX as f64).then(|| seconds as u64)
+        })
+}
+
+/// An OpenCode HTTP-date Retry-After, when no numeric retry header won.
+/// Keep the absolute reset on the provider's clock; the caller judges it.
+fn opencode_retry_reset(event: &JsonValue) -> Option<u64> {
+    if event.get("type")?.as_str()? != "error" {
+        return None;
+    }
+    let error = event.get("error")?;
+    if error.get("name")?.as_str()? != "APIError" {
+        return None;
+    }
+    let data = error.get("data")?;
+    data.get("message")?.as_str()?;
+    if opencode_retry_after(data).is_some() {
+        return None;
+    }
+    let header = data
+        .get("responseHeaders")?
+        .get("retry-after")?
+        .as_str()?
+        .trim();
+    if header.len() != 29 {
+        return None;
+    }
+    let format = "%a, %d %b %Y %H:%M:%S GMT";
+    let reset = chrono::NaiveDateTime::parse_from_str(header, format).ok()?;
+    if reset.format(format).to_string() != header {
+        return None;
+    }
+    u64::try_from(reset.and_utc().timestamp()).ok()
 }
 
 /// A reset an error message names as a Unix-seconds suffix after a bar.

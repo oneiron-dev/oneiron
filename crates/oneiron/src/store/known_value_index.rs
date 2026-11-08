@@ -310,6 +310,48 @@ impl KnownValues {
         })
     }
 
+    /// The matcher over exactly the entries `bound` names, each a custody
+    /// record and one generation of its history, as the writer `wtxn` reads
+    /// them, or `None` when any of them is missing (FIX 21363): a replay
+    /// proves a masked edit's values against the entries its landing matched,
+    /// never another value those records once held. The writer contract is
+    /// [`Self::load_for_in_writer`]'s.
+    pub(crate) fn load_entries_in_writer(
+        store: &Store,
+        wtxn: &RwTxn<'_>,
+        bound: &[(EntityId, u32)],
+    ) -> Result<Option<Self>> {
+        let mut master = None;
+        let mut holders = Vec::with_capacity(bound.len());
+        for (custody, generation) in bound {
+            let Some((held, entries)) = store.known_entries_for_in_writer(wtxn, custody)? else {
+                return Ok(None);
+            };
+            let entries: Vec<KnownEntry> = entries
+                .into_iter()
+                .filter(|(at, _)| at == generation)
+                .map(|(_, entry)| entry)
+                .collect();
+            if entries.is_empty() {
+                return Ok(None);
+            }
+            if master.is_none() {
+                master = Some(held);
+            }
+            holders.push((*custody, entries));
+        }
+        let Some(master) = master else {
+            return Ok(None);
+        };
+        holders.sort_by_key(|(custody, _)| *custody);
+        let txn: &RoTxn<'_> = wtxn;
+        Self::of(&KnownHistory { master, holders }, |custody| {
+            Ok(store
+                .port_short_id_reference(txn, custody)?
+                .map(|(handle, _)| handle))
+        })
+    }
+
     /// The most bytes a known value takes in incoming bytes, spelled the
     /// longest way a spelling reaches (CALLS KNOWN_FORM_REACH_FACTOR): what
     /// a stream holds back so a value still arriving is never let through

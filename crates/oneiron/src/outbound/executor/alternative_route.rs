@@ -58,11 +58,12 @@ const ALTERNATIVE_LEDGER_REF_FIELD: &str = "alternative_ledger_ref";
 const ALTERNATIVE_STOPPED_UNKNOWN: &str = "stopped_delivery_unknown";
 /// The child receipt fields an interrupt's settlement reads its retry edge
 /// and delivery evidence from.
-const CARRIED_CHILD_FIELDS: [&str; 4] = [
+const CARRIED_CHILD_FIELDS: [&str; 5] = [
     "retry_at",
     "delivery_may_have_occurred",
     PROVIDER_RETRY_AFTER_FIELD,
     PROVIDER_WAIT_FIELD,
+    SENT_LOOKUP_FIELD,
 ];
 
 /// Routes one claimed attempt of `task` by its bound alternative's ledger
@@ -270,8 +271,10 @@ fn send_live_alternative<S: OutboundExecutionSink>(
                 now,
             )?;
             retry_connector_task_attempt(
+                vault,
                 queue,
                 attempt,
+                task.task_ref,
                 now,
                 "ambient_alternative_binding_invalid",
                 None,
@@ -280,8 +283,10 @@ fn send_live_alternative<S: OutboundExecutionSink>(
         }
         Err(_) => {
             retry_connector_task_attempt(
+                vault,
                 queue,
                 attempt,
+                task.task_ref,
                 now,
                 "ambient_alternative_dispatch_uncertain",
                 None,
@@ -299,6 +304,18 @@ fn send_live_alternative<S: OutboundExecutionSink>(
     }
     let outcome = child.outcome;
     let parked = parked_on_child(child, request, task, alternative, now);
+    match sent_lookup_finding(&parked) {
+        Some(SentLookupFinding::CannotTell) => {
+            park_uncertain_send(vault, attempt, task.task_ref, task, parked)?;
+            return Ok(RoutedAttempt::Settled);
+        }
+        Some(SentLookupFinding::NotSent) => {
+            if let Some(fence) = request.send_executor_fence {
+                mark_send_lookup_cleared(vault, task.task_ref, fence.lease.generation, now)?;
+            }
+        }
+        None => {}
+    }
     match outcome {
         OutboundDispatchOutcome::DeliveredToChannel | OutboundDispatchOutcome::Deferred => {
             // Settled on what the alternative's row says in the settling
@@ -330,8 +347,10 @@ fn send_live_alternative<S: OutboundExecutionSink>(
                 | AlternativeRoute::InterruptAlone
                 | AlternativeRoute::Live => {
                     retry_connector_task_attempt(
+                        vault,
                         queue,
                         attempt,
+                        task.task_ref,
                         now,
                         "ambient_alternative_unsettled",
                         None,
@@ -379,7 +398,15 @@ fn send_live_alternative<S: OutboundExecutionSink>(
                 };
             stop_alternative(vault, task, alternative, stop, now)?;
             let reason = format!("ambient_alternative_{}", outcome.as_str());
-            retry_connector_task_attempt(queue, attempt, now, &reason, None)?;
+            retry_connector_task_attempt(
+                vault,
+                queue,
+                attempt,
+                task.task_ref,
+                now,
+                &reason,
+                None,
+            )?;
             Ok(RoutedAttempt::Settled)
         }
         _ => {
@@ -387,8 +414,10 @@ fn send_live_alternative<S: OutboundExecutionSink>(
             // now says.
             let reason = format!("ambient_alternative_{}", outcome.as_str());
             retry_connector_task_attempt(
+                vault,
                 queue,
                 attempt,
+                task.task_ref,
                 now,
                 &reason,
                 receipt_provider_retry_after(&parked.receipt),

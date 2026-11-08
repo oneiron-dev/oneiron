@@ -21,6 +21,7 @@ mod entry_barrier;
 mod extraction;
 mod hello_refusal;
 mod media_bridge;
+mod phone;
 // Spoken audio gated per chunk on its way to the wire (FIX 9542).
 mod playout_queue;
 mod public;
@@ -37,6 +38,7 @@ pub(crate) use boot::VoiceBoot;
 pub use brain::{ChatBrain, ChatBrainBindings};
 pub(crate) use entry_barrier::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
+pub use phone::PhoneCallRead;
 pub(crate) use public::{LiveVoiceSessions, PublicSession, start_public};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 pub use speech::{PlayoutFrame, TurnSources, VoiceBrainOut, VoicePlayout};
@@ -80,6 +82,8 @@ pub struct VoiceHostBindings {
     /// The actual owner credential admitted for a live call. An unbound
     /// trusted pass attachment supplies None, never a fabricated credential.
     pub speculative_auth: Option<CoreAuth>,
+    /// The receiving agent's call-bound reader, never a bridge credential.
+    pub phone: Option<Arc<PhoneCallRead>>,
     /// The host's owner-plane policy config each sentence's safeguard
     /// enforces under (FIX 5043): its notice wording and dial.
     pub owner_policy: PolicyModelConfig,
@@ -119,6 +123,7 @@ pub struct VoiceHost {
     /// of a live call runs under it (ARCH-0061 §6 #recall-in-call).
     call_deadline: std::time::Duration,
     speculative_auth: Option<CoreAuth>,
+    phone: Option<Arc<phone::PhoneCallRead>>,
     /// The container the session is bound to, whose attendees' entries
     /// stop the call's output (OF-365 P5); `None` for no room's call.
     container: Option<(Arc<oneiron::Vault>, oneiron::EntityId)>,
@@ -205,6 +210,7 @@ impl VoiceHost {
         Ok(Self {
             call_deadline,
             speculative_auth: bindings.speculative_auth,
+            phone: bindings.phone,
             container,
             roster,
             speculative: SpeculativeThreads::default(),
@@ -266,64 +272,74 @@ impl VoiceHost {
             deadline: Some(self.call_deadline),
             threads: Some(self.speculative.clone()),
         };
-        let handle = match &self.speculative_auth {
-            Some(auth) if auth.host_root().is_some() || auth.is_local_dev_hatch() => {
-                let action = crate::api::host_action::host_action_of(&self.vault, auth)
-                    .ok_or(HostError::InvalidRequest)??;
-                let actor = action.actor();
-                let memory = crate::api::credential_memory(
-                    &self.vault,
-                    Some(auth),
-                    actor.entity_ref(),
-                    actor.actor_class(),
-                )
-                .with_host_action_authority(&action)?
-                .at(auth.locality());
-                state.core.open_scoped_utterance(
-                    utterance_id,
-                    config,
-                    &memory,
-                    &RecallScope::default(),
-                )?
+        let handle = if let Some(phone) = &self.phone {
+            let memory = phone.memory()?;
+            state.core.open_scoped_utterance(
+                utterance_id,
+                config,
+                &memory,
+                &RecallScope::default(),
+            )?
+        } else {
+            match &self.speculative_auth {
+                Some(auth) if auth.host_root().is_some() || auth.is_local_dev_hatch() => {
+                    let action = crate::api::host_action::host_action_of(&self.vault, auth)
+                        .ok_or(HostError::InvalidRequest)??;
+                    let actor = action.actor();
+                    let memory = crate::api::credential_memory(
+                        &self.vault,
+                        Some(auth),
+                        actor.entity_ref(),
+                        actor.actor_class(),
+                    )
+                    .with_host_action_authority(&action)?
+                    .at(auth.locality());
+                    state.core.open_scoped_utterance(
+                        utterance_id,
+                        config,
+                        &memory,
+                        &RecallScope::default(),
+                    )?
+                }
+                Some(auth)
+                    if (auth.managed_owner().is_none()
+                        && !auth.is_host_holder()
+                        && auth.verified_slip().is_some()
+                        && auth.actor_class() == Some("human"))
+                        || (auth.is_owner_grade()
+                            && auth.verified_slip().is_none()
+                            && auth.invocation_slip().is_none()
+                            && auth.actor_class() == Some("human")
+                            && auth.managed_owner().is_some_and(|holder| {
+                                auth.principal_ref().and_then(|principal| {
+                                    oneiron::EntityId::from_hex(principal).ok()
+                                }) == Some(holder)
+                            })) =>
+                {
+                    // The owner door proved this ordinary slip or managed
+                    // attestation's same Human principal, not the payer's class.
+                    let actor = auth
+                        .principal_ref()
+                        .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
+                        .ok_or(HostError::InvalidRequest)?;
+                    let memory = crate::api::credential_memory(
+                        &self.vault,
+                        Some(auth),
+                        actor,
+                        oneiron::EdgeActorClass::Human,
+                    )
+                    .at(auth.locality());
+                    state.core.open_scoped_utterance(
+                        utterance_id,
+                        config,
+                        &memory,
+                        &RecallScope::default(),
+                    )?
+                }
+                // Other admitted credential forms and unbound attachments retain
+                // the existing trusted path, not an auth-error fallback.
+                Some(_) | None => state.core.open_utterance(utterance_id, config)?,
             }
-            Some(auth)
-                if (auth.managed_owner().is_none()
-                    && !auth.is_host_holder()
-                    && auth.verified_slip().is_some()
-                    && auth.actor_class() == Some("human"))
-                    || (auth.is_owner_grade()
-                        && auth.verified_slip().is_none()
-                        && auth.invocation_slip().is_none()
-                        && auth.actor_class() == Some("human")
-                        && auth.managed_owner().is_some_and(|holder| {
-                            auth.principal_ref()
-                                .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
-                                == Some(holder)
-                        })) =>
-            {
-                // The owner door proved this ordinary slip or managed
-                // attestation's same Human principal, not the payer's class.
-                let actor = auth
-                    .principal_ref()
-                    .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
-                    .ok_or(HostError::InvalidRequest)?;
-                let memory = crate::api::credential_memory(
-                    &self.vault,
-                    Some(auth),
-                    actor,
-                    oneiron::EdgeActorClass::Human,
-                )
-                .at(auth.locality());
-                state.core.open_scoped_utterance(
-                    utterance_id,
-                    config,
-                    &memory,
-                    &RecallScope::default(),
-                )?
-            }
-            // Other admitted credential forms and unbound attachments retain
-            // the existing trusted path, not an auth-error fallback.
-            Some(_) | None => state.core.open_utterance(utterance_id, config)?,
         };
         // Connection-local, monotonically unique correlation. Not authentication.
         let token = serial.to_string();

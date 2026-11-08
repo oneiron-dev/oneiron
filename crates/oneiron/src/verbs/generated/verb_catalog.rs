@@ -942,6 +942,8 @@ pub enum AgentVerb {
     VaultSkillsPackReceipt,
     VaultSkillsOutcomesProject,
     VaultSkillsOutcomesGet,
+    VaultSettingsModelsResponsesStoreRead,
+    VaultSettingsModelsResponsesStoreSet,
     VaultModelsManifestRead,
     VaultModelsManifestReplace,
     VaultSettingsWebConnector,
@@ -1303,12 +1305,19 @@ pub enum AgentVerb {
     VaultMailSourcesAudienceEvents,
     VaultMailThreadsShare,
     VaultMailThreadsUnshare,
+    VaultMailReplyDraft,
+    VaultMailReplyDrafts,
+    VaultMailReplyDiscard,
+    VaultMailReplyApprove,
     VaultMailComplianceSetting,
     VaultMailComplianceSet,
     VaultMailComplianceLog,
     VaultMailSourcesSyncStatus,
+    VaultMailSourcesImportMbox,
+    VaultMailSourcesSync,
     VaultMailInbox,
     VaultMailThreadsRead,
+    VaultMailAttachmentsOpen,
     VaultMailComplianceSearch,
     VaultFilesSourcesConvert,
     VaultSyncRepoManifestsConflictReview,
@@ -2293,6 +2302,8 @@ impl AgentVerb {
         Self::VaultSkillsPackReceipt,
         Self::VaultSkillsOutcomesProject,
         Self::VaultSkillsOutcomesGet,
+        Self::VaultSettingsModelsResponsesStoreRead,
+        Self::VaultSettingsModelsResponsesStoreSet,
         Self::VaultModelsManifestRead,
         Self::VaultModelsManifestReplace,
         Self::VaultSettingsWebConnector,
@@ -2654,12 +2665,19 @@ impl AgentVerb {
         Self::VaultMailSourcesAudienceEvents,
         Self::VaultMailThreadsShare,
         Self::VaultMailThreadsUnshare,
+        Self::VaultMailReplyDraft,
+        Self::VaultMailReplyDrafts,
+        Self::VaultMailReplyDiscard,
+        Self::VaultMailReplyApprove,
         Self::VaultMailComplianceSetting,
         Self::VaultMailComplianceSet,
         Self::VaultMailComplianceLog,
         Self::VaultMailSourcesSyncStatus,
+        Self::VaultMailSourcesImportMbox,
+        Self::VaultMailSourcesSync,
         Self::VaultMailInbox,
         Self::VaultMailThreadsRead,
+        Self::VaultMailAttachmentsOpen,
         Self::VaultMailComplianceSearch,
         Self::VaultFilesSourcesConvert,
         Self::VaultSyncRepoManifestsConflictReview,
@@ -3673,6 +3691,12 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => "vault.skills.pack_receipt",
             Self::VaultSkillsOutcomesProject => "vault.skills.outcomes.project",
             Self::VaultSkillsOutcomesGet => "vault.skills.outcomes.get",
+            Self::VaultSettingsModelsResponsesStoreRead => {
+                "vault.settings.models.responses_store.read"
+            }
+            Self::VaultSettingsModelsResponsesStoreSet => {
+                "vault.settings.models.responses_store.set"
+            }
             Self::VaultModelsManifestRead => "vault.models.manifest.read",
             Self::VaultModelsManifestReplace => "vault.models.manifest.replace",
             Self::VaultSettingsWebConnector => "vault.settings.web_connector",
@@ -4042,12 +4066,19 @@ impl AgentVerb {
             Self::VaultMailSourcesAudienceEvents => "vault.mail.sources.audience_events",
             Self::VaultMailThreadsShare => "vault.mail.threads.share",
             Self::VaultMailThreadsUnshare => "vault.mail.threads.unshare",
+            Self::VaultMailReplyDraft => "vault.mail.reply.draft",
+            Self::VaultMailReplyDrafts => "vault.mail.reply.drafts",
+            Self::VaultMailReplyDiscard => "vault.mail.reply.discard",
+            Self::VaultMailReplyApprove => "vault.mail.reply.approve",
             Self::VaultMailComplianceSetting => "vault.mail.compliance.setting",
             Self::VaultMailComplianceSet => "vault.mail.compliance.set",
             Self::VaultMailComplianceLog => "vault.mail.compliance.log",
             Self::VaultMailSourcesSyncStatus => "vault.mail.sources.sync_status",
+            Self::VaultMailSourcesImportMbox => "vault.mail.sources.import_mbox",
+            Self::VaultMailSourcesSync => "vault.mail.sources.sync",
             Self::VaultMailInbox => "vault.mail.inbox",
             Self::VaultMailThreadsRead => "vault.mail.threads.read",
+            Self::VaultMailAttachmentsOpen => "vault.mail.attachments.open",
             Self::VaultMailComplianceSearch => "vault.mail.compliance.search",
             Self::VaultFilesSourcesConvert => "vault.files.sources.convert",
             Self::VaultSyncRepoManifestsConflictReview => {
@@ -5038,6 +5069,8 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSettingsModelsResponsesStoreRead
+                | Self::VaultSettingsModelsResponsesStoreSet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
@@ -5377,12 +5410,19 @@ impl AgentVerb {
                 | Self::VaultMailSourcesAudienceEvents
                 | Self::VaultMailThreadsShare
                 | Self::VaultMailThreadsUnshare
+                | Self::VaultMailReplyDraft
+                | Self::VaultMailReplyDrafts
+                | Self::VaultMailReplyDiscard
+                | Self::VaultMailReplyApprove
                 | Self::VaultMailComplianceSetting
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailSourcesImportMbox
+                | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
+                | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictReview
@@ -6418,6 +6458,8 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSettingsModelsResponsesStoreRead
+                | Self::VaultSettingsModelsResponsesStoreSet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
@@ -6757,12 +6799,19 @@ impl AgentVerb {
                 | Self::VaultMailSourcesAudienceEvents
                 | Self::VaultMailThreadsShare
                 | Self::VaultMailThreadsUnshare
+                | Self::VaultMailReplyDraft
+                | Self::VaultMailReplyDrafts
+                | Self::VaultMailReplyDiscard
+                | Self::VaultMailReplyApprove
                 | Self::VaultMailComplianceSetting
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailSourcesImportMbox
+                | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
+                | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictReview
@@ -7921,6 +7970,8 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSettingsModelsResponsesStoreRead
+                | Self::VaultSettingsModelsResponsesStoreSet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
@@ -8234,12 +8285,19 @@ impl AgentVerb {
                 | Self::VaultMailSourcesAudienceEvents
                 | Self::VaultMailThreadsShare
                 | Self::VaultMailThreadsUnshare
+                | Self::VaultMailReplyDraft
+                | Self::VaultMailReplyDrafts
+                | Self::VaultMailReplyDiscard
+                | Self::VaultMailReplyApprove
                 | Self::VaultMailComplianceSetting
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailSourcesImportMbox
+                | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
+                | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictReview
@@ -8850,6 +8908,7 @@ impl AgentVerb {
                 | Self::SelfSkillsFork
                 | Self::VaultSkillsCallableAmend
                 | Self::VaultSkillsOutcomesProject
+                | Self::VaultSettingsModelsResponsesStoreSet
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnectorReplace
                 | Self::VaultSettingsModelPackReplace
@@ -9044,7 +9103,13 @@ impl AgentVerb {
                 | Self::VaultMailSourcesMembersSet
                 | Self::VaultMailThreadsShare
                 | Self::VaultMailThreadsUnshare
+                | Self::VaultMailReplyDraft
+                | Self::VaultMailReplyDiscard
+                | Self::VaultMailReplyApprove
                 | Self::VaultMailComplianceSet
+                | Self::VaultMailSourcesImportMbox
+                | Self::VaultMailSourcesSync
+                | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictDiscard
@@ -9205,6 +9270,7 @@ impl AgentVerb {
                 "ttl",
                 "parent_ref",
                 "due_at",
+                "watch",
             ],
             Self::TasksWave => &["spec"],
             Self::VaultFanoutSpawn => &["spec"],
@@ -10073,6 +10139,8 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
+            Self::VaultSettingsModelsResponsesStoreRead => &["spec"],
+            Self::VaultSettingsModelsResponsesStoreSet => &["spec"],
             Self::VaultModelsManifestRead => &["spec"],
             Self::VaultModelsManifestReplace => &["spec"],
             Self::VaultSettingsWebConnector => &["spec"],
@@ -10434,12 +10502,19 @@ impl AgentVerb {
             Self::VaultMailSourcesAudienceEvents => &["spec"],
             Self::VaultMailThreadsShare => &["spec"],
             Self::VaultMailThreadsUnshare => &["spec"],
+            Self::VaultMailReplyDraft => &["spec"],
+            Self::VaultMailReplyDrafts => &["spec"],
+            Self::VaultMailReplyDiscard => &["spec"],
+            Self::VaultMailReplyApprove => &["spec"],
             Self::VaultMailComplianceSetting => &["spec"],
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
             Self::VaultMailSourcesSyncStatus => &["spec"],
+            Self::VaultMailSourcesImportMbox => &["spec"],
+            Self::VaultMailSourcesSync => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
+            Self::VaultMailAttachmentsOpen => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
             Self::VaultFilesSourcesConvert => &["spec"],
             Self::VaultSyncRepoManifestsConflictReview => &["spec"],
@@ -11425,6 +11500,8 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
+            Self::VaultSettingsModelsResponsesStoreRead => &["spec"],
+            Self::VaultSettingsModelsResponsesStoreSet => &["spec"],
             Self::VaultModelsManifestRead => &["spec"],
             Self::VaultModelsManifestReplace => &["spec"],
             Self::VaultSettingsWebConnector => &["spec"],
@@ -11786,12 +11863,19 @@ impl AgentVerb {
             Self::VaultMailSourcesAudienceEvents => &["spec"],
             Self::VaultMailThreadsShare => &["spec"],
             Self::VaultMailThreadsUnshare => &["spec"],
+            Self::VaultMailReplyDraft => &["spec"],
+            Self::VaultMailReplyDrafts => &["spec"],
+            Self::VaultMailReplyDiscard => &["spec"],
+            Self::VaultMailReplyApprove => &["spec"],
             Self::VaultMailComplianceSetting => &["spec"],
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
             Self::VaultMailSourcesSyncStatus => &["spec"],
+            Self::VaultMailSourcesImportMbox => &["spec"],
+            Self::VaultMailSourcesSync => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
+            Self::VaultMailAttachmentsOpen => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
             Self::VaultFilesSourcesConvert => &["spec"],
             Self::VaultSyncRepoManifestsConflictReview => &["spec"],
@@ -14136,7 +14220,7 @@ impl AgentVerb {
                 "Reuse an authorized clean action result into another matching working view without dispatching a cold build."
             }
             Self::VaultCodeSnapshotsIngest => {
-                "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."
+                "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership."
             }
             Self::VaultCodeSnapshotsGet => {
                 "Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."
@@ -14238,7 +14322,7 @@ impl AgentVerb {
                 "The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing."
             }
             Self::VaultRepoAnchorBind => {
-                "The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing."
+                "The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership."
             }
             Self::VaultRepoSnapshotsGet => {
                 "Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease."
@@ -14605,6 +14689,12 @@ impl AgentVerb {
             }
             Self::VaultSkillsOutcomesGet => {
                 "Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."
+            }
+            Self::VaultSettingsModelsResponsesStoreRead => {
+                "Reads the owner's Responses store switch from the serving vault."
+            }
+            Self::VaultSettingsModelsResponsesStoreSet => {
+                "Sets the owner's Responses store switch, persisting it before updating this server's live providers."
             }
             Self::VaultModelsManifestRead => {
                 "Reads the owner-pinned v2 model manifest, or none when no manifest is configured."
@@ -15626,10 +15716,10 @@ impl AgentVerb {
                 "The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision."
             }
             Self::VaultMailPackInstall => {
-                "The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."
+                "The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing."
             }
             Self::VaultMailSourcesConnect => {
-                "Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."
+                "Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members."
             }
             Self::VaultMailSourcesList => {
                 "The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted."
@@ -15649,6 +15739,18 @@ impl AgentVerb {
             Self::VaultMailThreadsUnshare => {
                 "Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving."
             }
+            Self::VaultMailReplyDraft => {
+                "Drafts a reply to a mail thread the caller reads, in plain text with optional simple HTML, to its sender (reply_all adds its To and Cc; cc names more), or its next revision under the same key. Nothing sends until the mailbox owner approves."
+            }
+            Self::VaultMailReplyDrafts => {
+                "The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, frozen plan and state."
+            }
+            Self::VaultMailReplyDiscard => {
+                "Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends."
+            }
+            Self::VaultMailReplyApprove => {
+                "The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice."
+            }
             Self::VaultMailComplianceSetting => {
                 "Whether org compliance search across mailboxes is on; off by default."
             }
@@ -15661,11 +15763,20 @@ impl AgentVerb {
             Self::VaultMailSourcesSyncStatus => {
                 "Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."
             }
+            Self::VaultMailSourcesImportMbox => {
+                "The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place."
+            }
+            Self::VaultMailSourcesSync => {
+                "The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."
+            }
             Self::VaultMailInbox => {
                 "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."
             }
             Self::VaultMailThreadsRead => {
                 "One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."
+            }
+            Self::VaultMailAttachmentsOpen => {
+                "A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers."
             }
             Self::VaultMailComplianceSearch => {
                 "Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."
