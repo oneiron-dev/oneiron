@@ -4,6 +4,8 @@ use super::*;
 
 /// Evaluates consent and connector governance without charging or recording.
 /// The caller must either finalize the returned decision or abort its txn.
+/// It stamps the recording time, runs [`judge_external_effect_in_txn`] on the
+/// writer's snapshot, then allocates the decision id.
 pub(crate) fn evaluate_external_effect_policy(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -13,9 +15,42 @@ pub(crate) fn evaluate_external_effect_policy(
     prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
     approval_context: ApprovalContext,
 ) -> Result<ExternalEffectGovernance> {
-    let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+    let recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+    let judgment = judge_external_effect_in_txn(
+        store,
+        &*wtxn,
+        effect,
+        policy,
+        required_grant_id,
+        prepared,
+        approval_context,
+        recorded_at,
+        None,
+    )?;
+    let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
+    Ok(judgment.into_governance(decision_id))
+}
+
+/// The whole external-effect judgment on one read snapshot (FIX 22102): consent,
+/// grants, envelopes, campaign compliance, connector key, charter and manifest,
+/// read-only. It writes nothing and allocates no decision id. `recorded_at` dates
+/// the judgment and every window it compares; `override_now` dates a
+/// counterparty's send-override expiry (`None` samples the store clock there, as a
+/// writer's judgment does).
+pub(crate) fn judge_external_effect_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+    required_grant_id: Option<EntityId>,
+    prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
+    approval_context: ApprovalContext,
+    recorded_at: u64,
+    override_now: Option<u64>,
+) -> Result<ExternalEffectJudgment> {
+    let mutation_recorded_at = recorded_at;
     let (mut hydrated_effect, counterparty_send_override, counterparty_contact_revoked) =
-        hydrate_external_effect_contact(store, &*wtxn, effect, policy)?;
+        hydrate_external_effect_contact_at(store, txn, effect, policy, override_now)?;
     // Send eligibility is checked with the Gate's writer snapshot. A sender
     // released after dispatch preparation cannot authorize even a known
     // contact through an ordinary policy grant. Terminal replay never enters
@@ -24,11 +59,11 @@ pub(crate) fn evaluate_external_effect_policy(
         && hydrated_effect.verb == "send"
         && let Some(identity) = hydrated_effect.channel_identity_ref
         && crate::channel_identity_provider::native_mail::is_native_mail_identity_in_txn(
-            store, &*wtxn, identity,
+            store, txn, identity,
         )?
         && !crate::channel_identity_provider::native_mail::native_mail_actor_may_send_in_txn(
             store,
-            &*wtxn,
+            txn,
             identity,
             hydrated_effect.provenance.actor_entity_ref,
         )?
@@ -43,11 +78,11 @@ pub(crate) fn evaluate_external_effect_policy(
         && hydrated_effect.verb == "send"
         && let Some(identity) = hydrated_effect.channel_identity_ref
         && crate::channel_identity_provider::member_mail::is_member_mail_identity_in_txn(
-            store, &*wtxn, identity,
+            store, txn, identity,
         )?
         && !crate::channel_identity_provider::member_mail::member_mail_actor_may_send_in_txn(
             store,
-            &*wtxn,
+            txn,
             identity,
             hydrated_effect.provenance.actor_entity_ref,
         )?
@@ -60,7 +95,7 @@ pub(crate) fn evaluate_external_effect_policy(
     let mut scoped_mcp_grant_authorized = false;
     let matched_grant = standing_outbound_grant_for_effect(
         store,
-        wtxn,
+        txn,
         &hydrated_effect,
         policy,
         required_grant_id,
@@ -76,7 +111,7 @@ pub(crate) fn evaluate_external_effect_policy(
     // class assertions.
     let agent_definition_ceiling = agent_definition_ceiling_for_effect_actor(
         store,
-        &*wtxn,
+        txn,
         &hydrated_effect.actor.actor_class,
         hydrated_effect.actor.actor_ref.as_deref(),
         hydrated_effect.provenance.actor_entity_ref,
@@ -91,10 +126,10 @@ pub(crate) fn evaluate_external_effect_policy(
     // authorized on remembered state is Auto on the consent axis exactly once,
     // honors revocation immediately, and an UNGRANTED irreversible effect is
     // the only one that enters the ask lane (invariant 1).
-    let mut consent_grants = crate::consent::load_active_standing_grants(store, wtxn)?;
+    let mut consent_grants = crate::consent::load_active_standing_grants(store, txn)?;
     let mail_cold = crate::channel_identity_provider::native_mail::native_mail_cold_send_in_txn(
         store,
-        &*wtxn,
+        txn,
         &hydrated_effect,
         policy,
     )?;
@@ -103,13 +138,13 @@ pub(crate) fn evaluate_external_effect_policy(
     // send"); a covering standing grant still releases it with no press.
     let member_mail = crate::channel_identity_provider::member_mail::member_mail_send_in_txn(
         store,
-        &*wtxn,
+        txn,
         &hydrated_effect,
     )?;
     let mail_once = mail_cold || member_mail;
     let mail_graduated = crate::channel_identity_provider::native_mail::mail_graduated_in_txn(
         store,
-        &*wtxn,
+        txn,
         &hydrated_effect,
         policy,
     )?;
@@ -152,7 +187,7 @@ pub(crate) fn evaluate_external_effect_policy(
             .map(|composed| {
                 channel_identity_envelope_admission_in_txn(
                     store,
-                    &*wtxn,
+                    txn,
                     &hydrated_effect,
                     *composed.digest().as_bytes(),
                     mutation_recorded_at,
@@ -220,7 +255,7 @@ pub(crate) fn evaluate_external_effect_policy(
         .map(|((grant_id, _), call)| (call.server.as_str(), grant_id, call.tool.as_str()));
     if connector_key::effect_slate_always_allows(
         store,
-        &*wtxn,
+        txn,
         &hydrated_effect.channel,
         &hydrated_effect.verb,
         slate_scoped,
@@ -252,7 +287,7 @@ pub(crate) fn evaluate_external_effect_policy(
         composed
             .as_ref()
             .map(|effect| {
-                crate::consent::approve_once_authorization_in_txn(store, &*wtxn, &effect.digest())
+                crate::consent::approve_once_authorization_in_txn(store, txn, &effect.digest())
             })
             .transpose()?
             .flatten()
@@ -292,7 +327,7 @@ pub(crate) fn evaluate_external_effect_policy(
         .map(|actor| {
             super::super::foreign_agent::resolve(
                 store,
-                &*wtxn,
+                txn,
                 crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::Agent),
             )
         })
@@ -314,9 +349,8 @@ pub(crate) fn evaluate_external_effect_policy(
         effect.counterparty_send_override = counterparty_send_override;
         effect.counterparty_contact_revoked = counterparty_contact_revoked;
     }
-    let mut decision = policy.evaluate_gate_with_delegation_chain(store, &*wtxn, &input);
+    let mut decision = policy.evaluate_gate_with_delegation_chain(store, txn, &input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
-    let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
     let created_at = mutation_recorded_at;
     let grant_ref = input
         .external_effect
@@ -335,12 +369,9 @@ pub(crate) fn evaluate_external_effect_policy(
     // a campaign never reach the evaluator at all.
     if decision.outcome() != GateOutcome::Deny
         && let Some(crate::gate::dispatch_compliance::ComplianceVerdict::Block { reason, .. }) =
-            store.gate_hooks.campaign_compliance_gate(
-                store,
-                &*wtxn,
-                &hydrated_effect,
-                created_at,
-            )?
+            store
+                .gate_hooks
+                .campaign_compliance_gate(store, txn, &hydrated_effect, created_at)?
         && approve_once.is_none()
         && !press_retry_authorized
         && !mail_retry_authorized
@@ -383,7 +414,7 @@ pub(crate) fn evaluate_external_effect_policy(
     );
     let governing = connector_key::governing_connector_key(
         store,
-        wtxn,
+        txn,
         &governing_connector,
         hydrated_effect.provenance.actor_entity_ref.as_ref(),
     )?;
@@ -424,7 +455,7 @@ pub(crate) fn evaluate_external_effect_policy(
         // A per-grant key's call meets its catalog connector's charter too
         // (ONE-1794); the first wall wins.
         let mut charter_wall = None;
-        let catalog_charter = connector_key::catalog_charter_in_txn(store, &*wtxn, &key)?;
+        let catalog_charter = connector_key::catalog_charter_in_txn(store, txn, &key)?;
         for block in key.charter.iter().chain(catalog_charter.iter()) {
             if key.status != ConnectorKeyStatus::Active || charter_wall.is_some() {
                 break;
@@ -520,7 +551,7 @@ pub(crate) fn evaluate_external_effect_policy(
         if charter_wall.is_none() {
             match connector_key::connector_tool_setting_in_txn(
                 store,
-                &*wtxn,
+                txn,
                 &_key_id,
                 &key,
                 manifest_verb,
@@ -537,7 +568,7 @@ pub(crate) fn evaluate_external_effect_policy(
                         && !match hydrated_effect.scoped_mcp_call.as_ref() {
                             Some(call) => connector_key::connector_tool_remembered_in_txn(
                                 store,
-                                &*wtxn,
+                                txn,
                                 &_key_id,
                                 &key,
                                 call,
@@ -609,8 +640,7 @@ pub(crate) fn evaluate_external_effect_policy(
     } else {
         None
     };
-    Ok(ExternalEffectGovernance {
-        decision_id,
+    Ok(ExternalEffectJudgment {
         decision,
         created_at,
         input,
