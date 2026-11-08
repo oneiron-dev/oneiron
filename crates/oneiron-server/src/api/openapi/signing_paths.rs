@@ -59,7 +59,6 @@ pub(super) fn merge_signing_paths(spec: &mut Value) {
         );
     }
     if let Some(request) = input_schema("vault.esign.signing.pdf") {
-        let request = headerless(request);
         paths.insert(
             "/sign/pdf".to_owned(),
             json!({"post": {
@@ -67,13 +66,18 @@ pub(super) fn merge_signing_paths(spec: &mut Value) {
                 "operationId": "signing_pdf",
                 "summary": "One ceremony item as a PDF attachment: the pinned original while signing, the hash-checked sealed output after sealing.",
                 "security": capability_security(),
-                "requestBody": {"required": true, "content": {"application/json": {"schema": request.clone()}}},
+                "requestBody": {"required": true, "content": {"application/json": {"schema": headerless(request)}}},
                 "responses": ceremony_responses(json!({
                     "description": "The item bytes, as an attachment.",
                     "content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}}
                 }))
             }}),
         );
+    }
+    if let (Some(request), Some(answer)) = (
+        input_schema("vault.esign.signing.preview"),
+        output_schema("vault.esign.signing.preview"),
+    ) {
         paths.insert(
             "/sign/preview".to_owned(),
             json!({"post": {
@@ -81,10 +85,10 @@ pub(super) fn merge_signing_paths(spec: &mut Value) {
                 "operationId": "signing_preview",
                 "summary": "The page geometry and field layout of one ceremony item, for the signing page to draw its fields.",
                 "security": capability_security(),
-                "requestBody": {"required": true, "content": {"application/json": {"schema": request}}},
+                "requestBody": {"required": true, "content": {"application/json": {"schema": headerless(request)}}},
                 "responses": ceremony_responses(json!({
                     "description": "The item pages and its fields laid out on them.",
-                    "content": {"application/json": {"schema": {"type": "object"}}}
+                    "content": {"application/json": {"schema": answer}}
                 }))
             }}),
         );
