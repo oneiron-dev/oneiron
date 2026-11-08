@@ -284,12 +284,27 @@ impl BookingPageLens {
             None => LensText::new("")?,
         };
         let rest = owner.collect::<Vec<_>>();
-        let mut root = LensNode::new(
+        // The fallback is the title, as for any sheet, unless the first frame
+        // is only whitespace: then it is the trimmed owner display's first
+        // frame, so the fallback still names the owner.
+        let fallback = if title.as_str().trim().is_empty() {
+            match LensText::frames(model.owner_display.trim())
+                .into_iter()
+                .next()
+            {
+                Some(fallback) => fallback,
+                None => LensText::new("public booking")?,
+            }
+        } else {
+            title.clone()
+        };
+        let mut root = LensNode::with_fallback_text(
             LensAtomId::new("booking-page")?,
             LensAtom::Sheet(CollectionAtom {
                 title,
                 rows: Vec::new(),
             }),
+            fallback,
         );
         if !rest.is_empty() {
             root.children.push(LensNode::new(
