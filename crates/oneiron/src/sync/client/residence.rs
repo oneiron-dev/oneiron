@@ -32,6 +32,7 @@ pub use bundle::{
 };
 pub(crate) use bundle::{observe_sealed_bundle_relay, relay_sealed_bundle};
 pub(crate) use checkpoint_roots::exchange_checkpoint_roots;
+pub(crate) use index::IndexFetchFault;
 pub use index::ResidenceIndexWindow;
 pub use kit_fetch::{fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit};
 pub(crate) use machine_history::fetch_owed_machine_history;

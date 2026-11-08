@@ -142,7 +142,9 @@ impl SnapshotWithhold {
 /// checkouts have one; hosted repo_refs name no path on this machine.
 pub(crate) fn snapshot_root(repo_ref: &RepoRef) -> Option<&str> {
     match repo_ref {
-        RepoRef::LocalFolder { path, .. } => Some(path.trim_end_matches('/')),
+        RepoRef::LocalFolder { path, .. } | RepoRef::LocalCapture { path } => {
+            Some(path.trim_end_matches('/'))
+        }
         RepoRef::GitHubAtCommit { .. } => None,
     }
 }

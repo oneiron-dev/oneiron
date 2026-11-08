@@ -229,12 +229,19 @@ impl Vault {
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
                 (run.proposal, units, run.read_rows)
             }
-            ReaskShape::Paragraphs { author, labels } => {
+            ReaskShape::Paragraphs {
+                author,
+                labels,
+                scope,
+            } => {
                 let blocks: Vec<String> = wake
                     .answers
                     .iter()
                     .filter_map(|answer| match &answer.unit {
-                        WithdrawnUnit::Paragraph { block } => Some(block.clone()),
+                        WithdrawnUnit::Paragraph {
+                            block,
+                            scope: unit_scope,
+                        } if unit_scope == scope => Some(block.clone()),
                         _ => None,
                     })
                     .collect();
@@ -248,6 +255,7 @@ impl Vault {
                         blocks: &blocks,
                         author,
                         labels,
+                        scope: scope.as_ref(),
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
