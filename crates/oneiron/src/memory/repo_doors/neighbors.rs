@@ -16,9 +16,15 @@ impl Memory<'_> {
         input: RepoSymbolsNeighborsInput,
     ) -> MemoryResult<RepoRunAnswer<RepoSymbolsNeighborsOutput>> {
         let target = repo_target(input.repo, &input.git_ref, [input.path.as_str()]);
-        let admitted = self.repo_run_admit(binding, &target, RepoAccessIntent::Read)?;
-        let (mount, _) =
-            self.repo_pinned_snapshot(binding, &admitted, &input.git_ref, &input.snapshot)?;
+        let join = self.repo_read_join_for_run(
+            binding,
+            &target,
+            None,
+            &input.snapshot,
+            super::read_join::SnapshotRows,
+        )?;
+        let admitted = join.admitted;
+        let mount = join.mount;
         let artifact = mount.code_artifact_id();
         let manifest = self
             .vault

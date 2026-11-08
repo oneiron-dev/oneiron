@@ -729,6 +729,7 @@ impl Vault {
                 at,
                 changes: projection.changes as u64,
                 recalc: None,
+                recalc_failure: None,
                 recalc_zone: Some(request.zone.clone()),
                 effects: Vec::new(),
             };
