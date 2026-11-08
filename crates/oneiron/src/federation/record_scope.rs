@@ -198,6 +198,18 @@ pub(crate) fn birth_facet(
     Ok(Some(row?.target))
 }
 
+/// The position a candidate put will receive from the native stamp writer.
+/// The candidate bytes and transaction must be the ones used by that put.
+pub(crate) fn candidate_put_position(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<Option<Scope>> {
+    Ok(derived_position(store, txn, id, kind, data)?.map(|(scope, _)| scope))
+}
+
 /// The position the row `id` of `kind`, with body `data`, is born at, read
 /// on `store`, and the facet it is born under: a CLAIM's from its body, a
 /// FACET at itself, a NOTE or ASSET under its one `FacetOf` target, an
