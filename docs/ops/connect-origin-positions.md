@@ -1,8 +1,11 @@
 # Signed Connect origin positions
 
-A Connect export can carry the stored birth positions of a source-bound
-ASSET_TEXT (a caption) and of every source ASSET that the same guest export
-carries. The `origin_positions` Loro root is inside the existing signed
+A Connect export can carry the stored birth positions of the NOTEs, ASSETs
+and source-bound ASSET_TEXTs (captions) that the same guest export carries.
+Without one, such a row lands with no birth facet, so only the receiver's
+owner can read it. With one, a reader the receiver's grants admit to that
+foreign world reads it too (ARCH-0043: guest content "is available when the
+user or agent brings that world into scope"). The `origin_positions` Loro root is inside the existing signed
 ConnectWindow update. It is not a new signature, permission, wire tag or side
 table.
 
@@ -18,7 +21,7 @@ one read snapshot. The witness binds:
   the window does not read. So the position names the facet, and the window
   signature covers it;
 - for a caption, its exact `DerivedFrom` set. Every source must be a live
-  ASSET under the same facet.
+  ASSET under the same facet, with a position of its own in the same window.
 
 An ASSET takes its worlds from its live `InWorld` edges, and a caption takes
 the worlds all its sources share (FIX 22223). The witness holds each row at
