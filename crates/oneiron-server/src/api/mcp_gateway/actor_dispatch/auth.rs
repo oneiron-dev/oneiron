@@ -163,6 +163,7 @@ pub(in crate::api::mcp_gateway) fn registry_actor_reading_ceiling(
                 ceiling_unread.set(true);
                 false
             })
+            || mcp_share_view_holder_admits(server, auth, actor_class, actor_ref)
     };
     let resolved = match registry.resolve(credential, now, ceiling_exists) {
         Err(McpConnectorActorResolutionError::UnknownCredential)

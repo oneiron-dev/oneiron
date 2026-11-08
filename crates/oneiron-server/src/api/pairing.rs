@@ -301,8 +301,8 @@ pub(super) async fn redeem(
             return Err(ApiError::too_many_attempts(retry_after_secs(wait)).into());
         }
     }
-    // Pairing creates a capability for a named existing actor; it never enrolls
-    // a roster authority key or manufactures a principal from an arbitrary label.
+    // Ordinary pairing requires an existing actor. A share-view link may name
+    // its non-resident recipient; it enrolls no entity or roster authority.
     let actor =
         oneiron::EntityId::from_hex(&request.holder_ref).map_err(|_| ApiError::unauthorized())?;
     if server
@@ -310,6 +310,13 @@ pub(super) async fn redeem(
         .get(&actor)
         .map_err(|_| ApiError::unauthorized())?
         .is_none()
+        && !with_issuer(&server, |issuer| {
+            server.vault().share_view_pairing_allows_holder(
+                issuer,
+                &request.code,
+                &request.holder_ref,
+            )
+        })?
     {
         return Err(ApiError::unauthorized().into());
     }
@@ -403,7 +410,8 @@ fn paired_mcp_record(
     let reads = ["read", crate::auth::CoreScope::Read.as_str()]
         .into_iter()
         .any(|verb| claims.scope.verbs.contains(&verb.to_owned()));
-    if claims.org_ref.is_some() || !reads {
+    let share_view = claims.share_ref.is_some();
+    if claims.org_ref.is_some() || (!reads && !share_view) {
         return Ok(None);
     }
     let class = match claims.actor_class.as_deref() {
@@ -439,10 +447,13 @@ fn paired_mcp_record(
     };
     let actor =
         oneiron::EntityId::from_hex(&claims.holder_ref).map_err(|_| ApiError::unauthorized())?;
-    Ok(Some(
-        crate::mcp::McpConnectorActorRecord::new(actor, class, scope)
-            .with_expiry(claims.expires_at),
-    ))
+    let record = crate::mcp::McpConnectorActorRecord::new(actor, class, scope)
+        .with_expiry(claims.expires_at);
+    Ok(Some(if share_view {
+        record.with_bound_verbs(["vault.shares.view", "vault.notes.follow_citation"])
+    } else {
+        record
+    }))
 }
 
 /// Records a live paired slip the in-memory registry has not seen: one
@@ -472,12 +483,12 @@ pub(super) fn register_live_paired_mcp(
     else {
         return false;
     };
-    // Redeem pairs only a holder that exists; neither does this.
+    // Only a share-bound credential can name a non-resident recipient.
     let holder_exists = oneiron::EntityId::from_hex(&slip.claims().holder_ref)
         .ok()
         .and_then(|holder| server.vault().get(&holder).ok().flatten())
         .is_some();
-    if !holder_exists {
+    if !holder_exists && slip.claims().share_ref.is_none() {
         return false;
     }
     match paired_mcp_record(server.vault(), slip.claims()) {
