@@ -1151,7 +1151,8 @@
         "brief": "brief",
         "ttl": "ttl",
         "parent_ref": "parent_ref",
-        "due_at": "due_at"
+        "due_at": "due_at",
+        "watch": "watch"
       },
       "mcp_required_fields": [
         "spec"
@@ -2603,9 +2604,9 @@
           }
         ],
         "docs": {
-          "remote": "    /// Exports the whole vault as one re-importable archive (a ZIP of JSONL\n    /// records, files by BLAKE3 and a manifest), custody secrets included.\n",
-          "ts": "/** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */",
-          "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."
+          "remote": "    /// Exports the whole vault as one re-importable archive (a ZIP of JSONL\n    /// records, files by BLAKE3 and a manifest), custody secrets included.\n    /// It carries every world wherever it goes; `notices` names each world\n    /// the owner's recipient choice would keep from there, and why.\n",
+          "ts": "/** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes. */",
+          "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes."
         }
       }
     },
@@ -12016,7 +12017,7 @@
     },
     {
       "name": "vault.code.snapshots.ingest",
-      "description": "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt.",
+      "description": "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership.",
       "input": "crate::memory::codebase_doors::CodeSnapshotIngestRequest",
       "output": "crate::memory::codebase_doors::CodeSnapshotView",
       "call": "memory.code_snapshot_ingest_as(&memory.embedded_owner(\"vault.code.snapshots.ingest\")?, input)?",
@@ -12539,7 +12540,7 @@
     },
     {
       "name": "vault.repo.anchor.bind",
-      "description": "The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing.",
+      "description": "The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership.",
       "input": "crate::task_verb::sdk::RepoAnchorBindInput",
       "output": "crate::task_verb::sdk::RepoAnchorBindOutput",
       "call": "crate::task_verb::sdk::bind_repo_anchor_as(memory.vault(), &memory.embedded_owner(\"vault.repo.anchor.bind\")?, input)?",
@@ -14881,6 +14882,38 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.settings.models.responses_store.read",
+      "description": "Reads the owner's Responses store switch from the serving vault.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::ModelResponsesStoreSettings",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.settings.models.responses_store.read\", &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.settings.models.responses_store.set",
+      "description": "Sets the owner's Responses store switch, persisting it before updating this server's live providers.",
+      "input": "crate::task_verb::sdk::ModelResponsesStoreSettings",
+      "output": "crate::task_verb::sdk::ModelResponsesStoreSettings",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.settings.models.responses_store.set\", &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "openapi": true,
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -21891,7 +21924,7 @@
     },
     {
       "name": "vault.mail.pack.install",
-      "description": "The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing.",
+      "description": "The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing.",
       "input": "EmptyRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "crate::mail_pack::install_mail_calendar_pack_embedded(memory)?",
@@ -21899,11 +21932,12 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door": true
     },
     {
       "name": "vault.mail.sources.connect",
-      "description": "Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names.",
+      "description": "Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members.",
       "input": "crate::mail_pack::MailSourceConnectRequest",
       "output": "crate::mail_pack::MailSourceConnectReceipt",
       "call": "memory.mail_sources_connect(&input)?",
@@ -21992,6 +22026,59 @@
       "section": false
     },
     {
+      "name": "vault.mail.reply.draft",
+      "description": "Drafts a reply to a mail thread the caller reads, in plain text with optional simple HTML, to its sender (reply_all adds its To and Cc; cc names more), or its next revision under the same key. Nothing sends until the mailbox owner approves.",
+      "input": "crate::mail_pack::MailReplyDraftRequest",
+      "output": "crate::mail_pack::MailReplyDraftView",
+      "call": "memory.mail_reply_draft(&input)?",
+      "mcp_off_runtime": true,
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.reply.drafts",
+      "description": "The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, frozen plan and state.",
+      "input": "crate::mail_pack::MailReplyDraftsRequest",
+      "output": "crate::mail_pack::MailReplyDraftPage",
+      "call": "memory.mail_reply_drafts(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.reply.discard",
+      "description": "Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends.",
+      "input": "crate::mail_pack::MailReplyDraftRef",
+      "output": "crate::mail_pack::MailReplyDraftView",
+      "call": "memory.mail_reply_discard(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.reply.approve",
+      "description": "The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice.",
+      "input": "crate::mail_pack::MailReplyApproveRequest",
+      "output": "crate::mail_pack::MailReplyDraftView",
+      "call": "memory.mail_reply_approve(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true
+    },
+    {
       "name": "vault.mail.compliance.setting",
       "description": "Whether org compliance search across mailboxes is on; off by default.",
       "input": "EmptyRequest",
@@ -22042,6 +22129,31 @@
       "section": false
     },
     {
+      "name": "vault.mail.sources.import_mbox",
+      "description": "The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place.",
+      "input": "crate::mail_pack::MailMboxImportRequest",
+      "output": "crate::mail_pack::MailMboxImportReport",
+      "call": "memory.mail_sources_import_mbox(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.sync",
+      "description": "The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner.",
+      "input": "crate::mail_pack::MailSourceSyncRequest",
+      "output": "crate::mail_pack::MailSyncReport",
+      "call": "memory.mail_sources_sync(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true
+    },
+    {
       "name": "vault.mail.inbox",
       "description": "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence.",
       "input": "crate::mail_pack::MailInboxRequest",
@@ -22061,6 +22173,19 @@
       "output": "crate::mail_pack::MailThreadView",
       "call": "memory.mail_thread(&input)?",
       "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.attachments.open",
+      "description": "A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers.",
+      "input": "crate::mail_pack::MailAttachmentOpenRequest",
+      "output": "crate::mail_pack::MailAttachmentView",
+      "call": "memory.mail_attachments_open(&input)?",
+      "scope": "Write",
       "mcp_fields": {
         "spec": "$"
       },

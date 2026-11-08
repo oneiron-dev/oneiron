@@ -13,7 +13,10 @@ use crate::error::{FatalCode, RetryableCode, SealError, SealStage};
 
 use super::super::{cms, pdf, tsp};
 use super::dss::append_dss;
-use super::material::{gather_validation_material, trust_anchors};
+use super::material::{
+    gather_validation_material, include_timestamp_material, timestamp_material_present,
+    trust_anchors,
+};
 
 /// `/Contents` DER capacity ladder in bytes (§7.2 rule 5): the first
 /// capacities a revision this engine writes tries. Past the last, a
@@ -488,14 +491,21 @@ fn push_warning(
         .map_err(|refusal| refusal.seal_error(SealStage::CmsAssembly))
 }
 
-/// Append the DocTimeStamp revision for B-LTA (§7.6). `Ok(None)` means the
-/// archival timestamp could not be produced; caller degrades to B-LT. The
-/// engine writes this revision, so past the ladder its hole grows to the
-/// token's size and a fresh token is fetched for it (Rule 5).
+enum DocumentTimestamp {
+    Signed(Vec<u8>),
+    MissingMaterial(tsp::ValidatedToken),
+    Unavailable,
+}
+
+/// Append the DocTimeStamp revision for B-LTA (§7.6). A selected token
+/// missing DSS material returns to the caller before its draft is published.
+/// Past the capacity ladder the hole grows to the token's size and a fresh
+/// token is fetched for it (Rule 5).
 async fn append_doc_timestamp(
     bytes: &[u8],
     ctx: &SealContext<'_>,
-) -> Result<Option<Vec<u8>>, SealError> {
+    material: &super::DssMaterial,
+) -> Result<DocumentTimestamp, SealError> {
     let mut capacity = CAPACITY_LADDER[0];
     loop {
         let state = pdf::reparse_revision(bytes, ctx.limits)?;
@@ -511,12 +521,18 @@ async fn append_doc_timestamp(
         })?;
         let imprint = pdf::hash_byte_range(&draft.bytes, br)?;
         let Some(token) = fetch_timestamp_token(ctx, &imprint).await? else {
-            return Ok(None);
+            return Ok(DocumentTimestamp::Unavailable);
         };
         let needed = token.content_info_der.len();
         ctx.limits.observed.note(Counter::ContentsBytes, needed);
         match pdf::patch_contents(&mut draft, &token.content_info_der, ctx.limits) {
-            Ok(()) => return Ok(Some(draft.bytes)),
+            Ok(()) => {
+                return Ok(if timestamp_material_present(ctx, material, &token) {
+                    DocumentTimestamp::Signed(draft.bytes)
+                } else {
+                    DocumentTimestamp::MissingMaterial(token)
+                });
+            }
             Err(SealError::Fatal {
                 code: FatalCode::ContentsCapacityExceeded,
                 ..
@@ -621,9 +637,32 @@ pub(crate) async fn assemble(
     let mut bytes = draft.bytes;
     if target >= PadesProfile::BaselineLt && achieved == PadesProfile::BaselineT {
         match gather_validation_material(ctx, &identity, token.as_ref()).await? {
-            Some(material) => {
-                bytes = append_dss(&bytes, ctx, &material)?;
+            Some(mut material) => {
+                let signed_bytes = bytes;
+                bytes = append_dss(&signed_bytes, ctx, &material)?;
                 achieved = PadesProfile::BaselineLt;
+                if target == PadesProfile::BaselineLta {
+                    loop {
+                        match append_doc_timestamp(&bytes, ctx, &material).await? {
+                            DocumentTimestamp::Signed(timestamped) => {
+                                bytes = timestamped;
+                                achieved = PadesProfile::BaselineLta;
+                                break;
+                            }
+                            DocumentTimestamp::MissingMaterial(archival_token) => {
+                                if !include_timestamp_material(ctx, &mut material, &archival_token)
+                                    .await?
+                                {
+                                    break;
+                                }
+                                // DSS bytes change the imprint: rebuild from the same
+                                // signed revision, then fetch a fresh archival token.
+                                bytes = append_dss(&signed_bytes, ctx, &material)?;
+                            }
+                            DocumentTimestamp::Unavailable => break,
+                        }
+                    }
+                }
             }
             None => push_warning(
                 ctx,
@@ -646,23 +685,7 @@ pub(crate) async fn assemble(
             ),
         )?;
     }
-    if target == PadesProfile::BaselineLta && achieved == PadesProfile::BaselineLt {
-        match append_doc_timestamp(&bytes, ctx).await? {
-            Some(b) => {
-                bytes = b;
-                achieved = PadesProfile::BaselineLta;
-            }
-            None => push_warning(
-                ctx,
-                &mut warnings,
-                degrade_warning(
-                    target,
-                    achieved,
-                    ProfileDegradeReason::DocumentTimestampUnavailable,
-                ),
-            )?,
-        }
-    } else if target == PadesProfile::BaselineLta {
+    if target == PadesProfile::BaselineLta && achieved < PadesProfile::BaselineLta {
         push_warning(
             ctx,
             &mut warnings,

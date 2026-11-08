@@ -181,6 +181,11 @@ pub struct OutboundDispatchRequest {
     /// transport call. In memory only, never persisted; `None` for every
     /// send that is not a connector-send TASK's.
     pub(crate) send_executor_fence: Option<super::connector_task::SendExecutorFence>,
+    /// FIX 4747 slice 5: the fence the agent run that starts this send took
+    /// on its run TASK, which the dispatch transport re-checks right before
+    /// its transport call beside `send_executor_fence`. In memory only,
+    /// never persisted; `None` for every send no fenced agent run starts.
+    pub(crate) agent_run_fence: Option<crate::agent_dispatch::AgentRunFence>,
     /// FIX 4747: the logical send's engine send id, for a connector-send
     /// TASK's send: the id its provider keeps on the wire where it keeps one,
     /// and the one a lookup asks for. Its presence makes the dispatch
@@ -257,6 +262,7 @@ impl OutboundDispatchRequest {
             exclusive_route_ref: None,
             sender_posture_fallback: false,
             send_executor_fence: None,
+            agent_run_fence: None,
             engine_send_id: None,
             earlier_send_lookup: false,
             owner_released_resend: false,
@@ -682,6 +688,27 @@ pub trait OutboundExecutionSink {
     ) -> super::SentLookup {
         super::SentLookup::CannotTell
     }
+
+    /// What the provider's own record says became of the call `request`
+    /// names, the exact request [`Self::execute`] would get, when the ledger
+    /// holds it uncertain (FIX 8814 follow-up). A sink answers `Delivered`
+    /// or `NotDelivered` only on its provider's proof; by default it cannot
+    /// ask, and answers `Unknown`.
+    fn read_back_delivery(
+        &self,
+        _request: &OutboundExecutionRequest<'_>,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        crate::outbound_intent_ledger::DeliveryReadBack::Unknown
+    }
+
+    /// Whether the sink sends one message to every recipient of an intent
+    /// that names more than one ([`OutboundIntent::recipients`], fix list
+    /// row 17645), its frozen message naming exactly that list. A sink that
+    /// does not is never handed one: the transport refuses the call before
+    /// any decision is recorded. By default a sink sends to its one target.
+    fn delivers_recipient_lists(&self) -> bool {
+        false
+    }
 }
 
 pub use crate::store::outbound_outcome::OutboundDispatchOutcome;
@@ -717,11 +744,36 @@ pub struct OutboundDispatchResult {
     /// Effector-meter ladder events fired by this dispatch, for the host's
     /// one steering queue (same contract as `BudgetAdmission.ladder_events`).
     pub budget_ladder_events: Vec<EffectorBudgetLadderEvent>,
+    /// Newly emitted by this dispatch's confirmed Done, each group under
+    /// its actual owning key. Replays emit none; no admission read is minted.
+    pub budget_settlement_events: Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
     /// A per-grant key's catalog pool side of this dispatch's charge
     /// (ONE-1794): its debit, matched rows and ladder events for the same
     /// steering queue, under the catalog key's ref. The pool's post-debit
     /// read rides `effector_budget.pool`.
     pub budget_pool: Option<EffectorPoolCharge>,
+}
+
+impl OutboundDispatchResult {
+    /// Newly emitted admission and confirmed-settlement messages for the
+    /// host's existing next-turn steering queue, each message once.
+    #[must_use]
+    pub fn steering_messages(&self) -> Vec<String> {
+        let mut messages = Vec::new();
+        for event in self
+            .budget_ladder_events
+            .iter()
+            .chain(self.budget_pool.iter().flat_map(|pool| &pool.ladder_events))
+            .chain(
+                self.budget_settlement_events
+                    .iter()
+                    .flat_map(|events| &events.ladder_events),
+            )
+        {
+            crate::connector_key::append_effector_steering_message(&mut messages, event);
+        }
+        messages
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

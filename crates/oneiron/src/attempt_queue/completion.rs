@@ -62,7 +62,10 @@ impl AttemptQueue<'_> {
 impl AttemptQueue<'_> {
     /// Records the inbox notification for a row this handle just settled, in
     /// the transaction that settles it (OF-221). Only a vault-opened handle
-    /// has the vault's entity door to write through.
+    /// has the vault's entity door to write through. An agent run's try
+    /// sets its run TASK's outcome here too, in the same write, while this
+    /// machine holds the run (FIX 4747): every terminal door ends here, and
+    /// a retry or a landing handoff, which carry the run on, do not.
     pub(crate) fn notify_settled_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -71,6 +74,7 @@ impl AttemptQueue<'_> {
         if let Some(vault) = self.vault {
             vault.record_job_notification_in_txn(wtxn, record)?;
             vault.enqueue_health_review_in_txn(wtxn, record)?;
+            crate::agent_dispatch::settle_agent_run_task_in_txn(vault, wtxn, record)?;
         }
         Ok(())
     }

@@ -19,7 +19,7 @@ use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunRepl
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
-    AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
+    AgentVerbRefusal, SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
     SelfEffect,
 };
 use crate::error::{Error, Result};
@@ -297,7 +297,7 @@ impl HostSelfDispatcher<'_> {
                 "agent verb write is in flight or needs reconciliation",
             ));
         };
-        if let Some(Err(refusal)) = door.map(|door| door.admit_run_call(RunCall::RecordedOutput)) {
+        if let Err(refusal) = super::admit_recorded_answer(door) {
             let rejected = super::gate_rejection(&refusal.code);
             let ruling = SelfDispatchOutcome::Denied(SelfDeniedResult {
                 effect: SelfEffect::AgentVerb,

@@ -91,6 +91,7 @@ pub(crate) use super::mesh_doors::*;
 pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_manifest_doors::*;
 pub(crate) use super::model_pack_doors::*;
+pub(crate) use super::model_setting_doors::*;
 pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 pub(crate) use super::outbox_diverged_doors::*;
@@ -130,6 +131,8 @@ pub(crate) use super::foreign_code_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
 pub(crate) use super::off_record_room_doors::*;
+// The owner's Mail & Calendar pack install door (FIX 12559), likewise.
+pub(crate) use super::mail_pack_doors::*;
 // The owner's pack preview door (FIX 5493), likewise.
 pub(crate) use super::pack_preview_doors::*;
 pub(crate) use super::persona_doors::*;
