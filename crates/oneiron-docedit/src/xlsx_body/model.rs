@@ -105,6 +105,23 @@ pub struct XlsxCell {
     pub style: Option<u32>,
     /// Why the body may not write this cell.
     pub locked: Option<XlsxLock>,
+    /// Why this read's value is the stored cache, set only on a preview
+    /// read back from a fallback the engine did not recompute. `None`
+    /// claims nothing about freshness: raw reads and success previews
+    /// leave it unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recalc: Option<XlsxCellRecalc>,
+}
+
+/// Why a preview cell's value is the stored cache rather than a fresh
+/// computation. Set only on a preview read back from a fallback, on
+/// computed cells alone; never a per-cell engine error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum XlsxCellRecalc {
+    /// This preview did not recompute the cell; its value is the
+    /// projected package's cached result.
+    CachedAfterFailure,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

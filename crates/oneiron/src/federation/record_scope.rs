@@ -252,7 +252,10 @@ fn derived_position(
         // one born unplaced keeps its own (`asset_text`). A stamp added
         // later is refused by `stamp_put` as a restamp.
         let facet = asset_text::text_facet(store, txn, id)?;
-        (default_stamp(kind, facet), facet)
+        // Its world is its sources' shared worlds, read live (FIX 22223).
+        let birth = default_stamp(kind, facet);
+        let scope = note_world::note_position(store, txn, id, kind, birth);
+        (scope, facet)
     } else if kind == crate::registry::ENTITY_TYPE_EVENT
         || kind == crate::registry::ENTITY_TYPE_TURN
     {
@@ -469,9 +472,10 @@ fn stamp_bound_on(
 /// and a SUMMARY
 /// where `settle_epoch_birth` settled it, whatever its body reads now; an
 /// epoch SUMMARY, in whatever form it is stored (`stored_epoch_in`), sits
-/// where its birth stamp says; a NOTE where its live `InWorld` edges place
-/// it (`note_world`). An ASSET, ASSET_TEXT or BLOB_ARTIFACT uses its kind-
-/// and birth-facet-bound singleton stamp, retaining base reality when no such
+/// where its birth stamp says; a NOTE or an ASSET where its live `InWorld`
+/// edges place it, and a caption (ASSET_TEXT) where its sources' shared
+/// worlds do (`note_world`, FIX 22223). A BLOB_ARTIFACT uses its kind- and
+/// birth-facet-bound singleton stamp, retaining base reality when no such
 /// single world is proved.
 /// Every other record, and any other SUMMARY, is base reality (`Some(None)`).
 /// `None` where the row cannot prove its world (an erased CLAIM, a TASK or epoch
@@ -505,16 +509,14 @@ pub(crate) fn record_world_in(
             .ok()
             .map(|entry| crate::authority::side_world(&entry.op)));
     }
-    if kind == crate::registry::ENTITY_TYPE_NOTE {
-        return Ok(note_world::note_worlds_in(store, txn, id).world());
+    // A NOTE, an ASSET and a caption sit where their live worlds place them
+    // (FIX 9433, FIX 22223).
+    if note_world::takes_live_worlds(kind) {
+        return Ok(note_world::live_worlds_in(store, txn, id, kind).world());
     }
     let summary = kind == crate::registry::ENTITY_TYPE_SUMMARY;
-    let asset = matches!(
-        kind,
-        crate::registry::ENTITY_TYPE_ASSET | crate::registry::ENTITY_TYPE_ASSET_TEXT
-    );
     let blob = kind == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
-    if kind != crate::registry::ENTITY_TYPE_TASK && !summary && !asset && !blob {
+    if kind != crate::registry::ENTITY_TYPE_TASK && !summary && !blob {
         return Ok(Some(None));
     }
     let worlds = stored_scope(store, txn, id, kind)?.map(|scope| scope.worlds);
@@ -524,7 +526,7 @@ pub(crate) fn record_world_in(
             .map(|world| Some(world.0).filter(|world| *world != crate::claim::base_world_id())),
         _ => None,
     };
-    if asset || blob {
+    if blob {
         return Ok(Some(stamped.flatten()));
     }
     // An epoch summary is one whatever form its body takes, and a pointer no
