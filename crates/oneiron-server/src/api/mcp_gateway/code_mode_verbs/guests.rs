@@ -522,7 +522,10 @@ impl RunGuests {
                 Err(refused) => {
                     let refused = self.bound_refusal(call.verb, origin, memory, &hooks, refused);
                     self.refused.keep(Some(&refused));
-                    return Ok(Err(AgentVerbRefusal { code: refused.code }));
+                    return Ok(Err(AgentVerbRefusal {
+                        hook_notice: None,
+                        code: refused.code,
+                    }));
                 }
             };
         let held = self.take_held_press();
@@ -691,6 +694,7 @@ impl RunGuests {
         };
         if run_id.is_none() {
             return Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: BrowserError::Unbound.code().to_owned(),
             });
         }

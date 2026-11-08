@@ -691,6 +691,7 @@ selfSecretsRenew(input: unknown): unknown
 selfSecretsTeardown(input: unknown): unknown
 selfSecretsUse(input: unknown): unknown
 vaultSharesCreate(input: unknown): unknown
+vaultSharesIssueViewLink(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
 hostCompact(input: unknown): unknown
@@ -811,6 +812,7 @@ vaultCodeViewsBuild(input: unknown): unknown
 vaultCodeCacheGet(input: unknown): unknown
 vaultCodeCacheReuse(input: unknown): unknown
 vaultCodeSnapshotsIngest(input: unknown): unknown
+vaultCodeSnapshotsCapture(input: unknown): unknown
 vaultCodeSnapshotsGet(input: unknown): unknown
 vaultCodeSnapshotsRead(input: unknown): unknown
 vaultCodeSymbolsDefinitions(input: unknown): unknown
@@ -1378,6 +1380,7 @@ selfFocusUnsubscribe(input: unknown): unknown
   inOffRecordSession(sessionRef: string): NativeClient
   withReadCredential(credential: string): NativeClient
   lastReceiptRef(): string | null
+  lastHookNotice(): string | null
   /** What `openWithHostRoot` did with its root; `null` on every other handle. */
   hostRootProfile(): HostRootProfile | null
   /** The engine-limit crossings this client's own vault kept; `null` on a remote, attached, or rebound view. */
