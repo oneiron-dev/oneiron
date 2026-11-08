@@ -204,6 +204,12 @@ impl SyncServer {
             config.limits.renderer_work,
             config.limits.queue_wait(),
         );
+        let context_reads = crate::admission::Admission::new(
+            crate::wire_telemetry::LimitRow::ContextReads,
+            Arc::clone(wire_telemetry.limit_questions()),
+            config.limits.context_reads,
+            config.limits.queue_wait(),
+        );
         // Task work waits in the vault's own line, which the embedded SDK, a
         // code run's own ask and wait and a pumped agent share with the
         // served doors; this server sets its `[limits]` row on it.
@@ -277,6 +283,18 @@ impl SyncServer {
         // Another vault of this process reads this one through this handle
         // (FIX 11157): the read-only door refuses a root held open here.
         vault.register_served();
+        // FIX 9609: the engine inspects the PDFs a field save or a sign act
+        // lays fields on through this server's organ host, before its writer.
+        #[cfg(unix)]
+        let organs = Arc::new(oneiron_organ_host::OrganHost::with_floor(
+            oneiron_organ_host::HostConfig::default(),
+            Arc::new(crate::machine::OrganFloor(memory.clone())),
+        ));
+        #[cfg(unix)]
+        vault.install_esign_page_inspector(Arc::new(crate::api::EsignOrganPageInspector::new(
+            Arc::clone(&organs),
+            memory.clone(),
+        )));
         let hyde_queue_wait = config.limits.queue_wait();
         let server = Self {
             note_editors: super::NoteEditors::default(),
@@ -307,6 +325,7 @@ impl SyncServer {
             )?,
             memory: memory.clone(),
             renderer_turns,
+            context_reads,
             renderer_scratch: Default::default(),
             wire_telemetry,
             mesh_pressure: crate::wire_telemetry::PoolPressure::mesh(),
@@ -348,6 +367,7 @@ impl SyncServer {
             browser_guest: None,
             browser_readiness: Default::default(),
             desktop_guest: None,
+            artifact_backend: None,
             desktop_seats: Arc::default(),
             browser_seats: Arc::default(),
             web_fetcher: std::sync::OnceLock::new(),
@@ -368,10 +388,7 @@ impl SyncServer {
             mesh_transport: std::sync::OnceLock::new(),
             builtin_handles: Arc::default(),
             #[cfg(unix)]
-            organs: Arc::new(oneiron_organ_host::OrganHost::with_floor(
-                oneiron_organ_host::HostConfig::default(),
-                Arc::new(crate::machine::OrganFloor(memory.clone())),
-            )),
+            organs,
             #[cfg(unix)]
             organ_dir: None,
             run_receipts,

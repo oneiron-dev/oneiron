@@ -375,6 +375,7 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 | `hard_erase_sweep` | day; hour while an erasure waits | the history an erase left in sync carriers (the 30-day erasure deadline) |
 | `ppr_cache_eviction` | day | cached graph walks older than the longest serve window (168 h) |
 | `drafter_corpus_sweep` | day, and at start | drafter training examples past the newest `DRAFTER_EXAMPLES_KEPT` (their keys retire), sealed drafter corpora no prepared, training or returned drafter version names, and stray files in a kept one |
+| `model_pack_retirement` | minute | a model pack's retirement: its notices 60, 30 and 7 days before (none while your model manifest outranks the pack), and on the day the move to its successor, with the change notice and its revert. `oneiron maintain` holds no model offers, so it sends no retiring model's notice |
 
 The signing sweeps and the cache eviction walk their records a page at a time and go on from
 where they stopped on the next pass. A sweep that fails, or that could not finish some of its
@@ -504,6 +505,23 @@ recorded. The receipt is best effort: if it cannot be written the export still s
 is logged, and `last_export` stays as it was. An export is your exit path, not a backup: restore
 from a backup file, the vault's encrypted snapshot.
 
+## Export secret supplement import marks
+
+`GET /v1/core/export-secret-supplements/{request}` and `oneiron secrets show-supplement`
+return `marked_imported`. It is true only when the authority fold admits the request's
+signed import mark. It does not report whether this install restored the custody secret.
+The holder's work `status` and the import's `restored`, `unchanged` or `skipped` outcome
+remain separate facts.
+
+A successful import keeps its secret even if this install has no live machine profile or
+loaded signing key to carry the mark. When a mark cannot be carried, a warning is logged;
+if no mark was already admitted, `marked_imported` stays false and the request's relayed
+copies remain until their window retires. Once the real profile and key are available,
+repeat the existing import with the same supplement and a current owner credential.
+An `unchanged` import retries the mark too; a `skipped` import does not.
+This is an explicit retry, not an automatic background job. An admitted mark ends relay
+retention; copies the owner kept remain readable.
+
 ## Secret scan switch
 
 ```sh
@@ -552,7 +570,7 @@ like any other reveal; approve once opens the agent's next read of that file.
 
 When a write's mask lifts a key out of a record, or marks a file, you get one inbox notice for
 that record, whatever number of keys it held. The notice lists each key's handle, its kind and
-where it sat. Answer each key one of four ways:
+where it sat. Answer each key using an action in its `actions` list:
 
 ```sh
 oneiron api raw GET '/v1/owner/secrets/found?pending=true'    # each record, its keys and what may still be done
@@ -574,8 +592,34 @@ oneiron api raw POST /v1/owner/secrets/found/not-a-secret --data '{"handle": "sc
   value an earlier revoke erased can't be marked not a secret; if the value appears again, its new
   finding can.
 
-Each answer writes its receipt. Not a secret works only for a key found in a record's body or in a
-file. A key in a claim or a text field keeps its handle.
+Each answer writes its receipt. The listing's `actions` says what is available for that key.
+The native text rulings support a record's body, a text field, a claim or a file; a signed MACHINE
+claim whose history owns its body keeps its handle. A repository finding supports **Not a secret**
+only and leaves its bytes, history and marks unchanged.
+
+To keep a real secret as text by choice, rather than declare a false hit, use **Kept as text**
+(`kept_as_text` in the action list):
+
+```sh
+oneiron api raw POST /v1/owner/secrets/found/keep-as-text --data '{"handle": "sc12"}'
+```
+
+This uses the same native restore, custody revoke and kept-value screen as **Not a secret**, but
+records the owner's distinct choice and receipt reason. It does not declare that the value is
+not a secret. Use it only where the key's `actions` lists `kept_as_text`.
+
+To re-enter a kept value after marking a key **Not a secret** or **Kept as text**, use the
+`re_enter` action on its card. Include settled keys in the listing with `pending=false`:
+
+```sh
+oneiron api raw GET '/v1/owner/secrets/found?pending=false'
+oneiron api raw POST /v1/owner/secrets/found/re-enter \
+  --data '{"handle": "sc12", "value_base64": "..."}'
+```
+
+This seals the supplied value in its existing custody record and returns the standing ruling
+and receipt unchanged. It does not rotate the key or undo the owner's choice. Use the rotate
+door to re-enter or reissue a key that is still active.
 
 ## Bind a secret so an agent can use it
 
@@ -999,7 +1043,11 @@ fields of its reply:
   `already_queued: true`.
 
 The resident Dreamer picks the step up at once: its deadline watch reads the queue again after
-every `host.wake`. Poll the root until `outcome.state` is not `running`:
+every `host.wake`. Poll the root until `outcome.state` is not `running`.
+`awaiting_host` still has unfinished work: it is not success, and `settled` stays false.
+Those jobs remain queued for their normal Coach host consumer; inspect the root again after
+that consumer serves them. This status does not say the host is absent or unavailable.
+To inspect the root:
 
 ```
 oneiron api call vault.sieve.settlements.get --data '{"wake":"<attempt>"}'
@@ -1008,7 +1056,11 @@ oneiron api call vault.sieve.settlements.get --data '{"wake":"<attempt>"}'
 (Over MCP, the `vault.sieve.settlements.get` tool with `{"spec": {"wake": "<attempt>"}}`.)
 `jobs` lists every job under the root; `outcome` says what they came to:
 
-- `running`: a job is still queued, leased, landing or scheduled (`outcome.waiting_on`).
+- `running`: a job is still queued, leased, landing or scheduled (`outcome.waiting_on`),
+  other than the all-host-queued case below. A leased or landing Coach job is still `running`.
+- `awaiting_host`: every job in `outcome.waiting_on` is queued or scheduled on `coach.host`
+  or `coach.heal`. Every job, its lineage and its queue eligibility remain unchanged; the
+  status does not mark it completed or claim a missing consumer has been installed.
 - `succeeded`: every job completed. `outcome.result_refs` and `outcome.conclusions` are what
   they produced.
 - `partial`: nothing is running, but a job is parked or paused (`parked`, with its cause), was
@@ -1024,6 +1076,29 @@ leaves what the interest queue still holds as one remainder job, due a policy in
 The step reports that remainder as `deferred` and does not wait for it. A lane job that another
 wake already holds queued (one Coach host job per kind, one curator slot, one remainder) stays
 under that wake's root, not this one.
+
+## Let the Dreamer apply its nightly identity links
+
+Nightly continuations propose `SameAs` links. They apply those links only under the owner's
+standing action grant for this vault's Dreamer; without one, each link remains proposed.
+To mint that existing grant through the SDK, MCP or HTTP facade:
+
+```sh
+oneiron api call vault.consent.create_nightly_link_grant --data '{}'
+```
+
+Over HTTP, call `POST /v1/core/facade/vault.consent.create_nightly_link_grant` with `{}` and
+an owner credential. Over MCP, pass `{"spec": {}}`. The vault resolves its own Dreamer System
+principal and mints exactly `dreamer.nightly_link.apply` on `dreamer:nightly-links`, without a
+project target or budget. No actor id or class comes from the request, and no grant is minted
+by default. The generic standing-action request's project/audience envelope does not express
+this bound.
+
+The answer is the normal consent receipt, including `grant_ref`. It appears in
+`vault.consent.registry`; withdraw it with `vault.consent.revoke`, passing
+`{"grant": "<grant_ref>"}`. The landing transaction still checks that the grant is active and
+its issuer is a live vault owner. Minting it changes no reader scope, trust, model policy or
+other Dreamer setting, and does not start a night step.
 
 ## Revert anything the Dreamer changed
 
@@ -1558,6 +1633,18 @@ ordinary outbound effect on `failure_signals/send` with its recorded receipt. Wh
 participates, the vault keeps a standing grant on that channel for the sender, so no send asks
 you; turning participation off revokes it. A record leaves the vault only once the publisher took
 it: a failed send keeps it for the next one.
+
+`GET /v1/owner/status` includes `failure_signals`: the configured `destination_host`
+(host only, never its URL path or credentials), `exports_enabled`, stored `waiting` quantities
+(`count_rows`, `signal_count`, `code_fix_records`), and an optional `last_batch_receipt`
+(`occurred_at`, `outcome`). Waiting quantities include a carried batch's shares once, not twice.
+They count stored work, even with exports off, not only work currently eligible to leave.
+An ambiguous send settles its counts but leaves its code-fix records queued for deduplicated retry.
+The receipt is the newest durable material result in native receipt order (timestamp descending,
+then kind and id ascending); equal timestamps do not establish sub-second order. Repeated material
+results retain their first observation. It is historical evidence, not current connectivity, and
+idle passes or failures before receipt persistence do not replace it. Reading status sends,
+settles, purges and approves nothing, and reveals no batch body or receipt free-text fields.
 
 The counts come from the Coach's detectors. Each diagnostic they raise counts once, ever: a missed
 recall is `memory_miss`, a consolidation error `task_failure`, a consent storm or predicate drift
@@ -2796,11 +2883,51 @@ oneiron api raw POST /v1/owner/maintain
 oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 ```
 
+## The operator's admin routes
+
+On a self-hosted vault, the host operator runs the admin commands without an owner slip. The
+operator's own credential comes from `oneiron token operator` on the stopped vault; it is never
+an owner or a person, and it reaches `/v1/operator/*` only. The host's root also passes. A
+managed vault serves none of these routes to its operator.
+
+| Route | What it does |
+|---|---|
+| `GET /v1/operator/status` | The same answer as `GET /v1/owner/status`. |
+| `GET /v1/operator/backups` | This vault's backups, oldest first. |
+| `POST /v1/operator/backups` | Takes one backup now, under the server's backup lock and retention. |
+| `POST /v1/operator/backups/rehearse` | `{}` or `{"file": "<name>"}`: a restore rehearsal in a scratch copy; the vault does not change. |
+| `POST /v1/operator/maintain` | Every housekeeping sweep now, as `POST /v1/owner/maintain` without `lift_secrets`. |
+
+A restore over the vault and the named repairs of `oneiron maintain` need a stopped vault, so they
+stay CLI commands. Lifting secrets is an owner act and has no operator route. Owner recovery is
+an owner act too: the operator's credential gets 403 at `/v1/operator/shared/recover-owner`.
+With the credential's `token` in `ONEIRON_SECRET` and its `binding_key` in `ONEIRON_BINDING_KEY`:
+
+```sh
+oneiron api raw GET /v1/operator/status
+oneiron api raw POST /v1/operator/backups
+```
+
 ## Shared-merge evidence questions
 
 Set `shared_merge_evidence_rows` under `[limits]` to change the existing shared-merge
 evidence question's bound. The value must be a positive integer. The default remains
 4,096 rows; the override does not change the question policy.
+
+## Membership withdrawal receipt links
+
+A signed `slip_grant_revoke` made by a shared-vault membership change names
+that change's execution receipt in `membership_receipt`. The writer uses the
+same receipt ID for the grant withdrawals, any Owner handover, and its committed
+membership receipt. The authority audit exposes this signed link as `receipt_ref`
+next to `grant_ref`. Owner handover audit rows also retain their signed
+`affected_grants` list.
+
+An ordinary guest revoke has no membership receipt link. A membership change
+without a live host issuer still lands through the existing pending carrier
+record, which names its own original execution receipt. A receipt link is a
+record of what the signer named, not an authority grant or proof that another
+replica has received the change.
 
 ## Limits today
 

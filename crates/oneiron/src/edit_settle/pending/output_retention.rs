@@ -59,6 +59,7 @@ pub(super) fn native_output_pending_row(
     explicit_fork: bool,
     deck: Option<DeckExportHold>,
     report: String,
+    delta_receipt: Option<&str>,
 ) -> PendingRow {
     PendingRow {
         proposal_ref: output.run_ref.clone(),
@@ -82,6 +83,7 @@ pub(super) fn native_output_pending_row(
         new_bytes: output.bytes.clone(),
         read_rows: Vec::new(),
         deck: deck,
+        delta_receipt: delta_receipt.map(str::to_owned),
         body: PendingBody::Output {
             name: output.name.clone(),
             media_type: output.media_type.clone(),
@@ -120,6 +122,7 @@ impl Vault {
             base_override.is_some(),
             None,
             report,
+            None,
         );
         // None cannot clock a lane. It still rejects an envelope naming
         // anything beyond its writer; no reader authority is invented here.

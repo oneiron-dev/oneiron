@@ -97,7 +97,7 @@ impl Asking<'_> {
                         &run.read_rows,
                     )?),
                     (_, Some(proposal)) => Some(vault.retain_edit_proposal_in_txn(
-                        wtxn, &artifact, proposal, None, None, self.actor, self.now,
+                        wtxn, &artifact, proposal, None, None, self.actor, self.now, None,
                     )?),
                     _ => None,
                 };

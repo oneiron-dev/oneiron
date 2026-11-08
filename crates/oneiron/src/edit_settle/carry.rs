@@ -182,6 +182,10 @@ pub struct UnitWithdrawal {
     pub reask_refs: Vec<String>,
     /// A failed wake is tried again from here.
     pub retry_at: Option<u64>,
+    /// The delta receipt id the withdrawn proposal answered (FIX 11967):
+    /// the original PRIMARY stamp, forwarded on re-ask after its pending
+    /// row is gone. `None` when no amendment stood behind it.
+    pub delta_receipt: Option<String>,
 }
 
 /// A held answer proposal split against what it read now.
@@ -245,13 +249,17 @@ impl Vault {
         &self,
         artifact: &EntityId,
         held: &EditProposal,
-        split: Split,
+        mut split: Split,
         made_by: Option<&MadeBy>,
         consent: &SettleConsent,
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
+        delta_receipt: Option<&str>,
     ) -> Result<SettleSelectOutcome> {
+        // The PRIMARY stamp rides into the durable withdrawal, both paths
+        // (FIX 11967 P1): the pending row is gone when the wake re-asks.
+        split.withdrawal.delta_receipt = delta_receipt.map(str::to_owned);
         let withdrawal = (!split.withdrawal.answers.is_empty()).then_some(&split.withdrawal);
         match &split.carried {
             Some(carried) => self.settle_select_carried(
@@ -263,6 +271,7 @@ impl Vault {
                 occurred,
                 learned_at,
                 Some(withdrawal),
+                delta_receipt,
             ),
             None => self.settle_all_withdrawn(
                 artifact,
@@ -374,6 +383,16 @@ impl Vault {
         }
         row.observed.clone_from(&fresh.observed);
         row.observed_live.clone_from(&fresh.observed_live);
+        // First stamp wins (FIX 11967 P1): the original PRIMARY, never a
+        // later guess; an empty stamp fills from the fresh withdrawal, else
+        // the exact pending row in the same writer (pre-Keep cover).
+        if row.delta_receipt.is_none() {
+            if fresh.delta_receipt.is_some() {
+                row.delta_receipt.clone_from(&fresh.delta_receipt);
+            } else if let Some(pending) = PENDING.get(&self.store, wtxn, key)? {
+                row.delta_receipt.clone_from(&pending.delta_receipt);
+            }
+        }
         WITHDRAWALS.put(&self.store, wtxn, key, &row)?;
         Ok(())
     }
@@ -597,6 +616,15 @@ impl Vault {
             .collect();
         let deadline = sheet_answers.as_ref().map(|work| work.deadline);
         self.with_write_txn(|wtxn| {
+            // The rework's stamp rides forward: the superseded row's when it
+            // still waits, else the durable withdrawal's original PRIMARY in
+            // the same writer (FIX 11967 P1); never a latest guess.
+            let pending = PENDING.get(&self.store, wtxn, key)?;
+            let current = WITHDRAWALS.get(&self.store, wtxn, key)?;
+            let forwarded = match pending {
+                Some(row) => row.delta_receipt,
+                None => current.as_ref().and_then(|row| row.delta_receipt.clone()),
+            };
             let proposed = match (&sheet_answers, &proposal) {
                 (Some(work), _) => Some(self.retain_sheet_answer_work_with_reads_in_txn(
                     wtxn,
@@ -616,6 +644,7 @@ impl Vault {
                     lane.as_ref(),
                     (actor, now),
                     &read_rows,
+                    forwarded.as_deref(),
                 )?),
                 _ => None,
             };
@@ -629,7 +658,7 @@ impl Vault {
                         .map(|refusal| crate::office_body::machine_memory_refused(refusal).kind()),
                 )?;
             }
-            let Some(mut row) = WITHDRAWALS.get(&self.store, wtxn, key)? else {
+            let Some(mut row) = current else {
                 return Ok((proposed, deadline, deferred_floor));
             };
             // A replay marks nothing: its first ask already covered the

@@ -149,6 +149,11 @@ impl Vault {
                 "the caller's scope is bound to another vault",
             ));
         }
+        if request.source == Some(super::connector_call::ConnectorSource::Builtin) {
+            return Err(IntentLedgerError::InvalidInput(
+                "builtin connectors use the served connector.call door",
+            ));
+        }
         let named = invocation;
         let invocation = invocation.unwrap_or_else(|| ConnectorCallInvocation {
             attempt_id: AttemptId::now(),

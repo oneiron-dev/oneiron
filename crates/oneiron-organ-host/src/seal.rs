@@ -41,7 +41,10 @@ mod verify;
 
 pub use custody_keys::CustodySealKeys;
 pub use file_keys::{FileSealKeys, pem_certificates};
-pub use pdf_work::{PdfInspectionError, inspect_pdf_pages_via_organ, inspect_pdf_region_until};
+pub use pdf_work::{
+    PdfInspectionError, inspect_first_party_pdf_region_until, inspect_pdf_pages_via_organ,
+    inspect_pdf_region_until,
+};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -50,7 +53,7 @@ use std::time::{Duration, Instant};
 use oneiron::Vault;
 use oneiron::blob_artifact::esign::{
     EsignSealError, EsignSealInput, EsignSealProducer, EsignSealRequest, EsignSealed, EsignSealer,
-    EsignSealerError, EsignVerdict, SealDegrade, SealProfile, SealVerdict,
+    EsignSealerError, EsignVerdict, SealActiveContentFacts, SealDegrade, SealProfile, SealVerdict,
 };
 use oneiron::skill_hub::pack_catalog::PackOrganBinary;
 use oneiron_organ_protocol::seal::SealRevisionClassification;
@@ -368,6 +371,7 @@ struct VerdictReply {
     achieved: Option<SealProfile>,
     self_verify_ok: bool,
     report_json: ByteBuf,
+    active_content: SealActiveContentFacts,
     classification: SealRevisionClassification,
 }
 
@@ -412,6 +416,7 @@ impl VerdictReply {
                 achieved: self.achieved,
                 self_verify_ok: self.self_verify_ok,
                 report_json: self.report_json.into_vec(),
+                active_content: self.active_content,
             },
             self.classification,
         )

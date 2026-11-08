@@ -14,7 +14,7 @@ use oneiron::voice_cascade::{AsrUpdate, Brain, ControlEvent, StopReason};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-use super::media_bridge::{HeardWork, MediaBridge, MediaEvent, MediaTts};
+use super::media_bridge::{HeardWork, LiveHeard, MediaBridge, MediaEvent, MediaTts};
 use super::public::{Command, invalid, unavailable};
 use super::public_events::Journal;
 use super::public_hold::SessionHold;
@@ -147,9 +147,14 @@ impl PublicLoop {
                         Command::Ack(input, reply) => {
                             let outcome = (|| {
                                 let token = self.journal.lock().map_err(|_| unavailable())?.ack(&input)?;
-                                if matches!(input.kind, LiveVoiceAckKind::Drained) {
-                                    self.host.drained(token, &mut self.bridge);
-                                }
+                                // The client's played count settles what the person heard (FIX 4899).
+                                let played_samples = input.played_samples;
+                                let acknowledged = match input.kind {
+                                    LiveVoiceAckKind::Drained => VoiceMediaIn::Drained { generation: token, played_samples },
+                                    LiveVoiceAckKind::Stopped => VoiceMediaIn::Stopped { generation: token, played_samples },
+                                };
+                                self.host.media_in(acknowledged, &mut self.bridge, &mut self.outputs);
+                                controls(&mut self.wire, &self.journal)?;
                                 self.journal.lock().map_err(|_| unavailable())?.finished(&self.host);
                                 Ok(self.journal.lock().map_err(|_| unavailable())?.processed())
                             })();
@@ -242,7 +247,7 @@ impl PublicLoop {
                         }
                         MediaEvent::Verdict(verdict) => self.host.verdict(verdict, &mut self.bridge, &mut self.outputs),
                         MediaEvent::Tick => self.host.speech_tick(&mut self.bridge, &mut self.outputs).map_err(|_| unavailable())?,
-                        MediaEvent::Out(VoiceMediaOutput::Pcm { frame, .. }) => self.host.spoken(frame, &mut self.bridge).map_err(|_| unavailable())?,
+                        MediaEvent::Out(VoiceMediaOutput::Pcm { submission, frame, alignment }) => self.host.spoken(submission, frame, alignment, &mut self.bridge).map_err(|_| unavailable())?,
                         MediaEvent::Out(VoiceMediaOutput::SpeechFailed { generation, .. }) => self.host.output_failed(generation, &mut self.bridge, &mut self.outputs),
                         MediaEvent::Out(VoiceMediaOutput::Cancelled { generation }) => {
                             let mut journal = self.journal.lock().map_err(|_| unavailable())?;
@@ -251,16 +256,15 @@ impl PublicLoop {
                         }
                         MediaEvent::Out(VoiceMediaOutput::Heard { event, .. }) => {
                             let utterance = cuts.pop_front().or_else(|| microphone.clone()).unwrap_or_default();
-                            if let Some((_, work)) = self.host.heard(&mut self.bridge, event) {
+                            if let Some((_, work)) = self.host.heard(&mut self.bridge, event, &mut self.outputs) {
                                 pending = Some(Box::pin(async move { (utterance, work.run().await.map_err(|_| invalid("voice final refused"))) }));
                                 pending_final = true;
                             }
                         }
                         MediaEvent::Live(Ok(updates)) => {
-                            if let Some(work) = self.host.live_heard(&mut self.bridge, updates, pending_final) {
+                            let heard = self.host.live_heard(&mut self.bridge, updates, pending_final, &mut self.outputs);
+                            if let Some((utterance, work)) = retire_cuts(heard, &mut cuts, microphone.as_deref()) {
                                 pending_final = work.final_text;
-                                let utterance = if work.final_text { cuts.pop_front() } else { None }
-                                    .or_else(|| microphone.clone()).unwrap_or_default();
                                 pending = Some(enrich(utterance, work));
                             }
                         }
@@ -282,10 +286,10 @@ impl PublicLoop {
                         Ok(_) => {}
                         Err(_) => { self.journal.lock().map_err(|_| unavailable())?.push(None, LiveVoiceEventKind::Error { code: "voice_transcription_refused".into() }); }
                     }
-                    if was_final && let Some(work) = self.host.live_resume(&mut self.bridge) {
+                    if was_final
+                        && let Some((utterance, work)) = retire_cuts(self.host.live_resume(&mut self.bridge, &mut self.outputs), &mut cuts, microphone.as_deref())
+                    {
                         pending_final = work.final_text;
-                        let utterance = if work.final_text { cuts.pop_front() } else { None }
-                            .or_else(|| microphone.clone()).unwrap_or_default();
                         pending = Some(enrich(utterance, work));
                     }
                 }
@@ -293,6 +297,27 @@ impl PublicLoop {
         }
         Ok(())
     }
+}
+
+/// The cuts `heard` consumed leave `cuts`, in order, whether or not their
+/// final goes on to be enriched (FIX 4899): a backchannel the agent's floor
+/// kept retires its cut too. The work's utterance is its cut when the work
+/// is a final, the last one consumed, else the microphone's.
+fn retire_cuts<'a>(
+    heard: LiveHeard<'a>,
+    cuts: &mut VecDeque<String>,
+    microphone: Option<&str>,
+) -> Option<(String, HeardWork<'a>)> {
+    let mut cut = None;
+    for _ in 0..heard.consumed_finals {
+        cut = cuts.pop_front();
+    }
+    let work = heard.work?;
+    let cut = if work.final_text { cut } else { None };
+    let utterance = cut
+        .or_else(|| microphone.map(str::to_owned))
+        .unwrap_or_default();
+    Some((utterance, work))
 }
 
 fn enrich(utterance: String, heard: HeardWork<'_>) -> Pending<'_> {
@@ -349,6 +374,12 @@ fn record_control(journal: &mut Journal, control: ControlOut) {
         }
         ControlOut::Event(ControlEvent::Notice { generation, notice }) => {
             journal.push(Some(generation), LiveVoiceEventKind::Notice { notice });
+        }
+        ControlOut::Event(ControlEvent::Heard {
+            generation,
+            playback,
+        }) => {
+            journal.push(Some(generation), LiveVoiceEventKind::Heard { playback });
         }
         ControlOut::Event(ControlEvent::Memories {
             generation,
