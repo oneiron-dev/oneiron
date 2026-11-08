@@ -37,8 +37,9 @@ use super::outcome::{
     current_status_in, outcome_grace_secs,
 };
 use super::prep::{
-    PrepEvent, PrepHomeNodeJob, PrepLensCopy, PrepPolicy, live_prep_event, plan_check_in_re_ask,
-    prep_wake_id, run_due_home_node_prep_with_sources, run_due_person_prep_with_sources,
+    PrepEvent, PrepHomeNodeJob, PrepLensCopy, PrepPolicy, live_prep_event, person_lane,
+    plan_check_in_re_ask, prep_wake_id, run_due_home_node_prep_with_sources,
+    run_due_person_prep_with_sources,
 };
 use crate::agent_inbox_lens::{
     AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
@@ -262,7 +263,8 @@ pub fn run_calendar_card_pass(
 /// The meeting rows of the INBOX: each delivered card with a lens that still
 /// stands, on no identity. An owners' card is addressed to the vault's
 /// owners. A person's card joins only when `own_reader`, the one actor
-/// reading its own slice, is that person: no other reader, the vault's owners
+/// reading its own slice, is that person, and only while their own lane
+/// still reads its meeting EVENT: no other reader, the vault's owners
 /// included, lists it. A prep card is an update; a check-in waits on its
 /// answer, so an answer or a cancellation takes it away at once.
 pub(crate) fn calendar_inbox_items(
@@ -286,12 +288,16 @@ pub(crate) fn calendar_inbox_items(
     };
     let now = vault.now_recorded_at();
     let mut items = Vec::new();
+    let mut own_cards = Vec::new();
     for (_, card) in cards {
         if card.lens.is_none() || !card_stands_in_txn(vault, &rtxn, &card, now)? {
             continue;
         }
         let (actor_ref, participants) = match card.recipient {
-            Some(person) if own_reader == Some(person) => (person, vec![person]),
+            Some(person) if own_reader == Some(person) => {
+                own_cards.push((card.item_id(), card.event_ref));
+                (person, vec![person])
+            }
             Some(_) => continue,
             None => match owners.first() {
                 Some(first) => (*first, owners.clone()),
@@ -329,14 +335,33 @@ pub(crate) fn calendar_inbox_items(
             widening: None,
         });
     }
+    drop(rtxn);
+    if let Some(person) = own_reader
+        && !own_cards.is_empty()
+    {
+        let lane = person_lane(vault, person)?;
+        let points: Vec<PointRead<'_>> = own_cards
+            .iter()
+            .map(|(_, event)| PointRead::id(*event))
+            .collect();
+        let read = lane.read(&points, None)?.value;
+        let withheld: BTreeSet<String> = own_cards
+            .into_iter()
+            .zip(read)
+            .filter(|(_, row)| row.is_none())
+            .map(|((item_id, _), _)| item_id)
+            .collect();
+        items.retain(|item| !withheld.contains(&item.item_id));
+    }
     Ok(items)
 }
 
 /// The lens the meeting row `item_id` carries, as delivered, for `reader`,
 /// whose own lane is `read`; `None` for a row that is no meeting card, or
 /// whose card a moved meeting has replaced. A person's card shows its lens
-/// to that person alone, and only while `read` still reads every row the
-/// lens copied: a revoked share or a lost grant takes its words away.
+/// to that person alone, and only while `read` still reads its meeting EVENT
+/// and every row the lens copied: a revoked share or a lost grant takes its
+/// words away.
 pub(crate) fn calendar_inbox_card_lens(
     vault: &Vault,
     item_id: &str,
@@ -360,20 +385,18 @@ pub(crate) fn calendar_inbox_card_lens(
     };
     match card.recipient {
         None => Ok(card.lens),
-        Some(person) if person == reader && every_source_reads(read, &card.source_refs)? => {
-            Ok(card.lens)
-        }
+        Some(person) if person == reader && reads_card_rows(read, &card)? => Ok(card.lens),
         Some(_) => Ok(None),
     }
 }
 
-/// Whether `read` reads every row in `sources`, in one snapshot at its
-/// persisted grant clock.
-fn every_source_reads(read: &ScopedRead<'_>, sources: &BTreeSet<EntityId>) -> Result<bool> {
-    if sources.is_empty() {
-        return Ok(true);
-    }
-    let points: Vec<PointRead<'_>> = sources.iter().map(|id| PointRead::id(*id)).collect();
+/// Whether `read` reads `card`'s meeting EVENT and every row its lens copied,
+/// in one snapshot at its persisted grant clock.
+fn reads_card_rows(read: &ScopedRead<'_>, card: &CalendarInboxCard) -> Result<bool> {
+    let points: Vec<PointRead<'_>> = std::iter::once(&card.event_ref)
+        .chain(&card.source_refs)
+        .map(|id| PointRead::id(*id))
+        .collect();
     Ok(read.read(&points, None)?.value.iter().all(Option::is_some))
 }
 
