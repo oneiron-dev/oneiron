@@ -362,7 +362,10 @@ impl Vault {
         };
         // A removed MACHINE admits nothing, however its removal arrived:
         // the owner's door, another door, or a sync (FIX 3374, L02 05:3x).
-        if fold.machine(machine).is_some_and(enrolment::machine_removed) {
+        if fold
+            .machine(machine)
+            .is_some_and(enrolment::machine_removed)
+        {
             return Ok(false);
         }
         let grant = &mint.action.claims;
