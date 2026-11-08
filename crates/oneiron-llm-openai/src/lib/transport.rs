@@ -68,6 +68,8 @@ pub trait OpenAiCompatTransport: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OpenAiCompatTransportError {
+    #[error(transparent)]
+    DispatchRelease(LlmError),
     #[error("OpenAI-compatible transport timed out")]
     Timeout,
     #[error("OpenAI-compatible transport stream was cut")]
@@ -100,6 +102,7 @@ impl From<OpenAiCompatTransportError> for LlmError {
     /// carrying their cause (FIX 10403), so a result row or receipt names it.
     fn from(error: OpenAiCompatTransportError) -> Self {
         match error {
+            OpenAiCompatTransportError::DispatchRelease(error) => error,
             OpenAiCompatTransportError::Timeout => RetryableLlmError::Timeout.into(),
             OpenAiCompatTransportError::StreamCut | OpenAiCompatTransportError::Connection => {
                 RetryableLlmError::StreamCut.into()

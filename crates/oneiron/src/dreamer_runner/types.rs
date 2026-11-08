@@ -616,6 +616,7 @@ pub struct DreamerAdmittedAttempt {
     pub status: DreamerAttemptStatus,
     pub budget: DreamerBudgetRecord,
     pub reservation: DreamerBudgetReservation,
+    pub(super) admitted_budget_line: super::AdmittedBudgetLine,
 }
 
 /// Private run-tree row keyed by attempt id.
