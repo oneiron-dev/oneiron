@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1335 facade rows, 4801 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1287.
+// UniFFI census: 1341 facade rows, 4812 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1293.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), DetachRemainderReason.WithdrawalFailed.kind (an enum with more than 256 variants (ErrorKind)), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -39511,6 +39511,30 @@ pub struct HookGoldenDiff {
     pub missing_history: Vec<String>,
 }
 
+/// `oneiron::runtime_hooks::regen::HookGoldenFingerprint`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HookGoldenFingerprint {
+    #[serde(rename = "cases")]
+    pub cases: std::collections::HashMap<String, String>,
+    #[serde(rename = "execution_failed")]
+    pub execution_failed: std::collections::HashMap<String, String>,
+    #[serde(rename = "withheld")]
+    pub withheld: Vec<String>,
+    #[serde(rename = "missing_history")]
+    pub missing_history: Vec<String>,
+}
+
+/// `oneiron::runtime_hooks::regen::HookGoldenManifest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HookGoldenManifest {
+    #[serde(rename = "runs")]
+    pub runs: Vec<String>,
+    #[serde(rename = "last_good")]
+    pub last_good: HookGoldenFingerprint,
+    #[serde(rename = "candidate")]
+    pub candidate: HookGoldenFingerprint,
+}
+
 /// `oneiron::runtime_hooks::regen::HookRegenFailurePhase`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum HookRegenFailurePhase {
@@ -39545,6 +39569,8 @@ pub enum HookRegenOutcome {
         target: HookContractStamp,
         #[serde(rename = "diff")]
         diff: HookGoldenDiff,
+        #[serde(rename = "golden")]
+        golden: HookGoldenManifest,
     },
     #[serde(rename = "needs_human_stamp")]
     NeedsHumanStamp {
@@ -39554,12 +39580,27 @@ pub enum HookRegenOutcome {
         target: HookContractStamp,
         #[serde(rename = "diff")]
         diff: HookGoldenDiff,
+        #[serde(rename = "golden")]
+        golden: HookGoldenManifest,
     },
     #[serde(rename = "rolled_back")]
     RolledBack {
         #[serde(rename = "failure")]
         failure: HookRegenFailure,
+        #[serde(rename = "target")]
+        target: HookContractStamp,
     },
+}
+
+/// `oneiron::runtime_hooks::regen::HookRegenPrior`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HookRegenPrior {
+    #[serde(rename = "body")]
+    pub body: String,
+    #[serde(rename = "body_hash")]
+    pub body_hash: String,
+    #[serde(rename = "stamp")]
+    pub stamp: HookContractStamp,
 }
 
 /// `oneiron::runtime_hooks::regen::HookRegenRecord`.
@@ -39573,6 +39614,10 @@ pub struct HookRegenRecord {
     pub intent: Option<String>,
     #[serde(rename = "pending", default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<HookRegenOutcome>,
+    #[serde(rename = "previous", default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<HookRegenPrior>,
+    #[serde(rename = "declined", default, skip_serializing_if = "Option::is_none")]
+    pub declined: Option<HookContractStamp>,
 }
 
 /// `oneiron::memory::hook_regen_doors::types::HookRegenView`.
@@ -39588,6 +39633,132 @@ pub struct HookRegenView {
     pub candidate_hash: Option<String>,
 }
 
+/// `oneiron::memory::hook_regen_doors::types::HookRegenHistoryRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HookRegenHistoryRequest {
+    #[serde(rename = "binding")]
+    pub binding: String,
+    #[serde(rename = "before", default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<u64>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::runtime_hooks::regen::history::HookRegenActor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "by")]
+pub enum HookRegenActor {
+    #[serde(rename = "engine")]
+    Engine,
+    #[serde(rename = "owner")]
+    Owner {
+        #[serde(rename = "actor")]
+        actor: String,
+    },
+    #[serde(rename = "agent")]
+    Agent {
+        #[serde(rename = "agent")]
+        agent: String,
+    },
+}
+
+/// `oneiron::runtime_hooks::regen::history::HookRegenDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HookRegenDecision {
+    #[serde(rename = "auto_adopt")]
+    AutoAdopt,
+    #[serde(rename = "needs_human_stamp")]
+    NeedsHumanStamp,
+    #[serde(rename = "rolled_back")]
+    RolledBack,
+}
+
+/// `oneiron::runtime_hooks::regen::history::HookRegenEvent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "event")]
+pub enum HookRegenEvent {
+    #[serde(rename = "decided")]
+    Decided {
+        #[serde(rename = "decision")]
+        decision: HookRegenDecision,
+        #[serde(
+            rename = "candidate_hash",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        candidate_hash: Option<String>,
+        #[serde(rename = "target")]
+        target: HookContractStamp,
+        #[serde(rename = "diff", default, skip_serializing_if = "Option::is_none")]
+        diff: Option<HookGoldenDiff>,
+        #[serde(rename = "golden", default, skip_serializing_if = "Option::is_none")]
+        golden: Option<HookGoldenManifest>,
+        #[serde(rename = "failure", default, skip_serializing_if = "Option::is_none")]
+        failure: Option<HookRegenFailure>,
+    },
+    #[serde(rename = "adopted")]
+    Adopted {
+        #[serde(rename = "candidate_hash")]
+        candidate_hash: String,
+        #[serde(rename = "target")]
+        target: HookContractStamp,
+        #[serde(rename = "stamped")]
+        stamped: bool,
+        #[serde(rename = "rebound", default, skip_serializing_if = "Option::is_none")]
+        rebound: Option<String>,
+    },
+    #[serde(rename = "cancelled")]
+    Cancelled {
+        #[serde(
+            rename = "candidate_hash",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        candidate_hash: Option<String>,
+        #[serde(rename = "declined")]
+        declined: HookContractStamp,
+    },
+    #[serde(rename = "reverted")]
+    Reverted {
+        #[serde(rename = "from_hash")]
+        from_hash: String,
+        #[serde(rename = "to_hash")]
+        to_hash: String,
+        #[serde(rename = "declined")]
+        declined: HookContractStamp,
+        #[serde(rename = "rebound", default, skip_serializing_if = "Option::is_none")]
+        rebound: Option<String>,
+    },
+}
+
+/// `oneiron::runtime_hooks::regen::history::HookRegenReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HookRegenReceipt {
+    #[serde(rename = "sequence")]
+    pub sequence: u64,
+    #[serde(rename = "binding")]
+    pub binding: String,
+    #[serde(rename = "recorded_at")]
+    pub recorded_at: u64,
+    #[serde(rename = "actor")]
+    pub actor: HookRegenActor,
+    #[serde(rename = "body_hash")]
+    pub body_hash: String,
+    #[serde(rename = "event")]
+    pub event: HookRegenEvent,
+}
+
+/// `oneiron::memory::hook_regen_doors::types::HookRegenRevertRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HookRegenRevertRequest {
+    #[serde(rename = "binding")]
+    pub binding: String,
+    #[serde(rename = "adopted_hash")]
+    pub adopted_hash: String,
+}
+
 /// `oneiron::memory::hook_regen_doors::types::HookRegenAdoptRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -39596,6 +39767,33 @@ pub struct HookRegenAdoptRequest {
     pub binding: String,
     #[serde(rename = "candidate_hash")]
     pub candidate_hash: String,
+}
+
+/// `oneiron::memory::hook_regen_doors::types::HookRegenCancelRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HookRegenCancelRequest {
+    #[serde(rename = "binding")]
+    pub binding: String,
+    #[serde(
+        rename = "candidate_hash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub candidate_hash: Option<String>,
+}
+
+/// `oneiron::runtime_hooks::regen::enact::HookRegenCancel`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HookRegenCancel {
+    #[serde(
+        rename = "candidate_hash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub candidate_hash: Option<String>,
+    #[serde(rename = "declined")]
+    pub declined: HookContractStamp,
 }
 
 /// `oneiron::artifact_hosting::vocabulary::ArtifactPointerChannel`.

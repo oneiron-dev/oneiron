@@ -40,6 +40,7 @@ pub use lenses::{
     WEAVE_REPORT_LENS, weave_lens_pack_files,
 };
 pub use local::LOCAL_PACK_NAME;
+pub(crate) use local::PreparedPackPut;
 pub use manifest::{PackAdapter, PackKind, PackManifest};
 pub use migrations::PackMigration;
 pub(crate) use model_pack::AdmittedModelPacks;

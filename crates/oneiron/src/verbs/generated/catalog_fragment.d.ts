@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1389 code-mode rows (1346 host rows, 43 run rows), 4867 declarations.
-// Replies: 1197 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1395 code-mode rows (1352 host rows, 43 run rows), 4878 declarations.
+// Replies: 1203 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -2526,12 +2526,23 @@ declare namespace Sdk {
   type HookRegenBindingRequest = { binding: EntityId };
   type HookContractStamp = { verb_table: string; sandbox: string };
   type HookGoldenDiff = { cases: number; changed: string[]; execution_failed: string[]; withheld: string[]; missing_history: string[] };
+  type HookGoldenFingerprint = { cases: Record<string, string>; execution_failed: Record<string, string>; withheld: string[]; missing_history: string[] };
+  type HookGoldenManifest = { runs: string[]; last_good: HookGoldenFingerprint; candidate: HookGoldenFingerprint };
   type HookRegenFailurePhase = "intent" | "generate" | "validate" | "golden_replay";
   type HookRegenFailure = { phase: HookRegenFailurePhase; message: string };
-  type HookRegenOutcome = { outcome: "auto_adopt"; candidate: string; target: HookContractStamp; diff: HookGoldenDiff } | { outcome: "needs_human_stamp"; candidate: string; target: HookContractStamp; diff: HookGoldenDiff } | { outcome: "rolled_back"; failure: HookRegenFailure };
-  type HookRegenRecord = { body_hash: string; stamp: HookContractStamp; intent?: string | null; pending?: HookRegenOutcome | null };
+  type HookRegenOutcome = { outcome: "auto_adopt"; candidate: string; target: HookContractStamp; diff: HookGoldenDiff; golden: HookGoldenManifest } | { outcome: "needs_human_stamp"; candidate: string; target: HookContractStamp; diff: HookGoldenDiff; golden: HookGoldenManifest } | { outcome: "rolled_back"; failure: HookRegenFailure; target: HookContractStamp };
+  type HookRegenPrior = { body: string; body_hash: string; stamp: HookContractStamp };
+  type HookRegenRecord = { body_hash: string; stamp: HookContractStamp; intent?: string | null; pending?: HookRegenOutcome | null; previous?: HookRegenPrior | null; declined?: HookContractStamp | null };
   type HookRegenView = { record: HookRegenRecord; candidate_hash?: string | null };
+  type HookRegenHistoryRequest = { binding: EntityId; before?: number | null; limit?: number | null };
+  type HookRegenActor = { by: "engine" } | { by: "owner"; actor: string } | { by: "agent"; agent: string };
+  type HookRegenDecision = "auto_adopt" | "needs_human_stamp" | "rolled_back";
+  type HookRegenEvent = { event: "decided"; decision: HookRegenDecision; candidate_hash?: string | null; target: HookContractStamp; diff?: HookGoldenDiff | null; golden?: HookGoldenManifest | null; failure?: HookRegenFailure | null } | { event: "adopted"; candidate_hash: string; target: HookContractStamp; stamped: boolean; rebound?: string | null } | { event: "cancelled"; candidate_hash?: string | null; declined: HookContractStamp } | { event: "reverted"; from_hash: string; to_hash: string; declined: HookContractStamp; rebound?: string | null };
+  type HookRegenReceipt = { sequence: number; binding: string; recorded_at: number; actor: HookRegenActor; body_hash: string; event: HookRegenEvent };
+  type HookRegenRevertRequest = { binding: EntityId; adopted_hash: string };
   type HookRegenAdoptRequest = { binding: EntityId; candidate_hash: string };
+  type HookRegenCancelRequest = { binding: EntityId; candidate_hash?: string | null };
+  type HookRegenCancel = { candidate_hash?: string | null; declined: HookContractStamp };
   type ArtifactPointerChannel = "published" | "preview";
   type CodebaseForkHash = number[];
   type ArtifactExportRef = { ForkHash: CodebaseForkHash } | { BlobVersion: { artifact_id: EntityId; version: number } };
@@ -5296,6 +5307,14 @@ declare namespace self {
   };
   /** Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled. */
   const history: (input: Sdk.FoldHistoryRequest) => Promise<Sdk.FoldHistory | StoredResult>;
+  const hooks: {
+    regen: {
+      /** Adopt the identical-fingerprint regen pending on a hook this agent authored, named by its candidate_hash, through the agent's own put of the local pack; the hook stays the agent's. A diff waits for the owner. */
+      adopt(input: Sdk.HookRegenAdoptRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
+      /** Read the regen record of a hook this agent authored: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash its adopt names. Changes nothing. */
+      get(input: Sdk.HookRegenBindingRequest): Promise<Sdk.HookRegenView | null | StoredResult>;
+    };
+  };
   const identity: {
     /** The owner answers an identity choice with supporting evidence refs; the original mention and verified owner resolution provenance are retained atomically. */
     answer(input: Sdk.IdentityAnswerEvidenceRequest): Promise<Sdk.IdentitySettled | StoredResult>;
@@ -6797,10 +6816,18 @@ declare const vault: Sdk.VaultHost & {
     regen: {
       /** Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record. */
       adopt(input: Sdk.HookRegenAdoptRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
+      /** Set aside, as the authenticated owner, the regen decision waiting on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. The hook keeps its body; its contract is declined until it moves again. */
+      cancel(input: Sdk.HookRegenCancelRequest): Promise<Sdk.HookRegenCancel | StoredResult>;
       /** List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen. */
       due(input: Sdk.EmptyRequest): Promise<Sdk.EntityId[] | StoredResult>;
       /** Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing. */
       get(input: Sdk.HookRegenBindingRequest): Promise<Sdk.HookRegenView | null | StoredResult>;
+      /** Read, as the authenticated owner, one hook binding's regen receipts newest first, across its rebinds: each decision with its golden manifest, and each adoption, cancel and revert. Changes nothing. */
+      history(input: Sdk.HookRegenHistoryRequest): Promise<Sdk.HookRegenReceipt[] | StoredResult>;
+      /** Revert, as the authenticated owner, the last regen adoption on one hook binding, named by the adopted body hash: the body it replaced installs again through the owner's pack put. Answers the put receipt. */
+      revert(input: Sdk.HookRegenRevertRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
+      /** Run, as the authenticated owner, one hook binding's intent again against this engine's contract on the serving host's model seat; the golden replay decides and the decision waits on the record. Enacts nothing. */
+      run(input: Sdk.HookRegenBindingRequest): Promise<Sdk.HookRegenView | null | StoredResult>;
     };
     /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest. */
     replay(input: Sdk.HooksReplayRequest): Promise<Sdk.HooksReplayPage | StoredResult>;
