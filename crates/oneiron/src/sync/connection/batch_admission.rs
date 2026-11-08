@@ -349,7 +349,7 @@ impl SyncConnection {
                     && !client.residence_acks.is_empty()
                     && let Err(e) = self.clear_residence_acks(client)
                 {
-                    return Err(LoopExit::Disconnected(e));
+                    return Err(LoopExit::Disconnected(e.to_string()));
                 }
             }
             Err(e) => {
