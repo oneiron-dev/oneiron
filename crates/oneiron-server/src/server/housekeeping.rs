@@ -443,12 +443,13 @@ impl SyncServer {
     /// models the owner's other nodes offer, as the last mesh catalog
     /// refresh left them on the router (`MeshRoutes::publish`, FIX 3229),
     /// with or without a configured model (FIX 22189). Nothing is probed or
-    /// sent. What the engine's pass lends its model pack retirement sweep
+    /// sent. The access a role's pick reads too (`ModelRuntime::offer_access`,
+    /// FIX 22227). What the engine's pass lends its model pack retirement sweep
     /// (FIX 20193), on this vault and on each retained shared environment,
     /// which has no `[models]` of its own and reaches models only through
     /// this host's router.
     fn model_pack_access(&self) -> AccessSnapshot {
-        self.ai.model_runtime().raw_router().access_snapshot()
+        self.ai.model_runtime().offer_access()
     }
 
     /// Runs every engine sweep now, as the owner asked, on a pass the host
