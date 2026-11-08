@@ -64,6 +64,7 @@ mod ladder;
 pub(crate) mod launch_price;
 mod llama_identity;
 mod media;
+pub(crate) mod native_call_capture;
 #[cfg(unix)]
 mod native_exl3;
 mod offer;
@@ -100,7 +101,7 @@ mod walk;
 mod worker_host;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
-pub(crate) use broker_context::BrokerContext;
+pub(crate) use broker_context::{BrokerContext, WeakBrokerContext};
 use cooldown::FallbackRung;
 pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
@@ -110,7 +111,7 @@ pub(crate) use discovered::MeshRoutes;
 pub(crate) use host_budgets::ModelHostBudgets;
 pub use hosted_speech::{HostedCloner, VendorVoice};
 pub(crate) use http::{codec_token, encode_request_body, is_cloud_node, mark_cloud_node};
-pub(crate) use ladder::ModelCallBinding;
+pub(crate) use ladder::{AnsweringRung, ModelCallBinding};
 pub use ladder::{CallDeadline, OfferLadder};
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
@@ -136,6 +137,7 @@ pub use status::{
     TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
+pub(crate) use worker_host::start_worker_controller;
 pub(crate) use worker_host::{
     install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
 };
@@ -269,6 +271,8 @@ pub struct ModelRuntime {
     token_ratios: Option<Arc<TokenRatios>>,
     /// The trainer connectors `[models.training]` names (FIX 7263).
     training: crate::config::models::TrainingSettings,
+    /// Config-bound managed workers whose local weight files the Coach can read.
+    stock_weights: BTreeMap<String, worker_host::StockWeights>,
     /// The vault's model byte budgets its media rungs and mesh routes hold
     /// their bytes on (FIX 9321, FIX 9323).
     budgets: ModelHostBudgets,

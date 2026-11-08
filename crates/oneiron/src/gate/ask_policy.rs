@@ -3,7 +3,6 @@ use crate::EntityId;
 use rmpv::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-const MAX_GUEST_WIRE_REFS: u64 = 64;
 const MAX_RETRY_PAGE: u64 = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,8 +86,13 @@ impl AskOperationalPolicy {
             ("holder_overrides".into(), Value::Array(vec![])),
         ])
     }
+    /// The guest fact threshold an ask of `holder` under a class with limit
+    /// `class` is observed at (FIX 10173): the least of the manifest's, the
+    /// class's and the holder override's. It counts, never refuses (FIX 8757):
+    /// a class limit above the manifest's is narrowed to it. `None` only for a
+    /// zero class limit, which discloses nothing.
     pub(crate) fn guest_limit_for(&self, holder: EntityId, class: Option<u16>) -> Option<usize> {
-        if class.is_some_and(|limit| limit == 0 || limit > self.guest_fact_limit) {
+        if class == Some(0) {
             return None;
         }
         let override_limit = self
@@ -195,7 +199,8 @@ impl AskOperationalPolicy {
                 "holder_overrides",
             ],
         )?;
-        let guest_fact_limit = limit(fields[0]?, MAX_GUEST_WIRE_REFS)?;
+        // An advisory threshold (FIX 8757): any positive value its field holds.
+        let guest_fact_limit = limit(fields[0]?, u64::from(u16::MAX))?;
         let retry_page_limit = limit(fields[1]?, MAX_RETRY_PAGE)?;
         let default_surface = AskPolicySurface::parse(fields[2]?)?;
         let Value::Array(surfaces) = fields[3]? else {
@@ -214,9 +219,6 @@ impl AskOperationalPolicy {
         let Value::Array(rows) = fields[5]? else {
             return None;
         };
-        if rows.len() > 256 {
-            return None;
-        }
         let mut holder_overrides = BTreeMap::new();
         for row in rows {
             let cells = map(
@@ -232,8 +234,11 @@ impl AskOperationalPolicy {
             if holder.to_hex() != cells[0]?.as_str()? {
                 return None;
             }
+            // Narrowed to the manifest's threshold where it applies
+            // (`guest_limit_for`, `meet`), never refused for exceeding it
+            // (FIX 8757).
             let guest = match cells[1] {
-                Some(value) => Some(limit(value, u64::from(guest_fact_limit))?),
+                Some(value) => Some(limit(value, u64::from(u16::MAX))?),
                 None => None,
             };
             let retry = match cells[2] {

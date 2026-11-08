@@ -9,7 +9,9 @@
 //! keeps every other field, its ask the typed marker
 //! `{state: erased, cause: target_erased}`, and the call answers the typed
 //! `TargetErased` its replay hands back without launching (C3). A nil ask
-//! stays nil and is compared exactly: it is never an erased wildcard.
+//! stays nil and is compared exactly: it is never an erased wildcard. A
+//! spawn its host answered `AskerErased` keeps that cause in its marker and
+//! its answer (FIX 9183).
 
 use std::collections::BTreeSet;
 
@@ -19,7 +21,7 @@ use super::coordination_codec::SPAWN_INTENT_KEYS;
 use super::payload::{
     decode_self_dispatch_outcome, keep_row_receipt, row_receipt, self_dispatch_outcome_value,
 };
-use super::replay::CodeRunBridgeCall;
+use super::replay::{CodeRunBridgeCall, ErasedRequest};
 use super::support::{
     decode_array, entity_id_value, entity_value, fixed_binary, invalid_code_run_replay, pinned_map,
     request_map, required, str_value,
@@ -27,6 +29,7 @@ use super::support::{
 use super::types::{SelfAgentSpawnResult, SelfDispatchOutcome, SelfEffect};
 use crate::attempt_queue::AttemptId;
 use crate::batch::secret_scan::admitted_from;
+use crate::team::SpawnErasure;
 use crate::{EntityId, Result};
 
 /// The request key of a spawn's ask.
@@ -59,7 +62,9 @@ impl ReplayRequestMatch {
 
 /// `stored`, the request a row of `effect` recorded, against `offered`, the
 /// request its call makes now under the row's own bridge stamp. Pure: it
-/// reads and writes nothing.
+/// reads and writes nothing. An erased request meets `offered` by its
+/// identity alone (FIX 6534): a hit or drift, never a wildcard and never a
+/// spawn's miss, so no call runs fresh in an erased row's place.
 ///
 /// # Errors
 ///
@@ -69,6 +74,9 @@ pub(super) fn replay_request_match(
     stored: &Value,
     offered: &Value,
 ) -> Result<ReplayRequestMatch> {
+    if let Some(erased) = ErasedRequest::of(stored) {
+        return erased.meets(offered);
+    }
     if stored == offered || admitted_from(stored, offered)? {
         return Ok(ReplayRequestMatch::Hit);
     }
@@ -117,8 +125,8 @@ fn without_intent(request: &Value) -> Option<Value> {
     ))
 }
 
-/// Whether `stored`, a spawn whose ask an erase of its target took, is the
-/// spawn `offered` asks again (Engine C3): `offered` asks something, and
+/// Whether `stored`, a spawn whose ask an erase took, is the spawn
+/// `offered` asks again (Engine C3): `offered` asks something, and
 /// every other field is the same, its project and objectives included, a
 /// field the side-row wall masked matching the secrets it holds. A nil ask
 /// on either side is never this arm's.
@@ -166,7 +174,7 @@ pub(super) fn ask_of(fields: &[(Value, Value)]) -> Option<&Value> {
 }
 
 /// A spawn request's fields without its ask.
-fn without_ask(fields: &[(Value, Value)]) -> Value {
+pub(super) fn without_ask(fields: &[(Value, Value)]) -> Value {
     Value::Map(
         fields
             .iter()
@@ -176,18 +184,24 @@ fn without_ask(fields: &[(Value, Value)]) -> Value {
     )
 }
 
-/// FIX 9180 (Engine C3): the stored marker of an ask an erase of the
-/// spawn's target took, a typed map no live ask spells (a live ask is its
-/// JSON text).
-fn erased_ask() -> Value {
+/// FIX 9180 (Engine C3): the stored marker of an ask an erase took, a
+/// typed map no live ask spells (a live ask is its JSON text). It names
+/// whose erase took it, the spawn's target or its asker (FIX 9183).
+fn erased_ask(cause: SpawnErasure) -> Value {
+    let cause = match cause {
+        SpawnErasure::TargetErased => "target_erased",
+        SpawnErasure::AskerErased => "asker_erased",
+    };
     request_map(vec![
         ("state", Value::from("erased")),
-        ("cause", Value::from("target_erased")),
+        ("cause", Value::from(cause)),
     ])
 }
 
 pub(super) fn is_erased_ask(value: &Value) -> bool {
-    *value == erased_ask()
+    [SpawnErasure::TargetErased, SpawnErasure::AskerErased]
+        .into_iter()
+        .any(|cause| *value == erased_ask(cause))
 }
 
 /// The targets a spawn call's host resolved for it (FIX 9180, Engine C1):
@@ -290,7 +304,8 @@ pub(super) fn decode_spawn_targets(value: &Value) -> Result<SpawnTargets> {
 /// the new outcome. Every other field of the call stays as it was: its seq,
 /// effect, the rest of its request, its times, its action digest and its
 /// targets. Pure; `true` when the call changed. A call of another effect is
-/// left as it is.
+/// left as it is. A call that already answers an erase keeps that answer
+/// and its cause, its asker's or its target's (FIX 9183).
 ///
 /// # Errors
 ///
@@ -300,6 +315,8 @@ pub(crate) fn erase_spawn_call(call: &mut CodeRunBridgeCall) -> Result<bool> {
         return Ok(false);
     }
     let before = call.clone();
+    let answered = decode_self_dispatch_outcome(&call.outcome);
+    let cause = spawn_erasure(&call.outcome);
     // Only the ask that ran is erased's (FIX 1442): the original never
     // reached the erased target, so it stays as working evidence -- unless
     // it duplicates the dispatched ask, which reached the target in the
@@ -316,7 +333,7 @@ pub(crate) fn erase_spawn_call(call: &mut CodeRunBridgeCall) -> Result<bool> {
                 if target_is_rewritten {
                     dispatched = str_value(value).ok().map(str::to_owned);
                 }
-                *value = erased_ask();
+                *value = erased_ask(cause);
             }
         }
     }
@@ -327,12 +344,14 @@ pub(crate) fn erase_spawn_call(call: &mut CodeRunBridgeCall) -> Result<bool> {
         for (key, value) in fields {
             if key.as_str() == Some(ASK_KEY) && str_value(value).is_ok_and(|ask| ask == dispatched)
             {
-                *value = erased_ask();
+                *value = erased_ask(cause);
             }
         }
     }
-    let prior = match decode_self_dispatch_outcome(&call.outcome) {
-        Ok(SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::TargetErased)) => None,
+    let prior = match answered {
+        Ok(SelfDispatchOutcome::AgentSpawn(
+            SelfAgentSpawnResult::TargetErased | SelfAgentSpawnResult::AskerErased,
+        )) => None,
         Ok(SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued {
             attempt_ref, ..
         })) => Some(Some(SpawnPrior::Attempt(attempt_ref))),
@@ -415,10 +434,67 @@ pub(crate) fn swap_spawn_ask(call: &mut CodeRunBridgeCall, ask: Value) -> Option
         .map(|(_, value)| std::mem::replace(value, ask))
 }
 
+/// FIX 6534: whether the guest's original ask of `erased`, a spawn call in
+/// its target-erased form, took the erased marker: the dispatched ask did,
+/// and the original with it when a hook's rewrite asked the same. A
+/// checkpoint keeps this bit beside a carried ask, never the request's
+/// words.
+pub(crate) fn original_ask_erased(erased: &CodeRunBridgeCall) -> bool {
+    matches!(&erased.request, Value::Map(fields) if ask_of(fields).is_some_and(is_erased_ask))
+}
+
+/// FIX 6534: the erased marker in the place of the ask a checkpoint carried
+/// apart from `call`, once that ask's instance retired: in the dispatched
+/// ask's slot, nil while it is carried apart, and in the guest's original
+/// ask's too when `original` says it took the marker
+/// ([`original_ask_erased`]). The marker keeps `cause`, whose erase it was
+/// (FIX 9183). A call whose request an erase took keeps no ask to mark and
+/// is left as it is.
+///
+/// # Errors
+///
+/// A call with no ask in the slot a checkpoint carries apart.
+pub(crate) fn retire_carried_ask(
+    call: &mut CodeRunBridgeCall,
+    original: bool,
+    cause: SpawnErasure,
+) -> Result<()> {
+    if call.request_erased() {
+        return Ok(());
+    }
+    let carried = swap_spawn_ask(call, erased_ask(cause));
+    if !carried.is_some_and(|ask| ask.is_nil() || ask.is_str() || is_erased_ask(&ask)) {
+        return Err(invalid_code_run_replay(
+            "a retired spawn ask does not fit its call",
+        ));
+    }
+    if original
+        && matches!(&call.rewritten_request, Some(Value::Map(_)))
+        && let Value::Map(fields) = &mut call.request
+    {
+        for (key, value) in fields {
+            if key.as_str() == Some(ASK_KEY) && value.is_str() {
+                *value = erased_ask(cause);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whose erase a spawn call's `outcome` answers (FIX 9183): its asker's
+/// when its host answered `AskerErased`, else its target's.
+pub(crate) fn spawn_erasure(outcome: &Value) -> SpawnErasure {
+    match decode_self_dispatch_outcome(outcome) {
+        Ok(SelfDispatchOutcome::AgentSpawn(spawn)) => spawn.erasure(),
+        _ => None,
+    }
+    .unwrap_or(SpawnErasure::TargetErased)
+}
+
 /// How a spawn row's outcome stands for its coherence.
 #[derive(PartialEq, Eq)]
 enum SpawnAnswer {
-    /// The typed `TargetErased`.
+    /// The typed `TargetErased` or `AskerErased` (FIX 9183).
     Erased,
     /// A checkpoint image's retired stub (`response_erased`).
     Stub,
@@ -441,17 +517,20 @@ impl CodeRunBridgeCall {
     }
 
     /// A spawn row whose host answered `TargetErased` keeps no ask (FIX
-    /// 9180): the newly captured ask takes its erased marker at once, with
-    /// no seat needed to reach it, as an erase finds it.
+    /// 9180), nor one it answered `AskerErased` (FIX 9183): the newly
+    /// captured ask takes its erased marker at once, with no seat needed to
+    /// reach it, as an erase finds it.
     ///
     /// # Errors
     ///
     /// An outcome that does not decode.
-    pub(super) fn scrub_target_erased_ask(&mut self) -> Result<()> {
+    pub(super) fn scrub_erased_ask(&mut self) -> Result<()> {
         if self.effect == SelfEffect::AgentsSpawn
             && matches!(
                 decode_self_dispatch_outcome(&self.outcome)?,
-                SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::TargetErased)
+                SelfDispatchOutcome::AgentSpawn(
+                    SelfAgentSpawnResult::TargetErased | SelfAgentSpawnResult::AskerErased
+                )
             )
         {
             erase_spawn_call(self)?;
@@ -462,17 +541,17 @@ impl CodeRunBridgeCall {
     /// FIX 9180: the row's spawn facts are one fact, checked wherever a row
     /// is built, encoded, decoded or replayed, before its request can match.
     /// Targets name a spawn's seats; an erased ask and a prior id belong to
-    /// a spawn that answers `TargetErased` (or a checkpoint image's retired
-    /// stub of one), and such a spawn keeps no live ask. An undispatched
-    /// barrier keeps its content-free marker only beside durable wait or
-    /// failure. A live spawn's row, whatever it asked and answered, is never
-    /// refused here.
+    /// a spawn that answers `TargetErased` or `AskerErased` (FIX 9183), or a
+    /// checkpoint image's retired stub of one, and such a spawn keeps no
+    /// live ask. An undispatched barrier keeps its content-free marker only
+    /// beside durable wait or failure. A live spawn's row, whatever it asked
+    /// and answered, is never refused here.
     ///
     /// # Errors
     ///
     /// A row no host records: targets on another effect, an ask that is
     /// not text, nil or a typed marker, an erased ask or prior id beside a
-    /// live answer, a live ask beside `TargetErased`, or a barrier beside
+    /// live answer, a live ask beside an erased answer, or a barrier beside
     /// another outcome.
     pub(super) fn validate_spawn_coherence(&self) -> Result<()> {
         if self.effect != SelfEffect::AgentsSpawn {
@@ -502,16 +581,19 @@ impl CodeRunBridgeCall {
         // the target's erase retires that copy. The original ask keeps its
         // check otherwise.
         let carried = run.is_some_and(Value::is_nil);
-        if !erased && !barrier && !live && !carried && ask.is_some_and(|ask| !ask.is_nil()) {
+        // An erased request keeps only a typed ask (FIX 6534).
+        let kept = !self.request_erased();
+        if kept && !erased && !barrier && !live && !carried && ask.is_some_and(|ask| !ask.is_nil())
+        {
             return Err(invalid_code_run_replay(
                 "spawn ask is not text, nil, or a typed marker",
             ));
         }
         let outcome = decode_self_dispatch_outcome(&self.outcome)?;
         let answer = match &outcome {
-            SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::TargetErased) => {
-                SpawnAnswer::Erased
-            }
+            SelfDispatchOutcome::AgentSpawn(
+                SelfAgentSpawnResult::TargetErased | SelfAgentSpawnResult::AskerErased,
+            ) => SpawnAnswer::Erased,
             SelfDispatchOutcome::Failed(failed) if failed.error == super::RESPONSE_ERASED => {
                 SpawnAnswer::Stub
             }
@@ -534,9 +616,7 @@ impl CodeRunBridgeCall {
             ));
         }
         if answer == SpawnAnswer::Erased && (live || barrier) {
-            return Err(invalid_code_run_replay(
-                "a target-erased spawn keeps its ask",
-            ));
+            return Err(invalid_code_run_replay("an erased spawn keeps its ask"));
         }
         Ok(())
     }

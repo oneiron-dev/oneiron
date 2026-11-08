@@ -228,8 +228,9 @@ fn complete(
     now: u64,
 ) -> oneiron::Result<()> {
     let attempt = &claimed.status.attempt;
-    // A native decline already settled this run's TASK. Reader reports,
-    // failed calls and non-declining refusals still owe the normal result.
+    // A native decline or fresh terminal TASK report already settled this
+    // run's TASK. Reader reports, acknowledgements and failed calls still
+    // owe the normal result.
     // A continued run's source calls are history, never its own (FIX 3694).
     let settled_itself = match attempt
         .task_ref
@@ -237,8 +238,8 @@ fn complete(
         .and_then(|task| EntityId::from_hex(task).ok())
     {
         Some(task) => {
-            outcome.replay_record.task_decline_count(task)
-                > inherited_task_declines(vault, attempt.id, task)?
+            settling_calls(&outcome.replay_record, task)
+                > inherited_task_settlements(vault, attempt.id, task)?
         }
         None => false,
     };
@@ -311,7 +312,22 @@ fn complete(
         tracing::warn!(%error, attempt = ?attempt.id, "an agent run's confession does not read; it seals none");
         None
     });
-    DreamerRunnerStore::new(vault).complete_with_confession(
+    let reported_context = if claimed.objectives.is_empty() {
+        None
+    } else {
+        match claimed.status.input.target.agent_definition_ref() {
+            Ok(subject) => Some(oneiron::task_verb::HostDoneConfessionContext {
+                subject,
+                type_ref: TypeRef::from(&claimed.status.input.type_ref),
+                objectives: claimed.objectives.clone(),
+            }),
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "host Done confession context does not read");
+                None
+            }
+        }
+    };
+    DreamerRunnerStore::new(vault).complete_with_reported_confession(
         CompleteDreamerAttempt {
             id: attempt.id,
             lease_owner: LEASE_OWNER.to_owned(),
@@ -320,16 +336,22 @@ fn complete(
         },
         judged,
         confession.as_ref(),
+        reported_context.as_ref(),
     )?;
     AgentDispatcher::new(vault).settle_child(&attempt.id, now)?;
     Ok(())
 }
 
-/// How many confirmed declines of the same TASK a continued run took over
+/// Native declines and fresh terminal reports of this bound TASK.
+fn settling_calls(record: &oneiron::code_run::CodeRunReplayRecord, task: EntityId) -> usize {
+    record.task_decline_count(task) + record.task_terminal_report_count(task)
+}
+
+/// How many settlements of the same TASK a continued run took over
 /// from its source (FIX 3694). A continuation's source calls all lie in the
 /// child's inherited prefix; calls after its cut cannot have committed an
 /// effect. No predecessor attempt needs to remain stored.
-fn inherited_task_declines(
+fn inherited_task_settlements(
     vault: &Vault,
     attempt: AttemptId,
     task: EntityId,
@@ -339,7 +361,7 @@ fn inherited_task_declines(
     };
     Ok(vault
         .get_code_run_replay_record(&continuation.checkpoint.source_run)?
-        .map_or(0, |source| source.task_decline_count(task)))
+        .map_or(0, |source| settling_calls(&source, task)))
 }
 
 /// The confession the run's finished answer ends with (OF-544), against the

@@ -270,6 +270,7 @@ fn drive(vault: &Vault, now: u64) {
             reserve_units: 10,
             now,
             host_scope: None,
+            destination_bound: None,
         },
         &mut executor,
         &cancel,

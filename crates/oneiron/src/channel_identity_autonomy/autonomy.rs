@@ -15,6 +15,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound_grant::{
     StandingOutboundGrant, StandingOutboundGrantScope, standing_outbound_grant_in_txn,
+    verb_in_class,
 };
 
 use super::codec::{
@@ -566,7 +567,7 @@ impl AutonomyReader<'_> {
                 let envelope = self.validate_autonomy_action(txn, &action, at)?;
                 if envelope.identity_ref != identity_ref
                     || envelope.relationship_context != mode.relationship_context
-                    || !matches!(&action.scope, StandingOutboundGrantScope::ChannelIdentityEnvelope { verb_class, .. } if verb_class == verb)
+                    || !matches!(&action.scope, StandingOutboundGrantScope::ChannelIdentityEnvelope { verb_class, .. } if verb_in_class(verb_class, verb))
                 {
                     return Err(invalid_autonomy());
                 }
