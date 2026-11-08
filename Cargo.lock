@@ -8827,6 +8827,7 @@ dependencies = [
  "oneiron-code-check",
  "oneiron-container",
  "oneiron-contracts",
+ "oneiron-docedit",
  "oneiron-driver",
  "oneiron-keystore",
  "oneiron-linear",
