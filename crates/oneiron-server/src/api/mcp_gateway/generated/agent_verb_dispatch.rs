@@ -715,6 +715,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.consent.deny" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.create_standing_grant" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.create_auto_weave_grant" => a.spec.clone().ok_or_else(invalid),
+        "vault.consent.create_nightly_link_grant" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.registry" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.failure_signals_held" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.revoke" => a.spec.clone().ok_or_else(invalid),
@@ -3329,6 +3330,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consent.create_auto_weave_grant" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consent.create_nightly_link_grant" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consent.registry" => {
@@ -6856,6 +6860,9 @@ async fn execute_agent_verb_row_on(
         }
         "vault.consent.create_auto_weave_grant" => {
             boxed_mcp_verb_row_vault_consent_create_auto_weave_grant(row).await
+        }
+        "vault.consent.create_nightly_link_grant" => {
+            boxed_mcp_verb_row_vault_consent_create_nightly_link_grant(row).await
         }
         "vault.consent.registry" => boxed_mcp_verb_row_vault_consent_registry(row).await,
         "vault.consent.failure_signals_held" => {
@@ -36814,6 +36821,63 @@ async fn mcp_verb_row_vault_consent_create_auto_weave_grant(
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
         crate::api::facade::host_doors::vault_consent_create_auto_weave_grant(server, auth, input),
+    )
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_consent_create_nightly_link_grant<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_consent_create_nightly_link_grant(row))
+}
+async fn mcp_verb_row_vault_consent_create_nightly_link_grant(
+    row: McpVerbRow<'_>,
+) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.create_nightly_link_grant", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::dreamer_consolidation::NightlyLinkGrantRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(
+        crate::api::facade::host_doors::vault_consent_create_nightly_link_grant(
+            server, auth, input,
+        ),
     )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
