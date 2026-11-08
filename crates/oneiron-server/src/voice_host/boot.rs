@@ -522,7 +522,11 @@ pub(super) fn prepare_call(
         .map_err(|fault| {
             tracing::info!(%fault, "voice: the room's funding refused the call");
             refused(match fault {
-                PayerFault::Missing { .. } => Refusal::PayerMissing,
+                // A room scope funded by an agent Grant's wallet has no
+                // payer this call path can bill (FIX 7766).
+                PayerFault::Missing { .. } | PayerFault::GrantWalletUnbound { .. } => {
+                    Refusal::PayerMissing
+                }
                 PayerFault::Needed { .. } => Refusal::PayerNeeded,
             })
         })?,
