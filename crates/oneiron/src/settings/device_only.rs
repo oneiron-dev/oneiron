@@ -320,3 +320,37 @@ fn deletion_world(
         .map(Some)
         .ok_or(Error::CorruptedIndex("deletion window address"))
 }
+
+/// The existing device-only world setting applied to a run's actual birth
+/// and finished read capture, in the export's own snapshot.
+pub(crate) fn device_only_withholds_run(
+    vault: &crate::Vault,
+    txn: &RoTxn<'_>,
+    flagged: &BTreeSet<EntityId>,
+    run: EntityId,
+    birth_world: Option<EntityId>,
+) -> Result<bool> {
+    if flagged.is_empty() {
+        return Ok(false);
+    }
+    let Some(birth_world) = birth_world else {
+        return Ok(true);
+    };
+    if flagged.contains(&birth_world) {
+        return Ok(true);
+    }
+    let Some(capture) = crate::code_run::closed_read_world_capture_in_txn(vault, txn, run)? else {
+        return Ok(true);
+    };
+    if !capture.worlds.is_disjoint(flagged) {
+        return Ok(true);
+    }
+    // The captured positions keep historical worlds. The ordinary row judge
+    // also follows a served summary's sources and their withdrawal records.
+    for row in capture.rows {
+        if device_only_withholds(&vault.store, txn, flagged, &row)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}

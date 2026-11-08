@@ -136,6 +136,11 @@ pub struct TaskRow {
     /// widen ask; `None` on every other row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub widening: Option<ConsultWidening>,
+    /// FIX685: the hook-chosen due/deadline stamp, Unix seconds. Display
+    /// only: it never changes status, sort, dispatch or expiry. `None`
+    /// leaves every existing row byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_at: Option<u64>,
     /// The persons who `fits:` this open, unassigned task, as the reader's
     /// board names them. They render as the section's discovery rows, apart
     /// from [`Self::line`], so they shed with discovery (FIX 9756).
@@ -163,6 +168,7 @@ impl TaskRow {
             counter_task_ref: intent.counter_task_ref.clone(),
             cancel_pathology: intent_cancel_pathology(intent),
             widening: intent.widening.clone(),
+            due_at: intent.due_at,
             fits: intent.fits.clone(),
         }
     }
@@ -592,6 +598,9 @@ pub struct TaskIntentPresence {
     /// FIX 3901: the widening this consult asks for, when it is a comm widen
     /// ask.
     pub widening: Option<ConsultWidening>,
+    /// FIX685: the hook-chosen due/deadline stamp, Unix seconds. Display
+    /// only: it never changes status, sort, dispatch or expiry.
+    pub due_at: Option<u64>,
 }
 
 impl TaskIntentPresence {
@@ -626,6 +635,7 @@ impl TaskIntentPresence {
             fits: Vec::new(),
             children: Vec::new(),
             widening: None,
+            due_at: None,
         }
     }
 
