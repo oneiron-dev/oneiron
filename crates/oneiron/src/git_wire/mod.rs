@@ -58,6 +58,7 @@ use oneiron_store::git_wire::record;
 use oneiron_store::git_wire::repo;
 mod repository_profile;
 mod retained_object;
+mod secret_purge;
 mod wire_publish;
 mod wire_reads;
 mod wire_stage;

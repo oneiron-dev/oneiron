@@ -463,6 +463,9 @@ fn task_page_slot_in(
         presence.interrupted = matches!(task.state, Some(TaskExecutionState::Interrupted { .. }));
         presence.widening =
             super::comm_widen::consult_widening_in(vault, rtxn, task.consult.as_ref());
+        // FIX685: the hook-chosen due stamp rides the row for display only;
+        // it never changes status, sort, dispatch or expiry.
+        presence.due_at = task.due_at;
         return Ok(Some(TaskPageSlot::Projected(presence)));
     }
     // FIX 4747: an agent run's portable record is the engine's, no person's
