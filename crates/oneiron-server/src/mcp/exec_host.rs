@@ -688,14 +688,20 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             // The run spends under no scope, so its children spend on the
             // host's meter, as its own calls do, on a clock one window from
             // its first spawn.
-            let reader_seat = reader_seats.as_ref().map(|lent| {
-                lent.seat(
-                    request.run_id,
-                    None,
-                    request.actor.destination(),
-                    provider.reader_window_tokens(),
-                )
-            });
+            let reader_seat = reader_seats
+                .as_ref()
+                .map(|lent| {
+                    lent.seat(
+                        &oneiron::code_run::ReaderJobs::canonical(&vault),
+                        oneiron::code_run::ReaderActor::of(write_actor),
+                        request.run_id,
+                        None,
+                        request.actor.destination(),
+                        provider.reader_window_tokens(),
+                    )
+                })
+                .transpose()
+                .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?;
             // Past the bound the run waits its credential's turn. The permit
             // moves into the worker below, so a caller who hangs up frees
             // nothing its run still holds.
