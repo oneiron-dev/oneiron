@@ -35,64 +35,80 @@ impl Vault {
         let provenance = BlobVersionProvenance::AgentRun {
             run_ref: row.proposal_ref.clone(),
         };
-        let (version, record, reconciliation, rebound) = self.with_write_txn_grouped(|wtxn| {
-            let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
-            if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
-                return Err(already_settled(&existing));
-            }
-            let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
-            // The output forks from the version it was made against; a later
-            // head keeps both, as a person may keep a machine version beside
-            // their own. Made against nothing, it lands on whatever head is.
-            // A deck export was made against the version its deck projected
-            // over, whatever head it found then (FIX 2700). An explicit fork
-            // lands a fork version even against the current head; anything
-            // else forks only from an older head (blind review of #4387).
-            let fork_parent = row.base_version.filter(|base| {
-                row.explicit_fork || head.as_ref().is_some_and(|head| head.version != *base)
-            });
-            // The claim is born at the producer's frozen position, never at
-            // the keeper's (FIX 3171).
-            let version = self.append_blob_artifact_version_kept_in_txn(
-                wtxn,
-                artifact_id,
-                fork_parent,
-                &row.new_bytes,
-                &provenance,
-                row.made_by.as_ref(),
-                actor,
-                occurred,
-                learned_at,
-                row.producer_position(),
-            )?;
-            let mut rebound = false;
-            if let Some(hold) = &row.deck {
-                rebound = self.keep_deck_export_in_txn(
+        // An output waiting in its body file is read whole before the writer
+        // opens and checked against its digest; a Discard or purge that
+        // commits first leaves this Keep settled or its artifact gone
+        // (FIX 20812).
+        let filed = row
+            .new_file
+            .as_ref()
+            .map(|file| self.read_pending_output_body(artifact_id, file))
+            .transpose()?;
+        let bytes = filed.as_deref().unwrap_or(row.new_bytes.as_slice());
+        // A kept version past the inline size goes to its body file under an
+        // instance minted before the writer opens (FIX 20812).
+        let mint = self.asset_body_mint([bytes.len() as u64])?;
+        let (version, record, reconciliation, rebound, _hold) =
+            self.with_write_txn_grouped(|wtxn| {
+                let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
+                if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
+                    return Err(already_settled(&existing));
+                }
+                let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
+                // The output forks from the version it was made against; a later
+                // head keeps both, as a person may keep a machine version beside
+                // their own. Made against nothing, it lands on whatever head is.
+                // A deck export was made against the version its deck projected
+                // over, whatever head it found then (FIX 2700). An explicit fork
+                // lands a fork version even against the current head; anything
+                // else forks only from an older head (blind review of #4387).
+                let fork_parent = row.base_version.filter(|base| {
+                    row.explicit_fork || head.as_ref().is_some_and(|head| head.version != *base)
+                });
+                let (version, hold) = self.append_kept_output_in_txn(
                     wtxn,
                     artifact_id,
-                    hold,
-                    (row.base_version, row.base_content_hash),
-                    &version,
-                    (actor, row.made_by.as_ref(), learned_at),
+                    fork_parent,
+                    bytes,
+                    &provenance,
+                    row.made_by.as_ref(),
+                    mint.as_ref(),
+                    actor,
+                    occurred,
+                    learned_at,
+                    row.producer_position(),
                 )?;
-            }
-            // The head it replaced is the version an Undo restores.
-            let replaced = row.base_version.and(head.as_ref().map(|head| head.version));
-            let record = output_record(
-                row,
-                SettleOutcomeKind::Selected,
-                (consent, actor),
-                learned_at,
-                (Some(&version), replaced),
-                grant_ref,
-            );
-            RECORD.put(&self.store, wtxn, &key, &record)?;
-            if let Some(stamp) = row.delta_receipt.as_deref() {
-                LINK.put(&self.store, wtxn, &key, &stamp.to_owned())?;
-            }
-            let reconciliation = VersionReconciliation::of(fork_parent, head.as_ref());
-            Ok((version, record, reconciliation, rebound))
-        })?;
+                let mut rebound = false;
+                if let Some(hold) = &row.deck {
+                    rebound = self.keep_deck_export_in_txn(
+                        wtxn,
+                        artifact_id,
+                        hold,
+                        (row.base_version, row.base_content_hash),
+                        &version,
+                        (actor, row.made_by.as_ref(), learned_at),
+                    )?;
+                }
+                // The head it replaced is the version an Undo restores.
+                let replaced = row.base_version.and(head.as_ref().map(|head| head.version));
+                let record = output_record(
+                    row,
+                    SettleOutcomeKind::Selected,
+                    (consent, actor),
+                    learned_at,
+                    (Some(&version), replaced),
+                    grant_ref,
+                );
+                RECORD.put(&self.store, wtxn, &key, &record)?;
+                if let Some(stamp) = row.delta_receipt.as_deref() {
+                    LINK.put(&self.store, wtxn, &key, &stamp.to_owned())?;
+                }
+                // The row and its body file go with the settlement: a settled
+                // row never outlives it (FIX 20812).
+                self.drop_pending_in_txn(wtxn, artifact_id, &key)?;
+                let reconciliation = VersionReconciliation::of(fork_parent, head.as_ref());
+                Ok((version, record, reconciliation, rebound, hold))
+            })?;
         let _ = rebound;
         #[cfg(feature = "sync")]
         if rebound {

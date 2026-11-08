@@ -58,10 +58,11 @@ use crate::registry::ENTITY_TYPE_ASSET;
 use crate::store::body_descriptor::{BodyLocation, BodyRef, BodyState, OwnedBody};
 use crate::store::owned_body::owned_body_in_txn;
 
-/// FIX 3677 (CALLS "ASSET inline body bound"): an opaque ASSET body longer
-/// than this lives in a body file; a body this long or shorter, and every
-/// body that is not opaque, stays in its row. It picks where a body lives
-/// and never refuses one (Rule 5). The sync transport's frame holds as much.
+/// FIX 3677 (CALLS "ASSET inline body bound"): an ASSET body longer than
+/// this lives in a body file when it is staged with an instance; a body
+/// this long or shorter, and an owning adapter's carrier, stays in its row.
+/// It picks where a body lives and never refuses one (Rule 5). The sync
+/// transport's frame holds as much.
 pub(crate) const ASSET_INLINE_BODY_BYTES: u64 = 8 * 1024 * 1024;
 
 /// A manifest's first byte: no UTF-8 text and no MessagePack value starts
@@ -81,6 +82,13 @@ pub(crate) enum AssetFileKind {
     /// plane, which hands back the same bytes, and the readers of a stored
     /// row read nothing from it, as from its manifest.
     Record,
+    /// Bytes a reader interprets: UTF-8 text, a container (ZIP, gzip, PDF
+    /// and the rest the secret scan opens), or a body a stream rule of the
+    /// write door hits, kept exactly as written (FIX 22075). The batch
+    /// door's secret scan and mask read the file's bytes as they read a body
+    /// in its row, and mark it by its digest; its readers read it whole
+    /// through the file plane.
+    Interpreted,
 }
 
 impl AssetFileKind {
@@ -89,6 +97,7 @@ impl AssetFileKind {
         match self {
             Self::Opaque => 1,
             Self::Record => 2,
+            Self::Interpreted => 3,
         }
     }
 
@@ -97,6 +106,7 @@ impl AssetFileKind {
         match code {
             1 => Some(Self::Opaque),
             2 => Some(Self::Record),
+            3 => Some(Self::Interpreted),
             _ => None,
         }
     }
