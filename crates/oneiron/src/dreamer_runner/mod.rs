@@ -65,8 +65,9 @@ pub(crate) use self::program::{
     TurnProgramEntered, arm_turn_program_in_txn, bind_program_write_in_txn,
     disarm_turn_program_in_txn, drain_turn_program_wakes, erase_turn_program_actor_in_txn,
     is_withdrawal_refusal, join_program_checkpoint_in_txn, note_program_write_uncertain,
-    program_milestone_envelope, record_turn_program_wakes_in_txn, settle_program_outbound_in_txn,
-    settle_program_write_in_txn, turn_program_erase_details, turn_programs_armed_in_txn,
+    program_actor_for_attempt_in_txn, program_milestone_envelope, record_turn_program_wakes_in_txn,
+    settle_program_outbound_in_txn, settle_program_write_in_txn, turn_program_erase_details,
+    turn_programs_armed_in_txn,
 };
 // KS-2B1: a turn program's STEP bodies and run actor, for body custody.
 pub(crate) use self::program::{
