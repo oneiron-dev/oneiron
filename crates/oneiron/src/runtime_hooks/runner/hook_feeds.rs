@@ -1,20 +1,23 @@
-//! The runner's work on the engine's own hook feeds: at the end of each
-//! pass, with a binding to run or none, hooks on or off, it prunes the
-//! settlement, tick and inbound rows every binding has passed (FIX 22121,
-//! FIX 22141, FIX 22154, FIX 22178). The due watcher TASKs are released at
-//! the start of the pass (FIX 22180). The claim changelog is not pruned
-//! here.
+//! The prune of the engine's own hook feeds: the settlement, tick and
+//! inbound rows every binding has passed (FIX 22121, FIX 22141, FIX 22154,
+//! FIX 22178). The runner prunes them at the end of each pass, with a
+//! binding to run or none, hooks on or off, after releasing the due watcher
+//! TASKs at its start; each housekeeping pass, the owner's run now and
+//! `oneiron maintain` included, prunes them once by the same rule after its
+//! own release, so a host that runs no runner keeps the feeds bounded (FIX
+//! 22180). The claim changelog is not pruned here.
 
 use crate::runtime_hooks::source::{self, FactPosition, FactSource};
 use crate::runtime_hooks::store::{self, CursorRow};
 use crate::skill_hub::pack_catalog::HookPhase;
 use crate::{EntityId, Result, Vault};
 
-/// Prunes the hook feeds once at the end of each pass, retained or not, with
-/// no binding to run, and with hooks off, when no binding moves its cursor
-/// (FIX 22121, FIX 22154, FIX 22178): the rows at or below the lowest
-/// stored cursor of every fact binding enabled in the prune's own snapshot,
-/// held back or not, or every row while none is enabled, at most
+/// Prunes the hook feeds once: at the end of each runner pass, retained or
+/// not, with no binding to run, and with hooks off, when no binding moves
+/// its cursor (FIX 22121, FIX 22154, FIX 22178), and in each housekeeping
+/// pass after its tick release (FIX 22180). It takes the rows at or below
+/// the lowest stored cursor of every fact binding enabled in the prune's own
+/// snapshot, held back or not, or every row while none is enabled, at most
 /// `max_rows` a feed, planned in that snapshot and deleted in one write only
 /// when there are any. The pass's own binding list is not the floor: a
 /// binding enabled since the pass began holds its rows too (review #6767).
@@ -24,7 +27,17 @@ use crate::{EntityId, Result, Vault};
 /// new to the tick feed, before the earliest open TASK's tick, which the
 /// tick prune keeps. Nothing goes from a feed while a binding stands at its
 /// start or holds no cursor there.
-pub(super) fn prune_hook_feeds(vault: &Vault, max_rows: usize) -> Result<()> {
+///
+/// The floor reads stored cursors only, never a runner's own state, so a
+/// housekeeping prune runs beside a live runner: a run in flight stands past
+/// its binding's stored cursor, which moves only in the write that commits
+/// it, and a stored cursor on these feeds moves only forward, a run or skip
+/// advancing it and a re-enable or restart placing it at the feed head. Two
+/// prunes racing each plan in their own snapshot and delete in their own
+/// write. The writes commit one after the other, so the later one finds no
+/// row where the earlier deleted it, its delete of that row changes nothing,
+/// and each row goes once.
+pub(crate) fn prune_hook_feeds(vault: &Vault, max_rows: usize) -> Result<()> {
     let planned = {
         let rtxn = vault.store.env.read_txn()?;
         let readers: Vec<EntityId> = vault
