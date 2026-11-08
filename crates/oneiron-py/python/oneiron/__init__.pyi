@@ -2054,6 +2054,8 @@ class Oneiron:
             """The owner shares a locally authored named-world document through its live guest grant as a filtered signed envelope bound to the pact epoch."""
         def export_envelope(self, spec: Facade.GuestDocumentShareRequest) -> Facade.GuestDocumentEnvelope:
             """The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket."""
+        def propose(self, spec: Facade.ConnectProposeRequest) -> Facade.ConnectProposalLanded:
+            """A Connect guest proposes one write of a record's text under its own live grant-bound credential; it lands in the owner's review inbox for that Connect and never writes the vault."""
         def reshare(self, spec: Facade.GuestDocumentShareRequest) -> Facade.GuestDocumentEnvelope:
             """The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused."""
         def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
@@ -3902,7 +3904,7 @@ class Oneiron:
         def sync(self, spec: Facade.MailSourceSyncRequest) -> Facade.MailSyncReport:
             """The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
         def search(self, spec: Facade.MailSourceSearchRequest) -> Facade.MailSearchReport:
-            """The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience."""
+            """The vault's owner searches a Google, Microsoft 365 or IMAP mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience."""
     class _VaultMailSourcesSettingsVerbs:
         def set(self, spec: Facade.MailSourceSettingsRequest) -> Facade.MailSourceView:
             """Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address."""
