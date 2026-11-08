@@ -8105,6 +8105,7 @@ pub fn map_edit_error(e: crate::edit::EditError) -> RuntimeError {
         EditError::CommentRangeOrphaned { .. }
         | EditError::CommentParentUnanchored { .. }
         | EditError::CommentEmptyBody { .. }
+        | EditError::CommentAnchorInCommentStory { .. }
         | EditError::CommentOnTrackedBlock { .. } => ErrorCode::UnsupportedEdit,
         EditError::NoteNotFound { .. } | EditError::NoteReferenceMissing { .. } => {
             ErrorCode::AnchorNotFound

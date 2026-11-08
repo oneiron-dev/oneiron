@@ -102,6 +102,7 @@ enum Selection<'a> {
     },
     Paragraphs {
         blocks: &'a [String],
+        scope: Option<&'a oneiron_docedit::docx_body::DocxStoryScope>,
         author: &'a str,
         labels: SlideReviewLabels,
     },
@@ -131,10 +132,12 @@ impl<'a> Selection<'a> {
             },
             ArtifactAskUnits::Paragraphs {
                 blocks,
+                scope,
                 author,
                 labels,
             } => Self::Paragraphs {
                 blocks,
+                scope: scope.as_ref(),
                 author,
                 labels: labels.clone(),
             },

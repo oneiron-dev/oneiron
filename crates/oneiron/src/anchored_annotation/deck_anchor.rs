@@ -27,7 +27,8 @@ struct Filed<'a> {
 /// The body locator of a deck thread's version locator: the one node at
 /// `at`, the frontier `version` projects, on the locator's slide whose ids
 /// in `version` the locator names. `None` when no node or more than one
-/// does.
+/// does. `held` is the ids `version`'s own record keeps, for an export
+/// a Keep did not bind (FIX 12346).
 pub(super) fn deck_body_locator(
     at: &DeckUnits,
     head: Option<&OfficeBodyUnits>,
@@ -76,6 +77,7 @@ pub(super) fn move_deck_locator(to: &DeckUnits, locator: &Locator) -> Option<Rea
 /// export `version` projects: the node's slide position and the shape's
 /// creation id, else its native id. `None` when its ids there are not
 /// known, or when they name another node of that slide as well.
+/// `held` is as [`deck_body_locator`] takes it.
 pub(super) fn deck_file_locator(
     at: &DeckUnits,
     head: Option<&OfficeBodyUnits>,
