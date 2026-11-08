@@ -9,7 +9,8 @@
 //! Hooks read the feed through their own cursors, as they read the
 //! settlement feed, so a restart neither skips nor repeats a tick. A watch
 //! TASK's tick settles it Done in the write that releases it (FIX 22121);
-//! its hooks are still offered the tick, as it was open at its due time.
+//! the hooks bound at that release are still offered the tick, as it was
+//! open at its due time, and a hook bound after it is not (review #6784).
 //! The runner prunes the rows every hook binding has passed, but an open
 //! TASK's own tick, and an erase leaves an erased TASK's rows at their
 //! sequences with no TASK in them.
