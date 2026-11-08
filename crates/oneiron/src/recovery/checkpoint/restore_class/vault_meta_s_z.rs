@@ -15,6 +15,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SAVED_QUERY_REPAIR, CONTENT),
     (&t::STORAGE_SCHEMA_VERSION, CONTENT),
     (&t::SCOPE_STAMP_SWEEP_DONE, CONTENT),
+    // A Connect origin facet stands with the stamp it places (FIX 22223).
+    (&t::SCOPE_ORIGIN_FACET, CONTENT),
     (&t::SCOPE_POLICY_SWEEP_DONE, CONTENT),
     (&t::SCOPE_RECORD_REVISION, CONTENT),
     (&t::SCOPE_RECORD_V1, CONTENT),
