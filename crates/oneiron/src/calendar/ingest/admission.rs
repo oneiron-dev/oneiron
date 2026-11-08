@@ -10,9 +10,9 @@ use super::ingest;
 use super::poll::IcsFeedPollConfig;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
-    CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
-    CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
-    PREDICATE_CALENDAR_STATUS, decode_status_value,
+    CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportSource,
+    CalendarPassportValue, CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_ORIGIN,
+    PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS, decode_status_value,
 };
 use crate::calendar::ics::ParsedVEvent;
 use crate::calendar::passport::{
@@ -57,6 +57,7 @@ pub(super) struct PollAdmission<'a> {
     pub(crate) preserve_direction: bool,
     pub(crate) now: u64,
     pub(crate) blob_ref: &'a str,
+    pub(crate) source: Option<CalendarPassportSource>,
     pub(crate) verdict_fold: VerdictFold,
     /// The events whose property admissions passed one pass's count, each
     /// queued a continuation once the feed is applied (FIX 11997, FIX
@@ -547,6 +548,7 @@ impl PollAdmission<'_> {
             uid: event.uid.clone(),
             last_sequence: event.sequence,
             content_hash: event.content_hash,
+            source: self.source,
             direction,
             last_seen_at: self.now,
             presence,

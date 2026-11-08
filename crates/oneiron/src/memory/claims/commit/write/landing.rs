@@ -147,7 +147,7 @@ impl Memory<'_> {
                 super::super::booking_publication::stage_publication_write(self.vault, txn, id)
             })?;
             if let Some(old_id) = prior {
-                content.update_claim(old_id, |txn| {
+                content.update_claim(old_id, |txn, _lane| {
                     super::super::booking_publication::stage_publication_write(
                         self.vault, txn, old_id,
                     )
@@ -313,7 +313,7 @@ impl Memory<'_> {
             .replay_header_in_txn(content.read(), write)?
             .map_or(learned_at, |header| header.learned_at);
         if let Some(birth) = birth {
-            content.update_claim(id, |txn| {
+            content.update_claim(id, |txn, _lane| {
                 crate::provenance::birth::stamp_birth_if_absent_in_txn(
                     &self.vault.store,
                     txn,
@@ -323,7 +323,7 @@ impl Memory<'_> {
             })?;
         }
         if let Some(old_id) = prior {
-            content.update_claim(old_id, |txn| {
+            content.update_claim(old_id, |txn, _lane| {
                 self.vault.stage_claim_supersession_in_txn(
                     txn,
                     &id,
@@ -356,7 +356,7 @@ impl Memory<'_> {
                 super::super::booking_publication::finish_publication_write(self.vault, txn, id)
             })?;
             if let Some(old_id) = prior {
-                content.update_claim(old_id, |txn| {
+                content.update_claim(old_id, |txn, _lane| {
                     super::super::booking_publication::finish_publication_write(
                         self.vault, txn, old_id,
                     )

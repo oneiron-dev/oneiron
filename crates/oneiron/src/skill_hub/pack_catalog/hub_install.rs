@@ -9,6 +9,7 @@ use super::{
     PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSource, invalid,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::skill_hub::local_dir::LOCAL_DIR_SKILLS_ONLY;
 use crate::skill_hub::ref_sync::{RefFetch, pinned_tracking};
 use crate::skill_hub::{
     GitEndpointSkillHubAdapter, HttpEndpointSkillHubAdapter, HubPin, HubRef, MODEL_PACK_NAME,
@@ -91,9 +92,8 @@ impl Vault {
                     at,
                 )
             }
-            SkillHubKind::LocalDir => {
-                Err(invalid("a local folder installs through vault.packs.put"))
-            }
+            // A pack from a folder installs through vault.packs.put.
+            SkillHubKind::LocalDir => Err(invalid(LOCAL_DIR_SKILLS_ONLY)),
         }
     }
 
@@ -142,6 +142,7 @@ impl Vault {
                     .to_hex();
                 (id, pinned, hash)
             }
+            RefFetch::Local(..) => return Err(invalid(LOCAL_DIR_SKILLS_ONLY)),
         };
         self.mark_hub_ref(&tracked, &revision, false)?;
         let source = self

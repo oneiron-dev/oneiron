@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use crate::Vault;
+use crate::channel_identity_provider::sheets::SheetsBrokerHost;
 use crate::channel_identity_provider::stalwart::StalwartConfig;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -149,6 +150,7 @@ pub struct ServedTransports {
     native_mail: Option<StalwartConfig>,
     connector_calls: Option<Arc<dyn ServedConnectorCalls>>,
     broker_model_listing: Option<Arc<dyn BrokerModelListingHost>>,
+    sheets_broker: Option<Arc<dyn SheetsBrokerHost>>,
     apns_applications: Vec<Arc<super::apns::ApnsApplication>>,
 }
 
@@ -160,6 +162,7 @@ impl ServedTransports {
             native_mail: None,
             connector_calls: None,
             broker_model_listing: None,
+            sheets_broker: None,
             apns_applications: Vec::new(),
         }
     }
@@ -193,6 +196,15 @@ impl ServedTransports {
         self
     }
 
+    /// The host's credential-broker leg for the built-in Google Sheets
+    /// connector (FIX 4862). This supplies a transport only; each call still
+    /// presents the checked connection's grant through its own custody door.
+    #[must_use]
+    pub fn with_sheets_broker(mut self, host: Arc<dyn SheetsBrokerHost>) -> Self {
+        self.sheets_broker = Some(host);
+        self
+    }
+
     /// Fixed configured APNs apps, each with its own topic, environment and
     /// connection pool. Credentials remain in the existing T0 secret door.
     pub fn with_apns_applications(mut self, configs: Vec<super::ApnsAppConfig>) -> Result<Self> {
@@ -221,6 +233,10 @@ impl ServedTransports {
 
     pub(crate) fn broker_model_listing(&self) -> Option<&Arc<dyn BrokerModelListingHost>> {
         self.broker_model_listing.as_ref()
+    }
+
+    pub(crate) fn sheets_broker(&self) -> Option<&Arc<dyn SheetsBrokerHost>> {
+        self.sheets_broker.as_ref()
     }
 
     #[must_use]

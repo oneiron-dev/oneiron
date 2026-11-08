@@ -148,6 +148,7 @@ pub fn admit_imported_evidence_claim_typed(
         admission,
         None,
         false,
+        crate::core_write::CoreWriteLaneRef::Unbound,
     )
 }
 
@@ -168,6 +169,7 @@ pub(crate) fn admit_imported_evidence_claim_typed_for_machine(
         admission,
         None,
         true,
+        crate::core_write::CoreWriteLaneRef::Unbound,
     )
 }
 
@@ -176,6 +178,7 @@ pub(crate) fn admit_imported_evidence_claim_for_memory(
     vault: &crate::Vault,
     claim: &NormalizedIngestClaim,
     admission: ImportedEvidenceAdmission,
+    lane: crate::core_write::CoreWriteLaneRef<'_>,
 ) -> crate::Result<()> {
     admit_imported_evidence_claim_typed_guarded(
         vault,
@@ -185,6 +188,7 @@ pub(crate) fn admit_imported_evidence_claim_for_memory(
         &admission,
         Some(crate::memory::guard_existing_claim_in_txn),
         false,
+        lane,
     )
 }
 
@@ -199,6 +203,7 @@ fn admit_imported_evidence_claim_typed_guarded(
     admission: &ImportedEvidenceAdmission,
     guard: Option<ClaimAuthorGuard>,
     sign_machine: bool,
+    lane: crate::core_write::CoreWriteLaneRef<'_>,
 ) -> crate::Result<()> {
     // `companion.expression.*` has typed doors that own its supersession
     // chain: writing a head means closing the one the family's own precedence
@@ -224,7 +229,7 @@ fn admit_imported_evidence_claim_typed_guarded(
     }
 
     if guard.is_some() {
-        return vault.try_with_actor_content_write_txn(admission.actor, |content| {
+        return vault.try_with_actor_content_write_txn(admission.actor, lane, |content| {
             admit_imported_evidence_in_content(
                 vault,
                 content,

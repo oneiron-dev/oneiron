@@ -195,6 +195,8 @@ pub(super) struct Ask<'a> {
     pub(super) locality: ModelLocality,
     /// Host-attested keyless bit, read beside the locality stamp (FIX 10592).
     pub(super) keyless: bool,
+    /// Host-attested paid bit, read beside the keyless one (FIX 18407).
+    pub(super) paid: bool,
 }
 
 /// The verdict a check records, the typed decision behind it and what its
@@ -284,7 +286,13 @@ pub(super) async fn verdict(
             step: &step,
             guard: model.guard,
         },
-        request: judge_shell(model, serde_json::json!({}), ask.locality, ask.keyless),
+        request: judge_shell(
+            model,
+            serde_json::json!({}),
+            ask.locality,
+            ask.keyless,
+            ask.paid,
+        ),
         seal: &seal,
     };
     let deadline = RetrievalDeadline::hard(
@@ -310,6 +318,13 @@ pub(super) async fn verdict(
         .await;
     // Every generation that finished is spent, whatever the pack's outcome.
     spend.book(ctx.vault, attempt_id, &spent).map_err(|error| {
+        if let Some(usage) = decided
+            .as_ref()
+            .err()
+            .and_then(DurableStepError::spent_usage)
+        {
+            spend.units = spend.units.saturating_add(units(usage));
+        }
         spend.note_before_error(ctx);
         error
     })?;

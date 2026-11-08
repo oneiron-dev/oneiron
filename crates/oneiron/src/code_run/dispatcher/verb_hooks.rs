@@ -473,9 +473,9 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
             proposal_ref,
             ..
         }) => json!({"kind": "agent_spawn", "state": "proposed_widen", "proposal": proposal_ref}),
-        SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::TargetErased) => {
-            json!({"kind": "agent_spawn", "state": "target_erased"})
-        }
+        SelfDispatchOutcome::AgentSpawn(
+            erased @ (SelfAgentSpawnResult::TargetErased | SelfAgentSpawnResult::AskerErased),
+        ) => json!({"kind": "agent_spawn", "state": erased.erasure()}),
         // The bare `ask` and `wait` answer their rows' outputs.
         SelfDispatchOutcome::TaskAsk(receipt) => json!({"output": receipt}),
         SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Pending { .. }) => return None,
@@ -500,8 +500,7 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
         SelfDispatchOutcome::ReportBlocked { receipt } => json!({"receipt": receipt.to_hex()}),
         SelfDispatchOutcome::InferenceDefaults(text) => json!({"json": text}),
         SelfDispatchOutcome::StoredReply(value) => json!({"output": value.output}),
-        SelfDispatchOutcome::Fold(text) => json!({"output": serde_json::from_str::<Value>(text)
-            .unwrap_or_else(|_| Value::String(text.clone()))}),
+        SelfDispatchOutcome::Fold(answer) => json!({"output": answer.guest_output()}),
         SelfDispatchOutcome::Context(value) => json!({"spec": value.spec}),
         SelfDispatchOutcome::WakePolicyWritten(policy) => json!({"policy": policy}),
         SelfDispatchOutcome::ReaderSpawn(receipt) => json!({"output": receipt}),
@@ -1037,7 +1036,7 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         }
         // A run repo row is rewritten only into its own row's input; the
         // binding is rebuilt at dispatch (FIX 6867).
-        SelfCall::Repo(call) => SelfCall::Repo(call.rewrite(args)?),
+        SelfCall::Repo(call) => SelfCall::Repo(Box::new(call.rewrite(args)?)),
         // A reader's source and finding, and a summary's members, are
         // resolved by the host before the hooks run: a rewrite would name a
         // result nothing resolved.

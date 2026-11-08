@@ -18,8 +18,8 @@ use crate::outbound_consent::{DataClass, ScopedMcpGrantRef};
 // once, under the same pinned on-disk strings.
 pub use crate::consent::ConsentGrantStatus as StandingOutboundGrantStatus;
 
-/// The send verb class: the class a contact or channel dial covers.
-pub(super) const SEND_VERB_CLASS: &str = "send";
+// The send verb class, the class a contact or channel dial covers: the store registry's (FIX 11876).
+use crate::store::consent_bound::SEND_VERB_CLASS;
 
 /// The verb an artifact publish names, and the class its dial covers.
 const ARTIFACT_PUBLISH_VERB: &str = "publish";

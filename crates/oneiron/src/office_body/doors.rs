@@ -575,6 +575,7 @@ impl Vault {
                 version: version.version,
                 frontier: head.frontier.clone(),
                 rebind_frontier: None,
+                held_ids: None,
                 source_version: head.source_version,
                 actor: BodyActor::Actor(request.actor.entity_ref()),
                 author: author.shown.clone(),
@@ -618,7 +619,13 @@ impl Vault {
         let limits = self.docedit_package_limits()?;
         let (bytes, recalc) = match self.project_body(artifact, &head, "preview", at, zone)? {
             Some((bytes, _, recalc, _)) => (bytes, recalc),
-            None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?,
+            None => recalc_xlsx(
+                &self.body_source(artifact, &head)?,
+                limits,
+                at,
+                zone,
+                self.xlsx_precision_recalc().as_deref(),
+            )?,
         };
         let book = read_xlsx_cells(&bytes, limits, &crate::office_body::document_resources())
             .map_err(|error| {

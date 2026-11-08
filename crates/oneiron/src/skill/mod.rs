@@ -7,6 +7,7 @@
 
 mod call;
 mod codec;
+mod delivery;
 mod doors;
 mod graph;
 pub(crate) mod health_review;
@@ -28,12 +29,17 @@ mod validate;
 mod tests;
 
 pub(crate) use self::call::{
-    AnswerMemory, erase_callable_case_actor_in_txn, erase_callable_cases_in_txn,
-    execute_callable_skill_cancellable, matches_shape, skill_callable_case_accepts_masked,
+    AnswerMemory, SelectedCallable, callable_script, erase_callable_case_actor_in_txn,
+    erase_callable_cases_in_txn, execute_callable_skill_cancellable, matches_shape,
+    skill_callable_case_accepts_masked,
 };
 pub use self::call::{CallableSkillAnswer, execute_callable_skill};
 pub use self::codec::{decode_skill_record, encode_skill_record};
 pub(crate) use self::codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};
+pub(crate) use self::delivery::{
+    CarriesSkillBodies, SkillBodyCapture, SkillBodyWitness, SkillFileSpan, WitnessedAnswer,
+    answer_digest,
+};
 pub use self::graph::{
     GraphSkillAnswerRef, GraphSkillFailure, GraphSkillInput, GraphSkillProgram, GraphSkillResult,
     GraphSkillStage, execute_graph_workflow_skill,

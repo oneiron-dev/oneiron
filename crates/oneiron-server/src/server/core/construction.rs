@@ -3,12 +3,12 @@
 //! The server definition, fields, and shared helpers stay in the parent module.
 
 use super::{
-    Arc, AtomicU32, BTreeMap, DreamerAttemptProgressProducer, EphemeralStore, HashSet, LoroDoc,
-    Materializer, McpConnectorActorRegistry, McpCredentialHashKey, Mutex,
-    NEXT_LIFECYCLE_SESSION_ID, Ordering, ROOT_LEASES_MAP, SERVER_USER_ID, SyncEngineContext,
-    SyncServer, SyncServerConfig, UsageLedger, WindowManager, add_window_to_root, broadcast,
-    host_root_secret, init_window_list, insert_root_schema_version, live_rows,
-    mcp_registry_hash_key, read_window_list, server_state, spawn_local_change_producer,
+    Arc, AtomicU32, DreamerAttemptProgressProducer, EphemeralStore, HashSet, LoroDoc, Materializer,
+    McpConnectorActorRegistry, McpCredentialHashKey, Mutex, NEXT_LIFECYCLE_SESSION_ID, Ordering,
+    ROOT_LEASES_MAP, SERVER_USER_ID, SyncEngineContext, SyncServer, SyncServerConfig, UsageLedger,
+    WindowManager, add_window_to_root, broadcast, host_root_secret, init_window_list,
+    insert_root_schema_version, live_rows, mcp_registry_hash_key, read_window_list, server_state,
+    spawn_local_change_producer,
 };
 
 impl SyncServer {
@@ -204,6 +204,12 @@ impl SyncServer {
             config.limits.renderer_work,
             config.limits.queue_wait(),
         );
+        let context_reads = crate::admission::Admission::new(
+            crate::wire_telemetry::LimitRow::ContextReads,
+            Arc::clone(wire_telemetry.limit_questions()),
+            config.limits.context_reads,
+            config.limits.queue_wait(),
+        );
         // Task work waits in the vault's own line, which the embedded SDK, a
         // code run's own ask and wait and a pumped agent share with the
         // served doors; this server sets its `[limits]` row on it.
@@ -214,6 +220,15 @@ impl SyncServer {
                 crate::wire_telemetry::LimitRow::TaskWork,
                 Arc::clone(wire_telemetry.limit_questions()),
             )),
+        );
+        // Guests' network work charges the process's descriptor line, which
+        // this server's listeners share, sized and asked as its `[limits]`
+        // row is, before any worker or guest starts (FIX 6299, FIX 6304).
+        crate::http_listener::attach_host_floor(
+            &vault,
+            &config.limits,
+            &retained,
+            wire_telemetry.limit_questions(),
         );
         let decisions = crate::decision_host::DecisionHost::new(&vault);
         let run_receipts = Arc::new(crate::models::ServerReceipts::hooked(vault.clone()));
@@ -234,6 +249,11 @@ impl SyncServer {
         live_runs.close_sessions_with(crate::api::run_session_closer(Arc::clone(
             &memories_cursors,
         )));
+        // FIX 17594 D3 (Engine call RESUME C): a live run that ends closes
+        // the self brief its entries installed.
+        let self_brief_sessions =
+            Arc::new(crate::server::self_brief_custody::SelfBriefCustody::default());
+        live_runs.close_briefs_with(Arc::clone(&self_brief_sessions));
         // CUA-001: no run guest outlives a restart, so no takeover Ask can be answered.
         super::desktop_seats::clear_stale_asks(&vault);
         // FIX 8335: no run-bound record outlives a restart, so a host that
@@ -264,7 +284,7 @@ impl SyncServer {
         // (FIX 11157): the read-only door refuses a root held open here.
         vault.register_served();
         let hyde_queue_wait = config.limits.queue_wait();
-        Ok(Self {
+        let server = Self {
             note_editors: super::NoteEditors::default(),
             artifact_previews: super::ArtifactPreviews::default(),
             live_voice: Default::default(),
@@ -293,6 +313,7 @@ impl SyncServer {
             )?,
             memory: memory.clone(),
             renderer_turns,
+            context_reads,
             renderer_scratch: Default::default(),
             wire_telemetry,
             mesh_pressure: crate::wire_telemetry::PoolPressure::mesh(),
@@ -334,13 +355,15 @@ impl SyncServer {
             browser_guest: None,
             browser_readiness: Default::default(),
             desktop_guest: None,
+            artifact_backend: None,
             desktop_seats: Arc::default(),
             browser_seats: Arc::default(),
             web_fetcher: std::sync::OnceLock::new(),
             memories_cursors,
-            self_brief_sessions: Mutex::new(BTreeMap::new()),
+            self_brief_sessions,
             deep_retrieval: None,
             model_slots: Arc::new(Default::default()),
+            trained_embedders: Default::default(),
             model_setup: None,
             model_setup_runtime: std::sync::OnceLock::new(),
             gpu_pool: std::sync::OnceLock::new(),
@@ -380,6 +403,10 @@ impl SyncServer {
             booking_test_now_secs: None,
             #[cfg(test)]
             booking_test_clock_from: None,
-        })
+        };
+        // FIX 2462: a workbook the native formula engine refuses
+        // recalculates through LibreOffice, where this host has it.
+        crate::xlsx_recalc::install(&server);
+        Ok(server)
     }
 }

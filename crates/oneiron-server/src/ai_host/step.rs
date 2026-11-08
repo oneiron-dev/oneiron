@@ -578,6 +578,7 @@ impl StepRunner {
                 })?;
             let mut request = call.request;
             request.envelope.host_keyless = call.ladder.all_keyless_own_server();
+            request.envelope.host_paid = !call.ladder.all_free_work();
             (
                 request,
                 call.ladder,
@@ -670,6 +671,7 @@ impl StepRunner {
                     response_format,
                     locality: seat.locality,
                     host_keyless: false,
+                    host_paid: false,
                 },
                 messages,
                 tools: Vec::new(),
@@ -688,8 +690,11 @@ impl StepRunner {
             let mut request = call.request;
             // FIX 10592: beside the door-stamped locality, the request carries
             // whether its ladder may only serve free keyless own-server work, so
-            // the replay below admits unmetered. Unstamped stays paid.
+            // the replay below admits unmetered. Unstamped stays paid. FIX
+            // 18407: it also carries whether a rung is paid work, so a paid
+            // on-device try reserves on the step's own budget line.
             request.envelope.host_keyless = call.ladder.all_keyless_own_server();
+            request.envelope.host_paid = !call.ladder.all_free_work();
             let offers_use = offers_use && secret_use::offer(&call.ladder, &mut request);
             (
                 request,
@@ -863,7 +868,9 @@ impl StepRunner {
         let run = run.with_work_context({
             let mut context = run.work_context();
             context.class = WorkClass::Foreground;
-            context.physical = if request.envelope.host_keyless {
+            // A free on-device try is free work too, as physical_for says
+            // (FIX 18407); a paid rung keeps the try paid.
+            context.physical = if ladder.all_free_work() {
                 WorkPhysical::KeylessOwnServer
             } else {
                 WorkPhysical::Paid
@@ -886,23 +893,19 @@ impl StepRunner {
             context.parent = parent;
             context
         });
-        // The admitted request is the step's replay capsule (FIX 3028),
-        // finalized with the rung that answers it. A capture that fails
-        // leaves none and never fails the step.
-        let capture_completed = continuation
-            .as_ref()
-            .is_some_and(|saved| saved.progress.cursor.capture_completed);
-        let capture = |request: &LlmRequest| {
-            if capture_completed {
-                return None;
-            }
+        // Each admitted request is a replay capsule of the step (FIX 3028),
+        // one per model round (FIX 7013), finalized with the rung that
+        // answers it. The tool rounds' cursor says which round already has
+        // one. A capture that fails leaves none and never fails the step.
+        let capture = |request: &LlmRequest, round: u64| {
             oneiron::code_run::capture_workflow_step(
                 vault,
                 attempt.id,
                 attempt.attempt_count,
                 actor,
                 request,
-                sources,
+                sources.clone(),
+                round,
             )
         };
         let may_send = || {
@@ -979,7 +982,7 @@ impl StepRunner {
                 &mut save,
             ),
             None => {
-                let staged = capture(&request);
+                let staged = capture(&request, 0);
                 let final_request = request.clone();
                 runtime
                     .block_on(ladder.generate_recorded_while(&run, request, None, &may_send))

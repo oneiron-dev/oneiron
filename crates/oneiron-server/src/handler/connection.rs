@@ -90,20 +90,21 @@ async fn ws_upgrade_handler(
         }
         return super::mcp_socket::upgrade(ws, &headers, &extensions, server);
     }
+    // The binding door proved the machine with the upgrade's own slip proof.
+    let machine = machine.map_or(oneiron::authority::PeerMachine::Unknown, |m| m.0);
     // A stale owner sign-in, whose per-request booking doors serve him,
     // holds an app-tier socket that books and nothing more (FIX 11712),
     // recognized as the MCP carrier recognizes him, before the owner-grade
     // credential full replication asks for. Its mode is fixed for the
     // socket's life. A slip or a bearer beside him is never him, so a slip
-    // that fails below never falls back to him.
+    // that fails below never falls back to him. A booking socket is never a
+    // peer session (FIX 4748).
     let mode = match super::mcp_socket::stale_booking_holder(&headers, &extensions, &server) {
         Some(holder) => {
             run::SocketMode::Booking(run::BookingCaller::upgraded(holder, &extensions)?)
         }
-        None => replication_mode(&headers, &extensions, &server)?,
+        None => replication_mode(&headers, &extensions, &server, machine)?,
     };
-    // The binding door proved the machine with the upgrade's own slip proof.
-    let machine = machine.map_or(oneiron::authority::PeerMachine::Unknown, |m| m.0);
     // The home answers with its own machine over that same proof, so the
     // device judges its sends for this machine (OF-534 G6/G7).
     let home_proof = home_proof_header(&headers, server.vault().as_ref());
@@ -170,12 +171,14 @@ async fn ws_upgrade_handler(
     Ok(response)
 }
 
-/// The full-replication socket an upgrade opens: its owner-grade
-/// credential, or the refusal it is answered with before the upgrade.
+/// The full-replication socket an upgrade opens for the caller whose upgrade
+/// proved `machine`: its owner-grade credential and its peer session, or the
+/// refusal it is answered with before the upgrade.
 fn replication_mode(
     headers: &HeaderMap,
     extensions: &axum::http::Extensions,
     server: &SyncServer,
+    machine: oneiron::authority::PeerMachine,
 ) -> Result<run::SocketMode, Response> {
     let auth = match CoreAuth::for_attested_request(headers, extensions, "/ws", server) {
         Some(Ok(auth)) if auth.is_owner_grade() => auth,
@@ -201,10 +204,15 @@ fn replication_mode(
     // The socket's sync frames count under the actor its upgrade admitted,
     // as an HTTP request counts under its own (OF-520, FIX 1086).
     let telemetry_actor = auth.principal_ref().unwrap_or(auth.principal()).to_owned();
+    // FIX 4748: a device serving another machine of this vault while their
+    // home is down serves it as a peer: only one marked mine, never while
+    // this machine's authority fold is unsettled, state only.
+    let peer_serve = super::peer_serve::admit(server, headers, extensions, machine)?;
     Ok(run::SocketMode::Replication {
         session_jti,
         owner,
         telemetry_actor,
+        peer_serve,
     })
 }
 
@@ -368,13 +376,22 @@ fn window_broadcast_allowed(
 /// socket is pushed the window, a `WINDOW_INVALIDATE` where it forgot the
 /// window's subscription past `max_windows_per_connection`, or nothing. A
 /// frame this server withholds as device-only is neither.
+///
+/// A socket served as a peer (FIX 4748) is sent no operation, live ones
+/// included: a change of a window it is pushed, or forgot, reaches it as the
+/// `WINDOW_INVALIDATE` notice, once until its asker asks again
+/// (`peer_serve::notices_change`). The asker answers with its vector, and the
+/// export door with the window's fresh state-only copy. A peer on a protocol
+/// that takes no notice is sent nothing: it gets the copy at its next
+/// connect.
 fn window_delivery(
     server: &SyncServer,
     protocol_version: u8,
     state: &super::conn_state::ConnState,
     frame: Vec<u8>,
 ) -> Option<Vec<u8>> {
-    if window_broadcast_allowed(protocol_version, state, &frame) {
+    let pushed = window_broadcast_allowed(protocol_version, state, &frame);
+    if pushed && !state.peer_served {
         let peer = state.peer_machine(server.vault());
         return (!window_update_withheld(server, peer, &frame)).then_some(frame);
     }
@@ -385,8 +402,9 @@ fn window_delivery(
         .get(1..)
         .and_then(|payload| protocol::decode_window_sync(payload).ok())?;
     let window = oneiron::sync::WindowKey::try_new(key)?;
-    if !state.invalidates_window(&window)
+    if !(pushed || state.invalidates_window(&window))
         || window_update_withheld(server, state.peer_machine(server.vault()), &frame)
+        || !super::peer_serve::notices_change(state, &window)
     {
         return None;
     }
