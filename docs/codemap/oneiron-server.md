@@ -173,6 +173,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/ai/waves.rs` | src | s | 3 crate-vis | — | Owner-authenticated admission and durable status for live wave planning |
 | `src/api/anonymous_chat.rs` | src | m | 4 crate-vis | — | A single memory-free turn on the house configuration or a plain model |
 | `src/api/answer_hold.rs` | src | s | 5 crate-vis | — | What an answer holds (a deck preview's renderer lease and turn), kept until the answer is encoded |
+| `src/api/artifact_backend_pairing.rs` | src | s | 2 crate-vis | — | Owner bootstrap for a published app's own zero-action credential |
 | `src/api/artifacts.rs` | src | m | 17 crate-vis | — | — |
 | `src/api/artifacts/backend.rs` | src | m | 1 crate-vis | — | Published zero-engine-action backends on the artifact-only listener |
 | `src/api/artifacts/backend_runtime.rs` | src | s | 2 crate-vis | — | One HTTP/1 exchange over the native untrusted guest's owned stdio |
