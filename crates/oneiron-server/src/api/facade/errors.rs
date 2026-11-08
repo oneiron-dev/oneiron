@@ -13,6 +13,7 @@ impl FacadeApiError {
     ) -> Self {
         Self {
             status,
+            hook_notice: false,
             body: FacadeErrorEnvelope {
                 error: FacadeErrorBody {
                     code: code.to_owned(),
@@ -32,6 +33,13 @@ impl FacadeApiError {
                 narrowing: None,
             },
         }
+    }
+
+    /// Adds only a positive, content-free notice from the actual hook chain.
+    /// No positive notice does not certify that the arguments were unchanged.
+    pub(super) fn with_hook_notice(mut self, hook_notice: bool) -> Self {
+        self.hook_notice |= hook_notice;
+        self
     }
 
     pub(super) fn forbidden(
@@ -197,6 +205,18 @@ impl From<MemoryError> for FacadeApiError {
         }
         Self {
             status,
+            hook_notice: matches!(
+                error.hook.as_deref(),
+                Some(
+                    VerbHookStop::Completed {
+                        hook_notice: Some(true),
+                        ..
+                    } | VerbHookStop::CompletedWithError {
+                        hook_notice: Some(true),
+                        ..
+                    }
+                )
+            ),
             body: FacadeErrorEnvelope {
                 error: FacadeErrorBody {
                     code: error.code,
@@ -326,13 +346,19 @@ impl FacadeApiError {
                 .headers_mut()
                 .insert(axum::http::header::RETRY_AFTER, HeaderValue::from(seconds));
         }
-        response
+        super::release::with_hook_notice(response, self.hook_notice)
     }
 
     /// The refusal as the engine's typed error, for a door outside the
     /// facade (MCP's row door admission, the held socket's `rpc.err`): its
     /// open code, message and suggestions, its read receipt, wrong-root
     /// correction and hook stop. Only the HTTP status stays behind.
+    pub(crate) fn into_memory_error_with_notice(self) -> (MemoryError, Option<bool>) {
+        let hook_notice = self.hook_notice.then_some(true);
+        (self.into_memory_error(), hook_notice)
+    }
+
+    /// The same refusal without its caller-only notice metadata.
     pub(crate) fn into_memory_error(self) -> MemoryError {
         let FacadeErrorEnvelope { error, narrowing } = self.body;
         let mut refusal = MemoryError::new(&error.code, error.message, &[]);
@@ -353,8 +379,9 @@ impl FacadeApiError {
     /// saved result before it answers (FIX 1435). `None` for any other
     /// refusal.
     pub(crate) fn completed_hook_result(&mut self) -> Option<(&str, &mut serde_json::Value)> {
-        let oneiron::runtime_hooks::VerbHookStop::Completed { invocation, result } =
-            self.body.error.hook.as_deref_mut()?
+        let oneiron::runtime_hooks::VerbHookStop::Completed {
+            invocation, result, ..
+        } = self.body.error.hook.as_deref_mut()?
         else {
             return None;
         };
