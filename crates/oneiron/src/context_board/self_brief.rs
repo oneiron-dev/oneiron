@@ -26,8 +26,8 @@ pub use ceilings::{
     brief_run_ceiling,
 };
 pub use class_verdicts::{
-    BriefClassReads, BriefClassSource, BriefClassVerdict, BriefClassVerdicts, BriefDefaultRule,
-    BriefOutboundScope, BriefPerActCheck,
+    BriefActionEnvelope, BriefClassReads, BriefClassSource, BriefClassVerdict, BriefClassVerdicts,
+    BriefDefaultRule, BriefOutboundScope, BriefPerActCheck,
 };
 pub use grants::{BriefGrant, BriefGrants};
 pub use working_set::{BriefWorkingHandle, BriefWorkingSet};
