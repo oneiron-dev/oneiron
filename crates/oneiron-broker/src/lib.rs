@@ -59,6 +59,7 @@ pub use deadline::FRAME_DEADLINE;
 pub use digest::{is_auth_header, request_digest};
 pub use error::{BrokerError, Failure, Refusal};
 pub use form::FormData;
+pub use frame::dispatch::DispatchError;
 pub use frame::{MAX_BODY, MAX_SECRET, MAX_STREAM, PROTOCOL_VERSION};
 pub use git_http::{
     GitCallHeader, GitExchange, GitRepository, GitRequestDigest, GitService, GitTarget,

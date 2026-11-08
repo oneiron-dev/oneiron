@@ -613,7 +613,7 @@ side_tables! {
     SKILL_OPTIMIZE_GOAL: VaultMeta b"skill_optimize/goal/v1\0" Raw;
     /// A proposal's live goal-axis report, bound to its bodies, evidence and plan (MessagePack
     /// named map). Key: id16 (proposal).
-    SKILL_OPTIMIZE_LIVE_AXES: VaultMeta b"skill_optimize/live_axes/v1\0" Raw;
+    SKILL_OPTIMIZE_LIVE_AXES: VaultMeta b"skill_optimize/live_axes/v2\0" Raw;
     /// Optimizer-birth marker. Key: id16.
     SKILL_OPTIMIZE_ORIGIN_MARKER: VaultMeta b"skill_optimize/origin/v1\0" Raw;
     /// A proposal's offline preflight: its floor and cost axes and the honesty floor scored on the
@@ -675,8 +675,9 @@ side_tables! {
     SKILL_OPTIMIZE_OFFER: VaultMeta b"skill_optimize:offer:v1:" Named
         => crate::skill_optimize::erase_offer_source_in_txn;
     /// The vault owner's one answer to a training offer, with any switch or train intent. Key:
-    /// id16 (offer).
-    SKILL_OPTIMIZE_OFFER_ANSWER: VaultMeta b"skill_optimize:offer_answer:v1:" Named;
+    /// id16 (offer). Its scrub leaves an erased actor's answers naming no one.
+    SKILL_OPTIMIZE_OFFER_ANSWER: VaultMeta b"skill_optimize:offer_answer:v1:" Named
+        => crate::skill_optimize::erase_offer_answer_actor_in_txn;
     /// An immutable owner-nominated seat/candidate pin for a Coach offer. Key: id16.
     SKILL_OPTIMIZE_OFFER_CANDIDATE: VaultMeta b"skill_optimize:offer_candidate:v1:" Named;
     /// One check of a training offer's promise against later receipts. Key: id16 (offer) + id16
@@ -690,8 +691,10 @@ side_tables! {
     SKILL_OPTIMIZE_OFFER_SWITCH: VaultMeta b"skill_optimize:offer_switch:v1:" Named
         => crate::skill_optimize::erase_switch_actor_in_txn;
     /// The prepared training run an approved Train offer handed off, with the exact spec the
-    /// owner authorized. Key: id16 (offer).
-    SKILL_OPTIMIZE_OFFER_TRAINING: VaultMeta b"skill_optimize:offer_training:v1:" Named;
+    /// owner authorized. Key: id16 (offer). Its scrub leaves an erased actor's handoffs naming
+    /// no one.
+    SKILL_OPTIMIZE_OFFER_TRAINING: VaultMeta b"skill_optimize:offer_training:v1:" Named
+        => crate::skill_optimize::erase_offer_training_actor_in_txn;
     /// The owner's final pick between a blind preference pair's two responses (preferred side,
     /// picker, time). Key: string (pair reference).
     SKILL_OPTIMIZE_RESPONSE_PAIR: VaultMeta b"skill_optimize:response_pair:v1:" Named;

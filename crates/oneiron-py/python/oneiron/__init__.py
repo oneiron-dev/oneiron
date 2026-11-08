@@ -1642,7 +1642,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def __call__(self, format: str | None = None) -> dict[str, Any]:
-            """Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."""
+            """Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`); `notices` names each world it carries that the owner's recipient choice would keep from where it goes."""
             return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
         @property
         def transfer(self) -> "Oneiron._VaultExportTransferVerbs":
@@ -3849,6 +3849,9 @@ class Oneiron:
         def inference_defaults(self) -> "Oneiron._VaultSettingsInferenceDefaultsVerbs":
             return Oneiron._VaultSettingsInferenceDefaultsVerbs(self._client)
         @property
+        def models(self) -> "Oneiron._VaultSettingsModelsVerbs":
+            return Oneiron._VaultSettingsModelsVerbs(self._client)
+        @property
         def web_connector(self) -> "Oneiron._VaultSettingsWebConnectorVerbs":
             return Oneiron._VaultSettingsWebConnectorVerbs(self._client)
         @property
@@ -3881,6 +3884,21 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
             return json.loads(_translate(lambda: self._client.vault_settings_inference_defaults_replace(json.dumps(spec))))
+    class _VaultSettingsModelsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def responses_store(self) -> "Oneiron._VaultSettingsModelsResponsesStoreVerbs":
+            return Oneiron._VaultSettingsModelsResponsesStoreVerbs(self._client)
+    class _VaultSettingsModelsResponsesStoreVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """Reads the owner's Responses store switch from the serving vault."""
+            return json.loads(_translate(lambda: self._client.vault_settings_models_responses_store_read(json.dumps(spec))))
+        def set(self, spec):
+            """Sets the owner's Responses store switch, persisting it before updating this server's live providers."""
+            return json.loads(_translate(lambda: self._client.vault_settings_models_responses_store_set(json.dumps(spec))))
     class _VaultSettingsWebConnectorVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4648,7 +4666,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def ingest(self, spec):
-            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""
+            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership."""
             return json.loads(_translate(lambda: self._client.vault_code_snapshots_ingest(json.dumps(spec))))
         def get(self, spec):
             """Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."""
@@ -4852,7 +4870,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def bind(self, spec):
-            """The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing."""
+            """The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership."""
             return json.loads(_translate(lambda: self._client.vault_repo_anchor_bind(json.dumps(spec))))
     class _VaultRepoSnapshotsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -6167,22 +6185,28 @@ class Oneiron:
         def threads(self) -> "Oneiron._VaultMailThreadsVerbs":
             return Oneiron._VaultMailThreadsVerbs(self._client)
         @property
+        def reply(self) -> "Oneiron._VaultMailReplyVerbs":
+            return Oneiron._VaultMailReplyVerbs(self._client)
+        @property
         def compliance(self) -> "Oneiron._VaultMailComplianceVerbs":
             return Oneiron._VaultMailComplianceVerbs(self._client)
         def inbox(self, spec):
             """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
             return json.loads(_translate(lambda: self._client.vault_mail_inbox(json.dumps(spec))))
+        @property
+        def attachments(self) -> "Oneiron._VaultMailAttachmentsVerbs":
+            return Oneiron._VaultMailAttachmentsVerbs(self._client)
     class _VaultMailPackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def install(self, spec=None):
-            """The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."""
+            """The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing."""
             return json.loads(_translate(lambda: self._client.vault_mail_pack_install(json.dumps({} if spec is None else spec))))
     class _VaultMailSourcesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def connect(self, spec):
-            """Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."""
+            """Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members."""
             return json.loads(_translate(lambda: self._client.vault_mail_sources_connect(json.dumps(spec))))
         def list(self, spec=None):
             """The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted."""
@@ -6199,6 +6223,12 @@ class Oneiron:
         def sync_status(self, spec):
             """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
             return json.loads(_translate(lambda: self._client.vault_mail_sources_sync_status(json.dumps(spec))))
+        def import_mbox(self, spec):
+            """The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place."""
+            return json.loads(_translate(lambda: self._client.vault_mail_sources_import_mbox(json.dumps(spec))))
+        def sync(self, spec):
+            """The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
+            return json.loads(_translate(lambda: self._client.vault_mail_sources_sync(json.dumps(spec))))
     class _VaultMailSourcesSettingsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -6223,6 +6253,21 @@ class Oneiron:
         def read(self, spec):
             """One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."""
             return json.loads(_translate(lambda: self._client.vault_mail_threads_read(json.dumps(spec))))
+    class _VaultMailReplyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def draft(self, spec):
+            """Drafts a reply to a mail thread the caller reads, in plain text with optional simple HTML, to its sender (reply_all adds its To and Cc; cc names more), or its next revision under the same key. Nothing sends until the mailbox owner approves."""
+            return json.loads(_translate(lambda: self._client.vault_mail_reply_draft(json.dumps(spec))))
+        def drafts(self, spec):
+            """The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, frozen plan and state."""
+            return json.loads(_translate(lambda: self._client.vault_mail_reply_drafts(json.dumps(spec))))
+        def discard(self, spec):
+            """Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends."""
+            return json.loads(_translate(lambda: self._client.vault_mail_reply_discard(json.dumps(spec))))
+        def approve(self, spec):
+            """The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice."""
+            return json.loads(_translate(lambda: self._client.vault_mail_reply_approve(json.dumps(spec))))
     class _VaultMailComplianceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -6238,6 +6283,12 @@ class Oneiron:
         def search(self, spec):
             """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
             return json.loads(_translate(lambda: self._client.vault_mail_compliance_search(json.dumps(spec))))
+    class _VaultMailAttachmentsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def open(self, spec):
+            """A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers."""
+            return json.loads(_translate(lambda: self._client.vault_mail_attachments_open(json.dumps(spec))))
     class _VaultDreamerVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
