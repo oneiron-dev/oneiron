@@ -108,7 +108,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/launch.rs` | src | m | 5 struct · 1 enum · 1 fn · 10 crate-vis | LaunchNode, LaunchPlan, LaunchRole, LaunchStatement, SpawnSpend, SpendCapView | The launch statement (OF-532, ARCH-0079 #budget): before every agent launch, the whole tree's agent count… |
 | `src/agent_dispatch/leader_planner.rs` | src | s | 1 struct · 2 fn | VaultLeaderTeamPlanner | The concrete CEO planner (OF-389, ARCH-0079 #planner): the leader's top-shapes advice over the one live… |
 | `src/agent_dispatch/leader_starter.rs` | src | m | 5 struct · 1 trait · 6 fn · 2 crate-vis | LeaderAdvice, LeaderResponsibility, LeaderStarter, LeaderStarterSkills, LeaderTaskContext, LeaderTeamPlanner | CEO starter over existing TASK promises, project responsibility and skill loads |
-| `src/agent_dispatch/mod.rs` | src | s | 2 mod · 29 re-export · 21 crate-vis | — | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
+| `src/agent_dispatch/mod.rs` | src | s | 2 mod · 30 re-export · 22 crate-vis | — | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
 | `src/agent_dispatch/origin.rs` | src | s | 3 crate-vis | — | OF-221: the conversation that started a dispatch |
 | `src/agent_dispatch/planner.rs` | src | L | 10 struct · 1 enum · 11 fn · 1 const · 2 re-export · 6 crate-vis | AvailableModel, CostEnvelope, PlanBudget, PlannerDecisions, PlannerEvidence, PlannerQuestionContext, PlannerRung, PlannerThresholds +3 | The spawn planner (ARCH-0079 #planner, OF-541): turns a [`SpawnNeed`] into a launch-ready plan — which… |
 | `src/agent_dispatch/planner/budget_resolution.rs` | src | s | 3 crate-vis | — | The budget a plan is fitted to and launched under (FIX 9561) |
@@ -132,10 +132,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/resident/validation.rs` | src | s | 1 crate-vis | — | A resident binding's validation: the rows it names, its inbox's actor, its home message's conversation and… |
 | `src/agent_dispatch/resident_tests.rs` | test | s | — | — | — |
 | `src/agent_dispatch/room_join.rs` | src | s | 4 crate-vis | — | Room-bound launches (OF-531) |
+| `src/agent_dispatch/run_effects.rs` | src | L | 1 enum · 1 fn · 23 crate-vis | AgentRunEffectAnswerOutcome | Effects of a handed-over run's replayed steps (FIX 4747 slice 7; canon ARCH-0023b "pending outbound send"… |
 | `src/agent_dispatch/run_handover.rs` | src | m | 1 struct · 1 fn | AgentRunLeaseReap | The agent run's handover when its machine closes or vanishes (FIX 4747 slice 6; canon CROSS-ARCH-0019 "Where… |
 | `src/agent_dispatch/run_lineage.rs` | src | s | 1 crate-vis | — | The store-only lineage step the Gate's delegation-chain read takes at each write of a delegated run (FIX… |
 | `src/agent_dispatch/run_objectives.rs` | src | s | 1 fn | — | The objectives an agent run confesses against (OF-544), kept with its attempt from its first claim |
-| `src/agent_dispatch/run_task.rs` | src | XL | 2 struct · 1 enum · 4 fn · 1 const · 40 crate-vis | AgentRunExecutorLease, AgentRunFence, AgentRunOutcome | The agent-run TASK (FIX 4747 slice 5; canon CROSS-ARCH-0019 "Where work runs", items 02-05): the synced… |
+| `src/agent_dispatch/run_placement.rs` | src | s | 3 crate-vis | — | Cloud placement of an agent run at its dispatch (FIX 4747 slice 7; canon CROSS-ARCH-0019 "Where work runs"… |
+| `src/agent_dispatch/run_task.rs` | src | XL | 2 struct · 1 enum · 4 fn · 1 const · 41 crate-vis | AgentRunExecutorLease, AgentRunFence, AgentRunOutcome | The agent-run TASK (FIX 4747 slice 5; canon CROSS-ARCH-0019 "Where work runs", items 02-05): the synced… |
 | `src/agent_dispatch/scope.rs` | src | s | 1 crate-vis | — | Project descent for a dispatched child's resource scope (FIX 8626): a child under a parent scope that names… |
 | `src/agent_dispatch/skill_default.rs` | src | s | 1 crate-vis | — | Default-hub workflow references, with the existing derived fallback |
 | `src/agent_dispatch/spend_calibration.rs` | src | m | 3 struct · 3 enum · 1 trait · 7 fn · 1 const · 9 crate-vis | AgentSpendCalibration, DollarBasis, ExpectedSpend, LaunchUsdPrices, SpendBasis, UsdPriceTarget, UsdUnitPrice | Per-agent spend calibration, learned from settled launches (OF-532) |
@@ -429,11 +431,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/mesh_machine/doors.rs` | src | m | 3 struct · 8 fn · 3 crate-vis | MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding | Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal… |
 | `src/authority/mesh_machine/enrolment.rs` | src | s | 2 enum · 1 fn · 2 crate-vis | MeshBindRefusal, MeshEnrolment | The mesh binding a machine link's redemption makes for the machine it enrols (FIX 3374, L02 04:5x) |
 | `src/authority/mod.rs` | src | m | 2 mod · 76 re-export · 53 crate-vis | — | AUTHORITY_LOG record substrate |
-| `src/authority/oauth_server/access_slips.rs` | src | s | 4 crate-vis | — | The native capability slip the server holds for each access token (FIX 4902 slice C; ARCH-0028:91 "The OAuth… |
-| `src/authority/oauth_server/authorization.rs` | src | m | 3 struct · 1 enum · 2 fn · 2 crate-vis | OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart, OAuthAuthorizationStatus | One sign-in's authorization request: recorded at `/oauth/authorize` with one inbox ask to the vault owner… |
-| `src/authority/oauth_server/clients.rs` | src | m | 2 struct · 2 enum · 10 fn | OAuthClientRecord, OAuthClientRegistration, OAuthClientSource, OAuthRegistrationRefusal | The apps that may sign in, in one table: ones registered at `/oauth/register` (RFC 7591), and ones known by… |
-| `src/authority/oauth_server/mod.rs` | src | s | 2 fn · 17 const · 3 re-export | — | The vault as the OAuth 2.1 authorization server for its own `/mcp` (FIX 4902 slice B; owner CLOUD AGENTS… |
-| `src/authority/oauth_server/rows.rs` | src | s | 13 crate-vis | — | The OAuth server's five side tables and the rows they hold |
+| `src/authority/oauth_server/access_slips.rs` | src | m | 5 crate-vis | — | The native capability slip the server holds for each access token (FIX 4902 slice C; ARCH-0028:91 "The OAuth… |
+| `src/authority/oauth_server/authorization.rs` | src | m | 3 struct · 1 enum · 2 fn · 3 crate-vis | OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart, OAuthAuthorizationStatus | One sign-in's authorization request: recorded at `/oauth/authorize` with one inbox ask to the vault owner… |
+| `src/authority/oauth_server/clients.rs` | src | m | 2 struct · 2 enum · 10 fn · 1 crate-vis | OAuthClientRecord, OAuthClientRegistration, OAuthClientSource, OAuthRegistrationRefusal | The apps that may sign in, in one table: ones registered at `/oauth/register` (RFC 7591), and ones known by… |
+| `src/authority/oauth_server/mod.rs` | src | s | 2 fn · 21 const · 3 re-export | — | The vault as the OAuth 2.1 authorization server for its own `/mcp` (FIX 4902 slice B; owner CLOUD AGENTS… |
+| `src/authority/oauth_server/rows.rs` | src | s | 18 crate-vis | — | The OAuth server's five side tables and the rows they hold |
+| `src/authority/oauth_server/sweep.rs` | src | m | 2 crate-vis | — | The engine's sweep of the OAuth server's lapsed rows, the housekeeping sweep `oauth_expiry` (FIX 4902) |
 | `src/authority/oauth_server/tokens.rs` | src | m | 4 struct · 1 enum · 7 fn · 1 crate-vis | OAuthAccess, OAuthCodeExchange, OAuthRefresh, OAuthTokenRefusal, OAuthTokens | Codes into tokens, tokens into new tokens, revocation, and the bearer's resolution at the `/mcp` ingress |
 | `src/authority/observation_policy.rs` | src | s | 1 struct · 2 fn · 8 const · 1 crate-vis | AuthorityObservationPolicy | Device-local authority observation policy and its versioned duration row |
 | `src/authority/op_apply.rs` | src | m | 7 crate-vis | — | Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`] |
@@ -3227,8 +3230,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_signals/witness.rs` | src | m | 1 struct · 1 fn · 10 crate-vis | Tier1Observation | Vault-local, non-serializable producer observations |
 | `src/fanout_auto.rs` | src | m | 6 struct · 5 enum · 6 fn · 1 const · 6 crate-vis | AppliedFanoutEscalationRuling, FanoutAskContext, FanoutAskTrigger, FanoutAskVerdict, FanoutClassifierView, FanoutDecisionHistory, FanoutDecisions, FanoutEscalationRuling +3 | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam |
 | `src/fanout_auto/tests.rs` | test | s | — | — | ONE-1720 (ES-07) unit tests: the closed verdict vocabulary, the fixed evaluation order (blank-context floor… |
-| `src/federation/agent_grant.rs` | src | m | 17 crate-vis | — | The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and… |
+| `src/federation/agent_grant.rs` | src | m | 16 crate-vis | — | The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and… |
 | `src/federation/agent_grant/funding.rs` | src | s | 6 crate-vis | — | The owner's explicitly selected funding Grant (FIX 7766, Engine 19:59 = A; L02 20:15 proof contract): the… |
+| `src/federation/agent_grant/withdrawal.rs` | src | s | 7 crate-vis | — | A Grant an owner's signed mint made, an agent or a GitPush grant, withdrawn on the record (FIX 22188, 22193… |
 | `src/federation/agent_grant_brief.rs` | src | s | 1 fn · 1 crate-vis | — | The self brief's GRANT producer (FIX 17594, Engine ruling 21:47): the owner's agent Grants that stand for… |
 | `src/federation/agent_verb_class.rs` | src | s | 9 crate-vis | — | The one resolver of an owner's agent Grant's verb classes (FIX 8735, Engine 18:26 = A; DEC-0006 invariant 3) |
 | `src/federation/archive_delete.rs` | src | m | 8 crate-vis | — | Who may delete one record the cleanup archived (ARCH-0073 §7, OF-449 L4), judged from the vault's own rows… |
@@ -5014,7 +5018,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_consent/connector_elicitation_consent.rs` | src | m | 3 fn · 6 crate-vis | — | The owner's consent on an answer to a connector's question under `always ask` (FIX 8808): DEC-0006's three… |
 | `src/outbound_consent/connector_elicitation_receipt.rs` | src | s | 1 struct · 2 enum · 1 fn | ConnectorElicitationReceipt, ElicitationDisposition, ElicitationEgress | The receipt of each answer the host sends a connector's questions (ONE-2510, FIX 3840): receipt-only, on the… |
 | `src/outbound_consent/connector_remember.rs` | src | s | 1 crate-vis | — | Native project and credential-lineage context for a connector call |
-| `src/outbound_consent/execution.rs` | src | m | 2 struct · 1 enum · 7 fn · 10 crate-vis | ConnectorElicitationBinding, ElicitationAnswerVerdict, ScopedMcpDispatchResult | Scoped-call execution, post-effect decision, and result transport |
+| `src/outbound_consent/execution.rs` | src | L | 2 struct · 1 enum · 7 fn · 10 crate-vis | ConnectorElicitationBinding, ElicitationAnswerVerdict, ScopedMcpDispatchResult | Scoped-call execution, post-effect decision, and result transport |
 | `src/outbound_consent/mod.rs` | src | s | 1 mod · 15 re-export · 7 crate-vis | — | Payload-aware consent and transport boundary for scoped outbound tools |
 | `src/outbound_consent/raw_body.rs` | src | s | 2 struct · 7 fn | RawOutboundBody, RawOutboundBodyReader | Owned bytes returned by one outbound send, shared without copying them |
 | `src/outbound_consent/recovery.rs` | src | m | 2 struct · 1 enum · 1 fn | AuthorizedRecoveryError, AuthorizedRecoveryReport, StaleConnectorManifestRefusal | Authorized recovery sweep, report, and best-effort lease |
@@ -5023,7 +5027,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_consent/scoped_prepared_effect.rs` | src | s | 1 crate-vis | — | — |
 | `src/outbound_consent/tests.rs` | test | XL | — | — | — |
 | `src/outbound_consent/tests/header_consent.rs` | test | m | — | — | Real preparation → owner grant → authorization → durable dispatch/recovery |
-| `src/outbound_consent/tool_call.rs` | src | m | 4 struct · 2 enum · 17 fn · 2 re-export · 21 crate-vis | ConnectorToolCallPreparation, FrozenToolCallView, HeaderGrantRequirement, MutationIntent, PreparedToolCall, ToolCallDescriptor | Resolve header parameters once and freeze them with the consent-visible tool call |
+| `src/outbound_consent/tool_call.rs` | src | m | 4 struct · 2 enum · 17 fn · 2 re-export · 23 crate-vis | ConnectorToolCallPreparation, FrozenToolCallView, HeaderGrantRequirement, MutationIntent, PreparedToolCall, ToolCallDescriptor | Resolve header parameters once and freeze them with the consent-visible tool call |
 | `src/outbound_consent/tool_call/headers.rs` | src | s | 1 fn · 4 crate-vis | — | The `x-mcp-header` declarations of a tool's input schema (FIX 8810, 9284): which arguments go as HTTP… |
 | `src/outbound_consent/tool_schema.rs` | src | m | 4 crate-vis | — | Fail-closed structural JSON Schema subset for resolved outbound descriptors |
 | `src/outbound_consent/zeroizing_wire.rs` | src | s | 1 struct · 3 fn | ZeroizingBufReader | Foreign bytes a live connector exchange holds, wiped once done with (FIX 8309, L10 09:30) |
@@ -5348,7 +5352,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/archive_source/prepared.rs` | src | s | 8 crate-vis | — | Canonical receipt preparation in one native, unlinked temporary body |
 | `src/receipt/archive_source/tests.rs` | test | m | — | — | Public storage/export outcomes for explicitly untrusted receipt source data |
 | `src/receipt/authority_audit.rs` | src | L | 5 struct · 2 enum · 2 fn · 4 const | AuthorityAuditEventKind, AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditQuery, AuthorityAuditRow, ColdAuthorityAuditRow, PendingMembershipExecutionRow | OF-224: the dated consent/authority audit, a renderer-neutral projection of the stored AUTHORITY_LOG |
-| `src/receipt/authority_audit/agent_grant_act.rs` | src | s | 1 crate-vis | — | An owner's agent Grant act in the audit (FIX 5628): a mint is a grant and a revoke a revoke |
+| `src/receipt/authority_audit/agent_grant_act.rs` | src | s | 3 crate-vis | — | An owner's agent Grant act in the audit (FIX 5628), and the withdrawals its mint pairs with: a mint is a… |
 | `src/receipt/authority_audit/carried_act.rs` | src | s | 2 crate-vis | — | An act on a vault setting and an owner's whole-vault export in the audit (FIX 4624, FIX 5660) |
 | `src/receipt/authority_audit/issues.rs` | src | s | 5 crate-vis | — | The fold's diagnostics an audit row names, indexed by the entry they name |
 | `src/receipt/brief_share.rs` | src | s | 1 crate-vis | — | The brief-share projection |
@@ -7505,6 +7509,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verb_catalog.rs` | src | s | 1 const | — | Verb catalog vocabulary used by core admission and action surfaces |
 | `src/verbs/act_answer.rs` | src | s | 3 struct · 1 enum · 1 fn | ActAnswer, DetailsOnDevice, NarrowedQuestion, NarrowedQuestions | What an act answers its caller (FIX 3414) |
 | `src/verbs/agent_grant.rs` | src | s | 7 struct · 3 fn | AgentGrantMintRequest, AgentGrantMinted, AgentGrantRevokeRequest, AgentGrantRevoked, AgentGrantView, BaseAgentList, BaseAgentPrincipal | The inputs and answers of the owner's agent grant rows (FIX 5628): `vault.agents.grants.mint` and `.revoke`… |
+| `src/verbs/agent_run_effect.rs` | src | s | 2 struct · 1 fn | AgentRunEffectAnswer, AgentRunEffectAnswered | The input and answer of `vault.agent.run_effect.answer` (FIX 4747 slice 7), a host door: the vault owner's… |
 | `src/verbs/agents.rs` | src | s | 4 struct · 1 enum · 3 fn · 1 re-export | AgentDefinitionCreateRequest, AgentDefinitionLifecycle, AgentDefinitionRequest, AgentDefinitionUpdateRequest, AgentDefinitionView | Typed custom AGENT_DEF authoring |
 | `src/verbs/anonymous_chat.rs` | src | s | 2 struct · 3 enum | AnonymousChatBlockReasonView, AnonymousChatRequest, AnonymousChatRequestTarget, AnonymousChatResponse, AnonymousChatSkippedCheckView | The anonymous-chat wire contract (OF-500, PRIVACY-08), shared by the standalone HTTP handler, OpenAPI and… |
 | `src/verbs/answer_forward.rs` | src | s | 4 struct · 1 fn | TaskAnswerForwardChallenge, TaskAnswerForwardChallengeRequest, TaskAnswerForwardRequest, TaskAnswerForwardStatusRequest | The served rows of a person's word on an ask this node did not admit (FIX 20468)… |
@@ -7546,7 +7551,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/free_time_policy.rs` | src | s | 1 fn | — | `vault.free_time.policy.set_as` (FIX 11424): an agent sets or clears one agent's free-time policy under its… |
 | `src/verbs/generated/catalog_fragment_revision.rs` | src | generated | 1 const | — | — |
 | `src/verbs/generated/run_verb_catalog.rs` | src | generated | 1 enum · 4 fn · 1 const | RunVerb | — |
-| `src/verbs/generated/sdk_generated.rs` | src | generated | 1385 fn · 4 const | — | — |
+| `src/verbs/generated/sdk_generated.rs` | src | generated | 1386 fn · 4 const | — | — |
 | `src/verbs/generated/verb_catalog.rs` | src | generated | 1 enum · 17 fn · 1 const | AgentVerb | — |
 | `src/verbs/git_push_grant.rs` | src | s | 8 struct · 3 fn | GitPushGrantMintInput, GitPushGrantMintOutput, GitPushGrantRevokeInput, GitPushGrantRevokeOutput, GitPushGrantView, RepoAnchorBindInput, RepoAnchorBindOutput, RepoRegistrationView | The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`… |
 | `src/verbs/goal_optimize.rs` | src | m | 16 struct · 1 enum · 16 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +9 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
@@ -7566,7 +7571,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/live_voice.rs` | src | s | 13 struct · 4 enum | LiveVoiceAckKind, LiveVoiceAckRequest, LiveVoiceAudioRequest, LiveVoiceEvent, LiveVoiceEventKind, LiveVoiceEvents, LiveVoiceEventsRequest, LiveVoiceProcessed +9 | The owner-bound live media session (ARCH-0061, OF-139 and OF-078) |
 | `src/verbs/memory_requests.rs` | src | m | 14 struct · 2 enum · 2 fn · 3 re-export · 8 crate-vis | AppendBlobVersionRequest, AuthorTakeRequest, AuthorTakeTarget, BlobContent, Bm25Search, ClaimHistoryRequest, ClaimRefRequest, CommitRequest +8 | Typed inputs for the public memory verbs in the SDK inventory |
 | `src/verbs/mesh.rs` | src | s | 5 struct · 2 fn · 1 const · 1 re-export | MeshDialRequest, MeshMachineBound, MeshMachineRevokeRequest, MeshMachineRevoked, MeshPathReceiptsRequest | `vault.mesh.path_receipts` (OF-535): the owner reads this vault's mesh path receipts, newest first, through… |
-| `src/verbs/mod.rs` | src | L | 33 struct · 8 fn · 1 mod · 112 re-export | BoardFrameReply, BoardRefreshRequest, BoardSubscriptionReply, BoardSubscriptionRequest, BoardWakeReply, BoardWakeRequest, CompanionSharingRequest, CompanionSharingSetRequest +25 | Shared typed agent-verb inputs and generated transport dispatch |
+| `src/verbs/mod.rs` | src | L | 33 struct · 8 fn · 1 mod · 113 re-export | BoardFrameReply, BoardRefreshRequest, BoardSubscriptionReply, BoardSubscriptionRequest, BoardWakeReply, BoardWakeRequest, CompanionSharingRequest, CompanionSharingSetRequest +25 | Shared typed agent-verb inputs and generated transport dispatch |
 | `src/verbs/model_manifest.rs` | src | s | 5 fn | — | Embedded-owner projection of the model-manifest and slot-route doors |
 | `src/verbs/model_pack.rs` | src | s | 3 fn | — | Embedded-owner projection of the model pack setting doors (FIX 5367) and the pack change revert (FIX 5369) |
 | `src/verbs/model_settings.rs` | src | s | 1 struct | ModelResponsesStoreSettings | The owner's field-specific Responses store setting (OF-602) |
