@@ -763,6 +763,8 @@ vaultCodeSessionModelHealCount(input: unknown): unknown
 vaultCodeCorrections(input: unknown): unknown
 vaultCodeStepEvidence(input: unknown): unknown
 vaultCodeTypeDiagnostics(input: unknown): unknown
+vaultCodeWaitsRebindPrepare(input: unknown): unknown
+vaultCodeWaitsRebind(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
 vaultCodeWaitsReceipt(input: unknown): unknown
 vaultResultsStatus(input: unknown): unknown
@@ -923,6 +925,7 @@ tasksAnswerForwardChallenge(input: unknown): unknown
 tasksAnswerForward(input: unknown): unknown
 tasksAnswerForwardStatus(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
+tasksOutcomesRouteCalibration(input: unknown): unknown
 vaultRoomsList(input: unknown): unknown
 vaultRoomsMessages(input: unknown): unknown
 vaultRoomsParticipants(input: unknown): unknown
@@ -1164,6 +1167,7 @@ vaultEsignSigningAct(input: unknown): unknown
 vaultEsignSigningPdf(input: unknown): unknown
 vaultEsignSigningImage(input: unknown): unknown
 vaultEsignSigningSignature(input: unknown): unknown
+vaultEsignSigningPreview(input: unknown): unknown
 vaultEsignSealGet(input: unknown): unknown
 vaultConversationsCreate(input: unknown): unknown
 vaultConversationsTurnsCreate(input: unknown): unknown
