@@ -15,7 +15,7 @@ mod type_feedback;
 
 use super::cancel::StepCancellation;
 use super::program_entry::{InjectedAnswer, PROGRAM_RESUME_HELD, ProgramInjection};
-use super::stack_floor::below_stack_floor;
+use super::stack_floor::on_callable_stack;
 use super::store::{
     ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
     RESULT_REPLY_INLINE_BYTES, StreamedOutputs, bridge_result_output_path, is_result_output_path,
