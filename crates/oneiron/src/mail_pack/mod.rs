@@ -39,9 +39,11 @@
 //! the engine's own MIME reader ([`mime`]).
 
 mod attachments;
+mod caldav_calendar;
 mod calendar;
 mod compliance;
 mod credential;
+mod dav_xml;
 mod doors;
 mod gmail;
 mod google_calendar;
@@ -82,6 +84,7 @@ pub(crate) use calendar::{
     bind_calendar_source_row_in_txn, calendar_source_occupancy, calendar_source_of_system_in,
     merge_busy,
 };
+pub use caldav_calendar::{CALDAV_CALENDAR_CONNECTOR_EFFECTOR, HttpCalDavCalendarWire};
 pub(crate) use compliance::erase_compliance_actor_in_txn;
 pub use compliance::{
     MailComplianceEventKind, MailComplianceEventView, MailComplianceHit, MailComplianceSearchReply,

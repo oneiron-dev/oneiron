@@ -10,6 +10,7 @@
 //! - `vault.shape.apply`
 //! - `vault.shape.groups`
 //! - `vault.shape.groups.resolve`
+//! - `vault.proactivity.digest.get`
 //! - `tasks.wave`
 //! - `vault.fanout.spawn`
 //! - `vault.budgets.resident_shares`
@@ -654,7 +655,11 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultHooksReplay,
     VaultHooksRegenDue,
     VaultHooksRegenGet,
+    VaultHooksRegenHistory,
+    VaultHooksRegenRevert,
+    VaultHooksRegenRun,
     VaultHooksRegenAdopt,
+    VaultHooksRegenCancel,
     VaultArtifactsPublishApproval,
     VaultArtifactsPublish,
     VaultArtifactsRepoint,
@@ -1434,7 +1439,11 @@ impl HostDoorRow {
             "vault.hooks.replay" => Self::VaultHooksReplay,
             "vault.hooks.regen.due" => Self::VaultHooksRegenDue,
             "vault.hooks.regen.get" => Self::VaultHooksRegenGet,
+            "vault.hooks.regen.history" => Self::VaultHooksRegenHistory,
+            "vault.hooks.regen.revert" => Self::VaultHooksRegenRevert,
+            "vault.hooks.regen.run" => Self::VaultHooksRegenRun,
             "vault.hooks.regen.adopt" => Self::VaultHooksRegenAdopt,
+            "vault.hooks.regen.cancel" => Self::VaultHooksRegenCancel,
             "vault.artifacts.publish_approval" => Self::VaultArtifactsPublishApproval,
             "vault.artifacts.publish" => Self::VaultArtifactsPublish,
             "vault.artifacts.repoint" => Self::VaultArtifactsRepoint,
@@ -1770,6 +1779,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.shape.apply"
                 | "vault.shape.groups"
                 | "vault.shape.groups.resolve"
+                | "vault.proactivity.digest.get"
                 | "tasks.wave"
                 | "vault.fanout.spawn"
                 | "vault.budgets.resident_shares"
