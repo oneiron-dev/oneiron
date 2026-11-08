@@ -1,7 +1,8 @@
 //! One import step of a mail or calendar source through this host's wire
 //! for its provider: Gmail for Google Workspace and Google mailboxes,
-//! Microsoft Graph for Microsoft 365 mailboxes and calendars, Google
-//! Calendar for Google calendars, HTTPS for ICS subscriptions. The owner runs
+//! Microsoft Graph for Microsoft 365 mailboxes and calendars, IMAP for IMAP
+//! mailboxes, Google Calendar for Google calendars, HTTPS for ICS
+//! subscriptions. The owner runs
 //! it through `vault.mail.sources.sync`, on this device as its embedded owner
 //! or on a served vault under the owner's proof; a server host runs it for
 //! every due source as the vault's local owner.
@@ -11,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::gmail::{HttpGmailMailWire, reads_google_mail};
 use super::google_calendar::HttpGoogleCalendarWire;
 use super::ics_calendar::HttpIcsCalendarWire;
+use super::imap::ImapMailWire;
 use super::importer::{MailSyncBudget, MailSyncReport};
 use super::microsoft365::HttpGraphMailWire;
 use super::microsoft365_calendar::HttpGraphCalendarWire;
@@ -122,9 +124,12 @@ impl Vault {
             let wire = HttpGraphMailWire::new(self)?;
             return self.mail_sync_step(owner, source, &wire, budget);
         }
-        Err(MemoryError::bad_request_with(
-            "this host reads Google and Microsoft 365 mailboxes so far",
-            &["IMAP mailboxes follow; connect a Google or Microsoft 365 mailbox meanwhile."],
+        if snapshot.provider == MailProvider::Imap {
+            let wire = ImapMailWire::new(self);
+            return self.mail_sync_step(owner, source, &wire, budget);
+        }
+        Err(MemoryError::bad_request(
+            "this host reads Google, Microsoft 365 and IMAP mailboxes",
         ))
     }
 }

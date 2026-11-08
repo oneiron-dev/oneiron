@@ -280,10 +280,8 @@ impl BudgetGuard {
                 reserve_units: record.reserve_units,
                 dispatched: record.dispatched,
             },
-            LeaseState::Settled {
-                absolute_used_units,
-            } => BudgetLeaseState::Settled {
-                used_units: absolute_used_units,
+            LeaseState::Settled { charged_units } => BudgetLeaseState::Settled {
+                used_units: charged_units,
             },
             LeaseState::Aborted => BudgetLeaseState::Aborted,
         })

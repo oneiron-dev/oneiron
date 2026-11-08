@@ -16,7 +16,10 @@ use tokio::runtime::Handle;
 use super::catalog::{CatalogRefresh, merge, mesh_row, prune};
 use super::pump::{AbortOnDrop, Demand, demand};
 use super::staging::{BookedBody, Booking, StagingBudget};
-use super::{Batch, CountedConnection, LLM_ALPN, Reply, Request, exchange, lock, put, take};
+use super::{
+    Batch, CountedConnection, DispatchError, LLM_ALPN, Reply, Request, dispatch_inference,
+    exchange, lock, take,
+};
 use crate::OwnServerTransport;
 
 /// How long a node has to answer the dial.
@@ -307,7 +310,7 @@ impl Leg {
         loop {
             let mut tried = Vec::new();
             for machine in self.nodes(&mut tried) {
-                match self.generate_on(machine, &body).await {
+                match self.generate_on(machine, &body, None).await {
                     Ok(answer) => {
                         self.taken();
                         return answer;
@@ -324,16 +327,16 @@ impl Leg {
         &self,
         machine: MachineId,
         body: &[u8],
+        lease: Option<&BudgetLease>,
     ) -> Result<LlmResult<LlmResponse>, Absent> {
         let conn = self.dial(machine).await?;
         let answer = async {
-            let request = put(&conn, body.to_vec())
-                .await
-                .map_err(|err| err.to_string())?;
-            match exchange(&conn, &Request::Generate { request })
-                .await
-                .map_err(|err| err.to_string())?
-            {
+            let reply = match dispatch_inference(&conn, body.to_vec(), lease, false).await {
+                Ok(reply) => reply,
+                Err(DispatchError::Transport(error)) => return Err(error.to_string()),
+                Err(DispatchError::Release(error)) => return Ok(Err(error)),
+            };
+            match reply {
                 Reply::Generated(Ok(carried)) => {
                     let body = take(&conn, carried, &self.budget)
                         .await
@@ -365,7 +368,7 @@ impl Leg {
         loop {
             let mut tried = Vec::new();
             for machine in self.nodes(&mut tried) {
-                match self.stream_on(machine, &body, pump).await {
+                match self.stream_on(machine, &body, pump, None).await {
                     Ok(()) => return,
                     Err(why) => tried.push(format!("node {}: {why}", machine.to_hex())),
                 }
@@ -387,16 +390,19 @@ impl Leg {
         machine: MachineId,
         body: &[u8],
         pump: &Demand,
+        lease: Option<&BudgetLease>,
     ) -> Result<(), Absent> {
         let conn = self.dial(machine).await?;
         let ran = async {
-            let request = put(&conn, body.to_vec())
-                .await
-                .map_err(|err| err.to_string())?;
-            let id = match exchange(&conn, &Request::Stream { request })
-                .await
-                .map_err(|err| err.to_string())?
-            {
+            let reply = match dispatch_inference(&conn, body.to_vec(), lease, true).await {
+                Ok(reply) => reply,
+                Err(DispatchError::Transport(error)) => return Err(error.to_string()),
+                Err(DispatchError::Release(error)) => {
+                    pump.hand(Err(error), None).await;
+                    return Ok(());
+                }
+            };
+            let id = match reply {
                 Reply::Started(Ok(id)) => id,
                 Reply::Started(Err(error)) => {
                     pump.hand(Err(error), None).await;
@@ -557,15 +563,16 @@ impl OwnServerTransport for MeshPeerTransport {
     fn generate<'a>(
         &'a self,
         request: LlmRequest,
-        _lease: &'a BudgetLease,
+        lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
+        let lease = lease.clone();
         let (leg, machine) = (Arc::clone(&self.leg), self.machine);
         let task = self.runtime.spawn(async move {
             match serde_json::to_vec(&request) {
                 // A node that does not take the call fails it; no other
                 // node runs it.
                 Ok(body) => leg
-                    .generate_on(machine, &body)
+                    .generate_on(machine, &body, Some(&lease))
                     .await
                     .unwrap_or_else(|_| Err(RetryableLlmError::ServerError.into())),
                 Err(_) => Err(FatalLlmError::InvalidRequest.into()),
@@ -580,14 +587,19 @@ impl OwnServerTransport for MeshPeerTransport {
         })
     }
 
-    fn stream<'a>(&'a self, request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+    fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        let lease = lease.clone();
         let body = serde_json::to_vec(&request).map_err(|_| FatalLlmError::InvalidRequest)?;
         let (leg, machine) = (Arc::clone(&self.leg), self.machine);
         let (pump, end) = demand();
         let task = self.runtime.spawn(async move {
             // The node did not take the stream, or broke before its first
             // event: nothing went out, and no other node runs it.
-            if leg.stream_on(machine, &body, &pump).await.is_err() {
+            if leg
+                .stream_on(machine, &body, &pump, Some(&lease))
+                .await
+                .is_err()
+            {
                 pump.hand(Err(RetryableLlmError::ServerError.into()), None)
                     .await;
             }

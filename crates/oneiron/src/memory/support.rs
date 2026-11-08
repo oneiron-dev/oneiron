@@ -51,6 +51,9 @@ pub struct Memory<'v> {
     /// The verified credential this actor presented, when a host bound one:
     /// every read verb then reads under the key that proof builds.
     pub(super) read_proof: Option<crate::authority::VerifiedSlip>,
+    /// Original call-bound read keys. Each identity read conjoins their
+    /// frozen ceilings and must still carry the same verified credential.
+    pub(super) phone_reads: Vec<crate::claim::ScopedReadActorKey>,
     /// The host action this handle's actor is, when a host bound one
     /// (`with_host_action_authority`, FIX 2222): every read verb then reads
     /// under its guarded owner key.
@@ -67,7 +70,8 @@ pub struct Memory<'v> {
     pub(super) destination: crate::settings::ReadDestination,
     /// Where a host collects the rows its reads pick (`listing_producers`).
     pub(super) producers: Option<&'v super::ProducerRows>,
-    /// Where a host bound its writer's TASKs to be born (`with_birth_position`).
+    /// Where a host bound its writer's TASKs, and its blob version claims, to
+    /// be born (`with_birth_position`, FIX 3171).
     pub(super) birth_position: crate::federation::record_scope::BirthPosition,
     /// The vault owner's authentication, when a host bound the owner's own
     /// direct request (`with_owner_authorship`).
@@ -117,6 +121,9 @@ pub struct Memory<'v> {
     /// host bound one (`with_origin_conversation`, OF-221): context, not
     /// authority.
     pub(super) origin_conversation: Option<EntityId>,
+    /// Host-stamped caller provenance, kept apart from read locality and
+    /// destination so recording it never changes what this handle reads.
+    pub(super) caller_origin: Option<crate::agent_dispatch::CallerOrigin>,
     /// The running agent attempt a host bound as this surface's TASK creator
     /// (`with_task_host`, OF-532).
     pub(super) task_host: Option<crate::task_verb::HostBinding>,
@@ -156,6 +163,10 @@ pub struct Memory<'v> {
     /// credential rides it, with the actual recipient when the host proved
     /// one (FIX 7608 2b-ii). Off on every other handle.
     pub(super) repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient,
+    /// The caller's own retrieval filter this handle's reads are bound to
+    /// (FIX 3977, [`Memory::with_read_filter`]): a request, never
+    /// authority. Every read lane the handle opens meets it.
+    pub(super) read_filter: Option<crate::gate::RetrievalFilter>,
 }
 
 /// Actual transport metadata from a host's request or socket upgrade.
