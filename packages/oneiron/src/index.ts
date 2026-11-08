@@ -2566,6 +2566,8 @@ export class Oneiron {
       snapshots: {
         /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership. */
         ingest: (input: Facade.CodeSnapshotIngestRequest): Facade.CodeSnapshotView => this.#call(() => this.#client.vaultCodeSnapshotsIngest(input) as Facade.CodeSnapshotView),
+        /** Capture current files of a host folder as a custody-filtered snapshot with no Git commit witness. Owner only. Includes untracked and ignored files; Git metadata and linked or nested repositories stay opaque. */
+        capture: (input: Facade.CodeSnapshotCaptureRequest): Facade.CodeSnapshotView => this.#call(() => this.#client.vaultCodeSnapshotsCapture(input) as Facade.CodeSnapshotView),
         /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
         get: (input: Facade.CodeSnapshotRequest): Facade.CodeSnapshotView | null => this.#call(() => this.#client.vaultCodeSnapshotsGet(input) as Facade.CodeSnapshotView | null),
         /** Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only. */

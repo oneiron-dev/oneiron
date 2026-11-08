@@ -2412,6 +2412,9 @@ impl OneironClient {
                 "vault.code.snapshots.ingest" => remote_agent_verb_output::<
                     oneiron::memory::codebase_doors::CodeSnapshotView,
                 >(client, verb, &input),
+                "vault.code.snapshots.capture" => remote_agent_verb_output::<
+                    oneiron::memory::codebase_doors::CodeSnapshotView,
+                >(client, verb, &input),
                 "vault.code.snapshots.get" => remote_agent_verb_output::<
                     Option<oneiron::memory::codebase_doors::CodeSnapshotView>,
                 >(client, verb, &input),
@@ -13687,6 +13690,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.snapshots.ingest", value)
+    }
+    pub fn vault_code_snapshots_capture(
+        &self,
+        input: &oneiron::memory::codebase_doors::CodeSnapshotCaptureRequest,
+    ) -> Result<oneiron::memory::codebase_doors::CodeSnapshotView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.snapshots.capture", value)
     }
     pub fn vault_code_snapshots_get(
         &self,

@@ -932,6 +932,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.code.cache.get" => a.spec.clone().ok_or_else(invalid),
         "vault.code.cache.reuse" => a.spec.clone().ok_or_else(invalid),
         "vault.code.snapshots.ingest" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.snapshots.capture" => a.spec.clone().ok_or_else(invalid),
         "vault.code.snapshots.get" => a.spec.clone().ok_or_else(invalid),
         "vault.code.snapshots.read" => a.spec.clone().ok_or_else(invalid),
         "vault.code.symbols.definitions" => a.spec.clone().ok_or_else(invalid),
@@ -4004,6 +4005,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.snapshots.ingest" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.snapshots.capture" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.snapshots.get" => {
@@ -7382,6 +7386,9 @@ async fn execute_agent_verb_row_on(
         "vault.code.cache.get" => boxed_mcp_verb_row_vault_code_cache_get(row).await,
         "vault.code.cache.reuse" => boxed_mcp_verb_row_vault_code_cache_reuse(row).await,
         "vault.code.snapshots.ingest" => boxed_mcp_verb_row_vault_code_snapshots_ingest(row).await,
+        "vault.code.snapshots.capture" => {
+            boxed_mcp_verb_row_vault_code_snapshots_capture(row).await
+        }
         "vault.code.snapshots.get" => boxed_mcp_verb_row_vault_code_snapshots_get(row).await,
         "vault.code.snapshots.read" => boxed_mcp_verb_row_vault_code_snapshots_read(row).await,
         "vault.code.symbols.definitions" => {
@@ -47788,6 +47795,58 @@ async fn mcp_verb_row_vault_code_snapshots_ingest(row: McpVerbRow<'_>) -> McpVer
         server, auth, input,
     ))
     .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_code_snapshots_capture<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_code_snapshots_capture(row))
+}
+async fn mcp_verb_row_vault_code_snapshots_capture(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.code.snapshots.capture", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::memory::codebase_doors::CodeSnapshotCaptureRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) =
+        Box::pin(crate::api::facade::host_doors::vault_code_snapshots_capture(server, auth, input))
+            .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
     served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
         listed,
