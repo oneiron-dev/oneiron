@@ -66,7 +66,13 @@ impl AiHost {
                 ladder: decisions.ladder().clone(),
                 dial: decisions.dial(oneiron::llm::decision::DecisionRung::Big),
                 bands: decisions.bands(),
-                wording: PROJECT_DETECTION_WORDING.to_owned(),
+                wording: models
+                    .map(|models| models.dreamer.wording.project_detection().to_owned())
+                    .unwrap_or_else(|| {
+                        crate::config::models::DreamerWording::default()
+                            .project_detection()
+                            .to_owned()
+                    }),
                 budget: PROJECT_DETECTION_BUDGET,
             });
         }
