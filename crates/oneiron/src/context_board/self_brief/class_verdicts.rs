@@ -230,15 +230,6 @@ impl BriefOutboundScope {
                     page_ref: *page_ref,
                 }
             }
-            StandingOutboundGrantScope::ChannelIdentityEnvelope {
-                identity_ref,
-                envelope_ref,
-                verb_class,
-            } => Self::ChannelIdentityEnvelope {
-                identity_ref: *identity_ref,
-                envelope_ref: *envelope_ref,
-                verb_class: verb_class.clone(),
-            },
         }
     }
 }
