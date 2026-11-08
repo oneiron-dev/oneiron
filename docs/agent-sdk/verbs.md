@@ -812,6 +812,7 @@ both bindings and their export-census tests in one change.
 - `vault.agents.grants.revoke`
 - `vault.agents.verb_classes.get`
 - `vault.agents.verb_classes.configure`
+- `vault.oauth.authorization.answer`
 - `vault.repo.git_push.mint`
 - `vault.repo.git_push.revoke`
 - `vault.connectors.read_grants.grant`
