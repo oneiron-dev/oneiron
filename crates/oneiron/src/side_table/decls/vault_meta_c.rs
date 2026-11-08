@@ -161,6 +161,9 @@ side_tables! {
     /// `health_review:` digest of each `review_outcomes` receipt. Key: digest32 + id16(actor) +
     /// u8(signal) + id16(task).
     COACH_AGENT_HEALTH_CARD_BY_RECEIPT: VaultMeta b"coach:agent_health_card_by_receipt:v1:" Raw;
+    /// One agent-health review state's frozen DIAGNOSTICs and evidence ids (FIX 8082), shared by
+    /// every outcome receipt of that state. Ids only. Key: the `health_review:` digest32.
+    COACH_AGENT_HEALTH_REVIEW_STATE: VaultMeta b"coach:agent_health_review_state:v1:" Named;
     /// Each live agent-health card under every reviewer revision it names
     /// (FIX 10434): `reviewer_revisions`. Key: id16(revision) + id16(actor) + u8(signal) +
     /// id16(task).
