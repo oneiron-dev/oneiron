@@ -682,7 +682,9 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCodeSecretsPropose,
     ExecuteCode,
     VaultCodeModelHealCount,
+    VaultCodeSessionModelHealCount,
     VaultCodeCorrections,
+    VaultCodeStepEvidence,
     VaultCodeTypeDiagnostics,
     VaultCodeWaitsResolve,
     VaultCodeWaitsReceipt,
@@ -754,6 +756,8 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultAgentsDreamingSet,
     VaultAgentsGrantsMint,
     VaultAgentsGrantsRevoke,
+    VaultAgentsVerbClassesGet,
+    VaultAgentsVerbClassesConfigure,
     VaultRepoGitPushMint,
     VaultRepoGitPushRevoke,
     VaultRepoAnchorBind,
@@ -788,6 +792,8 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultSkillsPackReceipt,
     VaultSkillsOutcomesProject,
     VaultSkillsOutcomesGet,
+    VaultSettingsModelsResponsesStoreRead,
+    VaultSettingsModelsResponsesStoreSet,
     VaultModelsManifestRead,
     VaultModelsManifestReplace,
     VaultModelsOneironerBind,
@@ -947,6 +953,9 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCustodyMembersDrainCommit,
     VaultCustodyMembersDrainFolder,
     VaultCustodyMembersReenrol,
+    VaultMailPackInstall,
+    VaultMailReplyApprove,
+    VaultMailSourcesSync,
     VaultFilesSourcesConvert,
 }
 impl HostDoorRow {
@@ -1455,7 +1464,9 @@ impl HostDoorRow {
             "vault.code.secrets.propose" => Self::VaultCodeSecretsPropose,
             "execute_code" => Self::ExecuteCode,
             "vault.code.model_heal_count" => Self::VaultCodeModelHealCount,
+            "vault.code.session_model_heal_count" => Self::VaultCodeSessionModelHealCount,
             "vault.code.corrections" => Self::VaultCodeCorrections,
+            "vault.code.step_evidence" => Self::VaultCodeStepEvidence,
             "vault.code.type_diagnostics" => Self::VaultCodeTypeDiagnostics,
             "vault.code.waits.resolve" => Self::VaultCodeWaitsResolve,
             "vault.code.waits.receipt" => Self::VaultCodeWaitsReceipt,
@@ -1527,6 +1538,8 @@ impl HostDoorRow {
             "vault.agents.dreaming.set" => Self::VaultAgentsDreamingSet,
             "vault.agents.grants.mint" => Self::VaultAgentsGrantsMint,
             "vault.agents.grants.revoke" => Self::VaultAgentsGrantsRevoke,
+            "vault.agents.verb_classes.get" => Self::VaultAgentsVerbClassesGet,
+            "vault.agents.verb_classes.configure" => Self::VaultAgentsVerbClassesConfigure,
             "vault.repo.git_push.mint" => Self::VaultRepoGitPushMint,
             "vault.repo.git_push.revoke" => Self::VaultRepoGitPushRevoke,
             "vault.repo.anchor.bind" => Self::VaultRepoAnchorBind,
@@ -1561,6 +1574,12 @@ impl HostDoorRow {
             "vault.skills.pack_receipt" => Self::VaultSkillsPackReceipt,
             "vault.skills.outcomes.project" => Self::VaultSkillsOutcomesProject,
             "vault.skills.outcomes.get" => Self::VaultSkillsOutcomesGet,
+            "vault.settings.models.responses_store.read" => {
+                Self::VaultSettingsModelsResponsesStoreRead
+            }
+            "vault.settings.models.responses_store.set" => {
+                Self::VaultSettingsModelsResponsesStoreSet
+            }
             "vault.models.manifest.read" => Self::VaultModelsManifestRead,
             "vault.models.manifest.replace" => Self::VaultModelsManifestReplace,
             "vault.models.oneironer.bind" => Self::VaultModelsOneironerBind,
@@ -1724,6 +1743,9 @@ impl HostDoorRow {
             "vault.custody.members.drain.commit" => Self::VaultCustodyMembersDrainCommit,
             "vault.custody.members.drain.folder" => Self::VaultCustodyMembersDrainFolder,
             "vault.custody.members.reenrol" => Self::VaultCustodyMembersReenrol,
+            "vault.mail.pack.install" => Self::VaultMailPackInstall,
+            "vault.mail.reply.approve" => Self::VaultMailReplyApprove,
+            "vault.mail.sources.sync" => Self::VaultMailSourcesSync,
             "vault.files.sources.convert" => Self::VaultFilesSourcesConvert,
             _ => return None,
         })

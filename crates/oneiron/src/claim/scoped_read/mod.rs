@@ -33,6 +33,7 @@ mod named_reads;
 mod native_raw;
 pub use native_raw::NativeRawRead;
 mod note_visibility;
+mod phone_line;
 mod pinned_reads;
 mod point_reads;
 mod reactions;
@@ -72,6 +73,7 @@ pub use frozen::FrozenReadLane;
 pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
+pub(crate) use weave_correction::erase_weave_decision_labels_in_txn;
 pub use weave_correction::{WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection};
 pub use weave_report::sieve_score::RedactedSieveDecision;
 pub use weave_report::{

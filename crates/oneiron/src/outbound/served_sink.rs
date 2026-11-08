@@ -698,6 +698,34 @@ fn slack_reply_thread(body: &serde_json::Value) -> Option<String> {
     None
 }
 
+impl ServedChannelSink<'_> {
+    /// Whether this machine holds what the served sink sends `intent` with
+    /// (FIX 4747 slice 4): the reaper's read-only check before it takes a
+    /// send another machine let lapse. It makes the machine-side reads each
+    /// send makes before its bytes, without the send's content, the
+    /// credential door or the provider: the checked pack connection whose
+    /// credential Slack, LINE and Telegram post with, the host's mail server
+    /// for native mail, and the APNs application the target device names. A
+    /// channel the sink has no transport for is not held.
+    #[must_use]
+    pub fn holds_channel(vault: &Vault, intent: &super::OutboundIntent) -> bool {
+        match (intent.channel.as_str(), intent.verb.as_str()) {
+            ("slack", "send") => vault
+                .verified_pack_connection_secret(SLACK_PACK, SLACK_CONNECTION)
+                .is_ok(),
+            (LINE_CHANNEL, "send" | "reply" | "push") => vault
+                .verified_pack_connection_secret(LINE_PACK, LINE_CONNECTION)
+                .is_ok(),
+            (telegram::TELEGRAM_CHANNEL, "send") => telegram::telegram_connection_held(vault),
+            (EMAIL_CHANNEL, "send") => vault.served_transports().native_mail().is_some(),
+            ("apns", "push") => {
+                apns::apns_application_held(vault, &vault.served_transports(), &intent.target)
+            }
+            _ => false,
+        }
+    }
+}
+
 impl OutboundExecutionSink for ServedChannelSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
         match (
@@ -739,6 +767,22 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
             }
             (EMAIL_CHANNEL, "send") => self.email_lookup_sent(engine_send_id, target),
             _ => SentLookup::CannotTell,
+        }
+    }
+
+    /// Only an email send reads back (FIX 8814 follow-up): the host's mail
+    /// server keeps the draft its send key names. Every other channel
+    /// answers `Unknown`.
+    fn read_back_delivery(
+        &self,
+        request: &OutboundExecutionRequest<'_>,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        match (
+            request.intent.channel.as_str(),
+            request.intent.verb.as_str(),
+        ) {
+            (EMAIL_CHANNEL, "send") => self.email_read_back(request),
+            _ => crate::outbound_intent_ledger::DeliveryReadBack::Unknown,
         }
     }
 }
@@ -815,5 +859,22 @@ impl OutboundExecutionSink for OwnedServedChannelSink {
                 .join()
         })
         .unwrap_or(SentLookup::CannotTell)
+    }
+
+    /// The served sink's read-back, on a thread of its own as a send runs.
+    fn read_back_delivery(
+        &self,
+        request: &OutboundExecutionRequest<'_>,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        let vault = self.vault.as_ref();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| match ServedChannelSink::new(vault) {
+                    Ok(sink) => sink.read_back_delivery(request),
+                    Err(_) => crate::outbound_intent_ledger::DeliveryReadBack::Unknown,
+                })
+                .join()
+        })
+        .unwrap_or(crate::outbound_intent_ledger::DeliveryReadBack::Unknown)
     }
 }

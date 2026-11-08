@@ -17,7 +17,7 @@
  * call boundary.
  */
 
-import type { ReadFilterInput } from "./facade-types.js"
+import type { ReadFilterInput, WorldRecipientNotice } from "./facade-types.js"
 
 /** Options for an embedded {@link Oneiron.open}. */
 export type OpenOptions = {
@@ -474,10 +474,10 @@ export type RetrievalMeta = {
 }
 
 /** A full-vault render in one of the five pack serialization formats. */
-/** The whole-vault archive (OF-222): a ZIP, standard base64 in `archive`. */
-export type MemoryExport = { format: string; archive: string; digest: string }
-/** One whole-vault export written to the caller's file (FIX 11177): its format, length and BLAKE3. The archive is the caller's file. */
-export type ExportReceipt = { format: string; bytes: number; digest: string }
+/** The whole-vault archive (OF-222): a ZIP, standard base64 in `archive`. `notices` names each world the owner's own export carries that his recipient choice would keep from where it goes (owner ruling 1-EXPORT = B). */
+export type MemoryExport = { format: string; archive: string; digest: string; notices?: WorldRecipientNotice[] }
+/** One whole-vault export written to the caller's file (FIX 11177): its format, length and BLAKE3, and its notices as `MemoryExport` names them. The archive is the caller's file. */
+export type ExportReceipt = { format: string; bytes: number; digest: string; notices?: WorldRecipientNotice[] }
 
 /** One read scope: which entity types, sensitivity, staleness, confidence and salience it admits. */
 export type ReadScope = {
@@ -984,6 +984,9 @@ class ExportReceipt(TypedDict):
     bytes: int
     # BLAKE3 of the archive, lowercase hex.
     digest: str
+    # Each world the owner's own export carries that his recipient choice
+    # would keep from where it goes, and why (owner ruling 1-EXPORT = B).
+    notices: NotRequired[list[Facade.WorldRecipientNotice]]
 
 class NativeLimitQuestion(TypedDict):
     # The [limits] row key that asked.
@@ -1597,7 +1600,7 @@ class Oneiron:
         def __call__(self, spec: Facade.SpendScopeRequest) -> Facade.SpendLeaseView:
             """The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."""
         def open(self, spec: Facade.OpenSpendLeaseRequest) -> Facade.SpendLeaseView:
-            """The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit."""
+            """The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit, optionally funded by his agent grant that names a wallet its whole tree draws on."""
         def top_up(self, spec: Facade.TopUpSpendLeaseRequest) -> Facade.SpendLeaseView:
             """The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap."""
     class _VaultBudgetsHoldVerbs:
@@ -3087,6 +3090,8 @@ class Oneiron:
         @property
         def inference_defaults(self) -> "Oneiron._VaultSettingsInferenceDefaultsVerbs": ...
         @property
+        def models(self) -> "Oneiron._VaultSettingsModelsVerbs": ...
+        @property
         def web_connector(self) -> "Oneiron._VaultSettingsWebConnectorVerbs": ...
         @property
         def model_pack(self) -> "Oneiron._VaultSettingsModelPackVerbs": ...
@@ -3105,6 +3110,14 @@ class Oneiron:
             """Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling."""
         def replace(self, spec: Facade.InferenceDefaultsReplaceRequest) -> Facade.PolicyActionOutcome:
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
+    class _VaultSettingsModelsVerbs:
+        @property
+        def responses_store(self) -> "Oneiron._VaultSettingsModelsResponsesStoreVerbs": ...
+    class _VaultSettingsModelsResponsesStoreVerbs:
+        def read(self, spec: Facade.EmptyRequest) -> Facade.ModelResponsesStoreSettings:
+            """Reads the owner's Responses store switch from the serving vault."""
+        def set(self, spec: Facade.ModelResponsesStoreSettings) -> Facade.ModelResponsesStoreSettings:
+            """Sets the owner's Responses store switch, persisting it before updating this server's live providers."""
     class _VaultSettingsWebConnectorVerbs:
         def __call__(self, spec: Facade.EmptyRequest) -> Facade.WebConnectorSetting:
             """Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key."""
@@ -3363,8 +3376,12 @@ class Oneiron:
         def secrets(self) -> "Oneiron._VaultCodeSecretsVerbs": ...
         def model_heal_count(self, spec: Facade.CodeRunModelHealCountRequest) -> Facade.CodeRunModelHealCountView:
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
+        def session_model_heal_count(self, spec: Facade.CodeRunSessionModelHealCountRequest) -> Facade.CodeRunSessionModelHealCountView:
+            """Read one model's healed-turn tally as one live off-record session the owner is in reads it: the canonical tally, that session's own delta and their sum. Owner only. A closed or unknown session is refused."""
         def corrections(self, spec: Facade.CodeRunCorrectionsRequest) -> Facade.CodeRunCorrectionsView:
             """Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only."""
+        def step_evidence(self, spec: Facade.CodeRunStepEvidenceRequest) -> Facade.CodeRunStepEvidenceView | None:
+            """Read one canonical code run's steps as the owner, paged by step: each step's normalized program, executed JavaScript, committed observation and finished console as stored, bounded or withheld, with its correction records."""
         def type_diagnostics(self, spec: Facade.CodeRunTypeDiagnosticsRequest) -> Facade.ProgramStepFeedbackRelease | None:
             """Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."""
         @property
@@ -3534,7 +3551,7 @@ class Oneiron:
             """Reuse an authorized clean action result into another matching working view without dispatching a cold build."""
     class _VaultCodeSnapshotsVerbs:
         def ingest(self, spec: Facade.CodeSnapshotIngestRequest) -> Facade.CodeSnapshotView:
-            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""
+            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership."""
         def get(self, spec: Facade.CodeSnapshotRequest) -> Facade.CodeSnapshotView | None:
             """Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."""
         def read(self, spec: Facade.CodeSnapshotReadRequest) -> Facade.CodeSnapshotPinnedFile | None:
@@ -3600,6 +3617,8 @@ class Oneiron:
         def dreaming(self) -> "Oneiron._VaultAgentsDreamingVerbs": ...
         @property
         def grants(self) -> "Oneiron._VaultAgentsGrantsVerbs": ...
+        @property
+        def verb_classes(self) -> "Oneiron._VaultAgentsVerbClassesVerbs": ...
         def base(self, spec: Facade.EmptyRequest | None = None) -> Facade.BaseAgentList:
             """The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent."""
         @property
@@ -3612,9 +3631,14 @@ class Oneiron:
             """The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."""
     class _VaultAgentsGrantsVerbs:
         def mint(self, spec: Facade.AgentGrantMintRequest) -> Facade.AgentGrantMinted:
-            """The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door."""
+            """The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it."""
         def revoke(self, spec: Facade.AgentGrantRevokeRequest) -> Facade.AgentGrantRevoked:
             """The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."""
+    class _VaultAgentsVerbClassesVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.AgentVerbClassesView:
+            """The owner reads his verb-class rows, each a class name and the exact verbs an agent grant naming it admits, with the trusted manifest hash."""
+        def configure(self, spec: Facade.AgentVerbClassesConfigureRequest) -> Facade.AgentVerbClassesReceipt:
+            """The owner replaces his whole verb-class table against the current manifest hash; each row names a class and its exact verbs, never git_push or another class, and grants naming the class admit them at once."""
     class _VaultAgentsSpawnVerbs:
         def __call__(self, spec: Facade.SpawnIntentRequest) -> Facade.SpawnIntentReply:
             """The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept."""
@@ -3648,7 +3672,7 @@ class Oneiron:
             """The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing."""
     class _VaultRepoAnchorVerbs:
         def bind(self, spec: Facade.RepoAnchorBindInput) -> Facade.RepoAnchorBindOutput:
-            """The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing."""
+            """The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership."""
     class _VaultRepoSnapshotsVerbs:
         def get(self, spec: Facade.LiveRunRequest[Facade.RepoSnapshotsGetInput]) -> Facade.RepoSnapshotsGetOutput:
             """Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease."""
@@ -4416,15 +4440,19 @@ class Oneiron:
         @property
         def threads(self) -> "Oneiron._VaultMailThreadsVerbs": ...
         @property
+        def reply(self) -> "Oneiron._VaultMailReplyVerbs": ...
+        @property
         def compliance(self) -> "Oneiron._VaultMailComplianceVerbs": ...
         def inbox(self, spec: Facade.MailInboxRequest) -> Facade.MailInboxPage:
             """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
+        @property
+        def attachments(self) -> "Oneiron._VaultMailAttachmentsVerbs": ...
     class _VaultMailPackVerbs:
         def install(self, spec: Facade.EmptyRequest | None = None) -> Facade.PackPutReceipt:
-            """The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."""
+            """The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing."""
     class _VaultMailSourcesVerbs:
         def connect(self, spec: Facade.MailSourceConnectRequest) -> Facade.MailSourceConnectReceipt:
-            """Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."""
+            """Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members."""
         def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.MailSourceView]:
             """The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted."""
         @property
@@ -4435,6 +4463,10 @@ class Oneiron:
             """Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins."""
         def sync_status(self, spec: Facade.MailSourceRef) -> Facade.MailSyncStatusView:
             """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
+        def import_mbox(self, spec: Facade.MailMboxImportRequest) -> Facade.MailMboxImportReport:
+            """The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place."""
+        def sync(self, spec: Facade.MailSourceSyncRequest) -> Facade.MailSyncReport:
+            """The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
     class _VaultMailSourcesSettingsVerbs:
         def set(self, spec: Facade.MailSourceSettingsRequest) -> Facade.MailSourceView:
             """Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address."""
@@ -4448,6 +4480,15 @@ class Oneiron:
             """Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving."""
         def read(self, spec: Facade.MailThreadRequest) -> Facade.MailThreadView:
             """One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."""
+    class _VaultMailReplyVerbs:
+        def draft(self, spec: Facade.MailReplyDraftRequest) -> Facade.MailReplyDraftView:
+            """Drafts a reply to a mail thread the caller reads, in plain text with optional simple HTML, to its sender (reply_all adds its To and Cc; cc names more), or its next revision under the same key. Nothing sends until the mailbox owner approves."""
+        def drafts(self, spec: Facade.MailReplyDraftsRequest) -> Facade.MailReplyDraftPage:
+            """The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, frozen plan and state."""
+        def discard(self, spec: Facade.MailReplyDraftRef) -> Facade.MailReplyDraftView:
+            """Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends."""
+        def approve(self, spec: Facade.MailReplyApproveRequest) -> Facade.MailReplyDraftView:
+            """The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice."""
     class _VaultMailComplianceVerbs:
         def setting(self, spec: Facade.EmptyRequest | None = None) -> Facade.MailComplianceSettingView:
             """Whether org compliance search across mailboxes is on; off by default."""
@@ -4457,6 +4498,9 @@ class Oneiron:
             """The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it."""
         def search(self, spec: Facade.MailComplianceSearchRequest) -> Facade.MailComplianceSearchReply:
             """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
+    class _VaultMailAttachmentsVerbs:
+        def open(self, spec: Facade.MailAttachmentOpenRequest) -> Facade.MailAttachmentView:
+            """A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers."""
     class _VaultDreamerVerbs:
         @property
         def follower(self) -> "Oneiron._VaultDreamerFollowerVerbs": ...
