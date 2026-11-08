@@ -5,9 +5,10 @@
 //!
 //! - `backend = "platform"` (the default) is the Apple data-protection keychain,
 //!   DPAPI-sealed files on Windows, or a 0700 key directory on other Unix systems.
-//!   `"hardware"` seals every slot to a Secure Enclave key on Apple and is refused
-//!   elsewhere, never served by a weaker tier (OF-168). `"off"` installs none, and
-//!   every signing and world-key door then answers `KeystoreUnavailable`.
+//!   `"hardware"` seals every slot to a Secure Enclave key on Apple, or in the
+//!   TPM 2.0 on Linux (through `/dev/tpmrm0`, the sealed slots in `dir`), and is
+//!   refused elsewhere, never served by a weaker tier (OF-168). `"off"` installs
+//!   none, and every signing and world-key door then answers `KeystoreUnavailable`.
 //! - `dir` is that key directory. It defaults to `$XDG_STATE_HOME/oneiron/keys`,
 //!   then `$HOME/.local/state/oneiron/keys` (`%LOCALAPPDATA%\Oneiron\keys` on
 //!   Windows), and it must lie outside the vault.

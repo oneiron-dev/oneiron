@@ -47,6 +47,10 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// Optional table of shared-vault act-policy rows, keyed by act name. Only a
 /// trusted manifest contributes rows; two differing tables fail closed.
 pub(crate) const POLICY_SHARED_ACT_POLICIES_KEY: &str = "shared_act_policies";
+/// Optional top-level manifest scalar naming the vault's common
+/// owner-change wait in seconds. Only a trusted manifest contributes it;
+/// two differing scalars fail closed.
+pub(crate) const POLICY_OWNER_CHANGE_WAIT_SECS_KEY: &str = "owner_change_wait_secs";
 /// Optional top-level manifest key whose value is an ordered MessagePack
 /// array of row maps. Each row selects exactly one call set — one `purpose`
 /// string (a pinned `CallPurpose` built-in name, or any other non-empty

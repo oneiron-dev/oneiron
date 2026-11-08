@@ -448,17 +448,26 @@ impl Vault {
                 }
                 let decision = self
                     .supersede_granted_deferred_claim_in_txn(txn, id, &old, now, checker, closer)?;
-                self.store.close_pending_gate_consent_in_txn(
+                self.store.close_pending_gate_consent_as_in_txn(
                     txn,
                     id,
                     now,
                     "superseded",
                     vec!["gate.supersede.contradiction_closure".to_owned()],
                     None,
+                    if critical_confirmed {
+                        // Keep the outer Clear's existing obligation result.
+                        crate::store::TrayRemoval::Answered
+                    } else {
+                        crate::store::TrayRemoval::Unanswered
+                    },
                 )?;
                 let envelope = super::supersession_provenance::envelope(&body)?;
                 super::supersession_provenance::write_companion(
                     self, txn, id, &old, &body, &old_body, &envelope, now,
+                )?;
+                super::supersession_provenance::settle_coaching_in_txn(
+                    self, txn, id, &old, &body, &envelope, closer, now,
                 )?;
                 decision
             }
@@ -589,6 +598,7 @@ fn park(
             reason_codes: vec![reason.to_owned()],
             dreamer_run_id: parker.run,
             predicate: Some(body.predicate.clone()),
+            expires_at: None,
         },
     )?;
     DEFERRED.put(&vault.store, txn, id, &proposal)?;

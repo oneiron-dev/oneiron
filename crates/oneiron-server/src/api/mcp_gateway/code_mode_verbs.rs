@@ -68,6 +68,9 @@ pub(crate) use self::task_workflow::{WorkflowPreflight, preflight_task_workflow}
 // The facade's browser rows count their hooks' decisions as this door's do
 // (FIX 10425).
 pub(crate) use self::guests::count_hook_decisions;
+// A code-mode run's self brief states its budget from the run's line (FIX
+// 17594 D5).
+pub(crate) use self::dispatch::code_mode_line;
 
 use self::dispatch::*;
 use self::field_writer::RunFieldWriter;
@@ -76,7 +79,10 @@ use self::receipt_evidence::ReceiptWriter;
 use self::secret_custody::RunSecretCustody;
 use self::site_skills::RunSiteSkills;
 use self::solved_runs::BrowserCapture;
-use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
+use super::actor_dispatch::{
+    mcp_host_verb_gate, mcp_run_call_gate, mcp_run_speech_gate, mcp_tool_validation_error,
+    mcp_verb_gate,
+};
 use super::admission::{
     mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb, mcp_admit_step_verb,
 };
@@ -146,6 +152,10 @@ pub(crate) struct McpCodeModeVerbs {
     /// built: each verb runs on a spawned task, and a live-run hold made
     /// there reaches the call's receipt only through this (FIX 10938).
     collector: Option<std::sync::mpsc::Sender<oneiron::receipt::CallAttemptWitness>>,
+    /// The serving call's admission observer, taken where the door is built
+    /// as its collector is: a nested verb's wait in a line shows on that
+    /// call's admission receipt, a skill call's among them (FIX 4735).
+    observer: Option<Arc<dyn oneiron::work_line::LineObserver>>,
 }
 
 /// One run's guests: its browser, when the host has a `[browser]` guest to
@@ -353,4 +363,6 @@ pub(crate) struct ReaderChildDoor {
     /// Where the parent run's caller's rows go: its locality, with the
     /// machine its connection proved (FIX 4937).
     caller: oneiron::settings::ReadDestination,
+    /// The native Read job also holds its own derived spawn seat.
+    nested_readers: bool,
 }

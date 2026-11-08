@@ -65,6 +65,7 @@ pub(crate) struct ConsolidationFence {
     actor: WriteActor,
     attempt: crate::attempt_queue::AttemptId,
     fallback_binding: Option<FallbackOutputPin>,
+    root_binding: Option<crate::dreamer_consolidation::root_evidence::bridge::RootBinding>,
     sources: BTreeMap<EntityId, SourcePin>,
     /// Each fenced TURN with the conversation of its declared part: every
     /// binding is fenced exactly (FIX 7524).
@@ -82,7 +83,7 @@ pub(crate) struct ConsolidationFence {
 }
 
 /// A row as it is stored: its type, learned time and document version.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RowRevision {
     entity_type: u8,
     learned_at: u64,
@@ -125,6 +126,40 @@ impl ConsolidationFence {
         (self.actor, self.attempt)
     }
 
+    pub(crate) fn root_close_revision(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        prior: EntityId,
+    ) -> Result<Option<crate::vault::entity_revision::RevisionRef>> {
+        match &self.root_binding {
+            Some(binding) => binding.capture_close_revision(vault, txn, prior),
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) fn record_root_close_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        prior: EntityId,
+        replacement: EntityId,
+        original: Option<crate::vault::entity_revision::RevisionRef>,
+    ) -> Result<()> {
+        if let (Some(binding), Some(original)) = (&self.root_binding, original) {
+            binding.record_close_in_txn(
+                vault,
+                txn,
+                self.actor,
+                self.attempt,
+                prior,
+                replacement,
+                original,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Records a prior this handoff's own granted correction closed, at the
     /// revision the grant wrote (read inside the grant's transaction). A
     /// poisoned lock records nothing, and the later writes refuse.
@@ -165,6 +200,7 @@ impl BranchResources<'_> {
         // Each output's head: its own id, or the head it attaches to.
         let mut heads: BTreeMap<EntityId, EntityId> = BTreeMap::new();
         let mut answers = Vec::new();
+        let mut unlisted = super::restated::UnlistedHeads::default();
         for verified in candidates {
             verified.evidence.check_pins(self)?;
             answers.extend(verified.answers);
@@ -217,6 +253,16 @@ impl BranchResources<'_> {
                 }
                 _ => None,
             };
+            // A candidate no admitted prior names may still restate the
+            // Dreamer's own unvetted head outside this listing: it is
+            // already said, as a listed one is (FIX 12043).
+            if attachment_head.is_none()
+                && matches.is_empty()
+                && prior.is_none()
+                && self.restates_unlisted_head(&candidate, rules, evidence.meet(), &mut unlisted)?
+            {
+                continue;
+            }
             if let Some(id) = attachment_head {
                 // Nothing attaches to an unvetted head, so a candidate that
                 // restates one is already said; this attempt's own head met
@@ -263,11 +309,17 @@ impl BranchResources<'_> {
             actor: self.actor,
             attempt: self.attempt,
             fallback_binding: self.fallback_binding(),
+            root_binding: self.origin.root_binding().cloned(),
             sources: self.sources.clone(),
             turns: self.turns.clone(),
             texts: self.texts.clone(),
             rules: self.rules.clone(),
-            closed: std::sync::Mutex::default(),
+            closed: std::sync::Mutex::new(
+                self.origin
+                    .root_binding()
+                    .map(|binding| binding.closed_revisions())
+                    .unwrap_or_default(),
+            ),
             standing: std::sync::Mutex::default(),
         }
     }
@@ -404,6 +456,9 @@ impl ConsolidationFence {
         // set, bindings, versions and frontiers must still match the pin.
         for (turn, text) in &self.texts {
             text.check_live_in(&read, txn, turn)?;
+        }
+        if let Some(binding) = &self.root_binding {
+            binding.validate_after_closes_in_txn(vault, &read, &recorded, txn, &closed)?;
         }
         Ok(())
     }

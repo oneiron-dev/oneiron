@@ -7,11 +7,27 @@
 //! the served model on the requested ladder, which a fallback answer never
 //! sat on. A call whose answering rung the site cannot name (an unrecorded
 //! stream) keeps the explicit unknown below, never a false pin.
-use oneiron::code_run::{CapsuleRungBinding, ReplayRoutePin};
-use oneiron::{ModelId, ModelLocality};
+//!
+//! FIX 4933: the binding also names the answering rung as a live
+//! compaction fork binds it, with the call exactly as that rung sent it. A
+//! fork of a run's latest completed call goes to the rung that answered it,
+//! never to the rung a walk would take now.
+use std::sync::Arc;
+
+use oneiron::code_run::{CapsuleRungBinding, LiveForkRung, ReplayRoutePin};
+use oneiron::{LlmRequest, ModelId, ModelLocality};
 
 use super::shadow_capture;
 use super::{LadderRung, OfferLadder};
+
+/// The rung that answered one call as a live compaction fork binds it, and
+/// the call exactly as that rung sent it (FIX 4933): its model at its
+/// route, its route prompt first and its cache boundaries moved past it.
+#[derive(Clone, Debug)]
+pub(crate) struct AnsweringRung {
+    pub(crate) rung: LiveForkRung,
+    pub(crate) request: Arc<LlmRequest>,
+}
 
 /// The rung that answered one call: its model-call rung and the route it
 /// went out on, pinned as it answered.
@@ -19,19 +35,38 @@ use super::{LadderRung, OfferLadder};
 pub(crate) struct ModelCallBinding {
     pub(crate) rung: CapsuleRungBinding,
     pub(crate) route: Option<ReplayRoutePin>,
+    /// The answering rung and the call it sent (FIX 4933). `None` for a
+    /// binding read back from a saved answer: no rung sent it now.
+    pub(crate) answering: Option<AnsweringRung>,
 }
 
 impl ModelCallBinding {
     /// The binding of the rung that answered: its model, where it ran, the
-    /// prompt it put first, and its answering route pin.
-    pub(super) fn for_rung(rung: &LadderRung) -> Self {
+    /// prompt it put first, its answering route pin, and `sent`, the call
+    /// as that rung sent it (FIX 4933).
+    pub(super) fn for_rung(rung: &LadderRung, sent: Arc<LlmRequest>) -> Self {
         Self {
             rung: CapsuleRungBinding {
                 model: rung.model.clone(),
                 locality: rung.offer.binding.locality,
                 prompt: rung.prompt.clone(),
             },
-            route: shadow_capture::route_pin(rung),
+            route: Some(shadow_capture::route_pin(rung)),
+            answering: Some(AnsweringRung {
+                rung: rung.live_fork_rung(),
+                request: sent,
+            }),
+        }
+    }
+
+    /// The binding read back from a saved answer: its rung and route pin as
+    /// they answered, and no answering rung, since no rung sent it now
+    /// (FIX 4933).
+    pub(crate) fn saved(rung: CapsuleRungBinding, route: Option<ReplayRoutePin>) -> Self {
+        Self {
+            rung,
+            route,
+            answering: None,
         }
     }
 }
@@ -62,7 +97,7 @@ impl OfferLadder {
             prompt: prompt.clone(),
         };
         let route = if self.exact_prompt().is_some() {
-            answered.and_then(shadow_capture::route_pin)
+            answered.map(shadow_capture::route_pin)
         } else {
             None
         };

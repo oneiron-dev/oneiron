@@ -84,6 +84,7 @@ mod turn_actions;
 pub(crate) use turn_actions::action_reader;
 mod turn_program;
 mod turn_program_host;
+mod turn_wake;
 mod turns;
 pub(crate) mod waves;
 mod weave_lens;
@@ -119,10 +120,6 @@ const DREAMER_ROLE: ModelRole = ModelRole::DreamerCurrent;
 pub(crate) const CHAT_ROLE: ModelRole = ModelRole::GenerativeReasoner;
 /// How long shutdown lets running chat turns finish before stopping them.
 const TURN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
-/// How the host words the house mind's project question (OF-501).
-const PROJECT_DETECTION_WORDING: &str = "Does this message start or describe a piece of work \
-with its own goal that will take more than one sitting, worth tracking as a project? \
-Answer no for a passing question, a chat or a single task.";
 /// What one project question may spend on the host's ladder.
 const PROJECT_DETECTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 
@@ -152,6 +149,9 @@ pub struct AiHandle {
     /// Dreamer's passes ask their typed questions through it, and the
     /// workflow pump rules on a wave cut's fan-out through it.
     decisions: Arc<OnceLock<DecisionHost>>,
+    /// Each vault's landed turns waiting for its turn-wake worker's next
+    /// round (FIX 14873).
+    turn_wakes: Arc<turn_wake::TurnWakes>,
     /// The installed Coach-heal worker's real publisher and served runtime.
     coach_heal_wake: Arc<OnceLock<coach_heal::WakeHost>>,
     /// The runtime recorded by the actual host Coach worker installation.

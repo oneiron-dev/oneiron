@@ -8,7 +8,7 @@
 
 use heed::RoTxn;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::{
     REPO_SECRET_PROJECTION_PREDICATE, RepoProjectionCheckout, RepoProjectionCheckoutRecipient,
@@ -109,6 +109,39 @@ impl RepoProjectionClaim {
             }
         }
         Ok(found)
+    }
+
+    /// Every masked copy object of `graph` whose copy differs from its
+    /// original (FIX 10270): the full changed set the exact-forward
+    /// classifier reads, not the roots-only pre-check. One entry per
+    /// changed copy OID, from its standing masked object record.
+    ///
+    /// # Errors
+    /// A store failure, or a record that does not decode.
+    pub(crate) fn changed_copies_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        graph: &EntityId,
+    ) -> Result<BTreeSet<GitOid>> {
+        let mut changed = BTreeSet::new();
+        for id in vault.claims_for_subject_in_txn(txn, graph)? {
+            let Some(body) = standing(vault, txn, &id)? else {
+                continue;
+            };
+            if kind_of(&body)? != "object" {
+                continue;
+            }
+            let map = body.value.as_map().ok_or_else(corrupt)?;
+            if !field(map, "occurrence")?.is_nil() {
+                continue;
+            }
+            let original = git_oid(field(map, "original")?)?;
+            let copy = git_oid(field(map, "copy")?)?;
+            if copy != original {
+                changed.insert(copy);
+            }
+        }
+        Ok(changed)
     }
 
     /// The checkout binding of the lease `checkout` at `epoch`, with the

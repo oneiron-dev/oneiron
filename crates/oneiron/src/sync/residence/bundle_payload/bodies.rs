@@ -186,6 +186,7 @@ pub(super) fn land(
                 materializer: manager.materializer(),
                 window: &window,
                 windows: &windows,
+                home: None,
             };
             land_carried_body(&peer, &carried.window, &carried.body, &bytes)
         })();

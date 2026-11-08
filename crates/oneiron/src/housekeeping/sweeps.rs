@@ -20,6 +20,7 @@ use super::{Deadline, HardEraseWork, HousekeepingSweep, SecretLiftWork, SweepWor
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
+use crate::llm::model_pack::AccessSnapshot;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{EntityId, Vault};
 
@@ -40,6 +41,9 @@ const PPR_CACHE_PAGE: usize = 512;
 /// document handed; past the `[limits] esign_sweep_documents` row they ask
 /// and go on, so this page only paces the walk.
 const ESIGN_PAGE: usize = 32;
+
+/// Paced verb calls one gate-decision run ends or deletes (FIX 8753).
+const PACED_VERB_EXPIRE_PER_PASS: usize = 256;
 
 /// Bodies one line-index rebuild run drains: each streams a whole body, so
 /// the page stays small and the run stops between bodies at the deadline.
@@ -71,7 +75,9 @@ impl Run {
 
 /// Runs one sweep from `cursor`, the point an unfinished walk of the same
 /// sweep stopped at. `owner_asked` when the owner asked for this run rather
-/// than its schedule making it due.
+/// than its schedule making it due. `access` is what the host's offers hold,
+/// against which the model pack retirement sweep resolves the active pack's
+/// roles.
 pub(super) fn run(
     vault: &Vault,
     sweep: HousekeepingSweep,
@@ -79,6 +85,7 @@ pub(super) fn run(
     deadline: &Deadline,
     cursor: Option<&[u8]>,
     owner_asked: bool,
+    access: &AccessSnapshot,
 ) -> Result<Run> {
     let work = match sweep {
         HousekeepingSweep::SecretLeaseExpiry => {
@@ -166,6 +173,13 @@ pub(super) fn run(
         HousekeepingSweep::DrafterCorpusSweep => SweepWork::DrafterCorpora {
             removed: vault.sweep_drafter_corpora()?,
         },
+        HousekeepingSweep::ModelPackRetirement => {
+            let report = vault.run_model_pack_retirement(access)?;
+            SweepWork::ModelPackRetirement {
+                notices: u64::from(report.notices),
+                migrated: report.migrated,
+            }
+        }
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune
@@ -255,6 +269,11 @@ fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     // Retained peer work takes its turn or ends with its receipt (FIX 7997,
     // 8565).
     super::sync_work::drain_retained_sync_work(vault);
+    // Verb calls a budget window paced end unrun once their deadline passes
+    // (FIX 8753); only the host's settler runs their turns.
+    if let Err(error) = vault.expire_paced_verb_calls(PACED_VERB_EXPIRE_PER_PASS) {
+        tracing::warn!(%error, "paced verb calls not expired");
+    }
     let mut removed = 0;
     let mut complete = true;
     if vault.gate_decision_retention_secs()?.is_some() {

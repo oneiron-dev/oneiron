@@ -22,6 +22,12 @@ pub struct WaitDelivery {
     /// its settler listed none: the reply then adds no row to its run's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_rows: Option<Vec<EntityId>>,
+    /// The origins of the reply as its settler served it (FIX 7083): the
+    /// worlds and row scopes the settler froze in the writer that made the
+    /// reply. `None` when they are unknown. An empty value is a proof that
+    /// the reply has no origin. A copy of the delivery keeps them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origins: Option<crate::code_run::ResultOrigins>,
     /// Whether an erase of its holder's actor took the reply (FIX 5718):
     /// its text is gone, and when it came and its rows stay.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -29,8 +35,8 @@ pub struct WaitDelivery {
 }
 
 /// A delivery's erased form (FIX 5718): when it came and the rows its reply
-/// was derived from stay, its reply goes. An erase writes it past the
-/// side-row wall.
+/// was derived from stay, and its origins too (FIX 7083); its reply goes. An
+/// erase writes it past the side-row wall.
 impl ErasedForm for WaitDelivery {
     fn into_erased(self) -> Result<Self> {
         Ok(Self {
@@ -86,21 +92,43 @@ pub(crate) const HOLDERS: SideTable<(EntityId, EntityId, u64), WaitHolder, Named
 pub(crate) enum WaitHolder {
     /// The reply, for `actor`'s run, when its run's stamps name one.
     Kept { actor: Option<EntityId> },
+    /// A soft delete of `actor` took the reply (FIX 6591): it reads as
+    /// erased for good, as Erased, and no retry keeps it again. The actor
+    /// stays only so its later erase selects the membership; it is no live
+    /// hold and no authority.
+    Deleted { actor: EntityId },
     /// Its run's actor was erased: the reply reads as erased for it, for
     /// good.
     Erased,
 }
 
 impl WaitHolder {
-    pub(crate) const fn actor(self) -> Option<EntityId> {
+    /// The actor whose erase selects this membership (FIX 6591): the one it
+    /// keeps the reply for, or the one a soft delete took it from.
+    pub(crate) const fn retirement_actor(self) -> Option<EntityId> {
         match self {
             Self::Kept { actor } => actor,
+            Self::Deleted { actor } => Some(actor),
             Self::Erased => None,
         }
     }
 
+    /// Whether a delete or an erase took the reply.
     pub(crate) const fn erased(self) -> bool {
-        matches!(self, Self::Erased)
+        !matches!(self, Self::Kept { .. })
+    }
+
+    /// The membership `prior` once a soft delete of `actor` takes it (FIX
+    /// 6591): an erased one stays erased, and one that names an actor keeps
+    /// naming it.
+    pub(crate) const fn deleted(prior: Option<Self>, actor: EntityId) -> Self {
+        match prior {
+            Some(Self::Erased) => Self::Erased,
+            Some(Self::Deleted { actor } | Self::Kept { actor: Some(actor) }) => {
+                Self::Deleted { actor }
+            }
+            Some(Self::Kept { actor: None }) | None => Self::Deleted { actor },
+        }
     }
 }
 
@@ -150,8 +178,8 @@ pub(crate) fn wait_reply_erased(value: &[u8]) -> bool {
 
 /// Who holds the settled row `key`'s reply (a full `vault_meta` key): each
 /// membership of its wait that keeps it, once, by the actor it names (its
-/// run's when it names none; a connector caller's is the caller). An erased
-/// membership holds nothing.
+/// run's when it names none; a connector caller's is the caller). A deleted
+/// or erased membership holds nothing.
 ///
 /// # Errors
 ///

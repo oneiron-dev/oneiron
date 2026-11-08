@@ -119,6 +119,7 @@ fn settle_with_cutoff_in(
 ) -> Result<Option<TaskAskResult>> {
     if let Some(result) = read_result(vault, txn, id)? {
         // A replay runs the continuation again; it acts at most once.
+        super::contribution_pair::resolve_answer_in(vault, txn, &result, owner)?;
         super::highway_block::continue_blocked_task_in(vault, txn, id, &result, now)?;
         deliver_to_parked_runs(vault, txn, id, &result, now)?;
         crate::runtime_hooks::verb_ask_settled_in_txn(vault, txn, id, &result, now)?;
@@ -196,6 +197,7 @@ fn settle_with_cutoff_in(
     }
     if !super::training_offer_ask::may_cut(vault, txn, id, &group, reason, &decision, owner)?
         || !super::training_swap_ask::may_cut(vault, txn, id, &group, reason, &decision, owner)?
+        || !super::contribution_pair::may_cut(vault, txn, &group, reason, &decision, owner)?
         || !crate::office_body::may_cut_live_edit(
             vault,
             txn,
@@ -223,10 +225,17 @@ fn settle_with_cutoff_in(
     );
     let reference = settlement_id(id)?;
     let cutoff_order = evidence.iter().map(|entry| entry.order).max().unwrap_or(0);
+    let picked = decision.picked_option(&evidence).cloned();
+    let was_rec = picked
+        .as_ref()
+        .zip(group.effective.rec.as_ref())
+        .is_some_and(|(picked, rec)| picked == &rec.option);
     let mut result = TaskAskResult {
         effect_authorization: TaskAskEffectAuthorization::NotEvaluatedByAsk,
         coverage,
         decision,
+        picked,
+        was_rec,
         fallback,
         evidence,
         settlement: TaskAskSettlement {
@@ -309,6 +318,7 @@ fn settle_with_cutoff_in(
     super::attendee_answer::resolve_answer_in(vault, txn, &group, &result, owner)?;
     super::training_offer_ask::resolve_answer_in(vault, txn, &group, &result, owner)?;
     super::training_swap_ask::resolve_answer_in(vault, txn, &group, &result, owner)?;
+    super::contribution_pair::resolve_answer_in(vault, txn, &result, owner)?;
     super::comm_widen::resolve_answer_in(vault, txn, &group, &result)?;
     crate::office_body::resolve_live_edit_holder_ask_in_txn(vault, txn, &result, owner)?;
     crate::office_body::resolve_holder_ask_in_txn(vault, txn, &result)?;
@@ -552,10 +562,17 @@ pub(super) fn validate_result(id: EntityId, result: &TaskAskResult) -> Result<()
             entry.ladder_changed = None;
         }
     }
+    let expected_picked = decision.picked_option(&evidence).cloned();
+    let expected_was_rec = expected_picked
+        .as_ref()
+        .zip(settlement.effective.rec.as_ref())
+        .is_some_and(|(picked, rec)| picked == &rec.option);
     if coverage != result.coverage
         || decision != result.decision
         || evidence != result.evidence
         || unmet_sources != settlement.unmet_sources
+        || expected_picked != result.picked
+        || expected_was_rec != result.was_rec
         || fallback(
             &settlement.effective,
             &coverage,
