@@ -84,6 +84,9 @@ impl PackSource {
                 }
             }
         }
+        if manifest.kind == PackKind::Model {
+            super::model_pack::read_source_model_pack(&manifest, &files)?;
+        }
         let mut sections = Vec::new();
         for file in &files {
             if file.path.starts_with("knowledge/sections/") && file.path.ends_with(".json") {
@@ -108,6 +111,13 @@ impl PackSource {
         for file in &files {
             if manifest.kind == PackKind::Agent && file.path.starts_with("scripts/") {
                 return Err(invalid("agent pack cannot contain executable scripts"));
+            }
+            if manifest.kind == PackKind::Model
+                && file.path != "PACK.md"
+                && (!file.path.starts_with("knowledge/")
+                    || file.path.starts_with("knowledge/sections/"))
+            {
+                return Err(invalid("a model pack carries data only"));
             }
             if file.path != "PACK.md"
                 && !(manifest.kind == PackKind::Agent

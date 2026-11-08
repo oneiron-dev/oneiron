@@ -581,6 +581,7 @@ pub(crate) fn chart(package: &Package, chart: &str) -> Result<Option<NodePayload
                 x,
                 x_labels,
                 plot: ordinal,
+                plot_id: None,
                 categories: None,
                 bubble_size,
                 bubble_3d: bubble.then(|| flag(&tree, ser, "bubble3D")).flatten(),
