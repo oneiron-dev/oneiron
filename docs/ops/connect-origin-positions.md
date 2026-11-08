@@ -56,6 +56,10 @@ A position must name the window's signed world (`world_ref`). It lands in
 this vault's foreign copy of that world (`foreign_world_for` over the
 authenticated source vault). That is the same world the guest admission
 rewrites the row's `InWorld` edges to, so the stamp and the live worlds agree.
+The importer installs a position only where the row already sits in that
+foreign world. An `InWorld` edge waits while this vault holds no WORLD row
+for its copy of the world. Until it lands, the row keeps no position, and
+only the owner reads it, rather than reading as base reality.
 The other signed axes stay unchanged. Audience and sensitivity are not
 recipient permissions.
 
