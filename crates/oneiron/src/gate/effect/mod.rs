@@ -102,6 +102,9 @@ pub(crate) struct ExternalEffectGovernance {
 pub(crate) struct ExternalEffectJudgment {
     decision: GateDecision,
     created_at: u64,
+    /// The decision lacks external-effect authority that the owner's press
+    /// on this one effect would supply (ARCH-0046 "a press per send").
+    press_supplies_authority: bool,
     input: GateEvaluatorInput,
     binding: GateConsentBinding,
     grant_ref: Option<String>,
@@ -156,6 +159,14 @@ impl ExternalEffectJudgment {
     #[must_use]
     pub(crate) fn waits_for_envelope_window(&self) -> bool {
         self.decision.outcome() == GateOutcome::Allow && self.envelope_wait.is_some()
+    }
+
+    /// The decision lacks external-effect authority, and the owner's press on
+    /// this one effect would supply it: the per-send mail press or the
+    /// publish press (ARCH-0046 "a press per send").
+    #[must_use]
+    pub(crate) const fn press_supplies_authority(&self) -> bool {
+        self.press_supplies_authority
     }
 }
 

@@ -39,11 +39,16 @@ pub(crate) struct ExternalEffectPreflight {
 enum PreflightReason {
     Allow,
     Deny,
-    /// A hold only the owner's decision releases.
+    /// A hold the owner's word on this one effect releases: a press, an
+    /// exact approval or an override.
     OwnerDecision,
-    /// A hold the vault's own state keeps: a drift, a missing authority, a
-    /// trust or criticality floor, a checker, a compliance clearance.
+    /// A hold the vault's own state keeps, which no word on this one effect
+    /// releases: a drift, a missing key, a trust or criticality floor, an
+    /// actor or delegation-chain ceiling, a checker.
     AdministrativeHold,
+    /// Missing external-effect authority: an owner decision when the owner's
+    /// press on this one effect supplies it, else an administrative hold.
+    MissingAuthority,
 }
 
 /// The class of `code`. One exhaustive match: a new reason code does not
@@ -67,17 +72,23 @@ const fn preflight_reason(code: GateReasonCode) -> PreflightReason {
         | GateReasonCode::DenyWitnessMessageAuthorNotAuthorized
         | GateReasonCode::DenyPersonaSingleCycle
         | GateReasonCode::DenyUnresolvedRecordReference => PreflightReason::Deny,
+        // The consent ladder's asks, the opted-out counterparty an override
+        // passes, and a campaign-compliance hold, which an exact approval
+        // returns to the decision it held (CA-06).
         GateReasonCode::PendingConsentIrreversibleEffect
         | GateReasonCode::PendingConsentBoundExceeded
         | GateReasonCode::PendingConsentCatastropheFloor
         | GateReasonCode::PendingConsentWriteClassificationFailed
         | GateReasonCode::PendingCounterpartyOptOut
-        | GateReasonCode::PendingActorCeiling
-        | GateReasonCode::PendingDelegationChainCeiling => PreflightReason::OwnerDecision,
-        GateReasonCode::PendingSourceTrust
+        | GateReasonCode::PendingCampaignCompliance => PreflightReason::OwnerDecision,
+        GateReasonCode::PendingExternalEffectAuthority => PreflightReason::MissingAuthority,
+        // An approval of one effect releases consent only: an actor or
+        // delegation-chain ceiling holds until its policy or grant changes.
+        GateReasonCode::PendingActorCeiling
+        | GateReasonCode::PendingDelegationChainCeiling
+        | GateReasonCode::PendingSourceTrust
         | GateReasonCode::PendingCriticalityFloor
         | GateReasonCode::PendingPolicyManifestAuthority
-        | GateReasonCode::PendingExternalEffectAuthority
         | GateReasonCode::PendingConnectorKeyUnregistered
         | GateReasonCode::PendingCharterDrift
         | GateReasonCode::PendingConnectorManifestDrift
@@ -86,8 +97,7 @@ const fn preflight_reason(code: GateReasonCode) -> PreflightReason {
         | GateReasonCode::PendingMirroringIsolation
         | GateReasonCode::PendingChecker
         | GateReasonCode::PendingCheckerUnavailable
-        | GateReasonCode::PendingCarryForwardConfidence
-        | GateReasonCode::PendingCampaignCompliance => PreflightReason::AdministrativeHold,
+        | GateReasonCode::PendingCarryForwardConfidence => PreflightReason::AdministrativeHold,
     }
 }
 
@@ -98,7 +108,13 @@ pub(crate) fn preflight_answer(judgment: &ExternalEffectJudgment) -> ExternalEff
     let mut reasons = Vec::new();
     let mut holds = Vec::new();
     for &code in judgment.decision().reason_codes() {
-        let class = preflight_reason(code);
+        let class = match preflight_reason(code) {
+            PreflightReason::MissingAuthority if judgment.press_supplies_authority() => {
+                PreflightReason::OwnerDecision
+            }
+            PreflightReason::MissingAuthority => PreflightReason::AdministrativeHold,
+            class => class,
+        };
         if class == PreflightReason::Allow {
             continue;
         }
