@@ -76,6 +76,11 @@ pub struct CalendarEventView {
     pub calendar_systems: Vec<String>,
     /// Whether this EVENT consumes availability (the Busy-only law input).
     pub blocks_time: bool,
+    /// An all-day or floating EVENT's days or wall times, which it has in
+    /// place of UTC bounds; in a ranged search, this occurrence's (FIX
+    /// 17869).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub civil: Option<super::civil::CalendarCivilSpan>,
 }
 
 /// `calendar.read` request.

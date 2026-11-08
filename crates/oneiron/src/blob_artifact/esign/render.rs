@@ -162,7 +162,9 @@ pub struct PreparedEsignPdf {
     pub appendix_pages: u32,
 }
 /// PDF user-space rectangle, with a bottom-left origin.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct PdfFieldRect {
     pub x: f64,

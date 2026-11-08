@@ -133,6 +133,12 @@ pub struct MailFull {
     /// message has no text part.
     pub body_text: Option<String>,
     pub attachments: Vec<MailAttachmentRef>,
+    /// The BLAKE3 of the whole message, each line ended by CRLF, when it was
+    /// read whole: what proves a copy of it found later to be the same
+    /// message (fix list row 19145). `None` where the wire does not read the
+    /// message's bytes.
+    #[serde(default)]
+    pub content_digest: Option<[u8; 32]>,
 }
 
 /// One change a history page reports since the source's anchor.
@@ -209,7 +215,9 @@ pub trait MailProviderWire {
     /// The labels a listing read for `provider_id` in this wire's step,
     /// when they come at no further provider read: a provider whose folders
     /// are labels (IMAP) names a message once per folder, so a message the
-    /// vault holds carries the folders it is found in. `None` by default.
+    /// vault holds carries the folders it is found in, and a listing after
+    /// an expired anchor takes them whole where it first names the message
+    /// (an empty set where only the all-mail view does). `None` by default.
     fn listed_labels(&self, _provider_id: &str) -> Option<Vec<String>> {
         None
     }
@@ -245,6 +253,33 @@ pub trait MailProviderWire {
     /// The provider's own failure, a refusal for a missing scope included.
     fn own_addresses(&self, _source: &MailSyncSource) -> Result<Option<Vec<String>>> {
         Ok(None)
+    }
+
+    /// One page of the mailbox's messages that `query` finds, in the
+    /// provider's own search language, at most `limit`, trash, spam and
+    /// drafts excluded (fix list row 15424). A wire whose provider it cannot
+    /// search refuses.
+    ///
+    /// # Errors
+    ///
+    /// `mail_search_not_served` from a wire that cannot search, or the
+    /// provider's own failure.
+    fn search_page(
+        &self,
+        _source: &MailSyncSource,
+        _query: &str,
+        _limit: u32,
+        _page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        Err(super::rest::refused("mail_search_not_served"))
+    }
+
+    /// Whether a backslash inside a quoted string of this provider's search
+    /// language escapes the character after it (IMAP), so a search query's
+    /// grouping is read as the provider reads it (fix list row 19089). No by
+    /// default: a quote then always ends the string.
+    fn search_escapes(&self) -> bool {
+        false
     }
 
     /// One attachment's bytes, as a reader opened it; `None` when the
