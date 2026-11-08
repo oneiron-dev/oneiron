@@ -198,8 +198,9 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
-    ProgramResumeWait, ProgramRowAnswer, load_program_checkpoint_tail, program_resume_call,
-    program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
+    ProgramResumeKind, ProgramResumeWait, ProgramRowAnswer, load_program_checkpoint_tail,
+    program_resume_call, program_resume_calls_in_txn, program_resume_head_in_txn,
+    wait_delivered_in_txn,
 };
 pub(crate) use self::storage::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,

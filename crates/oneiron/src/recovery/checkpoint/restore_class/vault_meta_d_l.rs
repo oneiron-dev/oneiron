@@ -306,6 +306,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::HOOKS_PACED_VERB_WITNESS, LIVE),
     (&t::HOOKS_RECEIPT, CONTENT),
     (&t::HOOKS_REGEN, LIVE),
+    (&t::HOOKS_REGEN_RECEIPT, CONTENT),
     (&t::HOOKS_RUN_INDEX, CONTENT),
     (&t::HOOKS_SETTLED, CONTENT),
     (&t::HOOKS_SETTLED_NEXT, CONTENT),
