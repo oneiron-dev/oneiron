@@ -12139,6 +12139,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CalendarQueryReceipt",
       "CalendarRead"
      ],
      "path": "src/calendar/query/facts.rs",
@@ -12146,7 +12147,8 @@
      "surface": {
       "crate-vis": 17,
       "enum": 1,
-      "fn": 1
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -12168,7 +12170,7 @@
      "path": "src/calendar/query/occurrences.rs",
      "purpose": "Windowed occurrences from lane-admitted calendar facts",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -12266,7 +12268,7 @@
      "path": "src/calendar/series/expansion.rs",
      "purpose": "Windowed recurrence expansion over the tz border",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 3,
       "struct": 2
      }
@@ -12292,7 +12294,7 @@
      "path": "src/calendar/series/mod.rs",
      "purpose": "Recurrence series machinery (CAL-03)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 2
      }
     },
