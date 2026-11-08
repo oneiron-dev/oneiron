@@ -12,8 +12,8 @@ mod types;
 
 pub use self::types::{
     CHANNEL_IDENTITY_AUTONOMY_SCHEMA_VERSION, ChannelIdentityActionEnvelope,
-    ChannelIdentityAutonomyMode, ChannelIdentityAutonomyRequest, ChannelIdentityAutonomyRung,
-    ChannelIdentityAutonomyState, ChannelIdentityEffectCandidate,
+    ChannelIdentityActionGrant, ChannelIdentityAutonomyMode, ChannelIdentityAutonomyRequest,
+    ChannelIdentityAutonomyRung, ChannelIdentityAutonomyState, ChannelIdentityEffectCandidate,
     DEFAULT_GRADUATION_UNCHANGED_STREAK, DraftReviewOutcome, GraduationEvidence, GraduationOffer,
     GraduationScopeKey, MailboxReadCandidate, MailboxReadEnvelope, PREDICATE_ACTION_ENVELOPE,
     PREDICATE_AUTONOMY_MODE, PREDICATE_GRADUATION_EVIDENCE, PREDICATE_MAILBOX_READ_ENVELOPE,
@@ -49,8 +49,6 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::error::Result;
-#[cfg(test)]
-use crate::outbound_grant::StandingOutboundGrantScope;
 #[cfg(test)]
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 #[cfg(test)]

@@ -122,7 +122,7 @@ impl Vault {
         };
         let act = OriginPublishAct {
             actor: Some(caller.actor),
-            class: caller.class.into(),
+            class: caller.class,
             authority,
             at: self.now_recorded_at(),
         };
