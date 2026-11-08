@@ -313,12 +313,7 @@ impl Vault {
             crate::origin::secret_projection::index::RepoIndexMarks::read_in_txn(self, &wtxn)?;
         let (files, custody_report) =
             self.repo_snapshot_inputs_in_txn(&wtxn, &repo_marks, snapshot, file_contents)?;
-        let filtered_snapshot = CodebaseSnapshot::new(
-            snapshot.project_id.clone(),
-            snapshot.repo_ref.clone(),
-            snapshot.commit_hash.clone(),
-            files,
-        )?;
+        let filtered_snapshot = snapshot.rebuilt_with_files(files)?;
         self.put_filtered_codebase_snapshot_in_txn(
             &mut wtxn,
             code_artifact_id,

@@ -81,8 +81,8 @@ impl Vault {
         let result = self.commit_ingest_snapshot(
             &snapshot,
             &capture.blobs,
-            timing.0,
-            timing.1,
+            timing,
+            None,
             &contents,
             Some(owner),
             |txn| {

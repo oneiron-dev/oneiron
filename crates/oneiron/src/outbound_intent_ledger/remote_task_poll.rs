@@ -288,8 +288,12 @@ impl Vault {
         end: RemoteTaskEnd,
     ) -> IntentLedgerResult<IntentState> {
         let state = match end {
+            // The served poller has no turn queue to steer: a completed
+            // task's budget events fire in its settling writer, and only the
+            // state goes back.
             RemoteTaskEnd::Completed => {
                 self.settle_remote_outbound_task(intent, RemoteTaskObservation::Completed)?
+                    .state
             }
             RemoteTaskEnd::Unconfirmed => super::store::abandon_unconfirmed_remote_task(
                 self,
