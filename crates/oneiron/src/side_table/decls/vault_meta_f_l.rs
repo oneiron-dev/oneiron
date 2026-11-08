@@ -303,6 +303,9 @@ side_tables! {
     /// Each TASK with a due time not yet ticked (FIX 4749). Key: u64be (due time, Unix seconds)
     /// + id16 (TASK).
     HOOKS_TASK_DUE: VaultMeta b"hooks:task_due:v1:" Named;
+    /// Each TASK the due index holds (FIX 4749): the due time it holds, and the tick sequence
+    /// its release committed, if it has ticked. Key: id16 (TASK).
+    HOOKS_TASK_DUE_REVERSE: VaultMeta b"hooks:task_due_reverse:v1:" Named;
     /// The tick feed fact hooks follow (FIX 4749): one row per due TASK released. Key: u64be
     /// (sequence).
     HOOKS_TICK: VaultMeta b"hooks:tick:v1:" Named;

@@ -48,7 +48,7 @@ pub(crate) use default_hub::MODEL_PACK_SUBTREE;
 pub use default_hub::{
     DefaultSkillHub, FIRST_PARTY_PACK_PUBLISHER, MODEL_PACK_NAME, ModelCatalogSync,
     PRODUCTIVITY_PACK_NAME, PRODUCTIVITY_PACK_SUBTREE, REVIEW_BUNDLE_EXPLAINER_SUBTREE,
-    default_skill_hub_commit, default_skill_hub_id,
+    WRITE_A_WATCHER_SUBTREE, default_skill_hub_commit, default_skill_hub_id,
 };
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
