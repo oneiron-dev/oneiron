@@ -127,21 +127,6 @@ impl Fetched {
         fetch_value(&self.items, name)
     }
 
-    /// The value after the first attribute whose name starts with
-    /// `prefix`: a section the server may spell its own way
-    /// (`BODY[HEADER.FIELDS ("MESSAGE-ID")]`).
-    pub(super) fn value_starting(&self, prefix: &str) -> Option<&Item> {
-        self.items
-            .chunks(2)
-            .find(|pair| {
-                pair.first().and_then(Item::atom).is_some_and(|atom| {
-                    atom.len() >= prefix.len()
-                        && atom.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
-                })
-            })
-            .and_then(|pair| pair.get(1))
-    }
-
     pub(super) fn uid(&self) -> Option<u64> {
         self.value("UID")
             .and_then(Item::number)
