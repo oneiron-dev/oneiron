@@ -162,7 +162,7 @@ impl FactHookRunner {
         vault: &Vault,
         runtime: &dyn HookBodyRuntime,
         max_entries: usize,
-        retained: Option<RetainedPass<'_>>,
+        mut retained: Option<RetainedPass<'_>>,
     ) -> Result<HookPassReport> {
         let mut report = HookPassReport::default();
         if !vault.hooks_enabled()? {
@@ -190,7 +190,7 @@ impl FactHookRunner {
             .cloned()
             .collect();
         if bindings.is_empty() {
-            return Ok(report);
+            return hook_feeds::prune_hook_feeds(vault, max_entries).map(|()| report);
         }
         bindings.sort_by(|(_, a), (_, b)| {
             b.selector
@@ -198,7 +198,6 @@ impl FactHookRunner {
                 .cmp(&a.selector.priority)
                 .then_with(|| a.body_hash.cmp(&b.body_hash))
         });
-        let mut retained = retained;
         if let Some(pass) = &mut retained {
             pass.runs.keep_source_order_for(&bindings);
         }
@@ -233,7 +232,7 @@ impl FactHookRunner {
                 pass.run_source(source, max_entries, &bindings)?;
             }
         }
-        pass.prune_hook_feeds(max_entries)?;
+        hook_feeds::prune_hook_feeds(vault, max_entries)?;
         Ok(pass.report)
     }
 
@@ -621,7 +620,8 @@ impl Pass<'_, '_> {
         };
         let check = vault.with_write_txn_grouped(|txn| {
             // A body that ran across a permanent erase keeps its content-free
-            // run identity, never the erased bytes or a pending effect.
+            // run identity, never erased bytes, an erased actor or a pending effect.
+            store::scrub_erased_actor_in_txn(vault, txn, &mut memo, run.entry.actor)?;
             let erased =
                 store::dependencies_erased_in_txn(vault, txn, &memo.derivation.dependencies)?;
             if erased {

@@ -15,8 +15,11 @@ use serde::{Deserialize, Serialize};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::ports::{ChangeLogStore, ChangeLogStoreRead, ChangeOp, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::skill_hub::pack_catalog::HookPhase;
 use crate::vault::RevisionRef;
 use crate::{EntityId, Error, Result, Vault};
+
+use super::{filter, store};
 
 pub(crate) use schedule::index_task_due_in_txn;
 pub(super) use schedule::{TickDetails, release_due_ticks};
@@ -453,6 +456,46 @@ pub(super) fn head_in_txn(
         FactSource::SurfaceInbound => surface_inbound::head_in_txn(vault, txn)?,
     };
     Ok(head)
+}
+
+/// Whether a fact of `kind` that a write appends to `source`, one of the
+/// engine's own hook feeds, has a reader in that write's `txn` (FIX 22141,
+/// FIX 22154): hooks are on, and an enabled fact binding whose selector
+/// takes `kind` follows `source` from an unpaused cursor. No other binding
+/// takes the fact: one with no cursor there, or a paused one, starts past it
+/// at the feed head; a disabled one takes nothing; one whose selector takes
+/// no such fact skips it. While hooks are off no fact is recorded, so a
+/// binding that kept its cursor reads none appended then, and a selector
+/// widened to take `kind` reads none appended before. It reads the switch,
+/// the cursor rows and, up to the first reader, the claims of the bindings
+/// they name: no binding list scan per fact.
+pub(super) fn has_reader_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: FactSource,
+    kind: FactKind,
+) -> Result<bool> {
+    if !vault.hooks_enabled_in_txn(txn)? {
+        return Ok(false);
+    }
+    for binding in store::unpaused_cursor_bindings_in_txn(vault, txn, source)? {
+        // A binding claim that does not read counts as a reader: the runner
+        // judges it on its pass, and the appending write never fails on a
+        // hook's claim.
+        let reads = vault
+            .pack_hook_binding_in_txn(txn, &binding)
+            .map_or(true, |row| {
+                row.is_some_and(|row| {
+                    row.enabled
+                        && row.selector.phase == HookPhase::Fact
+                        && filter::verbs_admit_kind(&row.selector.verbs, kind)
+                })
+            });
+        if reads {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The hook feed rows at or before `floor`, the lowest cursor of every
