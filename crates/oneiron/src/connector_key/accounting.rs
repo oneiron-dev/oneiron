@@ -445,7 +445,12 @@ impl Vault {
         }
 
         usage.touch(&budget.window, budget.limit, settled_at);
-        usage.entries.push((settled_at, minor_units));
+        usage.entries.push(super::meter::UsageEntry::settled(
+            &self.store,
+            &mut wtxn,
+            settled_at,
+            minor_units,
+        )?);
         SETTLE_EVENT.put(&self.store, &mut wtxn, &event_key, &event_value)?;
         super::meter::USAGE.put(&self.store, &mut wtxn, &usage_row_key, &usage)?;
 

@@ -115,6 +115,17 @@ impl RepoRef {
         }
     }
 
+    /// The repository this ref names, without its revision (FIX 4299):
+    /// `local:<folder>` or `github:<owner>/<repo>`. A scope and a
+    /// registration compare this, never the commit.
+    #[must_use]
+    pub fn locator(&self) -> String {
+        match self {
+            Self::LocalFolder { path, .. } => format!("local:{path}"),
+            Self::GitHubAtCommit { owner, repo, .. } => format!("github:{owner}/{repo}"),
+        }
+    }
+
     /// Stable repository identity, without the revision carried by `RepoRef`.
     pub fn same_repository(&self, other: &Self) -> bool {
         match (self, other) {
