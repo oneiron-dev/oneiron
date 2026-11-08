@@ -115,6 +115,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::RepoSymbolsRenew
             | SelfEffect::RepoSymbolsRelease
             | SelfEffect::RepoProposalSubmit
+            | SelfEffect::RepoProposalResolve
             | SelfEffect::RepoMergeQueueEnqueue
             | SelfEffect::RepoCheckoutBind
             | SelfEffect::RepoExport
@@ -223,12 +224,17 @@ impl HostSelfDispatcher<'_> {
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<Vec<ScoredEntity>> {
         let mut scored = ServedRows::new();
-        let hits = vault.search_text_observed(query, limit, |txn, hits| {
-            scored = hits
-                .iter()
-                .map(|hit| (hit.id, served_row_in(vault, txn, hit.id)))
-                .collect();
-        })?;
+        let hits = vault.search_text_observed_for_attempt(
+            query,
+            limit,
+            |txn, hits| {
+                scored = hits
+                    .iter()
+                    .map(|hit| (hit.id, served_row_in(vault, txn, hit.id)))
+                    .collect();
+            },
+            self.agent_lease.as_ref().map(|lease| lease.attempt),
+        )?;
         let (hits, admitted) = match read_as {
             Some(reader) => {
                 let mut admitted = ServedRows::new();

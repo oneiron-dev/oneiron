@@ -533,7 +533,7 @@ fn passport_digest(uid: &str) -> [u8; 32] {
 /// [`super::claims::decode_passport_value`] reads. CAL-00 owns the codec; the
 /// write-door validator chain rejects any drift fail-closed.
 pub(crate) fn encode_passport_value(value: &CalendarPassportValue) -> rmpv::Value {
-    rmpv::Value::Map(vec![
+    let mut entries = vec![
         (
             rmpv::Value::from("system"),
             rmpv::Value::from(value.system.as_str()),
@@ -562,7 +562,23 @@ pub(crate) fn encode_passport_value(value: &CalendarPassportValue) -> rmpv::Valu
             rmpv::Value::from("presence"),
             rmpv::Value::from(value.presence.as_str()),
         ),
-    ])
+    ];
+    if let Some(source) = value.source {
+        entries.push((
+            rmpv::Value::from("source"),
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("artifact"),
+                    rmpv::Value::from(source.artifact.to_hex()),
+                ),
+                (
+                    rmpv::Value::from("version"),
+                    rmpv::Value::from(source.version),
+                ),
+            ]),
+        ));
+    }
+    rmpv::Value::Map(entries)
 }
 
 fn ingest(reason: &'static str) -> CalendarError {
