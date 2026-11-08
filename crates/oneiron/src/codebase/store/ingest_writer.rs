@@ -465,9 +465,9 @@ impl Vault {
                 .collect::<Result<Vec<_>>>()?;
             // Symbol rows first, then every edge a working batch at a time.
             let mut symbol_graph = prepare_code_symbol_graph(
-                repo_ref.clone(),
+                snapshot.repo_ref.clone(),
                 identity,
-                commit_hash.map(str::to_owned),
+                snapshot.commit_hash.clone(),
                 symbol_sources,
             )?;
             // Each symbol names the operations that wrote it, read from its
