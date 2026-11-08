@@ -189,6 +189,10 @@ pub struct StoreCore {
     /// archived when it opened, and the lock that keeps a retirement from
     /// racing a live snapshot's decrypt.
     pub(in crate::store) key_custody: crate::store::key_custody::KeyCustody,
+    /// Body instances minted outside every writer, which a put inside one
+    /// draws to file a long ASSET body (FIX 22091).
+    #[cfg(unix)]
+    pub(crate) body_instance_pool: crate::store::BodyInstancePool,
     /// A device-only flag commits under the write side; a raw send's verdict
     /// reads the flags and accepts under the read side. A flag committed
     /// before a verdict reads is seen by it; one committed later finds the

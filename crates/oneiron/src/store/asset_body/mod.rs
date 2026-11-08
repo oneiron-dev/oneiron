@@ -250,7 +250,7 @@ pub(crate) const ASSET_FILE_PLANE: bool = true;
 /// What the file plane may hold `body` as, judged whole; `None` keeps it in
 /// its row. Neither kind is UTF-8 text, a body an owning adapter reads (the
 /// serializer would attach it as a file), a container the secret mask reads
-/// into, or a refinement carrier.
+/// into, a refinement carrier, or a shape seed, whose reader reads its row.
 ///
 /// - [`AssetFileKind::Opaque`]: no MessagePack map with a string key leads
 ///   it, so no reader of ASSET bodies interprets it.
@@ -265,6 +265,8 @@ fn asset_file_kind(body: &[u8]) -> Option<AssetFileKind> {
     if !crate::serialize::attaches_as_file(ENTITY_TYPE_ASSET, body)
         || crate::batch::secret_scan::is_container(body)
         || crate::store::refinement_carrier::refinement_carrier_payload(body).is_some()
+        // A shape seed's reader reads its row (FIX 22091).
+        || crate::vault_shape::names_shape_seed(body)
     {
         return None;
     }
@@ -399,18 +401,20 @@ pub(crate) fn short_content_hash_in_txn(
     })
 }
 
-/// FIX 3677: the body file a local ASSET put's `data` would go to when it
-/// is one ([`ASSET_INLINE_BODY_BYTES`], [`asset_file_kind`], a file the
-/// secret mask did not mark). This runs inside the batch writer, and a body
-/// file is one vault instance whose key is minted before any writer opens
-/// (KS-2A): so the body stays in its row, which a checkpoint seals under an
-/// instance of its own. A put that files a long body stages it before its
-/// writer ([`crate::Vault::stage_asset_body`]). `None` keeps the body in its
-/// row.
+/// FIX 3677: the body file a local ASSET put's `data` goes to when it is
+/// one ([`ASSET_INLINE_BODY_BYTES`], [`asset_file_kind`], a file the secret
+/// mask did not mark): the manifest its row keeps, and the body's facts.
+/// This runs inside the batch writer, after the door's scan and mask read
+/// the body. A body file is one vault instance whose key is minted before
+/// any writer opens (KS-2A), so the file takes one the store's pool minted
+/// before this write took the writer (FIX 22091); the file is published
+/// and its key row bound here, and the put binds its descriptor. A dry pool
+/// keeps the body in its row, which a checkpoint seals under an instance of
+/// its own. `None` keeps the body in its row.
 ///
 /// # Errors
 ///
-/// Storage errors as they occur.
+/// Storage, custody and filesystem errors as they occur.
 pub(crate) fn file_put_body_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -420,15 +424,40 @@ pub(crate) fn file_put_body_in_txn(
     if entity_type != ENTITY_TYPE_ASSET
         || data.len() as u64 <= ASSET_INLINE_BODY_BYTES
         || !ASSET_FILE_PLANE
-        || asset_file_kind(data).is_none()
     {
         return Ok(None);
     }
+    let Some(kind) = asset_file_kind(data) else {
+        return Ok(None);
+    };
+    let facts = AssetBodyFacts::of(data);
     // A marked file keeps its row: a serving door reads its keys' spans over
-    // the bytes it holds. Any other stays there too, with no instance minted
-    // inside this writer.
-    crate::store::file_key_masks::masked_file_in_txn(store, txn, &AssetBodyFacts::of(data).blake3)?;
-    Ok(None)
+    // the bytes it holds.
+    if crate::store::file_key_masks::masked_file_in_txn(store, txn, &facts.blake3)?.is_some() {
+        return Ok(None);
+    }
+    let Some(mint) = store.body_instance_pool.draw() else {
+        return Ok(None);
+    };
+    // Published before the row that names it, its key row bound in this
+    // writer: the writer that would collect it or retire its instance
+    // cannot run until this one commits.
+    let dir = store.body_dir()?;
+    let key = dir.import_sealing(
+        &facts.blake3,
+        facts.len,
+        &mut io::Cursor::new(data),
+        false,
+        mint.mint()?,
+    )?;
+    crate::store::bind_body_key_in_txn(store, txn, &dir, &key)?;
+    let manifest = AssetFileManifest {
+        facts,
+        kind,
+        mime: None,
+    }
+    .encode()?;
+    Ok(Some((manifest, facts)))
 }
 
 /// Binds ASSET `id`'s body file to the row a put just staged, in the put's

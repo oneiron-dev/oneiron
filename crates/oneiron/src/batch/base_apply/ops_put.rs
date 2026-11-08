@@ -51,14 +51,14 @@ pub(super) fn apply_put_arm(
     put_options.storage.asset_file = state.asset_files.remove(&id);
     // The bytes the body file holds, read for this put's adapter checks
     // (FIX 22091).
-    let file_body = state.asset_file_bodies.remove(&id);
+    let mut file_body = state.asset_file_bodies.remove(&id);
     if put_options.storage.asset_file.is_none()
         && !replicated
         && !state.replay
         && let Some((manifest, file)) =
             crate::store::file_put_body_in_txn(store, wtxn, entity_type, &data)?
     {
-        data = Zeroizing::new(manifest);
+        file_body = Some(std::mem::replace(&mut data, Zeroizing::new(manifest)));
         put_options.storage.asset_file = Some(file);
     }
     let sources = state.text_births.get(&id).map(Vec::as_slice);

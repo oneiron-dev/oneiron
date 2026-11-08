@@ -49,7 +49,8 @@ use oneiron_crypto::Kek;
 use zeroize::Zeroizing;
 
 pub(crate) use self::custody::{
-    BodyMint, body_key_in, body_mint_in, custody_unavailable, instance_id, pin_body_custody_in_txn,
+    BodyInstancePool, BodyMint, body_key_in, body_mint_in, custody_unavailable, instance_id,
+    pin_body_custody_in_txn,
 };
 pub(crate) use self::frames::{FileKey, SealedStream, SealingStream};
 pub(crate) use self::live_spill::{FrozenSpill, LiveSpillRetention, LiveSpillSources};

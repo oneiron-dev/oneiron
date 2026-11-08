@@ -173,6 +173,8 @@ impl Store {
         let shared_env: Env = (*env).clone();
         let core = Arc::new(StoreCore {
             key_custody,
+            #[cfg(unix)]
+            body_instance_pool: crate::store::BodyInstancePool::default(),
             env: StoreEnv::new(shared_env),
             raw,
             kind_registry,
