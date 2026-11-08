@@ -1,0 +1,1 @@
+Does this message start or describe a piece of work with its own goal that will take more than one sitting, worth tracking as a project? Answer no for a passing question, a chat or a single task.

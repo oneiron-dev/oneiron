@@ -125,6 +125,12 @@ async fn read_hydrate(
         mode,
     } = admitted;
     let content_hash_hex = format!("{content_hash:02x}");
+    // The caller's filter, as the hooks left the request (FIX 3977).
+    let request = req
+        .filter
+        .as_ref()
+        .map(oneiron::memory::ReadFilterInput::to_filter);
+    let scoped_read = scoped_read.with_read_filter(request.as_ref());
     let view = req.view.unwrap_or(View::Full);
     let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
     let pick = hydrate_pick(server, auth, req.task, takes_images(req.image_input, view));
@@ -260,6 +266,12 @@ async fn read_batch_hydrate(
     scoped_read: oneiron::claim::ScopedRead<'_>,
     req: CoreBatchShortIdHydrateRequest,
 ) -> Result<NativeReadAnswer, NativeReadError> {
+    // The caller's filter, as the hooks left the request (FIX 3977).
+    let request = req
+        .filter
+        .as_ref()
+        .map(oneiron::memory::ReadFilterInput::to_filter);
+    let scoped_read = scoped_read.with_read_filter(request.as_ref());
     let view = req.view.unwrap_or(View::Full);
     let reader = hydrate_reader(req.image_input, view);
     let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
