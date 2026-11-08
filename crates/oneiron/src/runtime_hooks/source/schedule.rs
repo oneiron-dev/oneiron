@@ -6,14 +6,18 @@
 //! The vault's elected home releases the due rows into the tick feed in one
 //! write: a row leaves the index and gains its feed sequence together, so
 //! each tick is released once per vault, and feed order is commit order.
-//! It releases them at each fact-hook runner pass and each housekeeping
-//! pass, the owner's run now and `oneiron maintain` included, hooks on or
-//! off, with a binding to take a tick or none, so a watch TASK settles at
-//! its due time wherever the vault serves; a stopped vault wakes for its
-//! earliest due row, and `oneiron maintain` settles its due watch TASKs
-//! (FIX 22180). Hooks read the feed through their own cursors, as they read
-//! the settlement feed, so a restart neither skips nor repeats a tick. A
-//! watch TASK's tick settles it Done in the write that releases it
+//! Before an election names a home, a device releases only while its synced
+//! machine roster names no other machine; with another there, none releases
+//! until a home is elected, as no MACRO round, digest or booking runs on an
+//! unelected vault, and each due row waits, then ticks once, late. The
+//! releasing node releases at each fact-hook runner pass and each
+//! housekeeping pass, the owner's run now and `oneiron maintain` included,
+//! hooks on or off, with a binding to take a tick or none, so a watch TASK
+//! settles at its due time on that node, served or stopped: a stopped vault
+//! wakes for its earliest due row, and `oneiron maintain` settles its due
+//! watch TASKs (FIX 22180). Hooks read the feed through their own cursors,
+//! as they read the settlement feed, so a restart neither skips nor repeats
+//! a tick. A watch TASK's tick settles it Done in the write that releases it
 //! (FIX 22121); the hooks bound at that release are still offered the
 //! tick, as it was open at its due time, and a hook bound after it is not
 //! (review #6784). A binding a peer enabled is bound here when this node
@@ -128,29 +132,47 @@ pub(crate) fn index_task_due_in_txn(
 
 /// Whether this node releases the vault's ticks. The vault's elected MACRO
 /// home does (ARCH-0026), the one node its due digests and bookings run on,
-/// so a tick fires once per vault however many devices hold its TASK. A
-/// vault with no elected home releases where its rows are.
+/// so a tick fires once per vault however many devices hold its TASK.
+///
+/// Before any election names a home, a device releases only while it is
+/// the vault's one machine: the synced authority roster profiles no machine
+/// but this install's own that was not removed
+/// (`AuthorityFold::profiles_other_machine`), so a vault no serve has
+/// claimed still ticks, `oneiron maintain` included. With another machine
+/// there, none releases, as no MACRO round, digest or booking runs on a
+/// vault with no elected home; the due rows wait, and the home's first pass
+/// once one is elected (its serve claims it, a device elects the home it
+/// dials, or the owner picks one) releases each, late, once. A roster this
+/// snapshot cannot read (history the vault lacks, conflicting vault roots)
+/// releases nothing, as it elects nothing.
 fn releases_here(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
     let home =
         crate::dreamer_runner::DreamerRunnerStore::new(vault).home_node_designation_in_txn(txn)?;
-    match home {
-        None => Ok(true),
-        Some(home) => Ok(crate::identity::read_client_id_in_txn(vault, txn)? == Some(home.node_id)),
+    if let Some(home) = home {
+        return Ok(crate::identity::read_client_id_in_txn(vault, txn)? == Some(home.node_id));
     }
+    let fold = match vault.authority_view_readonly_in_txn(txn) {
+        Ok(fold) if !fold.vault_root_is_conflicted() => fold,
+        Ok(_) => return Ok(false),
+        Err(error) if crate::authority::is_history_incomplete(&error) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let own = crate::identity::read_machine_id_in_txn(vault, txn)?;
+    Ok(!fold.profiles_other_machine(own))
 }
 
 /// Moves the due rows at or before `now` (Unix seconds) into the tick feed,
-/// in due order, at most [`HOOK_TICK_RELEASE_ROWS`], on the vault's home
-/// alone. A row whose TASK is gone, has settled, or is no longer due at that
-/// time leaves the index with no tick. A watch TASK settles Done with its
-/// tick, whether or not a hook takes it (FIX 22121). Returns whether due
-/// rows remain past the bound. The fact-hook runner calls it at the start of
-/// each pass and each housekeeping pass before its sweeps, the host tick's,
-/// the owner's run now and `oneiron maintain`, whatever the bindings and the
-/// hooks switch (FIX 22180). A row two releases both plan moves once: the
-/// writes commit one after the other, the later one finds the row gone from
-/// the due index and skips it, and each draws its sequences in its own
-/// write.
+/// in due order, at most [`HOOK_TICK_RELEASE_ROWS`], on the one node that
+/// releases the vault's ticks ([`releases_here`]). A row whose TASK is
+/// gone, has settled, or is no longer due at that time leaves the index with
+/// no tick. A watch TASK settles Done with its tick, whether or not a hook
+/// takes it (FIX 22121). Returns whether due rows remain past the bound. The
+/// fact-hook runner calls it at the start of each pass and each housekeeping
+/// pass before its sweeps, the host tick's, the owner's run now and
+/// `oneiron maintain`, whatever the bindings and the hooks switch (FIX
+/// 22180). A row two releases both plan moves once: the writes commit one
+/// after the other, the later one finds the row gone from the due index and
+/// skips it, and each draws its sequences in its own write.
 pub(crate) fn release_due_ticks(vault: &Vault, now: u64) -> Result<bool> {
     let (due, more) = {
         let rtxn = vault.store.env.read_txn()?;
@@ -210,8 +232,10 @@ pub(crate) fn release_due_ticks(vault: &Vault, now: u64) -> Result<bool> {
 }
 
 /// When this node next releases a tick: the due time of the earliest row in
-/// the due index, Unix seconds, on the vault's home alone; `None` elsewhere
-/// and while no TASK waits. A stopped vault wakes then
+/// the due index, Unix seconds, on the node that releases ([`releases_here`]),
+/// the elected home or, before an election, the vault's one machine; `None`
+/// on any other, a device of a vault with no elected home included, and
+/// while no TASK waits. A stopped vault wakes then
 /// (`Vault::housekeeping_wake_at`, FIX 22180). A cancelled TASK's row wakes
 /// it once: that release drops the row with no tick.
 pub(crate) fn next_tick_release_at(vault: &Vault) -> Result<Option<u64>> {
