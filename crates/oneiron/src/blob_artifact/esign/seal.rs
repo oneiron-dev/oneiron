@@ -50,6 +50,7 @@ pub struct SealedItem {
     pub sealed_version: u64,
     pub sha256: [u8; 32],
     pub profile: SealProfileEvidence,
+    pub active_content: super::sealer::SealActiveContentFacts,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedDocument {
@@ -264,6 +265,7 @@ impl Vault {
                     achieved: sealed.achieved,
                     degraded: sealed.degraded,
                 },
+                checked.active_content,
             ));
         }
         let now = self.now_recorded_at();
@@ -274,7 +276,7 @@ impl Vault {
             }
             let artifact_actor = super::artifact_actor::actor(self, txn, now)?;
             let mut items = Vec::new();
-            for (index, (bytes, hash, _, profile)) in outputs.iter().enumerate() {
+            for (index, (bytes, hash, _, profile, active_content)) in outputs.iter().enumerate() {
                 let id = self.new_entity_id()?;
                 let mut body = originals[index].0.clone();
                 body.name = format!("sealed-{}.pdf", index + 1);
@@ -321,6 +323,7 @@ impl Vault {
                     sealed_version: version.version,
                     sha256: *hash,
                     profile: profile.clone(),
+                    active_content: *active_content,
                 });
             }
             let manifest = SealedDocument {
