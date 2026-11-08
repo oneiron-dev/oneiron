@@ -55,12 +55,13 @@ impl Journal {
         self.sources.insert(generation.value(), sources);
     }
 
-    /// The rows one served event was made from (FIX 4778). Its audio, and
-    /// each safeguard verdict and notice on what it said, come from its
-    /// generation's model input (a notice also from the policy row it
-    /// names); its memories receipt counts the rows the read found. Every
-    /// other event is control only: the cursor, epoch, playout, tool
-    /// source label, error and end events list none. A generation's brain
+    /// The rows one served event was made from (FIX 4778). Its audio, its
+    /// heard record (FIX 4899), and each safeguard verdict and notice on
+    /// what it said, come from its generation's model input (a notice also
+    /// from the policy row it names); its memories receipt counts the rows
+    /// the read found. Every other event is control only: the cursor,
+    /// epoch, playout, tool source label, error and end events list none.
+    /// A generation's brain
     /// hands its rows over with its first event, before anything it says
     /// is spoken or judged, so a generation with none kept served nothing
     /// made from its input: its events list none (FIX 6080).
@@ -69,7 +70,9 @@ impl Journal {
             .generation
             .and_then(|generation| self.sources.get(&generation));
         match &event.event {
-            LiveVoiceEventKind::Pcm { .. } | LiveVoiceEventKind::Safeguard { .. } => sources
+            LiveVoiceEventKind::Pcm { .. }
+            | LiveVoiceEventKind::Safeguard { .. }
+            | LiveVoiceEventKind::Heard { .. } => sources
                 .map(|sources| sources.said.clone())
                 .unwrap_or_default(),
             LiveVoiceEventKind::Notice { notice } => {

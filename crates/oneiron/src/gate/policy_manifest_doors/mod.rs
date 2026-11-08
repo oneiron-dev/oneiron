@@ -62,6 +62,7 @@ const FIELDS: &[&str] = &[
     "signatures",
     "auto_checker",
     "slide_review_policy",
+    crate::gate::code_consent_settlement::KEY,
     "teacher_probe",
     "sheet_answer_limits",
 ];
@@ -207,7 +208,7 @@ fn record(
     vault
         .store
         .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
-    Ok(receipt.decision_id.to_hex())
+    Ok(format!("gate:{}", receipt.decision_id.to_hex()))
 }
 
 /// Replaces one field of the owner-trusted default manifest through the

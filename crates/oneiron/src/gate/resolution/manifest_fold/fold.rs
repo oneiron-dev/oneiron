@@ -44,6 +44,8 @@ pub(super) fn fold_policy_manifest(
     // The seeded `policy_values` rows are fallbacks an authored row of the
     // same key and scope replaces (FIX 9802, 9809, 11346).
     let mut value_seeds = crate::gate::policy_value_seeds::SeededPolicyValueRows::default();
+    let mut code_consent_settlement =
+        crate::gate::code_consent_settlement::CodeConsentSettlementFold::default();
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = match index_entry {
@@ -63,6 +65,7 @@ pub(super) fn fold_policy_manifest(
             Err(error) => return Err(error),
         };
 
+        resolution.manifest_body_rows.insert(id);
         if raw.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
             resolution.diagnostics.malformed_manifest_seen = true;
             continue;
@@ -123,6 +126,16 @@ pub(super) fn fold_policy_manifest(
                 if let Some(row) = decoded.teacher_probe {
                     resolution.teacher_probe_trusted = true;
                     merge_teacher_probe_row(&mut resolution, row);
+                }
+                if let Some(row) = decoded.code_consent_settlement {
+                    code_consent_settlement.add(
+                        crate::gate::manifest_authenticity::policy_row_origin(
+                            store, txn, &id, body,
+                        )?,
+                        id,
+                        body,
+                        row,
+                    );
                 }
                 if let Some(lifetimes) = decoded.credential_lifetimes {
                     if let Some(resolved) = &mut resolution.credential_lifetimes {
@@ -187,6 +200,17 @@ pub(super) fn fold_policy_manifest(
                     match &resolution.shared_act_policies {
                         None => resolution.shared_act_policies = Some(rows),
                         Some(existing) if *existing == rows => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
+                // One common owner-change wait per vault: the same scalar
+                // twice is one configuration; two different scalars have no
+                // deterministic answer, so every act they would govern fails
+                // closed.
+                if let Some(secs) = decoded.owner_change_wait_secs {
+                    match &resolution.owner_change_wait_secs {
+                        None => resolution.owner_change_wait_secs = Some(secs),
+                        Some(existing) if *existing == secs => {}
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
@@ -648,6 +672,7 @@ pub(super) fn fold_policy_manifest(
         owner_docx_limits
     };
     resolution.entity_resolution_bands = entity_resolution_bands.resolve();
+    resolution.code_consent_settlement = code_consent_settlement.finish();
     resolution.carry_forward_authored = authored_confidence.is_some();
     resolution.carry_forward_confidence = authored_confidence
         .or(seeded_confidence)

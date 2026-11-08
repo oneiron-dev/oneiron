@@ -28,6 +28,7 @@ pub(super) fn graph_record_with(
             store_id,
             roots,
             private_root,
+            known_history,
             ..
         } => RepoProjectionRecord::Graph {
             store_identity: store_identity.clone(),
@@ -35,6 +36,7 @@ pub(super) fn graph_record_with(
             roots: roots.clone(),
             private_root: private_root.clone(),
             marks,
+            known_history: *known_history,
             audience,
         },
         other => other.clone(),

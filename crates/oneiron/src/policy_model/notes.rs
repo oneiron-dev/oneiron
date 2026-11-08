@@ -10,7 +10,8 @@ use serde_json::json;
 
 use crate::error::Result;
 use oneiron_model::llm::{
-    ContentPart, FinishReason, LlmMessage, LlmMessageRole, LlmResponse, RetryableLlmError,
+    BudgetDenied, ContentPart, FinishReason, LlmMessage, LlmMessageRole, LlmResponse,
+    RetryableLlmError,
 };
 
 use super::classifier_lease::ClassifierLease;
@@ -61,6 +62,10 @@ pub(super) async fn rationale_notes(
         // A refused admission is no notes, never a call on another lease.
         SafeguardModel::Budgeted { budget, .. } => match budget.admit_for_request(&request) {
             Ok(admission) => Some(ClassifierLease::new(budget, admission.lease)),
+            Err(BudgetDenied::Exhausted) => {
+                audit.model_notes_budget_exhausted = true;
+                return Ok(());
+            }
             Err(_) => return Ok(()),
         },
     };

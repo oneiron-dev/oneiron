@@ -52,8 +52,9 @@ pub(super) enum Class {
     /// absent.
     Live,
     /// Authority entangled with content, which cannot be carried without it:
-    /// the restore refuses, before creating anything, when the image's rows
-    /// differ from the live vault's. `what` names it in the refusal.
+    /// the restore refuses before publication when the target's rows differ
+    /// from the live vault's. Whole families are checked before creation;
+    /// image-entity scopes wait for opened compartments. `what` names it.
     Refuse { what: &'static str, scope: Scope },
 }
 
@@ -62,10 +63,11 @@ pub(super) enum Class {
 pub(super) enum Scope {
     /// Every row.
     Family,
-    /// Rows keyed by an entity the image holds (the key leads with its id16).
-    /// The rows of an entity the image does not hold leave with it, as
-    /// content: a room or document made after the checkpoint does not block
-    /// restoring it, and any change to one the checkpoint holds does.
+    /// Rows keyed by an entity the restored target holds (the key leads with
+    /// its id16), including opened compartments. An entity absent from that
+    /// target takes its rows with it, as content: a room or document made
+    /// after the checkpoint, or whose owner did not open, does not block
+    /// restoring it; any change to one the target holds does.
     ImageEntities,
     /// Entity bodies that are content but carry authority: only the
     /// authority the [`Projection`] names is compared.
@@ -350,6 +352,14 @@ const RUNTIME_KINDS: &[(&str, &str, Class)] = &[
         CONTENT,
     ),
 ];
+/// A derived row's carried policies only ever grow (FIX 17207): a restore
+/// that would give back a smaller set for a row the image holds refuses, so
+/// a reader one of the added policies denies never reads the row again. The
+/// floor of a row made after the checkpoint leaves with the row.
+const SOURCE_AUDIENCE_FLOORS: Class = Class::Refuse {
+    what: "a derived row's carried policies",
+    scope: Scope::ImageEntities,
+};
 const ESIGN_CEREMONIES: Class = Class::Refuse {
     what: "e-sign ceremonies",
     scope: Scope::ImageEntities,
