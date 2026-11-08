@@ -94,8 +94,9 @@ impl Vault {
 
     /// Runs `apply` with the mirror's basic-auth header for `destination`,
     /// inside the custody door (effector `origin:mirror-push`). A served
-    /// host's mirror relay hands it to the credential broker this way, after
-    /// the broker acknowledged an exchange's body (FIX 19083).
+    /// host's mirror relay and its Git-LFS transport hand it to the
+    /// credential broker this way, after the broker acknowledged an
+    /// exchange's body (FIX 19083, FIX 19876).
     ///
     /// # Errors
     /// The custody door's refusal of the destination's record.
@@ -104,6 +105,9 @@ impl Vault {
         destination: &OriginPublishDestination,
         apply: &mut dyn FnMut(&str),
     ) -> Result<()> {
+        // A mirror set up before the URL rule reports misconfigured before
+        // its credential leaves custody (FIX 20091).
+        crate::origin::mirror::require_plain_mirror_url(&destination.url)?;
         let user = destination.user.clone();
         self.inject_secret_at_door(
             &destination.secret_ref,

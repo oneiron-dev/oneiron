@@ -96,6 +96,7 @@ impl FallbackRegistry {
                     call_id,
                     name,
                     input,
+                    ..
                 } => call_id.trim().is_empty() || name.trim().is_empty() || !input.is_object(),
                 ContentPart::ToolResult { .. } => true,
                 ContentPart::Image { media_type, image } => {
@@ -180,7 +181,8 @@ impl DeterministicRunner for JsonRules {
         let class = match failure {
             FatalLlmError::Auth => "auth",
             FatalLlmError::InvalidRequest => "invalid_request",
-            FatalLlmError::InvalidRequestDetail { .. } => "invalid_request",
+            FatalLlmError::InvalidRequestDetail { .. }
+            | FatalLlmError::ContextWindowExceeded { .. } => "invalid_request",
             FatalLlmError::ContentFiltered => "content_filtered",
             FatalLlmError::EmptyResponse => "empty_response",
             FatalLlmError::JobLost => "job_lost",

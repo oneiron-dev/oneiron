@@ -92,7 +92,7 @@ pub(crate) const READER_CHILD_READ_ONLY: &str = "reader_child_read_only";
 /// parent run's caller's rows go, as its host noted it at the run's last
 /// entry: its locality, with the machine its connection proved (FIX 4937).
 pub(crate) struct ReaderSeats {
-    callers: Mutex<HashMap<EntityId, (ReadDestination, u64)>>,
+    callers: Mutex<HashMap<EntityId, ReaderCaller>>,
     /// Each parent run's live clock, as its host last lent it (FIX 1839):
     /// it bounds the parent's children's work beside the clock its first
     /// spawn froze, and is forgotten with the parent's caller.
@@ -100,6 +100,15 @@ pub(crate) struct ReaderSeats {
     /// The memory one running child may hold: its run's memory share over
     /// the children one parent runs at once.
     child_memory_bytes: u64,
+}
+
+/// A live entry's destination, bound to the same actor and storage route as
+/// its durable note. Clocks retain their existing process-local lifetime.
+struct ReaderCaller {
+    destination: ReadDestination,
+    noted_ms: u64,
+    route: oneiron::code_run::ReaderRoute,
+    actor: oneiron::code_run::ReaderActor,
 }
 
 impl ReaderSeats {
@@ -123,12 +132,14 @@ impl ReaderSeats {
     /// parent's: [`Self::seat_with_parent`] with none.
     pub(crate) fn seat(
         &self,
+        jobs: &ReaderJobs<'_>,
+        actor: oneiron::code_run::ReaderActor,
         run: EntityId,
         scope: Option<SpendScopeId>,
         caller: impl Into<ReadDestination>,
         window_tokens: Option<u64>,
-    ) -> SpawnHostSeat {
-        self.seat_with_parent(run, scope, caller, window_tokens, None)
+    ) -> oneiron::Result<SpawnHostSeat> {
+        self.seat_with_parent(jobs, actor, run, scope, caller, window_tokens, None)
     }
 
     /// [`Self::seat`] for a parent its host lends `parent` (FIX 1839, FIX
@@ -140,19 +151,35 @@ impl ReaderSeats {
     /// and its children outlive it, as before.
     pub(crate) fn seat_with_parent(
         &self,
+        jobs: &ReaderJobs<'_>,
+        actor: oneiron::code_run::ReaderActor,
         run: EntityId,
         scope: Option<SpendScopeId>,
         caller: impl Into<ReadDestination>,
         window_tokens: Option<u64>,
         parent: Option<&ReaderParentHost>,
-    ) -> SpawnHostSeat {
+    ) -> oneiron::Result<SpawnHostSeat> {
         let now = unix_millis_now();
-        lock(&self.callers).insert(run, (caller.into(), now));
+        let caller = caller.into();
+        // Entry and fallback share this lock: no child can pair a newer
+        // durable note with an older live entry, or observe a half-update.
+        let mut callers = lock(&self.callers);
+        jobs.note_parent_caller(run, actor, &caller)?;
+        callers.insert(
+            run,
+            ReaderCaller {
+                destination: caller,
+                noted_ms: now,
+                route: jobs.route(),
+                actor,
+            },
+        );
+        drop(callers);
         let clock = parent.and_then(ReaderParentHost::clock);
         if let Some(clock) = clock {
             lock(&self.clocks).insert(run, clock);
         }
-        SpawnHostSeat {
+        Ok(SpawnHostSeat {
             spend: ReaderSpend::for_run_scope(scope),
             deadline: reader_parent_deadline(clock, now),
             // A child holds one model call's prior at its claim, or what its
@@ -167,20 +194,32 @@ impl ReaderSeats {
             // (`run_bound`, and a session run's `parent_model_list`).
             listed: Vec::new(),
             parent_lease: parent.and_then(ReaderParentHost::lease).cloned(),
-        }
+        })
     }
 
     /// A Read child's own spawn seat. Its remaining clock already excludes
     /// its parent's fold reserve; only its own fold is carved out here.
     fn nested_seat(
         &self,
+        jobs: &ReaderJobs<'_>,
         job: &ReaderJob,
         clock: ReaderParentClock,
         now_ms: u64,
         window_tokens: Option<u64>,
     ) -> SpawnHostSeat {
-        let caller = self.caller(job.binding.parent_run);
-        lock(&self.callers).insert(job.run, (caller, now_ms));
+        // A nested child stands as its children's parent on its own route and
+        // actor, live only: its destination is its parent's, derived at each
+        // bind, never a host's entry, so it writes no durable note.
+        let caller = self.caller(jobs, job.binding.parent_run, job.binding.actor);
+        lock(&self.callers).insert(
+            job.run,
+            ReaderCaller {
+                destination: caller,
+                noted_ms: now_ms,
+                route: jobs.route(),
+                actor: job.binding.actor,
+            },
+        );
         lock(&self.clocks).insert(job.run, clock);
         SpawnHostSeat {
             spend: ReaderSpend::for_run_scope(
@@ -211,11 +250,24 @@ impl ReaderSeats {
     /// Where `parent`'s caller's rows go: as its host last noted it, else a
     /// destination nobody proved, the rule that withholds the most. A child
     /// gets a copy of that destination, never its parent's credential.
-    fn caller(&self, parent: EntityId) -> ReadDestination {
-        lock(&self.callers).get(&parent).map_or_else(
-            || CallerLocality::OffDevice.into(),
-            |(caller, _)| caller.clone(),
-        )
+    fn caller(
+        &self,
+        jobs: &ReaderJobs<'_>,
+        parent: EntityId,
+        actor: oneiron::code_run::ReaderActor,
+    ) -> ReadDestination {
+        let callers = lock(&self.callers);
+        let route = jobs.route();
+        if let Some(note) = callers.get(&parent)
+            && note.route == route
+            && note.actor == actor
+        {
+            return note.destination.clone();
+        }
+        jobs.parent_caller(parent, actor)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| CallerLocality::OffDevice.into())
     }
 
     /// Forgets every parent last noted more than two windows before `now`
@@ -225,8 +277,8 @@ impl ReaderSeats {
         let horizon = now.saturating_sub(DEFAULT_READER_WINDOW_MS.saturating_mul(2));
         let mut callers = lock(&self.callers);
         let mut clocks = lock(&self.clocks);
-        callers.retain(|run, (_, noted)| {
-            *noted >= horizon
+        callers.retain(|run, note| {
+            note.noted_ms >= horizon
                 || clocks
                     .get(run)
                     .is_some_and(|clock| clock.remaining_ms() > 0)
