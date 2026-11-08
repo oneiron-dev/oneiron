@@ -6190,11 +6190,14 @@ class Oneiron:
         def inbox(self, spec):
             """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
             return json.loads(_translate(lambda: self._client.vault_mail_inbox(json.dumps(spec))))
+        @property
+        def attachments(self) -> "Oneiron._VaultMailAttachmentsVerbs":
+            return Oneiron._VaultMailAttachmentsVerbs(self._client)
     class _VaultMailPackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def install(self, spec=None):
-            """The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."""
+            """The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing."""
             return json.loads(_translate(lambda: self._client.vault_mail_pack_install(json.dumps({} if spec is None else spec))))
     class _VaultMailSourcesVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -6218,7 +6221,7 @@ class Oneiron:
             """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
             return json.loads(_translate(lambda: self._client.vault_mail_sources_sync_status(json.dumps(spec))))
         def sync(self, spec):
-            """The vault's owner runs one bounded import step of a Google or Microsoft 365 mailbox source on this device: changes since its anchor, the next newest-first pages under its copy setting, then waiting bodies."""
+            """The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
             return json.loads(_translate(lambda: self._client.vault_mail_sources_sync(json.dumps(spec))))
     class _VaultMailSourcesSettingsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -6259,6 +6262,12 @@ class Oneiron:
         def search(self, spec):
             """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
             return json.loads(_translate(lambda: self._client.vault_mail_compliance_search(json.dumps(spec))))
+    class _VaultMailAttachmentsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def open(self, spec):
+            """A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers."""
+            return json.loads(_translate(lambda: self._client.vault_mail_attachments_open(json.dumps(spec))))
     class _VaultDreamerVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

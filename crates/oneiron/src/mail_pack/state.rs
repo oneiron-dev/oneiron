@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::source::MailCopySetting;
+use super::wire::MailAttachmentRef;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
@@ -121,6 +122,10 @@ pub(super) struct MailOccurrence {
     pub(super) received_at: u64,
     /// Whether a search fetched it: kept whatever the copy setting.
     pub(super) searched: bool,
+    /// Its attachments, as its whole message described them; empty until
+    /// its body lands.
+    #[serde(default)]
+    pub(super) attachments: Vec<MailAttachmentRef>,
     pub(super) landed_at: u64,
     pub(super) updated_at: u64,
 }
@@ -155,6 +160,7 @@ impl MailOccurrence {
         self.rfc_message_id = None;
         self.from = None;
         self.subject = None;
+        self.attachments.clear();
         self.updated_at = at;
     }
 }
@@ -222,6 +228,12 @@ pub(crate) fn erase_occurrence_rows_in_txn(
         }
         occurrence.scrub(at);
         OCCURRENCES.put(store, txn, &key, &occurrence)?;
+        super::attachments::forget_message_attachments_in_txn(
+            store,
+            txn,
+            source,
+            &occurrence.provider_id,
+        )?;
     }
     Ok(())
 }

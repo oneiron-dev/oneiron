@@ -1560,6 +1560,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.mail.sources.sync" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.inbox" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.threads.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.mail.attachments.open" => a.spec.clone().ok_or_else(invalid),
         "vault.mail.compliance.search" => a.spec.clone().ok_or_else(invalid),
         "vault.files.sources.convert" => a.spec.clone().ok_or_else(invalid),
         "vault.sync.repo_manifests.conflict.review" => a.spec.clone().ok_or_else(invalid),
@@ -5568,6 +5569,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.mail.threads.read" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.mail.attachments.open" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.mail.compliance.search" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -8188,6 +8192,7 @@ async fn execute_agent_verb_row_on(
         "vault.mail.sources.sync" => boxed_mcp_verb_row_vault_mail_sources_sync(row).await,
         "vault.mail.inbox" => boxed_mcp_verb_row_vault_mail_inbox(row).await,
         "vault.mail.threads.read" => boxed_mcp_verb_row_vault_mail_threads_read(row).await,
+        "vault.mail.attachments.open" => boxed_mcp_verb_row_vault_mail_attachments_open(row).await,
         "vault.mail.compliance.search" => {
             boxed_mcp_verb_row_vault_mail_compliance_search(row).await
         }
@@ -71966,10 +71971,16 @@ async fn mcp_verb_row_vault_mail_pack_install(row: McpVerbRow<'_>) -> McpVerbRow
             "invalid typed agent-verb argument",
         )
     };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.mail.pack.install", &input)
+        .map_err(mcp_facade_error)?;
     let input: oneiron::task_verb::sdk::EmptyRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
-    let output = oneiron::task_verb::sdk::vault_mail_pack_install(&memory, input)
-        .map_err(mcp_facade_error)?;
+    let output = Box::pin(crate::api::facade::host_doors::vault_mail_pack_install(
+        server, auth, input,
+    ))
+    .await
+    .map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)
 }
@@ -72468,10 +72479,16 @@ async fn mcp_verb_row_vault_mail_sources_sync(row: McpVerbRow<'_>) -> McpVerbRow
             "invalid typed agent-verb argument",
         )
     };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.mail.sources.sync", &input)
+        .map_err(mcp_facade_error)?;
     let input: oneiron::mail_pack::MailSourceSyncRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
-    let output = oneiron::task_verb::sdk::vault_mail_sources_sync(&memory, input)
-        .map_err(mcp_facade_error)?;
+    let output = Box::pin(crate::api::facade::host_doors::vault_mail_sources_sync(
+        server, auth, input,
+    ))
+    .await
+    .map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)
 }
@@ -72553,6 +72570,47 @@ async fn mcp_verb_row_vault_mail_threads_read(row: McpVerbRow<'_>) -> McpVerbRow
     let input: oneiron::mail_pack::MailThreadRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let output = oneiron::task_verb::sdk::vault_mail_threads_read(&memory, input)
+        .map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_mail_attachments_open<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_mail_attachments_open(row))
+}
+async fn mcp_verb_row_vault_mail_attachments_open(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let input: oneiron::mail_pack::MailAttachmentOpenRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let output = oneiron::task_verb::sdk::vault_mail_attachments_open(&memory, input)
         .map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)

@@ -29,19 +29,27 @@
 //! audience ([`landing`]), and a provider delete applies the source's setting
 //! ([`provider_delete`]). Provider wires land per provider row: Gmail for
 //! Google Workspace and Google ([`gmail`]), Microsoft Graph for Microsoft 365
-//! ([`microsoft365`]); the owner runs a step on this device through
-//! [`local_sync`].
+//! ([`microsoft365`]). Calendar sources land through the calendar engine's
+//! connector admission, each EVENT bound to its source at birth
+//! ([`calendar`]), read from Google Calendar ([`google_calendar`]), Microsoft 365
+//! ([`microsoft365_calendar`]) or an ICS subscription ([`ics_calendar`]).
+//! The owner runs a step on this device through [`local_sync`].
 
+mod attachments;
+mod calendar;
 mod compliance;
 mod credential;
 mod doors;
 mod gmail;
+mod google_calendar;
 mod header_retire;
+mod ics_calendar;
 mod importer;
 mod inbox;
 mod landing;
 mod local_sync;
 mod microsoft365;
+mod microsoft365_calendar;
 mod pack;
 mod provider_delete;
 mod rest;
@@ -51,6 +59,13 @@ mod state;
 mod wire;
 
 pub use crate::source_audience::{SourceAudienceEventView, SourceAudienceOp};
+pub(crate) use attachments::collect_after_delete;
+pub use attachments::{MailAttachmentOpenRequest, MailAttachmentState, MailAttachmentView};
+pub(crate) use calendar::{
+    bind_calendar_source_row_in_txn, calendar_source_occupancy, calendar_source_of_system_in,
+    merge_busy,
+};
+pub use calendar::{MailCalendarFeed, MailCalendarPull, MailCalendarRead, MailCalendarWire};
 pub(crate) use compliance::erase_compliance_actor_in_txn;
 pub use compliance::{
     MailComplianceEventKind, MailComplianceEventView, MailComplianceHit, MailComplianceSearchReply,
@@ -62,12 +77,17 @@ pub use doors::{
     MailSourceSettingsRequest,
 };
 pub use gmail::HttpGmailMailWire;
+pub use google_calendar::{GOOGLE_CALENDAR_CONNECTOR_EFFECTOR, HttpGoogleCalendarWire};
+pub use ics_calendar::{HttpIcsCalendarWire, ICS_CALENDAR_CONNECTOR_EFFECTOR};
 pub use importer::{MailSyncBudget, MailSyncReport};
 pub use inbox::{
     MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView,
 };
 pub use local_sync::MailSourceSyncRequest;
 pub use microsoft365::{HttpGraphMailWire, MICROSOFT365_CONNECTOR_EFFECTOR};
+pub use microsoft365_calendar::{
+    HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR,
+};
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
 };
