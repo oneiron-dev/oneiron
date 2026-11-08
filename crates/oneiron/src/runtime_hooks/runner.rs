@@ -8,6 +8,7 @@
 //! (FIX 4749).
 
 mod body;
+mod commit;
 mod evaluation;
 mod retained;
 
@@ -23,19 +24,14 @@ use crate::skill_hub::pack_catalog::{HookActorClass, HookPhase, PackHookBinding}
 use crate::{EntityId, Error, Result, Vault};
 
 use super::apply;
-use super::block::{self, HookBlock};
+use super::block;
 use super::body::{HookBodyRuntime, HookVerdict};
 use super::filter;
 use super::grant::{self, HookGrant};
-use super::lineage::{self, HookCheck, LineageLink};
-use super::outcome::HookOutcome;
 use super::read::{self, SeenFact};
 use super::source::{self, FactEntry, FactKind, FactPosition, FactSource};
-use super::store::{
-    self, HookIntent, HookIntentState, HookRunRecord, HookRunRef, HookRunState, RunKey,
-};
+use super::store::{self, HookRunState, RunKey};
 
-use body::receipt;
 pub(super) use body::{Verdict, ask_verdict, judge, verdict_context};
 use retained::RetainedPass;
 
@@ -118,6 +114,24 @@ impl HookPassReport {
     }
 }
 
+/// Enabled fact bindings from the caller's live-binding snapshot, in run order.
+pub(crate) fn fact_bindings(
+    all: &[(EntityId, PackHookBinding)],
+) -> Vec<(EntityId, PackHookBinding)> {
+    let mut bindings: Vec<(EntityId, PackHookBinding)> = all
+        .iter()
+        .filter(|(_, binding)| binding.enabled && binding.selector.phase == HookPhase::Fact)
+        .cloned()
+        .collect();
+    bindings.sort_by(|(_, a), (_, b)| {
+        b.selector
+            .priority
+            .cmp(&a.selector.priority)
+            .then_with(|| a.body_hash.cmp(&b.body_hash))
+    });
+    bindings
+}
+
 impl FactHookRunner {
     #[must_use]
     pub fn new() -> Self {
@@ -183,20 +197,10 @@ impl FactHookRunner {
         }
         let all = vault.pack_hook_bindings()?;
         pause_disabled(vault, &all)?;
-        let mut bindings: Vec<(EntityId, PackHookBinding)> = all
-            .iter()
-            .filter(|(_, binding)| binding.enabled && binding.selector.phase == HookPhase::Fact)
-            .cloned()
-            .collect();
+        let bindings = fact_bindings(&all);
         if bindings.is_empty() {
             return Ok(report);
         }
-        bindings.sort_by(|(_, a), (_, b)| {
-            b.selector
-                .priority
-                .cmp(&a.selector.priority)
-                .then_with(|| a.body_hash.cmp(&b.body_hash))
-        });
         let mut retained = retained;
         if let Some(pass) = &mut retained {
             pass.runs.keep_source_order_for(&bindings);
@@ -516,7 +520,14 @@ impl Pass<'_, '_> {
                 return Ok(false);
             }
         };
-        let Some(seen) = read::fact_row(&lane, &grant, entry)? else {
+        let seen = if read::fact_point(entry).is_some() {
+            let _bodies = lane.prepare_point_read::<crate::Error>()?;
+            let txn = self.vault.store.env.read_txn()?;
+            read::fact_row_in_txn(&lane, &txn, &grant, entry)?
+        } else {
+            None
+        };
+        let Some(seen) = seen else {
             self.report.skipped += 1;
             return Ok(false);
         };
@@ -585,120 +596,6 @@ impl Pass<'_, '_> {
             apply::drain_one(self.vault, self.all, &run.key, &mut self.report)?;
         }
         Ok(false)
-    }
-
-    /// The run's one write: lineage and any owner check, local outcomes,
-    /// saved intents, memo and its run index row, receipt and the cursor.
-    /// Returns whether an intent waits.
-    fn commit(&mut self, run: &Run<'_>, memo: HookRunRecord, verdict: &Verdict) -> Result<bool> {
-        let vault = self.vault;
-        let at = vault.store.clock.now_recorded_at();
-        let key = run.key;
-        let mut queued = verdict.outcome.as_ref().is_some_and(HookOutcome::is_queued);
-        let proposal = match &verdict.outcome {
-            Some(HookOutcome::Propose { .. }) => Some(apply::proposal_id(&key)?),
-            _ => None,
-        };
-        let added = match &verdict.outcome {
-            Some(HookOutcome::AddBlock { block }) => Some((
-                block_id(&key)?,
-                HookBlock::from_request(
-                    run.binding_id,
-                    format!("{}/{}", run.binding.pack, run.binding.hook),
-                    hex_lower(&key),
-                    block,
-                    at,
-                    None,
-                )?,
-            )),
-            _ => None,
-        };
-        let rows_read = memo.reads.iter().map(|pin| pin.rows.len()).sum::<usize>();
-        let (duration_ms, now) = (memo.duration_ms, memo.now);
-        let link = LineageLink {
-            binding: run.binding_id,
-            run_key: hex_lower(&key),
-            entity: run.entry.entity,
-            position: run.entry.position.hex(),
-        };
-        let mut memo = HookRunRecord {
-            committed_at: at.saturating_mul(1_000),
-            ..memo
-        };
-        let check = vault.with_write_txn_grouped(|txn| {
-            // A body that ran across a permanent erase keeps its content-free
-            // run identity, never the erased bytes or a pending effect.
-            let erased =
-                store::dependencies_erased_in_txn(vault, txn, &memo.derivation.dependencies)?;
-            if erased {
-                store::scrub_memo_payload(&mut memo);
-                queued = false;
-                if let Some(mut intent) = store::INTENTS.get(&vault.store, txn, &key)? {
-                    store::scrub_intent_payload(&mut intent, at);
-                    store::INTENTS.put(vault, txn, &key, &intent)?;
-                }
-            }
-            let due_at = run.entry.tick.as_ref().map(|tick| tick.due_at);
-            let (chain, check) =
-                lineage::run_chain_in_txn(vault, txn, &run.entry.entity, link, due_at)?;
-            if let Some(reason) = check {
-                let raised = HookCheck {
-                    binding: run.binding_id,
-                    run_key: hex_lower(&key),
-                    reason,
-                    chain: chain.clone(),
-                    raised_at: at,
-                };
-                lineage::raise_check_in_txn(vault, txn, &key, &raised)?;
-            }
-            if !erased {
-                if let Some((id, added)) = &added {
-                    block::put_block_in_txn(vault, txn, *id, added)?;
-                    lineage::put_in_txn(vault, txn, id.as_bytes(), &chain)?;
-                }
-                if let Some(id) = proposal {
-                    lineage::put_in_txn(vault, txn, id.as_bytes(), &chain)?;
-                }
-            }
-            if queued {
-                let intent = HookIntent {
-                    dependencies: memo.derivation.dependencies.clone(),
-                    binding: run.binding_id,
-                    author: run.binding.author_id(),
-                    outcome_json: verdict.outcome_json.clone().unwrap_or_default(),
-                    lineage: chain,
-                    state: HookIntentState::Pending,
-                    landed: None,
-                    reason: None,
-                    created_at: at,
-                    settled_at: None,
-                };
-                store::INTENTS.put(vault, txn, &key, &intent)?;
-            }
-            let previous = store::MEMOS
-                .get(&vault.store, txn, &key)?
-                .map(|old| old.committed_at);
-            store::MEMOS.put(vault, txn, &key, &memo)?;
-            store::index_run_in_txn(
-                vault,
-                txn,
-                run.binding_id,
-                previous,
-                memo.committed_at,
-                HookRunRef::Fact(key),
-            )?;
-            let mut hook_receipt = receipt(run, verdict, check, rows_read, duration_ms, now);
-            if erased {
-                store::scrub_receipt_payload(&mut hook_receipt);
-            }
-            store::RECEIPTS.put(vault, txn, &key, &hook_receipt)?;
-            store::advance_cursor_in_txn(vault, txn, run.binding_id, run.entry.position, at)?;
-            Ok(check)
-        })?;
-        if check.is_some() {
-            self.report.checks += 1;
-        }
-        Ok(queued)
     }
 
     fn body(
