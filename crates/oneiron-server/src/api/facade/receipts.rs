@@ -67,9 +67,9 @@ pub(super) async fn facade_call_receipt(
         .get::<call_receipt::HeldOuterAttempt>()
         .map(|held| held.0);
     // A body the vault had no room or memory to read is refused, and the
-    // call does not run.
+    // call does not run; a hold it runs inside still names its attempt.
     let (mut response, attempt) = match refused {
-        Some(refused) => (refused.into_response(), None),
+        Some(refused) => (refused.into_response(), outer),
         None => {
             call_receipt::attempt_witnessed_inside(
                 outer,
