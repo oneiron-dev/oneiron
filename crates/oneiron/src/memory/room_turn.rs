@@ -70,13 +70,26 @@ impl<'v> RoomTurnHandle<'v> {
     /// One SDK verb inside the turn; a verb that could read around the room
     /// is refused rather than run unbound.
     pub fn invoke(&self, verb: &str, input: serde_json::Value) -> MemoryResult<serde_json::Value> {
+        self.invoke_with_notice(verb, input).0
+    }
+
+    /// The same call, beside any caller-notice metadata its hook chain supplied.
+    /// Missing metadata is unknown and never grants authority to run the call.
+    pub fn invoke_with_notice(
+        &self,
+        verb: &str,
+        input: serde_json::Value,
+    ) -> (MemoryResult<serde_json::Value>, Option<bool>) {
         if !Self::serves(verb) {
-            return Err(MemoryError::bad_request_with(
-                format!("{verb} is not served inside a room turn"),
-                &["Call it outside the room turn."],
-            ));
+            return (
+                Err(MemoryError::bad_request_with(
+                    format!("{verb} is not served inside a room turn"),
+                    &["Call it outside the room turn."],
+                )),
+                None,
+            );
         }
-        crate::task_verb::sdk::invoke(&self.memory, verb, input)
+        crate::task_verb::sdk::invoke_with_notice(&self.memory, verb, input)
     }
 
     /// The record-ref check `verb`'s engine fn runs before its call, run
@@ -242,6 +255,7 @@ impl<'v> Memory<'v> {
                 session_key: self.session_key,
                 machine_signer: self.machine_signer,
                 read_proof: self.read_proof.clone(),
+                phone_reads: self.phone_reads.clone(),
                 host_action: self.host_action.clone(),
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
@@ -274,6 +288,7 @@ impl<'v> Memory<'v> {
                 task_work_turn: self.task_work_turn.clone(),
                 external_git_source_host: None,
                 repo_tool_recipient: self.repo_tool_recipient.clone(),
+                read_filter: self.read_filter.clone(),
             },
         })
     }

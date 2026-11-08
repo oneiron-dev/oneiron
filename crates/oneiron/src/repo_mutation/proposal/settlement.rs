@@ -94,6 +94,9 @@ impl Vault {
                     "approval requires unanimous independent multi-critic acceptance",
                 ));
             }
+            // Acceptance is judged against the retained whitelist as it
+            // stands now; an accepted candidate is never revoked (FIX 4299).
+            row.require_registered_edit_at_acceptance_in_txn(self, &txn)?;
         }
         let (receipt, now) =
             self.put_settlement_receipt_in_txn(&mut txn, id, actor, decision, &[])?;

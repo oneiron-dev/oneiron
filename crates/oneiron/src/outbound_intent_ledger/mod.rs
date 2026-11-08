@@ -11,6 +11,8 @@ mod late_recipient;
 pub use oneiron_base::unsubscribe_headers as email_headers;
 mod payload;
 mod pinned_approval;
+mod read_back;
+mod remote_task_input;
 mod remote_task_poll;
 mod resolution;
 mod settlement;
@@ -19,12 +21,18 @@ mod types;
 
 pub use self::codec::INTENT_LEDGER_VALUE_KEYS;
 pub use self::dispatch::{derive_intent_id, intent_ledger_records};
+pub use self::read_back::DeliveryReadBack;
+pub use self::remote_task_input::{
+    ParkedInput, RemoteTaskAnswer, RemoteTaskFormQuestion, RemoteTaskInputChoice,
+    RemoteTaskInputPhase, RemoteTaskInputView,
+};
 pub use self::remote_task_poll::{
     DueRemoteTask, MIN_REMOTE_TASK_POLL_MS, RemoteTaskCredential, RemoteTaskEnd, RemoteTaskPoll,
+    RemoteTaskSessionEnd,
 };
 pub use self::settlement::{
     BudgetReservation, ProviderRetryDirective, ProviderWait, ProviderWaitKind, RemoteTaskHandle,
-    RemoteTaskObservation, ReservationStatus,
+    RemoteTaskObservation, RemoteTaskSettlement, ReservationStatus,
 };
 pub use self::types::{
     BudgetChargeMarker, BudgetClass, FrozenOutboundCall, INTENT_LEDGER_SCHEMA_VERSION,
@@ -46,7 +54,7 @@ pub(crate) use self::late_recipient::{
 };
 pub(crate) use self::payload::{
     LedgerPayloadContext, admitting_actor_in_txn, erase_outbound_intent_actor_in_txn,
-    payload_recipient_in_txn, stored_admission_in_txn,
+    payload_recipient_in_txn, payload_recipients_in_txn, stored_admission_in_txn,
 };
 pub(crate) use self::pinned_approval::{
     PinnedApproval, PinnedApprovalFamily, keep_press_after_admission, pinned_retry_approval,
@@ -65,14 +73,16 @@ pub(crate) use self::store::{
     insert_pending_in_txn, insert_suppressed_in_txn, keep_pinned_approval_in_txn,
     outbound_intent_ledger_record_accepts_masked, read_intent_for_attempt_in_txn,
     read_intent_record_in_txn, reconcile_connector_intent_in_txn, record_definite_non_delivery,
-    record_possible_delivery, record_provider_refusal, renew_admission_in_txn,
+    record_looked_up_non_delivery, record_possible_delivery, record_provider_refusal,
+    renew_admission_in_txn,
 };
 // DOOR-141 PR3b: whether an attempt's sends are settled, for a held program's resume;
 // FIX 7188: their abandon in the owner's Stop of that try; FIX 4747: the abandon of
-// the ones that certainly never went when a connector send's executor stands down.
+// the ones that certainly never went when a connector send's executor stands down,
+// and their supersession when that send's lease comes back (slice 4).
 pub(crate) use self::store::pending::{
     abandon_attempt_pending_intents_in_txn, abandon_attempt_undelivered_intents_in_txn,
-    attempt_has_pending_intent_in_txn,
+    attempt_has_pending_intent_in_txn, supersede_stood_down_intents_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::store::{read_intent_record, replace_intent_record_for_test};

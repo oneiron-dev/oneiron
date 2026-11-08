@@ -12,7 +12,8 @@ pub mod attribution_audits;
 pub mod attribution_labels;
 pub(crate) use attribution_labels::{
     erase_label_proposals_naming_in_txn, erase_unclear_note_copies_in_txn,
-    forget_unclear_notes_in_txn,
+    forget_unclear_notes_in_txn, withdraw_label_proposals_judged_by_in_txn,
+    withdraw_label_proposals_quoting_in_txn,
 };
 pub mod browser_candidate;
 pub mod browser_programs;
@@ -64,9 +65,11 @@ pub mod seal_checks;
 mod source_erase;
 pub(crate) use source_erase::erase_source_copies_in_txn;
 pub mod stewardship;
+
 #[cfg(test)]
 mod tests;
 mod type_tree_gate;
+pub(crate) use type_tree_gate::team_shape_tree_judge;
 pub(crate) mod type_tree_prior;
 pub mod type_tree_upkeep;
 use super::{
@@ -327,7 +330,7 @@ pub(crate) fn execute(
     }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: 0,
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     })
 }
 fn load_row<T: serde::Serialize + serde::de::DeserializeOwned>(

@@ -132,7 +132,21 @@ pub(super) fn forget_claimed_hashes(
     txn: &mut RwTxn<'_>,
     artifact: &EntityId,
 ) -> Result<()> {
+    forget_claimed_hashes_except_in_txn(store, txn, artifact, &std::collections::BTreeSet::new())
+}
+
+/// Keeps only the hashes of exact versions an accepted source erase still
+/// owes. The ordinary delete wrapper passes no retained hashes.
+pub(super) fn forget_claimed_hashes_except_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+    kept: &std::collections::BTreeSet<ContentHash>,
+) -> Result<()> {
     for hash in claimed_hashes(store, txn, artifact)? {
+        if kept.contains(&hash) {
+            continue;
+        }
         CLAIMED_HASH.delete(store, txn, &(*artifact, hash))?;
         VERSION_CLAIM.delete(store, txn, &(hash, *artifact))?;
     }
@@ -404,6 +418,5 @@ pub(super) fn lift_release_fence(
     }
     Ok(())
 }
-
 #[cfg(test)]
 mod tests;

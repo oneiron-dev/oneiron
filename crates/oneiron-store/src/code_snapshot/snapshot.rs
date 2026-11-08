@@ -1,4 +1,10 @@
 //! Codebase snapshot value type, MessagePack codec, fork/scope hashing, and manifest validation.
+//!
+//! FIX 4299 (CODE-CUSTODY-01): a capture names the registered repository it
+//! belongs to, its stable CODE anchor, when it has one. Its scope key derives
+//! from that anchor, or from the repository's commit-free locator for an
+//! unregistered capture, never from the commit. The capture itself stays
+//! immutable and content-addressed with its source revision.
 
 use crate::code_snapshot::repo_ref::RepoRef;
 use crate::code_snapshot::repo_ref::normalize_commit_hash;
@@ -13,6 +19,8 @@ use oneiron_base::error::Result;
 use oneiron_base::msgpack_shape::OverBudget;
 use oneiron_base::msgpack_shape::ShapeBudget;
 use oneiron_base::msgpack_shape::over_budget;
+use oneiron_contracts::entity_id::ENTITY_ID_LEN;
+use oneiron_contracts::entity_id::EntityId;
 use rmpv::Value;
 
 pub const CODEBASE_PROJECT_ID_MAX_BYTES: usize = 256;
@@ -29,13 +37,14 @@ pub const CODEBASE_SCOPE_KEY_LEN: usize = 32;
 /// okay: the count it once refused past (FIX 8678). Never a refusal.
 pub const CODEBASE_SNAPSHOT_MAX_FILES: usize = 100_000;
 
-pub const CODEBASE_SNAPSHOT_BODY_KEYS: [&str; 6] = [
+pub const CODEBASE_SNAPSHOT_BODY_KEYS: [&str; 7] = [
     "project_id",
     "repo_ref",
     "commit_hash",
     "fork_hash",
     "scope_key",
     "files",
+    "repository",
 ];
 
 pub const CODEBASE_FILE_ENTRY_KEYS: [&str; 4] = ["path", "content_hash", "size_bytes", "mode"];
@@ -52,6 +61,8 @@ const KEY_SCOPE_KEY: &str = CODEBASE_SNAPSHOT_BODY_KEYS[4];
 
 const KEY_FILES: &str = CODEBASE_SNAPSHOT_BODY_KEYS[5];
 
+const KEY_REPOSITORY: &str = CODEBASE_SNAPSHOT_BODY_KEYS[6];
+
 const KEY_FILE_PATH: &str = CODEBASE_FILE_ENTRY_KEYS[0];
 
 const KEY_FILE_CONTENT_HASH: &str = CODEBASE_FILE_ENTRY_KEYS[1];
@@ -62,7 +73,7 @@ const KEY_FILE_MODE: &str = CODEBASE_FILE_ENTRY_KEYS[3];
 
 const CODEBASE_FORK_HASH_DOMAIN: &[u8] = b"oneiron:codebase-forkhash:v1";
 
-const CODEBASE_SCOPE_KEY_DOMAIN: &[u8] = b"oneiron:codebase-scope:v1";
+const CODEBASE_SCOPE_KEY_DOMAIN: &[u8] = b"oneiron:codebase-scope:v2";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodebaseFileEntry {
@@ -107,6 +118,10 @@ pub struct CodebaseSnapshot {
     pub fork_hash: CodebaseForkHash,
     pub scope_key: CodebaseScopeKey,
     pub files: Vec<CodebaseFileEntry>,
+    /// The registered repository this capture belongs to: its stable CODE
+    /// anchor (FIX 4299). `None` for an unregistered capture, which is
+    /// read-only and confers no edit authority.
+    pub repository: Option<EntityId>,
 }
 
 impl CodebaseSnapshot {
@@ -119,16 +134,38 @@ impl CodebaseSnapshot {
         let project_id = project_id.into();
         let mut snapshot = Self {
             fork_hash: [0; CODEBASE_FORK_HASH_LEN],
-            scope_key: codebase_scope_key(&project_id, &repo_ref)?,
+            scope_key: codebase_scope_key(&project_id, None, &repo_ref)?,
             project_id,
             repo_ref,
             commit_hash: commit_hash.map(normalize_commit_hash).transpose()?,
             files,
+            repository: None,
         };
         snapshot.files.sort_by(|a, b| a.path.cmp(&b.path));
         snapshot.fork_hash = codebase_fork_hash(&snapshot.files)?;
         validate_codebase_snapshot(&snapshot)?;
         Ok(snapshot)
+    }
+
+    /// This capture as one of the registered repository `repository` (FIX
+    /// 4299), its scope key derived again from that anchor.
+    pub fn with_repository(mut self, repository: Option<EntityId>) -> Result<Self> {
+        self.repository = repository;
+        self.scope_key = codebase_scope_key(&self.project_id, repository.as_ref(), &self.repo_ref)?;
+        validate_codebase_snapshot(&self)?;
+        Ok(self)
+    }
+
+    /// The capture of the same project, source revision and repository
+    /// holding `files` instead: what custody filtering rebuilds.
+    pub fn rebuilt_with_files(&self, files: Vec<CodebaseFileEntry>) -> Result<Self> {
+        Self::new(
+            self.project_id.clone(),
+            self.repo_ref.clone(),
+            self.commit_hash.clone(),
+            files,
+        )?
+        .with_repository(self.repository)
     }
 }
 
@@ -180,6 +217,12 @@ pub fn encode_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<Vec<u8>> 
             Value::Binary(snapshot.scope_key.to_vec()),
         ),
         (Value::from(KEY_FILES), Value::Array(files)),
+        (
+            Value::from(KEY_REPOSITORY),
+            snapshot.repository.map_or(Value::Nil, |anchor| {
+                Value::Binary(anchor.as_bytes().to_vec())
+            }),
+        ),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -206,7 +249,7 @@ impl RawValue for CodebaseSnapshot {
 const FILE_ENTRY_MIN_BYTES: usize = 64;
 
 /// What a snapshot body of `body_bytes` may unfold into before its schema is
-/// read: a root map of six fields whose `files` array holds entry maps of
+/// read: a root map of seven fields whose `files` array holds entry maps of
 /// four, as many as its bytes could spell (a memory floor, never a file
 /// count: FIX 8678), and no field longer than a path.
 fn snapshot_shape(body_bytes: usize) -> ShapeBudget {
@@ -257,6 +300,7 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
     let mut fork_hash: Option<CodebaseForkHash> = None;
     let mut scope_key: Option<CodebaseScopeKey> = None;
     let mut files: Option<Vec<CodebaseFileEntry>> = None;
+    let mut repository: Option<Option<EntityId>> = None;
     let mut seen = [false; CODEBASE_SNAPSHOT_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -335,6 +379,22 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
                         .collect::<Result<Vec<_>>>()?,
                 );
             }
+            KEY_REPOSITORY => {
+                repository = Some(match value {
+                    Value::Nil => None,
+                    _ => Some(
+                        EntityId::from_bytes(hash_from_value::<ENTITY_ID_LEN>(
+                            value,
+                            "repository must be null or a 16-byte entity id",
+                        )?)
+                        .map_err(|_| {
+                            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                                "repository must be null or a 16-byte entity id",
+                            ))
+                        })?,
+                    ),
+                });
+            }
             _ => unreachable!("index resolved from CODEBASE_SNAPSHOT_BODY_KEYS"),
         }
     }
@@ -354,9 +414,16 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
         files: files.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
             "missing required snapshot key files",
         )))?,
+        repository: repository.ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+            "missing required snapshot key repository",
+        )))?,
     };
     let expected_fork_hash = codebase_fork_hash(&snapshot.files)?;
-    let expected_scope_key = codebase_scope_key(&snapshot.project_id, &snapshot.repo_ref)?;
+    let expected_scope_key = codebase_scope_key(
+        &snapshot.project_id,
+        snapshot.repository.as_ref(),
+        &snapshot.repo_ref,
+    )?;
     snapshot.fork_hash = fork_hash.unwrap_or(expected_fork_hash);
     snapshot.scope_key = scope_key.unwrap_or(expected_scope_key);
     if snapshot.fork_hash != expected_fork_hash {
@@ -366,7 +433,7 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
     }
     if snapshot.scope_key != expected_scope_key {
         return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-            "scope_key must match project_id and repo_ref",
+            "scope_key must match project_id and the repository",
         )));
     }
     validate_codebase_snapshot(&snapshot)?;
@@ -478,6 +545,11 @@ pub fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<()> {
     if let Some(commit_hash) = &snapshot.commit_hash {
         validate_normalized_commit_hash(commit_hash)?;
     }
+    if matches!(snapshot.repo_ref, RepoRef::LocalCapture { .. }) && snapshot.commit_hash.is_some() {
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+            "a local capture has no commit witness",
+        )));
+    }
     if let Some(repo_commit) = snapshot.repo_ref.commit_hash()
         && snapshot.commit_hash.as_deref() != Some(repo_commit)
     {
@@ -490,9 +562,15 @@ pub fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<()> {
             "fork_hash must match the file manifest",
         )));
     }
-    if snapshot.scope_key != codebase_scope_key(&snapshot.project_id, &snapshot.repo_ref)? {
+    if snapshot.scope_key
+        != codebase_scope_key(
+            &snapshot.project_id,
+            snapshot.repository.as_ref(),
+            &snapshot.repo_ref,
+        )?
+    {
         return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-            "scope_key must match project_id and repo_ref",
+            "scope_key must match project_id and the repository",
         )));
     }
     let mut previous: Option<&str> = None;
@@ -535,13 +613,28 @@ fn codebase_fork_hash(files: &[CodebaseFileEntry]) -> Result<CodebaseForkHash> {
     Ok(hasher.finalize().into())
 }
 
-fn codebase_scope_key(project_id: &str, repo_ref: &RepoRef) -> Result<CodebaseScopeKey> {
+/// The scope of a capture (FIX 4299): its project and its registered
+/// repository's stable anchor, or, for an unregistered capture, the
+/// repository's commit-free locator. A commit never moves a scope.
+fn codebase_scope_key(
+    project_id: &str,
+    repository: Option<&EntityId>,
+    repo_ref: &RepoRef,
+) -> Result<CodebaseScopeKey> {
     validate_project_id(project_id)?;
-    let repo_ref = repo_ref.canonical();
     let mut hasher = blake3::Hasher::new();
     hasher.update(CODEBASE_SCOPE_KEY_DOMAIN);
     write_hash_str(&mut hasher, project_id)?;
-    write_hash_str(&mut hasher, &repo_ref)?;
+    match repository {
+        Some(anchor) => {
+            hasher.update(&[1]);
+            hasher.update(anchor.as_bytes());
+        }
+        None => {
+            hasher.update(&[0]);
+            write_hash_str(&mut hasher, &repo_ref.locator())?;
+        }
+    }
     Ok(hasher.finalize().into())
 }
 

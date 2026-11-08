@@ -146,6 +146,7 @@ fn human_context(
         predicate: None,
         lifecycle: Some(crate::ClaimLifecycleStatus::Active.as_str().to_owned()),
         limit: usize::MAX,
+        filter: None,
     }) {
         Ok(read) => read.value,
         Err(error) => return unread(error.code),
@@ -363,7 +364,7 @@ pub async fn run_free_time_for_human(
     else {
         return Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         });
     };
     if !ctx
@@ -373,7 +374,7 @@ pub async fn run_free_time_for_human(
     {
         return Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         });
     }
     let window = model
@@ -485,8 +486,15 @@ pub async fn run_free_time_for_human(
     };
     let mut charges = StepChargeTally::default();
     let response = match call_as_step(&step_ctx, model.backend, model.guard, request).await {
-        Ok(StepOutcome::Finished { response, .. }) => {
-            charges.record_terminal_metered(ctx, attempt_id, step_hash, &response.usage)?;
+        Ok(StepOutcome::Finished {
+            response, binding, ..
+        }) => {
+            charges.record_terminal_metered(
+                ctx,
+                binding.attempt_id,
+                binding.step_hash,
+                &response.usage,
+            )?;
             response
         }
         Ok(StepOutcome::Trapped { .. }) => {
@@ -540,6 +548,6 @@ pub async fn run_free_time_for_human(
     )?;
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
-        step_hashes: charges.step_hashes.clone(),
+        step_bindings: charges.step_bindings.clone(),
     })
 }

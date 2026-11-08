@@ -21,6 +21,7 @@ impl crate::vault::Vault {
             own_owner_authority: false,
             records_cover: Default::default(),
             judged_at: None,
+            read_filter: None,
         }
     }
 
@@ -57,6 +58,7 @@ impl crate::vault::Vault {
             own_owner_authority: false,
             records_cover: Default::default(),
             judged_at: None,
+            read_filter: None,
         }
     }
 }
@@ -262,6 +264,15 @@ impl<'a> ScopedRead<'a> {
         let now = self.vault.instant_in_txn(txn)?.secs();
         if now < claims.issued_at || now >= claims.expires_at {
             return Ok(false);
+        }
+        if let Some(share) = &claims.share_ref {
+            let share = EntityId::from_hex(share)?;
+            let holder = EntityId::from_hex(&claims.holder_ref)?;
+            if crate::share::live_share_for_holder_in_txn(self.vault, txn, &share, &holder, now)?
+                .is_none()
+            {
+                return Ok(false);
+            }
         }
         // The shared view of this snapshot's fold: a copy of the fold costs
         // as much as the vault has agents, and this runs once per candidate.
