@@ -22,6 +22,12 @@ pub enum AnnotationLocator {
         char_start: u64,
         char_end: u64,
     },
+    DocxStory {
+        scope: oneiron_docedit::docx_body::DocxStoryScope,
+        para_path: String,
+        char_start: u64,
+        char_end: u64,
+    },
     Pptx {
         slide: u64,
         shape_id: String,
@@ -33,6 +39,17 @@ pub enum AnnotationLocator {
     },
     /// A span over a plain-text file's whole decoded text (FIX 7905).
     Text {
+        char_start: u64,
+        char_end: u64,
+    },
+    /// A span over one code file's whole decoded text (FIX 7905): `commit`
+    /// is the code artifact's repo_ref commit (40 lowercase hex), `path`
+    /// the file's path in that snapshot and `file_hash` its content hash
+    /// (64 lowercase hex), so the words read from those exact bytes.
+    Code {
+        commit: String,
+        path: String,
+        file_hash: String,
         char_start: u64,
         char_end: u64,
     },
@@ -49,6 +66,12 @@ impl TryFrom<&AnnotationLocator> for Locator {
                 char_start,
                 char_end,
             } => Self::docx(para_path.clone(), *char_start, *char_end),
+            AnnotationLocator::DocxStory {
+                scope,
+                para_path,
+                char_start,
+                char_end,
+            } => Self::docx_story(scope.clone(), para_path.clone(), *char_start, *char_end),
             AnnotationLocator::Pptx { slide, shape_id } => Self::pptx(*slide, shape_id.clone()),
             AnnotationLocator::Html {
                 part_id,
@@ -59,6 +82,19 @@ impl TryFrom<&AnnotationLocator> for Locator {
                 char_start,
                 char_end,
             } => Self::text(*char_start, *char_end),
+            AnnotationLocator::Code {
+                commit,
+                path,
+                file_hash,
+                char_start,
+                char_end,
+            } => Self::code(
+                commit.clone(),
+                path.clone(),
+                file_hash.clone(),
+                *char_start,
+                *char_end,
+            ),
         }
     }
 }
@@ -75,6 +111,17 @@ impl From<&Locator> for AnnotationLocator {
                 char_start,
                 char_end,
             } => Self::Docx {
+                para_path: para_path.clone(),
+                char_start: *char_start,
+                char_end: *char_end,
+            },
+            Locator::DocxStory {
+                scope,
+                para_path,
+                char_start,
+                char_end,
+            } => Self::DocxStory {
+                scope: scope.clone(),
                 para_path: para_path.clone(),
                 char_start: *char_start,
                 char_end: *char_end,
@@ -99,6 +146,19 @@ impl From<&Locator> for AnnotationLocator {
                 char_start: *char_start,
                 char_end: *char_end,
             },
+            Locator::Code {
+                commit,
+                path,
+                file_hash,
+                char_start,
+                char_end,
+            } => Self::Code {
+                commit: commit.clone(),
+                path: path.clone(),
+                file_hash: file_hash.clone(),
+                char_start: *char_start,
+                char_end: *char_end,
+            },
         }
     }
 }
@@ -108,12 +168,21 @@ impl From<&Locator> for AnnotationLocator {
 pub struct ArtifactUnitsRequest {
     pub artifact_ref: String,
     /// The head when absent. This reads version bytes, not a live body frontier.
+    /// A code artifact's one anchor version is `CODE_ANCHOR_VERSION` (0).
     #[serde(default)]
     pub version: Option<u64>,
+    /// Code artifacts only: the snapshot file whose lines to list, each with
+    /// its words. Absent, a code artifact lists one whole-file unit per
+    /// readable text file, with a null quote: a code file's words are read
+    /// by pin or with `path`. Ignored for blob artifacts.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// A unit's locator and the text it actually holds. A null quote means the
-/// place has no readable text or its identity is ambiguous; it cannot be pinned.
+/// place has no readable text or its identity is ambiguous; it cannot be
+/// pinned. A code artifact's whole-file unit is the exception: its quote is
+/// null and a pin reads its words.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ArtifactUnitView {
     pub locator: AnnotationLocator,

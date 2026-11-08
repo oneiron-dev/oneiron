@@ -138,9 +138,10 @@ const STALE_PINS_FIELD: &str = "stale_pins";
 enum PostDirect {
     /// The TASK landed: its receipt, its lifecycle kept beside it.
     Created(Box<TaskCallReceipt>),
-    /// An earlier landing of the same post: its assignee, and the receipt
-    /// the first landing kept.
-    Replay(Option<TaskAssignee>, Option<String>),
+    /// An earlier landing of the same post: its assignee, the due time it
+    /// watches, if it is a watch TASK, and the receipt the first landing
+    /// kept.
+    Replay(Option<TaskAssignee>, Option<u64>, Option<String>),
     Gated,
 }
 
@@ -217,8 +218,9 @@ fn stamp_copy_fields(
 
 /// The digest one post's request binds: the actor, the key, the brief,
 /// every routed field and `parent_ref`, the parent it files under
-/// (DOOR-113). A replay under the same key with any other request is
-/// refused, as an ask's is.
+/// (DOOR-113), its due time (FIX 4749) and whether it is a watch (FIX
+/// 22121). A replay under the same key with any other request is refused,
+/// as an ask's is.
 fn request_digest(
     actor: EntityId,
     key: &str,
@@ -234,6 +236,8 @@ fn request_digest(
         post.ttl,
         &post.label,
         parent_ref,
+        post.due_at,
+        post.watch,
     ))
     .map_err(|_| MemoryError::bad_request("task post does not encode"))?;
     let mut hasher = blake3::Hasher::new();
@@ -259,8 +263,8 @@ pub(super) fn brief_type_ref_in(
 }
 
 /// The create spec one post validates and mints as: a standard task, with
-/// the brief's resolved stamp and its project's tree to place against, and
-/// the parent it files under.
+/// the brief's resolved stamp and its project's tree to place against, the
+/// parent it files under, its due time, and whether it is a watch.
 fn create_spec_of(
     post: &TaskPost,
     owner: EntityId,
@@ -274,7 +278,8 @@ fn create_spec_of(
         Some(now),
     )
     .with_kind(TaskKind::Standard)
-    .with_assignee(post.assignee);
+    .with_assignee(post.assignee)
+    .with_watch(post.watch);
     if let Some(ttl) = post.ttl {
         spec = spec.with_ttl(ttl);
     }
@@ -283,6 +288,9 @@ fn create_spec_of(
     }
     if let Some(parent_ref) = post.parent_ref {
         spec = spec.with_parent_ref(parent_ref);
+    }
+    if let Some(due_at) = post.due_at {
+        spec = spec.with_due_at(due_at);
     }
     spec.brief = Some(post.brief.clone());
     spec
@@ -414,6 +422,8 @@ impl Memory<'_> {
                 ttl: spec.ttl,
                 label: spec.label.clone(),
                 parent_ref: spec.parent_ref,
+                due_at: spec.due_at,
+                watch: spec.watch,
             }),
         )?;
         let landed = receipt.related.iter().find_map(|handle| match handle {
@@ -577,7 +587,7 @@ impl Memory<'_> {
                 return if provenance_digest(&body.provenance) == Some(digest) {
                     let kept =
                         lifecycle_receipt::replayed_in(self.vault(), &*wtxn, receipt_id.clone())?;
-                    Ok(PostDirect::Replay(body.assignee, kept))
+                    Ok(PostDirect::Replay(body.assignee, body.watch_due_at(), kept))
                 } else {
                     Err(changed_arguments())
                 };
@@ -673,7 +683,7 @@ impl Memory<'_> {
                 self.vault().store.notify_attempt_observers();
                 Ok(*receipt)
             }
-            PostDirect::Replay(assignee, kept) => {
+            PostDirect::Replay(assignee, watch, kept) => {
                 lifecycle.outcome = "replayed".to_owned();
                 lifecycle
                     .fields
@@ -682,7 +692,7 @@ impl Memory<'_> {
                     handle: TaskHandle::Task { task_ref },
                     related: Vec::new(),
                     outcome: TaskOutcome::Created {
-                        route: self.replayed_route(task_ref, assignee)?,
+                        route: self.replayed_route(task_ref, assignee, watch)?,
                     },
                     receipt_ref: kept,
                     lifecycle: Some(lifecycle),
@@ -711,12 +721,17 @@ impl Memory<'_> {
     }
 
     /// The route an earlier landing of this post took, as far as this node
-    /// can still name it.
+    /// can still name it: a watch TASK's (`watch`, its due time) queued no
+    /// work (FIX 22121).
     fn replayed_route(
         &self,
         task_ref: EntityId,
         assignee: Option<TaskAssignee>,
+        watch: Option<u64>,
     ) -> MemoryResult<Option<TaskRouteOutcome>> {
+        if let Some(due_at) = watch {
+            return Ok(Some(TaskRouteOutcome::WatchTick { due_at }));
+        }
         Ok(match assignee {
             None | Some(TaskAssignee::Dreamer) => {
                 crate::attempt_queue::AttemptQueue::new(self.vault())

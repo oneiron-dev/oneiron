@@ -81,9 +81,9 @@ pub use cut_audit::{
 };
 pub use measurement::{
     EstimateGap, EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalFamilySummary, EvalLegRecord,
-    EvalMeasurement, EvalMeasurementRequest, FloorSlicePolicy, JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS,
-    MeasurementMethodPin, MeasurementState, MeasurementUnavailable, ScoreDirection,
-    eval_seat_canary,
+    EvalMeasurement, EvalMeasurementRequest, EvalServingOffer, FloorSlicePolicy, JUDGE_SCORE_AXIS,
+    JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState, MeasurementUnavailable,
+    ScoreDirection, eval_seat_canary,
 };
 pub use repair_task::{
     EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,

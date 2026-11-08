@@ -17,6 +17,7 @@ mod outcome;
 pub(super) mod session;
 mod wait;
 
+use outcome::completed;
 pub(super) use outcome::{SavedOutcome, saved_producers};
 pub use wait::VerbHookWaitStatus;
 pub(super) use wait::status as wait_status;
@@ -256,6 +257,7 @@ pub(super) fn retry(
                           invocation"
                     .to_owned(),
                 receipt_ref: None,
+                hook_notice: None,
             }));
         }
         // A consumed-but-unfinished read can resume without repeating a write.
@@ -380,27 +382,6 @@ pub(super) fn used_error() -> Error {
 /// Whether `stop` is the Skipped a used answer ends a call with.
 pub(super) fn is_used(stop: &VerbHookStop) -> bool {
     matches!(stop, VerbHookStop::Skipped { reason, .. } if reason == USED)
-}
-
-/// The stop a retry of a drained call gets: what the call returned.
-fn completed(invocation: InvocationId, outcome: &SavedOutcome) -> Result<VerbHookStop> {
-    Ok(match outcome {
-        SavedOutcome::Ok { result, .. } => VerbHookStop::Completed {
-            invocation: invocation.to_hex(),
-            result: serde_json::from_str(result)
-                .map_err(|_| Error::CorruptedIndex("verb hook ask outcome"))?,
-        },
-        SavedOutcome::Err {
-            code,
-            message,
-            receipt,
-        } => VerbHookStop::CompletedWithError {
-            invocation: invocation.to_hex(),
-            code: code.clone(),
-            message: message.clone(),
-            receipt_ref: receipt.clone(),
-        },
-    })
 }
 
 /// Opens the hook's ask as its author and saves the stopped call, with the

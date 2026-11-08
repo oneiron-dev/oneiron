@@ -59,6 +59,7 @@ use crate::edit::verbs::numbering::NumberingChange;
 use crate::edit::verbs::page_setup::{
     ColumnLayout, PageMargins, PageSetupPatch, PageSize, SectionTarget,
 };
+use crate::edit::verbs::story_cells::StoryCellAddress;
 use crate::edit::verbs::table_ops::{TableInsertPosition, TableOp};
 use crate::edit::{
     BlockSpec, CellFormattingPatch, ContentFragment, DataBinding, EditStep, EditTransaction,
@@ -875,6 +876,9 @@ pub enum Op {
     /// `validate_schema`). Comments are annotations, not tracked changes.
     CommentCreate {
         target: NodeId,
+        /// Omitted for the main body; otherwise the exact native story.
+        #[serde(default)]
+        scope: Option<StoryCellScopeWire>,
         expect: String,
         /// 1-based copy of `expect` to anchor when the quote repeats.
         #[serde(default)]
@@ -916,6 +920,45 @@ pub enum Op {
         #[serde(default)]
         rationale: Option<String>,
     },
+    /// Edit one paragraph within a comment story as marked runs (§17.13.4).
+    /// Mirrors `EditStep::EditCommentRuns`. `comment_id` must be non-empty;
+    /// `target` is the story-local paragraph id; `expect` is the current-text
+    /// precondition; `content` is the v4 inline list (same shape as a paragraph
+    /// replace). Empty content empties the paragraph; new runs carry the exact
+    /// six marks and land as Normal annotation text in both outer modes, never
+    /// as a tracked redline in comments.xml.
+    EditCommentRuns {
+        comment_id: String,
+        target: NodeId,
+        expect: String,
+        content: Vec<Inline>,
+        #[serde(default)]
+        semantic_hash: Option<String>,
+        #[serde(default)]
+        rationale: Option<String>,
+    },
+    /// Edit one table cell's FIRST-paragraph text within a header/footer,
+    /// footnote/endnote, or comment story. Mirrors
+    /// `EditStep::EditStoryCell`. `scope` names the actual story (the same
+    /// object shape as the wrapper `DocxStoryScope`: header/footer with
+    /// `part_name` plus `band`, footnote/endnote/comment with `id`);
+    /// `target` is the story-local table id (never a body id — story `tbl_n`
+    /// ids collide with body `tbl_n` and cross-story); `row_index`/`col_index`
+    /// are the logical grid address; `paragraph` selects an exact paragraph
+    /// inside that cell (absent means FIRST); `text` replaces only that paragraph.
+    EditStoryCell {
+        scope: StoryCellScopeWire,
+        target: NodeId,
+        row_index: usize,
+        col_index: usize,
+        #[serde(default)]
+        paragraph: Option<NodeId>,
+        text: String,
+        #[serde(default)]
+        semantic_hash: Option<String>,
+        #[serde(default)]
+        rationale: Option<String>,
+    },
     /// Insert a footnote or endnote (§17.11). Mirrors `EditStep::InsertNote`.
     /// `note_kind` is the wire string `"footnote"` | `"endnote"` (validated and
     /// mapped to `NoteKind`; an unknown value is refused, never defaulted).
@@ -951,6 +994,24 @@ pub enum Op {
         note_id: String,
         /// `"footnote"` | `"endnote"`.
         note_kind: String,
+        #[serde(default)]
+        rationale: Option<String>,
+    },
+    /// Edit one paragraph within a footnote/endnote story as marked runs
+    /// (§17.11). Mirrors `EditStep::EditNoteRuns`. `note_id` must be
+    /// non-empty; `note_kind` is `"footnote"` | `"endnote"`; `target` is the
+    /// story-local paragraph id; `expect` is the current-text precondition;
+    /// `content` is the v4 inline list (same shape as a paragraph replace).
+    /// Empty content empties the paragraph; new runs carry the exact six marks.
+    EditNoteRuns {
+        note_id: String,
+        /// `"footnote"` | `"endnote"`.
+        note_kind: String,
+        target: NodeId,
+        expect: String,
+        content: Vec<Inline>,
+        #[serde(default)]
+        semantic_hash: Option<String>,
         #[serde(default)]
         rationale: Option<String>,
     },
@@ -1018,6 +1079,10 @@ pub enum Op {
         target: NodeId,
         expect: String,
         content: Vec<Inline>,
+        /// Treat each replacement run's six text marks as an exact set.
+        /// Absent/false keeps ordinary inherited formatting.
+        #[serde(default)]
+        exact_marks: bool,
         #[serde(default)]
         semantic_hash: Option<String>,
         #[serde(default)]
@@ -1030,6 +1095,10 @@ pub enum Op {
         target: NodeId,
         expect: String,
         content: Vec<Inline>,
+        /// Treat each replacement run's six text marks as an exact set.
+        /// Absent/false keeps ordinary inherited formatting.
+        #[serde(default)]
+        exact_marks: bool,
         #[serde(default)]
         semantic_hash: Option<String>,
         #[serde(default)]
@@ -1455,6 +1524,77 @@ pub enum TableOpWire {
         col_index: usize,
         text: String,
     },
+}
+
+/// Wire form of a native story scope (`EditStoryCell` and `CommentCreate`). Tagged by
+/// `kind`; the same object shape as the wrapper `DocxStoryScope`, so the
+/// projection forwards its scope verbatim. `band` is the
+/// `"default"` | `"first"` | `"even"` token, refused at translate when unknown
+/// (never defaulted); `part_name`/`id` must be non-empty (refused in
+/// `validate_schema`).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StoryCellScopeWire {
+    /// A header story: part name plus the exact band it must carry.
+    Header { part_name: String, band: String },
+    /// A footer story: part name plus the exact band it must carry.
+    Footer { part_name: String, band: String },
+    /// A footnote story by `w:id`.
+    Footnote { id: String },
+    /// An endnote story by `w:id`.
+    Endnote { id: String },
+    /// A comment story by `w:id`.
+    Comment { id: String },
+}
+
+fn validate_story_scope(op_index: usize, scope: &StoryCellScopeWire) -> Result<(), SchemaError> {
+    match scope {
+        StoryCellScopeWire::Header { part_name, .. }
+        | StoryCellScopeWire::Footer { part_name, .. } => {
+            if part_name.trim().is_empty() {
+                return Err(SchemaError::HeaderFooterEmptyField {
+                    op_index,
+                    field: "scope.part_name",
+                });
+            }
+        }
+        StoryCellScopeWire::Footnote { id } | StoryCellScopeWire::Endnote { id } => {
+            if id.trim().is_empty() {
+                return Err(SchemaError::NoteMissingId { op_index });
+            }
+        }
+        StoryCellScopeWire::Comment { id } => {
+            if id.trim().is_empty() {
+                return Err(SchemaError::CommentMissingId { op_index });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn story_scope_address(
+    op_index: usize,
+    scope: StoryCellScopeWire,
+) -> Result<StoryCellAddress, AdapterError> {
+    Ok(match scope {
+        StoryCellScopeWire::Header { part_name, band } => StoryCellAddress::HeaderFooter {
+            story: StoryRef::Header(part_name),
+            band: parse_header_footer_kind(op_index, &band)?,
+        },
+        StoryCellScopeWire::Footer { part_name, band } => StoryCellAddress::HeaderFooter {
+            story: StoryRef::Footer(part_name),
+            band: parse_header_footer_kind(op_index, &band)?,
+        },
+        StoryCellScopeWire::Footnote { id } => StoryCellAddress::Note {
+            kind: NoteKind::Footnote,
+            id,
+        },
+        StoryCellScopeWire::Endnote { id } => StoryCellAddress::Note {
+            kind: NoteKind::Endnote,
+            id,
+        },
+        StoryCellScopeWire::Comment { id } => StoryCellAddress::Comment { id },
+    })
 }
 
 fn default_after() -> String {
@@ -2368,6 +2508,7 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
         "comment_create",
         &[
             "target",
+            "scope",
             "expect",
             "occurrence",
             "body",
@@ -2383,6 +2524,30 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
     ("comment_resolve", &["comment_id", "done", "rationale"]),
     ("comment_delete", &["comment_id", "rationale"]),
     (
+        "edit_comment_runs",
+        &[
+            "comment_id",
+            "target",
+            "expect",
+            "content",
+            "semantic_hash",
+            "rationale",
+        ],
+    ),
+    (
+        "edit_story_cell",
+        &[
+            "scope",
+            "target",
+            "row_index",
+            "col_index",
+            "paragraph",
+            "text",
+            "semantic_hash",
+            "rationale",
+        ],
+    ),
+    (
         "insert_note",
         &[
             "target",
@@ -2395,6 +2560,18 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
     ),
     ("edit_note", &["note_id", "note_kind", "body", "rationale"]),
     ("delete_note", &["note_id", "note_kind", "rationale"]),
+    (
+        "edit_note_runs",
+        &[
+            "note_id",
+            "note_kind",
+            "target",
+            "expect",
+            "content",
+            "semantic_hash",
+            "rationale",
+        ],
+    ),
     (
         "set_page_setup",
         &[
@@ -2432,6 +2609,7 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
             "target",
             "expect",
             "content",
+            "exact_marks",
             "semantic_hash",
             "rationale",
         ],
@@ -2443,6 +2621,7 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
             "target",
             "expect",
             "content",
+            "exact_marks",
             "semantic_hash",
             "rationale",
         ],
@@ -2839,8 +3018,8 @@ pub enum SchemaError {
     EmptyPageSetup { op_index: usize },
 
     /// An `edit_header` / `edit_footer` op carried an empty `header_part` /
-    /// `footer_part` or `expect`. Without the part name the story is
-    /// unaddressable; without `expect` the edit has no anchor.
+    /// `footer_part`, or a blank `expect` without a semantic hash. The part names
+    /// the story; a blank substring expectation needs the existing content guard.
     HeaderFooterEmptyField {
         op_index: usize,
         field: &'static str,
@@ -3628,9 +3807,12 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
                     }
                 }
             }
-            Op::CommentCreate { body, .. } => {
+            Op::CommentCreate { body, scope, .. } => {
                 if body.trim().is_empty() {
                     return Err(SchemaError::CommentEmptyBody { op_index });
+                }
+                if let Some(scope) = scope {
+                    validate_story_scope(op_index, scope)?;
                 }
             }
             Op::CommentReply {
@@ -3650,6 +3832,21 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
                     return Err(SchemaError::CommentMissingId { op_index });
                 }
             }
+            // `expect` needs no emptiness gate here: a blank expectation is
+            // the guarded empty-paragraph fill the projection sends with the
+            // actual semantic hash, and apply-time matching is the same
+            // substring law the header/footer story edits use.
+            Op::EditCommentRuns { comment_id, .. } => {
+                if comment_id.trim().is_empty() {
+                    return Err(SchemaError::CommentMissingId { op_index });
+                }
+            }
+            // `text` needs no emptiness gate (an empty cell text is a valid
+            // clearing edit, as on the body cell path); `row_index`/`col_index`
+            // are validated against the live table in the verb. The `band`
+            // token is refused when unknown at translate, the same edge as the
+            // header/footer kind tokens.
+            Op::EditStoryCell { scope, .. } => validate_story_scope(op_index, scope)?,
             Op::InsertNote { expect, body, .. } => {
                 if expect.trim().is_empty() {
                     return Err(SchemaError::NoteEmptyExpect { op_index });
@@ -3667,6 +3864,15 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
                 }
             }
             Op::DeleteNote { note_id, .. } => {
+                if note_id.trim().is_empty() {
+                    return Err(SchemaError::NoteMissingId { op_index });
+                }
+            }
+            // `expect` needs no emptiness gate here: a blank expectation is
+            // the guarded empty-paragraph fill the projection sends with the
+            // actual semantic hash, and apply-time matching is the same
+            // substring law the header/footer story edits use.
+            Op::EditNoteRuns { note_id, .. } => {
                 if note_id.trim().is_empty() {
                     return Err(SchemaError::NoteMissingId { op_index });
                 }
@@ -3702,6 +3908,7 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
             Op::EditHeader {
                 header_part,
                 expect,
+                semantic_hash,
                 ..
             } => {
                 if header_part.trim().is_empty() {
@@ -3710,7 +3917,7 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
                         field: "header_part",
                     });
                 }
-                if expect.trim().is_empty() {
+                if expect.trim().is_empty() && semantic_hash.is_none() {
                     return Err(SchemaError::HeaderFooterEmptyField {
                         op_index,
                         field: "expect",
@@ -3720,6 +3927,7 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
             Op::EditFooter {
                 footer_part,
                 expect,
+                semantic_hash,
                 ..
             } => {
                 if footer_part.trim().is_empty() {
@@ -3728,7 +3936,7 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
                         field: "footer_part",
                     });
                 }
-                if expect.trim().is_empty() {
+                if expect.trim().is_empty() && semantic_hash.is_none() {
                     return Err(SchemaError::HeaderFooterEmptyField {
                         op_index,
                         field: "expect",
@@ -5023,6 +5231,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
         }
         Op::CommentCreate {
             target,
+            scope,
             expect,
             occurrence,
             body,
@@ -5031,6 +5240,9 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             rationale,
         } => Ok(EditStep::CommentCreate {
             block_id: target,
+            story: scope
+                .map(|scope| story_scope_address(op_index, scope))
+                .transpose()?,
             expect,
             occurrence,
             semantic_hash,
@@ -5065,6 +5277,43 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             comment_id,
             rationale,
         }),
+        Op::EditCommentRuns {
+            comment_id,
+            target,
+            expect,
+            content,
+            semantic_hash,
+            rationale,
+        } => Ok(EditStep::EditCommentRuns {
+            comment_id,
+            block_id: target,
+            expect,
+            semantic_hash,
+            content: v4_inlines_to_paragraph_content(op_index, &content)?,
+            rationale,
+        }),
+        Op::EditStoryCell {
+            scope,
+            target,
+            row_index,
+            col_index,
+            paragraph,
+            text,
+            semantic_hash,
+            rationale,
+        } => {
+            let story = story_scope_address(op_index, scope)?;
+            Ok(EditStep::EditStoryCell {
+                story,
+                block_id: target,
+                row_index,
+                col_index,
+                paragraph,
+                text,
+                semantic_hash,
+                rationale,
+            })
+        }
         Op::InsertNote {
             target,
             expect,
@@ -5098,6 +5347,23 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
         } => Ok(EditStep::DeleteNote {
             note_id,
             note_kind: parse_note_kind(op_index, &note_kind)?,
+            rationale,
+        }),
+        Op::EditNoteRuns {
+            note_id,
+            note_kind,
+            target,
+            expect,
+            content,
+            semantic_hash,
+            rationale,
+        } => Ok(EditStep::EditNoteRuns {
+            note_id,
+            note_kind: parse_note_kind(op_index, &note_kind)?,
+            block_id: target,
+            expect,
+            semantic_hash,
+            content: v4_inlines_to_paragraph_content(op_index, &content)?,
             rationale,
         }),
         Op::SetPageSetup {
@@ -5160,6 +5426,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             target,
             expect,
             content,
+            exact_marks,
             semantic_hash,
             rationale,
         } => Ok(EditStep::EditHeader {
@@ -5168,6 +5435,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             expect,
             semantic_hash,
             content: v4_inlines_to_paragraph_content(op_index, &content)?,
+            exact_marks,
             rationale,
         }),
         Op::EditFooter {
@@ -5175,6 +5443,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             target,
             expect,
             content,
+            exact_marks,
             semantic_hash,
             rationale,
         } => Ok(EditStep::EditFooter {
@@ -5183,6 +5452,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             expect,
             semantic_hash,
             content: v4_inlines_to_paragraph_content(op_index, &content)?,
+            exact_marks,
             rationale,
         }),
         Op::CreateHeader { kind, rationale } => Ok(EditStep::CreateHeader {
