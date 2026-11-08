@@ -7,7 +7,10 @@ use serde_json::{Value, json};
 use super::{StalwartClient, StalwartMailbox, array, invalid, method_result, string};
 use crate::channel_identity_provider::EmailThreadHeaders;
 use crate::channel_identity_provider::native_mail::canonical_recipient;
-use crate::outbound::{OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink};
+use crate::outbound::{
+    EngineSendId, OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
+    SENT_LOOKUP_TIMEOUT, SentLookup, SentLookupTarget,
+};
 use crate::{EntityId, Result};
 
 pub const NATIVE_MAIL_MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
@@ -123,22 +126,19 @@ impl OutboundExecutionSink for StalwartSendSink<'_> {
             }
             let mailbox = self.client.mailbox(identity, self.sender_address)?;
             // Email's common contract correctly does not claim provider-native
-            // idempotency. This Message-ID is only a draft/reconciliation key;
-            // ambiguous sends still remain ambiguous in the ordinary ledger.
+            // idempotency. This Message-ID is the draft/reconciliation key and
+            // the id a lookup asks for; a connector-send TASK's send derives
+            // it from its engine send id, the same on every machine (FIX
+            // 4747).
             let key = request
-                .intent
-                .idempotency_key
-                .as_deref()
+                .engine_send_id
+                .map(EngineSendId::as_str)
+                .or(request.intent.idempotency_key.as_deref())
                 .unwrap_or(request.intent_ref);
             if key.trim().is_empty() {
                 return Err(invalid("native mail send lacks a logical send reference"));
             }
-            let message_id = format!(
-                "{}@{}",
-                blake3::hash(key.as_bytes()).to_hex(),
-                self.client.config.domain
-            );
-            Ok((mailbox, message_id))
+            Ok((mailbox, self.client.native_message_id(key)))
         };
         let (mailbox, message_id) = match prepare() {
             Ok(prepared) => prepared,
@@ -152,9 +152,112 @@ impl OutboundExecutionSink for StalwartSendSink<'_> {
             None,
         )
     }
+
+    /// FIX 4747: the submission of this sender's draft that carries the
+    /// engine send id's Message-ID.
+    fn lookup_sent(
+        &mut self,
+        engine_send_id: &EngineSendId,
+        target: &SentLookupTarget<'_>,
+    ) -> SentLookup {
+        if target.intent.channel != "email"
+            || target.intent.verb != "send"
+            || target
+                .channel_identity_ref
+                .is_some_and(|identity| identity != self.sender)
+        {
+            return SentLookup::CannotTell;
+        }
+        match self.client.mailbox(self.sender, self.sender_address) {
+            Ok(mailbox) => self.client.look_up_submission(
+                &mailbox,
+                &self.client.native_message_id(engine_send_id.as_str()),
+            ),
+            Err(_) => SentLookup::CannotTell,
+        }
+    }
 }
 
 impl StalwartClient {
+    /// The Message-ID of the native mail send keyed `send_key`, the send's
+    /// logical reference or its engine send id: its draft is found by it and
+    /// its submission looked up by it.
+    fn native_message_id(&self, send_key: &str) -> String {
+        format!(
+            "{}@{}",
+            blake3::hash(send_key.as_bytes()).to_hex(),
+            self.config.domain
+        )
+    }
+
+    /// Whether the served send keyed `send_key` from `identity`'s mailbox at
+    /// `address` went (FIX 4747): the submission of the draft its
+    /// Message-ID names. Reads ids only, never a message.
+    pub fn look_up_served_send(
+        &self,
+        identity: crate::EntityId,
+        address: &str,
+        send_key: &str,
+    ) -> SentLookup {
+        if send_key.trim().is_empty() {
+            return SentLookup::CannotTell;
+        }
+        match self.mailbox(identity, address) {
+            Ok(mailbox) => self.look_up_submission(&mailbox, &self.native_message_id(send_key)),
+            Err(_) => SentLookup::CannotTell,
+        }
+    }
+
+    /// The submission of the one draft carrying `message_id` (FIX 4747):
+    /// `Email/query` by the Message-ID header, then `EmailSubmission/query`
+    /// by that email, each bounded by [`SENT_LOOKUP_TIMEOUT`]. Engine call
+    /// (CALLS, FIX 4747): no such email, or an email no submission sent, is
+    /// not sent; a query that failed, or two emails under one id, cannot
+    /// tell.
+    fn look_up_submission(&self, mailbox: &StalwartMailbox, message_id: &str) -> SentLookup {
+        let Ok(query) = self.call_within(
+            "Email/query",
+            json!({
+                "accountId": &mailbox.account_id,
+                "filter": {"header": ["Message-ID", message_id]}, "limit": 2
+            }),
+            SENT_LOOKUP_TIMEOUT,
+        ) else {
+            return SentLookup::CannotTell;
+        };
+        let Ok(ids) = array(&query, "ids") else {
+            return SentLookup::CannotTell;
+        };
+        if ids.len() > 1 {
+            return SentLookup::CannotTell;
+        }
+        let Some(email_id) = ids.first() else {
+            return SentLookup::NotSent;
+        };
+        let Some(email_id) = email_id.as_str() else {
+            return SentLookup::CannotTell;
+        };
+        let Ok(previous) = self.call_within(
+            "EmailSubmission/query",
+            json!({
+                "accountId": &mailbox.account_id, "filter": {"emailIds": [email_id]}, "limit": 1
+            }),
+            SENT_LOOKUP_TIMEOUT,
+        ) else {
+            return SentLookup::CannotTell;
+        };
+        let Ok(ids) = array(&previous, "ids") else {
+            return SentLookup::CannotTell;
+        };
+        match ids.first().map(Value::as_str) {
+            None => SentLookup::NotSent,
+            Some(Some(id)) => SentLookup::Sent {
+                provider_ref: format!("stalwart:submission:{id}"),
+            },
+            Some(None) => SentLookup::CannotTell,
+        }
+    }
+
     /// Submits `message` from `identity`'s mailbox for a served send
     /// (OF-187), after the common dispatcher admitted it: the same draft and
     /// submission path as [`StalwartSendSink`], its Message-ID derived from
@@ -177,11 +280,7 @@ impl StalwartClient {
             Ok(mailbox) => mailbox,
             Err(_) => return OutboundExecutionOutcome::failed("native_mail_fields_or_binding"),
         };
-        let message_id = format!(
-            "{}@{}",
-            blake3::hash(send_key.as_bytes()).to_hex(),
-            self.config.domain
-        );
+        let message_id = self.native_message_id(send_key);
         self.submit(&mailbox, message, &message_id, headers, answered)
     }
 
