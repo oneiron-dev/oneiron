@@ -586,9 +586,51 @@ impl Vault {
         let row = self
             .pending_row(artifact_id, proposal_ref)?
             .ok_or(Error::EntityNotFound)?;
-        let outcome = if let Some(proposal) = row.edit_proposal()? {
-            if proposal.sheet_answers.is_some() {
-                self.settle_select_edit_proposal_made_by(
+        let Some(proposal) = row.edit_proposal()? else {
+            // A native output's row goes in the writer that settles it
+            // (FIX 20812).
+            return self.keep_native_output(
+                artifact_id,
+                &row,
+                consent,
+                actor,
+                occurred,
+                learned_at,
+            );
+        };
+        let outcome = if proposal.sheet_answers.is_some() {
+            self.settle_select_edit_proposal_made_by(
+                artifact_id,
+                &proposal,
+                row.made_by.as_ref(),
+                consent,
+                actor,
+                occurred,
+                learned_at,
+                row.delta_receipt.as_deref(),
+            )?
+        } else {
+            // A held answer whose units changed under it lands what is
+            // untouched and withdraws the rest (ARCH-0075 §4).
+            match self.split_typed_answers(
+                artifact_id,
+                &proposal,
+                row.retained_by,
+                row.made_by.as_ref(),
+                true,
+            )? {
+                Some(split) => self.keep_split(
+                    artifact_id,
+                    &proposal,
+                    split,
+                    row.made_by.as_ref(),
+                    consent,
+                    actor,
+                    occurred,
+                    learned_at,
+                    row.delta_receipt.as_deref(),
+                )?,
+                None => self.settle_select_edit_proposal_made_by(
                     artifact_id,
                     &proposal,
                     row.made_by.as_ref(),
@@ -597,42 +639,8 @@ impl Vault {
                     occurred,
                     learned_at,
                     row.delta_receipt.as_deref(),
-                )?
-            } else {
-                // A held answer whose units changed under it lands what is
-                // untouched and withdraws the rest (ARCH-0075 §4).
-                match self.split_typed_answers(
-                    artifact_id,
-                    &proposal,
-                    row.retained_by,
-                    row.made_by.as_ref(),
-                    true,
-                )? {
-                    Some(split) => self.keep_split(
-                        artifact_id,
-                        &proposal,
-                        split,
-                        row.made_by.as_ref(),
-                        consent,
-                        actor,
-                        occurred,
-                        learned_at,
-                        row.delta_receipt.as_deref(),
-                    )?,
-                    None => self.settle_select_edit_proposal_made_by(
-                        artifact_id,
-                        &proposal,
-                        row.made_by.as_ref(),
-                        consent,
-                        actor,
-                        occurred,
-                        learned_at,
-                        row.delta_receipt.as_deref(),
-                    )?,
-                }
+                )?,
             }
-        } else {
-            self.keep_native_output(artifact_id, &row, consent, actor, occurred, learned_at)?
         };
         self.drop_pending(artifact_id, proposal_ref)?;
         Ok(outcome)
@@ -651,44 +659,65 @@ impl Vault {
         let row = self
             .pending_row(artifact_id, proposal_ref)?
             .ok_or(Error::EntityNotFound)?;
-        let outcome = if let Some(proposal) = row.edit_proposal()? {
-            self.settle_discard_edit_proposal(
+        let Some(proposal) = row.edit_proposal()? else {
+            // A native output's row goes in the writer that settles it
+            // (FIX 20812).
+            return self.discard_native_output(
                 artifact_id,
-                &proposal,
+                &row,
                 consent,
                 actor,
                 reason,
                 learned_at,
-            )?
-        } else {
-            self.authorize_settle(consent, actor)?;
-            let reason = reason.trim();
-            let key = settlement_key_parts(artifact_id, proposal_ref);
-            self.with_write_txn_grouped(|wtxn| {
-                let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
-                if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
-                    return Err(already_settled(&existing));
-                }
-                let mut record = output_record(
-                    &row,
-                    SettleOutcomeKind::Discarded,
-                    (consent, actor),
-                    learned_at,
-                    (None, None),
-                    grant_ref,
-                );
-                record.reason = (!reason.is_empty()).then(|| reason.to_owned());
-                RECORD.put(&self.store, wtxn, &key, &record)?;
-                Ok(record)
-            })
-            .and_then(|record| {
-                Ok(SettleDiscardOutcome {
-                    receipt: settlement_receipt_record(*artifact_id, &record)?,
-                })
-            })?
+            );
         };
+        let outcome = self.settle_discard_edit_proposal(
+            artifact_id,
+            &proposal,
+            consent,
+            actor,
+            reason,
+            learned_at,
+        )?;
         self.drop_pending(artifact_id, proposal_ref)?;
         Ok(outcome)
+    }
+
+    /// Discards one waiting native output: its consume-once record, and
+    /// its row deleted and its body file released, in one writer.
+    fn discard_native_output(
+        &self,
+        artifact_id: &EntityId,
+        row: &PendingRow,
+        consent: &SettleConsent,
+        actor: WriteActor,
+        reason: &str,
+        learned_at: u64,
+    ) -> Result<SettleDiscardOutcome> {
+        self.authorize_settle(consent, actor)?;
+        let reason = reason.trim();
+        let key = settlement_key_parts(artifact_id, &row.proposal_ref);
+        let record = self.with_write_txn_grouped(|wtxn| {
+            let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
+            if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
+                return Err(already_settled(&existing));
+            }
+            let mut record = output_record(
+                row,
+                SettleOutcomeKind::Discarded,
+                (consent, actor),
+                learned_at,
+                (None, None),
+                grant_ref,
+            );
+            record.reason = (!reason.is_empty()).then(|| reason.to_owned());
+            RECORD.put(&self.store, wtxn, &key, &record)?;
+            self.drop_pending_in_txn(wtxn, artifact_id, &key)?;
+            Ok(record)
+        })?;
+        Ok(SettleDiscardOutcome {
+            receipt: settlement_receipt_record(*artifact_id, &record)?,
+        })
     }
 
     fn keep_native_output(
@@ -770,6 +799,9 @@ impl Vault {
             if let Some(stamp) = row.delta_receipt.as_deref() {
                 LINK.put(&self.store, wtxn, &key, &stamp.to_owned())?;
             }
+            // The row and its body file go with the settlement: a settled
+            // row never outlives it (FIX 20812).
+            self.drop_pending_in_txn(wtxn, artifact_id, &key)?;
             let reconciliation = VersionReconciliation::of(fork_parent, head.as_ref());
             Ok((version, record, reconciliation, hold))
         })?;
@@ -882,24 +914,27 @@ impl Vault {
         Ok(Some(row))
     }
 
-    /// Deletes one waiting row and releases the body file it names, in one
-    /// writer (FIX 20812).
+    /// Deletes one settled edit proposal's waiting row.
     fn drop_pending(&self, artifact_id: &EntityId, proposal_ref: &str) -> Result<()> {
         let key = settlement_key_parts(artifact_id, proposal_ref);
-        self.with_write_txn_grouped(|wtxn| {
-            if let Some(file) = PENDING
-                .get(&self.store, wtxn, &key)?
-                .and_then(|row| row.new_file)
-            {
-                body_file::release_pending_output_body_in_txn(
-                    &self.store,
-                    wtxn,
-                    artifact_id,
-                    &file,
-                )?;
-            }
-            PENDING.delete(&self.store, wtxn, &key).map(|_| ())
-        })
+        self.with_write_txn_grouped(|wtxn| self.drop_pending_in_txn(wtxn, artifact_id, &key))
+    }
+
+    /// Deletes the waiting row under `key` in `wtxn` and releases the body
+    /// file it names (FIX 20812).
+    fn drop_pending_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        artifact_id: &EntityId,
+        key: &(EntityId, [u8; 32]),
+    ) -> Result<()> {
+        if let Some(file) = PENDING
+            .get(&self.store, wtxn, key)?
+            .and_then(|row| row.new_file)
+        {
+            body_file::release_pending_output_body_in_txn(&self.store, wtxn, artifact_id, &file)?;
+        }
+        PENDING.delete(&self.store, wtxn, key).map(|_| ())
     }
 }
 
