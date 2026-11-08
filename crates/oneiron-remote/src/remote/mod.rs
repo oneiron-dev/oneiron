@@ -479,23 +479,26 @@ impl RemoteClient {
             .credential_headers()
             .map_err(|_| oneiron::FatalLlmError::Auth)?;
         let bytes = encode_request(bytes, &mut credential);
-        self.stream_agent()?
+        let request = self
+            .stream_agent()?
             .post(url)
             .timeout(REQUEST_TIMEOUT)
             .headers(credential)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .header("x-oneiron-budget-lease", lease.id())
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    oneiron::RetryableLlmError::Timeout.into()
-                } else {
-                    oneiron::RetryableLlmError::StreamCut.into()
-                }
-            })
+            .body(bytes);
+        if lease.has_dispatch_release() {
+            lease.check_dispatch_release()?;
+            lease.begin_physical_attempt();
+        }
+        request.send().await.map_err(|e| {
+            if e.is_timeout() {
+                oneiron::RetryableLlmError::Timeout.into()
+            } else {
+                oneiron::RetryableLlmError::StreamCut.into()
+            }
+        })
     }
 
     pub(crate) async fn llm_stream(
@@ -513,22 +516,25 @@ impl RemoteClient {
             .credential_headers()
             .map_err(|_| oneiron::FatalLlmError::Auth)?;
         let bytes = encode_request(bytes, &mut credential);
-        self.stream_agent()?
+        let request = self
+            .stream_agent()?
             .post(url)
             .headers(credential)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/x-ndjson")
             .header("x-oneiron-budget-lease", lease.id())
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    oneiron::RetryableLlmError::Timeout.into()
-                } else {
-                    oneiron::RetryableLlmError::StreamCut.into()
-                }
-            })
+            .body(bytes);
+        if lease.has_dispatch_release() {
+            lease.check_dispatch_release()?;
+            lease.begin_physical_attempt();
+        }
+        request.send().await.map_err(|e| {
+            if e.is_timeout() {
+                oneiron::RetryableLlmError::Timeout.into()
+            } else {
+                oneiron::RetryableLlmError::StreamCut.into()
+            }
+        })
     }
 
     /// The streaming agent the own-server LLM transport posts on. A served
