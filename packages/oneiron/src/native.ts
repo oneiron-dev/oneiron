@@ -96,6 +96,7 @@ selfGrantsAsk(input: unknown): unknown
 selfGrantsAsked(input: unknown): unknown
 vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
 selfGrantsAnswer(input: unknown): unknown
+vaultProactivityDigestGet(input: unknown): unknown
 vaultPersonasPreview(input: unknown): unknown
 vaultPersonasExport(input: unknown): unknown
 vaultPersonasEdit(input: unknown): unknown
@@ -702,7 +703,11 @@ vaultHooksChecks(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultHooksRegenDue(input: unknown): unknown
 vaultHooksRegenGet(input: unknown): unknown
+vaultHooksRegenHistory(input: unknown): unknown
+vaultHooksRegenRevert(input: unknown): unknown
+vaultHooksRegenRun(input: unknown): unknown
 vaultHooksRegenAdopt(input: unknown): unknown
+vaultHooksRegenCancel(input: unknown): unknown
 vaultArtifactsPublishApproval(input: unknown): unknown
 vaultArtifactsPublish(input: unknown): unknown
 vaultArtifactsRepoint(input: unknown): unknown
@@ -759,6 +764,8 @@ vaultCodeSessionModelHealCount(input: unknown): unknown
 vaultCodeCorrections(input: unknown): unknown
 vaultCodeStepEvidence(input: unknown): unknown
 vaultCodeTypeDiagnostics(input: unknown): unknown
+vaultCodeWaitsRebindPrepare(input: unknown): unknown
+vaultCodeWaitsRebind(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
 vaultCodeWaitsReceipt(input: unknown): unknown
 vaultResultsStatus(input: unknown): unknown
@@ -919,6 +926,7 @@ tasksAnswerForwardChallenge(input: unknown): unknown
 tasksAnswerForward(input: unknown): unknown
 tasksAnswerForwardStatus(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
+tasksOutcomesRouteCalibration(input: unknown): unknown
 vaultRoomsList(input: unknown): unknown
 vaultRoomsMessages(input: unknown): unknown
 vaultRoomsParticipants(input: unknown): unknown
@@ -1160,6 +1168,7 @@ vaultEsignSigningAct(input: unknown): unknown
 vaultEsignSigningPdf(input: unknown): unknown
 vaultEsignSigningImage(input: unknown): unknown
 vaultEsignSigningSignature(input: unknown): unknown
+vaultEsignSigningPreview(input: unknown): unknown
 vaultEsignSealGet(input: unknown): unknown
 vaultConversationsCreate(input: unknown): unknown
 vaultConversationsTurnsCreate(input: unknown): unknown
@@ -1292,6 +1301,8 @@ vaultTasksLinearProvenance(input: unknown): unknown
 selfRunAttach(input: unknown): unknown
 selfFoldsDescribe(input: unknown): unknown
 selfHistory(input: unknown): unknown
+selfHooksRegenAdopt(input: unknown): unknown
+selfHooksRegenGet(input: unknown): unknown
 vaultRunsReview(input: unknown): unknown
 vaultRunsSettle(input: unknown): unknown
 vaultRunsSettlement(input: unknown): unknown
@@ -1328,6 +1339,7 @@ vaultMailComplianceLog(input: unknown): unknown
 vaultMailSourcesSyncStatus(input: unknown): unknown
 vaultMailSourcesImportMbox(input: unknown): unknown
 vaultMailSourcesSync(input: unknown): unknown
+vaultMailSourcesSearch(input: unknown): unknown
 vaultMailInbox(input: unknown): unknown
 vaultMailThreadsRead(input: unknown): unknown
 vaultMailAttachmentsOpen(input: unknown): unknown
