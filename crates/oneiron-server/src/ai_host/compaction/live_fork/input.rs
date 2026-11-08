@@ -104,7 +104,7 @@ fn prefix_parts(prefix: &LlmRequest) -> Vec<PrefixPart<'_>> {
                 .map(move |(part, content)| PrefixPart {
                     at: PartAt { message, part },
                     text: match content {
-                        ContentPart::Text { text } => Some(text.as_str()),
+                        ContentPart::Text { text, .. } => Some(text.as_str()),
                         _ => None,
                     },
                 })
