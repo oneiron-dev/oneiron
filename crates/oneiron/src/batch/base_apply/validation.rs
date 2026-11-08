@@ -111,26 +111,70 @@ pub(super) fn validate_put_type(
     Ok(entity_type)
 }
 
+/// The ids this batch writes a `DerivedFrom` edge from: a text put among
+/// them names its sources in that edge, whatever its put names.
+pub(super) fn derived_from_edge_sources(ops: &[BatchOp]) -> BTreeSet<EntityId> {
+    ops.iter()
+        .filter_map(|op| match op {
+            BatchOp::Edge {
+                src,
+                kind: crate::edge::EdgeKind::DerivedFrom,
+                ..
+            }
+            | BatchOp::PublicEdgeWithCreatedAt {
+                src,
+                kind: crate::edge::EdgeKind::DerivedFrom,
+                ..
+            }
+            | BatchOp::EdgeWithCreatedAt {
+                src,
+                kind: crate::edge::EdgeKind::DerivedFrom,
+                ..
+            } => Some(*src),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether a put of `entity_type` at `id` births a source-free ASSET_TEXT
+/// (FIX 8741): a text whose put names no `sources`, in a batch that writes no
+/// `DerivedFrom` edge from it (`derived`). A text that batch derives without
+/// naming its sources at the put (a promotion replay, a raw edge op) is no
+/// source-free birth; it keeps the reading such a text had, unplaced.
+pub(super) fn source_free_text_birth(
+    entity_type: u8,
+    id: &EntityId,
+    sources: Option<&[EntityId]>,
+    derived: &BTreeSet<EntityId>,
+) -> bool {
+    entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
+        && sources.is_none()
+        && !derived.contains(id)
+}
+
 /// The FACET a NOTE, ASSET, CLAIM, EVENT or TURN put at `id` is born under.
 /// A CLAIM carries its facet in its body, so its birth edge follows the body's
 /// `scopeFacetId` (FIX 7757); a NOTE, ASSET, EVENT or TURN uses the batch mask,
 /// else the vault default (FIX 7774 keeps the TASK exception). An ASSET_TEXT put
 /// with the `sources` it was written from is born under the one facet they were
-/// born under (facet rule C). `None` when the put births nothing that carries a
-/// stamp — a put over a stored row, another kind, a text bound to no source, or
-/// a replicated put, whose origin's `FacetOf` edge arrives in the same window.
+/// born under (facet rule C); a `source_free` one ([`source_free_text_birth`])
+/// under the batch mask, else the vault default, as a NOTE is (FIX 8741).
+/// `None` when the put births nothing that carries a stamp — a put over a
+/// stored row, another kind, a text derived with unnamed sources, or a
+/// replicated put, whose origin's `FacetOf` edge arrives in the same window.
 pub(super) fn birth_stamp_target(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     entity_type: u8,
     replicated: bool,
-    (mask, sources): (Option<EntityId>, Option<&[EntityId]>),
+    (mask, sources, source_free): (Option<EntityId>, Option<&[EntityId]>, bool),
     data: &[u8],
 ) -> Result<Option<EntityId>> {
     let sources = sources.filter(|_| entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT);
     if replicated
         || !(sources.is_some()
+            || source_free
             || matches!(
                 entity_type,
                 crate::registry::ENTITY_TYPE_NOTE

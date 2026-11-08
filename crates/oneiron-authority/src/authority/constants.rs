@@ -142,6 +142,8 @@ pub const SLIP_KEY_CHANNELS: &str = "channels";
 pub const SLIP_KEY_ACTOR_CLASS: &str = "actor_class";
 pub const SLIP_KEY_ORG_REF: &str = "org_ref";
 pub const SLIP_KEY_GRANT_REF: &str = "grant_ref";
+/// The membership execution receipt this signed Grant withdrawal belongs to.
+pub const SLIP_KEY_MEMBERSHIP_RECEIPT: &str = "membership_receipt";
 pub const SLIP_KEY_INVITATION_REF: &str = "invitation_ref";
 /// A support slip's signed delegation (OF-606). Present only on a support
 /// slip's mint, so every other slip's wire form is unchanged.

@@ -34,8 +34,10 @@
 //! The candidate, its version and its history-free state are persisted in one transaction that
 //! also retires the old window's pending updates and the queued sends it took in, whose effects
 //! step 1 carried over, and clears the pending mirrors (`pm:`, `lm:w:`) step 1 replayed; a
-//! `lm:w:` marker whose value comes back as a conflict stays owed. Preparation refused before
-//! that transaction leaves every mirror marker in place. The caller attaches observers last.
+//! `lm:w:` marker whose value comes back as a conflict stays owed. A peer's state-only copy
+//! installed while the home is down retires no queued send ([`QueuedSends::Keep`], FIX 4748).
+//! Preparation refused before that transaction leaves every mirror marker in place. The caller
+//! attaches observers last.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -92,8 +94,20 @@ pub fn prepare_replacement(
         snapshot,
         evidence,
         ReplacementByteBound::NetworkFrame,
+        QueuedSends::Retire,
         None,
     )
+}
+
+/// What a replacement install does with the queued sends it takes in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::sync) enum QueuedSends {
+    /// They retire with the install: their effects are in the installed window as its own
+    /// operations.
+    Retire,
+    /// They stay queued (FIX 4748): the install is a peer's state-only copy while the home is
+    /// down, and a peer session retires no queued send, so the home session replays every one.
+    Keep,
 }
 
 /// How long a replacement snapshot may be.
@@ -171,9 +185,13 @@ pub(in crate::sync) fn check_bounded_replacement(
     .map(drop)
 }
 
-/// [`prepare_replacement`] for a snapshot up to `bound`. Only the length check
-/// differs: the snapshot passes the same admission, and the install keeps the
-/// same bookkeeping.
+/// [`prepare_replacement`] for a snapshot up to `bound`, the queued sends it takes in retired
+/// or kept as `queued` says. Only the length check differs: the snapshot passes the same
+/// admission, and the install keeps the same bookkeeping.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the install's window, snapshot, bound, queue handling and origin positions"
+)]
 pub(in crate::sync) fn prepare_bounded_replacement(
     vault: &Vault,
     materializer: &Materializer,
@@ -182,6 +200,7 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     snapshot: &[u8],
     evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
     bound: ReplacementByteBound,
+    queued: QueuedSends,
     positions: Option<crate::sync::origin_positions::OwnDevicePositionImport>,
 ) -> Result<PreparedReplacement> {
     let candidate = admitted_replacement(
@@ -295,11 +314,14 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     vault.with_write_txn_grouped(|wtxn| {
         persist_window_doc_in_txn(vault, wtxn, key, &state, &vv)?;
         // The old generation's pending updates and the queued sends it took in depend on history
-        // the candidate does not hold; their effects are in it as its own operations.
+        // the candidate does not hold; their effects are in it as its own operations. A peer's
+        // copy keeps the queued sends for the home, which has not taken them (FIX 4748).
         for update in &stale_updates {
             WINDOW_UPDATE.delete(&vault.store, wtxn, update)?;
         }
-        crate::sync::queue::retire_queued_in_txn(vault, wtxn, &carried)?;
+        if queued == QueuedSends::Retire {
+            crate::sync::queue::retire_queued_in_txn(vault, wtxn, &carried)?;
+        }
         for marker in &mirrored {
             OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker)?;
         }

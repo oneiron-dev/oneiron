@@ -20,6 +20,10 @@ use std::collections::BTreeSet;
 
 mod asset_body;
 pub(crate) mod asset_text;
+// FIX 3656: a replicated TASK's or SUMMARY's birth placement on a copy to
+// another vault.
+#[cfg(feature = "sync")]
+mod birth_placement;
 mod delete;
 mod export;
 pub(crate) mod note_world;
@@ -32,6 +36,12 @@ mod stamping;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "sync")]
+pub(crate) use self::birth_placement::{
+    BirthPlacement, GuestPlacement, carries_birth_placement, stored_placement_in_txn,
+};
+#[cfg(feature = "sync")]
+pub(crate) use self::stamping::stamp_carried_placement;
 pub(crate) use self::stamping::{
     has_stored_position, restrict_stamp_in_txn, room_row_placed, settle_epoch_birth,
     settle_source_birth, stage_session_position, stamp_blob_project, stamp_import_audience_birth,
@@ -92,9 +102,10 @@ fn bump_scope_revision(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
 
 /// Settle a TASK that carries no birth stamp in base reality, as the upgrade
 /// sweep does once: a TASK put before birth positions (#1401) was written by
-/// a vault-wide writer. A stamp never travels with its TASK, so one a peer
-/// replicates later stays unstamped, and a device-local world keeps it until
-/// its world is known (DEC-0005).
+/// a vault-wide writer. A stamp travels with its TASK only on a guest's
+/// copy, as a placement admission validated (FIX 3656); one a peer
+/// replicates without it stays unstamped, and a device-local world keeps it
+/// until its world is known (DEC-0005).
 pub(crate) fn backfill_task_base(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -115,9 +126,11 @@ pub(crate) fn backfill_task_base(
 }
 
 /// Retire an id's scope sidecar in the same transaction that erases its body.
-/// A later same-id write never inherits the deleted record's birth position.
+/// A later same-id write never inherits the deleted record's birth position,
+/// nor a source-free text's birth record (FIX 8741).
 pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
     SCOPE_RECORD.delete(store, txn, &id)?;
+    asset_text::retire_source_free_birth(store, txn, id)?;
     bump_scope_revision(store, txn)
 }
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
@@ -214,9 +227,10 @@ fn derived_position(
         let scope = note_world::note_position(store, txn, id, kind, birth);
         (scope, facet)
     } else if kind == crate::registry::ENTITY_TYPE_ASSET_TEXT {
-        // A text born from its sources sits under their facet; one born
-        // unplaced keeps its own (`asset_text`). A stamp added later is
-        // refused by `stamp_put` as a restamp.
+        // A text born from its sources sits under their facet, one born
+        // source-free under its batch mask or vault default (FIX 8741), and
+        // one born unplaced keeps its own (`asset_text`). A stamp added
+        // later is refused by `stamp_put` as a restamp.
         let facet = asset_text::text_facet(store, txn, id)?;
         (default_stamp(kind, facet), facet)
     } else if kind == crate::registry::ENTITY_TYPE_EVENT
