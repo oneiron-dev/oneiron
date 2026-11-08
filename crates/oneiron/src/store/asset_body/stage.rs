@@ -57,6 +57,18 @@ pub(crate) struct StagedHold {
     _pin: Option<ResultBodyPin>,
 }
 
+impl StagedHold {
+    /// The hold on a body file staged for a row other than an ASSET put
+    /// (a waiting native output, FIX 20812): its instance's lease and its
+    /// digest's pin.
+    pub(crate) fn of_file(key: StagedBodyKey, pin: ResultBodyPin) -> Self {
+        Self {
+            _key: Some(key),
+            _pin: Some(pin),
+        }
+    }
+}
+
 enum Staged {
     Inline(Vec<u8>),
     /// The published file, held open, and what its manifest names it.
