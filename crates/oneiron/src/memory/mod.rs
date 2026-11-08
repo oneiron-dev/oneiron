@@ -63,9 +63,11 @@ pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
 mod core_write_doors;
+pub mod device_succession;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
+mod edge_provenance;
 mod people_verbs;
 mod plugin_sections;
 pub mod run_review;
@@ -151,9 +153,11 @@ mod shape_doors;
 pub(crate) use shape_doors::AFTER_NEEDS_HANDLE;
 pub use shape_doors::DescribeRequest;
 mod signal_extraction;
+mod skill_bodies;
 mod structural;
 mod subscriptions;
 mod support;
+pub(crate) use support::TranscriptRetainedCaller;
 mod transcript;
 pub mod usage_repair;
 pub use oneiron_web_fetch::web_acquisition;
@@ -234,6 +238,10 @@ pub use dreamer_wake_read::{
     DreamerWakeCallView, DreamerWakeCheckpointView, DreamerWakeClaimAuthoringFallbackView,
     DreamerWakeEndView, DreamerWakeGenerationView, DreamerWakeHeaderView, DreamerWakeLeaseView,
     DreamerWakeLiveCallView, DreamerWakeLiveView, DreamerWakeResumeView, DreamerWakeView,
+};
+pub use edge_provenance::{
+    EdgeProvenanceActorClass, EdgeProvenanceLifecycle, EdgeProvenanceRequest,
+    EdgeProvenanceSupersession, EdgeProvenanceView,
 };
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
@@ -387,8 +395,9 @@ pub use witness::{
     StreamSyncVisibility,
 };
 pub use witness::{
-    MessageReplyAssertions, SessionMessageStream, SessionStreamEnd, SessionStreamOutcome,
-    SessionStreamPartial, SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome,
+    MessageReplyAssertions, SessionMessageStream, SessionStreamEnd, SessionStreamFinished,
+    SessionStreamOutcome, SessionStreamPartial, SessionWitnessBinding, SessionWitnessContext,
+    SessionWitnessOutcome,
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,

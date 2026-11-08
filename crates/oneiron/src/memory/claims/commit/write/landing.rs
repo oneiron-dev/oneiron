@@ -12,6 +12,14 @@ pub(super) struct ClaimSupport {
     pub(super) commitment_write: bool,
 }
 
+/// What a claim's gated apply leaves its finish: the envelope the closure
+/// binding and conflicts are written under, and whether the write is its
+/// owner's direct correction, which closes the prior head at once.
+pub(super) struct ClaimLanding {
+    pub(super) closure_envelope: crate::WriteEnvelope,
+    pub(super) owner_correction: bool,
+}
+
 impl Memory<'_> {
     /// The caller's in-writer check, the publication owner's authority, the
     /// keyed-claim and authorship guards and the prior head's grant; returns
@@ -147,7 +155,7 @@ impl Memory<'_> {
                 super::super::booking_publication::stage_publication_write(self.vault, txn, id)
             })?;
             if let Some(old_id) = prior {
-                content.update_claim(old_id, |txn| {
+                content.update_claim(old_id, |txn, _lane| {
                     super::super::booking_publication::stage_publication_write(
                         self.vault, txn, old_id,
                     )
@@ -162,7 +170,8 @@ impl Memory<'_> {
     }
 
     /// Applies the candidate through the Gate; returns the envelope the
-    /// closure binding and conflicts are written under.
+    /// closure binding and conflicts are written under, and whether the
+    /// write is its owner's direct correction.
     pub(super) fn apply_claim_candidate_in_txn(
         &self,
         content: &mut crate::federation::ActorContentTxn<'_, '_, '_>,
@@ -170,7 +179,7 @@ impl Memory<'_> {
         candidate: ClaimCandidate,
         mut envelope: crate::WriteEnvelope,
         occurred: TimeRange,
-    ) -> Result<crate::WriteEnvelope, Error> {
+    ) -> Result<ClaimLanding, Error> {
         let ClaimWrite {
             id,
             subject,
@@ -235,8 +244,12 @@ impl Memory<'_> {
         };
         // A replacement is a create-versus-closure proposal even when its
         // source and actor would qualify for Auto. The later grant is
-        // the only door allowed to close the prior head.
-        if prior.is_some() {
+        // the only door allowed to close the prior head. The owner's own
+        // direct correction is the exception (FIX 22041): it keeps the Auto
+        // it requested, so the Gate judges it as the owner's fresh write, and
+        // the finish closes the prior in this write.
+        let owner_correction = self.owner_correction_in_txn(content.read(), write, &envelope)?;
+        if prior.is_some() && !owner_correction {
             envelope = envelope.with_approval(ClaimApprovalStatus::Proposed);
         }
         self.sign_machine_claim_in_txn(content.read(), id, &candidate, &mut envelope)?;
@@ -285,7 +298,10 @@ impl Memory<'_> {
                 ApplyOpsGateMode::new(true, true).with_owner_authored(owner_authored),
             )?;
         }
-        Ok(closure_envelope)
+        Ok(ClaimLanding {
+            closure_envelope,
+            owner_correction,
+        })
     }
 
     pub(super) fn finish_claim_write_in_txn(
@@ -293,8 +309,12 @@ impl Memory<'_> {
         content: &mut crate::federation::ActorContentTxn<'_, '_, '_>,
         write: &ClaimWrite<'_>,
         support: ClaimSupport,
-        closure_envelope: &crate::WriteEnvelope,
+        landing: &ClaimLanding,
     ) -> Result<(), Error> {
+        let ClaimLanding {
+            closure_envelope,
+            owner_correction,
+        } = landing;
         let ClaimWrite {
             id,
             subject,
@@ -313,7 +333,7 @@ impl Memory<'_> {
             .replay_header_in_txn(content.read(), write)?
             .map_or(learned_at, |header| header.learned_at);
         if let Some(birth) = birth {
-            content.update_claim(id, |txn| {
+            content.update_claim(id, |txn, _lane| {
                 crate::provenance::birth::stamp_birth_if_absent_in_txn(
                     &self.vault.store,
                     txn,
@@ -323,15 +343,23 @@ impl Memory<'_> {
             })?;
         }
         if let Some(old_id) = prior {
-            content.update_claim(old_id, |txn| {
-                self.vault.stage_claim_supersession_in_txn(
-                    txn,
-                    &id,
-                    &old_id,
-                    closure_envelope,
-                    learned_at,
-                )
-            })?;
+            if *owner_correction {
+                let owner = closure_envelope.actor();
+                content.update_claim(old_id, |txn, _lane| {
+                    self.vault
+                        .supersede_by_owner_correction_in_txn(txn, &id, &old_id, owner, now)
+                })?;
+            } else {
+                content.update_claim(old_id, |txn, _lane| {
+                    self.vault.stage_claim_supersession_in_txn(
+                        txn,
+                        &id,
+                        &old_id,
+                        closure_envelope,
+                        learned_at,
+                    )
+                })?;
+            }
         }
         if !stated_conflicts.is_empty() {
             self.open_preference_conflicts_in_txn(
@@ -356,7 +384,7 @@ impl Memory<'_> {
                 super::super::booking_publication::finish_publication_write(self.vault, txn, id)
             })?;
             if let Some(old_id) = prior {
-                content.update_claim(old_id, |txn| {
+                content.update_claim(old_id, |txn, _lane| {
                     super::super::booking_publication::finish_publication_write(
                         self.vault, txn, old_id,
                     )

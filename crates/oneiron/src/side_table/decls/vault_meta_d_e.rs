@@ -97,7 +97,8 @@ side_tables! {
         => crate::drafter::erase_drafter_actor_in_txn;
     /// Private binding proving an SDK-facing detached step (no engine-owned run) belongs to its
     /// actor/subject/step hash. Key: id16(attempt).
-    DREAMER_DETACHED_STEP: VaultMeta b"dreamer.detached_step.v1/" Raw;
+    DREAMER_DETACHED_STEP: VaultMeta b"dreamer.detached_step.v1/" Raw
+        => crate::llm::erase_detached_step_actor_in_txn;
     /// FIX 10766: every milestone claim by the attempt its value names, bound or not; written and
     /// dropped beside the durable index. Key: id16(attempt) + id16(claim).
     DREAMER_MILESTONE_INDEX_ATTEMPT_CLAIM: VaultMeta b"dreamer.milestone_index.v1.a:" Named Engine;
@@ -508,13 +509,9 @@ side_tables! {
     /// string.
     EDIT_DISTANCE_PRINCIPAL_DECISION: VaultMeta b"edit_distance/principal_decision/v1\0" Raw
         => crate::edit_distance::miner::erase_principal_decision_entity_in_txn;
-    /// Finalized proposal-text artifact (span attributions, actor/class per span), write-once keyed
-    /// by artifact ref. Key: id16.
+    /// Finalized proposal-text artifact (span attributions, actor/class per span, the head of its
+    /// document on the entity-document plane), write-once keyed by artifact ref. Key: id16.
     EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored [accepts: crate::edit_distance::edit_distance_proposal_artifact_accepts_masked]
-        => crate::edit_distance::erase_proposal_texts_in_txn;
-    /// Raw proposal document whose served texts were custody-marked before it was kept, outside
-    /// the side-row wall as an entity document is (FIX 11539), keyed by artifact ref. Key: id16.
-    EDIT_DISTANCE_PROPOSAL_DOCUMENT: VaultMeta b"edit_distance/proposal_document/v1\0" Raw
         => crate::edit_distance::erase_proposal_texts_in_txn;
     /// Rebuildable training-reservoir candidate index row, keyed by the proposal artifact's entity
     /// id. Key: id16.
@@ -525,10 +522,17 @@ side_tables! {
     EDIT_DISTANCE_ROUTING_AGGREGATE: VaultMeta b"edit_distance/routing_aggregate/v1\0" Raw;
     /// Run-to-generation membership binding, keyed by receipt id. Key: string.
     EDIT_DISTANCE_ROUTING_MEMBER: VaultMeta b"edit_distance/routing_member/v1\0" Raw;
+    /// The owner-anchored outcome of one judged amendment's rework (FIX 11706):
+    /// `undone` for a Keep later undone, `merged` for a fork later merged.
+    /// Key: string (the delta receipt id).
+    EDIT_DISTANCE_ROUTING_OUTCOME: VaultMeta b"edit_distance/routing_outcome/v1\0" Raw;
     /// Per-task-class rollout rung state. Key: string.
     EDIT_DISTANCE_ROUTING_RUNG: VaultMeta b"edit_distance/routing_rung/v1\0" Raw;
     /// Model-version stamp new routing folds are recorded against. Key: ().
     EDIT_DISTANCE_ROUTING_SERVING_MODEL: VaultMeta b"edit_distance/routing_serving_model/v1" Raw;
+    /// The delta receipt id a Selected Keep answered (FIX 11706), so its undo
+    /// anchors the routing outcome. Key: id16 + hash32 (blake3 of the proposal ref).
+    EDIT_SETTLE_KEEP_LINK: VaultMeta b"edit_settle:keep_link:v1:" Named;
     /// An organ call held until one of the owner's nodes can run it (OF-575 MESH): the call's
     /// bytes, why it waits, and its tries. Key: id16 + hash32 (blake3 of the run ref).
     EDIT_SETTLE_ORGAN_WAIT: VaultMeta b"edit_settle:organ_wait:v1:" Named;
@@ -571,8 +575,8 @@ side_tables! {
     EMBEDDING_SLOT: VaultMeta b"embedding/slot/" Named;
     /// Declared embedding space: id, width, accepted inputs, query towers (OF-370). Key: string.
     EMBEDDING_SPACE: VaultMeta b"embedding/space/" Named;
-    /// Pointer from an entity to its owning document, plus generation/pending-update counters. Key:
-    /// hex32.
+    /// Pointer from an owner (a stored entity or a proposal artifact) to its document, plus
+    /// generation/pending-update counters. Key: hex32.
     ENTITY_DOC_HEAD: VaultMeta b"entity_doc:v1:head:" Named;
     /// Retained revision history document. Key: id16.
     ENTITY_REVISION_DOC: VaultMeta b"entity_revision:doc:" Raw;

@@ -3,10 +3,11 @@
 //! Managed state and shutdown definitions remain in the parent module.
 
 use super::{
-    Arc, Body, CarriedConnection, CarrierPaused, IntoResponse, Json, ManagedCarrierContext,
-    ManagedError, ManagedIngress, ManagedState, ManagedWidenAction, McpLifecycleObservation,
-    Method, Next, Request, Response, Router, State, StatusCode, Surface, SyncServer, UPGRADE,
-    WriteKind, build_app, is_read_only, middleware, owner_attestable, to_bytes, writes_frozen_body,
+    Arc, Body, CarriedConnection, CarrierAdmission, CarrierPaused, IntoResponse, Json,
+    ManagedCarrierContext, ManagedError, ManagedIngress, ManagedState, ManagedWidenAction,
+    McpLifecycleObservation, Method, Next, Request, Response, Router, State, StatusCode, Surface,
+    SyncServer, UPGRADE, WriteKind, build_app, is_read_only, middleware, owner_attestable,
+    to_bytes, writes_frozen_body,
 };
 
 impl ManagedCarrierContext {
@@ -25,6 +26,36 @@ impl ManagedCarrierContext {
     pub(crate) fn admit_receipt<T>(&self, action: impl FnOnce() -> T) -> Result<T, CarrierPaused> {
         let _admission = self.0.admit(WriteKind::OwnerWrite).map_err(CarrierPaused)?;
         Ok(action())
+    }
+
+    /// Runs `call`, one call a held socket answers itself rather than as a
+    /// served request (FIX 11712), under a served write's admission. As a
+    /// served write's handler does, it finishes in a task that owns the
+    /// admission, so a waiter that stops waiting releases nothing while it
+    /// runs, and it runs as the socket's connection (FIX 811). Its answer
+    /// comes back beside that admission, which the socket keeps while it
+    /// judges the answer at its send door; `None` when the task ended with
+    /// no answer. While the vault is frozen for reap nothing runs, and the
+    /// pause a served write gets is returned instead.
+    pub(crate) async fn admit_call<T: Send + 'static>(
+        &self,
+        call: impl std::future::Future<Output = T> + Send + 'static,
+    ) -> Result<Option<(T, CarrierAdmission)>, CarrierPaused> {
+        let admitted = self.0.admit(WriteKind::OwnerWrite).map_err(CarrierPaused)?;
+        let connection = crate::api::call_receipt::connection_id();
+        let owned = tokio::spawn(crate::api::call_receipt::on_connection(
+            connection,
+            async move {
+                let answer = call.await;
+                (
+                    answer,
+                    CarrierAdmission {
+                        _admitted: admitted,
+                    },
+                )
+            },
+        ));
+        Ok(owned.await.ok())
     }
 
     /// Marks `request` as a call the socket carries, so the task its

@@ -142,7 +142,9 @@ impl SnapshotWithhold {
 /// checkouts have one; hosted repo_refs name no path on this machine.
 pub(crate) fn snapshot_root(repo_ref: &RepoRef) -> Option<&str> {
     match repo_ref {
-        RepoRef::LocalFolder { path, .. } => Some(path.trim_end_matches('/')),
+        RepoRef::LocalFolder { path, .. } | RepoRef::LocalCapture { path } => {
+            Some(path.trim_end_matches('/'))
+        }
         RepoRef::GitHubAtCommit { .. } => None,
     }
 }
@@ -226,14 +228,14 @@ impl Vault {
         &self,
         txn: &RoTxn<'_>,
         snapshot: &CodebaseSnapshot,
+        custody_root: Option<&str>,
         file_contents: &dyn Fn(&str) -> Option<Vec<u8>>,
     ) -> Result<(Vec<CodebaseFileEntry>, SnapshotCustodyReport)> {
         let exclusions = SnapshotExclusionSet::for_project(self, txn, &snapshot.project_id)?;
-        let root = snapshot_root(&snapshot.repo_ref);
         let mut files = Vec::with_capacity(snapshot.files.len());
         let mut report = SnapshotCustodyReport::default();
         for entry in &snapshot.files {
-            if exclusions.excludes(&entry.path, &entry.content_hash, root) {
+            if exclusions.excludes(&entry.path, &entry.content_hash, custody_root) {
                 report.excluded_secret_paths.push(entry.path.clone());
                 continue;
             }

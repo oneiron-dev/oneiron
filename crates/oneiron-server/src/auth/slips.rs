@@ -5,10 +5,12 @@ use oneiron_vault_contract::BINDING_HEADER;
 use serde::Deserialize;
 
 /// The facade doors an invitee's own slip (FIX 1925) reaches: its
-/// invitation's list, accept and decline. Anywhere else it holds no scope.
-pub(crate) const INVITEE_DOORS: [&str; 3] = [
+/// invitation's list, acceptance (plain or with a member credential) and decline.
+/// Anywhere else it holds no scope.
+pub(crate) const INVITEE_DOORS: [&str; 4] = [
     "vault.members.invitations",
     "vault.members.accept",
+    "vault.members.accept_with_credential",
     "vault.members.decline",
 ];
 
@@ -136,6 +138,31 @@ impl CoreAuth {
             None => auth,
         })
     }
+    /// The self-hosted root's caller a resumed call rebuilds from its
+    /// recorded host action (FIX 4744): `verified` is the root this host
+    /// retains, verified again now as the very root the action recorded, and
+    /// `instrument` the fingerprint of the token the request presented, so
+    /// its authority ceiling is the one the call was admitted under. It
+    /// names no principal and keeps no holder binding: it acts only through
+    /// the host action its door resolves. Anything but a full host root is
+    /// refused.
+    pub(crate) fn from_recorded_host_root(
+        verified: VerifiedSlip,
+        instrument: [u8; 32],
+        vault: &dyn RevokedTokenJtis,
+    ) -> Result<Self, ApiError> {
+        let unattenuated = verified.is_full_vault_owner_grade();
+        let mut auth = Self::from_verified(verified, unattenuated)?;
+        if auth.host_root().is_none() {
+            return Err(ApiError::unauthorized());
+        }
+        auth.instrument = Some(instrument);
+        auth.facets_owner_exempt = auth
+            .verified_slip
+            .as_ref()
+            .is_some_and(|proof| vault.credential_facets_owner_exempt(proof));
+        Ok(auth)
+    }
     /// The exact instrument this credential was authenticated on, if any.
     pub(crate) const fn instrument(&self) -> Option<[u8; 32]> {
         self.instrument
@@ -156,7 +183,7 @@ impl CoreAuth {
         // This also refuses one-shot instruments before a consuming operation.
         let auth = Self::from_slip_token(token, proof, vault)?;
         let slip = CapabilitySlip::from_token(token).map_err(|_| ApiError::unauthorized())?;
-        vault
+        let verified = vault
             .admit_capability_slip_request(
                 &slip,
                 proof.timestamp,
@@ -164,14 +191,21 @@ impl CoreAuth {
                 proof.nonce.as_bytes(),
             )
             .map_err(|_| ApiError::unauthorized())?;
+        let mut admitted_auth = Self::from_verified(verified, slip.caveats.is_empty())?;
+        admitted_auth.instrument = auth.instrument;
+        admitted_auth.invocation_slip = auth.invocation_slip;
+        admitted_auth.facets_owner_exempt = admitted_auth
+            .verified_slip
+            .as_ref()
+            .is_some_and(|proof| RevokedTokenJtis::credential_facets_owner_exempt(vault, proof));
         // A fresh proof, used here once: the connection it came on is no
         // longer a stranger's. The read-only check above does not say so,
         // since a replay passes it and is refused only here.
         crate::http_listener::authenticated();
         // Its body, if it has one, now counts under this slip in the owner's
         // connection-pool pressure check (FIX 7656).
-        super::body_credential::attach_slip(&auth);
-        Ok(auth)
+        super::body_credential::attach_slip(&admitted_auth);
+        Ok(admitted_auth)
     }
     pub(super) fn from_verified(
         verified: VerifiedSlip,
@@ -198,9 +232,6 @@ impl CoreAuth {
             {
                 return Err(ApiError::unauthorized());
             }
-        } else if matches!(&claims.scope.verbs, ScopeAxis::Some(verbs) if verbs.iter().any(|verb| verb.starts_with("org:")))
-        {
-            return Err(ApiError::unauthorized());
         }
         let scopes: BTreeSet<_> = CoreScope::all()
             .into_iter()
@@ -210,8 +241,8 @@ impl CoreAuth {
                 if claims.invitation_ref.is_some() {
                     return false;
                 }
-                // A general root is not an organization credential. Organization
-                // powers exist only in the explicit org-bound closed vocabulary.
+                // A member grant may carry org:* verbs without an organization.
+                // Project organization powers only with their explicit binding.
                 if matches!(scope, CoreScope::OrgAdmin(_)) && claims.org_ref.is_none() {
                     return false;
                 }
@@ -268,6 +299,24 @@ impl CoreAuth {
             .trim_start_matches('/');
         if invited && INVITEE_DOORS.contains(&verb) {
             self.scopes = BTreeSet::from([CoreScope::Read, CoreScope::Write]);
+        }
+        self.at_share_view_door(verb)
+    }
+
+    /// Whether this verified share credential permits this rendering door.
+    pub(crate) fn allows_share_view_verb(&self, verb: &str) -> bool {
+        matches!(verb, "vault.shares.view" | "vault.notes.follow_citation")
+            && self
+                .verified_slip
+                .as_ref()
+                .is_some_and(|slip| slip.claims().share_ref.is_some() && slip.allows_verb(verb))
+    }
+
+    /// A request-local Read scope for the two share renderers, never general
+    /// core:read authority or a generic scoped-read key.
+    pub(crate) fn at_share_view_door(mut self, verb: &str) -> Self {
+        if self.allows_share_view_verb(verb) {
+            self.scopes.insert(CoreScope::Read);
         }
         self
     }
@@ -352,20 +401,34 @@ impl CoreAuth {
         vault: &oneiron::Vault,
         id: &oneiron::EntityId,
     ) -> oneiron::Result<bool> {
+        self.can_read_entity_at(vault, id, &self.destination())
+    }
+    /// [`Self::can_read_entity`] for a read toward `destination` instead of
+    /// the machine the request's connection proved: the same credential
+    /// lane, read for the machine a door already judged the rows for. The
+    /// owner's own whole-vault export, whose owner its door admitted again,
+    /// reads on this device: his recipient choice keeps none of its rows
+    /// (owner ruling 1-EXPORT = B).
+    pub(crate) fn can_read_entity_at(
+        &self,
+        vault: &oneiron::Vault,
+        id: &oneiron::EntityId,
+        destination: &oneiron::settings::ReadDestination,
+    ) -> oneiron::Result<bool> {
         if self.is_local_dev_hatch() {
             let action = vault.dev_action_authority()?;
             return vault
-                .scoped_read(action.read_key().for_destination(&self.destination()))
+                .scoped_read(action.read_key().for_destination(destination))
                 .is_entity_readable(id);
         }
         let Some(proof) = self.verified_slip() else {
-            return Ok(!vault.device_local_keeps_for(id, &self.destination())?);
+            return Ok(!vault.device_local_keeps_for(id, destination)?);
         };
         let Some(key) = vault.credential_read_key(proof)? else {
             return Ok(false);
         };
         vault
-            .scoped_read(key.for_destination(&self.destination()))
+            .scoped_read(key.for_destination(destination))
             .is_entity_readable(id)
     }
     /// Whether this credential is still live, read inside the write

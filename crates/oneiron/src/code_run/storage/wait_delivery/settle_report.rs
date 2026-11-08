@@ -3,7 +3,8 @@
 //! one every waiter is delivered. The comparison is the settle's own
 //! put-if-absent, so two concurrent answers never both hear that their
 //! reply stands. Delivery to the parked runs is [`ExecutorStorage::deliver_wait`]'s,
-//! unchanged.
+//! unchanged. A reply settled here has unknown origins (FIX 7083); the
+//! settled reply that stands keeps its own.
 
 use super::{
     SETTLED, SETTLED_TAG, WaitDeliveries, WaitDelivery, deliver_wait_listing_in_txn,
@@ -32,7 +33,7 @@ impl WaitDeliveries<'_> {
         match &self.storage {
             ExecutorStorage::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
                 let won = !SETTLED.contains(&vault.store, txn, &(SETTLED_TAG, wait_id))?;
-                deliver_wait_listing_in_txn(vault, txn, wait_id, reply, None, now_ms)?;
+                deliver_wait_listing_in_txn(vault, txn, wait_id, reply, None, None, now_ms)?;
                 let settled = settled_in_txn(&vault.store, txn, wait_id)?.ok_or_else(missing)?;
                 Ok((won, settled))
             }),
@@ -41,12 +42,14 @@ impl WaitDeliveries<'_> {
                     reply: reply_text(reply)?,
                     delivered_at_ms: now_ms,
                     source_rows: None,
+                    origins: None,
                     erased: false,
                 };
                 let won = binding.answered(|| {
                     put_if_absent_routed(binding, &SETTLED, &(SETTLED_TAG, wait_id), &fresh)
                 })?;
-                self.storage.deliver_wait(wait_id, reply, None, now_ms)?;
+                self.storage
+                    .deliver_wait(wait_id, reply, None, None, now_ms)?;
                 let settled = binding
                     .answered(|| {
                         binding

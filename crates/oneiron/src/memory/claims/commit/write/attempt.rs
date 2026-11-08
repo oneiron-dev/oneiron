@@ -16,12 +16,13 @@ impl Memory<'_> {
         write: &ClaimWrite<'_>,
         approval: ClaimApprovalStatus,
         skip_exact_hook_replay: bool,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<Option<EntityId>, Error> {
         let candidate = claim_candidate(write);
         let envelope = self.claim_envelope(write.source, "vault.commit", approval)?;
         let occurred = claim_occurred(write);
         self.vault
-            .try_with_actor_content_write_txn(envelope.actor(), |content| {
+            .try_with_actor_content_write_txn(envelope.actor(), lane, |content| {
                 self.write_claim_in_txn(
                     content,
                     write,
@@ -54,9 +55,9 @@ impl Memory<'_> {
             return Ok(None);
         }
         let support = self.stage_claim_support_in_txn(content, write)?;
-        let closure_envelope =
+        let landing =
             self.apply_claim_candidate_in_txn(content, write, candidate, envelope, occurred)?;
-        self.finish_claim_write_in_txn(content, write, support, &closure_envelope)?;
+        self.finish_claim_write_in_txn(content, write, support, &landing)?;
         Ok(None)
     }
 

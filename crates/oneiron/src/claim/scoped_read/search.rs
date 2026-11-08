@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::access_gate::HeldAuthority;
 use super::*;
 
@@ -106,7 +108,8 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
     ) -> Result<RequestExclusions> {
         Ok(RequestExclusions {
-            ceiling: requested
+            ceiling: self
+                .asked_request(requested)
                 .map(|_| self.filter_under(policy, None))
                 .transpose()?,
             ids: Mutex::default(),
@@ -133,7 +136,7 @@ impl ScopedRead<'_> {
             if !plan_row_decodes(store, txn, id)? {
                 return Ok(false);
             }
-            let held = HeldAuthority::for_request(requested);
+            let held = self.held_for(requested);
             if self.is_entity_retrievable_held_in(txn, policy, filter, id, &held)? {
                 return Ok(true);
             }
@@ -331,8 +334,64 @@ impl ScopedRead<'_> {
         }
         self.owner_live_in(txn)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
-        let filter = self.filter_under(&policy, requested)?;
+        // The bound caller filter meets the door's request after the floor
+        // loads, before any plan, alternative or receipt reads it (FIX 3977).
+        let requested = self.asked_request(requested);
+        let filter = self.under_caller_filter(self.filter_under(&policy, requested.as_deref())?);
         Ok((filter, policy))
+    }
+
+    /// This lane bound to the caller's own retrieval filter `request`
+    /// (FIX 3977): a request, never authority. A rebind meets the filter
+    /// already bound, so it only narrows; `None` binds nothing new. Lanes
+    /// this one derives (record, owner and every-status lanes) keep it.
+    #[must_use]
+    pub fn with_read_filter(mut self, request: Option<&RetrievalFilter>) -> Self {
+        self.read_filter = RetrievalFilter::meet_requests(self.read_filter.as_ref(), request);
+        self
+    }
+
+    /// The caller filter this lane is bound to, if any.
+    #[must_use]
+    pub fn read_filter(&self) -> Option<&RetrievalFilter> {
+        self.read_filter.as_ref()
+    }
+
+    /// What this read asks of its rows: its bound caller filter met with
+    /// `requested`, the request its door names. `None` is the floor alone.
+    pub(super) fn asked_request<'r>(
+        &'r self,
+        requested: Option<&'r RetrievalFilter>,
+    ) -> Option<Cow<'r, RetrievalFilter>> {
+        match (self.read_filter.as_ref(), requested) {
+            (None, requested) => requested.map(Cow::Borrowed),
+            (Some(bound), None) => Some(Cow::Borrowed(bound)),
+            (Some(bound), Some(requested)) => Some(Cow::Owned(bound.meet(requested))),
+        }
+    }
+
+    /// `filter`, resolved from what this read asked, marked with whether
+    /// its bound caller filter excludes stale claims (FIX 3977): a record
+    /// lane reads stale claims past the floor, never past the caller's own
+    /// `include_stale = false`. A door's own request never marks it, so a
+    /// receipt's applied scope met again leaves record reads as they were.
+    pub(super) fn under_caller_filter(
+        &self,
+        mut filter: ResolvedRetrievalFilter,
+    ) -> ResolvedRetrievalFilter {
+        filter.caller_excludes_stale = self
+            .read_filter
+            .as_ref()
+            .is_some_and(|bound| bound.include_stale == Some(false));
+        filter
+    }
+
+    /// The held authority of one serving txn whose rows this read judges
+    /// under `requested` met with its bound caller filter, so each own-Grant
+    /// and owner alternative meets the same request the read's own filter
+    /// did (FIX 3977).
+    pub(super) fn held_for(&self, requested: Option<&RetrievalFilter>) -> HeldAuthority {
+        HeldAuthority::for_request(self.asked_request(requested).as_deref())
     }
 
     /// This key's read filter under `policy`, narrowed by `requested`; with
@@ -393,7 +452,7 @@ impl ScopedRead<'_> {
         // read must satisfy BOTH the plan authority and this fresh snapshot.
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         // One held authority for every hit's checks in this txn (FIX 7462).
-        let held = HeldAuthority::for_request(requested);
+        let held = self.held_for(requested);
         // A withheld row counts only inside the key's own ceiling under both
         // snapshots: a request or pinned projection excluded it. A row the
         // key's baseline authority denies stays opaque (FIX 8670).
@@ -561,11 +620,12 @@ impl ScopedRead<'_> {
         let before = results.len();
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
-        let held = HeldAuthority::for_request(requested);
+        let held = self.held_for(requested);
         // A withheld row counts only inside the key's own ceiling: with no
         // request every withheld row is the key's own denial, which stays
         // opaque (FIX 8670).
-        let ceiling = requested
+        let ceiling = self
+            .asked_request(requested)
             .map(|_| self.filter_under(&policy, None))
             .transpose()?;
         let ceiling_held = HeldAuthority::for_request(None);
@@ -613,6 +673,104 @@ impl ScopedRead<'_> {
     }
 }
 
+impl<'v> ScopedRead<'v> {
+    /// This read bound to `request` as well (FIX 3977), for a shared service
+    /// a caller hands its lane by reference: the same key, audience, peers,
+    /// session view, room ceiling, claim status, owner authority, records
+    /// cover and judged time, its bound filter met with `request`. A request,
+    /// never authority: it only narrows.
+    pub(crate) fn narrowed_by_request(
+        &self,
+        request: Option<&RetrievalFilter>,
+    ) -> Result<ScopedRead<'v>> {
+        let room_ceiling = self
+            .room_ceiling
+            .lock()
+            .map_err(|_| Error::InvariantViolation("room ceiling lock"))?
+            .clone();
+        Ok(ScopedRead {
+            vault: self.vault,
+            actor_key: self.actor_key.clone(),
+            audience: self.audience.clone(),
+            peer_reads: self.peer_reads.clone(),
+            audience_cache: Mutex::new(Default::default()),
+            room_ceiling: Mutex::new(room_ceiling),
+            room_ceilings_built: AtomicUsize::new(0),
+            session_view: self.session_view,
+            claim_status: self.claim_status,
+            recall_authority: Mutex::new(None),
+            room_peer: self.room_peer,
+            own_owner_authority: self.own_owner_authority,
+            records_cover: self.records_cover.clone(),
+            judged_at: self.judged_at,
+            read_filter: RetrievalFilter::meet_requests(self.read_filter.as_ref(), request),
+        })
+    }
+}
+
+/// A context pack's admission under one read's search plan (FIX 3977): every
+/// channel's candidates and every neighbor take the read's row gate, its key
+/// and its bound caller filter, before any cut, so a row the read refuses
+/// takes no place an admitted row could fill. A prefilter, never an
+/// authorization: the pack is still filtered under the read once it runs.
+pub struct ContextPackPlan<'p, 'v> {
+    read: &'p ScopedRead<'v>,
+    plan: SearchPlan,
+}
+
+impl<'v> ScopedRead<'v> {
+    /// The plan a context pack this read assembles retrieves under, resolved
+    /// in a fresh snapshot ([`ContextPackPlan`]).
+    ///
+    /// # Errors
+    ///
+    /// The read's own refusals resolving its authority.
+    pub fn context_pack_plan(&self) -> Result<ContextPackPlan<'_, 'v>> {
+        Ok(ContextPackPlan {
+            read: self,
+            plan: self.search_plan(None)?,
+        })
+    }
+}
+
+impl ContextPackPlan<'_, '_> {
+    /// `builder` retrieving under this plan: its read key on private-note and
+    /// PPR candidate work, the plan's candidate envelope on every channel and
+    /// neighbor, and the read's row gate on each candidate.
+    #[must_use]
+    pub fn admit<'b>(
+        &'b self,
+        builder: crate::ContextPackBuilder<'b>,
+    ) -> crate::ContextPackBuilder<'b> {
+        builder
+            .scoped_note_reader(self.read.actor_key.clone())
+            .authority_filter(self.plan.candidates.clone())
+            .filter_candidates(&plan_row_decodes)
+            .gate_candidates(self)
+    }
+}
+
+impl crate::store::retrieval_values::CandidateGate for ContextPackPlan<'_, '_> {
+    fn in_txn<'t>(
+        &'t self,
+        txn: &'t heed::RoTxn<'t>,
+    ) -> Box<crate::store::retrieval_values::SnapshotCandidateFilter<'t>> {
+        let held = self.read.held_for(None);
+        Box::new(
+            move |_: &crate::store::StoreRead<'_>, rtxn: &heed::RoTxn<'_>, id: &EntityId| {
+                self.read.snapshot_candidate_in(
+                    txn,
+                    &held,
+                    rtxn,
+                    &self.plan.policy,
+                    &self.plan.filter,
+                    id,
+                )
+            },
+        )
+    }
+}
+
 /// A CLAIM whose body does not decode is no candidate, as the D19 gate holds;
 /// it does not end the search.
 fn plan_row_decodes(
@@ -642,7 +800,7 @@ impl<'v> ScopedRead<'v> {
         filter: &'t ResolvedRetrievalFilter,
         requested: Option<&RetrievalFilter>,
     ) -> impl Fn(&EntityId) -> Result<bool> + 't {
-        let held = HeldAuthority::for_request(requested);
+        let held = self.held_for(requested);
         move |id| self.is_entity_retrievable_held_in(txn, policy, filter, id, &held)
     }
 
@@ -715,8 +873,9 @@ impl crate::store::retrieval_values::CandidateGate for RecallCandidateGate<'_, '
         &'t self,
         txn: &'t heed::RoTxn<'t>,
     ) -> Box<crate::store::retrieval_values::SnapshotCandidateFilter<'t>> {
-        // A recall plan resolves its filter with no request.
-        let held = HeldAuthority::for_request(None);
+        // A recall plan resolves its filter with no request beyond its
+        // lane's bound caller filter (FIX 3977).
+        let held = self.read.held_for(None);
         Box::new(
             move |_: &crate::store::StoreRead<'_>, rtxn: &heed::RoTxn<'_>, id: &EntityId| {
                 self.read
@@ -740,7 +899,7 @@ impl crate::store::retrieval_values::CandidateGate for PlanGate<'_, '_> {
         &'t self,
         txn: &'t heed::RoTxn<'t>,
     ) -> Box<crate::store::retrieval_values::SnapshotCandidateFilter<'t>> {
-        let held = HeldAuthority::for_request(self.requested);
+        let held = self.read.held_for(self.requested);
         // The key's own ceiling resolves with no request.
         let ceiling_held = HeldAuthority::for_request(None);
         Box::new(

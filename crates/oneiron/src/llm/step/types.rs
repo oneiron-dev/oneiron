@@ -1,13 +1,14 @@
 //! Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome.
 
-pub(super) const DREAMER_STEP_STATE_SCHEMA_VERSION: u64 = 1;
+pub(super) const DREAMER_STEP_STATE_SCHEMA_VERSION: u64 = 2;
 
-pub(super) const DREAMER_STEP_STATE_KEYS: [&str; 9] = [
+pub(super) const DREAMER_STEP_STATE_KEYS: [&str; 10] = [
     "schema_version",
     "progression",
     "started_at",
     "updated_at",
     "response",
+    "source",
     "actor",
     "subject",
     "claim",
@@ -78,6 +79,8 @@ pub(super) const KEY_STATE_CLAIM: &str = "claim";
 /// A step-state row whose response its owner's erase took (KS-2B1).
 pub(super) const KEY_STATE_ERASED: &str = "erased";
 
+pub(super) const KEY_STEP_SOURCE: &str = "source";
+
 // Runtime write-envelope provenance keys stamped by `dreamer_runtime_envelope`
 // onto every step/trap record. The memo-index admission gate (ONE-1344) reads
 // them back off the stored claim, so writer and reader share these constants.
@@ -86,6 +89,11 @@ pub(super) const ENVELOPE_PROVENANCE_SURFACE_KEY: &str = "surface";
 pub(super) const ENVELOPE_PROVENANCE_RUN_KEY: &str = "run";
 
 pub(super) const ENVELOPE_PROVENANCE_ATTEMPT_KEY: &str = "job_id";
+
+/// The provenance surface a self-written compaction's filed step carries
+/// (FIX 4465 B). The memo index admits a step by it and its job (FIX 4816),
+/// so the compaction writer and the index share this constant.
+pub(super) const COMPACTION_STEP_SURFACE: &str = "code-run-compaction";
 
 /// A `params_hash` / `step_hash` is a BLAKE3 digest rendered as lowercase hex.
 pub(super) const STEP_HEX_DIGEST_LEN: usize = 64;

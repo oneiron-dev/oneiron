@@ -265,10 +265,27 @@ impl Vault {
         request: &ProposalSettleRequest<'_>,
         actor: WriteActor,
     ) -> Result<OfficeBodyProposal> {
-        self.with_write_txn_grouped(|wtxn| {
+        let (record, landed) = self.with_write_txn_grouped(|wtxn| {
             settle_in_txn(self, wtxn, proposal, Some(artifact), request, actor)
-                .map(|(record, _)| record)
-        })
+        })?;
+        let _ = &landed;
+        #[cfg(feature = "sync")]
+        {
+            let artifacts = landed
+                .iter()
+                .filter_map(|(fork, _)| {
+                    record
+                        .members
+                        .iter()
+                        .find(|member| member.fork == *fork)
+                        .map(|member| member.artifact)
+                })
+                .collect::<BTreeSet<_>>();
+            for artifact in artifacts {
+                self.notify_typed_body_document(artifact);
+            }
+        }
+        Ok(record)
     }
 
     /// Record a holder ask on an unsettled proposal, once per ask group.
@@ -306,7 +323,10 @@ impl Vault {
         if !repeated {
             record.asks.push(ask);
         }
-        PROPOSALS.put(&self.store, wtxn, proposal, &record)
+        PROPOSALS.put(&self.store, wtxn, proposal, &record)?;
+        #[cfg(feature = "sync")]
+        crate::batch::queue_committed_rows(self, wtxn, BTreeSet::from([record.header.artifact]));
+        Ok(())
     }
 
     /// Record that ask admission refused one member artifact's holder ask.
@@ -339,7 +359,14 @@ impl Vault {
                 reason: reason.to_owned(),
                 at,
             });
-            PROPOSALS.put(&self.store, wtxn, proposal, &record)
+            PROPOSALS.put(&self.store, wtxn, proposal, &record)?;
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(
+                self,
+                wtxn,
+                BTreeSet::from([record.header.artifact]),
+            );
+            Ok(())
         })
     }
 }
@@ -395,7 +422,14 @@ pub(super) fn join_in_txn(
         wtxn,
         &(fork.entity, fork.fork),
         &record.header.proposal,
-    )
+    )?;
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows_in_txn(
+        store,
+        wtxn,
+        BTreeSet::from([record.header.artifact]),
+    );
+    Ok(())
 }
 
 /// The proposal a DOCX or XLSX fork joined.
@@ -453,7 +487,14 @@ pub(super) fn let_go_in_txn(
         }
     }
     close_if_done(&mut record, at, None);
-    PROPOSALS.put(store, wtxn, &proposal, &record)
+    PROPOSALS.put(store, wtxn, &proposal, &record)?;
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows_in_txn(
+        store,
+        wtxn,
+        BTreeSet::from([record.header.artifact]),
+    );
+    Ok(())
 }
 
 /// Removes `artifact`'s memberships and its members from every proposal. A
@@ -461,6 +502,8 @@ pub(super) fn let_go_in_txn(
 pub(super) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, artifact: &EntityId) -> Result<()> {
     let at = store.clock().now_recorded_at();
     let mut changed = Vec::new();
+    #[cfg(feature = "sync")]
+    let mut mirror_artifacts = BTreeSet::new();
     for (proposal, mut record) in PROPOSALS.scan(store, txn)? {
         let members = record.members.len();
         let asks = record.asks.len();
@@ -475,6 +518,8 @@ pub(super) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, artifact: &Entity
         {
             continue;
         }
+        #[cfg(feature = "sync")]
+        mirror_artifacts.insert(record.header.artifact);
         if record.members.is_empty() {
             changed.push((proposal, None));
             continue;
@@ -483,6 +528,8 @@ pub(super) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, artifact: &Entity
             record.header.artifact = record.members[0].artifact;
         }
         close_if_done(&mut record, at, None);
+        #[cfg(feature = "sync")]
+        mirror_artifacts.insert(record.header.artifact);
         changed.push((proposal, Some(record)));
     }
     for (proposal, record) in changed {
@@ -494,6 +541,8 @@ pub(super) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, artifact: &Entity
         }
     }
     MEMBERSHIP.delete_from(store, txn, artifact.as_bytes())?;
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows_in_txn(store, txn, mirror_artifacts);
     Ok(())
 }
 
@@ -713,13 +762,17 @@ pub(super) fn settle_in_txn(
     }
     close_if_done(&mut record, at, reason);
     PROPOSALS.put(&vault.store, wtxn, proposal, &record)?;
+    // FIX 2691: the record rides beside its home artifact, into each live
+    // window that carries it once this write commits.
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows(vault, wtxn, BTreeSet::from([record.header.artifact]));
     Ok((record, landed))
 }
 
 /// Everyone whose answer on `member` would be the opener's own: the
 /// proposal's opener and the member's. No agent or run lineage resolver
 /// exists yet, so each is exactly itself (FIX-LIST).
-fn lineage(header: &ProposalHeader, member: &ProposalMember) -> BTreeSet<EntityId> {
+pub(super) fn lineage(header: &ProposalHeader, member: &ProposalMember) -> BTreeSet<EntityId> {
     [header.opener, member.opener]
         .into_iter()
         .filter_map(BodyActor::id)

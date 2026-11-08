@@ -47,6 +47,21 @@ side_tables! {
     AUTHORITY_HOST_ROOT_SLIP_CACHE: SyncState b"authority:host-root-slip:v2" Raw;
     /// Host-signed mesh binding projection keyed by hex32 MACHINE id.
     AUTHORITY_MESH_MACHINE: SyncState b"authority:mesh-machine:v1:" Named;
+    /// An OAuth client that may sign in to this vault's `/mcp` (FIX 4902): registered, or known
+    /// by its client ID metadata document. Key: hex64 (BLAKE3 of its `client_id`).
+    AUTHORITY_OAUTH_CLIENT: SyncState b"authority:oauth-client:v1:" Named;
+    /// An OAuth authorization code, until it lapses; never the code itself. Key: hex64 (keyed
+    /// hash of the code).
+    AUTHORITY_OAUTH_CODE: SyncState b"authority:oauth-code:v1:" Named;
+    /// An OAuth token family: the grant, client and resource every token one code minted
+    /// stands on, and whether it is revoked. Key: hex32 (the family id).
+    AUTHORITY_OAUTH_FAMILY: SyncState b"authority:oauth-family:v1:" Named;
+    /// An OAuth authorization request waiting for, or holding, the owner's answer; its page's
+    /// poll secret only as a keyed hash. Key: hex32 (the request id).
+    AUTHORITY_OAUTH_REQUEST: SyncState b"authority:oauth-request:v1:" Named;
+    /// An OAuth access or refresh token, until it lapses; never the token itself. Key: hex64
+    /// (keyed hash of the token).
+    AUTHORITY_OAUTH_TOKEN: SyncState b"authority:oauth-token:v1:" Named;
     /// Cached minted host-held project.write slip token ("v2.slip."+hex(JSON)) the owner's project
     /// signer uses, for one host signing key. Key: hex64.
     AUTHORITY_OWNER_PROJECT_SLIP_CACHE: SyncState b"authority:owner-project-slip:v1:" Raw;
@@ -244,7 +259,9 @@ side_tables! {
     /// never synced, and dropped wherever the machine id is. Key: ().
     IDENTITY_PINNED_ROOT: SyncState b"m:pinned_root" Raw;
     /// Sweep refs a hard delete captured from a provenance Claim before its SoftErase emptied the
-    /// body, held until a purge queues its sweep. Key: hex32 (entity id).
+    /// body, and the ids of the rows an erase retired with the entity (FIX 7494), held until a
+    /// purge queues its sweep; and the relayed ask intents a legal hold kept from the entity's
+    /// erase, held until a due legal-hold pass retires them (FIX 20468). Key: hex32 (entity id).
     DELETION_PENDING_SWEEP_REFS: SyncState b"m:sr:" Raw;
     /// Monotonic counter allocating the next u:e: sequence number for one entity's text document.
     /// Key: hex32 (entity id).
@@ -312,6 +329,11 @@ side_tables! {
     /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
     /// Key: hex32 (entity id) ":" hex32 (request id).
     SYNC_NC_E: SyncState b"nc:e:" LegacyJson;
+    /// Marks a replica's NOTE fork its authority sent (FIX 12789): the
+    /// authority's fork set settles it, and a fork made here carries no mark.
+    /// Key: hex32(note) ":" hex32(fork); value: BLAKE3 of the fork document
+    /// as sent.
+    NOTE_FORK_AUTHORITY: SyncState b"note_fork_authority:v1:" Raw;
     /// Marks a window whose peer-authored NOTE inbox residue was staged, consulted by the note
     /// module's erasure sweep. Key: yyyy-mm (window key).
     SYNC_NOTE_INBOX: SyncState b"note_inbox:v1:" Raw;
@@ -414,6 +436,11 @@ side_tables! {
     /// This machine's sealed bundle cursor (FIX 922): the u64be UTC slot it last finished ‖ the
     /// generation (24) it last took in, when it took one. Key: ().
     SYNC_RESIDENCE_BUNDLE_CURSOR: SyncState b"rbt" Raw;
+    /// A stored window's ready generation (fix list row 19634): u64 little-endian, one higher
+    /// each time a policy wake persists the window again; an absent row is 0. Each live
+    /// connection asks its peer to exchange the window once per generation it has not asked
+    /// for; no send, export or receipt consumes it. Local to this vault. Key: window key.
+    WINDOW_READY_GENERATION: SyncState b"ready:w:" Raw;
     /// A retained federation or maintenance item that carries an entity's bytes, so the entity's
     /// erase scrubs it (FIX 7998). Empty value. Key: hex32 (entity id) then the item's reference.
     SYNC_RETAINED_WORK_CARRIER: SyncState b"retained:carrier:" Raw;
@@ -439,6 +466,9 @@ side_tables! {
     SYNC_RESIDENCE_ITEM_CONTENT_WORLD: SyncState b"ri:c:" Raw;
     /// A thin-residence item's opened document state. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_DOCUMENT: SyncState b"ri:d:" Raw;
+    /// A thin item's source worlds and hashes of its exact cached blob and document, encoded
+    /// as CachedItemWorlds. Provenance only, never read authority. Key: hex32 (entity id).
+    SYNC_RESIDENCE_ITEM_SOURCES: SyncState b"ri:s:" Raw;
     /// The thin-residence index rows fetched for one window. Key: window key ":" item tag.
     SYNC_RESIDENCE_INDEX: SyncState b"ri:w:" Raw;
     /// Entity-scoped needs-rematerialization retry flag, set when a CRDT-tombstone purge or a
@@ -563,15 +593,20 @@ side_tables! {
     /// Aggregated usage-metering rollup totals (cost/units) for one owner/vault pair. Key: hex ":"
     /// hex (owner, vault).
     USAGE_VAULT_ROLLUP: SyncState b"usage:rollup:vault:" Named;
-    /// Admitted foreign-import payload retained only while its receipt is Pending, so recovery
-    /// survives losing the in-memory stage. Key: hex64.
+    /// The by-reference ASSET bodies a confirmed staged import still owes (FIX 12408): each owed
+    /// body's admitted window and row, and every row its kept content carries. No body bytes.
+    /// Key: hex64 (receipt).
+    VAULT_IMPORT_BODY_WORK: SyncState b"vault_import_body_work:v1:" Raw;
+    /// Admitted foreign-import payload retained while its receipt is Pending, so recovery
+    /// survives losing the in-memory stage, and after its confirmation while it owes bodies.
+    /// Key: hex64.
     VAULT_IMPORT_CONTENT: SyncState b"vault_import_content:v1:" Raw;
     /// Terminal/pending status receipt (hand-rolled MessagePack map) for one foreign vault-import
     /// artifact, keyed by its content-derived receipt id. Key: hex64.
     VAULT_IMPORT_RECEIPT: SyncState b"vault_import_receipt:v1:" Raw;
     /// The facet stamps a foreign artifact staged ahead of their rows, kept with its receipt while
-    /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
-    /// of them again. Key: hex64.
+    /// it is Pending, and after its confirmation while it owes bodies, bound to it by the
+    /// receipt's digest, so its confirmation holds every one of them again. Key: hex64.
     VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
     /// A BASE row the owner's discard of a world copy took as that world's alone (FIX 14534):
     /// the world's id (16 bytes), the ingest ladder's cue to judge the row's body again before

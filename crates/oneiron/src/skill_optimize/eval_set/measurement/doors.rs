@@ -26,10 +26,16 @@ const MAX_REF_BYTES: usize = 256;
 /// candidate and the incumbent retest, each a Candidate serving (CALL: three
 /// exposures, not two).
 const EXPOSURE_LEGS: [&str; 3] = ["incumbent", "candidate", "retest"];
-/// The canary metric a seat declares beside its measured axis. None is
-/// declared in this build (CALL), so every measured card reads unknown with
-/// `NoCanary` until a ruling names one.
+/// The seat-specific canary metric a seat declares beside its measured axis:
+/// the override table a later ruling fills. Empty in this build, so every seat
+/// measures the generic default below until one is named (FIX 10437).
 const SEAT_CANARIES: &[(EvalSeat, &str)] = &[];
+/// Every seat's canary while its override table holds none: its call failure
+/// rate, errors + refusals over calls from the legs' own receipts (FIX 10437).
+const GENERIC_SEAT_CANARY: &str = "call_failure_rate";
+/// How far the candidate arm's call failure rate must sit above the
+/// incumbent's to read diverged: 0.0 is literal "moved apart" (FIX 10437).
+const CANARY_FAILURE_DIVERGENCE_TOLERANCE: f64 = 0.0;
 
 /// The required floor slices a seat declares. None is declared in this
 /// build, so every request reads empty until a ruling names one (FIX 10446).
@@ -39,13 +45,21 @@ fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.into())
 }
 
-/// The canary metric `seat` declares, if any.
+/// The canary metric `seat` measures beside its axis: its declared override,
+/// else the generic call failure rate every seat shares (FIX 10437).
 #[must_use]
 pub fn eval_seat_canary(seat: &EvalSeat) -> Option<&'static str> {
     SEAT_CANARIES
         .iter()
         .find(|(declared, _)| declared == seat)
         .map(|(_, metric)| *metric)
+        .or(Some(GENERIC_SEAT_CANARY))
+}
+
+/// The candidate-over-incumbent call failure gap that reads diverged.
+#[must_use]
+pub(super) fn canary_failure_divergence_tolerance() -> f64 {
+    CANARY_FAILURE_DIVERGENCE_TOLERANCE
 }
 
 /// The digest that keys a request's row: its domain and its named encoding.
@@ -190,6 +204,21 @@ impl Vault {
         now: u64,
     ) -> Result<[u8; 32]> {
         validate(request)?;
+        // An unnamed canary freezes to the seat's measured one before the
+        // digest, so redelivery still hits the same row (FIX 10437). A
+        // host-named metric freezes as-is; the worker still measures the
+        // generic default beside the axis.
+        let filled;
+        let request = if request.canary.is_none() {
+            filled = {
+                let mut stamped = request.clone();
+                stamped.canary = eval_seat_canary(&stamped.seat).map(str::to_owned);
+                stamped
+            };
+            &filled
+        } else {
+            request
+        };
         let digest = request_digest(request)?;
         if let Some(row) = MEASUREMENTS.get(&self.store, &*txn, &digest)? {
             // An open measurement's job is queued again; the queue's dedupe
@@ -259,6 +288,15 @@ impl Vault {
     pub fn eval_measurement(&self, digest: &[u8; 32]) -> Result<Option<EvalMeasurement>> {
         let txn = self.store.env.read_txn()?;
         measurement_in_txn(self, &txn, digest)
+    }
+
+    /// One measurement on the caller's snapshot.
+    pub(crate) fn eval_measurement_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        digest: &[u8; 32],
+    ) -> Result<Option<EvalMeasurement>> {
+        measurement_in_txn(self, txn, digest)
     }
 
     /// Claim a Pending measurement before any paid work: count three

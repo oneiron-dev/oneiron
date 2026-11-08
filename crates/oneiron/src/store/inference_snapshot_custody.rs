@@ -37,7 +37,10 @@ fn snapshot_subject(binding: &CustodyBinding, catalog_id: &[u8; 16]) -> Result<C
 /// The wrapped key `secret` holds: exactly
 /// [`INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES`], of the sealed format.
 fn copy_wrapped(secret: &CustodySecret) -> Result<WrappedSnapshotKey> {
-    WrappedSnapshotKey::parse(secret.expose()).map_err(|_| CustodyKind::InferenceSnapshot.corrupt())
+    WrappedSnapshotKey::parse(secret.expose()).map_err(|error| match error {
+        Error::Io(error) if error.kind() == std::io::ErrorKind::OutOfMemory => Error::Io(error),
+        _ => CustodyKind::InferenceSnapshot.corrupt(),
+    })
 }
 
 impl Store {
@@ -49,11 +52,11 @@ impl Store {
 
     /// Writes `wrapped`'s 61 bytes as snapshot `catalog_id`'s key in `wtxn`,
     /// the binding pinned in the same transaction: published, synced and its
-    /// Mint journaled before the catalog row sealed under it commits, so a
-    /// crash leaves either nothing or the whole item. The writer keeps the
-    /// finisher from every entry, so no custody guard is taken. The same
-    /// bytes already there are kept; other bytes, or a retired id, are
-    /// refused, never replaced.
+    /// Mint journaled before the catalog row sealed under it commits. A crash
+    /// before that commit can leave a rowless mint; startup reconcile stages
+    /// its retirement. The writer keeps the finisher from every entry, so no
+    /// custody guard is taken. The same bytes already there are kept; other
+    /// bytes, or a retired id, are refused, never replaced.
     ///
     /// # Errors
     /// An archived vault, whose custody is its replacement's; a retired id,
@@ -70,7 +73,11 @@ impl Store {
         self.core.key_custody.pin_in_txn(self, wtxn)?;
         let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
         let id = snapshot_subject(custody.binding(), catalog_id)?.at(0);
-        let bytes = Zeroizing::new(wrapped.to_bytes());
+        let mut bytes = Zeroizing::new(Vec::new());
+        bytes
+            .try_reserve_exact(wrapped.bytes.len())
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+        bytes.extend_from_slice(&wrapped.bytes);
         debug_assert_eq!(bytes.len(), INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES);
         let secret = CustodySecret::from_bytes(bytes);
         custody.publish_minted(&id, &secret)
@@ -102,6 +109,30 @@ impl Store {
             EntryState::Live => Ok(Some(copy_wrapped(&custody.read(&subject.at(0))?)?)),
             EntryState::Missing | EntryState::Retired => Ok(None),
         }
+    }
+
+    /// Subjects whose generation-0 snapshot entry is still published in this
+    /// vault's custody. Directory names and entry presence only: no key read.
+    /// Completed retirement directories are omitted, but an entry left behind
+    /// its retirement marker is included for the existing finisher to resume.
+    /// An archived vault or one without local custody lists none.
+    ///
+    /// # Errors
+    /// Custody and file faults.
+    pub(crate) fn inference_snapshot_key_subjects(&self) -> Result<Vec<CustodySubject>> {
+        if self.core.gate_custody_archived() {
+            return Ok(Vec::new());
+        }
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(Vec::new());
+        };
+        let mut subjects = Vec::new();
+        for subject in custody.subjects_with_prefix(CustodyKind::InferenceSnapshot, &[])? {
+            if custody.published(&subject.at(0))? {
+                subjects.push(subject);
+            }
+        }
+        Ok(subjects)
     }
 
     /// Stages retirement of snapshot `catalog_id`'s wrapped key in `wtxn`,

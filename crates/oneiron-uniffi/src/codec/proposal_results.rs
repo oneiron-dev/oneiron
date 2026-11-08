@@ -102,6 +102,7 @@ impl Lift<oneiron::blob_artifact::ArtifactAskOutcome> for crate::ArtifactAskOutc
             proposed,
             abstained,
             refused,
+            next_sheet_row,
         } = value;
         // Consume the nested proposal (and its deep summary tree) first.
         let proposed = proposed.map(crate::PendingProposalView::lift).transpose()?;
@@ -117,6 +118,7 @@ impl Lift<oneiron::blob_artifact::ArtifactAskOutcome> for crate::ArtifactAskOutc
             proposed,
             abstained,
             refused,
+            next_sheet_row,
         })
     }
 }
@@ -339,6 +341,7 @@ impl Lift<oneiron::code_run::ConnectorCallReply> for crate::ConnectorCallReply {
                 questions,
                 live_until_ms,
                 reasons,
+                budget_steering,
             } => Ok(Self::AwaitingInput {
                 handle,
                 call_ref,
@@ -353,6 +356,11 @@ impl Lift<oneiron::code_run::ConnectorCallReply> for crate::ConnectorCallReply {
                     None
                 } else {
                     Some(reasons)
+                },
+                budget_steering: if budget_steering.is_empty() {
+                    None
+                } else {
+                    Some(budget_steering)
                 },
             }),
         }
@@ -383,6 +391,28 @@ impl Lift<oneiron::task_verb::sdk::ConnectorSchemaReply> for crate::ConnectorSch
                 Some(reasons)
             },
         })
+    }
+}
+
+impl Lift<oneiron::task_verb::sdk::ActAnswer<oneiron::code_run::ConnectorCallReply>>
+    for crate::ActAnswerConnectorCallReply
+{
+    fn lift(
+        value: oneiron::task_verb::sdk::ActAnswer<oneiron::code_run::ConnectorCallReply>,
+    ) -> Result<Self, OneironError> {
+        match value {
+            oneiron::task_verb::sdk::ActAnswer::DetailsOnDevice(details) => {
+                Ok(Self::DetailsOnDevice(crate::DetailsOnDevice {
+                    details_on_device: details.details_on_device,
+                }))
+            }
+            oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(questions) => Ok(
+                Self::QuestionsNarrowed(crate::NarrowedQuestions::lift(questions)?),
+            ),
+            oneiron::task_verb::sdk::ActAnswer::Done(outcome) => {
+                Ok(Self::Done(crate::ConnectorCallReply::lift(outcome)?))
+            }
+        }
     }
 }
 
@@ -428,7 +458,7 @@ impl Lift<oneiron::task_verb::sdk::ConnectorCallStatus> for crate::ConnectorCall
                 uncertain,
                 reply,
             } => {
-                let reply = crate::ConnectorCallReply::lift(reply)?;
+                let reply = crate::ActAnswerConnectorCallReply::lift(reply)?;
                 Ok(Self::AwaitingInput {
                     call_ref,
                     name,

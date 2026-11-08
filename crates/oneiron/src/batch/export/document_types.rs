@@ -12,7 +12,7 @@ use super::{
 use crate::error::{Error, Result};
 use crate::serialize::{ExportBody, ExportValue};
 
-pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 4;
+pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -102,6 +102,10 @@ pub struct WholeVaultExportReceipt {
     /// because it did not open here, and where its holder's sealed copy
     /// stands once the export's audit recorded it.
     pub(crate) holder_requests: Vec<crate::authority::HolderExportRequest>,
+    /// Owner ruling 1-EXPORT = B: each world the owner's own export carries
+    /// that his recipient choice would keep from where it goes, and why.
+    /// None on this device.
+    pub(crate) notices: Vec<crate::share_travel::WorldRecipientNotice>,
 }
 
 impl WholeVaultExportReceipt {
@@ -116,6 +120,11 @@ impl WholeVaultExportReceipt {
     pub fn manifest(&self) -> &WholeVaultDocumentManifest {
         &self.manifest
     }
+    /// Owner ruling 1-EXPORT = B: each world this export carries that the
+    /// owner's recipient choice would keep from where it goes, and why.
+    pub fn notices(&self) -> &[crate::share_travel::WorldRecipientNotice] {
+        &self.notices
+    }
 }
 
 /// An archive payload in memory and its standalone validating manifest, for a
@@ -128,6 +137,8 @@ pub struct WholeVaultExport {
     pub(crate) manifest: WholeVaultDocumentManifest,
     /// OF-490: the diaries this export read, for the vault's own log.
     pub(crate) diary_reads: Vec<super::ExportDiaryRead>,
+    /// As [`WholeVaultExportReceipt::notices`].
+    pub(crate) notices: Vec<crate::share_travel::WorldRecipientNotice>,
 }
 
 impl WholeVaultExport {
@@ -137,6 +148,10 @@ impl WholeVaultExport {
     }
     pub fn diary_reads(&self) -> &[super::ExportDiaryRead] {
         &self.diary_reads
+    }
+    /// As [`WholeVaultExportReceipt::notices`].
+    pub fn notices(&self) -> &[crate::share_travel::WorldRecipientNotice] {
+        &self.notices
     }
     pub fn manifest(&self) -> &WholeVaultDocumentManifest {
         &self.manifest
@@ -168,7 +183,7 @@ pub struct WholeVaultDocument {
     /// The three kind slots; `None` when the export carries no setup (a
     /// records archive, OKF).
     pub slot_bindings: Option<PortableSlotBindings>,
-    /// Every session's epoch floor, in session order; empty outside a
+    /// Every lineage's epoch floor, in key order; empty outside a
     /// whole-vault export.
     pub epoch_floors: Vec<ExportEpochFloor>,
     /// FIX 2768: the allowlisted side-table rows that index the records here
@@ -182,14 +197,19 @@ pub struct WholeVaultDocument {
     pub row_births: Vec<ExportRowBirth>,
 }
 
-/// Where one session's highest removed epoch summary left the count (OF-013):
-/// its epoch and the turn it ended at, nothing it said. An import raises the
-/// local floor to it and never lowers one.
+/// Where one lineage's highest removed epoch summary left the count
+/// (OF-013): its epoch and the turn it ended at, nothing it said. A lineage
+/// is a session's own log, or one conversation's turns within a session
+/// (FIX 5029). An import raises the local floor to it and never lowers one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportEpochFloor {
     /// The session's id, hex.
     pub session: String,
+    /// The conversation's id, hex, for a conversation's lineage; absent for
+    /// the session's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<String>,
     pub epoch: u64,
     pub turn_end: u64,
 }
@@ -221,6 +241,10 @@ pub struct ExportRunResults {
 #[serde(deny_unknown_fields)]
 pub struct ExportRun {
     pub run_id: String,
+    /// Host-witnessed birth world, or required `null` when unknown. Not a
+    /// residence receipt or a complete served-world capture.
+    #[serde(deserialize_with = "Option::<String>::deserialize")]
+    pub birth_world: Option<String>,
     pub outputs: Vec<ExportRunOutput>,
     /// The run's live result names. A binding whose occurrence was withheld
     /// keeps its name and reason but no handle.

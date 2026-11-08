@@ -2,6 +2,8 @@
 //! socket. The steady sync socket keeps sole ownership of its own reader.
 //! Device-side opened-item residence; the home side lives in `crate::sync::residence`.
 
+mod ask_option_link;
+pub use ask_option_link::request_ask_option_link;
 mod authority;
 mod bundle;
 mod checkpoint_roots;
@@ -25,11 +27,12 @@ use self::windows::PromotionReply;
 pub(crate) use self::windows::retry_refused_retains;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
 pub use bundle::{
-    PadAdmissionReport, SealedBundleRelay, SealedBundleRelayObservation,
+    PadAdmissionReport, SealedBundleRelay, SealedBundleRelayObservation, UnmergedUpload,
     sealed_bundle_relay_observation,
 };
 pub(crate) use bundle::{observe_sealed_bundle_relay, relay_sealed_bundle};
 pub(crate) use checkpoint_roots::exchange_checkpoint_roots;
+pub(crate) use index::IndexFetchFault;
 pub use index::ResidenceIndexWindow;
 pub use kit_fetch::{fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit};
 pub(crate) use machine_history::fetch_owed_machine_history;

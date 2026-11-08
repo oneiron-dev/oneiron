@@ -207,15 +207,23 @@ impl Metrics {
     /// characters) in `first` width, then `rest`; at least one. A word
     /// wider than the line breaks across lines.
     fn lines_in(&self, text: &str, first: i64, rest: i64) -> i64 {
+        let start = text.trim_start_matches(char::is_whitespace);
+        let leading = &text[..text.len() - start.len()];
+        let body = start.trim_end_matches(char::is_whitespace);
+        let trailing = &start[body.len()..];
+        let literal_spaces =
+            |run: &str| !run.is_empty() && run.chars().all(|ch| ch == ' ' || ch == '\u{3000}');
+        let leading = literal_spaces(leading).then_some((leading, ""));
+        let trailing = literal_spaces(trailing).then_some((trailing, ""));
         let space = self.advance(" ");
         let mut lines = 1;
         let mut used = 0;
         let mut width = first.max(1);
-        for (word, separator) in words(text) {
+        for (word, separator) in leading.into_iter().chain(words(body)).chain(trailing) {
             let need = self.advance(word);
             let gap = if used == 0 || separator.is_empty() {
                 0
-            } else if separator.bytes().all(|byte| byte == b' ') {
+            } else if literal_spaces(separator) {
                 self.advance(separator)
             } else {
                 space
