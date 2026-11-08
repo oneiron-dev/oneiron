@@ -3440,7 +3440,7 @@ declare namespace Sdk {
   type ModelPackView = { receipt: ModelPackReceipt; released_epoch_day: number; roles: string[]; successor?: string | null; retirement?: ModelStackDeprecationStatus | null };
   type ModelPackSetting = { preference: ModelPackPreference; active?: ModelPackView | null; previous?: ModelPackReceipt | null; change_ref?: string | null; installed: ModelPackView[] };
   type ModelPackRevertRequest = { change_ref: string };
-  type ModelPackRevertBlock = "superseded" | "no_previous_pack" | "not_installed" | "retired";
+  type ModelPackRevertBlock = "superseded" | "no_previous_pack" | "not_installed" | "retired" | "frozen_ref_pins_newer";
   type ModelPackRevert = { blocked?: ModelPackRevertBlock | null; setting: ModelPackSetting };
   type WebConnectorUsageRead = { since_ms?: number | null; limit?: number | null };
   type WebTool = "search" | "fetch";

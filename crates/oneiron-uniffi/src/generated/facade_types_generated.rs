@@ -54665,6 +54665,8 @@ pub enum ModelPackRevertBlock {
     NotInstalled,
     #[serde(rename = "retired")]
     Retired,
+    #[serde(rename = "frozen_ref_pins_newer")]
+    FrozenRefPinsNewer,
 }
 
 /// `oneiron::llm::model_pack::change::ModelPackRevert`.
