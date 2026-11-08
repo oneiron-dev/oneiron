@@ -16,7 +16,9 @@ use crate::channel_identity_provider::native_mail::is_native_mail_identity_in_tx
 use crate::channel_identity_provider::stalwart::{NativeMailMessage, StalwartClient};
 use crate::channel_identity_provider::{EMAIL_CHANNEL, EmailThreadHeaders};
 use crate::error::Error;
-use crate::outbound::{OutboundExecutionOutcome, OutboundExecutionRequest};
+use crate::outbound::{
+    EngineSendId, OutboundExecutionOutcome, OutboundExecutionRequest, SentLookup, SentLookupTarget,
+};
 
 /// The built-in native mail pack connection whose checked credential sends.
 const NATIVE_MAIL_PACK: &str = "oneiron.native_mail";
@@ -71,8 +73,12 @@ impl ServedChannelSink<'_> {
             Ok(message) => message,
             Err(_) => return OutboundExecutionOutcome::failed("email_message_invalid"),
         };
+        // FIX 4747: a connector-send TASK's send keys on its engine send
+        // id, so its Message-ID is the same from every machine.
         let send_key = request
-            .idempotency_key
+            .engine_send_id
+            .map(EngineSendId::as_str)
+            .or(request.idempotency_key)
             .or(request.intent.idempotency_key.as_deref())
             .unwrap_or(request.intent_ref);
         // A reply threads on the message it answers, as its archive names it.
@@ -113,6 +119,63 @@ impl ServedChannelSink<'_> {
         outcome.unwrap_or_else(|| {
             OutboundExecutionOutcome::failed("native_mail_credential_unavailable")
         })
+    }
+}
+
+impl ServedChannelSink<'_> {
+    /// FIX 4747: whether the native mail send `engine_send_id` keys went,
+    /// from the identity the dispatch resolved: the host's mail server's
+    /// submission of the draft carrying its Message-ID, read with the native
+    /// mail pack's checked credential. Any other email identity, or a host
+    /// that names no mail server, cannot tell.
+    pub(super) fn email_lookup_sent(
+        &self,
+        engine_send_id: &EngineSendId,
+        target: &SentLookupTarget<'_>,
+    ) -> SentLookup {
+        let Some(placement) = self.transports.native_mail().cloned() else {
+            return SentLookup::CannotTell;
+        };
+        let Some(identity) = target.channel_identity_ref else {
+            return SentLookup::CannotTell;
+        };
+        // Read before the door opens: the door holds the vault's writer.
+        let native = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(Error::from)
+            .and_then(|txn| is_native_mail_identity_in_txn(&self.vault.store, &txn, identity));
+        if !matches!(native, Ok(true)) {
+            return SentLookup::CannotTell;
+        }
+        let address = match self.vault.channel_identity_facts(&identity) {
+            Ok(Some(facts)) => facts.address_or_handle,
+            _ => return SentLookup::CannotTell,
+        };
+        let Ok(secret) = self
+            .vault
+            .verified_pack_connection_secret(NATIVE_MAIL_PACK, NATIVE_MAIL_CONNECTION)
+        else {
+            return SentLookup::CannotTell;
+        };
+        let mut found = None;
+        let _door = self.vault.inject_secret_at_door(
+            &secret.name,
+            &secret.effector,
+            &mut |value: &[u8]| {
+                let header = authorization_header(value)?;
+                found = Some(match StalwartClient::connect(placement.clone(), header) {
+                    Ok(client) => {
+                        client.look_up_served_send(identity, &address, engine_send_id.as_str())
+                    }
+                    Err(_) => SentLookup::CannotTell,
+                });
+                Ok(())
+            },
+        );
+        found.unwrap_or(SentLookup::CannotTell)
     }
 }
 
