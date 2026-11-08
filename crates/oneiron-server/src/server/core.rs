@@ -198,6 +198,7 @@ pub struct SyncServer {
     /// The `[desktop]` guest each code run starts for its own desktop verbs.
     /// `None` answers every desktop call `browser_unbound`.
     pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
+    pub(crate) artifact_backend: Option<Arc<crate::runtime::ArtifactBackendHost>>,
     /// The run desktops bound now, for the owner's takeover (CUA-001).
     pub(crate) desktop_seats: Arc<super::DesktopSeats>,
     /// The run browsers bound now, for the owner's takeover (CUA-001).
@@ -398,6 +399,19 @@ impl SyncServer {
         &self.browser_readiness
     }
 
+    /// Installs the host-owned published backend execution profile.
+    #[must_use]
+    pub fn with_artifact_backend(
+        mut self,
+        profile: Option<crate::config::ArtifactBackendConfig>,
+    ) -> anyhow::Result<Self> {
+        self.artifact_backend = profile
+            .map(crate::runtime::ArtifactBackendHost::new)
+            .transpose()?
+            .map(Arc::new);
+        Ok(self)
+    }
+
     /// Gives code runs a desktop guest, from the `[desktop]` section.
     #[must_use]
     pub fn with_desktop_guest(mut self, guest: Option<oneiron_browser::DesktopGuest>) -> Self {
@@ -446,10 +460,11 @@ impl SyncServer {
         meter: oneiron::BudgetGuard,
     ) -> Self {
         self.decision_read = Some((door, meter));
-        self.decisions = self
-            .decisions
-            .clone()
-            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
+        self.decisions = self.decisions.clone().with_house_read(
+            self.decision_read.as_ref(),
+            self.house_read_admission(),
+            &self.vault,
+        );
         self
     }
 
@@ -502,10 +517,11 @@ impl SyncServer {
             self.decision_read = Some((door, raw.meter().clone()));
         }
         // The house read fills the ladder's escalation rung.
-        self.decisions = self
-            .decisions
-            .clone()
-            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
+        self.decisions = self.decisions.clone().with_house_read(
+            self.decision_read.as_ref(),
+            self.house_read_admission(),
+            &self.vault,
+        );
         // A planned team's pattern skill runs on its generative seat.
         self.pattern_launch_runner = pattern_workflow::bind(Arc::clone(&self.vault), ai.clone());
         self.ai = ai;

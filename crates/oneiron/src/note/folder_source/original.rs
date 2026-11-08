@@ -44,7 +44,7 @@ impl OriginalBytes {
 
 /// A kept original: the version of its file's blob artifact that holds the
 /// bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FileOriginal {
     /// The file's blob artifact, one per file across its versions.
     pub artifact: EntityId,

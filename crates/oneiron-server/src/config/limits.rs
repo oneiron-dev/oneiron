@@ -271,6 +271,7 @@ impl LimitsConfig {
             header_read_timeout: Duration::from_millis(self.header_read_timeout_ms),
             body_idle_timeout: Duration::from_millis(self.body_idle_timeout_ms),
             queue_wait: self.queue_wait(),
+            max_read_buffer_bytes: None,
         }
     }
 
@@ -467,7 +468,10 @@ impl LimitsConfig {
             identity_excerpt_bytes,
             community_cache_bytes,
             connector_manifest_entries,
+            context_third_parties,
+            memory_pinned_refs,
             codebase_manifest_files,
+            recall_query_bytes,
             requested_result_rows,
             embedding_dimensions,
             shared_merge_evidence_rows,
@@ -775,7 +779,10 @@ impl LimitsConfig {
                 EngineLimit::ConnectorManifestEntries,
                 connector_manifest_entries,
             ),
+            (EngineLimit::ContextThirdParties, context_third_parties),
+            (EngineLimit::MemoryPinnedRefs, memory_pinned_refs),
             (EngineLimit::CodebaseManifestFiles, codebase_manifest_files),
+            (EngineLimit::RecallQueryBytes, recall_query_bytes),
             (EngineLimit::RequestedResultRows, requested_result_rows),
             (EngineLimit::EmbeddingDimensions, embedding_dimensions),
             (
