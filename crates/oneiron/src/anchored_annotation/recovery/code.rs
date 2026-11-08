@@ -21,10 +21,11 @@ use crate::secret_custody::SecretSight;
 
 /// Every exact place in `artifact`'s current snapshot where the words of
 /// each of `unattached` read again, with its files read in `txn` through
-/// `sight`. Offers come in thread order, and each thread's places in path
-/// order, then file order, at most [`MAX_OFFERS`] a thread, as one blob
-/// search lists them. A path the snapshot's custody withholds, or one whose
-/// file `reads` refuses, is skipped; a file that is not text holds no place.
+/// `sight`, the projection the threads' words were read through. Offers
+/// come in thread order, and each thread's places in path order, then file
+/// order, at most [`MAX_OFFERS`] a thread, as one blob search lists them. A
+/// path the snapshot's custody withholds, or one whose file `reads` refuses,
+/// is skipped; a file that is not text holds no place.
 /// No snapshot offers nothing. A resource refusal is the engine's error
 /// (FIX 10587), never empty offers.
 pub(super) fn code_reattach_offers_in_txn(
@@ -105,8 +106,10 @@ pub(super) fn code_reattach_offers_in_txn(
 }
 
 /// The words a one-click reattach at `locator` on the code artifact
-/// `artifact` would land on, read in `txn` through the owner's sight, as the
-/// blob arm reads its version's stored bytes. Refused unless `locator` is a
+/// `artifact` would land on, read in `txn` through the masked projection,
+/// the one the Unattached list's snapshot words were read through
+/// (`record_detached_in_txn`), so the two compare in one projection and no
+/// plaintext secret is read to compare them. Refused unless `locator` is a
 /// code locator that names the artifact's current repo_ref commit and that
 /// commit's file hash for its path. `None` when the path is withheld or the
 /// span does not read.
@@ -135,13 +138,14 @@ pub(super) fn code_reattach_words_in_txn(
             "a code reattach names the artifact's current commit and that commit's file hash",
         )));
     }
-    code_span_words_in_txn(vault, txn, artifact, locator, SecretSight::Owner)
+    code_span_words_in_txn(vault, txn, artifact, locator, SecretSight::Masked)
 }
 
 impl Vault {
     /// [`Vault::annotation_reattach_offers`] on a code artifact (FIX 7905):
-    /// the files read through the owner's sight, as the blob arm reads its
-    /// head's stored bytes.
+    /// the files read through the masked projection, the one the stored
+    /// snapshot words were read through, so an offer is a place where those
+    /// words read again and its reattach takes it.
     pub(super) fn code_annotation_reattach_offers(
         &self,
         artifact_id: &EntityId,
@@ -156,7 +160,7 @@ impl Vault {
             &rtxn,
             artifact_id,
             unattached,
-            SecretSight::Owner,
+            SecretSight::Masked,
             |_| Ok(true),
         )
     }
