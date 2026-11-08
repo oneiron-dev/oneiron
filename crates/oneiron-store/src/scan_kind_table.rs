@@ -5,7 +5,7 @@ use crate::scan_kind::EngineScan;
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 140] = [
+    pub const ALL: [Self; 141] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -81,6 +81,7 @@ impl EngineScan {
         Self::AudienceEdgeRows,
         Self::RoomAncestryRecords,
         Self::PrivateThreadAncestryRecords,
+        Self::WordSourceRecords,
         Self::RoomPolicyRows,
         Self::RoomThreadHolderRows,
         Self::ProjectDepthDefaultRows,
@@ -235,6 +236,7 @@ impl EngineScan {
             Self::AudienceEdgeRows => "audience_edge_rows",
             Self::RoomAncestryRecords => "room_ancestry_records",
             Self::PrivateThreadAncestryRecords => "private_thread_ancestry_records",
+            Self::WordSourceRecords => "word_source_records",
             Self::RoomPolicyRows => "room_policy_rows",
             Self::RoomThreadHolderRows => "room_thread_holder_rows",
             Self::ProjectDepthDefaultRows => "project_depth_default_rows",
@@ -444,6 +446,7 @@ impl EngineScan {
             Self::ReceiptSourceRows => 153,
             Self::SyncPrefixRows => 154,
             Self::DependentWalkRows => 155,
+            Self::WordSourceRecords => 246,
             Self::MachineTransitionFrontier => 247,
         }]
     }

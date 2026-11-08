@@ -160,6 +160,7 @@ pub(super) fn media_job_carriage(value: &[u8]) -> Option<Vec<u8>> {
     let mut request: MediaRequest = typed(field(&entries, REQUEST)?)?;
     request.parts.clear();
     request.references.clear();
+    request.mask = None;
     request.params.clear();
     request.voice = None;
     let ended = match field(&entries, ENDED) {
