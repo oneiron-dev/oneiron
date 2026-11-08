@@ -22,7 +22,7 @@ use oneiron::runtime_hooks::VerbHookStop;
 use oneiron::skill_attribution::run_write_token_of_origin;
 use tower::ServiceExt;
 
-use super::super::host_doors::support::with_calling_run_writes;
+use super::super::host_doors::support::{with_calling_action_program, with_calling_run_writes};
 use super::super::{FacadeApiError, FacadeCallOutput};
 use crate::api::call_receipt::{
     self, CallStamp, HeldOuterAttempt, RECEIPT_REF_HEADER, attempt_collector,
@@ -310,11 +310,13 @@ impl FacadeRowDoor {
                     });
                 let _ = sender.send((stamp, answer));
             };
+            // An action program's row: a whole-vault export it calls
+            // follows the world settings (FIX 9591).
             self.runtime.spawn(with_attempt_collector(
                 self.collector.clone(),
                 crate::api::facade::with_admission_observer(
                     self.observer.clone(),
-                    with_calling_run_writes(run_writes, row),
+                    with_calling_run_writes(run_writes, with_calling_action_program(row)),
                 ),
             ));
             let Ok((stamp, answer)) = receiver.recv() else {
@@ -358,7 +360,7 @@ impl FacadeRowDoor {
             self.collector.clone(),
             crate::api::facade::with_admission_observer(
                 self.observer.clone(),
-                with_calling_run_writes(run_writes, row),
+                with_calling_run_writes(run_writes, with_calling_action_program(row)),
             ),
         ));
         let Ok((stamp, answer)) = receiver.recv() else {
@@ -444,13 +446,19 @@ impl AgentVerbDoor for FacadeRowDoor {
             .chain(answer.observations.iter().flat_map(|seen| &seen.rows))
             .copied()
             .collect();
-        if !super::super::release::rows_still_admitted(vault, auth, &sources) {
+        if !super::super::release::rows_still_admitted(vault, auth, &sources, false) {
             return Err(oneiron::Error::EntityNotFound);
         }
         let destination = auth.destination();
         for seen in &answer.observations {
             let frame = serde_json::to_value(&seen.frame).unwrap_or(serde_json::Value::Null);
-            if super::super::release::known_denied_rows(vault, &destination, &seen.rows, &frame) {
+            if super::super::release::known_denied_rows(
+                vault,
+                &destination,
+                &seen.rows,
+                &frame,
+                false,
+            ) {
                 return Err(oneiron::Error::EntityNotFound);
             }
         }
@@ -463,6 +471,7 @@ impl AgentVerbDoor for FacadeRowDoor {
                 value: answer.output,
                 rows: answer.rows.clone(),
             },
+            false,
         );
         Ok(answer)
     }

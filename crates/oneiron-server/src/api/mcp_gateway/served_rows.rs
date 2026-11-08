@@ -153,16 +153,25 @@ pub(super) fn stop_release_rows<'s>(
 /// answer is released only as a claimed invocation's waiter is
 /// ([`crate::api::facade::rows_still_admitted`]); a lapsed one answers only
 /// that the call ran. Any other stop, or rows that are unknown, is not
-/// judged here.
+/// judged here. The owner's own whole-vault export
+/// (`owner_whole_vault_export`, as the retry's route and his fresh proof
+/// name it) reads its rows as his credential reads them on this device
+/// (owner ruling 1-EXPORT = B).
 pub(super) fn drained_rows_lapsed(
     server: &SyncServer,
     actor: &McpCallContext,
     stop: &VerbHookStop,
     rows: Option<&[EntityId]>,
+    owner_whole_vault_export: bool,
 ) -> bool {
     matches!(stop, VerbHookStop::Completed { .. })
         && rows.zip(actor.auth.as_ref()).is_some_and(|(rows, auth)| {
-            !crate::api::facade::rows_still_admitted(&server.vault, auth, rows)
+            !crate::api::facade::rows_still_admitted(
+                &server.vault,
+                auth,
+                rows,
+                owner_whole_vault_export,
+            )
         })
 }
 
@@ -199,8 +208,15 @@ pub(super) fn held_act_answer(
     let (output, rows) = unknown_act_answer(tool, actor, output, served)?;
     let held = match rows.as_deref() {
         Some(known) if KNOWN_ROW_ACTS.contains(&tool) && actor.destination().is_off_device() => {
-            super::device_release::mcp_release_result(server, actor, known, false, output.clone())
-                .is_err()
+            super::device_release::mcp_release_result(
+                server,
+                actor,
+                known,
+                false,
+                output.clone(),
+                false,
+            )
+            .is_err()
         }
         _ => false,
     };

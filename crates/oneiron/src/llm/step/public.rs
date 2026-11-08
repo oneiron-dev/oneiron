@@ -266,7 +266,7 @@ async fn submit(
                 "saved model step lost its captured recovery".into(),
             ))
         })?;
-        super::execute::recover_step(&context, &row.step_hash, &row.input.request, recovery, None)
+        super::execute::recover_step(&context, &row.input.request, recovery, None)
     };
     row.result = Some(match outcome {
         Ok(StepOutcome::Finished {

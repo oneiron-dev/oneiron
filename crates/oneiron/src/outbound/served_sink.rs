@@ -698,6 +698,34 @@ fn slack_reply_thread(body: &serde_json::Value) -> Option<String> {
     None
 }
 
+impl ServedChannelSink<'_> {
+    /// Whether this machine holds what the served sink sends `intent` with
+    /// (FIX 4747 slice 4): the reaper's read-only check before it takes a
+    /// send another machine let lapse. It makes the machine-side reads each
+    /// send makes before its bytes, without the send's content, the
+    /// credential door or the provider: the checked pack connection whose
+    /// credential Slack, LINE and Telegram post with, the host's mail server
+    /// for native mail, and the APNs application the target device names. A
+    /// channel the sink has no transport for is not held.
+    #[must_use]
+    pub fn holds_channel(vault: &Vault, intent: &super::OutboundIntent) -> bool {
+        match (intent.channel.as_str(), intent.verb.as_str()) {
+            ("slack", "send") => vault
+                .verified_pack_connection_secret(SLACK_PACK, SLACK_CONNECTION)
+                .is_ok(),
+            (LINE_CHANNEL, "send" | "reply" | "push") => vault
+                .verified_pack_connection_secret(LINE_PACK, LINE_CONNECTION)
+                .is_ok(),
+            (telegram::TELEGRAM_CHANNEL, "send") => telegram::telegram_connection_held(vault),
+            (EMAIL_CHANNEL, "send") => vault.served_transports().native_mail().is_some(),
+            ("apns", "push") => {
+                apns::apns_application_held(vault, &vault.served_transports(), &intent.target)
+            }
+            _ => false,
+        }
+    }
+}
+
 impl OutboundExecutionSink for ServedChannelSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
         match (
