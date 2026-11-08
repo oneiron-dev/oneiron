@@ -51730,8 +51730,7 @@ async fn mcp_verb_row_can(row: McpVerbRow<'_>) -> McpVerbRowResult {
             "invalid typed agent-verb argument",
         )
     };
-    let input: oneiron::task_verb::sdk::TaskCanAskRequest =
-        serde_json::from_value(input).map_err(|_| invalid())?;
+    let input: oneiron::verbs::CanRequest = serde_json::from_value(input).map_err(|_| invalid())?;
     let output = oneiron::task_verb::sdk::can(&memory, input).map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)
