@@ -574,8 +574,19 @@ pub(super) fn resolve_program_step(
     payload: &CampaignEnrollmentAttemptPayload,
     event: &CampaignEnrollmentEvent,
 ) -> Result<CampaignProgramStep> {
+    let rtxn = vault.store.env.read_txn()?;
+    resolve_program_step_in_txn(vault, &rtxn, payload, event)
+}
+
+pub(super) fn resolve_program_step_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    payload: &CampaignEnrollmentAttemptPayload,
+    event: &CampaignEnrollmentEvent,
+) -> Result<CampaignProgramStep> {
     let program =
-        campaign_program(vault, payload.campaign_program_ref)?.ok_or(Error::EntityNotFound)?;
+        super::program::campaign_program_in_txn(vault, txn, payload.campaign_program_ref)?
+            .ok_or(Error::EntityNotFound)?;
     if program.campaign_ref != event.campaign_ref {
         return Err(invalid(
             "campaign program does not belong to the event's campaign",
@@ -583,9 +594,19 @@ pub(super) fn resolve_program_step(
     }
     // Archive stops queued work: an archived program or campaign, or a step
     // an update dropped, fails closed here, before either leg acts.
-    require_program_step_enrolls(vault, &program, payload.program_step_ref)?;
-    campaign_program_step(vault, program.program_ref, payload.program_step_ref)?
-        .ok_or(Error::EntityNotFound)
+    super::program::require_program_step_enrolls_in_txn(
+        vault,
+        txn,
+        &program,
+        payload.program_step_ref,
+    )?;
+    super::program::campaign_program_step_in_txn(
+        vault,
+        txn,
+        program.program_ref,
+        payload.program_step_ref,
+    )?
+    .ok_or(Error::EntityNotFound)
 }
 
 /// The durable identity of ONE enrollment consequence, standing where ONE-1691
