@@ -548,6 +548,7 @@ impl Vault {
                 made_by,
                 false,
                 true,
+                None,
                 crate::core_write::CoreWriteLaneRef::Unbound,
             )?;
             Ok((version, staged.into_hold()))
