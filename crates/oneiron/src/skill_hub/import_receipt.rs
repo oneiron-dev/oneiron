@@ -316,13 +316,21 @@ impl Vault {
         learned_at: u64,
     ) -> Result<EntityId> {
         self.import_marketplace_skill_with_query(
-            adapter, source, publisher, fit, None, occurred, learned_at,
+            adapter,
+            source,
+            publisher,
+            fit,
+            None,
+            occurred,
+            learned_at,
+            &mut super::SkillImportRows::default(),
         )
     }
 
     /// The same import; with `advisories`, the bytes' OSV receipts are queried
     /// before the fit, bound into it, and co-commit with the import, so the
-    /// activation consult reads them.
+    /// activation consult reads them. `rows` notes the stored skill a content
+    /// dedup answers, whether the commit lands or not (FIX 11699).
     #[expect(
         clippy::too_many_arguments,
         reason = "the marketplace import plus an optional dependency advisory transport"
@@ -336,11 +344,12 @@ impl Vault {
         advisories: Option<&dyn super::osv::OsvQuery>,
         occurred: TimeRange,
         learned_at: u64,
+        rows: &mut super::SkillImportRows,
     ) -> Result<EntityId> {
         let fitted = self.fit_marketplace_skill(
             adapter, source, publisher, fit, advisories, occurred, learned_at,
         )?;
-        self.with_write_txn_grouped(|txn| self.commit_fitted_skill_in_txn(txn, &fitted, None))
+        self.with_write_txn_grouped(|txn| self.commit_fitted_skill_in_txn(txn, &fitted, None, rows))
     }
     pub(super) fn write_hub_import_receipt_in_txn(
         &self,
