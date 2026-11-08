@@ -102,7 +102,7 @@ pub(crate) fn record_external_effect_policy(
         && approval_context != ApprovalContext::Observe
         && let Some(reservation) = envelope_reservation
     {
-        reservation.commit_in_txn(store, wtxn, created_at)?;
+        reservation.commit_in_txn(store, wtxn)?;
     }
     store.diagnostics.gate.record_decision(&decision);
 

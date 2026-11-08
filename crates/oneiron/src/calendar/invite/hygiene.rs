@@ -392,7 +392,7 @@ struct StandingGrants {
 
 impl StandingGrants {
     fn read(vault: &Vault) -> Result<Self, CalendarError> {
-        let grants = {
+        let grants: Vec<(EntityId, StandingOutboundGrant)> = {
             let rtxn = vault
                 .store
                 .env

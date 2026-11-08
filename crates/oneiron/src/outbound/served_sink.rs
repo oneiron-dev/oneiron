@@ -751,6 +751,22 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
             _ => SentLookup::CannotTell,
         }
     }
+
+    /// Only an email send reads back (FIX 8814 follow-up): the host's mail
+    /// server keeps the draft its send key names. Every other channel
+    /// answers `Unknown`.
+    fn read_back_delivery(
+        &self,
+        request: &OutboundExecutionRequest<'_>,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        match (
+            request.intent.channel.as_str(),
+            request.intent.verb.as_str(),
+        ) {
+            (EMAIL_CHANNEL, "send") => self.email_read_back(request),
+            _ => crate::outbound_intent_ledger::DeliveryReadBack::Unknown,
+        }
+    }
 }
 
 /// How long after a send's approval its LINE retry key still deduplicates a
@@ -825,5 +841,22 @@ impl OutboundExecutionSink for OwnedServedChannelSink {
                 .join()
         })
         .unwrap_or(SentLookup::CannotTell)
+    }
+
+    /// The served sink's read-back, on a thread of its own as a send runs.
+    fn read_back_delivery(
+        &self,
+        request: &OutboundExecutionRequest<'_>,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        let vault = self.vault.as_ref();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| match ServedChannelSink::new(vault) {
+                    Ok(sink) => sink.read_back_delivery(request),
+                    Err(_) => crate::outbound_intent_ledger::DeliveryReadBack::Unknown,
+                })
+                .join()
+        })
+        .unwrap_or(crate::outbound_intent_ledger::DeliveryReadBack::Unknown)
     }
 }
