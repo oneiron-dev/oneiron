@@ -4,6 +4,16 @@ use serde::{Deserialize, Serialize};
 use crate::federation::{FederationDirectionScope, FederationPactScope, Scope};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 
+pub use crate::authority::{
+    FederationPactInactiveReason, FederationPactStatusRow, FederationStatus,
+};
+
+/// Reads this install's current pact status as the embedded vault owner.
+pub fn federation_status(memory: &Memory<'_>) -> MemoryResult<FederationStatus> {
+    let owner = memory.embedded_owner("vault.federation.status")?;
+    Ok(memory.vault().federation_status_as_owner(&owner)?)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConnectIdentity {
     pub vault: String,

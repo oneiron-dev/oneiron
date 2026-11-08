@@ -55,15 +55,24 @@ pub(super) fn resolve_campaign_member_target(
     step: &CampaignProgramStep,
 ) -> Result<Option<CampaignMemberTarget>> {
     let txn = vault.store.env.read_txn()?;
-    if vault.get_entity_type_in_txn(&txn, &member)? != Some(ENTITY_TYPE_PERSON) {
+    resolve_campaign_member_target_in_txn(vault, &txn, member, step)
+}
+
+pub(super) fn resolve_campaign_member_target_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    member: EntityId,
+    step: &CampaignProgramStep,
+) -> Result<Option<CampaignMemberTarget>> {
+    if vault.get_entity_type_in_txn(txn, &member)? != Some(ENTITY_TYPE_PERSON) {
         return Ok(None);
     }
-    let Some(party_key) = comm_party_key(vault, &txn, member)? else {
+    let Some(party_key) = comm_party_key(vault, txn, member)? else {
         return Ok(None);
     };
     let (Some(row), Some(facts)) = (
-        vault.get_channel_identity_in_txn(&txn, &step.sender_ref)?,
-        channel_identity_facts_in_txn(&vault.store, &txn, &step.sender_ref)?,
+        vault.get_channel_identity_in_txn(txn, &step.sender_ref)?,
+        channel_identity_facts_in_txn(&vault.store, txn, &step.sender_ref)?,
     ) else {
         return Ok(None);
     };
@@ -75,7 +84,7 @@ pub(super) fn resolve_campaign_member_target(
         return Ok(None);
     }
     let Some((_, contact)) =
-        vault.find_counterparty_contact_in_txn(&txn, &step.sender_ref, &party_key)?
+        vault.find_counterparty_contact_in_txn(txn, &step.sender_ref, &party_key)?
     else {
         return Ok(None);
     };
