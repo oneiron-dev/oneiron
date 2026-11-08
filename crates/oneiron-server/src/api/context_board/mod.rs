@@ -28,6 +28,7 @@ pub(crate) use mcp_self::{
 };
 mod scratchpad;
 mod session;
+mod source_rows;
 mod split;
 pub(crate) use split::next_state_part;
 mod standing;
@@ -47,6 +48,8 @@ pub(crate) use prefix::*;
 pub(crate) use scratchpad::*;
 pub(crate) use session::*;
 pub(crate) use turn_actions::{action_board, requester_auth};
+
+use self::source_rows::extend_source_rows;
 
 use super::CoreContextPackRequest;
 use super::CoreContextPackResponse;
@@ -231,6 +234,10 @@ pub(crate) struct ContextBoardResponse {
     #[serde(skip)]
     #[schema(ignore)]
     chat_sources: Vec<BoardSectionSource>,
+    /// Whether every rendered row reference has an identity; never on the wire.
+    #[serde(skip)]
+    #[schema(ignore)]
+    rows_complete: bool,
     /// The same frame as a chat turn's two parts (I1 = C), when it asked
     /// for them; never on the wire.
     #[serde(skip)]
@@ -756,6 +763,7 @@ async fn hydrate_inner(
         board_turn: None,
         chat_context,
         chat_sources,
+        rows_complete: parts.named_complete,
         chat_split,
     };
     match board_turn {
@@ -792,12 +800,16 @@ async fn hydrate_inner(
     drop(briefs);
     // Every row the board delivered: its MEMORIES rows (pins included), its
     // capability hits, and the task intents, worlds, room and project it named.
-    let mut delivered: Vec<_> = response
-        .memories
-        .iter()
-        .flat_map(|memories| &memories.rows)
-        .filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok())
-        .collect();
+    let mut delivered = Vec::new();
+    extend_source_rows(
+        &mut delivered,
+        &mut response.rows_complete,
+        response
+            .memories
+            .iter()
+            .flat_map(|memories| &memories.rows)
+            .map(|row| row.id.as_str()),
+    );
     delivered.extend(hits_of(response.pack.as_ref()));
     delivered.extend(parts.named.iter().copied());
     let mut rider_key = None;
@@ -833,12 +845,16 @@ async fn hydrate_inner(
     // named or stamped contact, named reader definition and discovered
     // capability, what each INBOX row rests on (FIX 8145), and what the
     // MEMORIES filter chose its rows by (BOARD-LAYOUT).
-    let mut admit: Vec<_> = response
-        .notifications
-        .iter()
-        .filter_map(|notification| oneiron::EntityId::from_hex(&notification.id).ok())
-        .collect();
-    admit.extend(rider_admits(&changed_line));
+    let mut admit = Vec::new();
+    extend_source_rows(
+        &mut admit,
+        &mut response.rows_complete,
+        response
+            .notifications
+            .iter()
+            .map(|notification| notification.id.as_str()),
+    );
+    admit.extend(rider_admits(&changed_line, &mut response.rows_complete));
     admit.extend(pack_sources);
     admit.extend(named_refs);
     admit.extend(parts.named);
@@ -858,11 +874,12 @@ async fn hydrate_inner(
     }
     let memories = response.memories.iter().flat_map(|memories| &memories.rows);
     let standing = response.standing.iter().map(|prefix| &prefix.world_ref);
-    served.extend(
+    extend_source_rows(
+        &mut served,
+        &mut response.rows_complete,
         memories
-            .map(|row| &row.id)
-            .chain(standing)
-            .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
+            .map(|row| row.id.as_str())
+            .chain(standing.map(String::as_str)),
     );
     // The standing block's text is its CLAIMs' (FIX 8148): a replay admits
     // each again under the caller's read and clamp, and an erase of one
@@ -871,7 +888,7 @@ async fn hydrate_inner(
     Ok((
         axum::Extension(crate::idempotency::ServedRows {
             rows: served,
-            admit: Some(admit),
+            admit: response.rows_complete.then_some(admit),
             sources: standing_claims,
         }),
         Json(response),
@@ -897,11 +914,16 @@ fn hits_of(pack: Option<&CoreContextPackResponse>) -> impl Iterator<Item = oneir
 /// removed connector's key is one the reader was already shown.
 fn rider_admits(
     line: &oneiron::context_board::ChangedLine,
-) -> impl Iterator<Item = oneiron::EntityId> + '_ {
-    line.named_rows().filter_map(|id| {
-        let hex = id.rsplit_once(':').map_or(id, |(_, hex)| hex);
-        oneiron::EntityId::from_hex(hex).ok()
-    })
+    complete: &mut bool,
+) -> Vec<oneiron::EntityId> {
+    let mut rows = Vec::new();
+    extend_source_rows(
+        &mut rows,
+        complete,
+        line.named_rows()
+            .map(|id| id.rsplit_once(':').map_or(id, |(_, hex)| hex)),
+    );
+    rows
 }
 
 /// A standing session's response must fit its whole token budget.
@@ -1041,6 +1063,8 @@ pub(crate) struct ChatBoard {
     pub(crate) block: String,
     /// Every row the board served.
     pub(crate) rows: Vec<oneiron::EntityId>,
+    /// Whether `rows` is a complete source witness for this board.
+    pub(crate) rows_complete: bool,
     /// What the turn's context records keep of it (FIX 6921); `None` when
     /// its MEMORIES did not match its settled render.
     pub(crate) context: Option<ChatContextCapture>,
@@ -1188,6 +1212,7 @@ async fn read_chat_board(
         Some(split) => ChatBoard {
             block: split.render.state,
             rows: served.0.rows,
+            rows_complete: context.rows_complete,
             context: context.chat_context,
             sections: split.state_sources,
             rider_ack,
@@ -1199,6 +1224,7 @@ async fn read_chat_board(
         None => ChatBoard {
             block: context.board,
             rows: served.0.rows,
+            rows_complete: context.rows_complete,
             context: context.chat_context,
             sections: context.chat_sources,
             rider_ack,
