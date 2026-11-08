@@ -29,8 +29,10 @@ impl Vault {
     /// names now (FIX 3208): a FEDERATION_GRANT row the owner minted his
     /// agent (`owner_agent`), whose member is `agent`, that confers now, is
     /// not known withdrawn (FIX 5107), lists `ai.<operation>` among an
-    /// explicit verb set, and whose pact membership, on a shared vault,
-    /// still stands (FIX 7548). Empty for an agent no such Grant names.
+    /// explicit verb set or names a verb class that lists it (its own
+    /// spelling or the owner's row for it, FIX 8735), and whose pact
+    /// membership, on a shared vault, still stands (FIX 7548). Empty for an
+    /// agent no such Grant names.
     ///
     /// # Errors
     ///
@@ -39,6 +41,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let now = self.instant_in_txn(&txn)?.secs();
         let mut operations = BTreeSet::new();
+        let mut class_rows: Option<crate::federation::AgentVerbClasses> = None;
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.store,
             &txn,
@@ -56,17 +59,40 @@ impl Vault {
             let Ok(grant) = decode_federation_grant_body(&body) else {
                 continue;
             };
-            let ScopeAxis::Some(verbs) = &grant.authority_scope.verbs else {
+            if !grant.owner_agent || grant.member_ref != agent {
                 continue;
+            }
+            if !grant.verb_classes.is_empty() && class_rows.is_none() {
+                class_rows = Some(crate::federation::AgentVerbClasses::for_grants_in_txn(
+                    &self.store,
+                    &txn,
+                    [&grant],
+                )?);
+            }
+            let classes = class_rows.as_ref();
+            // The explicit set's `ai.*` verbs, then each class's: the
+            // built-in outbound classes list no `ai.*` verb.
+            let explicit = match &grant.authority_scope.verbs {
+                ScopeAxis::Some(verbs) => Some(verbs.iter().map(String::as_str)),
+                ScopeAxis::Bottom | ScopeAxis::All => None,
             };
-            let named: Vec<&str> = verbs
-                .iter()
+            let classed = classes.into_iter().flat_map(|classes| {
+                grant
+                    .verb_classes
+                    .iter()
+                    .flat_map(move |class| classes.spelled_verbs(class))
+            });
+            let named: BTreeSet<&str> = explicit
+                .into_iter()
+                .flatten()
+                .chain(classed)
                 .filter_map(|verb| verb.strip_prefix(AI_GRANT_VERB_PREFIX))
                 .collect();
             if named.is_empty()
-                || !grant.owner_agent
-                || grant.member_ref != agent
-                || !grant.confers_at(now)
+                || !grant.confers_with_classes_at(
+                    now,
+                    classes.unwrap_or(&crate::federation::AgentVerbClasses::none()),
+                )
                 || grant_known_withdrawn_in_txn(&self.store, &txn, id)
                 || grant_pact_standing_lapsed_in_txn(self, &txn, id, grant.scope, grant.member_ref)
             {
