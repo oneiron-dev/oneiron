@@ -15,6 +15,7 @@ use crate::Vault;
 use crate::dreamer_runner::maintenance::agent_health::AgentHealthTone;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::receipt::dispatch_identity::APPROVAL_DIGEST_FIELD;
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScanPosition};
 use crate::self_heal::AgentHealthSignal;
 
@@ -51,6 +52,8 @@ pub struct AgentInboxLensItem {
     pub occurred_at: u64,
     pub receipt_ref: Option<String>,
     pub payload_ref: Option<String>,
+    /// The held outbound receipt's approve-once digest, when present.
+    pub approval_digest: Option<String>,
     /// Present exactly on a Concern row.
     pub concern: Option<AgentInboxConcern>,
     /// Present exactly on a pending diary-read review's row.
@@ -271,6 +274,7 @@ impl Vault {
                     occurred_at: body.created_at,
                     receipt_ref: None,
                     payload_ref: Some(id.to_hex()),
+                    approval_digest: None,
                     concern: None,
                     diary_review: None,
                     sender: None,
@@ -430,6 +434,17 @@ fn project_receipts(
             .transpose()
             .map_err(|_| Error::InvalidConfig("invalid inbox impact".to_owned()))?
             .unwrap_or(0);
+        let approval_digest = receipt
+            .fields
+            .get(APPROVAL_DIGEST_FIELD)
+            .filter(|digest| {
+                approval
+                    && digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            })
+            .cloned();
         items.push(AgentInboxLensItem {
             item_id: format!(
                 "{}:{}:{}:{intent}",
@@ -457,6 +472,7 @@ fn project_receipts(
             impact: InboxImpact(impact),
             occurred_at: receipt.occurred_at,
             receipt_ref: Some(receipt.receipt_id.clone()),
+            approval_digest,
             payload_ref: receipt
                 .fields
                 .get("payload_ref")
