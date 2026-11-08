@@ -20,7 +20,7 @@ use oneiron::memory::extraction::{
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill::{LoadedSkillPack, MeasuredSkillPack};
 use oneiron::skill_optimize::{
-    EvalArmPin, EvalMeasurement, EvalSeat, EvalTaskInput, HeldOutReplayNotes,
+    EvalArmPin, EvalMeasurement, EvalSeat, EvalServingOffer, EvalTaskInput, HeldOutReplayNotes,
     MeasurementUnavailable, seat_model_role,
 };
 use oneiron::{
@@ -74,6 +74,7 @@ pub(super) enum Generated {
         text: String,
         /// The provider that answered, as the ladder stamped it.
         served: Option<String>,
+        serving_offer: Option<EvalServingOffer>,
     },
     Unavailable(MeasurementUnavailable),
 }
@@ -297,6 +298,10 @@ impl Arms {
         if call.ladder.exact_prompt() != Some(self.prompt.as_deref()) {
             return Generated::Unavailable(MeasurementUnavailable::InstructionDiffers);
         }
+        let serving_offer = call
+            .ladder
+            .exact_offer_binding()
+            .map(EvalServingOffer::from_binding);
         let may_send = || !clock.decision_time_left().is_zero();
         if !may_send() {
             return Generated::Unavailable(MeasurementUnavailable::ClockExhausted);
@@ -328,6 +333,7 @@ impl Arms {
                 Generated::Answer {
                     text: answer_text(&response),
                     served: response.usage.served_provider().map(str::to_owned),
+                    serving_offer,
                 }
             }
             Err(LlmError::BudgetDenied(_)) => {
