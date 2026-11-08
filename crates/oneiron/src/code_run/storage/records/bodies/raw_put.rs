@@ -120,7 +120,10 @@ pub(in crate::code_run::storage) fn raw_put_descriptor_in_txn(
 /// does not read would fail it. Where the owner/path occurrence declines,
 /// the put publishes a raw hold instead ([`raw_put_descriptor_in_txn`], FIX
 /// 7364), so no raw put that lands today is refused or costs another body
-/// its hold.
+/// its hold. A prior that differs only in its code-run origin is the same
+/// descriptor ([`OwnedBody::eq_ignoring_origin`], FIX 7365).
+///
+/// [`OwnedBody::eq_ignoring_origin`]: crate::provenance::body::OwnedBody::eq_ignoring_origin
 fn raw_put_publishes_descriptor(
     prior: &Result<Option<crate::provenance::body::OwnedBody>>,
     body: &crate::provenance::body::OwnedBody,
@@ -129,7 +132,8 @@ fn raw_put_publishes_descriptor(
     match prior {
         Ok(None) => true,
         Ok(Some(prior)) => {
-            prior == body || matches!(prior.state, BodyState::Incomplete { retained: None })
+            prior.eq_ignoring_origin(body)
+                || matches!(prior.state, BodyState::Incomplete { retained: None })
         }
         Err(_) => false,
     }

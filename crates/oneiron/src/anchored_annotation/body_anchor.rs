@@ -22,7 +22,9 @@ use oneiron_docedit::xlsx_body::{XlsxAxis, XlsxAxisEdit};
 
 use super::anchor_text::{docx_blocks, remap_span};
 use super::codec::ThreadHead;
-use super::deck_anchor::{deck_body_locator, deck_file_locator, move_deck_locator};
+use super::deck_anchor::{
+    deck_body_locator, deck_file_locator, deck_needs_held_ids, move_deck_locator,
+};
 use super::failed_stamps::FailedStampKey;
 use super::model::{
     Anchor, AnnotationThread, BodyAnchor, DriftMarker, Locator, ReanchorOp, ReanchorOutcome,
@@ -32,7 +34,7 @@ use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::office_body::OfficeBodyUnits;
+use crate::office_body::{HeldDeckIds, OfficeBodyUnits};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -60,6 +62,15 @@ enum Filed {
 
 /// A Word version's file by version, read once a pass.
 type FiledAt = HashMap<u64, Filed>;
+
+/// A deck export's held ids, read once a pass; an unread record retries.
+enum HeldIds {
+    Read(Option<HeldDeckIds>),
+    Unread,
+}
+
+/// A deck export's held ids by version (FIX 12346).
+type HeldAt = HashMap<u64, HeldIds>;
 
 /// One thread's next head, planned in a read and written in a write.
 struct Planned {
@@ -223,7 +234,7 @@ impl Vault {
             *self.vault_id().as_bytes(),
             export.as_ref().map(|(version, _)| *version),
         );
-        let (mut units, mut filed) = (UnitsAt::new(), FiledAt::new());
+        let (mut units, mut filed, mut held) = (UnitsAt::new(), FiledAt::new(), HeldAt::new());
         let mut unread = 0_u64;
         let mut plans = Vec::new();
         for thread in threads {
@@ -240,7 +251,7 @@ impl Vault {
                         txn,
                         (artifact, head.as_slice()),
                         &thread.anchor,
-                        (&mut units, &mut filed),
+                        (&mut units, &mut filed, &mut held),
                         &mut unread,
                     ) {
                         Stamp::Held(body) => Some((body, true)),
@@ -287,8 +298,14 @@ impl Vault {
                 if matches!(thread.anchor.locator, Locator::Docx { .. }) {
                     self.load_filed(txn, artifact, *version, &mut filed, &mut unread);
                 }
+                if matches!(thread.anchor.locator, Locator::Pptx { .. })
+                    && let Some(OfficeBodyUnits::Pptx(deck)) = units_at(&units, frontier)
+                    && deck_needs_held_ids(deck, units_at(&units, &head), *version)
+                {
+                    self.load_held(txn, artifact, *version, &mut held, &mut unread);
+                }
             }
-            match plan_thread(thread, body, stamped, &head, landing, &units, &filed) {
+            match plan_thread(thread, body, stamped, &head, landing, &units, &filed, &held) {
                 Follow::Planned(plan) => plans.push(plan),
                 Follow::Idle => {}
                 Follow::OutOfOrder => {
@@ -309,7 +326,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         (artifact, head): (&EntityId, &[u8]),
         anchor: &Anchor,
-        (units, filed): (&mut UnitsAt, &mut FiledAt),
+        (units, filed, held): (&mut UnitsAt, &mut FiledAt, &mut HeldAt),
         unread: &mut u64,
     ) -> Stamp {
         let read = self.office_body_frontier_of_version_in_txn(txn, artifact, anchor.version);
@@ -350,10 +367,20 @@ impl Vault {
             }
             (Some(OfficeBodyUnits::Pptx(deck)), Locator::Pptx { .. }) => {
                 let head = units_at(units, head);
-                return match deck_body_locator(deck, head, anchor.version, &anchor.locator) {
+                let (held, held_unread) = if deck_needs_held_ids(deck, head, anchor.version) {
+                    self.load_held(txn, artifact, anchor.version, held, unread);
+                    match held.get(&anchor.version) {
+                        Some(HeldIds::Read(ids)) => (ids.as_ref(), false),
+                        Some(HeldIds::Unread) | None => (None, true),
+                    }
+                } else {
+                    (None, false)
+                };
+                return match deck_body_locator(deck, head, anchor.version, held, &anchor.locator) {
                     Some(locator) => Stamp::Held(BodyAnchor { frontier, locator }),
-                    // A head deck that did not read may yet bind the version.
-                    None if head.is_none() => Stamp::Retry,
+                    // An unread head may yet bind the version; an unread
+                    // optional-id record must not memoize a missing match.
+                    None if head.is_none() || held_unread => Stamp::Retry,
                     None => Stamp::Missed,
                 };
             }
@@ -387,6 +414,27 @@ impl Vault {
                 None
             });
         units.insert(frontier.to_vec(), read);
+    }
+
+    fn load_held(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        artifact: &EntityId,
+        version: u64,
+        held: &mut HeldAt,
+        unread: &mut u64,
+    ) {
+        if held.contains_key(&version) {
+            return;
+        }
+        let read = match self.office_body_held_ids_in_txn(txn, artifact, version) {
+            Ok(ids) => HeldIds::Read(ids),
+            Err(error) => {
+                warn_unread(artifact, &error, unread);
+                HeldIds::Unread
+            }
+        };
+        held.insert(version, read);
     }
 
     fn load_filed(
@@ -423,7 +471,7 @@ fn warn_unread(artifact: &EntityId, error: &crate::error::Error, unread: &mut u6
     tracing::warn!(
         artifact = %artifact.to_hex(),
         error = ?error,
-        "a body or version did not read; its comments keep their version pin",
+        "an annotation body-anchor input could not be read",
     );
 }
 
@@ -440,6 +488,7 @@ fn plan_thread(
     landing: Option<&(u64, Vec<u8>)>,
     units: &UnitsAt,
     filed: &FiledAt,
+    held: &HeldAt,
 ) -> Follow {
     let (Some(from), Some(to)) = (units_at(units, &body.frontier), units_at(units, body_head))
     else {
@@ -480,6 +529,7 @@ fn plan_thread(
             let landing_unread = landing.is_some_and(|(version, frontier)| {
                 units_at(units, frontier).is_none()
                     || matches!(filed.get(version), Some(Filed::Missing | Filed::Unread))
+                    || matches!(held.get(version), Some(HeldIds::Unread))
             });
             let landed = landing.and_then(|(version, frontier)| {
                 let target = units_at(units, frontier)?;
@@ -495,7 +545,11 @@ fn plan_thread(
                 let located = match target {
                     OfficeBodyUnits::Pptx(deck) => {
                         let head = units_at(units, body_head);
-                        deck_file_locator(deck, head, *version, &at_export)
+                        let held = match held.get(version) {
+                            Some(HeldIds::Read(ids)) => ids.as_ref(),
+                            _ => None,
+                        };
+                        deck_file_locator(deck, head, *version, held, &at_export)
                     }
                     _ => file_locator(filed, target, &at_export),
                 };

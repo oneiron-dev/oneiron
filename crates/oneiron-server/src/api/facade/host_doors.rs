@@ -58,6 +58,8 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 pub(crate) use super::agent_definition_doors::*;
 // The owner's agent grant doors (FIX 5628) too.
 pub(crate) use super::agent_grant_doors::*;
+// The owner's answer to a send that may have gone out (FIX 4747) too.
+pub(crate) use super::uncertain_send_doors::*;
 // The owner's git_push Grant doors (FIX 6867, G1-PUSH) too.
 pub(crate) use super::git_push_doors::*;
 // The public run repo doors (FIX 6867, G1 PR3b): no owner proof, so none is
@@ -138,6 +140,10 @@ pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+// The owner's retained document-copy edit doors (FIX 13274).
+pub(crate) use super::repo_copy_edit_doors::{
+    vault_sync_documents_copy_edit_review, vault_sync_documents_copy_edit_settle,
+};
 // The owner's reset of a person's step-up passkeys (FIX 17553).
 pub(crate) use super::step_up_doors::{vault_step_up_passkeys_reset, vault_step_up_totp_reset};
 // The weave Admin's served rows, on the passkey step-up (FIX 11694).
@@ -201,6 +207,7 @@ pub(crate) use super::graduation_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::checkout_doors::*;
+pub(crate) use super::device_succession_doors::*;
 pub(crate) use super::origin_doors::*;
 // The exact publish doors (FIX 6866): the owner, or one Grant's holder.
 pub(crate) use super::origin_publish_doors::*;
@@ -240,6 +247,7 @@ pub(crate) use super::core_write_doors::*;
 pub(crate) use super::critic_review_doors::*;
 // The owner's campaign split evaluation door (FIX 655), likewise.
 pub(crate) use super::affect_doors::*;
+pub(crate) use super::agent_verb_class_doors::*;
 pub(crate) use super::aging_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::coach_offer_doors::*;
