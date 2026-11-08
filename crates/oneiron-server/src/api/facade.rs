@@ -84,6 +84,7 @@ mod decision_ask_doors;
 mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod deck_creation_doors;
+mod device_succession_doors;
 mod disclosure_doors;
 #[path = "facade/generated/dispatch.rs"]
 mod dispatch;
