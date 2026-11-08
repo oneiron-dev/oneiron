@@ -119,9 +119,6 @@ impl CarryForwardPolicy {
                     let Value::Array(rows) = value else {
                         return None;
                     };
-                    if rows.len() > 256 {
-                        return None;
-                    }
                     let mut actors = BTreeSet::new();
                     for row in rows {
                         let Value::Map(fields) = row else {

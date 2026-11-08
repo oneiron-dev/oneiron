@@ -42,7 +42,9 @@ pub(crate) use self::reads::{
     CapturedReaderChild, ReaderFindingSelection, ReaderReadCapture, RetainedReadVerdict,
     SelectedFinding,
 };
-use super::types::SelfCall;
+use super::payload::{answer_fold_words, push_fold_word};
+use super::replay::CodeRunBridgeCall;
+use super::types::{FoldWordRef, SelfCall};
 use crate::dreamer_wake::BudgetLegibilityEnvelope;
 use crate::skill::{SelectedCallable, SkillBodyWitness};
 use crate::task_verb::sdk::AgentVerb;
@@ -109,6 +111,26 @@ impl GuestResponseCapture {
     /// The response kept at `seq`.
     pub(crate) fn at(&self, seq: u64) -> Option<&CapturedGuestResponse> {
         self.responses.iter().find(|response| response.seq == seq)
+    }
+
+    /// The folds whose accepted summaries a kept hook view may show (FIX
+    /// 18924): for each response kept with a view, the words its row among
+    /// `calls` records, by its position, each fold once. A response with no
+    /// view copies nothing into the context.
+    pub(crate) fn viewed_fold_words(&self, calls: &[CodeRunBridgeCall]) -> Vec<FoldWordRef> {
+        let mut words = Vec::new();
+        for response in self.responses.iter().filter(|kept| kept.view.is_some()) {
+            let row = usize::try_from(response.seq)
+                .ok()
+                .and_then(|seq| calls.get(seq));
+            for word in row
+                .and_then(|row| answer_fold_words(&row.outcome))
+                .unwrap_or_default()
+            {
+                push_fold_word(&mut words, word);
+            }
+        }
+        words
     }
 
     /// Whether each response is at its own position, all before
@@ -253,19 +275,24 @@ pub(crate) struct StepContextCommit {
     pub(crate) capsule: Option<(EntityId, u32)>,
     pub(crate) context: StepReplayContext,
     pub(crate) bytes: Vec<u8>,
+    /// The folds whose accepted summaries its hook views show (FIX 18924).
+    pub(crate) fold_words: Vec<FoldWordRef>,
 }
 
 impl StepContextCommit {
-    /// `context`, encoded, for `capsule`.
+    /// `context`, encoded, for `capsule`, its hook views showing the
+    /// accepted summaries of the folds `fold_words` names.
     pub(crate) fn new(
         capsule: Option<(EntityId, u32)>,
         context: StepReplayContext,
+        fold_words: Vec<FoldWordRef>,
     ) -> Result<Self> {
         let bytes = context.encode()?;
         Ok(Self {
             capsule,
             context,
             bytes,
+            fold_words,
         })
     }
 
