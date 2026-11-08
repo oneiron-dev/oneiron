@@ -1,4 +1,4 @@
-//! Named entities below the content a query matched.
+//! Rows the query did not match, below the content it did match.
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -8,20 +8,40 @@ use crate::store::{RetrievalScoreComponent, RetrievalSignal, StoreRead};
 use heed::RoTxn;
 use std::collections::HashMap;
 
-/// Moves each PERSON, ORG and RELATIONSHIP the query did not match itself
-/// to just after the last row it did match, keeping their order, and caps
-/// their scores below the weakest match so a later sort keeps them there.
+/// How one run reads the query's own matches.
+#[derive(Clone, Copy)]
+pub(super) struct MatchReading {
+    /// The temporal channel scans a window the query or the host named. The
+    /// effort dial's default now anchor names none: it scores how fresh a
+    /// row is, which the query did not ask for.
+    pub(super) temporal_is_query: bool,
+    /// No reranker set the order, so the blend's order is the answer's.
+    pub(super) blend_order: bool,
+}
+
+/// Moves each row the query did not match itself to just after the last row
+/// it did match, keeping their order, and caps their scores below the
+/// weakest match so a later sort keeps them there. The query matched a row
+/// that a text, vector, phonetic, HyDE or media channel scored, or that the
+/// temporal channel scored on a window the query or the host named.
 ///
-/// Every message a principal writes is `AuthoredBy` that principal, so PPR
-/// pools all its seeds' mass into the author, and a person's slower decay
-/// keeps it fresh beside older content: left alone, the owner outranks the
-/// messages that matched. A person the query names matches on its own text
-/// and keeps its rank. Every other row keeps its place, so a reranked order
-/// stands; with no direct match at all (a pure graph or time query) nothing
-/// moves.
-pub(super) fn rank_unmatched_entities_below_matches(
+/// A PERSON, ORG or RELATIONSHIP moves in every run. Every message a
+/// principal writes is `AuthoredBy` that principal, so PPR pools all its
+/// seeds' mass into the author, and a person's slower decay keeps it fresh
+/// beside older content: left alone, the owner outranks the messages that
+/// matched. A person the query names matches on its own text and keeps its
+/// rank.
+///
+/// Any other row moves only in the blend's order, where no reranker judged
+/// the rows (FIX 22182). There, graph mass and the effort's now anchor alone
+/// rank fresh rows the query never named above the rows it did: ten fresh
+/// skill records outranked the two claims the query's one word matched, and
+/// the limit cut those claims. A reranked order stands. With no direct match
+/// at all (a pure graph or time query) nothing moves.
+pub(super) fn rank_unmatched_below_matches(
     scores: &mut Vec<ScoredEntity>,
     components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    reading: MatchReading,
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
@@ -30,15 +50,16 @@ pub(super) fn rank_unmatched_entities_below_matches(
         components.get(id).is_some_and(|parts| {
             parts.iter().any(|part| {
                 part.score > 0.0
-                    && matches!(
-                        part.signal,
+                    && match part.signal {
                         RetrievalSignal::Text
-                            | RetrievalSignal::Vector
-                            | RetrievalSignal::Phonetic
-                            | RetrievalSignal::Hyde
-                            | RetrievalSignal::HydeRetry
-                            | RetrievalSignal::MediaVector
-                    )
+                        | RetrievalSignal::Vector
+                        | RetrievalSignal::Phonetic
+                        | RetrievalSignal::Hyde
+                        | RetrievalSignal::HydeRetry
+                        | RetrievalSignal::MediaVector => true,
+                        RetrievalSignal::Temporal => reading.temporal_is_query,
+                        _ => false,
+                    }
             })
         })
     };
@@ -54,13 +75,8 @@ pub(super) fn rank_unmatched_entities_below_matches(
         if direct(&hit.id) {
             floor = floor.min(hit.score);
         } else if index < last_match || hit.score >= floor {
-            let kind = metadata_cache
-                .get(store, rtxn, &hit.id)?
-                .map(|meta| meta.entity_type);
-            demote[index] = matches!(
-                kind,
-                Some(ENTITY_TYPE_PERSON | ENTITY_TYPE_ORG | ENTITY_TYPE_RELATIONSHIP)
-            );
+            demote[index] =
+                reading.blend_order || named_entity(store, rtxn, metadata_cache, &hit.id)?;
         }
     }
     if !demote.contains(&true) {
@@ -103,4 +119,21 @@ pub(super) fn rank_unmatched_entities_below_matches(
         hit.score = below(hit.score);
     }
     Ok(())
+}
+
+/// Whether `id` is a PERSON, ORG or RELATIONSHIP, the rows PPR pools a
+/// principal's mass into.
+fn named_entity(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    id: &EntityId,
+) -> Result<bool> {
+    let kind = metadata_cache
+        .get(store, rtxn, id)?
+        .map(|meta| meta.entity_type);
+    Ok(matches!(
+        kind,
+        Some(ENTITY_TYPE_PERSON | ENTITY_TYPE_ORG | ENTITY_TYPE_RELATIONSHIP)
+    ))
 }
