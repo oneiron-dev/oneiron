@@ -243,7 +243,7 @@ impl WindowRows {
             return Err(invalid("entity outside world window"));
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE && !body.is_empty() {
-            crate::note::decode_note_body_using(body, crate::note::NoteKind::wire)?;
+            crate::note::decode_note_core_using(body, crate::note::NoteKind::wire)?;
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
             crate::authority::validate_authority_log_entry_body_bytes(body)?;

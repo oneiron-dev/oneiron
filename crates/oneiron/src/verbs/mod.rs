@@ -12,6 +12,7 @@ mod calendar;
 mod campaign_archive;
 mod campaign_enrollment;
 mod campaign_split;
+mod can;
 mod catalog_fragment;
 mod comm_widen;
 mod connect_proposal;
@@ -457,6 +458,7 @@ pub use self::calendar::*;
 pub use self::campaign_archive::*;
 pub use self::campaign_enrollment::*;
 pub use self::campaign_split::*;
+pub use self::can::*;
 pub use self::catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
 };

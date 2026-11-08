@@ -542,8 +542,12 @@ impl Offer<'_> {
                 if vault.skill_hash_blocked_in_txn(txn, approved.content_hash)? {
                     return Ok(Fit::ask(HASH_BLOCKED, &permissions));
                 }
-                let entity =
-                    vault.commit_fitted_skill_in_txn(txn, &fitted, Some(target_skill_ref))?;
+                let entity = vault.commit_fitted_skill_in_txn(
+                    txn,
+                    &fitted,
+                    Some(target_skill_ref),
+                    &mut crate::skill_hub::SkillImportRows::default(),
+                )?;
                 // The section's ref is where every rebuild re-finds the skill:
                 // content held elsewhere aborts this writer, and the offer
                 // asks.
