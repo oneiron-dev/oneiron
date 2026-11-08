@@ -134,6 +134,11 @@ impl ReadDestination {
         }
     }
 
+    /// Connection peers retained even while the current locality is on-device.
+    pub(crate) fn all_peers(&self) -> &[PeerMachine] {
+        &self.proved
+    }
+
     /// Every machine the judge reads the world settings for: none on this
     /// device, else each machine the rows go to. An unproved one stands for
     /// all of them, since a destination nobody proved may read the least.
