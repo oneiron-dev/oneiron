@@ -276,6 +276,8 @@ vaultSkillHubsDefaultGet(input: unknown): unknown
 vaultSkillsRestoredefaults(input: unknown): unknown
 vaultSkillHubsPut(input: unknown): unknown
 vaultSkillHubsGet(input: unknown): unknown
+vaultSkillHubsClawhubSearch(input: unknown): unknown
+vaultSkillHubsClawhubImport(input: unknown): unknown
 vaultSkillHubsPublishersAdmit(input: unknown): unknown
 vaultSkillHubsPublishersRevoke(input: unknown): unknown
 vaultSkillHubsRefsGet(input: unknown): unknown
@@ -394,6 +396,7 @@ vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
 vaultMembersInvitations(input: unknown): unknown
 vaultMembersAccept(input: unknown): unknown
+vaultMembersAcceptWithCredential(input: unknown): unknown
 vaultMembersDecline(input: unknown): unknown
 vaultMembersWithdrawInvitation(input: unknown): unknown
 vaultSharedObject(input: unknown): unknown
@@ -458,6 +461,7 @@ vaultFilesSourcesRescan(input: unknown): unknown
 vaultFilesSourcesDetach(input: unknown): unknown
 vaultFilesSourcesList(input: unknown): unknown
 vaultFilesSourcesFiles(input: unknown): unknown
+vaultFilesSourcesExclude(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown
 vaultResidenceOpen(input: unknown): unknown
 vaultResidenceIndex(input: unknown): unknown
@@ -593,6 +597,7 @@ vaultPolicyOutboundDecide(input: unknown): unknown
 vaultPolicyRelayDecide(input: unknown): unknown
 vaultConsentApproveOnce(input: unknown): unknown
 vaultConnectorsCallsApproveOnce(input: unknown): unknown
+vaultConnectorsRepliesRetryFailed(input: unknown): unknown
 vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
 vaultConsentCreateAutoWeaveGrant(input: unknown): unknown
@@ -768,6 +773,9 @@ vaultCodeOriginPublishCancel(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
+vaultCodeSecretsPurgeRequest(input: unknown): unknown
+vaultCodeSecretsPurgeGet(input: unknown): unknown
+vaultCodeSecretsPurgeExecute(input: unknown): unknown
 vaultCodeCheckoutHolderBind(input: unknown): unknown
 vaultCodeCheckoutBind(input: unknown): unknown
 vaultCodeCheckoutClaim(input: unknown): unknown
@@ -914,6 +922,7 @@ vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsInvite(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
+vaultRoomsLeave(input: unknown): unknown
 vaultRoomsOffer(input: unknown): unknown
 vaultRoomsOfferAnswer(input: unknown): unknown
 vaultRoomsOfferVote(input: unknown): unknown
@@ -947,6 +956,9 @@ vaultModelsManifestRead(input: unknown): unknown
 vaultModelsManifestReplace(input: unknown): unknown
 vaultSettingsWebConnector(input: unknown): unknown
 vaultSettingsWebConnectorReplace(input: unknown): unknown
+vaultSettingsModelPack(input: unknown): unknown
+vaultSettingsModelPackReplace(input: unknown): unknown
+vaultModelPackRevert(input: unknown): unknown
 vaultConnectorsWebUsage(input: unknown): unknown
 vaultModelsOneironerBind(input: unknown): unknown
 vaultModelsRoutesRead(input: unknown): unknown
@@ -1100,6 +1112,7 @@ vaultSearchHybrid(input: unknown): unknown
 vaultSearchTemporal(input: unknown): unknown
 vaultSearchBm25(input: unknown): unknown
 vaultNeighbors(input: unknown): unknown
+vaultEdgesProvenance(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
 vaultProductivityCreate(input: unknown): unknown
@@ -1286,6 +1299,7 @@ vaultMailComplianceSearch(input: unknown): unknown
 vaultFilesSourcesConvert(input: unknown): unknown
 vaultSyncRepoManifestsConflictReview(input: unknown): unknown
 vaultSyncRepoManifestsConflictDiscard(input: unknown): unknown
+vaultDreamerFollowerKeyframe(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown

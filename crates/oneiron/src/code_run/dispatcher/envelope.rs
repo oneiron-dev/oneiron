@@ -143,6 +143,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::RepoSymbolsRenew
             | SelfEffect::RepoSymbolsRelease
             | SelfEffect::RepoProposalSubmit
+            | SelfEffect::RepoProposalResolve
             | SelfEffect::RepoMergeQueueEnqueue
             | SelfEffect::RepoCheckoutBind
             | SelfEffect::RepoExport
@@ -388,6 +389,7 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::RepoSymbolsRenew
         | SelfEffect::RepoSymbolsRelease
         | SelfEffect::RepoProposalSubmit
+        | SelfEffect::RepoProposalResolve
         | SelfEffect::RepoMergeQueueEnqueue
         // PR3b: a checkout of the vault's own served store, and an export
         // that advances its own served ref; a mirror release stays the

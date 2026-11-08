@@ -344,7 +344,7 @@ pub(super) fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         }
         // A run repo row is rewritten only into its own row's input; the
         // binding is rebuilt at dispatch (FIX 6867).
-        SelfCall::Repo(call) => SelfCall::Repo(call.rewrite(args)?),
+        SelfCall::Repo(call) => SelfCall::Repo(Box::new(call.rewrite(args)?)),
         // A reader's source and finding, and a summary's members, are
         // resolved by the host before the hooks run: a rewrite would name a
         // result nothing resolved.
