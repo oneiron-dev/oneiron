@@ -247,6 +247,8 @@ both bindings and their export-census tests in one change.
 - `vault.skills.restoreDefaults`
 - `vault.skill_hubs.put`
 - `vault.skill_hubs.get`
+- `vault.skill_hubs.clawhub.search`
+- `vault.skill_hubs.clawhub.import`
 - `vault.skill_hubs.publishers.admit`
 - `vault.skill_hubs.publishers.revoke`
 - `vault.skill_hubs.refs.get`
@@ -365,6 +367,7 @@ both bindings and their export-census tests in one change.
 - `vault.members.leave`
 - `vault.members.invitations`
 - `vault.members.accept`
+- `vault.members.accept_with_credential`
 - `vault.members.decline`
 - `vault.members.withdraw_invitation`
 - `vault.shared.object`
@@ -429,6 +432,7 @@ both bindings and their export-census tests in one change.
 - `vault.files.sources.detach`
 - `vault.files.sources.list`
 - `vault.files.sources.files`
+- `vault.files.sources.exclude`
 - `vault.residence.mode`
 - `vault.residence.open`
 - `vault.residence.index`
@@ -564,6 +568,7 @@ both bindings and their export-census tests in one change.
 - `vault.policy.relay.decide`
 - `vault.consent.approve_once`
 - `vault.connectors.calls.approve_once`
+- `vault.connectors.replies.retry_failed`
 - `vault.consent.deny`
 - `vault.consent.create_standing_grant`
 - `vault.consent.create_auto_weave_grant`
@@ -739,6 +744,9 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.authority.get`
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`
+- `vault.code.secrets.purge.request`
+- `vault.code.secrets.purge.get`
+- `vault.code.secrets.purge.execute`
 - `vault.code.checkout.holder.bind`
 - `vault.code.checkout.bind`
 - `vault.code.checkout.claim`
@@ -885,6 +893,7 @@ both bindings and their export-census tests in one change.
 - `vault.rooms.join`
 - `vault.rooms.invite`
 - `vault.rooms.consent`
+- `vault.rooms.leave`
 - `vault.rooms.offer`
 - `vault.rooms.offer.answer`
 - `vault.rooms.offer.vote`
@@ -1074,6 +1083,7 @@ both bindings and their export-census tests in one change.
 - `vault.search.temporal`
 - `vault.search.bm25`
 - `vault.neighbors`
+- `vault.edges.provenance`
 - `vault.structural.put`
 - `vault.habits.checkin`
 - `vault.productivity.create`
@@ -1263,3 +1273,4 @@ both bindings and their export-census tests in one change.
 - `vault.files.sources.convert`
 - `vault.sync.repo_manifests.conflict.review`
 - `vault.sync.repo_manifests.conflict.discard`
+- `vault.dreamer.follower.keyframe`
