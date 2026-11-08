@@ -62,24 +62,25 @@ fn fenced_id(key: &[u8]) -> Option<Vec<u8>> {
         .map(<[u8]>::to_vec)
 }
 
-/// Rewrites `databases` so every live row is `current`'s, or refuses when a
-/// refused family moved since the checkpoint. Returns the notes for the home
-/// tables that came from the image (FIX 5661 C2b), and `current`'s pad
-/// objects captured in the read its live rows came from (PAD-1), with the
-/// bundles of the generations the image does not keep (FIX 11824). Scoped
-/// floors are checked on the restored target, once its compartments land.
-pub(super) fn carry_current_authority(
+/// Rewrites `databases` so every live row, by `classes` (FIX 6994), is
+/// `current`'s, or refuses when a refused family moved since the checkpoint.
+/// Returns the notes for the home tables that came from the image (FIX 5661
+/// C2b), and `current`'s pad objects captured in the read of its live rows
+/// (PAD-1), with the bundles of the generations the image does not keep
+/// (FIX 11824). Scoped floors are checked on the restored target, once its
+/// compartments land.
+pub(super) fn carry_current_authority<'a>(
     databases: &mut BTreeMap<String, CanonicalRows>,
     current: &Vault,
+    classes: &'a Classes,
 ) -> Result<(
     Vec<super::HomeTableNote>,
     crate::store::PadObjectsCapture,
-    ImageEntityFloors,
+    ImageEntityFloors<'a>,
 )> {
-    let classes = Classes::new(current, databases)?;
     // The copy keeps the generations the image keeps (FIX 11824).
     let copy = crate::store::CopyGenerations::of_rows(&databases["sync_state"]);
-    let live = current_rows(current, &classes, &copy)?;
+    let live = current_rows(current, classes, &copy)?;
     let claim_row_floor = super::claim_order::floor(&databases["vault_meta"])?
         .max(super::claim_order::floor(&live.rows["vault_meta"])?);
     // A store's random id, minted at its first open, names the vault even
@@ -122,7 +123,7 @@ pub(super) fn carry_current_authority(
         .filter_map(|(key, _)| fenced_id(key))
         .collect();
     let mut moved = authority_moved(
-        &classes,
+        classes,
         &databases["entities"],
         &image_entities,
         &image_fences,
@@ -131,7 +132,7 @@ pub(super) fn carry_current_authority(
     );
     for (database, live_rows) in &live.rows {
         let scoped = |rows, fenced| {
-            refused(&classes, database, rows, &image_entities, fenced, |scope| {
+            refused(classes, database, rows, &image_entities, fenced, |scope| {
                 matches!(scope, Scope::Family)
             })
         };
@@ -201,13 +202,13 @@ pub(super) fn carry_current_authority(
 /// Image-scoped floors from the same live read as the carried authority.
 /// The bare image omits compartmented entities and their side rows, so it
 /// cannot name the target of this comparison.
-pub(super) struct ImageEntityFloors {
-    classes: Classes,
+pub(super) struct ImageEntityFloors<'a> {
+    classes: &'a Classes,
     rows: BTreeMap<&'static str, CanonicalRows>,
     fences: BTreeSet<Vec<u8>>,
 }
 
-impl ImageEntityFloors {
+impl ImageEntityFloors<'_> {
     /// Compares against the rows the native restore actually kept, including
     /// opened compartments but not rows whose owners were unavailable.
     pub(super) fn refuse_changes(self, restored: &Vault) -> Result<()> {
@@ -251,7 +252,7 @@ impl ImageEntityFloors {
             }
             let scoped = |rows, fences| {
                 refused(
-                    &self.classes,
+                    self.classes,
                     database,
                     rows,
                     &image_entities,
