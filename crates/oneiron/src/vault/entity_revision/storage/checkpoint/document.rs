@@ -39,7 +39,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::identity_topology::author_carrier_actor;
 use crate::note::checkpoint::{join_core_row, split_core_row};
-use crate::note::decode_note_body_in_txn;
+use crate::note::decode_note_core_in_txn;
 use crate::registry::{ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTE, entity_type_registry_entry};
 use crate::side_table::{SideCodec, SideKey, SideTable};
 use crate::store::ManifestDbs;
@@ -613,7 +613,7 @@ fn note_kinds_held(
         if body.is_empty() {
             continue;
         }
-        match decode_note_body_in_txn(dbs, txn, body) {
+        match decode_note_core_in_txn(dbs, txn, body) {
             Ok(_) => {}
             Err(Error::Record(_)) => return Ok(Err(Unresolved::UnknownKind)),
             Err(Error::CorruptedIndex(_)) => return Ok(Err(Unresolved::Undecodable)),

@@ -30,9 +30,9 @@ use crate::sync::{
 /// world.
 const ITEM11_UNREADABLE_HOME_DISCOVERY: bool = true;
 /// FIX 922 item 11 call: a home that may not read a window's world is not asked to promote it; the
-/// `rp:w:` intent stays, and a first-edit promotion reports the home unavailable. Nor is it asked to
-/// retain or demote it (FIX 3872): a retain is marked refused, and a demotion reports the home
-/// unavailable.
+/// `rp:w:` intent stays, and a first-edit promotion is refused. Nor is it asked to retain or demote
+/// it (FIX 3872): a retain is marked refused, and a demotion is refused. Each refusal is
+/// [`TransportError::world_unreadable_by_home`], never a storage fault (FIX 22217).
 pub(super) const ITEM11_UNREADABLE_HOME_PROMOTION: bool = true;
 
 /// The home's digest-bound answer to an opened-item queue send.
@@ -58,6 +58,7 @@ pub struct SyncClient {
     pub(crate) vault: Arc<Vault>,
     pub(crate) manager: Arc<WindowManager>,
     pub(crate) root_doc: LoroDoc,
+    pub(super) root_parts: Mutex<super::root_updates::RootUpdateAssembly>,
     /// The home answered this connection's NOTE session bind: the NOTE lane
     /// (NOTE requests, operations, imports and receipts, publications) runs.
     /// A peer session binds the socket's actor, never the NOTE authority, so
@@ -238,6 +239,7 @@ impl SyncClient {
             vault,
             manager,
             root_doc,
+            root_parts: Mutex::default(),
             client_id,
             config,
             server_vvs: HashMap::new(),

@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1351 facade rows, 4850 generated types.
+// UniFFI census: 1351 facade rows, 4860 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1303.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), DetachRemainderReason.WithdrawalFailed.kind (an enum with more than 256 variants (ErrorKind)), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -52694,6 +52694,233 @@ pub struct TaskCanAskRequest {
     pub ask: TaskAskSpec,
 }
 
+/// `oneiron_authority::channel_selection_vocabulary::RelationshipContext`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RelationshipContext {
+    #[serde(rename = "work_deal")]
+    WorkDeal,
+    #[serde(rename = "scheduling_logistics")]
+    SchedulingLogistics,
+    #[serde(rename = "campaign_outreach")]
+    CampaignOutreach,
+    #[serde(rename = "transactional_system")]
+    TransactionalSystem,
+    #[serde(rename = "personal_friends")]
+    PersonalFriends,
+    #[serde(rename = "group_space")]
+    GroupSpace,
+}
+
+/// `oneiron::channel_identity_selection::selection_resolution::SelectionRuleScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum SelectionRuleScope {
+    #[serde(rename = "vault_default")]
+    VaultDefault,
+    #[serde(rename = "world")]
+    World {
+        #[serde(rename = "world_ref")]
+        world_ref: String,
+    },
+    #[serde(rename = "relationship")]
+    Relationship {
+        #[serde(rename = "relationship_ref")]
+        relationship_ref: String,
+    },
+    #[serde(rename = "brief")]
+    Brief {
+        #[serde(rename = "brief_ref")]
+        brief_ref: String,
+    },
+    #[serde(rename = "space")]
+    Space {
+        #[serde(rename = "space_ref")]
+        space_ref: String,
+    },
+}
+
+/// `oneiron_authority::channel_selection_vocabulary::ChannelIdentityFace`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ChannelIdentityFace {
+    #[serde(rename = "delegated_owner_account")]
+    DelegatedOwnerAccount,
+    #[serde(rename = "agent_named_address")]
+    AgentNamedAddress,
+    #[serde(rename = "side_domain_address")]
+    SideDomainAddress,
+    #[serde(rename = "house_identity")]
+    HouseIdentity,
+    #[serde(rename = "companion_identity")]
+    CompanionIdentity,
+    #[serde(rename = "named_group_participant")]
+    NamedGroupParticipant,
+}
+
+/// `oneiron::memory::channel_doors::selection::ChannelSelectionCandidateInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelSelectionCandidateInput {
+    #[serde(rename = "identity_ref")]
+    pub identity_ref: String,
+    #[serde(rename = "face")]
+    pub face: ChannelIdentityFace,
+}
+
+/// `oneiron::memory::channel_doors::selection::ChannelSelectionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelSelectionRequest {
+    #[serde(rename = "relationship")]
+    pub relationship: RelationshipContext,
+    #[serde(
+        rename = "applicable_scopes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub applicable_scopes: Option<Vec<SelectionRuleScope>>,
+    #[serde(rename = "candidates")]
+    pub candidates: Vec<ChannelSelectionCandidateInput>,
+    #[serde(
+        rename = "thread_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub thread_ref: Option<String>,
+}
+
+/// `oneiron::verbs::connector::OutboundScheduleRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutboundScheduleRequest {
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "target")]
+    pub target: String,
+    #[serde(
+        rename = "on_behalf_of",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub on_behalf_of: Option<String>,
+    #[serde(
+        rename = "content_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub content_ref: Option<String>,
+    #[serde(
+        rename = "idempotency_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub idempotency_key: Option<String>,
+    #[serde(
+        rename = "dedupe_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dedupe_key: Option<String>,
+    #[serde(rename = "trigger")]
+    pub trigger: String,
+    #[serde(rename = "trigger_ref")]
+    pub trigger_ref: String,
+    #[serde(rename = "job_ref", default, skip_serializing_if = "Option::is_none")]
+    pub job_ref: Option<String>,
+    #[serde(
+        rename = "occurred_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurred_at: Option<u64>,
+    #[serde(rename = "mention", default, skip_serializing_if = "Option::is_none")]
+    pub mention: Option<WireMentionProvenance>,
+    #[serde(rename = "selection", default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<ChannelSelectionRequest>,
+    #[serde(
+        rename = "counterparty_class",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub counterparty_class: Option<String>,
+}
+
+/// `oneiron::verbs::can::CanOutboundSchedule`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CanOutboundSchedule {
+    #[serde(rename = "outbound_schedule")]
+    pub outbound_schedule: OutboundScheduleRequest,
+}
+
+/// `oneiron::outbound_consent::connector_call_types::ConnectorSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConnectorSource {
+    #[serde(rename = "catalog")]
+    Catalog,
+    #[serde(rename = "builtin")]
+    Builtin,
+}
+
+/// `oneiron::outbound_consent::tool_call::MutationIntent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MutationIntent {
+    #[serde(rename = "preview")]
+    Preview,
+    #[serde(rename = "explicit_mutation")]
+    ExplicitMutation,
+}
+
+/// `oneiron::outbound_consent::connector_call_types::ConnectorCallRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorCallRequest {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ConnectorSource>,
+    #[serde(rename = "tool")]
+    pub tool: String,
+    #[serde(rename = "arguments", default, skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<crate::WireJson>,
+    #[serde(rename = "mutation", default, skip_serializing_if = "Option::is_none")]
+    pub mutation: Option<MutationIntent>,
+}
+
+/// `oneiron::verbs::can::CanConnectorCall`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CanConnectorCall {
+    #[serde(rename = "connector_call")]
+    pub connector_call: ConnectorCallRequest,
+}
+
+/// `oneiron::verbs::can::CanEffect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum CanEffect {
+    OutboundSchedule(CanOutboundSchedule),
+    ConnectorCall(CanConnectorCall),
+}
+
+/// `oneiron::verbs::can::CanEffectRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CanEffectRequest {
+    #[serde(rename = "effect")]
+    pub effect: CanEffect,
+}
+
+/// `oneiron::verbs::can::CanRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum CanRequest {
+    Ask(TaskCanAskRequest),
+    Effect(CanEffectRequest),
+}
+
 /// `oneiron::task_verb::ask_types::TaskAskPreflightRecipient`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct TaskAskPreflightRecipient {
@@ -52712,6 +52939,48 @@ pub struct TaskAskPreflightRecipient {
 pub struct TaskAskPreflight {
     #[serde(rename = "recipients")]
     pub recipients: Vec<TaskAskPreflightRecipient>,
+}
+
+/// `oneiron::memory::can::CanEffectVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CanEffectVerdict {
+    #[serde(rename = "allow")]
+    Allow,
+    #[serde(rename = "deny")]
+    Deny,
+    #[serde(rename = "would_ask")]
+    WouldAsk,
+    #[serde(rename = "held")]
+    Held,
+}
+
+/// `oneiron::memory::can::CanEffectAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CanEffectAnswer {
+    #[serde(rename = "verdict")]
+    pub verdict: CanEffectVerdict,
+    #[serde(rename = "reasons")]
+    pub reasons: Vec<String>,
+    #[serde(rename = "holds")]
+    pub holds: Vec<String>,
+    #[serde(rename = "waits_for_envelope_window")]
+    pub waits_for_envelope_window: bool,
+    #[serde(
+        rename = "rate_window_opens_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rate_window_opens_at: Option<u64>,
+    #[serde(rename = "checked_at")]
+    pub checked_at: u64,
+}
+
+/// `oneiron::memory::can::CanAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum CanAnswer {
+    Ask(TaskAskPreflight),
+    Effect(CanEffectAnswer),
 }
 
 /// `oneiron::task_verb::ask_types::TaskAskPersonKind`.
@@ -58132,40 +58401,6 @@ pub struct LiveVoiceUsage {
     pub settlements: Vec<RunRungSettlement>,
 }
 
-/// `oneiron::outbound_consent::connector_call_types::ConnectorSource`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ConnectorSource {
-    #[serde(rename = "catalog")]
-    Catalog,
-    #[serde(rename = "builtin")]
-    Builtin,
-}
-
-/// `oneiron::outbound_consent::tool_call::MutationIntent`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum MutationIntent {
-    #[serde(rename = "preview")]
-    Preview,
-    #[serde(rename = "explicit_mutation")]
-    ExplicitMutation,
-}
-
-/// `oneiron::outbound_consent::connector_call_types::ConnectorCallRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectorCallRequest {
-    #[serde(rename = "name")]
-    pub name: String,
-    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<ConnectorSource>,
-    #[serde(rename = "tool")]
-    pub tool: String,
-    #[serde(rename = "arguments", default, skip_serializing_if = "Option::is_none")]
-    pub arguments: Option<crate::WireJson>,
-    #[serde(rename = "mutation", default, skip_serializing_if = "Option::is_none")]
-    pub mutation: Option<MutationIntent>,
-}
-
 /// `oneiron::verbs::live_voice::LiveVoiceToolRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -62350,6 +62585,18 @@ pub struct CalendarOccurrencesPageRequest {
     pub resume_from: Option<u64>,
 }
 
+/// `oneiron::calendar::query::civil::CalendarCivilSpan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarCivilSpan {
+    #[serde(rename = "time_kind")]
+    pub time_kind: String,
+    #[serde(rename = "start")]
+    pub start: String,
+    #[serde(rename = "end")]
+    pub end: String,
+}
+
 /// `oneiron::calendar::query::window::CalendarOccurrenceView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CalendarOccurrenceView {
@@ -62365,6 +62612,8 @@ pub struct CalendarOccurrenceView {
     pub start_utc: u64,
     #[serde(rename = "end_utc")]
     pub end_utc: u64,
+    #[serde(rename = "civil", default, skip_serializing_if = "Option::is_none")]
+    pub civil: Option<CalendarCivilSpan>,
 }
 
 /// `oneiron::calendar::query::pages::CalendarOccurrencesPage`.
@@ -62438,6 +62687,8 @@ pub struct CalendarEventView {
     pub calendar_systems: Vec<String>,
     #[serde(rename = "blocks_time")]
     pub blocks_time: bool,
+    #[serde(rename = "civil", default, skip_serializing_if = "Option::is_none")]
+    pub civil: Option<CalendarCivilSpan>,
 }
 
 /// `oneiron_store::ports::read_result::ScopedReadResult` with `T` = `OptionalCalendarEventView`.
@@ -71749,69 +72000,6 @@ pub struct ChannelIdentityReleaseRequest {
     pub request_ref: Option<String>,
 }
 
-/// `oneiron_authority::channel_selection_vocabulary::RelationshipContext`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum RelationshipContext {
-    #[serde(rename = "work_deal")]
-    WorkDeal,
-    #[serde(rename = "scheduling_logistics")]
-    SchedulingLogistics,
-    #[serde(rename = "campaign_outreach")]
-    CampaignOutreach,
-    #[serde(rename = "transactional_system")]
-    TransactionalSystem,
-    #[serde(rename = "personal_friends")]
-    PersonalFriends,
-    #[serde(rename = "group_space")]
-    GroupSpace,
-}
-
-/// `oneiron::channel_identity_selection::selection_resolution::SelectionRuleScope`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "kind")]
-#[serde(deny_unknown_fields)]
-pub enum SelectionRuleScope {
-    #[serde(rename = "vault_default")]
-    VaultDefault,
-    #[serde(rename = "world")]
-    World {
-        #[serde(rename = "world_ref")]
-        world_ref: String,
-    },
-    #[serde(rename = "relationship")]
-    Relationship {
-        #[serde(rename = "relationship_ref")]
-        relationship_ref: String,
-    },
-    #[serde(rename = "brief")]
-    Brief {
-        #[serde(rename = "brief_ref")]
-        brief_ref: String,
-    },
-    #[serde(rename = "space")]
-    Space {
-        #[serde(rename = "space_ref")]
-        space_ref: String,
-    },
-}
-
-/// `oneiron_authority::channel_selection_vocabulary::ChannelIdentityFace`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ChannelIdentityFace {
-    #[serde(rename = "delegated_owner_account")]
-    DelegatedOwnerAccount,
-    #[serde(rename = "agent_named_address")]
-    AgentNamedAddress,
-    #[serde(rename = "side_domain_address")]
-    SideDomainAddress,
-    #[serde(rename = "house_identity")]
-    HouseIdentity,
-    #[serde(rename = "companion_identity")]
-    CompanionIdentity,
-    #[serde(rename = "named_group_participant")]
-    NamedGroupParticipant,
-}
-
 /// `oneiron_authority::channel_selection_vocabulary::SelectionRuleWriterKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SelectionRuleWriterKind {
@@ -71922,38 +72110,6 @@ pub struct ChannelSelectionUpdateRequest {
     pub expected_revision: u64,
     #[serde(rename = "patch")]
     pub patch: ChannelSelectionPatchInput,
-}
-
-/// `oneiron::memory::channel_doors::selection::ChannelSelectionCandidateInput`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ChannelSelectionCandidateInput {
-    #[serde(rename = "identity_ref")]
-    pub identity_ref: String,
-    #[serde(rename = "face")]
-    pub face: ChannelIdentityFace,
-}
-
-/// `oneiron::memory::channel_doors::selection::ChannelSelectionRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ChannelSelectionRequest {
-    #[serde(rename = "relationship")]
-    pub relationship: RelationshipContext,
-    #[serde(
-        rename = "applicable_scopes",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub applicable_scopes: Option<Vec<SelectionRuleScope>>,
-    #[serde(rename = "candidates")]
-    pub candidates: Vec<ChannelSelectionCandidateInput>,
-    #[serde(
-        rename = "thread_ref",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub thread_ref: Option<String>,
 }
 
 /// `oneiron::channel_identity_selection::selection_resolution::ChannelIdentitySelectionDecision`.
@@ -75427,6 +75583,14 @@ pub struct MailSyncStatusView {
     pub bodies_waiting: u64,
     #[serde(rename = "deleted_at_provider")]
     pub deleted_at_provider: u64,
+    #[serde(rename = "claim_rechecks_pending")]
+    pub claim_rechecks_pending: u64,
+    #[serde(rename = "claim_rechecks_checked")]
+    pub claim_rechecks_checked: u64,
+    #[serde(rename = "claim_rechecks_review_needed")]
+    pub claim_rechecks_review_needed: u64,
+    #[serde(rename = "claim_rechecks_obsolete")]
+    pub claim_rechecks_obsolete: u64,
     #[serde(
         rename = "last_step_at",
         default,

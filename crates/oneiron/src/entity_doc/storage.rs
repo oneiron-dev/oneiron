@@ -3,16 +3,13 @@
 use super::{DocAuthorization, EntityDoc, invalid};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result, StoreError};
-use crate::ports::EntityStoreRead;
 use crate::ports::{
-    DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, UpdateSeq,
+    DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, EntityStoreRead, UpdateSeq,
 };
 use crate::side_table::{self, HexId, Named, SideTable};
-use crate::store::Store;
-use crate::store::row_birth::RowBirth;
+use crate::store::{Store, row_birth::RowBirth};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
-use crate::write_envelope::WriteActor;
-use crate::write_envelope::provenance::made_by::MadeByClass;
+use crate::write_envelope::{WriteActor, provenance::made_by::MadeByClass};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -281,6 +278,9 @@ pub(super) fn persist_scanned(
     super::token_uses::record_token_uses_in_txn(store, txn, entity, doc, before)?;
     if entity_owned {
         history::capture_document_revision_in_txn(store, txn, entity, h, doc, birth)?;
+        // FIX 4817: a home part's new revision withdraws what wore the old one.
+        let custody = crate::secret_custody::CustodyWrite::of(vault);
+        crate::ports::withdraw_changed_home_dependents_in_txn(&custody, txn, entity)?;
     }
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
@@ -431,17 +431,10 @@ impl Vault {
                 }
                 crate::store::witness_message_body::validate_canonical_witness_message_body(body)?;
             }
+            // A NOTE owns its own document from its birth (FIX 7783): its row
+            // is its core alone, with no text to move.
             if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-                let original = crate::store::note_body::decode_note_body(body)?;
-                // Only a live author that is the migrating writer matches: an
-                // erased one is no one, never another verified writer.
-                if !original.author_ref.is(birth_actor.entity_ref())
-                    || *field != TextField::MapField("markdown".to_owned())
-                {
-                    return Err(invalid(
-                        "note migration must preserve its original author and markdown field",
-                    ));
-                }
+                return Err(invalid("entity already owns a document"));
             }
             let (initial, metadata, pointer) = replace_text(body, field, &entity.to_hex())?;
             crate::origin::lfs::guard_lfs_asset_put(

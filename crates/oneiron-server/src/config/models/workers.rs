@@ -141,6 +141,28 @@ pub struct WorkerConfig {
     pub launch_manifest_sha256: Option<CacheDigest>,
 }
 
+impl WorkerConfig {
+    /// What this row's supervisor installs and runs: the launch of a
+    /// managed row that names one. `None` for an external row, and for a
+    /// managed row with no launch, whose supervisor only probes it.
+    #[must_use]
+    pub fn managed_launch(&self) -> Option<&ManagedLaunch> {
+        match self.mode {
+            WorkerMode::Managed => self.launch.as_ref(),
+            WorkerMode::External => None,
+        }
+    }
+
+    /// Whether this row's supervisor holds a native launch slot (DESIGN-V2
+    /// §8, V2-R1): a managed EXL3 row with a launch, whose launch record may
+    /// name a native socket. The one rule the worker host and `maintain`'s
+    /// on-device views read.
+    #[must_use]
+    pub fn has_native_launch(&self) -> bool {
+        self.kind == WorkerKind::Exl3 && self.managed_launch().is_some()
+    }
+}
+
 /// What a managed worker's supervisor installs and runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ManagedLaunch {

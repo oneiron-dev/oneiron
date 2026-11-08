@@ -4,6 +4,7 @@
 //! handle reads it. A sink on a handle with none sends to each provider's
 //! public API, has no mail server and makes no connector call.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::Vault;
@@ -152,6 +153,10 @@ pub struct ServedTransports {
     broker_model_listing: Option<Arc<dyn BrokerModelListingHost>>,
     sheets_broker: Option<Arc<dyn SheetsBrokerHost>>,
     apns_applications: Vec<Arc<super::apns::ApnsApplication>>,
+    /// The installed MCP endpoint of each `[connectors]` section, by
+    /// normalized catalog name: where a catalog connector's tool calls go on
+    /// this host, the same endpoint the served connector host sends to.
+    connector_endpoints: BTreeMap<String, String>,
 }
 
 impl ServedTransports {
@@ -164,6 +169,7 @@ impl ServedTransports {
             broker_model_listing: None,
             sheets_broker: None,
             apns_applications: Vec::new(),
+            connector_endpoints: BTreeMap::new(),
         }
     }
 
@@ -224,6 +230,17 @@ impl ServedTransports {
         Ok(self)
     }
 
+    /// The installed MCP endpoint of each catalog connector, by normalized
+    /// catalog name (the host's `[connectors]` sections): the endpoint its
+    /// tool calls go to on this host, the same one the served connector host
+    /// sends to. This supplies an address only, never a credential or a
+    /// transport.
+    #[must_use]
+    pub fn with_connector_endpoints(mut self, endpoints: BTreeMap<String, String>) -> Self {
+        self.connector_endpoints = endpoints;
+        self
+    }
+
     pub(super) fn apns_application(&self, id: &str) -> Option<&super::apns::ApnsApplication> {
         self.apns_applications
             .iter()
@@ -237,6 +254,13 @@ impl ServedTransports {
 
     pub(crate) fn sheets_broker(&self) -> Option<&Arc<dyn SheetsBrokerHost>> {
         self.sheets_broker.as_ref()
+    }
+
+    /// The endpoint the catalog connector `name` (normalized) sends its tool
+    /// calls to on this host, as the served connector host does; `None` when
+    /// the host installed none for it.
+    pub(crate) fn connector_endpoint(&self, name: &str) -> Option<&str> {
+        self.connector_endpoints.get(name).map(String::as_str)
     }
 
     #[must_use]

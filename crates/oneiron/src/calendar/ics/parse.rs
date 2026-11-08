@@ -93,12 +93,13 @@ pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
             prop.name.as_str().eq_ignore_ascii_case("METHOD")
                 && prop.val.as_str().trim().eq_ignore_ascii_case("CANCEL")
         });
+        let calendar_zone = calendar_timezone(calendar);
         for component in calendar
             .components
             .iter()
             .filter(|component| is_named(component, "VEVENT"))
         {
-            let event = parse_vevent(component, method_cancel)?;
+            let event = parse_vevent(component, method_cancel, calendar_zone)?;
             // A duplicated UID would attach two live passports for the same
             // (system, uid) — the one-live law fails closed at parse.
             if !seen_uids.insert((event.uid.clone(), event.properties.recurrence_id_utc)) {
@@ -113,6 +114,53 @@ pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
 
 const BEGIN_VCALENDAR: &str = "BEGIN:VCALENDAR";
 const END_VCALENDAR: &str = "END:VCALENDAR";
+
+/// The longest calendar zone name a VCALENDAR's `X-WR-TIMEZONE` gives.
+const MAX_CALENDAR_ZONE_BYTES: usize = 64;
+
+/// The zone a VCALENDAR names its own (`X-WR-TIMEZONE`, under any
+/// spelling), which places its all-day days (fix list row 17868), when it
+/// is a plain zone name: ASCII letters, digits, spaces and `/_+-.`, at most
+/// 64 bytes. So the name can head a rendered resource again as it is.
+/// `None` when it names none, or anything else.
+fn calendar_timezone<'c>(calendar: &'c icalendar::parser::Component<'_>) -> Option<&'c str> {
+    calendar
+        .properties
+        .iter()
+        .find(|prop| prop.name.as_str().eq_ignore_ascii_case("X-WR-TIMEZONE"))
+        .map(|prop| prop.val.as_str().trim())
+        .filter(|zone| {
+            !zone.is_empty()
+                && zone.len() <= MAX_CALENDAR_ZONE_BYTES
+                && zone
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"/_+-. ".contains(&byte))
+        })
+}
+
+/// The zone the VCALENDAR in `input` that carries the VEVENT `uid` names
+/// its own (`X-WR-TIMEZONE`), the zone [`parse_ics_feed`] gives that
+/// calendar's all-day events (fix list row 17868); `None` when that
+/// calendar names none, no calendar carries `uid`, or `input` does not
+/// parse. A feed of several calendars gives each event its own calendar's.
+pub(crate) fn ics_calendar_timezone(input: &[u8], uid: &str) -> Option<String> {
+    let text = std::str::from_utf8(input).ok()?;
+    let unfolded = icalendar::parser::unfold(text);
+    let roots = icalendar::parser::read_components(&unfolded).ok()?;
+    roots
+        .iter()
+        .filter(|root| is_named(root, "VCALENDAR"))
+        .find(|calendar| {
+            calendar.components.iter().any(|component| {
+                is_named(component, "VEVENT")
+                    && component
+                        .find_prop("UID")
+                        .is_some_and(|prop| prop.val.as_str() == uid)
+            })
+        })
+        .and_then(calendar_timezone)
+        .map(str::to_owned)
+}
 
 /// Whether `component` is named `name` under any ASCII spelling (RFC 5545
 /// names are case-insensitive).
@@ -229,9 +277,16 @@ fn names_are_upper_case(component: &icalendar::parser::Component<'_>) -> bool {
 /// The pinned parser has already decoded every TEXT value once, so `UID`,
 /// `SUMMARY`, and `DESCRIPTION` are read as it returns them; decoding again
 /// would turn a literal backslash sequence into different content.
+///
+/// An all-day VEVENT that names no zone of its own takes `calendar_zone`,
+/// the zone of the calendar carrying it (fix list row 17868): its dates
+/// stay dates, and the zone, a `calendar.tz` claim, places its days. The
+/// zone it takes is event content, so a calendar that changes zone changes
+/// its all-day events.
 fn parse_vevent(
     component: &icalendar::parser::Component<'_>,
     method_cancel: bool,
+    calendar_zone: Option<&str>,
 ) -> Result<ParsedVEvent, CalendarError> {
     let uid = required_uid(component)?;
     let sequence = vevent_sequence(component)?;
@@ -251,9 +306,18 @@ fn parse_vevent(
         .find_prop("DESCRIPTION")
         .map(|prop| prop.val.as_str().to_owned());
 
+    let mut properties = properties::parse(component)?;
+    let inherited = calendar_zone.filter(|_| {
+        properties.time_kind == Some(crate::calendar::claims::CalendarTimeKind::AllDay)
+            && properties.timezone.is_none()
+    });
+    if let Some(zone) = inherited {
+        properties.timezone = Some(zone.to_owned());
+    }
+
     Ok(ParsedVEvent {
-        properties: properties::parse(component)?,
-        content_hash: canonical_vevent_hash(component, method_cancel),
+        properties,
+        content_hash: canonical_vevent_hash(component, method_cancel, inherited),
         raw_component: render_raw_component(component),
         uid,
         sequence,
@@ -473,8 +537,14 @@ fn civil_from_days(days: i64) -> Option<(i32, u8, u8)> {
 /// any content drift under an unchanged SEQUENCE still hashes differently —
 /// the same-sequence-drift update path. A `METHOD:CANCEL` on the carrying
 /// VCALENDAR is event content too and adds its own line, so a cancellation
-/// that leaves the VEVENT untouched still reads as an update.
-fn canonical_vevent(component: &icalendar::parser::Component<'_>, method_cancel: bool) -> Vec<u8> {
+/// that leaves the VEVENT untouched still reads as an update. So is the zone
+/// an all-day VEVENT takes from its calendar (fix list row 17868), on a line
+/// no property can write (a name never starts with `=`).
+fn canonical_vevent(
+    component: &icalendar::parser::Component<'_>,
+    method_cancel: bool,
+    inherited_zone: Option<&str>,
+) -> Vec<u8> {
     let mut lines: Vec<String> = component
         .properties
         .iter()
@@ -502,6 +572,9 @@ fn canonical_vevent(component: &icalendar::parser::Component<'_>, method_cancel:
     if method_cancel {
         lines.push("METHOD:CANCEL".to_owned());
     }
+    if let Some(zone) = inherited_zone {
+        lines.push(format!("=X-WR-TIMEZONE:{zone}"));
+    }
     lines.sort();
     lines.join("\r\n").into_bytes()
 }
@@ -510,8 +583,9 @@ fn canonical_vevent(component: &icalendar::parser::Component<'_>, method_cancel:
 fn canonical_vevent_hash(
     component: &icalendar::parser::Component<'_>,
     method_cancel: bool,
+    inherited_zone: Option<&str>,
 ) -> [u8; 32] {
-    let digest = Sha256::digest(canonical_vevent(component, method_cancel));
+    let digest = Sha256::digest(canonical_vevent(component, method_cancel, inherited_zone));
     let mut out = [0_u8; 32];
     out.copy_from_slice(&digest);
     out
