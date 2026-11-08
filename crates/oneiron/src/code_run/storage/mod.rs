@@ -136,8 +136,8 @@ pub(crate) use self::wait_delivery::{
 // DOOR-141 PR3b: a turn program's resume checkpoint and its wait.
 pub(crate) use self::program_resume::{
     ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
-    ProgramResumeWait, ProgramRowAnswer, load_program_checkpoint_tail, program_resume_call,
-    program_resume_calls_in_txn, program_resume_head_in_txn,
+    ProgramResumeKind, ProgramResumeWait, ProgramRowAnswer, load_program_checkpoint_tail,
+    program_resume_call, program_resume_calls_in_txn, program_resume_head_in_txn,
 };
 pub(crate) use self::wait_delivery::wait_delivered_in_txn;
 pub(crate) use self::wait_holders::{
