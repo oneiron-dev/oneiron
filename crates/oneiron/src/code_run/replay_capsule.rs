@@ -29,16 +29,21 @@
 //! An executor step's capsule also holds the run's state before the step
 //! (FIX 3694): its replay row as stored, with the config and teaching it ran
 //! under, in a body the run owns. A continuation of a failed run forks from
-//! the start of its failing step.
+//! the start of its failing step. The start also holds the run's epochs and
+//! fold ledger as they stood then, which the continuation inherits (FIX
+//! 4198).
 //!
 //! Each body a capsule names is written as the side-row wall admits it, each
 //! secret in it its custody handle, and the capsule names the actor whose
 //! step it was, so an erase of that actor releases them (FIX 6144, KEY STORE
-//! = A; `storage::replay_capsule`). Staged captures are kept and measured,
-//! never capped (FIX 6143). A request the wall refuses outright (a recovery
-//! phrase, a key split over members, an opaque codec) is withheld: no copy
-//! of it is kept, and the capsule keeps the step's start when that admits,
-//! so a continuation still forks from it (FIX 6254, [`CapsuleRequest`]).
+//! = A; `storage::replay_capsule`). The request is kept as pieces: each
+//! message and the rest of the request are held once per run and actor,
+//! and the capsule's own body is the manifest that names them (FIX 4192).
+//! Staged captures are kept and measured, never capped (FIX 6143). A
+//! request the wall refuses outright (a recovery phrase, a key split over
+//! members, an opaque codec) is withheld: no copy of it is kept, and the
+//! capsule keeps the step's start when that admits, so a continuation still
+//! forks from it (FIX 6254, [`CapsuleRequest`]).
 //!
 //! The answering rung also names the route it went out on
 //! ([`note_answering_route_pin`], PR-S1): its route, offer, catalog
@@ -61,9 +66,11 @@ use std::cell::RefCell;
 
 use serde::{Deserialize, Serialize};
 
+use super::FoldWordRef;
 use super::replay::CodeRunReplayRecord;
 use super::storage::{
-    bind_capsule_answer, finalize_capsule, put_staged_capsule, refresh_staged_request,
+    StartCompaction, bind_capsule_answer, finalize_capsule, put_staged_capsule,
+    refresh_staged_request,
 };
 use crate::attempt_queue::AttemptId;
 use crate::compaction::output::OutputRef;
@@ -97,6 +104,10 @@ pub(crate) struct StepStartBody {
     pub(crate) soft_steps: u32,
     /// The resolved teaching the run's provider work was produced under.
     pub(crate) prompt_fingerprint: String,
+    /// The run's epochs and fold ledger as they stood at this start, inside
+    /// its prefix (FIX 4198): what a continuation from it inherits. It holds
+    /// no epoch's digest and no fold's words (FIX 928, FIX 18694).
+    pub(crate) compaction: StartCompaction,
 }
 
 /// One step a capture site is about to send.
@@ -117,6 +128,10 @@ pub(crate) struct StepCapture<'a> {
     pub(crate) console: Option<ConsoleSlot>,
     /// Every row the request was read from, or `None` when any is unknown.
     pub(crate) source_rows: Option<Vec<EntityId>>,
+    /// The folds whose accepted summaries the request copies (FIX 18924):
+    /// the stubs it shows and the answers its consoles may print. Apart
+    /// from `source_rows`, and never a claim that they are complete.
+    pub(crate) fold_words: Vec<FoldWordRef>,
     /// An executor step's run state and config; `None` for a workflow step.
     pub(crate) start: Option<StepStartCapture<'a>>,
 }
@@ -141,6 +156,8 @@ pub(crate) struct CapsuleDraft<'a> {
     pub(crate) actor: EntityId,
     /// The request's canonical bytes as sent.
     pub(crate) request: Vec<u8>,
+    /// Where the run keeps the capsule's own request body: the manifest of
+    /// the request's shared pieces (FIX 4192).
     pub(crate) request_path: String,
     pub(crate) start_path: String,
     pub(crate) messages_digest: [u8; 32],
@@ -425,10 +442,11 @@ impl WorkflowCaptureHandle {
     }
 }
 
-/// Captures a saved-workflow step's admitted request before it is sent: the
-/// step is its attempt's first call, made for `actor`. The returned handle
-/// finalizes only that call with its actual returned binding. A failure is
-/// logged and never fails the step.
+/// Captures a saved-workflow step's admitted request before it is sent:
+/// round `round` of the step's model calls (0 for its first, one more for
+/// each `self.use` tool round after it, FIX 7013), made for `actor`. The
+/// returned handle finalizes only that call with its actual returned
+/// binding. A failure is logged and never fails the step.
 pub fn capture_workflow_step(
     vault: &Vault,
     attempt: AttemptId,
@@ -436,13 +454,14 @@ pub fn capture_workflow_step(
     actor: WriteActor,
     request: &LlmRequest,
     source_rows: Option<Vec<EntityId>>,
+    round: u64,
 ) -> Option<WorkflowCaptureHandle> {
     let run = EntityId::from_bytes(*attempt.as_bytes()).ok()?;
     let capture = StepCapture {
         attempt,
         lease_generation,
         run,
-        step: 0,
+        step: round,
         host: CapsuleHost::WorkflowStep,
         actor,
         request,
@@ -450,6 +469,7 @@ pub fn capture_workflow_step(
         exposures: &[],
         console: None,
         source_rows,
+        fold_words: Vec::new(),
         start: None,
     };
     finalize_step_captures(vault);
@@ -487,7 +507,8 @@ pub fn bind_workflow_step_answer(
         let request_hash = request.canonical_hash().map_err(|error| {
             crate::Error::InvalidConfig(format!("capsule answer request: {error}"))
         })?;
-        // A workflow step is its attempt's first call (`capture_workflow_step`).
+        // A step with no tool round answers in its first call, round 0
+        // (`capture_workflow_step`).
         let key = (run, u64::from(lease_generation), 0);
         bind_capsule_answer(vault, &key, request_hash, OutputRef::from_bytes(answer))
     });
@@ -555,7 +576,7 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
         attempt: EntityId::from_bytes(*capture.attempt.as_bytes())?,
         actor: capsule_actor(capture.actor),
         request_path: format!(
-            "replay/capsule/{}/{:06}.request.json",
+            "replay/capsule/{}/{:06}.request.msgpack",
             capture.lease_generation, capture.step
         ),
         start_path: format!(

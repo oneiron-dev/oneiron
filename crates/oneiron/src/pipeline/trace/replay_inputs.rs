@@ -331,8 +331,11 @@ pub(in crate::pipeline) fn capture_replay_inputs(
                 if let Some(memory) = kind_memory.as_mut() {
                     memory.materialized(
                         0,
-                        (kind_overrides.capacity() as u64)
-                            .saturating_mul(std::mem::size_of::<serde_json::Value>() as u64),
+                        (kind_overrides.capacity() as u64).saturating_mul(std::mem::size_of::<
+                            serde_json::Value,
+                        >(
+                        )
+                            as u64),
                     );
                 }
                 json!({

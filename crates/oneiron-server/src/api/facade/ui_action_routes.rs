@@ -305,6 +305,11 @@ async fn event_answer(
             let rendered_by = held.frame.principal().clone();
             let server = Arc::clone(&server);
             let credential = auth.idempotency_principal();
+            // FIX 4973: the clicking credential's admitted locality;
+            // provenance only, captured before the blocking closure.
+            let caller_origin = oneiron::agent_dispatch::CallerOrigin::Connection {
+                locality: auth.locality(),
+            };
             let key = request.idempotency_key;
             let queued = super::clock_ingress::run_blocking(move || {
                 crate::ai_host::queue_lens_callback(
@@ -314,6 +319,7 @@ async fn event_answer(
                     &emitter,
                     &callback,
                     &key,
+                    caller_origin,
                 )
             })
             .await
