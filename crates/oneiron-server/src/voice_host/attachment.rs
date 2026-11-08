@@ -36,6 +36,7 @@ impl VoiceHostConfig {
                 session: self.session.clone(),
                 shutdown: self.shutdown.clone(),
                 speculative_auth: None,
+                phone: None,
                 // A supervisor's pass attachment has no server's `[policy]`:
                 // the engine's default, as before.
                 owner_policy: oneiron::policy_model::PolicyModelConfig::default(),
