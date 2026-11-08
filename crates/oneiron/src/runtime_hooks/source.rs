@@ -2,7 +2,7 @@
 //! A position is never a timestamp or the notify counter: an imported claim
 //! can carry an old time, and the notify counter is process-local. The two
 //! watcher sources (FIX 4749) live in the `schedule` and `surface_inbound`
-//! submodules.
+//! submodules; theirs are the feeds the runner prunes and an erase scrubs.
 
 mod schedule;
 mod surface_inbound;
@@ -590,6 +590,39 @@ pub(super) fn head_in_txn(
         FactSource::SurfaceInbound => surface_inbound::head_in_txn(vault, txn)?,
     };
     Ok(head)
+}
+
+/// Deletes, in the caller's write, the watcher feed rows at or before
+/// `floor`, the lowest cursor of every enabled fact binding, at most
+/// `max_rows`. The claim changelog and the settlement feed prune nothing
+/// here.
+pub(super) fn prune_passed_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    floor: FactPosition,
+    max_rows: usize,
+) -> Result<()> {
+    match floor {
+        FactPosition::Schedule(floor) => {
+            schedule::prune_passed_ticks_in_txn(vault, txn, floor, max_rows)
+        }
+        FactPosition::SurfaceInbound(floor) => {
+            surface_inbound::prune_passed_events_in_txn(vault, txn, floor, max_rows)
+        }
+        FactPosition::ClaimChangelog(_) | FactPosition::Settlement(_) => Ok(()),
+    }
+}
+
+/// Erases `id` from both watcher feeds in the caller's erase write: an
+/// erased TASK's due index rows, and every tick or inbound row that names
+/// it, each kept at its sequence with nothing in it.
+pub(super) fn scrub_watcher_feeds_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    schedule::scrub_task_ticks_in_txn(vault, txn, id)?;
+    surface_inbound::scrub_inbound_events_in_txn(vault, txn, id)
 }
 
 /// The changelog position of a binding claim's latest write, in the

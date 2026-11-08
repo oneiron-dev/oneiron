@@ -10,6 +10,7 @@
 mod body;
 mod evaluation;
 mod retained;
+mod watcher_feeds;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -410,17 +411,9 @@ impl Pass<'_, '_> {
         for (id, _) in bindings {
             cursors.push(self.cursor_for(*id, source)?);
         }
-        // Due watcher TASKs tick here, once a binding here can take a tick,
-        // and after every cursor above is placed: a binding met for the
-        // first time starts before the ticks this pass releases (FIX 4749).
-        if source == FactSource::Schedule
-            && bindings.iter().any(|(_, binding)| {
-                filter::verbs_admit_kind(&binding.selector.verbs, FactKind::ScheduleTick)
-            })
-        {
-            let now = self.vault.store.clock.now_recorded_at();
-            self.report.more |= source::release_due_ticks(self.vault, now)?;
-        }
+        // Due ticks release after every cursor above is placed: a binding
+        // met for the first time starts before them (FIX 4749).
+        self.release_ticks(source, bindings)?;
         let lowest = cursors.iter().copied().min().flatten();
         let batch = source::read_after(self.vault, source, lowest, max_entries)?;
         self.report.entries_read += batch.entries.len();
@@ -449,7 +442,7 @@ impl Pass<'_, '_> {
             }
         }
         // Every entry up to `through` was delivered or passed over; skipped
-        // entries move the cursor as runs do.
+        // entries move the cursor as runs do, and passed watcher rows go.
         if let Some(through) = batch.through {
             let vault = self.vault;
             let at = vault.store.clock.now_recorded_at();
@@ -460,7 +453,7 @@ impl Pass<'_, '_> {
                     }
                     store::advance_cursor_in_txn(vault, txn, *id, through, at)?;
                 }
-                Ok(())
+                self.prune_watcher_feed_in_txn(txn, source, bindings, max_entries)
             })?;
         }
         Ok(())

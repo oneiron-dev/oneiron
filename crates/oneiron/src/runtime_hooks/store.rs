@@ -176,7 +176,17 @@ pub(super) fn cursor(
     source: FactSource,
 ) -> Result<Option<CursorRow>> {
     let rtxn = vault.store.env.read_txn()?;
-    CURSORS.get(&vault.store, &rtxn, &(binding, [source.tag()]))
+    cursor_in_txn(vault, &rtxn, binding, source)
+}
+
+/// [`cursor`], in the caller's snapshot.
+pub(super) fn cursor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding: EntityId,
+    source: FactSource,
+) -> Result<Option<CursorRow>> {
+    CURSORS.get(&vault.store, txn, &(binding, [source.tag()]))
 }
 
 pub(super) fn put_cursor_in_txn(
@@ -385,6 +395,20 @@ impl HookRunDerivation {
                 id: *id,
                 revision,
                 body_hash,
+            });
+        }
+        // An inbound event's input names its actor too, so that actor's
+        // erase scrubs the run as its identity's does; a pinned dependency
+        // on the same id already does.
+        if let Some(surface) = &entry.surface
+            && !dependencies
+                .iter()
+                .any(|dependency| dependency.id == surface.actor)
+        {
+            dependencies.push(HookDependency {
+                id: surface.actor,
+                revision: None,
+                body_hash: None,
             });
         }
         dependencies.sort();

@@ -1,6 +1,7 @@
 //! Source-erasure teardown for retained hook payloads. Identity, ordering,
 //! digests and terminal status stay; source-derived bytes and pending work
-//! that could resurrect them do not.
+//! that could resurrect them do not. A watcher feed row that names the
+//! erased id keeps only its position.
 
 use std::collections::BTreeSet;
 
@@ -84,8 +85,9 @@ pub(in crate::runtime_hooks) fn scrub_receipt_payload(receipt: &mut ReceiptRecor
     receipt.policy_trace.clear();
 }
 
-/// Scrubs every retained hook carrier that depends on `id`, in the caller's
-/// erase transaction. Complete scans avoid a second dependency index; every
+/// Scrubs every retained hook carrier that depends on `id`, and every tick,
+/// due index and inbound row that names it, in the caller's erase
+/// transaction. Complete scans avoid a second dependency index; every
 /// matching row is retired before the erase or its sweep declares completion.
 pub(crate) fn scrub_hook_source_in_txn(
     vault: &Vault,
@@ -162,5 +164,6 @@ pub(crate) fn scrub_hook_source_in_txn(
         scrub_receipt_payload(&mut receipt);
         RECEIPTS.put(vault, txn, &key, &receipt)?;
     }
-    Ok(())
+
+    crate::runtime_hooks::source::scrub_watcher_feeds_in_txn(vault, txn, id)
 }

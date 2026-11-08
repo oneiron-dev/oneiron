@@ -291,7 +291,9 @@ side_tables! {
     /// The last settlement sequence handed out. Key: ().
     HOOKS_SETTLED_NEXT: VaultMeta b"hooks:settled_next:v1" Named;
     /// The inbound surface-event feed fact hooks follow (FIX 4749): one row per admitted
-    /// connector SurfaceEvent, its ids and tokens only. Key: u64be (sequence).
+    /// connector SurfaceEvent, its ids and tokens only; an erase leaves a row naming the erased
+    /// entity as an empty erased row, and the runner prunes the rows every binding passed. Key:
+    /// u64be (sequence).
     HOOKS_SURFACE_INBOUND: VaultMeta b"hooks:surface_inbound:v1:" Named;
     /// The last inbound surface-event sequence handed out. Key: ().
     HOOKS_SURFACE_INBOUND_NEXT: VaultMeta b"hooks:surface_inbound_next:v1" Named;
@@ -301,8 +303,9 @@ side_tables! {
     /// Each TASK the due index holds (FIX 4749): the due time it holds, and the tick sequence
     /// its release committed, if it has ticked. Key: id16 (TASK).
     HOOKS_TASK_DUE_REVERSE: VaultMeta b"hooks:task_due_reverse:v1:" Named;
-    /// The tick feed fact hooks follow (FIX 4749): one row per due TASK released. Key: u64be
-    /// (sequence).
+    /// The tick feed fact hooks follow (FIX 4749): one row per due TASK released; an erase
+    /// leaves an erased TASK's row as an empty erased row, and the runner prunes the rows every
+    /// binding passed, but an open TASK's own tick. Key: u64be (sequence).
     HOOKS_TICK: VaultMeta b"hooks:tick:v1:" Named;
     /// The last tick sequence handed out. Key: ().
     HOOKS_TICK_NEXT: VaultMeta b"hooks:tick_next:v1" Named;
