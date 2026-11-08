@@ -5,11 +5,12 @@ actor. Tools cannot open vaults, change identity, or make raw HTTP writes.
 Typed errors and receipts pass through unchanged. This package never creates an
 engine lease.
 
-The `recall` tool's `effort` field does not work yet. Its schema offers
-`minimal`, `standard` and `deep`, but the engine accepts only `light`,
-`medium`, `high`, `xhigh`, `max` and `call`. Every value the schema allows is
-refused with a typed bad-request error. A call that leaves `effort` unset runs
-at the default, `medium`.
+The `recall` tool's `effort` field offers `light`, `medium`, `high`, `xhigh`,
+`max` and `call`, exactly the engine's terms. `high`, `xhigh` and `max` need a
+budget lease, and `call` is call mode for live calls. A call that leaves
+`effort` unset runs at the default, `medium`. Its `scope` accepts `kinds`, the
+registry kinds to return; unset returns every kind but conversations, sessions,
+facets and worlds.
 
 ```sh
 npm install oneiron @oneiron/ai-sdk ai @ai-sdk/openai
