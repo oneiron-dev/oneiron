@@ -54,9 +54,18 @@ use read_admission::{admitted_born_from, caveat_lane};
 /// The largest JSON body these routes take: a file travels base64 inside it.
 const ARTIFACT_BODY_LIMIT: usize = 96 * 1024 * 1024;
 
-/// The decoded content whose base64 can fit one structured action argument
-/// (64 MiB of JSON, FIX 22074 E4): a longer one never runs as an action.
-const ACTION_CONTENT_BYTES: u64 = oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES as u64 / 4 * 3;
+/// One structured action argument's JSON bound (64 MiB, FIX 22074 E4).
+const ACTION_JSON_BYTES: u64 = oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES as u64;
+
+/// The length of `input` as one action argument once its content, `len`
+/// bytes decoded, is base64 in it again: the input's JSON with an empty
+/// content string, and the content's canonical base64, which JSON never
+/// escapes.
+fn action_input_len(input: &ArtifactCreateRequest, len: u64) -> u64 {
+    serde_json::to_vec(input)
+        .map_or(u64::MAX, |json| json.len() as u64)
+        .saturating_add(len.div_ceil(3).saturating_mul(4))
+}
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -362,7 +371,7 @@ pub(super) async fn create(
         &input,
     )?
     .filter(|bound| bound.writes_as() == actor);
-    if bound.is_some() && streamed.content.file().1 <= ACTION_CONTENT_BYTES {
+    if bound.is_some() && action_input_len(&input, streamed.content.file().1) <= ACTION_JSON_BYTES {
         let (streamed, content_base64) = blocking_read(move || {
             let text = encode_content(&streamed)?;
             Ok((streamed, text))

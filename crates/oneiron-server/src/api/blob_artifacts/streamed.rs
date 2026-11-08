@@ -45,6 +45,11 @@ pub(super) async fn read<H: DeserializeOwned + Send + 'static>(
     body: Body,
     limit: u64,
 ) -> Result<StreamedBody<H>, ApiError> {
+    // A body that does not say it is JSON is refused as the route's JSON
+    // reader refused it.
+    if !crate::api::has_json_content_type(headers) {
+        return Err(body_spool::invalid_json());
+    }
     let declared = body_spool::declared_length(headers);
     if let Some(declared) = declared.filter(|declared| *declared > limit) {
         return Err(too_large(limit, declared));
