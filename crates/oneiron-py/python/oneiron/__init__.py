@@ -505,7 +505,7 @@ class Oneiron:
         """Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."""
         return json.loads(_translate(lambda: self._client.execute_code(json.dumps(spec))))
     def can(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Read-only ask routing or attributed partial answers."""
+        """Read-only ask routing, or one effect's dated allow, deny, would-ask or named hold."""
         return json.loads(_translate(lambda: self._client.can(json.dumps(request, allow_nan=False))))
     def peek(self, request: dict[str, Any]) -> list[dict[str, Any]]:
         """Read-only ask routing or attributed partial answers."""
