@@ -315,12 +315,7 @@ pub(crate) fn erase_spawn_call(call: &mut CodeRunBridgeCall) -> Result<bool> {
         return Ok(false);
     }
     let before = call.clone();
-    let answered = decode_self_dispatch_outcome(&call.outcome);
-    let cause = match &answered {
-        Ok(SelfDispatchOutcome::AgentSpawn(spawn)) => spawn.erasure(),
-        _ => None,
-    }
-    .unwrap_or(SpawnErasure::TargetErased);
+    let cause = spawn_erasure(&call.outcome);
     // Only the ask that ran is erased's (FIX 1442): the original never
     // reached the erased target, so it stays as working evidence -- unless
     // it duplicates the dispatched ask, which reached the target in the
@@ -451,17 +446,22 @@ pub(crate) fn original_ask_erased(erased: &CodeRunBridgeCall) -> bool {
 /// apart from `call`, once that ask's instance retired: in the dispatched
 /// ask's slot, nil while it is carried apart, and in the guest's original
 /// ask's too when `original` says it took the marker
-/// ([`original_ask_erased`]). A call whose request an erase took keeps no
-/// ask to mark and is left as it is.
+/// ([`original_ask_erased`]). The marker keeps `cause`, whose erase it was
+/// (FIX 9183). A call whose request an erase took keeps no ask to mark and
+/// is left as it is.
 ///
 /// # Errors
 ///
 /// A call with no ask in the slot a checkpoint carries apart.
-pub(crate) fn retire_carried_ask(call: &mut CodeRunBridgeCall, original: bool) -> Result<()> {
+pub(crate) fn retire_carried_ask(
+    call: &mut CodeRunBridgeCall,
+    original: bool,
+    cause: SpawnErasure,
+) -> Result<()> {
     if call.request_erased() {
         return Ok(());
     }
-    let carried = swap_spawn_ask(call, erased_ask());
+    let carried = swap_spawn_ask(call, erased_ask(cause));
     if !carried.is_some_and(|ask| ask.is_nil() || ask.is_str() || is_erased_ask(&ask)) {
         return Err(invalid_code_run_replay(
             "a retired spawn ask does not fit its call",
@@ -473,11 +473,21 @@ pub(crate) fn retire_carried_ask(call: &mut CodeRunBridgeCall, original: bool) -
     {
         for (key, value) in fields {
             if key.as_str() == Some(ASK_KEY) && value.is_str() {
-                *value = erased_ask();
+                *value = erased_ask(cause);
             }
         }
     }
     Ok(())
+}
+
+/// Whose erase a spawn call's `outcome` answers (FIX 9183): its asker's
+/// when its host answered `AskerErased`, else its target's.
+pub(crate) fn spawn_erasure(outcome: &Value) -> SpawnErasure {
+    match decode_self_dispatch_outcome(outcome) {
+        Ok(SelfDispatchOutcome::AgentSpawn(spawn)) => spawn.erasure(),
+        _ => None,
+    }
+    .unwrap_or(SpawnErasure::TargetErased)
 }
 
 /// How a spawn row's outcome stands for its coherence.

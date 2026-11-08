@@ -32,7 +32,7 @@ use super::replay::{CodeRunBridgeCall, CodeRunReplayRecord};
 use super::replay_capsule::StepStartBody;
 use super::spawn_replay::{
     decode_spawn_targets, erase_spawn_call, original_ask_erased, retire_carried_ask,
-    spawn_ask_part, spawn_targets_value, swap_spawn_ask,
+    spawn_ask_part, spawn_erasure, spawn_targets_value, swap_spawn_ask,
 };
 use super::storage::replay_carriage;
 use super::support::invalid_code_run_replay;
@@ -268,8 +268,9 @@ fn erased_facts(erased: &CodeRunBridgeCall) -> Result<Vec<u8>> {
 }
 
 /// The call one retired request part names, given the erased `facts` kept
-/// beside it: the erased marker in its carried ask's place
-/// ([`retire_carried_ask`]), its answer and targets too when the reply
+/// beside it: the erased marker in its carried ask's place, with the cause
+/// its kept answer names ([`retire_carried_ask`], [`spawn_erasure`]), its
+/// answer and targets too when the reply
 /// retired, and [`erase_spawn_call`] last. A retired reply's skeleton keeps
 /// its request erased (FIX 6534).
 fn retire_request_part(
@@ -285,7 +286,7 @@ fn retire_request_part(
             "erased spawn facts are not a mark, an answer and targets",
         ));
     };
-    retire_carried_ask(call, *original)?;
+    retire_carried_ask(call, *original, spawn_erasure(outcome))?;
     if reply_retired {
         call.outcome = outcome.clone();
         call.spawn_targets = decode_spawn_targets(targets)?;

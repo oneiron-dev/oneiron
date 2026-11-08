@@ -8,8 +8,9 @@
 //! The handle binds the claim's stored row, its pending-consent row when it
 //! waits in the tray, and the live policy frontier. A settlement whose handle
 //! no longer matches is refused and changes nothing. The handle is no
-//! authority: the settlement revalidates the owner's proof in its own writer,
-//! and the actor that opened a proposal never settles it (DEC-0006). Each
+//! authority: the settlement revalidates the owner's proof or the holder's
+//! explicit owner-issued Grant in its own writer. The actor that opened a
+//! proposal never settles it (DEC-0006). Each
 //! settlement appends one gate ledger row, its durable receipt, and the claim's
 //! tray row, when it has one, closes with its own resolution receipt.
 
@@ -19,6 +20,9 @@ use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::consent::bundle_projection::GateConsentBundleAction;
+
+mod authority;
+use authority::ClaimSettler;
 
 /// Key-derivation context of the review handle.
 const CLAIM_REVIEW_DOMAIN: &str = "oneiron.claim-settle.review.v1";
@@ -36,6 +40,9 @@ const CLAIM_SETTLEMENT_REVERT_VERB: &str = "vault.claims.retract";
 pub struct ClaimProposalReviewRequest {
     /// The proposed claim (short-id ref or 32-hex).
     pub claim_ref: String,
+    /// An explicit native consent Grant for this holder and claim (64 hex).
+    /// None uses the existing owner proof. A Grant grants no read access.
+    pub grant_ref: Option<String>,
 }
 
 /// One proposed claim as its review read it.
@@ -77,6 +84,9 @@ pub struct ClaimSettleRequest {
     pub review_id: String,
     /// The answer.
     pub decision: ClaimSettleDecision,
+    /// An explicit native consent Grant for this holder and claim (64 hex).
+    /// None uses the existing owner proof, never an inferred Grant.
+    pub grant_ref: Option<String>,
 }
 
 /// A settled change's verdict, and the proposal's.
@@ -107,6 +117,11 @@ pub enum ClaimSettlementAnswer {
         /// The person (32 hex).
         person_ref: String,
     },
+    /// The actual holder answered under this owner-issued native Grant.
+    Grant {
+        /// The stored Grant's bound digest (64 hex).
+        grant_ref: String,
+    },
 }
 
 /// Why a settlement went the way it did; each is the reason code its ledger
@@ -119,6 +134,12 @@ pub enum ClaimSettlementReason {
     /// The owner rejected the reviewed body.
     #[serde(rename = "gate.claim.settle.declined")]
     OwnerDeclined,
+    /// The explicitly granted holder approved the reviewed body.
+    #[serde(rename = "gate.claim.settle.holder_approved")]
+    HolderApproved,
+    /// The explicitly granted holder rejected the reviewed body.
+    #[serde(rename = "gate.claim.settle.holder_declined")]
+    HolderDeclined,
 }
 
 impl ClaimSettlementReason {
@@ -128,6 +149,8 @@ impl ClaimSettlementReason {
         match self {
             Self::OwnerApproved => "gate.claim.settle.approved",
             Self::OwnerDeclined => "gate.claim.settle.declined",
+            Self::HolderApproved => "gate.claim.settle.holder_approved",
+            Self::HolderDeclined => "gate.claim.settle.holder_declined",
         }
     }
 }
@@ -386,9 +409,44 @@ impl Memory<'_> {
         vetting: bool,
     ) -> MemoryResult<ClaimProposalReview> {
         self.require_settling_owner(owner.revalidate(self.vault)?)?;
-        let id = self.admitted_claim(&input.claim_ref)?;
+        self.review_claim_proposal(input, vetting, None)
+    }
+
+    /// Review on an embedded owner handle, or under the explicitly named
+    /// Grant on this handle's own credential.
+    pub fn claim_review(
+        &self,
+        input: &ClaimProposalReviewRequest,
+    ) -> MemoryResult<ClaimProposalReview> {
+        match input.grant_ref.as_deref() {
+            Some(_) => self.claim_review_as_grant_holder(input),
+            None => self.claim_review_as_owner(&self.embedded_owner("vault.claims.review")?, input),
+        }
+    }
+
+    /// Reviews a readable proposal under the holder's named, live native
+    /// Grant. This action Grant grants no additional read authority.
+    pub fn claim_review_as_grant_holder(
+        &self,
+        input: &ClaimProposalReviewRequest,
+    ) -> MemoryResult<ClaimProposalReview> {
+        let grant = authority::named_grant(input.grant_ref.as_deref())?;
+        self.review_claim_proposal(input, false, Some(ClaimSettler::Grant(&grant)))
+    }
+
+    fn review_claim_proposal(
+        &self,
+        input: &ClaimProposalReviewRequest,
+        vetting: bool,
+        holder: Option<ClaimSettler<'_>>,
+    ) -> MemoryResult<ClaimProposalReview> {
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let id = self.admitted_claim_in_lane(&lane, &input.claim_ref)?;
         let reviewed = {
             let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
+            if let Some(holder) = holder {
+                holder.authorize(self, &rtxn, &lane, id, "vault.claims.review")?;
+            }
             ReviewedProposal::read_in_txn(self.vault, &rtxn, &id)?
         };
         if !(if vetting {
@@ -450,6 +508,34 @@ impl Memory<'_> {
         input: &ClaimSettleRequest,
         vetting: bool,
     ) -> MemoryResult<ClaimSettlement> {
+        self.settle_claim_proposal(ClaimSettler::Owner(owner), input, vetting)
+    }
+
+    /// Settles on an embedded owner handle, or under the explicitly named
+    /// Grant on this handle's own credential.
+    pub fn claim_settle(&self, input: &ClaimSettleRequest) -> MemoryResult<ClaimSettlement> {
+        match input.grant_ref.as_deref() {
+            Some(_) => self.claim_settle_as_grant_holder(input),
+            None => self.claim_settle_as_owner(&self.embedded_owner("vault.claims.settle")?, input),
+        }
+    }
+
+    /// Settles a reviewed readable proposal as the holder named by a live
+    /// owner-issued native Grant. It answers no owner-critical obligation.
+    pub fn claim_settle_as_grant_holder(
+        &self,
+        input: &ClaimSettleRequest,
+    ) -> MemoryResult<ClaimSettlement> {
+        let grant = authority::named_grant(input.grant_ref.as_deref())?;
+        self.settle_claim_proposal(ClaimSettler::Grant(&grant), input, false)
+    }
+
+    fn settle_claim_proposal(
+        &self,
+        authority: ClaimSettler<'_>,
+        input: &ClaimSettleRequest,
+        vetting: bool,
+    ) -> MemoryResult<ClaimSettlement> {
         let review_id = input.review_id.trim();
         if review_id.len() != 64 || !review_id.as_bytes().iter().all(u8::is_ascii_hexdigit) {
             return Err(MemoryError::bad_request_with(
@@ -457,32 +543,43 @@ impl Memory<'_> {
                 &["Review the claim with vault.claims.review and pass its review_id."],
             ));
         }
-        let id = self.admitted_claim(&input.claim_ref)?;
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let id = self.admitted_claim_in_lane(&lane, &input.claim_ref)?;
         let now = self.vault.store.clock.now_recorded_at();
         let (action, verdict, reason) = match input.decision {
             ClaimSettleDecision::Approve => (
                 GateConsentBundleAction::Approve,
                 ClaimSettlementVerdict::Landed,
-                ClaimSettlementReason::OwnerApproved,
+                if authority.is_grant() {
+                    ClaimSettlementReason::HolderApproved
+                } else {
+                    ClaimSettlementReason::OwnerApproved
+                },
             ),
             ClaimSettleDecision::Reject => (
                 GateConsentBundleAction::Decline,
                 ClaimSettlementVerdict::Rejected,
-                ClaimSettlementReason::OwnerDeclined,
+                if authority.is_grant() {
+                    ClaimSettlementReason::HolderDeclined
+                } else {
+                    ClaimSettlementReason::OwnerDeclined
+                },
             ),
         };
         let written = self
             .vault
             .try_with_write_txn_grouped(|wtxn| -> MemoryResult<_> {
-                // The proof is rechecked where the decision commits: an owner
-                // whose person, credential or ownership went away while the call
-                // waited for the writer decides nothing.
-                let person = owner.revalidate_in_txn(self.vault, &*wtxn)?;
-                self.require_settling_owner(person)?;
-                let owner_answer = owner.owner_answer_in_txn(self.vault, &*wtxn)?;
+                // Authority is rechecked where the decision commits, after
+                // any wait for the writer. A Grant never supplies owner proof.
+                if authority.is_grant() {
+                    self.verify_actor_write_in_txn(wtxn)?;
+                }
+                let authorized =
+                    authority.authorize(self, &*wtxn, &lane, id, "vault.claims.settle")?;
+                let actor = authorized.actor;
+                let owner_answer = authorized.owner_answer;
                 let reviewed = ReviewedProposal::read_in_txn(self.vault, &*wtxn, &id)?;
-                reviewed.settleable(review_id, person, action, vetting)?;
-                let actor = WriteActor::new(person, EdgeActorClass::Human);
+                reviewed.settleable(review_id, actor.entity_ref(), action, vetting)?;
                 let settled = if vetting {
                     self.vault.vet_generated_claim_in_txn(
                         wtxn,
@@ -490,6 +587,19 @@ impl Memory<'_> {
                         action,
                         actor,
                         owner_answer.as_ref(),
+                        now,
+                    )?
+                } else if authorized.grant_ref.is_some()
+                    && action == GateConsentBundleAction::Approve
+                {
+                    self.vault.approve_proposed_claim_with_caller_in_txn(
+                        wtxn,
+                        id,
+                        self.claim_envelope(
+                            reviewed.body.source.unwrap_or(ClaimSource::Inferred),
+                            "vault.claims.settle",
+                            ClaimApprovalStatus::Approved,
+                        )?,
                         now,
                     )?
                 } else {
@@ -519,6 +629,7 @@ impl Memory<'_> {
                     now,
                 );
                 record.read_frontier_hash = reviewed.frontier;
+                record.grant_ref = authorized.grant_ref;
                 // FIX 7499, 7500: the reviewed candidate's read context, and
                 // the loop links of the pending decision it answers.
                 let pending = reviewed.pending.as_ref().and_then(|pending| {
@@ -549,9 +660,9 @@ impl Memory<'_> {
                 self.vault
                     .store
                     .append_gate_decision_in_txn(wtxn, &record)?;
-                Ok((settled, record, person))
+                Ok((settled, record))
             });
-        let (settled, record, person) = written?;
+        let (settled, record) = written?;
         for decision in &settled.recorded {
             decision.record_metrics(&self.vault.store.diagnostics.gate);
         }
@@ -585,15 +696,27 @@ impl Memory<'_> {
             review_id: review_id.to_ascii_lowercase(),
             changes: vec![ClaimChangeVerdict { claim_ref, verdict }],
             verdict,
-            answered_by: ClaimSettlementAnswer::Word {
-                person_ref: person.to_hex(),
+            answered_by: match &record.grant_ref {
+                Some(grant_ref) => ClaimSettlementAnswer::Grant {
+                    grant_ref: grant_ref.clone(),
+                },
+                None => ClaimSettlementAnswer::Word {
+                    person_ref: self.actor.to_hex(),
+                },
             },
             reason,
-            summary: match verdict {
-                ClaimSettlementVerdict::Landed => {
+            summary: match (verdict, authority.is_grant()) {
+                (ClaimSettlementVerdict::Landed, true) => {
+                    "The granted holder approved the reviewed claim; it now reads as approved.".to_owned()
+                }
+                (ClaimSettlementVerdict::Rejected, true) => {
+                    "The granted holder rejected the reviewed claim; it no longer waits for consent."
+                        .to_owned()
+                }
+                (ClaimSettlementVerdict::Landed, false) => {
                     "The owner approved the reviewed claim; it now reads as approved.".to_owned()
                 }
-                ClaimSettlementVerdict::Rejected => {
+                (ClaimSettlementVerdict::Rejected, false) => {
                     "The owner rejected the reviewed claim; it no longer waits for consent."
                         .to_owned()
                 }
@@ -625,9 +748,12 @@ impl Memory<'_> {
     /// `claim_ref` as this handle may read it, whatever its status:
     /// `NOT_FOUND` with the read's receipt when it resolves to nothing the
     /// handle admits.
-    fn admitted_claim(&self, claim_ref: &str) -> MemoryResult<EntityId> {
-        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
-        let id = self.resolve_ref_in_lane(&lane, claim_ref)?;
+    fn admitted_claim_in_lane(
+        &self,
+        lane: &crate::claim::ScopedRead<'_>,
+        claim_ref: &str,
+    ) -> MemoryResult<EntityId> {
+        let id = self.resolve_ref_in_lane(lane, claim_ref)?;
         let rows = lane.read(&[crate::claim::PointRead::id(id)], None)?;
         if rows
             .value
@@ -638,7 +764,7 @@ impl Memory<'_> {
             return Ok(id);
         }
         Err(self.with_lane_receipt(
-            &lane,
+            lane,
             MemoryError::not_found("no claim this caller may read has that ref"),
         )?)
     }
