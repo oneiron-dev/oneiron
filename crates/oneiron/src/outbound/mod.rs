@@ -23,6 +23,7 @@ mod reply_content;
 mod reply_job;
 pub mod report_signature;
 mod retry_audit;
+mod retry_edge;
 mod schedule_contract;
 pub use schedule_contract::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 mod send_lookup;
