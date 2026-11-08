@@ -124,19 +124,23 @@ pub(super) fn reported_cache(response: &LlmResponse, memoized: bool) -> Option<[
     )
 }
 
-/// Whether the provider refused the request itself, as an oversized one is
-/// refused: its spans go back to their own rungs.
+/// A context refusal hands its spans back to their own rungs. Bare request
+/// refusals keep their existing recovery while providers lack a typed signal.
 pub(super) fn refused_request(error: &DurableStepError) -> bool {
     matches!(
         error,
-        DurableStepError::Llm(LlmError::Fatal(FatalLlmError::InvalidRequest))
-            | DurableStepError::SpentLlm {
-                source: LlmError::Fatal(FatalLlmError::InvalidRequest),
-                ..
-            }
-            | DurableStepError::ClassifiedLlm {
-                source: LlmError::Fatal(FatalLlmError::InvalidRequest),
-                ..
-            }
+        DurableStepError::Llm(LlmError::Fatal(
+            FatalLlmError::InvalidRequest | FatalLlmError::ContextWindowExceeded { .. }
+        )) | DurableStepError::SpentLlm {
+            source: LlmError::Fatal(
+                FatalLlmError::InvalidRequest | FatalLlmError::ContextWindowExceeded { .. }
+            ),
+            ..
+        } | DurableStepError::ClassifiedLlm {
+            source: LlmError::Fatal(
+                FatalLlmError::InvalidRequest | FatalLlmError::ContextWindowExceeded { .. }
+            ),
+            ..
+        }
     )
 }

@@ -4,7 +4,7 @@
 use super::model::{
     ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_LOCATOR_TEXT_MAX_BYTES,
     ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment, BodyAnchor, DriftMarker, FORMAT_DOCX,
-    FORMAT_HTML, FORMAT_PPTX, FORMAT_XLSX, Locator, TaskBrief, ThreadState,
+    FORMAT_HTML, FORMAT_PPTX, FORMAT_TEXT, FORMAT_XLSX, Locator, TaskBrief, ThreadState,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
@@ -135,6 +135,14 @@ pub(crate) fn encode_locator(locator: &Locator) -> Value {
             (Value::from(KEY_CHAR_START), Value::from(*char_start)),
             (Value::from(KEY_CHAR_END), Value::from(*char_end)),
         ]),
+        Locator::Text {
+            char_start,
+            char_end,
+        } => Value::Map(vec![
+            (Value::from(KEY_FORMAT), Value::from(FORMAT_TEXT)),
+            (Value::from(KEY_CHAR_START), Value::from(*char_start)),
+            (Value::from(KEY_CHAR_END), Value::from(*char_end)),
+        ]),
     }
 }
 
@@ -162,6 +170,11 @@ pub(crate) fn decode_locator(value: &Value) -> Result<Locator> {
             let char_start = map_u64(value, KEY_CHAR_START)?;
             let char_end = map_u64(value, KEY_CHAR_END)?;
             Locator::html(part_id, char_start, char_end)
+        }
+        FORMAT_TEXT => {
+            let char_start = map_u64(value, KEY_CHAR_START)?;
+            let char_end = map_u64(value, KEY_CHAR_END)?;
+            Locator::text(char_start, char_end)
         }
         _ => Err(Error::Artifact(ArtifactError::InvalidAnchor(
             "unknown locator format",

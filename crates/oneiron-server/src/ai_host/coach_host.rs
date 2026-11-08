@@ -38,7 +38,7 @@ use std::collections::BTreeMap;
 mod wake;
 pub(super) use wake::WakeExecutor;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::actor_claims::{
@@ -76,7 +76,7 @@ use serde::Deserialize;
 
 use super::coach_heal::{LEASE_OWNER, settle};
 use super::coach_health::coach_role;
-use super::code_fix::{HostModels, message};
+use super::code_fix::{HostModels, coach_model_call_principal, message};
 use crate::server::SyncServer;
 
 mod attribution_audits;
@@ -136,6 +136,7 @@ pub(crate) fn spawn(
     let digest = DigestHostReady {
         vault: Arc::downgrade(server.vault()),
         expected_round_interval: TICK,
+        alive: Arc::new(Mutex::new(true)),
     };
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
@@ -149,9 +150,10 @@ pub(crate) fn spawn(
             let Some(pass) = admit() else {
                 continue;
             };
+            let renewal = digest.renewal();
             let served = match tokio::task::spawn_blocking(move || {
                 let _pass = pass;
-                round(&server)
+                round(&server, &renewal)
             })
             .await
             {
@@ -181,28 +183,61 @@ pub(crate) fn spawn(
 /// (FIX 6165). Dropped with the worker's task, aborted or ended, it says not
 /// ready. It holds the vault weakly, so the worker keeps no vault open. A
 /// ready word carries the worker's tick, so it lapses while no round serves
-/// (FIX 7211); the round itself is never cut short.
+/// (FIX 7211); the round itself is never cut short, and each job a round
+/// completes renews it (FIX 7328).
 struct DigestHostReady {
     vault: std::sync::Weak<Vault>,
     /// The worker's own tick: one round is expected per interval.
     expected_round_interval: Duration,
+    /// Whether the worker still runs. Every write of the word holds this
+    /// lock, so a round that outlives an aborted worker (a blocking thread
+    /// is never cancelled) writes nothing after the drop's not ready.
+    alive: Arc<Mutex<bool>>,
 }
 
 impl DigestHostReady {
     fn set(&self, ready: bool) {
-        if let Some(vault) = self.vault.upgrade() {
-            vault.set_coach_weave_digest_host_ready(ready, self.expected_round_interval);
+        self.renewal().write(ready);
+    }
+
+    /// The handle a round renews the word through.
+    fn renewal(&self) -> DigestRenewal {
+        DigestRenewal {
+            vault: self.vault.clone(),
+            expected_round_interval: self.expected_round_interval,
+            alive: Arc::clone(&self.alive),
         }
     }
 }
 
 impl Drop for DigestHostReady {
     fn drop(&mut self) {
-        self.set(false);
+        let mut alive = self.alive.lock().unwrap_or_else(PoisonError::into_inner);
+        *alive = false;
+        if let Some(vault) = self.vault.upgrade() {
+            vault.set_coach_weave_digest_host_ready(false, self.expected_round_interval);
+        }
     }
 }
 
-fn round(server: &SyncServer) -> oneiron::Result<()> {
+/// A round's handle on its worker's ready word: it writes only while that
+/// worker still runs.
+struct DigestRenewal {
+    vault: std::sync::Weak<Vault>,
+    expected_round_interval: Duration,
+    alive: Arc<Mutex<bool>>,
+}
+
+impl DigestRenewal {
+    fn write(&self, ready: bool) {
+        let alive = self.alive.lock().unwrap_or_else(PoisonError::into_inner);
+        if *alive && let Some(vault) = self.vault.upgrade() {
+            vault.set_coach_weave_digest_host_ready(ready, self.expected_round_interval);
+        }
+    }
+}
+
+fn round(server: &SyncServer, renewal: &DigestRenewal) -> oneiron::Result<()> {
     let vault = server.vault();
     let store = DreamerRunnerStore::new(vault);
     // Autoresearch host work: a campaign's runs advance as they finish, not
@@ -246,7 +281,15 @@ fn round(server: &SyncServer) -> oneiron::Result<()> {
             },
             failed => failed,
         };
+        let served = ran.is_ok();
         settle(vault, &store, &admitted, ran, BUDGET_ID)?;
+        // A long round that keeps serving stays ready: each job it completes
+        // renews the digest readiness its end would, so the readiness lapses
+        // only after two ticks with no job served, never inside a healthy
+        // round (FIX 7328).
+        if served {
+            renewal.write(true);
+        }
     }
     Ok(())
 }
@@ -373,6 +416,7 @@ fn distill(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> oneiron::R
             .to_owned(),
         vault,
         owner: vault.ensure_embedded_owner_actor().ok(),
+        caller: coach_model_call_principal(vault, admitted, COACH_SKILL_DISTILL_FACET),
     };
     let drain = vault.run_coach_skill_distill(admitted, DISTILL_SESSIONS, &distiller)?;
     tracing::debug!(
@@ -394,6 +438,9 @@ struct HostDistiller<'a> {
     vault: &'a Vault,
     /// The vault's person, whom the core turn door names [`OWNER_SPEAKER`].
     owner: Option<EntityId>,
+    /// The executing attempt's actor, not a speaker in the sitting it reads.
+    /// The standing worker has no calling session.
+    caller: Option<EntityId>,
 }
 
 /// The actor a speaker label names in one sitting (FIX 2015), from what the
@@ -474,13 +521,14 @@ impl SessionActorDistiller for HostDistiller<'_> {
         let rows = union_source_rows([brief.source_rows.as_deref(), Some(speaker_rows.as_slice())]);
         let text = self
             .models
-            .generate_sourced(
+            .generate_sourced_recorded(
                 self.models.coach(),
                 vec![
                     message(LlmMessageRole::System, self.wording.clone()),
                     message(LlmMessageRole::User, data.to_string()),
                 ],
                 rows,
+                self.caller,
             )?
             .ok_or_else(|| Error::InvalidConfig("no seat took the Coach's distill".into()))?;
         let wire = parse_notes(&text).ok_or_else(|| {

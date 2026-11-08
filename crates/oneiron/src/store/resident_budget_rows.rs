@@ -1,6 +1,6 @@
 //! The vault's durable resident budget rows (FIX 7767): each resident's
-//! share of the host-paid allocation and its depletion on the allocation
-//! generation it last drew on, keyed by the resident, with the erase an
+//! share of the host-paid allocation and its depletion on every allocation
+//! generation it drew on, keyed by the resident, with the erase an
 //! actor's deletion makes of its row (FIX 3520). Run admission
 //! (`llm::run_admission`) and the resident ledger (`llm::budget::resident`)
 //! read, charge and set them; the side-table declaration's erase hook calls
@@ -36,17 +36,21 @@ pub struct ResidentShare {
 pub(crate) const RESIDENTS: SideTable<EntityId, ResidentRow, Named> =
     SideTable::new(&side_table::BUDGET_RESIDENT_SHARE);
 
-/// One resident's row: the owner's share setting, and its depletion on the
-/// allocation generation it last drew on.
+/// One resident's setting and the depletion of each captured allocation.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ResidentRow {
     pub(crate) share: ResidentShare,
-    /// The allocation the counts below are on; `None` before any charge.
-    pub(crate) allocation: Option<AllocationRef>,
+    pub(crate) usage: Vec<ResidentAllocationUsage>,
+}
+
+/// Charges on one original allocation, including settlements after replacement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ResidentAllocationUsage {
+    pub(crate) allocation: AllocationRef,
     pub(crate) used_units: u64,
     pub(crate) overdraft_units: u64,
-    /// How many settled calls charged past the share.
     pub(crate) overdrafts: u64,
 }
 

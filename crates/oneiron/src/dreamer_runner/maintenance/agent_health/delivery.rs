@@ -70,6 +70,7 @@ pub(crate) fn agent_health_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLe
             occurred_at: card.window_to,
             receipt_ref: card.diagnostics.last().map(EntityId::to_hex),
             payload_ref: Some(card_ref),
+            approval_digest: None,
             concern: Some(AgentInboxConcern {
                 subject: card.subject,
                 signal: card.signal,
