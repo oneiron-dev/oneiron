@@ -725,6 +725,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
       { inputTokens: 128, outputTokens: 48 }),
   }, ...backgroundExtraction("privacy-extract", ["follower_instruction"])] });
   let engine: EngineFixture | undefined;
+  let sourceTurn: string | undefined;
   let extractionTicket: FacadeResult<"vault.memory.signal_extraction"> | undefined;
   const extractionStatusTransitions: { observedAt: number; jobRef: string;
     status: FacadeResult<"vault.consolidation.status"> }[] = [];
@@ -740,7 +741,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     await grantExtraction(engine);
     const source = await ownerRoom(engine, spec.sourceText, spec.phoneticName);
     const witnessed = await engine.client.call("vault.witness", turn(source.id, spec.sourceText));
-    const sourceTurn = turnId(witnessed);
+    sourceTurn = turnId(witnessed);
     // Preserve the public extraction ticket and every status observation;
     // the original completion conditions and provider barrier are unchanged.
     extractionTicket = await engine.client.call("vault.memory.signal_extraction", { turn_refs: [sourceTurn] });
