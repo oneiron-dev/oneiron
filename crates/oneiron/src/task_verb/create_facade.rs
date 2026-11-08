@@ -293,7 +293,12 @@ impl Memory<'_> {
                     return None;
                 }
                 match proposal_origin_in(self.vault(), &rtxn, *id) {
-                    Ok(parked) => (parked == origin).then_some(*id),
+                    Ok(parked) => {
+                        let same_creator =
+                            parked.as_ref().and_then(TaskCreateOrigin::intent_identity)
+                                == origin.as_ref().and_then(TaskCreateOrigin::intent_identity);
+                        same_creator.then_some(*id)
+                    }
                     Err(error) => {
                         unreadable = Some(error);
                         None
@@ -391,6 +396,14 @@ impl Memory<'_> {
             team: None,
         });
         self.put_task_body_in_txn(wtxn, task_ref, &body, now)?;
+        // FIX 4749: a standard TASK with a due time commits with its row in
+        // the due index, which the hook runner releases as its
+        // `schedule.tick`. A consult carries the stamp but never ticks.
+        if let Some(due_at) = validated.due_at
+            && validated.kind == TaskKind::Standard
+        {
+            crate::runtime_hooks::index_task_due_in_txn(self.vault(), wtxn, task_ref, due_at)?;
+        }
         // A TASK is born in its writer's world and facet (ARCH-0067 §5).
         if self.birth_position() != BirthPosition::default() {
             stamp_task_birth(&self.vault().store, wtxn, task_ref, self.birth_position())?;
@@ -531,7 +544,7 @@ impl Memory<'_> {
     /// [`Self::route_created_task_in_txn`] under an origin already resolved:
     /// a live binding's, a host-bound post's, or the one an approved
     /// proposal or wave plan witnessed. `None` is an unstamped root; a root
-    /// witness carries only the conversation that started the work.
+    /// witness keeps caller provenance and the conversation, when known.
     pub(super) fn route_created_task_with_origin_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -597,6 +610,7 @@ impl Memory<'_> {
                         type_ref: Some(validated.type_ref.clone()),
                         budget,
                         origin_conversation: origin.and_then(TaskCreateOrigin::origin_conversation),
+                        caller_origin: origin.map(TaskCreateOrigin::caller_origin),
                         team,
                         objectives,
                         // FIX 11592: the instrument this request was admitted
