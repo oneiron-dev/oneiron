@@ -1,6 +1,12 @@
 //! Generic bounded static HTTP index. No marketplace-specific URL rules: the
 //! engine's own schema-1 index, or the agentskills.io well-known discovery
 //! index (`/.well-known/agent-skills/index.json`) any publisher serves.
+mod clawhub;
+mod clawhub_download;
+pub use clawhub::{ClawHubSearchHit, ClawHubSearchOwner, ClawHubSearchReply};
+pub(super) use clawhub_download::ClawHubDownload;
+pub use clawhub_download::ClawHubGitHubHandoff;
+
 use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 use super::package_codec::invalid;
 use super::{HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, SkillHubAdapter, SkillHubKind};

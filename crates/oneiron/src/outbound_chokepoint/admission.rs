@@ -130,6 +130,31 @@ pub(super) fn aged_admission_ceiling(
     Ok(None)
 }
 
+/// Whether the sibling route `sibling` still holds its send: its call 0 is
+/// admitted and not stopped definitely unsent. A pending call may go on a
+/// later attempt, and a remote task that failed after its provider accepted
+/// it may have done its work; only one route of a send is ever admitted
+/// while the other can still go.
+fn sibling_route_holds_send_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    sibling: crate::attempt_queue::AttemptId,
+) -> Result<bool, IntentLedgerError> {
+    use crate::outbound_intent_ledger::{
+        IntentEscalationReason, IntentResolution, UnconfirmedDelivery,
+    };
+    let Some(record) = read_intent_for_attempt_in_txn(vault, txn, sibling, 0)? else {
+        return Ok(false);
+    };
+    Ok(!matches!(
+        IntentResolution::from_record(&record)?,
+        IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::DefiniteNonDelivery,
+            reason,
+        } if reason != IntentEscalationReason::RemoteTaskFailed
+    ))
+}
+
 pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
@@ -216,6 +241,17 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         drop(wtxn);
         return Ok(result);
     }
+    // FIX 11029: a send is not admitted, nor parked, while its sibling
+    // route (an interrupt and its ambient alternative) holds the send, under
+    // this writer: at most one route of a send is ever live.
+    if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command
+        && let Some(sibling) = prepared.exclusive_route
+        && sibling_route_holds_send_in_txn(vault, &wtxn, sibling)?
+    {
+        return Err(IntentLedgerError::InvalidInput(
+            "a sibling route of this send holds it",
+        ));
+    }
     // FIX 6404: the transport's own target judges the new call again under
     // this writer; a refusal records no decision.
     transport.admit_in(&wtxn)?;
@@ -232,12 +268,14 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             let effect =
                 vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
             let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-            let (decision_id, decision, _) = gate::check_external_effect_policy(
+            // A parked send admits nothing, so its decision stays evidence
+            // only: its one-shot approval, standing grant and envelope slot
+            // are kept for the send that is admitted later (FIX 8754).
+            let (decision_id, decision) = gate::record_held_external_effect_policy(
                 &vault.store,
                 &mut wtxn,
                 &effect,
                 &policy,
-                false,
             )?;
             wtxn.commit().map_err(Error::from)?;
             vault.store.notify_attempt_observers();
@@ -392,6 +430,14 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         ));
         let stored = stored_admission_in_txn(vault, &mut wtxn, &suppressed, &payload_context)?;
         insert_suppressed_in_txn(vault, &mut wtxn, &stored)?;
+        // FIX 11030: a party with no PERSON yet is kept for a later erase.
+        crate::outbound_intent_ledger::record_unresolved_party_in_txn(
+            vault,
+            &mut wtxn,
+            &suppressed.id,
+            suppressed.payload(),
+            payload_context.recipient,
+        )?;
         crate::receipt::put_suppression_in_txn(vault, &mut wtxn, &intent_id, &receipt, dedupe_now)?;
         wtxn.commit().map_err(Error::from)?;
         force_sync(vault)?;
@@ -638,7 +684,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     // not an availability observation from dispatch preparation. Spend,
     // decision, typed proof, budget marker and Pending insert commit together.
     pending.admitted_approval = governance.admitted_send_approval(pending.id);
-    let pinned_approval = governance.pinned_send_approval(pending.id);
+    pending.pinned_approval = governance.pinned_send_approval(pending.id);
     let spent = governance.spent_press_digest();
     if pending.id != intent_id {
         return Err(IntentLedgerError::InvalidRecord(
@@ -654,23 +700,14 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     let stored = stored_admission_in_txn(vault, &mut wtxn, &pending, &payload_context)?;
     insert_pending_in_txn(vault, &mut wtxn, &stored)?;
-    let ordinary_press = match pinned_approval {
-        Some(approval)
-            if approval.family
-                == crate::outbound_intent_ledger::PinnedApprovalFamily::ConnectorSlate =>
-        {
-            Some(approval)
-        }
-        Some(approval)
-            if approval.family
-                == crate::outbound_intent_ledger::PinnedApprovalFamily::LinearDispatch
-                && super::ordinary_slate::candidate_in_txn(vault, &wtxn, &pending)?.is_some() =>
-        {
-            Some(approval)
-        }
-        _ => None,
-    };
-    crate::outbound_intent_ledger::keep_pinned_approval_in_txn(vault, &mut wtxn, ordinary_press)?;
+    // FIX 11030: a party with no PERSON yet is kept for a later erase.
+    crate::outbound_intent_ledger::record_unresolved_party_in_txn(
+        vault,
+        &mut wtxn,
+        &pending.id,
+        pending.payload(),
+        payload_context.recipient,
+    )?;
     reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved, spend_basis)?;
     // The wait's admission commits with the spend, the decision and the
     // Pending row, or not at all.
@@ -693,13 +730,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)?;
-    // FIX 6424 part 2a: the presses it spent, kept for its retry once it stands.
-    super::types::keep_spent_presses(
-        vault,
-        pending.id,
-        pinned_approval.filter(|_| ordinary_press.is_none()),
-        co_spent,
-    )?;
+    // The primary proof committed in Pending. The co-actor keeps its existing
+    // best-effort post-commit writer and first-send failure policy.
+    super::types::keep_spent_presses(vault, pending.id, co_spent)?;
 
     let mut result = send_admitted(vault, authority, pending, spent, now_ms, transport)?;
     result.gate_decision_id = Some(format!("gate:{}", decision_id.to_hex()));

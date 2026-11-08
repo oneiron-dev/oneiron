@@ -6,6 +6,7 @@
 mod ask_band;
 mod ask_effect;
 mod ask_facade;
+mod ask_forward;
 mod ask_guest;
 mod ask_limits;
 mod ask_option_link;
@@ -69,11 +70,15 @@ mod highway_report;
 pub(crate) mod highway_runner;
 mod highway_status;
 mod highway_types;
+mod host_done_confession;
+pub use host_done_confession::HostDoneConfessionContext;
+pub(crate) use host_done_confession::host_done_confession_in_txn;
 mod lifecycle_facade;
 mod lifecycle_receipt;
 pub(crate) use lifecycle_receipt::{
+    discard_payload_in_txn as discard_lifecycle_receipt_payload_in_txn,
     erase_in_txn as erase_lifecycle_receipts_in_txn, erase_lifecycle_actor_in_txn,
-    settled_receipt_in, task_lifecycle_receipts,
+    lifecycle_field_holds_words, settled_receipt_in, task_lifecycle_receipts,
 };
 mod linear_store;
 mod mirror_edit;
@@ -96,6 +101,7 @@ mod refusal;
 pub(crate) use highway_runner::workflow_try::workflow_done_judge_in_txn;
 mod report_journal;
 pub(crate) use report_journal::{
+    discard_payload_in_txn as discard_report_journal_payload_in_txn,
     erase_in_txn as erase_report_journal_in_txn, erase_report_actor_in_txn,
 };
 pub mod revoke_lands;
@@ -138,8 +144,8 @@ pub(crate) use training_swap_ask::{
 pub use training_swap_ask::{SwapAskState, TrainingSwapAskView, training_swap_asks};
 pub(crate) use wire_decode::{
     TaskBinding, decode_task_realization_input, done_task_evidence_in, leader_task_body_in,
-    leader_task_brief_in, task_binding, task_is_blocked_in, task_stored_brief_in,
-    task_text_with_source_in,
+    leader_task_brief_in, task_binding, task_is_blocked_in, task_is_blocked_with_source_in,
+    task_stored_brief_in, task_text_with_source_in,
 };
 mod wire_encode;
 mod world_privacy_wait;
@@ -433,6 +439,13 @@ mod ask_outcome_tests;
 mod ask_tests;
 
 pub(crate) use ask_facade::settle_waiting_asks;
+pub use ask_forward::{
+    AskForwardAct, AskForwardHolderProof, AskForwardReceipt, ask_forward_challenge,
+};
+pub(crate) use ask_forward::{
+    AskForwardArrivals, drain_ask_forward_intents, retire_holder_ask_forward_rows_in_txn,
+    settle_held_ask_forward_rows_in_txn,
+};
 pub(crate) use ask_guest::{ask_guest_grant_in, ask_member_task_in};
 pub(crate) use ask_option_link::deliver_ask_change_in_txn;
 pub(crate) use ask_option_link::{
@@ -464,10 +477,10 @@ pub use ask_types::{
     TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskEffectAuthorization,
     TaskAskElectorate, TaskAskEvidence, TaskAskEvidenceReason, TaskAskFallback, TaskAskGuest,
     TaskAskHandle, TaskAskHoldReason, TaskAskLadderPrediction, TaskAskLaunchHold, TaskAskNeed,
-    TaskAskOptionId, TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight,
-    TaskAskPreflightRecipient, TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult,
-    TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus,
-    TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
+    TaskAskOption, TaskAskOptionId, TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight,
+    TaskAskPreflightRecipient, TaskAskProvisional, TaskAskQuestion, TaskAskRec, TaskAskReceipt,
+    TaskAskResult, TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec,
+    TaskAskStatus, TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };
 
 use crate::memory::{MemoryError, MemoryResult};

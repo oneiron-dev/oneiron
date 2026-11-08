@@ -9,6 +9,7 @@ pub mod admission;
 mod authority_audit;
 mod brief_share;
 mod call;
+mod content;
 mod context_emit;
 mod decision_asks;
 mod direct_dispatch;
@@ -24,6 +25,7 @@ mod kernel;
 mod ledgers;
 mod lens;
 mod off_device;
+pub(crate) use off_device::served_form_rows;
 mod pack_attribution;
 mod projection;
 pub mod prompt_stamp;
@@ -54,6 +56,7 @@ pub use self::call::{
     CallTransport, ERASED_CALL_IDENTITY, MAX_ACTION_INPUT_ENTITIES, MAX_CALL_RECEIPT_SERVED,
     call_bytes_digest, call_json_digest, call_reads_world, call_refusal_digest, json_entity_refs,
 };
+pub(crate) use self::content::ReceiptContent;
 pub use self::context_emit::ContextEmitReceipt;
 pub use self::decision_asks::{
     DecisionAskAnswerRequest, DecisionAskClimbRequest, DecisionAskConfirmGrantRequest,
@@ -98,12 +101,12 @@ pub use self::projection::{
 };
 pub use self::questions::{
     AI_VERDICT_DEADLINE_MS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined,
-    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage,
-    QuestionAnswersReply, QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest,
-    QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionOutcomes,
+    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAdmitRequest, QuestionAnswer,
+    QuestionAnswersPage, QuestionAnswersReply, QuestionAnswersRequest, QuestionBackfillRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionOutcomes,
     QuestionOutcomesProjectRequest, QuestionOutcomesProjected, QuestionOutcomesRequest,
-    QuestionPauseRequest, QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
-    QuestionScheduleRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionPrepareRequest, QuestionPrepared,
+    QuestionPreparedSource, QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
 };
 pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, receipt_creations_not_proven,
@@ -113,6 +116,7 @@ pub use self::served_form::{AudioPull, PixelPull, ServedForm, ServedRung};
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 pub use self::share_doors::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 
+pub(crate) use self::direct_dispatch::latest_direct_dispatch_receipt_in_txn;
 pub(crate) use self::direct_dispatch::record as record_direct_dispatch_receipt;
 pub(crate) use self::dispatch_observation::{
     DispatchObservationKey, append_dispatch_observation_in_txn, read_dispatch_observation,

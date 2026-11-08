@@ -17,6 +17,7 @@
 //! and the host's stock review policy (`review_policy`).
 
 mod custody;
+mod holder;
 mod host;
 mod proposals;
 mod reads;
@@ -41,6 +42,7 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedReadActorKey};
 use crate::error::{Error, Result};
 use crate::federation::repo_access::RepoMembership;
+use crate::origin::RepoPortableId;
 use crate::task_verb::HostBinding;
 use crate::{EntityId, Vault, WriteActor};
 use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
@@ -82,6 +84,14 @@ impl RepoRunBinding {
 pub struct RepoRunAnswer<T> {
     pub output: T,
     pub rows: Vec<EntityId>,
+}
+
+/// The host operation Gate's selected repo. Request-selection data only;
+/// the door admits the run again and compares this before preparing bytes.
+#[derive(Clone, Copy)]
+pub(crate) struct RepoRunSelection {
+    pub(crate) repo: EntityId,
+    pub(crate) portable_hit: bool,
 }
 
 /// What one admitted run repo act stands on, as its snapshot read it.
@@ -158,6 +168,17 @@ impl Vault {
         target: &RepoTarget,
         intent: RepoAccessIntent,
     ) -> Result<RepoRunAdmission> {
+        self.admit_repo_run_target_in_txn(txn, binding, target, intent, None)
+    }
+
+    fn admit_repo_run_target_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: &RepoRunBinding,
+        target: &RepoTarget,
+        intent: RepoAccessIntent,
+        portable: Option<&RepoPortableId>,
+    ) -> Result<RepoRunAdmission> {
         let Some((record, task)) = binding.lease.leased_task_in_txn(self, txn)? else {
             return Ok(Err(RepoAccessRefusal::StaleLease));
         };
@@ -168,14 +189,14 @@ impl Vault {
             return Ok(Err(RepoAccessRefusal::StaleLease));
         }
         let (actor, class) = (binding.actor.entity_ref(), binding.actor.actor_class());
-        let admitted = match intent {
-            RepoAccessIntent::Read => {
-                self.admit_repo_read_in_txn(txn, actor, class, target.repo, target)?
-            }
-            RepoAccessIntent::Edit => {
-                self.admit_repo_edit_in_txn(txn, actor, class, target.repo, target)?
-            }
-        };
+        let admitted = self.admit_repo_in_txn(
+            txn,
+            actor,
+            class,
+            target.repo,
+            portable,
+            Some((target, intent)),
+        )?;
         let membership = match admitted {
             Ok(membership) => membership,
             Err(refused) => return Ok(Err(refused)),
@@ -192,6 +213,30 @@ impl Vault {
             generation: record.attempt_count,
             task,
         }))
+    }
+
+    /// Resolves the portable selector before normal admission in the same
+    /// snapshot. Returns the selected CODE and whether the selector hit;
+    /// an absent or unknown id retains the caller's fallback target.
+    pub(crate) fn admit_repo_run_with_portable_in_txn<S: AsRef<str>>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: &RepoRunBinding,
+        fallback: EntityId,
+        portable: Option<&RepoPortableId>,
+        git_ref: &str,
+        paths: impl IntoIterator<Item = S>,
+        intent: RepoAccessIntent,
+    ) -> Result<(EntityId, bool, RepoRunAdmission)> {
+        let resolved = match portable {
+            Some(id) => self.resolve_repo_anchor_by_portable_in_txn(txn, id)?,
+            None => None,
+        };
+        let selected = resolved.unwrap_or(fallback);
+        let target = repo_target(selected, git_ref, paths);
+        let admitted =
+            self.admit_repo_run_target_in_txn(txn, binding, &target, intent, portable)?;
+        Ok((selected, resolved.is_some(), admitted))
     }
 }
 
