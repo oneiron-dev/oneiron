@@ -287,6 +287,7 @@ impl BatchBuilder<'_> {
         let (origin, birth_mask) = (self.origin, self.birth_mask);
         let text_births = std::mem::take(&mut self.text_births);
         let births = std::mem::take(&mut self.births);
+        let note_births = std::mem::take(&mut self.note_births);
         let asset_files = std::mem::take(&mut self.asset_files);
         let replicated_puts = std::mem::take(&mut self.replicated_puts);
         let marked_carriers = std::mem::take(&mut self.marked_carriers);
@@ -400,6 +401,7 @@ impl BatchBuilder<'_> {
             let batch = AdmittedBatch {
                 routed,
                 bound_inputs: reader.is_some(),
+                note_births,
                 ops,
                 text_index_trusted,
                 gate_mode: ApplyOpsGateMode::new(false, true)
@@ -532,6 +534,8 @@ impl BatchBuilder<'_> {
 struct AdmittedBatch<'a> {
     routed: Option<crate::comm::RoutedBatchPuts>,
     bound_inputs: bool,
+    /// Each NOTE the batch births, with its explicit birth text (FIX 7783).
+    note_births: Vec<(crate::entity_id::EntityId, String)>,
     ops: Vec<BatchOp>,
     text_index_trusted: bool,
     gate_mode: ApplyOpsGateMode,
@@ -607,6 +611,10 @@ fn apply_admitted(
         batch.gate_mode,
         batch.origin,
     )?;
+    // Each NOTE's document is born with its core row (FIX 7783).
+    for (id, markdown) in &batch.note_births {
+        crate::note::birth_document_in_txn(vault, wtxn, *id, markdown)?;
+    }
     routed_rows.extend(born_touches.record_with_admission_in_txn(vault, wtxn, admission)?);
     let changes_claims = changes_claims || !routed_rows.is_empty();
     let pad_windows = pad_scope.finish().pad_windows;

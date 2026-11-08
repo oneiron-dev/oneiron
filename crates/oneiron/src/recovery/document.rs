@@ -179,7 +179,7 @@ pub(super) fn capture(
         }
         let note = id(entity.id)?;
         crate::note::recovery::guard(vault, txn, note)?;
-        let core = crate::note::decode_note_body_using(
+        let core = crate::note::decode_note_core_using(
             &entity.blob[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             crate::note::NoteKind::wire,
         )?;
