@@ -7,7 +7,7 @@ are `Any`, and the census below counts them.
 Census: 1303 facade rows, 4725 declarations.
 Inputs: 1232 of 1303 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1132 of 1303 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 121; unread shapes: 0.
+Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -11931,7 +11931,7 @@ class LensScope(TypedDict):
 class LensProposeRequest(TypedDict):
     slot: LensSlot
     pack_content_hash: str
-    compiled: Any
+    compiled: GeneratedLens
     intent_prompt: str
     trigger: NotRequired[MadeByTrigger | None]
     scope: NotRequired[LensScope | None]
