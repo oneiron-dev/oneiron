@@ -128,7 +128,7 @@ impl<'a> HostSelfDispatcher<'a> {
             .map(crate::skill_attribution::enter_run_writes);
         // The call holds its leased run's tool witness open (FIX 8521).
         let _tool = self.activity_tool();
-        match self.dispatch_tasks_refuse(input.into_call(crate::unix_seconds_now())?)? {
+        match self.dispatch_tasks_refuse(input.into_call(crate::unix_seconds_now())?, None)? {
             SelfDispatchOutcome::TaskRefusal(refusal) => Ok(TaskRefuseOutput {
                 task: refusal.task_ref,
                 level: refusal.level,

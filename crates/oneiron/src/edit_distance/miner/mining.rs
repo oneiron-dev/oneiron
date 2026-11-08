@@ -396,8 +396,9 @@ fn artifact_index(vault: &Vault) -> Result<ArtifactIndex> {
     for entry in PROPOSAL_ARTIFACT.iter_from(&vault.store, &rtxn, &[])? {
         let (artifact, stored) = entry?;
         rows.row();
-        // A document kept outside the wall joins with its masked texts (FIX
-        // 11539), read here in the index's own transaction.
+        // The artifact's document rows, and a marked document's masked
+        // texts (FIX 11539), are read here in the index's own transaction
+        // (FIX 11535).
         let stored = crate::edit_distance::joined_in_txn(&vault.store, &rtxn, stored)?;
         index.records.insert(artifact, stored);
     }

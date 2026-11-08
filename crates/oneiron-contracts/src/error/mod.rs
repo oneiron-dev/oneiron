@@ -418,6 +418,7 @@ pub enum ErrorKind {
     EmbeddingTransformChanged,
     ArchivedVault,
     HostActionRequiresSupportGrant,
+    StorageIdMismatch,
     /// A nonce spend met the writer lease another process holds on the vault
     /// (FIX 12023 W0).
     VaultServedElsewhere,

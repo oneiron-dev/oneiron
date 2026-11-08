@@ -455,6 +455,7 @@ impl<'v> Landing<'v> {
                 attachments: Vec::new(),
                 reply: None,
                 listed_in: None,
+                content_digest: None,
                 landed_at: self.imported_at,
                 updated_at: self.imported_at,
             });
@@ -491,6 +492,9 @@ impl<'v> Landing<'v> {
             occurrence.searched |= searched;
             if let Some(full) = full {
                 occurrence.attachments.clone_from(&full.attachments);
+                // The first whole read names what the id holds (fix list
+                // row 19145).
+                occurrence.content_digest = occurrence.content_digest.or(full.content_digest);
             }
             occurrence.reply = Some(MailReplyHeaders::of(headers));
             occurrence.updated_at = self.imported_at;
@@ -550,7 +554,9 @@ impl Landing<'_> {
     /// Records the occurrence `key` landed again with the words it landed
     /// with already: it keeps the reply headers `headers` give, whole, and
     /// when the message was read whole (`full`), its stage is the body, it
-    /// keeps the message's attachments, and it leaves the body queue.
+    /// keeps the message's attachments and the digest of its first whole
+    /// read (fix list row 19145), and it leaves the body queue. It writes
+    /// nothing when none of these changed.
     fn settle_same_in_place(
         &self,
         key: &(EntityId, [u8; 32]),
@@ -569,8 +575,12 @@ impl Landing<'_> {
                 return Ok(());
             }
             let reply_changed = occurrence.reply.as_ref() != Some(&reply);
+            // The whole read settles when it gives the body stage, other
+            // attachments, or the first digest of the message.
             let full = full.filter(|full| {
-                occurrence.stage != MailStage::Body || occurrence.attachments != full.attachments
+                occurrence.stage != MailStage::Body
+                    || occurrence.attachments != full.attachments
+                    || (occurrence.content_digest.is_none() && full.content_digest.is_some())
             });
             if !reply_changed && full.is_none() {
                 return Ok(());
@@ -581,6 +591,9 @@ impl Landing<'_> {
                 let first_body = occurrence.stage == MailStage::Headers;
                 occurrence.stage = MailStage::Body;
                 occurrence.attachments.clone_from(&full.attachments);
+                // The first whole read names what the id holds (fix list
+                // row 19145).
+                occurrence.content_digest = occurrence.content_digest.or(full.content_digest);
                 BODY_QUEUE.delete(
                     &vault.store,
                     wtxn,
