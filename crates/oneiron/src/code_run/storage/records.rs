@@ -20,7 +20,8 @@ use crate::{EntityId, Error, ModelId, Result, Vault};
 
 use super::super::codec::validate_raw_output;
 use super::super::replay::{
-    CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, ResultOccurrence,
+    CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding,
+    ResultOccurrence,
 };
 use super::super::support::invalid_code_run_replay;
 use super::replay_bodies::RESPONSE_ERASED;
@@ -32,12 +33,12 @@ mod bodies;
 pub(crate) use self::admitted::{ReplyAdmission, ReplyBody, ReplySpool};
 pub(crate) use self::bodies::{
     FinishedOutput, StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
-    code_run_body_row_key, code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
-    retire_unlanded_inline_body_keys_in_txn,
+    code_run_body_in_file_in_txn, code_run_body_row_key, code_run_inline_body_of_row,
+    lift_code_run_file_hold_in_txn, retire_unlanded_inline_body_keys_in_txn,
 };
 pub(super) use self::bodies::{
     body_drifted, finish_output, finish_output_sourced, load_whole_body, open_body_file,
-    owned_body, raw_put_publishes_descriptor, read_body_row_range,
+    owned_body, raw_put_descriptor_in_txn, read_body_row_range,
 };
 
 /// The replay record of one run, keyed by run id.
@@ -301,6 +302,28 @@ impl Vault {
         let key = REPLAY_RECORDS.key_bytes(run_id);
         let raw = ResponseRead::of(ResponseFamily::Replay, &key, &raw).present()?;
         REPLAY_RECORDS.decode_value(raw).map(Some)
+    }
+
+    /// The result names run `run_id`'s replay record binds now, each with
+    /// its content handle and occurrence path exactly, and nothing else of
+    /// the record. A binding grants nothing. `None` when no record is held.
+    pub fn code_run_result_bindings(
+        &self,
+        run_id: &EntityId,
+    ) -> Result<Option<Vec<CodeRunResultBinding>>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.code_run_result_bindings_in_txn(&rtxn, run_id)
+    }
+
+    /// [`Self::code_run_result_bindings`] in the caller's snapshot.
+    pub(crate) fn code_run_result_bindings_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        run_id: &EntityId,
+    ) -> Result<Option<Vec<CodeRunResultBinding>>> {
+        Ok(self
+            .get_code_run_replay_record_in_txn(rtxn, run_id)?
+            .map(|record| record.bindings))
     }
 
     /// The taint refs and secret-scan reason of the occurrence of `output`

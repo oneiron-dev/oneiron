@@ -63,8 +63,16 @@ impl Memory<'_> {
         skip_exact_hook_replay: bool,
     ) -> MemoryResult<CommitReceipt> {
         refuse_typed_claim_family(input)?;
+        // ABC row 22: every claim door that commits here (claim_upsert,
+        // commit, claim_propose and the scoped admission) measures the claim
+        // whole, never refusing it for its size.
+        let bytes = crate::memory::caps::claim_input_json_bytes(input)?;
+        let _ = self
+            .vault
+            .measure_limit(crate::limit_ask::EngineLimit::ClaimInputJsonBytes, bytes);
         let write = self.resolve_claim_write(input, auto_supersede, in_writer, birth)?;
         before_txn();
+        let lane = self.core_write_lane()?;
 
         let mut approval = forced_approval
             .unwrap_or_else(|| requested_approval(write.source, input.scope.as_ref()));
@@ -72,25 +80,32 @@ impl Memory<'_> {
         // Proposed: that write would park for review, so it lands parked. A
         // Gate deny (an unresolved record reference among them, FIX 1220) is
         // never resubmitted; no approval lane makes it land.
-        let refused = match self.attempt_claim_write(&write, approval, skip_exact_hook_replay) {
-            Ok(refused) => refused,
-            Err(err) if approval == ClaimApprovalStatus::Auto && gate_rejection_pends(&err) => {
-                approval = ClaimApprovalStatus::Proposed;
-                self.attempt_claim_write(&write, approval, skip_exact_hook_replay)
+        let refused =
+            match self.attempt_claim_write(&write, approval, skip_exact_hook_replay, lane.as_ref())
+            {
+                Ok(refused) => refused,
+                Err(err) if approval == ClaimApprovalStatus::Auto && gate_rejection_pends(&err) => {
+                    approval = ClaimApprovalStatus::Proposed;
+                    self.attempt_claim_write(
+                        &write,
+                        approval,
+                        skip_exact_hook_replay,
+                        lane.as_ref(),
+                    )
                     .map_err(|err| {
                         write
                             .publication_refusal
                             .take()
                             .unwrap_or_else(|| err.into())
                     })?
-            }
-            Err(err) => {
-                return Err(write
-                    .publication_refusal
-                    .take()
-                    .unwrap_or_else(|| err.into()));
-            }
-        };
+                }
+                Err(err) => {
+                    return Err(write
+                        .publication_refusal
+                        .take()
+                        .unwrap_or_else(|| err.into()));
+                }
+            };
         if let Some(refused_id) = refused {
             return Err(hard_deleted_refusal(&refused_id));
         }

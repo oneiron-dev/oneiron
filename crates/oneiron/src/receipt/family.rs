@@ -388,6 +388,12 @@ pub(super) fn collect_receipt_records(
     if query.includes_kind(ReceiptKind::ArtifactSettle) {
         records.extend(crate::edit_settle::settle_receipts(vault, query)?);
     }
+    // FIX 4727: each reviewed run's settlement, in its own read txn.
+    if query.includes_kind(ReceiptKind::ProposalOutcome) {
+        records.extend(crate::memory::run_review::run_settlement_receipts(
+            vault, query,
+        )?);
+    }
 
     let rtxn = vault.store.env.read_txn()?;
     // ONE type-76 scan serves both kinds it projects; the projector-level
@@ -396,6 +402,16 @@ pub(super) fn collect_receipt_records(
         || query.includes_kind(ReceiptKind::ProposalOutcome)
     {
         records.extend(identity_topology_receipts(vault, &rtxn, query)?);
+    }
+    // FIX 7817: the SIXTH Gate projector: each topology-audit candidate's
+    // post-hoc review, the rung that replaces the pre-check for reversible
+    // automatic classes. Same kind, own store, own field class, as the
+    // skill-edit verdicts; local review evidence from its own three tables,
+    // read in the shared txn.
+    if query.includes_kind(ReceiptKind::Gate) {
+        records.extend(crate::identity_topology::topology_audit_receipts(
+            vault, &rtxn, query,
+        )?);
     }
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);

@@ -221,6 +221,7 @@ impl Emitted {
                     call_id: call_id.clone(),
                     name: name.clone(),
                     input: input.clone()?,
+                    signature: None,
                 }),
                 Shown::Image { media_type, image } => Some(ContentPart::Image {
                     media_type: media_type.clone(),
@@ -275,6 +276,7 @@ fn ordered<'a>(content: impl Iterator<Item = &'a ContentPart>) -> Vec<OrderedRep
                 call_id,
                 name,
                 input,
+                ..
             } => parts.push(OrderedReplyPart::Tool {
                 call_id: call_id.as_str(),
                 name: name.as_str(),

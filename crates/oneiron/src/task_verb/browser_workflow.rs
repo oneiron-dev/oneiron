@@ -463,7 +463,12 @@ pub fn record_task_workflow_outcome(
                 )
                 .edge(&note, EdgeKind::AuthoredBy, &author, 1.0)
                 .edge(&note, EdgeKind::About, &row.task_ref, 1.0);
-            let mut content = ActorContentTxn::new(vault, wtxn, actor)?;
+            let mut content = ActorContentTxn::new(
+                vault,
+                wtxn,
+                actor,
+                crate::core_write::CoreWriteLaneRef::Unbound,
+            )?;
             content.apply_batch(batch)?;
             content.finish()?;
         }

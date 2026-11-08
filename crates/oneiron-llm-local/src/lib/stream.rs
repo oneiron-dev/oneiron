@@ -120,11 +120,13 @@ impl<'a> LocalEventStream<'a> {
                     call_id: call_id.clone(),
                     name: name.clone(),
                     input: input.clone(),
+                    signature: None,
                 }));
                 self.content.push(ContentPart::ToolCall {
                     call_id,
                     name,
                     input,
+                    signature: None,
                 });
             }
             LocalOutputPart::ToolResult {

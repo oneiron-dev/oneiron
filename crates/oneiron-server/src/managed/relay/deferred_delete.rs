@@ -4,10 +4,8 @@
 //! object, its generation and the BLAKE3 digest of the ciphertext it names)
 //! in `deferred-deletes/` under the room directory, beside `objects/`, so a
 //! listing or a read never shows it. Then the guard runs the unlink. A
-//! standing hold the owner may see defers it (202 `held_until_release`); one
-//! that stands only as a host order whose silence runs defers it with a
-//! neutral 202 `completion_pending` that names no hold (FIX 9500); a hold
-//! state the guard cannot read defers it too (202 `hold_state_unknown`).
+//! standing customer hold defers it (202 `held_until_release`); a hold state
+//! the guard cannot read defers it too (202 `hold_state_unknown`).
 //! Nothing is refused. The intents replay at start, before the room serves,
 //! each time the guard's recheck counter moves, and once an upload kept a
 //! generation (`super::overwrite`, FIX 1283), through the same guard. An
@@ -85,24 +83,6 @@ fn deferred(reason: Reason) -> Response {
         Json(Deferred {
             state: "deferred",
             reason,
-        }),
-    )
-        .into_response()
-}
-
-/// The body of a delete only silent host orders keep (FIX 9500): its state
-/// and nothing else, no hold, reason, order, date or count.
-#[derive(Serialize)]
-struct CompletionPending {
-    state: &'static str,
-}
-
-/// The 202 of a delete only silent host orders keep. It claims no deletion.
-fn completion_pending_reply() -> Response {
-    (
-        StatusCode::ACCEPTED,
-        Json(CompletionPending {
-            state: "completion_pending",
         }),
     )
         .into_response()
@@ -191,9 +171,6 @@ impl HeldDeletes {
             Ok(RelayDeleteHoldOutcome::Deferred(RelayDeleteDeferral::Held {
                 visibility: RelayHoldVisibility::Visible,
             })) => Ok(deferred(Reason::HeldUntilRelease)),
-            Ok(RelayDeleteHoldOutcome::Deferred(RelayDeleteDeferral::Held {
-                visibility: RelayHoldVisibility::SilentOnly,
-            })) => Ok(completion_pending_reply()),
             Ok(RelayDeleteHoldOutcome::Deferred(RelayDeleteDeferral::HoldStateUnknown))
             | Err(RelayDeleteHoldError::GuardUnavailable) => Ok(deferred(Reason::HoldStateUnknown)),
             Err(RelayDeleteHoldError::StorageIo(error)) => Err(storage_error(error)),

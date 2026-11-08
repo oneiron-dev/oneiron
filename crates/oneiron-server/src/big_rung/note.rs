@@ -47,6 +47,7 @@ impl BigModel {
                 response_format: ResponseFormat::Text,
                 locality: route.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, system.to_owned()),

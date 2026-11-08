@@ -24,6 +24,7 @@ struct TouchReply {
     entity_id: String,
     blob: TouchItemReply,
     document: TouchItemReply,
+    cache_worlds: Option<serde_json::Value>,
     /// Where the row sits (FIX 14534); unknown from a home that sends none.
     #[serde(default)]
     content_world: ContentWorld,
@@ -190,6 +191,15 @@ impl SyncClient {
         )
         .await?;
         let document = touch_item_bytes(&mut rpc, &touch, "document", reply.document, None).await?;
+        // Provenance is optional and never changes whether the working read
+        // is admitted. A part re-read must still match both original hashes.
+        let cache_worlds = reply
+            .cache_worlds
+            .and_then(|value| {
+                serde_json::from_value::<crate::sync::residence::CachedItemWorlds>(value).ok()
+            })
+            .filter(|worlds| worlds.matches(item, &blob, &document))
+            .and_then(|worlds| rmp_serde::to_vec_named(&worlds).ok());
         let header = crate::batch::EntityMetadataHeader::parse(&blob).ok_or_else(refused)?;
         if window
             .start_timestamp()
@@ -257,6 +267,12 @@ impl SyncClient {
                     &format!("ro:e:{}", item.to_hex()),
                     window.as_str().as_bytes(),
                 )?;
+                let source_key = format!("ri:s:{}", item.to_hex());
+                if let Some(worlds) = &cache_worlds {
+                    self.vault.store.sync_state.put(txn, &source_key, worlds)?;
+                } else {
+                    self.vault.store.sync_state.delete(txn, &source_key)?;
+                }
                 // The witness belongs to these bytes: one an earlier fetch
                 // kept never stands for them (FIX 14534).
                 let witness = format!("ri:c:{}", item.to_hex());
