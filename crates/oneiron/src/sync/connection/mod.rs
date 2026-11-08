@@ -860,8 +860,8 @@ enum LoopExit {
     /// The residence mode changed (FIX 8869): what was buffered is queued,
     /// and the next connect sends the new mode's hello.
     Renegotiate,
-    /// A peer session's probe found the home answering (FIX 4748): what was
-    /// buffered is queued, and the next connect is the home's.
+    /// A peer session's probe received the home's root (FIX 4748): what was
+    /// buffered is queued, and the next connect tries the home's first round.
     HomeReturned,
 }
 
