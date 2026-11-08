@@ -1,20 +1,26 @@
 //! Source-erasure teardown for retained hook payloads. Identity, ordering,
 //! digests and terminal status stay; source-derived bytes and pending work
 //! that could resurrect them do not. A fact memo, verb run or Hook receipt
-//! that names an erased actor names the erased marker instead, and a hook
-//! feed row that names the erased id keeps only its position.
+//! that names an erased actor names the erased marker instead, a hook
+//! feed row that names the erased id keeps only its position, and hook
+//! lineage names no erased entity ([`lineage::scrub_erased_in_txn`]).
 
 use std::collections::BTreeSet;
 
 use super::*;
 use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::runtime_hooks::lineage;
 use crate::runtime_hooks::verb::{HookVerbRunRecord, VERB_RUNS};
 
 const ERASED_HISTORY_REASON: &str = "source history erased";
 
 /// Whether a permanent erase, not a restorable soft delete, fences `id` in
 /// this write's snapshot.
-fn source_erased_in_txn(vault: &Vault, txn: &heed::RoTxn, id: &EntityId) -> Result<bool> {
+pub(in crate::runtime_hooks) fn source_erased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn,
+    id: &EntityId,
+) -> Result<bool> {
     Ok(vault.local_hard_delete_marker_exists_in_txn(txn, id)?
         || vault.archive_tombstone_in_txn(txn, id)?.is_some())
 }
@@ -221,11 +227,12 @@ pub(in crate::runtime_hooks) fn scrub_receipt_payload(receipt: &mut ReceiptRecor
 
 /// Scrubs every retained hook carrier that depends on `id`, every fact
 /// memo whose input names `id` as the fact's actor, every verb run and Hook
-/// receipt that names `id` as the call's caller, and every settlement, tick,
-/// due index and inbound row that names it, in the caller's erase
-/// transaction. Complete scans avoid a second dependency index; every
-/// matching row is retired before the erase or its sweep declares
-/// completion.
+/// receipt that names `id` as the call's caller, every chain, raised check
+/// and intent lineage that names it as a link's entity, and every
+/// settlement, tick, due index and inbound row that names it, in the
+/// caller's erase transaction. Complete scans avoid a second dependency
+/// index; every matching row is retired before the erase or its sweep
+/// declares completion.
 pub(crate) fn scrub_hook_source_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -262,20 +269,30 @@ pub(crate) fn scrub_hook_source_in_txn(
     }
 
     let mut intents = Vec::new();
+    let mut lineage_intents = Vec::new();
     for row in INTENTS.iter_from(&vault.store, txn, &[])? {
-        let (key, intent) = row?;
+        let (key, mut intent) = row?;
+        let named = lineage::erase_entity(&mut intent.lineage, id);
         if intent
             .dependencies
             .iter()
             .any(|dependency| dependency.id == *id)
         {
             intents.push((key, intent));
+        } else if named {
+            lineage_intents.push((key, intent));
         }
     }
     for (key, mut intent) in intents {
         scrub_intent_payload(&mut intent, at);
         INTENTS.put(vault, txn, &key, &intent)?;
         affected_runs.insert(key);
+    }
+    // An intent whose lineage alone names `id`, as a verb run's caller or
+    // the entity of a run behind it, keeps its payload: only the id leaves,
+    // so the row it lands later names none (FIX 22184).
+    for (key, intent) in &lineage_intents {
+        INTENTS.put(vault, txn, key, intent)?;
     }
 
     let mut verb_runs = Vec::new();
@@ -321,5 +338,6 @@ pub(crate) fn scrub_hook_source_in_txn(
         RECEIPTS.put(vault, txn, key, receipt)?;
     }
 
+    lineage::scrub_erased_in_txn(vault, txn, id)?;
     crate::runtime_hooks::source::scrub_hook_feeds_in_txn(vault, txn, id)
 }
