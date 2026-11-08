@@ -25905,6 +25905,8 @@ pub enum ContentPart {
         name: String,
         #[serde(rename = "input")]
         input: crate::WireJson,
+        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     #[serde(rename = "tool_result")]
     ToolResult {
@@ -55472,6 +55474,8 @@ pub enum LlmStreamEvent {
         name: String,
         #[serde(rename = "input")]
         input: crate::WireJson,
+        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     #[serde(rename = "tool_result_start")]
     ToolResultStart {

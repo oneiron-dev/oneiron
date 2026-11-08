@@ -342,6 +342,7 @@ fn openai_message(message: &LlmMessage, reasoning_history: bool) -> JsonValue {
                 call_id,
                 name,
                 input,
+                ..
             } => {
                 tool_calls.push(json!({
                     "id": call_id,
@@ -443,6 +444,7 @@ fn parse_openai_tool_call(call: &JsonValue) -> Option<ContentPart> {
         call_id,
         name,
         input,
+        signature: None,
     })
 }
 
