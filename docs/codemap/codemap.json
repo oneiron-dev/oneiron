@@ -2144,7 +2144,7 @@
      "path": "src/anchored_annotation/code_units.rs",
      "purpose": "Code artifacts (FIX 7905, OF-511; ARCH-0078 \"a tree at a commit\")",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 29
      }
     },
     {
@@ -2305,13 +2305,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/anchored_annotation/recovery/code.rs",
      "purpose": "Reattach offers and one-click reattach on a code artifact (FIX 7905)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -12548,6 +12548,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalendarCivilSpan"
+     ],
+     "path": "src/calendar/query/civil.rs",
+     "purpose": "The civil time of an all-day or floating occurrence (FIX 17869), carried on the calendar views beside UTC…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -12557,7 +12570,7 @@
      "path": "src/calendar/query/facts.rs",
      "purpose": "Lane admission and fail-closed fact reduction",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -12572,7 +12585,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 1,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -12582,7 +12595,7 @@
      "path": "src/calendar/query/occurrences.rs",
      "purpose": "Windowed occurrences from lane-admitted calendar facts",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -12656,7 +12669,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CalendarOccurrenceView",
@@ -19539,7 +19552,7 @@
      "path": "src/code_run/storage/replay_capsule/admit.rs",
      "purpose": "A capsule's bodies, admitted and published in the capsule's own writer (FIX 6144, KEY STORE = A): the…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -19550,6 +19563,16 @@
      "purpose": "A staged executor capsule's actual post-route request, in its own writer",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_capsule/admit/start_publication.rs",
+     "purpose": "A step start's publication in its capsule's writer (FIX 4192): the estimate its body instances are minted…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -19669,7 +19692,7 @@
      "path": "src/code_run/storage/replay_capsule/start_landing.rs",
      "purpose": "FIX 11415: the length each row a restore's republish of a step start writes lands at, counted before any…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -50108,7 +50131,7 @@
      "purpose": "The IMAP mail wire (FIX 12559 row 4, fix list row 15425): one IMAP4rev1 mailbox over TLS, through the…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 8,
       "fn": 1,
       "struct": 1
      }
@@ -50120,11 +50143,11 @@
      "path": "src/mail_pack/imap_client.rs",
      "purpose": "A native IMAP4rev1 client (RFC 3501) for the mail pack's IMAP wire (FIX 15425): TLS through rustls with the…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 29
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "MailSyncBudget",
@@ -62347,9 +62370,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/execution/channels/entity_rank.rs",
-     "purpose": "Named entities below the content a query matched",
+     "purpose": "Rows the query did not match, below the content it did match",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -97591,7 +97614,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 82,
+     "files": 83,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -97710,7 +97733,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 259,
+     "files": 260,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99047,9 +99070,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 235,
+   "over_bar": 236,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7056,
+   "source_files": 7058,
    "test_files": 895
   },
   "oneiron-android": {
@@ -114287,6 +114310,7 @@
       "NapiBlobArtifactInput",
       "NapiBlobVersionAppendOutcome",
       "NapiBlobVersionView",
+      "NapiCalendarCivilSpan",
       "NapiCalendarEventRead",
       "NapiCalendarEventView",
       "NapiCalendarEvents",
@@ -114351,7 +114375,7 @@
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
       "crate-vis": 2,
-      "struct": 63
+      "struct": 64
      }
     },
     {
@@ -129168,6 +129192,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
+      "fn": 2,
       "struct": 5
      }
     },
@@ -133822,7 +133847,7 @@
      "path": "src/models/discovered.rs",
      "purpose": "The models the owner's other nodes offer (OF-575, FIX 3229)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -134676,7 +134701,7 @@
      "path": "src/models/runtime.rs",
      "purpose": "Model runtime construction and accessors",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 20
      }
     },
@@ -150735,6 +150760,7 @@
       "CalendarCheckInDue",
       "CalendarCheckInReceipt",
       "CalendarCheckInRequest",
+      "CalendarCivilSpan",
       "CalendarConnectorConfigureRequest",
       "CalendarConnectorKillRequest",
       "CalendarConnectorKillSwitchState",
@@ -155163,7 +155189,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1182,
-      "struct": 3668
+      "struct": 3669
      }
     },
     {
