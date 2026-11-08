@@ -34,6 +34,7 @@ use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
 
+mod blob_body;
 mod http;
 mod request;
 

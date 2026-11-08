@@ -44,6 +44,7 @@ pub(crate) use self::booking_inputs::{
 };
 pub use self::codec::McpToolArguments;
 pub(crate) use self::codec::mcp_raw_call_arguments;
+pub(crate) use self::endpoint_args::McpHeldContent;
 pub(crate) use self::endpoint_args::validate_mcp_endpoint_tool_args_as;
 pub use self::endpoint_args::{
     McpCacheHint, McpExecuteCodeToolArgs, McpInvokeActionToolArgs, McpPageRequest,
@@ -73,7 +74,7 @@ pub use self::paging::{
     McpResultEnd, McpRetrievalHealth, clamp_foreign_cache_ttl_ms, mcp_canonical_json,
     mcp_page_argument_digest,
 };
-pub(crate) use self::paging::{McpPageCursorState, McpPageSnapshot};
+pub(crate) use self::paging::{McpPageCursorState, McpPageSnapshot, mcp_page_argument_digest_held};
 pub use self::registry::McpConnectorActorRegistry;
 pub(crate) use self::results::mcp_stamp_call_receipt;
 pub use self::results::{

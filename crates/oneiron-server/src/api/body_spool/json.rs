@@ -160,6 +160,117 @@ pub(super) fn scan_object_head<const N: usize>(
     Ok(())
 }
 
+/// Scans one JSON object to its end with its bulk member nested under
+/// `path`, one object member per step from the top (FIX 22074): the bulk
+/// string goes to its sink, and every member, the bulk one's name with an
+/// empty string in its place, goes to the head file, each value as it
+/// stands. Every step of the path, and the bulk member, must be there
+/// once: a step given twice, or as anything but an object, and anything
+/// after the object, is malformed. The source span of each step's object,
+/// outermost first, is returned.
+pub(super) fn scan_member_path(
+    reader: impl BufRead + Seek,
+    path: &[&'static str],
+    bulk: &mut BulkMember<'_>,
+    head: &mut TextFileSink,
+) -> Result<Vec<(u64, u64)>, HeadFail> {
+    let mut scan = Scanner { reader };
+    let mut spans = Vec::with_capacity(path.len());
+    scan.skip_whitespace()?;
+    scan_path_object(&mut scan, path, bulk, head, &mut spans)?;
+    scan.skip_whitespace()?;
+    if scan.peek()?.is_some() || !bulk.seen {
+        return Err(HeadFail::Invalid);
+    }
+    Ok(spans)
+}
+
+/// One object of [`scan_member_path`], from its opening brace.
+fn scan_path_object<R: BufRead + Seek>(
+    scan: &mut Scanner<R>,
+    path: &[&'static str],
+    bulk: &mut BulkMember<'_>,
+    head: &mut TextFileSink,
+    spans: &mut Vec<(u64, u64)>,
+) -> Result<(), HeadFail> {
+    let wanted = path.first().copied().unwrap_or(bulk.name).as_bytes();
+    let mut seen = false;
+    let mut first = true;
+    scan.expect(b'{')?;
+    write_head(head, b"{");
+    scan.skip_whitespace()?;
+    // An empty object holds no step of the path.
+    if scan.peek()? == Some(b'}') {
+        return Err(HeadFail::Invalid);
+    }
+    loop {
+        scan.skip_whitespace()?;
+        let name_start = scan
+            .reader
+            .stream_position()
+            .map_err(|_| HeadFail::Failed)?;
+        scan.expect(b'"')?;
+        let mut name = Some(wanted);
+        scan.string(&mut |run| name = name.and_then(|remaining| remaining.strip_prefix(run)))?;
+        let name_end = scan
+            .reader
+            .stream_position()
+            .map_err(|_| HeadFail::Failed)?;
+        if !first {
+            write_head(head, b",");
+        }
+        first = false;
+        copy_raw_name(&mut scan.reader, name_start, name_end, head)?;
+        scan.skip_whitespace()?;
+        scan.expect(b':')?;
+        scan.skip_whitespace()?;
+        write_head(head, b":");
+        if name.is_some_and(<[u8]>::is_empty) {
+            if seen {
+                return Err(HeadFail::Invalid);
+            }
+            seen = true;
+            match path.split_first() {
+                None => {
+                    bulk.seen = true;
+                    scan.expect(b'"')?;
+                    scan.string(&mut |run: &[u8]| bulk.take(run))?;
+                    if !bulk.refused && !bulk.sink.finish() {
+                        bulk.refused = true;
+                    }
+                    write_head(head, b"\"\"");
+                }
+                Some((_, rest)) => {
+                    if scan.peek()? != Some(b'{') {
+                        return Err(HeadFail::Invalid);
+                    }
+                    let start = scan
+                        .reader
+                        .stream_position()
+                        .map_err(|_| HeadFail::Failed)?;
+                    let index = spans.len();
+                    spans.push((start, start));
+                    scan_path_object(scan, rest, bulk, head, spans)?;
+                    spans[index].1 = scan
+                        .reader
+                        .stream_position()
+                        .map_err(|_| HeadFail::Failed)?;
+                }
+            }
+        } else {
+            scan.copy_value(head)?;
+        }
+        scan.skip_whitespace()?;
+        match scan.next()? {
+            Some(b',') => {}
+            Some(b'}') => break,
+            _ => return Err(HeadFail::Invalid),
+        }
+    }
+    write_head(head, b"}");
+    if seen { Ok(()) } else { Err(HeadFail::Invalid) }
+}
+
 /// Replays only the original quoted name, ending at the scanner's saved position.
 fn copy_raw_name(
     reader: &mut (impl BufRead + Seek),
@@ -508,6 +619,11 @@ impl SpooledField {
     /// 11140).
     pub(in crate::api) fn file(&self) -> (&File, u64) {
         (&self.file, self.len)
+    }
+
+    /// The field's file and its length, owned.
+    pub(super) fn into_parts(self) -> (File, u64) {
+        (self.file, self.len)
     }
 }
 

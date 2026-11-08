@@ -113,7 +113,7 @@ pub(crate) async fn execute_native_read_input(
     let producers = oneiron::memory::ProducerRows::default();
     let pre = {
         let memory = native_read_surface(actor).memory(server, actor, &producers);
-        super::verb_hooks::mcp_row_hooks_pre(server, tool.name, actor, &memory, request)
+        super::verb_hooks::mcp_row_hooks_pre(server, tool.name, actor, &memory, request, None)
     };
     let hooks = pre.await?;
     let read = Box::pin(super::memory_response::execute(

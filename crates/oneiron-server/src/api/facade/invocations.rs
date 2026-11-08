@@ -436,6 +436,40 @@ pub(crate) fn invocation_body(
     locality: CallerLocality,
     parts: &[&[u8]],
 ) -> [u8; 32] {
+    *invocation_hasher(auth, locality, parts)
+        .finalize()
+        .as_bytes()
+}
+
+/// [`invocation_body`] whose last part is the `len` bytes `reader` reads,
+/// streamed, never held whole (FIX 22074): the same identity as with those
+/// bytes the last of `parts`.
+///
+/// # Errors
+///
+/// The reader's errors, and a reader that ends before `len` bytes.
+pub(crate) fn invocation_body_with_reader(
+    auth: Option<&CoreAuth>,
+    locality: CallerLocality,
+    parts: &[&[u8]],
+    len: u64,
+    reader: &mut dyn std::io::Read,
+) -> std::io::Result<[u8; 32]> {
+    let mut hasher = invocation_hasher(auth, locality, parts);
+    hasher.update(&len.to_le_bytes());
+    let read = std::io::copy(&mut reader.take(len), &mut hasher)?;
+    if read != len {
+        return Err(std::io::ErrorKind::UnexpectedEof.into());
+    }
+    Ok(*hasher.finalize().as_bytes())
+}
+
+/// The hasher of [`invocation_body`] with its caller, locality and `parts`.
+fn invocation_hasher(
+    auth: Option<&CoreAuth>,
+    locality: CallerLocality,
+    parts: &[&[u8]],
+) -> blake3::Hasher {
     let mut hasher = blake3::Hasher::new_derive_key("oneiron door invocation body v1");
     let mut part = |bytes: &[u8]| {
         hasher.update(&(bytes.len() as u64).to_le_bytes());
@@ -458,7 +492,7 @@ pub(crate) fn invocation_body(
     for &bytes in parts {
         part(bytes);
     }
-    *hasher.finalize().as_bytes()
+    hasher
 }
 
 /// Sends `response` as the claimed call's reply, saving it for each request
