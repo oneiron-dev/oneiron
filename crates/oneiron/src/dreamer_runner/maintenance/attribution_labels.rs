@@ -275,8 +275,8 @@ fn field(hash: &mut blake3::Hasher, bytes: &[u8]) {
     hash.update(bytes);
 }
 
-/// The scope a note is clustered within: its lane, consent scope and project.
-/// Two scopes never share a pattern, however alike their words.
+/// The scope a note is clustered within: its lane, consent scope, project and
+/// world. Two scopes never share a pattern, however alike their words.
 fn group_key(row: &UnclearAttribution) -> [u8; 32] {
     let mut hash = blake3::Hasher::new_derive_key("oneiron coach attribution-label group v1");
     field(&mut hash, row.lane.as_str().as_bytes());
@@ -298,14 +298,32 @@ fn group_key(row: &UnclearAttribution) -> [u8; 32] {
             hash.update(&[0]);
         }
     }
+    // A known world splits the group (FIX 22064); a note with none keeps the
+    // group it always had.
+    if let Some(world) = &row.context.world {
+        hash.update(&[1]);
+        hash.update(world.as_bytes());
+    }
     *hash.finalize().as_bytes()
 }
 
-/// Where a pattern's proposal claim stands (FIX 21886): the consent scope and
-/// project its notes were frozen in, which every note of one group shares. The
-/// project is the claim's project stamp (`scopeProjectId`); the consent scope
-/// rides as the claim scope's `scope`, as an edit-cost row's does. A note with
-/// neither leaves the claim where an unscoped finding stands.
+/// Where a pattern's proposal claim stands (FIX 21886, 22064): the consent
+/// scope, project and world its notes were frozen in, which every note of one
+/// group shares. The project is the claim's project stamp (`scopeProjectId`);
+/// the consent scope rides as the claim scope's `scope`, as an edit-cost
+/// row's does; a world other than base reality is the claim's world. A note
+/// with none of them leaves the claim where an unscoped finding stands.
+fn claim_place(row: &UnclearAttribution) -> Option<proposals::FindingPlace> {
+    let world = row
+        .context
+        .world
+        .filter(|world| *world != crate::claim::base_world_id());
+    let scope = claim_scope(row);
+    (scope.is_some() || world.is_some()).then_some(proposals::FindingPlace { scope, world })
+}
+
+/// The opaque claim scope of a pattern's proposal: its notes' consent scope
+/// and project, or none when they recorded neither.
 fn claim_scope(row: &UnclearAttribution) -> Option<rmpv::Value> {
     let mut entries = Vec::new();
     if let Some(scope) = &row.context.scope {
@@ -651,15 +669,15 @@ impl Pass<'_> {
         )? {
             return Ok(false);
         }
-        let proposal = match claim_scope(exemplar_row) {
-            Some(scope) => proposals::emit_scoped_in_txn(
+        let proposal = match claim_place(exemplar_row) {
+            Some(place) => proposals::emit_scoped_in_txn(
                 vault,
                 txn,
                 coach,
                 COACH_ATTRIBUTION_LABEL_PROPOSAL_PREDICATE,
                 &value,
                 &evidence,
-                &scope,
+                &place,
                 &self.envelope,
                 self.now,
             )?,
@@ -682,6 +700,12 @@ impl Pass<'_> {
                     .iter()
                     .chain(&row.context.skill)
                     .chain(&row.context.project)
+                    .chain(
+                        row.context
+                            .world
+                            .iter()
+                            .filter(|world| **world != crate::claim::base_world_id()),
+                    )
                     .chain(&row.context.sources)
                     .map(|id| *id.as_bytes())
                     .collect::<Vec<_>>()
