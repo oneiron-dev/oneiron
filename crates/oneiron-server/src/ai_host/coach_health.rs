@@ -172,7 +172,7 @@ impl CoachHealthHost for HostModel<'_> {
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();
@@ -211,6 +211,6 @@ fn parse_draft(text: &str) -> Option<AgentHealthCoachDraft> {
 fn message(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text }],
+        content: vec![ContentPart::Text { text, signature: None }],
     }
 }

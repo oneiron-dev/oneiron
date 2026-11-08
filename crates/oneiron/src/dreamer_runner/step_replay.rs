@@ -106,7 +106,7 @@ fn locate_span(
 ) -> Option<(&str, std::ops::Range<usize>)> {
     let span = span?;
     let message = request.messages.get(usize::try_from(message).ok()?)?;
-    let ContentPart::Text { text } = message.content.get(usize::try_from(part).ok()?)? else {
+    let ContentPart::Text { text, .. } = message.content.get(usize::try_from(part).ok()?)? else {
         return None;
     };
     let range = usize::try_from(span.start).ok()?..usize::try_from(span.end).ok()?;

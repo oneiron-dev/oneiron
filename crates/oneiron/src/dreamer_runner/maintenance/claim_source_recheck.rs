@@ -371,11 +371,15 @@ fn judge_request(
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: model.rubric.to_owned(),
+                    signature: None,
                 }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: input }],
+                content: vec![ContentPart::Text {
+                    text: input,
+                    signature: None,
+                }],
             },
         ],
         tools: Vec::new(),

@@ -767,11 +767,11 @@ impl Child {
             messages: vec![
                 LlmMessage {
                     role: LlmMessageRole::System,
-                    content: vec![ContentPart::Text { text: prompt }],
+                    content: vec![ContentPart::Text { text: prompt, signature: None }],
                 },
                 LlmMessage {
                     role: LlmMessageRole::User,
-                    content: vec![ContentPart::Text { text: input }],
+                    content: vec![ContentPart::Text { text: input, signature: None }],
                 },
             ],
             tools: Vec::new(),
@@ -819,7 +819,7 @@ impl Child {
             .content
             .iter()
             .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
+                ContentPart::Text { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect();
