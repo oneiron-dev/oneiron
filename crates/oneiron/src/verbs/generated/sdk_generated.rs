@@ -3577,6 +3577,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.shares.issue_view_link",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ShareViewLinkRequest,
+                >(),
+            ),
+            (
                 "vault.shares.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ShareRevokeRequest,
@@ -8120,6 +8126,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.secrets.renew",
     "self.secrets.teardown",
     "self.secrets.use",
+    "vault.shares.issue_view_link",
     "host.compact",
     "host.wake",
     "host.budget.hit",
@@ -10009,6 +10016,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "self.secrets.use" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SecretUseAnswer>()
+        }
+        "vault.shares.issue_view_link" => {
+            crate::code_run::vault_read::request_schema::<crate::authority::PairingLink>()
         }
         "host.compact" => crate::code_run::vault_read::request_schema::<
             crate::runtime_hooks::host_doors::HostCompactResult,
@@ -16028,6 +16038,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.shares.issue_view_link" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.shares.revoke" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21660,6 +21677,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.secrets.teardown" => validate_input_self_secrets_teardown(value)?,
         "self.secrets.use" => validate_input_self_secrets_use(value)?,
         "vault.shares.create" => validate_input_vault_shares_create(value)?,
+        "vault.shares.issue_view_link" => validate_input_vault_shares_issue_view_link(value)?,
         "vault.shares.revoke" => validate_input_vault_shares_revoke(value)?,
         "vault.shares.view" => validate_input_vault_shares_view(value)?,
         "host.compact" => validate_input_host_compact(value)?,
@@ -26097,6 +26115,11 @@ fn validate_input_self_secrets_use(value: &serde_json::Value) -> MemoryResult<()
 #[inline(never)]
 fn validate_input_vault_shares_create(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::ShareCreateRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_shares_issue_view_link(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::ShareViewLinkRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -30873,6 +30896,7 @@ pub fn invoke(
         "self.secrets.teardown" => invoke_self_secrets_teardown(memory, value),
         "self.secrets.use" => invoke_self_secrets_use(memory, value),
         "vault.shares.create" => invoke_vault_shares_create(memory, value),
+        "vault.shares.issue_view_link" => invoke_vault_shares_issue_view_link(memory, value),
         "vault.shares.revoke" => invoke_vault_shares_revoke(memory, value),
         "vault.shares.view" => invoke_vault_shares_view(memory, value),
         "host.compact" => invoke_host_compact(memory, value),
@@ -36472,6 +36496,13 @@ fn invoke_vault_shares_create(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_shares_create(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_shares_issue_view_link(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_shares_issue_view_link(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_shares_revoke(
@@ -47070,6 +47101,12 @@ pub fn vault_shares_create(
     input: crate::task_verb::sdk::ShareCreateRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ShareCreated> {
     crate::task_verb::sdk::create_share_as_caller(memory, input)
+}
+pub fn vault_shares_issue_view_link(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ShareViewLinkRequest,
+) -> MemoryResult<crate::authority::PairingLink> {
+    crate::task_verb::sdk::issue_share_view_link_as_caller(memory, input)
 }
 pub fn vault_shares_revoke(
     memory: &Memory<'_>,

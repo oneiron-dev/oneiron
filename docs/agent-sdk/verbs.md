@@ -662,6 +662,7 @@ both bindings and their export-census tests in one change.
 - `self.secrets.teardown`
 - `self.secrets.use`
 - `vault.shares.create`
+- `vault.shares.issue_view_link`
 - `vault.shares.revoke`
 - `vault.shares.view`
 - `host.compact`

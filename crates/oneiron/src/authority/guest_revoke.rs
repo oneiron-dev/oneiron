@@ -147,6 +147,7 @@ impl Vault {
             org_ref: None,
             grant_ref: Some(grant_ref.to_hex()),
             invitation_ref: None,
+            share_ref: None,
             delegation: None,
             comm,
             trusted_contact: None,
