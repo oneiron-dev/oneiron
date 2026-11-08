@@ -436,6 +436,7 @@ mod ceiling_wire {
     }
 }
 mod blob_input;
+pub(crate) use blob_input::held_request_form;
 pub use blob_input::{ActionBlobInput, HELD_MEMBER};
 mod build;
 mod execution;
