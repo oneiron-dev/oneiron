@@ -2412,6 +2412,9 @@ impl OneironClient {
                 "vault.code.symbols.definitions" => remote_agent_verb_output::<
                     oneiron::memory::codebase_doors::CodeSnapshotDefinitionsView,
                 >(client, verb, &input),
+                "vault.code.symbols.neighbors" => remote_agent_verb_output::<
+                    oneiron::memory::codebase_doors::CodeSnapshotNeighborsView,
+                >(client, verb, &input),
                 "vault.code.merge_queue.enqueue" => remote_agent_verb_output::<
                     oneiron::memory::merge_queue_doors::MergeQueueBatchView,
                 >(client, verb, &input),
@@ -2510,6 +2513,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.repo.symbols.definitions" => remote_agent_verb_output::<
                     oneiron::memory::repo_doors::RepoSymbolsDefinitionsOutput,
+                >(client, verb, &input),
+                "vault.repo.symbols.neighbors" => remote_agent_verb_output::<
+                    oneiron::memory::repo_doors::RepoSymbolsNeighborsOutput,
                 >(client, verb, &input),
                 "vault.repo.views.get" => remote_agent_verb_output::<
                     oneiron::memory::repo_doors::RepoViewsGetOutput,
@@ -13630,6 +13636,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.code.symbols.definitions", value)
     }
+    pub fn vault_code_symbols_neighbors(
+        &self,
+        input: &oneiron::memory::codebase_doors::CodeSnapshotNeighborsRequest,
+    ) -> Result<oneiron::memory::codebase_doors::CodeSnapshotNeighborsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.symbols.neighbors", value)
+    }
     pub fn vault_code_merge_queue_enqueue(
         &self,
         input: &oneiron::memory::merge_queue_doors::MergeQueueEnqueueRequest,
@@ -14008,6 +14026,20 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.repo.symbols.definitions", value)
+    }
+    pub fn vault_repo_symbols_neighbors(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::memory::repo_doors::RepoSymbolsNeighborsInput,
+        >,
+    ) -> Result<oneiron::memory::repo_doors::RepoSymbolsNeighborsOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.symbols.neighbors", value)
     }
     pub fn vault_repo_views_get(
         &self,

@@ -781,6 +781,7 @@ pub enum AgentVerb {
     VaultCodeSnapshotsGet,
     VaultCodeSnapshotsRead,
     VaultCodeSymbolsDefinitions,
+    VaultCodeSymbolsNeighbors,
     VaultCodeMergeQueueEnqueue,
     VaultCodeMergeQueueStage,
     VaultCodeMergeQueueObserve,
@@ -812,6 +813,7 @@ pub enum AgentVerb {
     VaultRepoSnapshotsGet,
     VaultRepoSnapshotsRead,
     VaultRepoSymbolsDefinitions,
+    VaultRepoSymbolsNeighbors,
     VaultRepoViewsGet,
     VaultRepoViewsRead,
     VaultRepoMergeQueueObserve,
@@ -2126,6 +2128,7 @@ impl AgentVerb {
         Self::VaultCodeSnapshotsGet,
         Self::VaultCodeSnapshotsRead,
         Self::VaultCodeSymbolsDefinitions,
+        Self::VaultCodeSymbolsNeighbors,
         Self::VaultCodeMergeQueueEnqueue,
         Self::VaultCodeMergeQueueStage,
         Self::VaultCodeMergeQueueObserve,
@@ -2157,6 +2160,7 @@ impl AgentVerb {
         Self::VaultRepoSnapshotsGet,
         Self::VaultRepoSnapshotsRead,
         Self::VaultRepoSymbolsDefinitions,
+        Self::VaultRepoSymbolsNeighbors,
         Self::VaultRepoViewsGet,
         Self::VaultRepoViewsRead,
         Self::VaultRepoMergeQueueObserve,
@@ -3498,6 +3502,7 @@ impl AgentVerb {
             Self::VaultCodeSnapshotsGet => "vault.code.snapshots.get",
             Self::VaultCodeSnapshotsRead => "vault.code.snapshots.read",
             Self::VaultCodeSymbolsDefinitions => "vault.code.symbols.definitions",
+            Self::VaultCodeSymbolsNeighbors => "vault.code.symbols.neighbors",
             Self::VaultCodeMergeQueueEnqueue => "vault.code.merge_queue.enqueue",
             Self::VaultCodeMergeQueueStage => "vault.code.merge_queue.stage",
             Self::VaultCodeMergeQueueObserve => "vault.code.merge_queue.observe",
@@ -3529,6 +3534,7 @@ impl AgentVerb {
             Self::VaultRepoSnapshotsGet => "vault.repo.snapshots.get",
             Self::VaultRepoSnapshotsRead => "vault.repo.snapshots.read",
             Self::VaultRepoSymbolsDefinitions => "vault.repo.symbols.definitions",
+            Self::VaultRepoSymbolsNeighbors => "vault.repo.symbols.neighbors",
             Self::VaultRepoViewsGet => "vault.repo.views.get",
             Self::VaultRepoViewsRead => "vault.repo.views.read",
             Self::VaultRepoMergeQueueObserve => "vault.repo.merge_queue.observe",
@@ -4859,6 +4865,7 @@ impl AgentVerb {
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
+                | Self::VaultCodeSymbolsNeighbors
                 | Self::VaultCodeMergeQueueEnqueue
                 | Self::VaultCodeMergeQueueStage
                 | Self::VaultCodeMergeQueueObserve
@@ -4890,6 +4897,7 @@ impl AgentVerb {
                 | Self::VaultRepoSnapshotsGet
                 | Self::VaultRepoSnapshotsRead
                 | Self::VaultRepoSymbolsDefinitions
+                | Self::VaultRepoSymbolsNeighbors
                 | Self::VaultRepoViewsGet
                 | Self::VaultRepoViewsRead
                 | Self::VaultRepoMergeQueueObserve
@@ -6233,6 +6241,7 @@ impl AgentVerb {
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
+                | Self::VaultCodeSymbolsNeighbors
                 | Self::VaultCodeMergeQueueEnqueue
                 | Self::VaultCodeMergeQueueStage
                 | Self::VaultCodeMergeQueueObserve
@@ -6264,6 +6273,7 @@ impl AgentVerb {
                 | Self::VaultRepoSnapshotsGet
                 | Self::VaultRepoSnapshotsRead
                 | Self::VaultRepoSymbolsDefinitions
+                | Self::VaultRepoSymbolsNeighbors
                 | Self::VaultRepoViewsGet
                 | Self::VaultRepoViewsRead
                 | Self::VaultRepoMergeQueueObserve
@@ -6944,6 +6954,7 @@ impl AgentVerb {
                 | Self::VaultRepoSnapshotsGet
                 | Self::VaultRepoSnapshotsRead
                 | Self::VaultRepoSymbolsDefinitions
+                | Self::VaultRepoSymbolsNeighbors
                 | Self::VaultRepoViewsGet
                 | Self::VaultRepoViewsRead
                 | Self::VaultRepoMergeQueueObserve
@@ -7748,6 +7759,7 @@ impl AgentVerb {
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
+                | Self::VaultCodeSymbolsNeighbors
                 | Self::VaultCodeMergeQueueEnqueue
                 | Self::VaultCodeMergeQueueStage
                 | Self::VaultCodeMergeQueueObserve
@@ -9875,6 +9887,7 @@ impl AgentVerb {
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
+            Self::VaultCodeSymbolsNeighbors => &["spec"],
             Self::VaultCodeMergeQueueEnqueue => &["spec"],
             Self::VaultCodeMergeQueueStage => &["spec"],
             Self::VaultCodeMergeQueueObserve => &["spec"],
@@ -9906,6 +9919,7 @@ impl AgentVerb {
             Self::VaultRepoSnapshotsGet => &["spec"],
             Self::VaultRepoSnapshotsRead => &["spec"],
             Self::VaultRepoSymbolsDefinitions => &["spec"],
+            Self::VaultRepoSymbolsNeighbors => &["spec"],
             Self::VaultRepoViewsGet => &["spec"],
             Self::VaultRepoViewsRead => &["spec"],
             Self::VaultRepoMergeQueueObserve => &["spec"],
@@ -11221,6 +11235,7 @@ impl AgentVerb {
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
+            Self::VaultCodeSymbolsNeighbors => &["spec"],
             Self::VaultCodeMergeQueueEnqueue => &["spec"],
             Self::VaultCodeMergeQueueStage => &["spec"],
             Self::VaultCodeMergeQueueObserve => &["spec"],
@@ -11252,6 +11267,7 @@ impl AgentVerb {
             Self::VaultRepoSnapshotsGet => &["spec"],
             Self::VaultRepoSnapshotsRead => &["spec"],
             Self::VaultRepoSymbolsDefinitions => &["spec"],
+            Self::VaultRepoSymbolsNeighbors => &["spec"],
             Self::VaultRepoViewsGet => &["spec"],
             Self::VaultRepoViewsRead => &["spec"],
             Self::VaultRepoMergeQueueObserve => &["spec"],
@@ -14092,6 +14108,9 @@ impl AgentVerb {
             Self::VaultCodeSymbolsDefinitions => {
                 "Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."
             }
+            Self::VaultCodeSymbolsNeighbors => {
+                "Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes."
+            }
             Self::VaultCodeMergeQueueEnqueue => {
                 "Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."
             }
@@ -14184,6 +14203,9 @@ impl AgentVerb {
             }
             Self::VaultRepoSymbolsDefinitions => {
                 "Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads."
+            }
+            Self::VaultRepoSymbolsNeighbors => {
+                "Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes."
             }
             Self::VaultRepoViewsGet => "Reads the attached run's own work, as it was opened.",
             Self::VaultRepoViewsRead => "Reads one file of the attached run's own work.",
