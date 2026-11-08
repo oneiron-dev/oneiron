@@ -232,6 +232,8 @@ fn bound_body(summary: EntityId, reference: &CompactionCheckMaterialRef) -> Owne
             body: reference.body.clone(),
         },
         result: None,
+        // A compaction's check material is no code run's output.
+        code_run_output: None,
     }
 }
 
