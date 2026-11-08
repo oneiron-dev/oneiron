@@ -15,8 +15,9 @@ pub(super) struct MatchReading {
     /// effort dial's default now anchor names none: it scores how fresh a
     /// row is, which the query did not ask for.
     pub(super) temporal_is_query: bool,
-    /// No reranker set the order, so the blend's order is the answer's.
-    pub(super) blend_order: bool,
+    /// Every row the query did not match moves, not only a PERSON, ORG or
+    /// RELATIONSHIP: the order is still the blend's.
+    pub(super) every_kind: bool,
 }
 
 /// Moves each row the query did not match itself to just after the last row
@@ -32,12 +33,15 @@ pub(super) struct MatchReading {
 /// matched. A person the query names matches on its own text and keeps its
 /// rank.
 ///
-/// Any other row moves only in the blend's order, where no reranker judged
-/// the rows (FIX 22182). There, graph mass and the effort's now anchor alone
-/// rank fresh rows the query never named above the rows it did: ten fresh
-/// skill records outranked the two claims the query's one word matched, and
-/// the limit cut those claims. A reranked order stands. With no direct match
-/// at all (a pure graph or time query) nothing moves.
+/// Any other row moves only while the order is the blend's (FIX 22182): the
+/// pipeline runs this before it takes the rerank block, and again after the
+/// rerank for the named entities alone. In the blend, graph mass and the
+/// effort's now anchor alone rank fresh rows the query never named above the
+/// rows it did: ten fresh skill records outranked the two claims the query's
+/// one word matched, and the limit cut those claims. Moved first, they can
+/// neither fill the rerank block nor push a match past the limit. A reranked
+/// order stands. With no direct match at all (a pure graph or time query)
+/// nothing moves.
 pub(super) fn rank_unmatched_below_matches(
     scores: &mut Vec<ScoredEntity>,
     components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
@@ -76,7 +80,7 @@ pub(super) fn rank_unmatched_below_matches(
             floor = floor.min(hit.score);
         } else if index < last_match || hit.score >= floor {
             demote[index] =
-                reading.blend_order || named_entity(store, rtxn, metadata_cache, &hit.id)?;
+                reading.every_kind || named_entity(store, rtxn, metadata_cache, &hit.id)?;
         }
     }
     if !demote.contains(&true) {
