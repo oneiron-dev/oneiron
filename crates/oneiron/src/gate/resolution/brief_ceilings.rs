@@ -197,8 +197,9 @@ impl PolicyManifestResolution {
     }
 
     /// The per-class verdicts this resolved policy gives `actor`, read on
-    /// `txn` beside the live definition ceiling `definition` read for it in
-    /// the same snapshot, dated `as_of_secs` and this policy's frontier
+    /// `txn` beside the two ceilings `ceilings` read for it in the same
+    /// snapshot (its definition's own and a foreign introduction's), dated
+    /// `as_of_secs` and this policy's frontier
     /// hash. One line for:
     ///
     /// 1. each standing outbound grant whose principal is the actor and that
@@ -213,12 +214,13 @@ impl PolicyManifestResolution {
     /// Inside its bound, a grant line or an effector line gets the words of
     /// the checks the actor meets for any target, classed as `can(effect)`
     /// classes them with no press (`crate::gate::preflight_words`). The
-    /// checks are an actor ceiling below auto and, on every line except a
-    /// scoped connector call's, a Proposed definition ceiling, which also
-    /// withholds the external-effect authority. A scoped connector call's
-    /// Gate input names the actor class `first_party`, and a verified scoped
-    /// grant dissolves a Proposed definition ceiling and the actor ceiling
-    /// with it. Beyond its bound, an act would ask. The lines are sorted by
+    /// checks are an actor ceiling below auto, a foreign agent held at
+    /// Proposed and, on every line except a scoped connector call's, a
+    /// Proposed definition ceiling, which also withholds the external-effect
+    /// authority. A scoped connector call's Gate input names the actor class
+    /// `first_party`, and a verified scoped grant dissolves a Proposed
+    /// definition ceiling and the actor ceiling with it, never a foreign
+    /// agent's clamp. Beyond its bound, an act would ask. The lines are sorted by
     /// class, then by source kind, then by grant.
     ///
     /// # Errors
@@ -232,9 +234,13 @@ impl PolicyManifestResolution {
         txn: &heed::RoTxn<'_>,
         actor: WriteActor,
         as_of_secs: u64,
-        definition: Option<PolicyApprovalCeiling>,
+        ceilings: BriefActorCeilings,
     ) -> Result<BriefClassVerdicts> {
         self.refuse_fail_closed_class_rows()?;
+        let BriefActorCeilings {
+            definition,
+            foreign,
+        } = ceilings;
         let frontier = self.read_frontier_hash()?;
         let actor_class = actor.actor_class().gate_actor_class();
         let actor_ref = actor.entity_ref().to_hex();
@@ -242,6 +248,10 @@ impl PolicyManifestResolution {
             self.actor_ceiling(class, Some(actor_ref.as_str())) != PolicyApprovalCeiling::Auto
         };
         let proposed = definition == Some(PolicyApprovalCeiling::Proposed);
+        // A foreign agent held at Proposed is clamped on every effect, a
+        // scoped MCP call's too: a scoped grant dissolves only the
+        // definition's fork (evaluation.rs, the foreign-agent clamp).
+        let foreign_proposed = foreign == Some(PolicyApprovalCeiling::Proposed);
         let mut target_free_codes = Vec::new();
         let mut scoped_mcp_codes = Vec::new();
         if self.is_fail_closed() {
@@ -251,13 +261,13 @@ impl PolicyManifestResolution {
             target_free_codes.push(GateReasonCode::PendingExternalEffectAuthority);
             scoped_mcp_codes.push(GateReasonCode::PendingExternalEffectAuthority);
         } else {
-            if proposed || below_auto(actor_class) {
+            if proposed || foreign_proposed || below_auto(actor_class) {
                 target_free_codes.push(GateReasonCode::PendingActorCeiling);
             }
             if proposed {
                 target_free_codes.push(GateReasonCode::PendingExternalEffectAuthority);
             }
-            if !proposed && below_auto(SCOPED_MCP_ACTOR_CLASS) {
+            if foreign_proposed || (!proposed && below_auto(SCOPED_MCP_ACTOR_CLASS)) {
                 scoped_mcp_codes.push(GateReasonCode::PendingActorCeiling);
             }
         }
@@ -371,6 +381,15 @@ impl PolicyManifestResolution {
     }
 }
 
+/// The two ceilings a class verdict meets, read apart as the Gate reads
+/// them: the live definition's own ceiling, and the ceiling of a foreign
+/// agent's introduction.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BriefActorCeilings {
+    pub(crate) definition: Option<PolicyApprovalCeiling>,
+    pub(crate) foreign: Option<PolicyApprovalCeiling>,
+}
+
 impl Vault {
     /// The class reads of the host-bound agent `actor`'s self brief, read in
     /// one snapshot: the vault's authority instant, the policy resolved
@@ -389,6 +408,12 @@ impl Vault {
         let as_of_secs = self.instant_in_txn(&txn)?.secs();
         let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
         let definition = crate::gate::agent_definition_ceiling_for_actor(&self.store, &txn, actor);
+        // The verdicts meet the two ceilings apart, as the Gate does: the
+        // definition's own, and a foreign agent's introduction.
+        let verdict_ceilings = BriefActorCeilings {
+            definition: crate::gate::definition_only_ceiling_for_actor(&self.store, &txn, actor),
+            foreign: crate::gate::resolve_foreign_agent_ceiling(&self.store, &txn, actor)?,
+        };
         Ok(BriefClassReads {
             ceilings: policy.brief_ceiling_rows(actor, as_of_secs, definition)?,
             class_verdicts: policy.brief_class_verdicts(
@@ -396,7 +421,7 @@ impl Vault {
                 &txn,
                 actor,
                 as_of_secs,
-                definition,
+                verdict_ceilings,
             )?,
         })
     }
