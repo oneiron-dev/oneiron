@@ -145,8 +145,10 @@ pub(super) struct ResidenceRpc {
 }
 
 impl ResidenceRpc {
-    /// `None` is only a transport outage. A refused bind or malformed reply
-    /// is an error, not permission to label the search local-only.
+    /// `None` is only a transport outage, the home's: a call that needs the
+    /// home fails on it as [`TransportError::home_offline`] (FIX 22190). A
+    /// refused bind or malformed reply is an error, not permission to label
+    /// the search local-only.
     pub(super) async fn connect(
         vault: &crate::Vault,
         config: &SyncClientConfig,

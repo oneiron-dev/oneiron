@@ -3,7 +3,8 @@
 //! retried as the storage failure it is; every other admission error stays
 //! the refusal of the peer's bytes. The far end's bytes that fail to apply
 //! cross it the same way (FIX 22153); a frame of this machine's own that does
-//! not encode is its own fault (FIX 22179).
+//! not encode is its own fault (FIX 22179); a home no residence dial reaches
+//! is the home's outage, never this machine's storage fault (FIX 22190).
 
 use super::TransportError;
 use crate::error::{Error, SecretError, StoreError, SyncEngineContext, SyncError};
@@ -84,5 +85,13 @@ impl TransportError {
         } else {
             Self::Storage(format!("own frame encode: {error}"))
         }
+    }
+
+    /// The transport error of a residence socket no home answered (FIX
+    /// 22190): a dial that failed or ran out of time is the home's outage,
+    /// on the far end's side as [`Self::WebSocket`], never this machine's
+    /// own [`Self::Storage`]. It tells "home node offline".
+    pub(crate) fn home_offline() -> Self {
+        Self::WebSocket("home node offline".to_owned())
     }
 }

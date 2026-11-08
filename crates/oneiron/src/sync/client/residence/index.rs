@@ -108,9 +108,7 @@ impl SyncClient {
             .await
             .map_err(IndexFetchFault::of_rpc)?
         else {
-            return Err(IndexFetchFault::Remote(TransportError::Storage(
-                "home node offline".into(),
-            )));
+            return Err(IndexFetchFault::Remote(TransportError::home_offline()));
         };
         let mut eligible = HashSet::new();
         let mut next = Some(WindowKey::from_timestamp(now_secs));
