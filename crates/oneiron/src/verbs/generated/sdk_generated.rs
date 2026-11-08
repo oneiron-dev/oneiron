@@ -3814,6 +3814,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.proposal_rereview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalRereviewRequest,
+                >(),
+            ),
+            (
                 "vault.code.conflict_record",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_doors::CodeConflictRecordRequest,
@@ -3829,6 +3835,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.proposal_resolve",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_doors::CodeProposalResolveRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_resolve_rereview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalResolveRereviewRequest,
                 >(),
             ),
             (
@@ -4063,6 +4075,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.origin.publish.cancel",
                 crate::code_run::vault_read::request_schema::<
                     crate::origin::publish::OriginPublishIdRequest,
+                >(),
+            ),
+            (
+                "vault.devices.predecessor.name",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::device_succession::DevicePredecessor,
                 >(),
             ),
             (
@@ -8020,9 +8038,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "graph_fs.head",
     "graph_fs.wc",
     "vault.code.proposal_submit",
+    "vault.code.proposal_rereview",
     "vault.code.conflict_record",
     "vault.code.conflict_view",
     "vault.code.proposal_resolve",
+    "vault.code.proposal_resolve_rereview",
     "vault.code.proposal_review",
     "vault.code.proposal_settle",
     "vault.code.proposal_settlement",
@@ -8055,6 +8075,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.origin.publish.approve",
     "vault.code.origin.publish.execute",
     "vault.code.origin.publish.cancel",
+    "vault.devices.predecessor.name",
     "vault.code.origin.authority.get",
     "vault.code.origin.authority.set",
     "vault.code.origin.publications",
@@ -9954,6 +9975,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.proposal_submit" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_doors::CodeProposalSubmitted,
         >(),
+        "vault.code.proposal_rereview" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSubmitted,
+        >(),
         "vault.code.conflict_record" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_doors::CodeConflictView,
         >(),
@@ -9961,6 +9985,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::memory::code_doors::CodeConflictHistory,
         >(),
         "vault.code.proposal_resolve" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSubmitted,
+        >(),
+        "vault.code.proposal_resolve_rereview" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_doors::CodeProposalSubmitted,
         >(),
         "vault.code.proposal_review" => crate::code_run::vault_read::request_schema::<
@@ -10058,6 +10085,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.origin.publish.cancel" => crate::code_run::vault_read::request_schema::<
             crate::origin::publish::OriginPublishRequestView,
+        >(),
+        "vault.devices.predecessor.name" => crate::code_run::vault_read::request_schema::<
+            crate::memory::device_succession::DevicePredecessor,
         >(),
         "vault.code.origin.authority.get" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginAuthorityView,
@@ -16087,6 +16117,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.proposal_rereview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.conflict_record" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -16102,6 +16139,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.proposal_resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_resolve_rereview" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -16375,6 +16419,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.origin.publish.cancel" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.devices.predecessor.name" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21327,9 +21378,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.symbols.renew" => validate_input_vault_code_symbols_renew(value)?,
         "vault.code.symbols.release" => validate_input_vault_code_symbols_release(value)?,
         "vault.code.proposal_submit" => validate_input_vault_code_proposal_submit(value)?,
+        "vault.code.proposal_rereview" => validate_input_vault_code_proposal_rereview(value)?,
         "vault.code.conflict_record" => validate_input_vault_code_conflict_record(value)?,
         "vault.code.conflict_view" => validate_input_vault_code_conflict_view(value)?,
         "vault.code.proposal_resolve" => validate_input_vault_code_proposal_resolve(value)?,
+        "vault.code.proposal_resolve_rereview" => {
+            validate_input_vault_code_proposal_resolve_rereview(value)?
+        }
         "vault.code.proposal_review" => validate_input_vault_code_proposal_review(value)?,
         "vault.code.proposal_settle" => validate_input_vault_code_proposal_settle(value)?,
         "vault.code.proposal_settlement" => validate_input_vault_code_proposal_settlement(value)?,
@@ -21381,6 +21436,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.origin.publish.cancel" => {
             validate_input_vault_code_origin_publish_cancel(value)?
         }
+        "vault.devices.predecessor.name" => validate_input_vault_devices_predecessor_name(value)?,
         "vault.code.origin.authority.get" => validate_input_vault_code_origin_authority_get(value)?,
         "vault.code.origin.authority.set" => validate_input_vault_code_origin_authority_set(value)?,
         "vault.code.origin.publications" => validate_input_vault_code_origin_publications(value)?,
@@ -25890,6 +25946,11 @@ fn validate_input_vault_code_proposal_submit(value: &serde_json::Value) -> Memor
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_code_proposal_rereview(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::code_doors::CodeProposalRereviewRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_code_conflict_record(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::code_doors::CodeConflictRecordRequest = decode(value.clone())?;
     Ok(())
@@ -25902,6 +25963,14 @@ fn validate_input_vault_code_conflict_view(value: &serde_json::Value) -> MemoryR
 #[inline(never)]
 fn validate_input_vault_code_proposal_resolve(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::code_doors::CodeProposalResolveRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_code_proposal_resolve_rereview(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::memory::code_doors::CodeProposalResolveRereviewRequest =
+        decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -26099,6 +26168,11 @@ fn validate_input_vault_code_origin_publish_execute(value: &serde_json::Value) -
 #[inline(never)]
 fn validate_input_vault_code_origin_publish_cancel(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::origin::publish::OriginPublishIdRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_devices_predecessor_name(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::device_succession::DevicePredecessor = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -30353,9 +30427,13 @@ pub fn invoke(
         "vault.code.symbols.renew" => invoke_vault_code_symbols_renew(memory, value),
         "vault.code.symbols.release" => invoke_vault_code_symbols_release(memory, value),
         "vault.code.proposal_submit" => invoke_vault_code_proposal_submit(memory, value),
+        "vault.code.proposal_rereview" => invoke_vault_code_proposal_rereview(memory, value),
         "vault.code.conflict_record" => invoke_vault_code_conflict_record(memory, value),
         "vault.code.conflict_view" => invoke_vault_code_conflict_view(memory, value),
         "vault.code.proposal_resolve" => invoke_vault_code_proposal_resolve(memory, value),
+        "vault.code.proposal_resolve_rereview" => {
+            invoke_vault_code_proposal_resolve_rereview(memory, value)
+        }
         "vault.code.proposal_review" => invoke_vault_code_proposal_review(memory, value),
         "vault.code.proposal_settle" => invoke_vault_code_proposal_settle(memory, value),
         "vault.code.proposal_settlement" => invoke_vault_code_proposal_settlement(memory, value),
@@ -30407,6 +30485,7 @@ pub fn invoke(
         "vault.code.origin.publish.cancel" => {
             invoke_vault_code_origin_publish_cancel(memory, value)
         }
+        "vault.devices.predecessor.name" => invoke_vault_devices_predecessor_name(memory, value),
         "vault.code.origin.authority.get" => invoke_vault_code_origin_authority_get(memory, value),
         "vault.code.origin.authority.set" => invoke_vault_code_origin_authority_set(memory, value),
         "vault.code.origin.publications" => invoke_vault_code_origin_publications(memory, value),
@@ -36138,6 +36217,13 @@ fn invoke_vault_code_proposal_submit(
     encode(vault_code_proposal_submit(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_code_proposal_rereview(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_proposal_rereview(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_code_conflict_record(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -36157,6 +36243,16 @@ fn invoke_vault_code_proposal_resolve(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_code_proposal_resolve(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_code_proposal_resolve_rereview(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_proposal_resolve_rereview(
+        memory,
+        decode(value)?,
+    )?)
 }
 #[inline(never)]
 fn invoke_vault_code_proposal_review(
@@ -36430,6 +36526,13 @@ fn invoke_vault_code_origin_publish_cancel(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_code_origin_publish_cancel(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_devices_predecessor_name(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_devices_predecessor_name(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_code_origin_authority_get(
@@ -45991,13 +46094,13 @@ pub fn vault_claims_review(
     memory: &Memory<'_>,
     input: crate::memory::ClaimProposalReviewRequest,
 ) -> MemoryResult<crate::memory::ClaimProposalReview> {
-    memory.claim_review_as_owner(&memory.embedded_owner("vault.claims.review")?, &input)
+    memory.claim_review(&input)
 }
 pub fn vault_claims_settle(
     memory: &Memory<'_>,
     input: crate::memory::ClaimSettleRequest,
 ) -> MemoryResult<crate::memory::ClaimSettlement> {
-    memory.claim_settle_as_owner(&memory.embedded_owner("vault.claims.settle")?, &input)
+    memory.claim_settle(&input)
 }
 pub fn vault_craft_candidates(
     memory: &Memory<'_>,
@@ -46577,6 +46680,16 @@ pub fn vault_code_proposal_submit(
 ) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
     memory.code_proposal_submit_as(&memory.embedded_owner("vault.code.proposal_submit")?, input)
 }
+pub fn vault_code_proposal_rereview(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalRereviewRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
+    memory.code_proposal_rereview_as(
+        &memory.embedded_owner("vault.code.proposal_rereview")?,
+        input.original,
+        input.change,
+    )
+}
 pub fn vault_code_conflict_record(
     memory: &Memory<'_>,
     input: crate::memory::code_doors::CodeConflictRecordRequest,
@@ -46596,6 +46709,16 @@ pub fn vault_code_proposal_resolve(
     memory.code_proposal_resolve_as(
         &memory.embedded_owner("vault.code.proposal_resolve")?,
         input,
+    )
+}
+pub fn vault_code_proposal_resolve_rereview(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalResolveRereviewRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
+    memory.code_proposal_resolve_rereview_as(
+        &memory.embedded_owner("vault.code.proposal_resolve_rereview")?,
+        input.original,
+        input.change,
     )
 }
 pub fn vault_code_proposal_review(
@@ -46887,6 +47010,15 @@ pub fn vault_code_origin_publish_cancel(
 ) -> MemoryResult<crate::origin::publish::OriginPublishRequestView> {
     memory.origin_publish_cancel_as(
         &memory.origin_publish_proof("vault.code.origin.publish.cancel"),
+        input,
+    )
+}
+pub fn vault_devices_predecessor_name(
+    memory: &Memory<'_>,
+    input: crate::memory::device_succession::DevicePredecessor,
+) -> MemoryResult<crate::memory::device_succession::DevicePredecessor> {
+    memory.device_predecessor_name_as(
+        &memory.embedded_owner("vault.devices.predecessor.name")?,
         input,
     )
 }
