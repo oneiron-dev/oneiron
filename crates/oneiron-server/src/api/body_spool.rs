@@ -143,6 +143,34 @@ impl SpooledField {
     }
 }
 
+/// A spool's read that failed after the whole body arrived (FIX 22074):
+/// why, and the body's digest, so a refusal still names the body it got.
+pub(in crate::api) struct SpoolFailed {
+    pub(in crate::api) unspooled: Unspooled,
+    /// BLAKE3 of the body as it arrived, when its spool still reads.
+    pub(in crate::api) body_digest: Option<String>,
+}
+
+impl BodySpool {
+    /// BLAKE3 of the whole body, as `call_bytes_digest` digests its bytes,
+    /// read from the spool's start.
+    pub(in crate::api) fn digest(&mut self) -> io::Result<String> {
+        self.file.seek(SeekFrom::Start(0))?;
+        let mut hasher = blake3::Hasher::new();
+        io::copy(&mut self.file, &mut hasher)?;
+        Ok(hasher.finalize().to_hex().to_string())
+    }
+
+    /// `unspooled`, a failure after the whole body arrived, with the body's
+    /// digest.
+    pub(in crate::api) fn failed(&mut self, unspooled: Unspooled) -> SpoolFailed {
+        SpoolFailed {
+            unspooled,
+            body_digest: self.digest().ok(),
+        }
+    }
+}
+
 /// How a body ended before it was spooled.
 pub(super) enum Unspooled {
     /// The vault's disk refused a write for want of room, or reached the
