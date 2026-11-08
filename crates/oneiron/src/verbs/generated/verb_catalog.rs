@@ -1290,6 +1290,7 @@ pub enum AgentVerb {
     VaultFilesSourcesConvert,
     VaultSyncRepoManifestsConflictReview,
     VaultSyncRepoManifestsConflictDiscard,
+    VaultDreamerFollowerKeyframe,
     ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
@@ -2617,6 +2618,7 @@ impl AgentVerb {
         Self::VaultFilesSourcesConvert,
         Self::VaultSyncRepoManifestsConflictReview,
         Self::VaultSyncRepoManifestsConflictDiscard,
+        Self::VaultDreamerFollowerKeyframe,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
@@ -3985,6 +3987,7 @@ impl AgentVerb {
             Self::VaultSyncRepoManifestsConflictDiscard => {
                 "vault.sync.repo_manifests.conflict.discard"
             }
+            Self::VaultDreamerFollowerKeyframe => "vault.dreamer.follower.keyframe",
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
@@ -5292,6 +5295,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictReview
                 | Self::VaultSyncRepoManifestsConflictDiscard
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -6648,6 +6652,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictReview
                 | Self::VaultSyncRepoManifestsConflictDiscard
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -8100,6 +8105,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictReview
                 | Self::VaultSyncRepoManifestsConflictDiscard
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -8891,6 +8897,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictDiscard
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
@@ -10261,6 +10268,7 @@ impl AgentVerb {
             Self::VaultFilesSourcesConvert => &["spec"],
             Self::VaultSyncRepoManifestsConflictReview => &["spec"],
             Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
+            Self::VaultDreamerFollowerKeyframe => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -11589,6 +11597,7 @@ impl AgentVerb {
             Self::VaultFilesSourcesConvert => &["spec"],
             Self::VaultSyncRepoManifestsConflictReview => &["spec"],
             Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
+            Self::VaultDreamerFollowerKeyframe => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -15401,6 +15410,9 @@ impl AgentVerb {
             }
             Self::VaultSyncRepoManifestsConflictDiscard => {
                 "The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."
+            }
+            Self::VaultDreamerFollowerKeyframe => {
+                "The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed."
             }
             Self::ConnectorAnswer => {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."

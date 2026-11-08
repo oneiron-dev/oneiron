@@ -1532,6 +1532,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.files.sources.convert" => a.spec.clone().ok_or_else(invalid),
         "vault.sync.repo_manifests.conflict.review" => a.spec.clone().ok_or_else(invalid),
         "vault.sync.repo_manifests.conflict.discard" => a.spec.clone().ok_or_else(invalid),
+        "vault.dreamer.follower.keyframe" => a.spec.clone().ok_or_else(invalid),
         "connector.answer" => a.spec.clone().ok_or_else(invalid),
         "self.browser.open" => a.spec.clone().ok_or_else(invalid),
         "self.browser.observe" => a.spec.clone().ok_or_else(invalid),
@@ -5465,6 +5466,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.sync.repo_manifests.conflict.discard" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.dreamer.follower.keyframe" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "connector.answer" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -8015,6 +8019,9 @@ async fn execute_agent_verb_row_on(
         }
         "vault.sync.repo_manifests.conflict.discard" => {
             boxed_mcp_verb_row_vault_sync_repo_manifests_conflict_discard(row).await
+        }
+        "vault.dreamer.follower.keyframe" => {
+            boxed_mcp_verb_row_vault_dreamer_follower_keyframe(row).await
         }
         "connector.answer" => boxed_mcp_verb_row_connector_answer(row).await,
         "self.browser.open" => boxed_mcp_verb_row_self_browser_open(row).await,
@@ -71203,6 +71210,59 @@ async fn mcp_verb_row_vault_sync_repo_manifests_conflict_discard(
         crate::api::facade::host_doors::vault_sync_repo_manifests_conflict_discard(
             server, auth, input,
         ),
+    )
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_dreamer_follower_keyframe<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_dreamer_follower_keyframe(row))
+}
+async fn mcp_verb_row_vault_dreamer_follower_keyframe(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.dreamer.follower.keyframe", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::task_verb::sdk::EmptyRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(
+        crate::api::facade::host_doors::vault_dreamer_follower_keyframe(server, auth, input),
     )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
