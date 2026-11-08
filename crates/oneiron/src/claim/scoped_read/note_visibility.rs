@@ -4,6 +4,48 @@ use super::*;
 use crate::federation::record_scope::note_world;
 
 impl ScopedRead<'_> {
+    /// `scope`, the stamped position of the row `id` of `kind` a non-owner
+    /// reads, as its live worlds hold it when its kind takes them
+    /// (`note_world::takes_live_worlds`): an ASSET or a caption reads, as a
+    /// NOTE does below, only where the asked worlds, the credential's and the
+    /// Grant's hold one of its worlds, and one only in worlds other than base
+    /// reality also needs one policy read Grant alone to reach one of them
+    /// (FIX-LIST 9433, 10726; FIX 22223). It is then held at its witness
+    /// there, so an ASSET in several worlds reads in each. `None` where it
+    /// does not read; any other row keeps `scope`.
+    pub(super) fn live_world_scope_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: u8,
+        scope: oneiron_authority::federation::Scope,
+        policy: &crate::gate::PolicyManifestResolution,
+        grant: Option<&oneiron_authority::federation::Scope>,
+    ) -> Result<Option<oneiron_authority::federation::Scope>> {
+        if !note_world::takes_live_worlds(kind) {
+            return Ok(Some(scope));
+        }
+        let ceiling = self.actor_key.world_ceiling();
+        let held = [&ceiling.worlds, &grant.unwrap_or(&ceiling).worlds];
+        let worlds = note_world::live_worlds_in(&self.store_read(), txn, *id, kind);
+        if !worlds.readable_at(&held) {
+            return Ok(None);
+        }
+        if grant.is_none()
+            && matches!(&worlds, note_world::NoteWorlds::In(set)
+                if !set.contains(&oneiron_authority::federation::ScopeId(crate::claim::base_world_id())))
+            && !self
+                .actor_key
+                .facets_owner_exempt_in(self.vault, txn)
+                .unwrap_or(false)
+            && crate::gate::scoped_read_note_world_witness(policy, &self.actor_key, &worlds, &held)
+                == Some(false)
+        {
+            return Ok(None);
+        }
+        Ok(Some(note_world::position_at(&scope, Some(&worlds), &held)))
+    }
+
     /// Scoped actor keys are asserted by a trusted host, not bearer secrets.
     /// A private NOTE additionally requires an exact entity id and a live,
     /// class-valid actor row in the same snapshot as its body.
