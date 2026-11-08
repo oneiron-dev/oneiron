@@ -88,6 +88,13 @@ impl SyncConnection {
         let mut left_rx = self.left.subscribe();
         // The host's admission for each batch, and its pause (FIX 12036).
         let mut gate = self.batch_gate();
+        // FIX 4748: a peer session takes none of the home's upkeep (residence
+        // directives, home handoff rounds, machine history, authority
+        // catch-up, leaf-key requests, publications), and it probes the home
+        // on its cadence, ending once the home answers.
+        let peer_session = client.peer_session;
+        let mut home_probe =
+            super::peer_session::HomeProbe::new(peer_session.is_some(), &self.config.client_config);
 
         // Every `break` is the run's shutdown; any other exit returns, and
         // its upkeep rounds run on beside the next connection.
@@ -111,13 +118,15 @@ impl SyncConnection {
                 }
                 return exit;
             }
-            self.run_machine_history(
-                &mut machine_history_tasks,
-                &machine_history_due,
-                event_tx,
-                &mut gate,
-            )
-            .await;
+            if peer_session.is_none() {
+                self.run_machine_history(
+                    &mut machine_history_tasks,
+                    &machine_history_due,
+                    event_tx,
+                    &mut gate,
+                )
+                .await;
+            }
             // Compute sleep future for debounce timer
             let debounce_sleep = match debounce_deadline {
                 Some(deadline) => tokio::time::sleep_until(deadline),
@@ -322,8 +331,11 @@ impl SyncConnection {
                         }
                         Ok(None) => {}
                     }
-                    // The next owed part goes on the next tick.
-                    if let Err(error) = client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot) {
+                    // The next owed part goes on the next tick; the home's
+                    // receipt retires it, so none goes to a peer.
+                    if peer_session.is_none()
+                        && let Err(error) = client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot)
+                    {
                         let _ = event_tx.send(SyncEvent::Error(format!("Artifact publication sync failed: {error}")));
                     }
                     if !debounce_buffer.is_empty() || !document_buffer.is_empty() || publication_slot.is_some() {
@@ -342,7 +354,9 @@ impl SyncConnection {
                         continue;
                     };
                     // The home handoff's delivery round (FIX 5661 C2a).
-                    self.home_handoff_wake.notify_one();
+                    if peer_session.is_none() {
+                        self.home_handoff_wake.notify_one();
+                    }
                     if tombstone_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
                         let vault = std::sync::Arc::clone(self.manager.vault());
                         let events = event_tx.clone();
@@ -379,6 +393,7 @@ impl SyncConnection {
                         }));
                     }
                     if self.config.client_config.federation_peer.is_none()
+                        && peer_session.is_none()
                         && sealed_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished)
                     {
                         let manager = std::sync::Arc::clone(&self.manager);
@@ -531,7 +546,9 @@ impl SyncConnection {
                         }
                         result = async {
                             crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await?;
-                            crate::sync::client::send_leaf_key_requests(client, &mut write).await?;
+                            if peer_session.is_none() {
+                                crate::sync::client::send_leaf_key_requests(client, &mut write).await?;
+                            }
                             crate::sync::client::send_sealed_updates(client, &mut write).await
                         } => result,
                     };
@@ -568,8 +585,13 @@ impl SyncConnection {
                         pump.send(client.poll_staged_body_pull(now));
                     }
                     // Pinned artifact pointers this device still owes the server,
-                    // one part at a time.
-                    match client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot) {
+                    // one part at a time; the home's, never a peer's.
+                    let pulled = if peer_session.is_none() {
+                        client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot)
+                    } else {
+                        Ok(false)
+                    };
+                    match pulled {
                         Ok(true) => {
                             debounce_deadline.get_or_insert_with(||
                                 Instant::now() + Duration::from_millis(debounce_ms));
@@ -587,6 +609,23 @@ impl SyncConnection {
 
                 // The host thawed: what the pause held goes first (FIX 12036).
                 () = gate.thawed(), if gate.paused() => {}
+
+                // FIX 4748: the home answers a peer session's probe: this
+                // session ends, what it buffered queued, and the next
+                // connect is the home's.
+                () = home_probe.answered() => {
+                    self.queue_on_exit(&mut gate, debounce_buffer).await;
+                    let mut send_left = self.left.subscribe();
+                    tokio::select! {
+                        biased;
+                        () = async { let _ = send_left.wait_for(|left| *left).await; } => {
+                            self.publish_leave_unqueued(debounce_buffer);
+                            break LoopExit::Shutdown;
+                        }
+                        _ = write.send(Message::Close(None)) => {}
+                    }
+                    return LoopExit::HomeReturned;
+                }
 
                 changed = mode_rx.changed() => {
                     if changed.is_ok() {

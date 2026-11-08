@@ -287,6 +287,31 @@ impl OfferLadder {
         self
     }
 
+    /// A call-local copy of this ladder whose owner's fallbacks stay within
+    /// `ceiling` (FIX 5366, review #6390): a model pack's local-GPU pick
+    /// never falls back to a third party. A stricter ceiling this ladder
+    /// already has stays.
+    #[must_use]
+    pub(super) fn with_locality_ceiling(&self, ceiling: ModelLocality) -> Self {
+        let locality_ceiling = Some(
+            self.scope
+                .locality_ceiling
+                .map_or(ceiling, |own| own.min(ceiling)),
+        );
+        Self {
+            name: self.name.clone(),
+            rungs: self.rungs.clone(),
+            picked: self.picked,
+            rests: Arc::clone(&self.rests),
+            scope: SeatScope {
+                locality_ceiling,
+                ..self.scope
+            },
+            prefix: self.prefix.clone(),
+            listed: self.listed.clone(),
+        }
+    }
+
     /// This ladder with its rungs in the order `routes` names them (FIX
     /// 11768 seam for L05): [`WorldModelRoutes::order`] over each rung's
     /// [`LadderRung::offer_id`], the same route id the ladder's doors
@@ -524,6 +549,12 @@ impl OfferLadder {
     #[must_use]
     pub fn rungs(&self) -> usize {
         self.rungs.len()
+    }
+
+    /// Each rung's host-bound offer, in ladder order: the access a vault's
+    /// model pack resolves against reads their payers (FIX 5366).
+    pub(crate) fn offer_bindings(&self) -> impl Iterator<Item = &OfferBinding> {
+        self.rungs.iter().map(|rung| &rung.offer.binding)
     }
 
     /// Whether every rung a call on this ladder may reach is free keyless
