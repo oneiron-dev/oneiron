@@ -56,11 +56,11 @@ mod support;
 mod task_reporting;
 mod task_settlement;
 mod team_submit;
+#[cfg(test)]
+mod tests;
 mod type_diagnostics;
 mod types;
 mod wait_rows;
-#[cfg(test)]
-mod tests;
 
 pub(crate) use self::action_inputs::self_call_inputs;
 pub(crate) use self::agent_authoring::{agent_put_draft, parse_agent_put_request};
@@ -161,14 +161,13 @@ pub(crate) use self::replay_context::{
 };
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
-pub(crate) use self::result_read::{unmarked_secret, unplaced_answer};
 pub(crate) use self::result_read::{
     DeliveredRanges, Reply as ResultReply, ResultRead, cannot as result_cannot,
     card as result_card, read_result_in, refusal as result_refusal, resolve as resolve_result,
     result_cards_in, unknown_handle,
 };
+pub(crate) use self::result_read::{unmarked_secret, unplaced_answer};
 pub use self::storage::ReadWorldUnknown;
-pub(crate) use self::storage::{ReplyBody, SessionCheckpointBody};
 pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
@@ -206,6 +205,7 @@ pub(crate) use self::storage::{
 pub(crate) use self::storage::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
+pub(crate) use self::storage::{ReplyBody, SessionCheckpointBody};
 pub(crate) use self::storage::{
     StagedSinks, clear_parked_wait_in_txn, code_run_body_file_of_row, code_run_body_held_in_txn,
     code_run_body_in_file_in_txn, code_run_body_row_key, code_run_inline_body_of_row,
