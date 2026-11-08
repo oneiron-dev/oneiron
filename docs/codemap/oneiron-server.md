@@ -1113,7 +1113,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/models/validation.rs` | src | s | 2 crate-vis | — | — |
 | `src/config/models/voice.rs` | src | s | 1 struct · 3 crate-vis | VoiceSettings | `[models.voice]`: the server's own voice loop (OF-410) |
 | `src/config/models/worker_controller.rs` | src | s | 1 crate-vis | — | — |
-| `src/config/models/workers.rs` | src | m | 5 struct · 1 enum · 2 crate-vis | ArtifactSource, ManagedLaunch, NativeServer, WorkerArtifact, WorkerConfig, WorkerEnvelope | `[models.workers.<id>]`: the model workers this server supervises or probes (FIX 8315, DESIGN-V2 R2) |
+| `src/config/models/workers.rs` | src | m | 5 struct · 1 enum · 2 fn · 2 crate-vis | ArtifactSource, ManagedLaunch, NativeServer, WorkerArtifact, WorkerConfig, WorkerEnvelope | `[models.workers.<id>]`: the model workers this server supervises or probes (FIX 8315, DESIGN-V2 R2) |
 | `src/config/native_mail.rs` | src | s | 1 struct · 1 enum · 3 crate-vis | NativeMailConfig, NativeMailMode | `[native_mail]`: the host's own mail server, a Stalwart instance serving one domain the owner controls… |
 | `src/config/oneironer.rs` | src | m | 4 struct · 3 enum · 9 fn · 1 re-export · 2 crate-vis | OneironerArgs, OneironerBackbone, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider, OneironerTier | The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity, native runtime and label table |
 | `src/config/oneironer/runtime.rs` | src | s | 1 enum · 1 fn | OneironerRuntime | The runtime setting a local tagger's workers are chosen by (FIX 6755, Engine call 4) |
@@ -1545,7 +1545,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/decision_read/host.rs` | src | s | 4 crate-vis | — | The vault a configured decision reader serves, bound once the AI host builds its runtime over that vault… |
 | `src/models/decision_read/tests.rs` | test | m | — | — | The decision read against an in-process llama.cpp: the joint marginals checked against idle-fold test 6's… |
 | `src/models/declared.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | DeclaredRun | A declared run on this server's models (ARCH-0053 `#run-declaration`): the host that states a run's… |
-| `src/models/discovered.rs` | src | s | 4 crate-vis | — | The models the owner's other nodes offer (OF-575, FIX 3229) |
+| `src/models/discovered.rs` | src | s | 5 crate-vis | — | The models the owner's other nodes offer (OF-575, FIX 3229) |
 | `src/models/drafter_evaluator.rs` | src | L | 1 crate-vis | — | The vault's own drafter, evaluated, activated and rolled back (FIX 14975, FIX 12569 slice 5): the host half… |
 | `src/models/drafter_serving.rs` | src | m | 1 struct · 12 crate-vis | VaultLoadSet | The vault's own drafter, served (FIX 14976, FIX 12569 slice 4): the host seam that serves each target's… |
 | `src/models/drafter_training.rs` | src | s | 4 crate-vis | — | A drafter training job's place on its target's device work line (FIX 14974) |
@@ -1624,7 +1624,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/role_route.rs` | src | m | 2 struct · 1 enum · 4 fn · 6 crate-vis | RoleCall, RoleRefusal, RoleRoute | A role-bound call's model under the vault's live model manifest |
 | `src/models/router.rs` | src | m | 1 struct · 8 fn · 12 crate-vis | ModelRouter | Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its… |
 | `src/models/run_backend.rs` | src | s | 1 struct · 1 fn | RunBackend | A ladder as an [`LlmBackend`], for engine code that calls a backend itself (the Dreamer's step layer) |
-| `src/models/runtime.rs` | src | m | 20 fn · 6 crate-vis | — | Model runtime construction and accessors |
+| `src/models/runtime.rs` | src | m | 20 fn · 7 crate-vis | — | Model runtime construction and accessors |
 | `src/models/seat_model.rs` | src | m | 7 crate-vis | — | The model door's broker leg (FIX 15702; ARCH-0069 `#door-sign-loopback`): one model request from an official… |
 | `src/models/seat_model_admission.rs` | src | m | 13 crate-vis | — | A seat's paid model calls on the model door (FIX 15702 slice 3; Engine call 14:12, A, mirroring the AI… |
 | `src/models/served.rs` | src | s | 3 crate-vis | — | Which model actually answered: the receipt field a ladder fills in |
