@@ -592,14 +592,19 @@ fn ancestors_or_self(
 /// # Errors
 /// A root absent from its run, or storage and render errors.
 pub fn research_tree(vault: &Vault, root: AttemptId) -> Result<RunTree> {
-    let binding = binding(vault, root)?;
-    let tree = render_run_tree(AttemptQueue::new(vault).list_run(&binding.run_id)?)?;
+    let txn = vault.store.env.read_txn()?;
+    let binding = binding_in_txn(vault, &txn, root)?;
+    let mut tree =
+        render_run_tree(AttemptQueue::new(vault).list_run_in_txn(&txn, &binding.run_id)?)?;
+    tree.deletions =
+        crate::vault_cleanup::deletions_for_run_in_txn(&vault.store, &txn, &binding.run_id)?;
     let node = find_node(&tree.roots, &hex(&root))
         .ok_or(invalid("the campaign root is absent from its run tree"))?
         .clone();
     Ok(RunTree {
         roots: vec![node],
         repairs: tree.repairs,
+        deletions: tree.deletions,
     })
 }
 
