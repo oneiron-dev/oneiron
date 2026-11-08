@@ -591,13 +591,13 @@ impl OrganProcess {
     /// Room for a call or an answer this process is about to be sent, made
     /// before it takes the writer (FIX 6195): the encoding the host makes
     /// first, counted with nothing allocated, then the organ's own read of
-    /// it with its descriptors' room, held in `room` until the call ends
-    /// ([`reserve_read`]), under the deadline sampled after that wait, so
-    /// room waits (which move the clock) are never charged as lateness. The
-    /// deadline-bound read comes last, so a pair that does not jointly fit
-    /// ends instead of stalling past the deadline. Waits on the call's
-    /// clock until the deadline; [`FrameError::Withdrawn`] once `stopped`
-    /// says the frame is not wanted.
+    /// it with its descriptors' room, held in `room` ([`reserve_read`], its
+    /// frames' part until the organ asks again), under the deadline sampled
+    /// after that wait, so room waits (which move the clock) are never
+    /// charged as lateness. The deadline-bound read comes last, so a pair
+    /// that does not jointly fit ends instead of stalling past the deadline.
+    /// Waits on the call's clock until the deadline; [`FrameError::Withdrawn`]
+    /// once `stopped` says the frame is not wanted.
     fn book(
         &self,
         msg: &ToOrgan,
@@ -606,8 +606,9 @@ impl OrganProcess {
         clock: Clock<'_>,
         stopped: &dyn Fn() -> bool,
     ) -> Result<Lease, FrameError> {
-        let frame = book_send(&self.frames, room.waits(), frame_body_len(msg)?, stopped)?;
-        reserve_read(room, msg, fds, clock.deadline(), stopped)?;
+        let len = frame_body_len(msg)?;
+        let frame = book_send(&self.frames, room.waits(), len, stopped)?;
+        reserve_read(room, msg, len, fds, clock.deadline(), stopped)?;
         Ok(frame)
     }
 
@@ -837,6 +838,9 @@ impl OrganProcess {
                 }
                 Ok(Delivery::Ask(ask, lease)) => {
                     asks.frame_received(lease.bytes());
+                    // The organ asks only once it has decoded all the host
+                    // sent it for the call: their frames' room goes back.
+                    room.reads_decoded();
                     // A revocation is ending the call, or the organ has
                     // already replied (the reader took the call's entry, and
                     // the reply waits behind this ask): run and answer
