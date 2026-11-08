@@ -269,6 +269,7 @@ impl Vault {
                 repo_bounds,
                 kind: super::FederationGrantKind::Access,
                 git_push_bounds: None,
+                detach_on_member_leave: None,
                 verb_classes,
                 wallet_ref,
             };
