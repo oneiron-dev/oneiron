@@ -19,6 +19,7 @@ categories.workspace = true
 doctest = true
 
 [dependencies]
+stacker = { git = "https://github.com/rust-lang/stacker", rev = "d3ac2df79a409c681329006e9b31c96ab9c5fcae" }
 # Lower engine crates split out of this one. This crate re-exports each moved
 # module at its old `oneiron::<module>` path.
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
