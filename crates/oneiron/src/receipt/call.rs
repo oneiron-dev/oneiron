@@ -340,32 +340,100 @@ pub fn call_json_digest_with_member(
     member: &str,
     write_value: impl FnOnce(&mut blake3::Hasher) -> std::io::Result<()>,
 ) -> std::io::Result<String> {
-    let mut keys: Vec<&str> = head
+    let mut hasher = blake3::Hasher::new();
+    write_object_with_member(&mut hasher, head, &[member], &mut Some(write_value))?;
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+/// [`call_json_digest_with_member`] for a member nested in `value`: `path`
+/// names it from `value` down, one object member per step, each step but
+/// the last an object `value` holds.
+///
+/// # Errors
+///
+/// What `write_value` returns; a step that is not an object.
+pub fn call_json_digest_with_member_path(
+    value: &serde_json::Value,
+    path: &[&str],
+    write_value: impl FnOnce(&mut blake3::Hasher) -> std::io::Result<()>,
+) -> std::io::Result<String> {
+    let mut hasher = blake3::Hasher::new();
+    write_call_json_with_member_path(&mut hasher, value, path, write_value)?;
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+/// The canonical text [`call_json_digest_with_member_path`] hashes, written
+/// to `hasher`: for a host whose own digest frames that text.
+///
+/// # Errors
+///
+/// As [`call_json_digest_with_member_path`].
+pub fn write_call_json_with_member_path(
+    hasher: &mut blake3::Hasher,
+    value: &serde_json::Value,
+    path: &[&str],
+    write_value: impl FnOnce(&mut blake3::Hasher) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    match value {
+        serde_json::Value::Object(map) if !path.is_empty() => {
+            write_object_with_member(hasher, map, path, &mut Some(write_value))
+        }
+        _ => Err(not_a_member_path()),
+    }
+}
+
+/// One object of a member path, canonically, the member at its end written
+/// by `write_value`.
+fn write_object_with_member<W: FnOnce(&mut blake3::Hasher) -> std::io::Result<()>>(
+    hasher: &mut blake3::Hasher,
+    map: &serde_json::Map<String, serde_json::Value>,
+    path: &[&str],
+    write_value: &mut Option<W>,
+) -> std::io::Result<()> {
+    let Some((&name, rest)) = path.split_first() else {
+        return Err(not_a_member_path());
+    };
+    let mut keys: Vec<&str> = map
         .keys()
         .map(String::as_str)
-        .filter(|key| *key != member)
-        .chain(std::iter::once(member))
+        .filter(|key| *key != name)
+        .chain(std::iter::once(name))
         .collect();
     keys.sort_unstable();
-    let mut hasher = blake3::Hasher::new();
-    let mut write_value = Some(write_value);
     hasher.update(b"{");
     for (index, key) in keys.into_iter().enumerate() {
         if index > 0 {
             hasher.update(b",");
         }
-        write_canonical(&mut hasher, &serde_json::Value::String(key.to_owned()));
+        write_canonical(hasher, &serde_json::Value::String(key.to_owned()));
         hasher.update(b":");
-        if key == member {
-            if let Some(write_value) = write_value.take() {
-                write_value(&mut hasher)?;
+        if key != name {
+            if let Some(item) = map.get(key) {
+                write_canonical(hasher, item);
             }
-        } else if let Some(item) = head.get(key) {
-            write_canonical(&mut hasher, item);
+        } else if rest.is_empty() {
+            if let Some(write_value) = write_value.take() {
+                write_value(hasher)?;
+            }
+        } else {
+            match map.get(name) {
+                Some(serde_json::Value::Object(child)) => {
+                    write_object_with_member(hasher, child, rest, write_value)?;
+                }
+                _ => return Err(not_a_member_path()),
+            }
         }
     }
     hasher.update(b"}");
-    Ok(hasher.finalize().to_hex().to_string())
+    Ok(())
+}
+
+/// A member path whose step is not an object.
+fn not_a_member_path() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "a held member's path does not run through objects",
+    )
 }
 
 /// BLAKE3 of raw bytes, lowercase hex: the digest of a body that is not JSON.

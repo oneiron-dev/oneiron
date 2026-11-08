@@ -41,6 +41,15 @@ pub(crate) fn hold_member(name: &'static str, file: File) -> HeldMemberGuard {
     HeldMemberGuard(())
 }
 
+/// Runs `run` with member `name` held as `file` for the first pre chain it
+/// runs on this thread: a host that runs a row's pre chain itself, not
+/// through the engine's row boundary, holds the member there (FIX 22074).
+/// The member goes when `run` returns, taken or not.
+pub fn with_held_member<R>(name: &'static str, file: File, run: impl FnOnce() -> R) -> R {
+    let _held = hold_member(name, file);
+    run()
+}
+
 /// The member held for this call, taken: no other chain meets it.
 pub(super) fn take() -> Option<HeldMember> {
     HELD.with(|held| held.borrow_mut().take())

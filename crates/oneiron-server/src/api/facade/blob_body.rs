@@ -291,23 +291,9 @@ fn read_spool_in(vault: &oneiron::Vault, spool: &mut BodySpool) -> Result<Spoole
 /// which is the string the caller sent, the only spelling standard base64
 /// decodes to those bytes.
 fn arrival_digest(head: &Map<String, Value>, content: &SpooledField) -> io::Result<String> {
-    let (mut file, _) = content.file();
-    file.seek(SeekFrom::Start(0))?;
-    let digest = oneiron::receipt::call_json_digest_with_member(head, CONTENT_MEMBER, |hasher| {
-        hasher.update(b"\"");
-        {
-            let mut text = base64::write::EncoderWriter::new(
-                &mut *hasher,
-                &base64::engine::general_purpose::STANDARD,
-            );
-            io::copy(&mut file, &mut text)?;
-            text.finish()?;
-        }
-        hasher.update(b"\"");
-        Ok(())
-    })?;
-    file.seek(SeekFrom::Start(0))?;
-    Ok(digest)
+    oneiron::receipt::call_json_digest_with_member(head, CONTENT_MEMBER, |hasher| {
+        content.write_base64_json(hasher)
+    })
 }
 
 /// The spooled body whole, as the facade read every body before.
