@@ -6397,6 +6397,26 @@ export_facade! {
     let output = client.vault_mail_threads_unshare(&input)?;
     crate::codec::lift_record("vault.mail.threads.unshare", &output)
 };
+"vault.mail.reply.draft" => fn vault_mail_reply_draft(&self, input: MailReplyDraftRequest) -> MailReplyDraftView = |client| {
+    let input: oneiron::mail_pack::MailReplyDraftRequest = crate::codec::lower_record("vault.mail.reply.draft", input)?;
+    let output = client.vault_mail_reply_draft(&input)?;
+    crate::codec::lift_record("vault.mail.reply.draft", &output)
+};
+"vault.mail.reply.drafts" => fn vault_mail_reply_drafts(&self, input: MailReplyDraftsRequest) -> MailReplyDraftPage = |client| {
+    let input: oneiron::mail_pack::MailReplyDraftsRequest = crate::codec::lower_record("vault.mail.reply.drafts", input)?;
+    let output = client.vault_mail_reply_drafts(&input)?;
+    crate::codec::lift_record("vault.mail.reply.drafts", &output)
+};
+"vault.mail.reply.discard" => fn vault_mail_reply_discard(&self, input: MailReplyDraftRef) -> MailReplyDraftView = |client| {
+    let input: oneiron::mail_pack::MailReplyDraftRef = crate::codec::lower_record("vault.mail.reply.discard", input)?;
+    let output = client.vault_mail_reply_discard(&input)?;
+    crate::codec::lift_record("vault.mail.reply.discard", &output)
+};
+"vault.mail.reply.approve" => fn vault_mail_reply_approve(&self, input: MailReplyApproveRequest) -> MailReplyDraftView = |client| {
+    let input: oneiron::mail_pack::MailReplyApproveRequest = crate::codec::lower_record("vault.mail.reply.approve", input)?;
+    let output = client.vault_mail_reply_approve(&input)?;
+    crate::codec::lift_record("vault.mail.reply.approve", &output)
+};
 "vault.mail.compliance.setting" => fn vault_mail_compliance_setting(&self) -> MailComplianceSettingView = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.mail.compliance.setting")?;
     let output = client.vault_mail_compliance_setting(&input)?;
@@ -6417,6 +6437,16 @@ export_facade! {
     let output = client.vault_mail_sources_sync_status(&input)?;
     crate::codec::lift_record("vault.mail.sources.sync_status", &output)
 };
+"vault.mail.sources.import_mbox" => fn vault_mail_sources_import_mbox(&self, input: MailMboxImportRequest) -> MailMboxImportReport = |client| {
+    let input: oneiron::mail_pack::MailMboxImportRequest = crate::codec::lower_record("vault.mail.sources.import_mbox", input)?;
+    let output = client.vault_mail_sources_import_mbox(&input)?;
+    crate::codec::lift_record("vault.mail.sources.import_mbox", &output)
+};
+"vault.mail.sources.sync" => fn vault_mail_sources_sync(&self, input: MailSourceSyncRequest) -> MailSyncReport = |client| {
+    let input: oneiron::mail_pack::MailSourceSyncRequest = crate::codec::lower_record("vault.mail.sources.sync", input)?;
+    let output = client.vault_mail_sources_sync(&input)?;
+    crate::codec::lift_record("vault.mail.sources.sync", &output)
+};
 "vault.mail.inbox" => fn vault_mail_inbox(&self, input: MailInboxRequest) -> MailInboxPage = |client| {
     let input: oneiron::mail_pack::MailInboxRequest = crate::codec::lower_record("vault.mail.inbox", input)?;
     let output = client.vault_mail_inbox(&input)?;
@@ -6426,6 +6456,11 @@ export_facade! {
     let input: oneiron::mail_pack::MailThreadRequest = crate::codec::lower_record("vault.mail.threads.read", input)?;
     let output = client.vault_mail_threads_read(&input)?;
     crate::codec::lift_record("vault.mail.threads.read", &output)
+};
+"vault.mail.attachments.open" => fn vault_mail_attachments_open(&self, input: MailAttachmentOpenRequest) -> MailAttachmentView = |client| {
+    let input: oneiron::mail_pack::MailAttachmentOpenRequest = crate::codec::lower_record("vault.mail.attachments.open", input)?;
+    let output = client.vault_mail_attachments_open(&input)?;
+    crate::codec::lift_record("vault.mail.attachments.open", &output)
 };
 "vault.mail.compliance.search" => fn vault_mail_compliance_search(&self, input: MailComplianceSearchRequest) -> MailComplianceSearchReply = |client| {
     let input: oneiron::mail_pack::MailComplianceSearchRequest = crate::codec::lower_record("vault.mail.compliance.search", input)?;

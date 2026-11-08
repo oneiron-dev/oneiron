@@ -10,7 +10,7 @@ use crate::frame::{
 };
 use crate::send::push_wiped;
 use crate::{
-    BrokerError, CallHeader, DispatchError, Failure, MAX_BODY, MAX_STREAM, Outcome,
+    BrokerError, CallHeader, DispatchError, Failure, MAX_BODY, Outcome,
     PROTOCOL_VERSION, ReplyHeader,
 };
 
@@ -152,7 +152,6 @@ impl BrokerConnection {
             stream: self.stream,
             deadline,
             whole,
-            received: 0,
             ended: None,
             dispatch: Some(dispatch),
         })
@@ -199,10 +198,7 @@ impl BrokerStream {
         .await
         .map_err(|_| BrokerError::Lost)??;
         if !chunk.is_empty() {
-            self.received += chunk.len();
-            if self.received > MAX_STREAM {
-                return Err(BrokerError::Lost.into());
-            }
+            // No cumulative byte limit on a streamed body (#5393, FIX 1895): each chunk is bounded.
             return Ok(StreamPart::Chunk(chunk));
         }
         let end = tokio::time::timeout_at(self.deadline, read_stream_end(&mut self.stream))

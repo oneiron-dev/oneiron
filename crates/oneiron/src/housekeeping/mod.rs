@@ -19,7 +19,8 @@
 //! in every report with the reason they did not run.
 //!
 //! A host that stops a vault between uses asks [`Vault::housekeeping_wake_at`]
-//! when it must run the vault again for a retirement that comes due.
+//! when it must run the vault again for a retirement that comes due, a model
+//! pack's notice marks and retirement day included (FIX 22059).
 
 mod claim_vad_payment;
 mod report;
@@ -104,7 +105,9 @@ impl Vault {
 
     /// Runs every engine sweep now, due or not, and reschedules each from
     /// now: the owner's "run housekeeping now". The model pack retirement
-    /// sweep runs against no model access, as on a stopped vault.
+    /// sweep runs against no model access, as on a stopped vault: model
+    /// offers live only on a serving host, so a retiring model's notices
+    /// wait for its pass (FIX 22059).
     pub fn housekeeping_all(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
         self.housekeeping_all_with_access(budget, &AccessSnapshot::new())
     }
@@ -136,10 +139,13 @@ impl Vault {
     /// and the erasure sweep's due time while an obligation waits, and a left
     /// env's owed body collection (FIX 2413), and the earliest deadline of
     /// the retained peer work (FIX 11183), and a paced verb call's window or
-    /// deadline (FIX 8753), and the next due watcher tick on the node that
-    /// releases them (FIX 22180). Cache and retention hygiene never
-    /// wake a vault. Reads one row per sweep, the schedule and the retained
-    /// work queues, so a host can ask every time it stops the vault.
+    /// deadline (FIX 8753), and the model pack retirement pass's next notice
+    /// mark or retirement day (FIX 22059), and the next due watcher tick on
+    /// the node that releases them (FIX 22180). Cache and retention hygiene
+    /// never wake a vault. Reads one row per sweep, the schedule, the
+    /// retained work queues, the installed model packs' kept checks (FIX
+    /// 20043) and the first due index row, so a host can ask every time it
+    /// stops the vault.
     pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
         let states = schedule::read_states(self)?;
         let noted = {
@@ -164,6 +170,11 @@ impl Vault {
         // host's settler runs its turn once the vault is up again.
         if let Some(at) = self.paced_verb_wake_at()? {
             owed.push((HousekeepingSweep::GateDecisionRetention, at));
+        }
+        // A model pack's notice mark or retirement day (FIX 22059): the pass
+        // records the move and sends the notices on the day itself.
+        if let Some(at) = self.model_pack_retirement_wake_at()? {
+            owed.push((HousekeepingSweep::ModelPackRetirement, at));
         }
         // The next due watcher tick (FIX 22180): the host's hook runner, or
         // its first housekeeping pass, releases it once the vault is up
