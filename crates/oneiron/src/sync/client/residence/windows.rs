@@ -117,7 +117,7 @@ impl SyncClient {
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
+            return Err(TransportError::home_offline());
         };
         // A home that may not read the window's world is not told its name
         // (FIX 922 item 11): the thin cache stays read-only, as with no home.
@@ -286,7 +286,7 @@ impl SyncClient {
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
+            return Err(TransportError::home_offline());
         };
         // A home that may not read the window's world is not told its name or
         // the selector (FIX 3872): the window stays on disk, marked for the
@@ -406,7 +406,7 @@ impl SyncClient {
         let selector = base64::engine::general_purpose::STANDARD
             .encode(encode_sync_selector(selector).map_err(|_| refused())?);
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
-            return Err(TransportError::Storage("home node offline".into()));
+            return Err(TransportError::home_offline());
         };
         // A home that may not read the window's world is not told its name or
         // the selector (FIX 3872): the window stays promoted here.
