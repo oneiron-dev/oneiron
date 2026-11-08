@@ -153,6 +153,7 @@
 //! - `self.history`
 //! - `vault.sync.repo_manifests.conflict.review`
 //! - `vault.sync.repo_manifests.conflict.discard`
+//! - `vault.dreamer.follower.keyframe`
 //! - `connector.answer`
 //! - `self.browser.open`
 //! - `self.browser.observe`
@@ -1857,6 +1858,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "self.history"
                 | "vault.sync.repo_manifests.conflict.review"
                 | "vault.sync.repo_manifests.conflict.discard"
+                | "vault.dreamer.follower.keyframe"
                 | "connector.answer"
                 | "self.browser.open"
                 | "self.browser.observe"
