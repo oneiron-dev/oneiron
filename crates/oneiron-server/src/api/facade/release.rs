@@ -241,20 +241,24 @@ pub(crate) fn released_hook_stop(
 /// withheld from where the answer goes keeps the result on this device: the
 /// caller gets the content-free word that the call ran
 /// ([`details_on_device`]). Unknown rows withhold nothing, as for every
-/// facade answer ([`known_denied`]).
+/// facade answer ([`known_denied`]). `owner_whole_vault_export`: the owner's
+/// own whole-vault export, as the retry's route and his fresh proof name it
+/// ([`super::export_transfer::owner_whole_vault_export_admitted`]), released
+/// as a kept answer of it is (owner ruling 1-EXPORT = B).
 pub(crate) fn released_saved_result(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     verb: &str,
     rows: Option<Vec<EntityId>>,
     result: serde_json::Value,
+    owner_whole_vault_export: bool,
 ) -> serde_json::Value {
     let release = InvocationRelease {
         peer: auth.peer(),
         value: result,
         rows,
     };
-    replayed_value(vault, auth, verb, release)
+    replayed_value(vault, auth, verb, release, owner_whole_vault_export)
 }
 
 /// `output`, a facade row's answer, as `auth`, its caller now, may read it
@@ -265,14 +269,20 @@ pub(crate) fn released_saved_result(
 /// content-free word that the call ran ([`details_on_device`]). A fresh
 /// answer, or a drained one whose rows are unknown, is `output` as it is.
 /// The destination release follows for every answer ([`released_value`]).
+/// The owner's own whole-vault export (`owner_whole_vault_export`, chosen
+/// from the call's route) reads its rows as his credential reads them on
+/// this device (owner ruling 1-EXPORT = B).
 pub(super) fn drained_still_admitted(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     producers: &oneiron::memory::ProducerRows,
     output: serde_json::Value,
+    owner_whole_vault_export: bool,
 ) -> serde_json::Value {
     match producers.drained_rows() {
-        Some(rows) if !rows_still_admitted(vault, auth, &rows) => details_on_device(),
+        Some(rows) if !rows_still_admitted(vault, auth, &rows, owner_whole_vault_export) => {
+            details_on_device()
+        }
         _ => output,
     }
 }

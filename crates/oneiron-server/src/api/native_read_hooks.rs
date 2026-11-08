@@ -253,7 +253,16 @@ fn released_completed(
     if rows.is_none() {
         return details_on_device();
     }
-    released_saved_result(&server.vault, auth, method.tool_name(), rows, result)
+    let owner_whole_vault_export =
+        crate::api::facade::owner_whole_vault_export_admitted(server, auth, method.tool_name());
+    released_saved_result(
+        &server.vault,
+        auth,
+        method.tool_name(),
+        rows,
+        result,
+        owner_whole_vault_export,
+    )
 }
 
 /// The route body a rewrite is admitted and read from: the rewritten native
