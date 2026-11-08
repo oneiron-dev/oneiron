@@ -226,10 +226,16 @@ fn row_with_saved(
     require_saved: bool,
 ) -> (MemoryResult<Value>, Option<bool>) {
     // A call a budget window paced answers from its held row until its turn
-    // ran (FIX 8753), before any hook runs on it again.
+    // ran (FIX 8753), before any hook runs on it again. Its saved answer's
+    // rows are listed as a drained answer's, so the door that releases it
+    // judges them for this caller again (FIX 22294).
     if !require_saved
-        && let Some(reply) = crate::runtime_hooks::verb::paced_verb_reply(memory, verb)
+        && let Some(reply) = crate::runtime_hooks::verb::paced_verb_reply_listed(memory, verb)
     {
+        let reply = reply.map(|(value, saved)| {
+            memory.produced_by_saved(saved);
+            value
+        });
         return (reply, None);
     }
     let mut notice = None;
