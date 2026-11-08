@@ -262,7 +262,7 @@ impl Vault {
         let Some(record) = VERSIONS.get(&self.store, rtxn, &(*artifact_id, version))? else {
             return Ok(None);
         };
-        if !compaction_response_readable_in(self, rtxn, artifact_id)? {
+        if !compaction_response_readable_in(&self.store, rtxn, artifact_id)? {
             return Ok(None);
         }
         let asset = super::blob_artifact_asset_entity_id(&record.content_hash)?;
