@@ -75480,6 +75480,14 @@ pub struct MailSyncStatusView {
     pub bodies_waiting: u64,
     #[serde(rename = "deleted_at_provider")]
     pub deleted_at_provider: u64,
+    #[serde(rename = "claim_rechecks_pending")]
+    pub claim_rechecks_pending: u64,
+    #[serde(rename = "claim_rechecks_checked")]
+    pub claim_rechecks_checked: u64,
+    #[serde(rename = "claim_rechecks_review_needed")]
+    pub claim_rechecks_review_needed: u64,
+    #[serde(rename = "claim_rechecks_obsolete")]
+    pub claim_rechecks_obsolete: u64,
     #[serde(
         rename = "last_step_at",
         default,
