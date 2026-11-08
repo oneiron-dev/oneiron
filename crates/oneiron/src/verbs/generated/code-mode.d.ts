@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1406 code-mode rows (1363 host rows, 43 run rows), 4926 declarations.
-// Replies: 1213 fully typed, 192 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1405 code-mode rows (1362 host rows, 43 run rows), 4925 declarations.
+// Replies: 1213 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 118; unread shapes: none.
+// Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -3034,12 +3034,6 @@ declare namespace Sdk {
   type RepoSymbolsRenewOutput = RepoSymbolDeclarationView;
   type RepoSymbolsReleaseInput = { work: EntityId; declaration: EntityId };
   type RepoSymbolsReleaseOutput = { work: EntityId; declaration: EntityId; task: EntityId };
-  type LlmMessageRole = "system" | "user" | "assistant" | "tool";
-  type LlmMessage = { role: LlmMessageRole; content: ContentPart[] };
-  type LlmToolSpec = { name: string; description: string; input_schema: unknown };
-  type ResponseFormat = { format: "text" } | { format: "json"; schema: unknown };
-  type RepoModelGenerateInput = { messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown>; response_format: ResponseFormat };
-  type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions; token_scores?: unknown | null };
   type RepoProposalSubmitInput = { work: EntityId; path: string; content: number[]; message: string; declaration?: EntityId | null; repair_of?: EntityId | null };
   type RepoProposalSubmitOutput = { proposal: EntityId; admission_receipt: EntityId; work: EntityId; path: string; base_green: string; base_snapshot: string; session: EntityId; provenance_claim: EntityId; declaration?: EntityId | null; status: RepoProposalStatus };
   type RepoMergeQueueEnqueueInput = { work: EntityId; proposals: EntityId[]; declaration?: EntityId | null };
@@ -3530,10 +3524,15 @@ declare namespace Sdk {
   type DeterministicFallback = { name: string; config?: unknown | null };
   type CallClass = { kind: "durable"; fallback: DeterministicFallback } | { kind: "best_effort" };
   type TierPrecedence = { per_seat?: ModelTierRef | null; vault_policy?: ModelTierRef | null; purpose_default?: ModelTierRef | null; global_default: ModelTierRef; seat?: ModelTierRef | null };
+  type ResponseFormat = { format: "text" } | { format: "json"; schema: unknown };
   type CallEnvelope = { scope?: ScopeScope; purpose: CallPurpose; class: CallClass; tier: TierPrecedence; response_format: ResponseFormat; locality: ModelLocality; seat_effort?: ReasoningEffort | null };
+  type LlmMessageRole = "system" | "user" | "assistant" | "tool";
+  type LlmMessage = { role: LlmMessageRole; content: ContentPart[] };
+  type LlmToolSpec = { name: string; description: string; input_schema: unknown };
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
   type ModelRoleInput = { kind: "generate"; request: LlmRequest } | { kind: "embed"; text: string } | { kind: "tag"; text: string };
   type ModelRoleInvoke = { role: ModelRole; input: ModelRoleInput };
+  type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions; token_scores?: unknown | null };
   type NerSpan = { message: number; start: number; end: number; label: string; confidence: number };
   type CorefLink = { span: number; antecedent: number; confidence?: number | null };
   type Vad = { valence: number; arousal: number; dominance: number };
@@ -7564,10 +7563,6 @@ declare const vault: Sdk.VaultHost & {
       enqueue(input: Sdk.LiveRunRequest<Sdk.RepoMergeQueueEnqueueInput>): Promise<Sdk.RepoMergeQueueEnqueueOutput | StoredResult>;
       /** Reads the merge queue the attached run's own work is pinned under, with its own entries and what each waits behind. */
       observe(input: Sdk.LiveRunRequest<Sdk.RepoMergeQueueObserveInput>): Promise<Sdk.RepoMergeQueueObserveOutput | StoredResult>;
-    };
-    model: {
-      /** Serves the supplied request content on the attached live run's registered model seat and spend line. The host retains only the actual served request's provenance on this exact credential attachment for repo proposals; a rebind inherits none. */
-      generate(input: Sdk.LiveRunRequest<Sdk.RepoModelGenerateInput>): Promise<Sdk.LlmResponse | StoredResult>;
     };
     /** Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance; without that witness it holds typed, work kept. */
     proposal_submit(input: Sdk.LiveRunRequest<Sdk.RepoProposalSubmitInput>): Promise<Sdk.RepoProposalSubmitOutput | StoredResult>;
