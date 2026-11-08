@@ -359,12 +359,15 @@ pub struct FolderItemInput {
     pub row: u32,
 }
 
-/// What an ask did: the proposal held for Keep (none when no unit was
-/// answered), the units left unanswered with their receipts, and those it
-/// refused.
+/// What an ask did: a staged proposal or paid answers still needing staging,
+/// the units left unanswered with their receipts, and those it refused.
+/// Both held-result fields are empty when no unit produced work to retain.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ArtifactAskOutcome {
     pub proposed: Option<PendingProposalView>,
+    /// Paid decisions retained before byte staging; the existing Keep can
+    /// stage and settle them without asking those units again.
+    pub needs_staging: Option<PendingProposalView>,
     pub abstained: Vec<UnitAbstention>,
     pub refused: Vec<UnitRefusal>,
     /// First selected sheet row not completed; narrow the original range
@@ -1083,6 +1086,8 @@ impl Memory<'_> {
                 let mut run = if asked.is_empty() {
                     crate::edit_roundtrip::ArtifactAskRun {
                         proposal: None,
+                        sheet_answers: None,
+                        deferred_floor: None,
                         abstained: Vec::new(),
                         refused: Vec::new(),
                         read_rows: Vec::new(),
@@ -1115,20 +1120,43 @@ impl Memory<'_> {
         // What the ask read beside its base and its evidence waits with its
         // proposal for that proposal's readers (FIX 9312).
         let read: Vec<EntityId> = run.read_rows.iter().chain(&evidence).copied().collect();
-        let proposed = match &run.proposal {
-            Some(proposal) => Some(vault.retain_edit_proposal_with_reads(
+        let held = if let Some(work) = &run.sheet_answers {
+            vault.retain_sheet_answer_work_with_reads(
                 &artifact,
-                proposal,
+                &input.run_ref,
+                work,
                 made_by,
                 self.made_by_reader(made_by)?,
                 (actor, at),
                 &read,
-                None,
-            )?),
-            None => None,
+            )?;
+            if let Some(refusal) = run.deferred_floor {
+                return Err(crate::office_body::machine_memory_refused(refusal).into());
+            }
+            Some(vault.finish_pending_sheet_answers(&artifact, &input.run_ref, work.deadline)?)
+        } else {
+            match &run.proposal {
+                Some(proposal) => Some(vault.retain_edit_proposal_with_reads(
+                    &artifact,
+                    proposal,
+                    made_by,
+                    self.made_by_reader(made_by)?,
+                    (actor, at),
+                    &read,
+                    None,
+                )?),
+                None => None,
+            }
+        };
+        let (needs_staging, proposed) = match held {
+            Some(view) if view.kind == crate::edit_settle::PendingProposalKind::NeedsStaging => {
+                (Some(view), None)
+            }
+            view => (None, view),
         };
         let outcome = ArtifactAskOutcome {
             proposed,
+            needs_staging,
             abstained: run.abstained,
             refused: run.refused,
             next_sheet_row: run.next_sheet_row,

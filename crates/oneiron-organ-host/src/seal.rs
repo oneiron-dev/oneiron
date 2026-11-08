@@ -36,6 +36,7 @@ mod fetch;
 mod file_keys;
 mod observe;
 mod pdf_work;
+mod producer;
 mod verify;
 
 pub use custody_keys::CustodySealKeys;
@@ -51,8 +52,8 @@ use std::time::{Duration, Instant};
 
 use oneiron::Vault;
 use oneiron::blob_artifact::esign::{
-    EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict,
-    SealActiveContentFacts, SealDegrade, SealProfile, SealVerdict,
+    EsignSealError, EsignSealInput, EsignSealProducer, EsignSealRequest, EsignSealed, EsignSealer,
+    EsignSealerError, EsignVerdict, SealActiveContentFacts, SealDegrade, SealProfile, SealVerdict,
 };
 use oneiron::skill_hub::pack_catalog::PackOrganBinary;
 use oneiron_organ_protocol::seal::SealRevisionClassification;
@@ -497,95 +498,10 @@ impl HostedSealer<'_> {
 impl EsignSealer for HostedSealer<'_> {
     fn seal(
         &self,
-        input: &EsignSealInput,
         request: &EsignSealRequest,
-    ) -> Result<EsignSealed, EsignSealerError> {
-        // The last call's lines go first: a call refused before it asks
-        // anything has none.
-        self.asked
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
-        let call = SealCall::new(self.keys, &request.operation_id, input)?;
-        let identity = Identity { call: &call };
-        let sign = Sign { call: &call };
-        let fetch = TimedFetch {
-            timeout: self.settings.fetch_timeout,
-            vault: self.vault,
-        };
-        let memory = MemoryGrow;
-        let handlers = AskHandlers::none()
-            .with(ASK_IDENTITY, &identity)
-            .with(ASK_SIGN, &sign)
-            .with(ASK_NET_FETCH, &fetch)
-            .with(ASK_MEMORY_GROW, &memory);
-        let _publish = Publish {
-            asked: &self.asked,
-            handlers: &handlers,
-        };
-        let args = to_value(&SealArgs {
-            operation_id: request.operation_id.clone(),
-            profile: request.profile,
-            now_ms: self.now_ms(),
-            config: self.config(true)?,
-            signature_revisions: call.revision_args(),
-        })
-        .map_err(|_| reply_invalid())?;
-        measure_operation_id(self.vault, &request.operation_id);
-        measure_input(self.vault, &input.pdf);
-        let lent = vec![
-            LentInput {
-                media_type: PDF.to_owned(),
-                bytes: input.pdf.clone(),
-            },
-            LentInput {
-                media_type: REVISIONS.to_owned(),
-                bytes: call.suffixes(),
-            },
-        ];
-        let called = self.sized_call(self.call(VERB_SEAL, SEAL_SCHEMA, args), lent, &handlers);
-        // Every ask the call made, however it ended.
-        measure_asks(self.vault, &handlers.asked());
-        let (reply, outcome) = called?;
-        let (evidence_sha256, requested, achieved, degraded, self_verify) =
-            match from_value(&reply)? {
-                SealReply::Failed(failure) => return Err(failure.into_error(self.vault)),
-                SealReply::Sealed {
-                    evidence_sha256,
-                    requested,
-                    achieved,
-                    degraded,
-                    self_verify,
-                } => (evidence_sha256, requested, achieved, degraded, self_verify),
-            };
-        measure_report(self.vault, &self_verify.report_json);
-        let sealed = outcome
-            .outputs
-            .iter()
-            .find(|output| output.name == SEALED_OUTPUT && output.media_type == PDF)
-            .ok_or_else(reply_invalid)?;
-        // Validation data and a document timestamp come after the signed
-        // revision, and only for a profile requested with them: what the
-        // organ says it achieved never decides it.
-        let witness = call.admit(sealed, request.profile >= SealProfile::BaselineLt)?;
-        let evidence: [u8; 32] = Sha256::digest(&sealed[..]).into();
-        if evidence_sha256.as_slice() != evidence {
-            return Err(reply_invalid());
-        }
-        // The call's outputs give back their budget before the fresh
-        // verification books its own.
-        let sealed = sealed.to_vec();
-        drop(outcome);
-        self.admit_fresh(&sealed, &witness, achieved, request.profile)?;
-        measure_output(self.vault, &input.pdf, &sealed);
-        Ok(EsignSealed {
-            bytes: sealed,
-            evidence_sha256: evidence,
-            requested,
-            achieved,
-            degraded,
-            self_verify: self_verify.into_verdict(),
-        })
+        producer: &mut dyn EsignSealProducer,
+    ) -> Result<EsignSealed, EsignSealError> {
+        self.seal_produced(request, producer)
     }
 
     fn verify(&self, pdf: &[u8]) -> Result<EsignVerdict, EsignSealerError> {

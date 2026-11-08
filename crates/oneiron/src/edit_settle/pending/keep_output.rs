@@ -122,7 +122,7 @@ impl PendingRow {
                 world: *producer_world,
                 facet: *producer_facet,
             },
-            PendingBody::Edit { .. } => BirthPosition::default(),
+            PendingBody::SheetAnswers { .. } | PendingBody::Edit { .. } => BirthPosition::default(),
         }
     }
 }

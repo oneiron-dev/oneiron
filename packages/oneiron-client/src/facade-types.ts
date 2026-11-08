@@ -6241,7 +6241,7 @@ export type BornFromArtifact = { artifact_id: EntityId; version: number; at: num
 /** `oneiron::blob_artifact::verbs::BornFromView` */
 export type BornFromView = { born: EntityId[]; born_records: RecordRef[]; versions: BornFromArtifact[] }
 /** `oneiron::edit_settle::pending::view::PendingProposalKind` */
-export type PendingProposalKind = "edit" | "output"
+export type PendingProposalKind = "needs_staging" | "edit" | "output"
 /** `oneiron::edit_settle::pending::view::PendingProposalView` */
 export type PendingProposalView = { artifact_id: EntityId; artifact: RecordRef; proposal_ref: string; kind: PendingProposalKind; base_version?: number | null; content_hash: string; byte_len: number; retained_by: EntityId; retained_by_record?: RecordRef | null; retained_at: number; made_by?: MadeBy | null; summary: unknown }
 /** `oneiron::edit_settle::organ_wait::OrganWaitView` */
@@ -6321,7 +6321,7 @@ export type UnitAbstention = { unit: unknown; decision?: TypedDecision | null; j
 /** `oneiron_store::blob_artifact::unit_refusal::UnitRefusal` */
 export type UnitRefusal = { unit: unknown; reason: string; judged_live?: LivePin | null }
 /** `oneiron::blob_artifact::verbs::ArtifactAskOutcome` */
-export type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[]; next_sheet_row?: number | null }
+export type ArtifactAskOutcome = { proposed?: PendingProposalView | null; needs_staging?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[]; next_sheet_row?: number | null }
 /** `oneiron::blob_artifact::verbs::ArtifactAdmitSubmit` */
 export type ArtifactAdmitSubmit = { ask: ArtifactAskSubmit; decisions: TypedDecision[] }
 /** `oneiron::critic::review::submit::CriticBinding` */

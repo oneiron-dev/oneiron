@@ -84,6 +84,7 @@ pub(super) fn native_output_pending_row(
         base_version: base.map(|(version, _)| version),
         base_content_hash: base.map(|(_, hash)| hash),
         explicit_fork: explicit_fork,
+        next_sheet_row: None,
         new_bytes: output.bytes.clone(),
         read_rows: Vec::new(),
         deck: deck,
