@@ -494,13 +494,14 @@ fn live_note_in_txn(
     if header.entity_type != ENTITY_TYPE_NOTE {
         return Ok(None);
     }
-    let bytes = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
-    #[cfg(feature = "sync")]
-    let resolved = crate::entity_doc::resolve_record_body(&vault.store, txn, id, bytes)?;
-    #[cfg(feature = "sync")]
-    let bytes = resolved.as_slice();
-    let bytes = crate::note::live_body_in_txn(&vault.store, txn, id, ENTITY_TYPE_NOTE, bytes)?;
-    let note = crate::note::decode_note_body_in_txn(&vault.store, txn, &bytes)?;
+    // The entry's core and its document's live text, in this read.
+    let note = crate::note::live_note_from_in_txn(
+        &vault.store,
+        &vault.store,
+        txn,
+        id,
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    )?;
     Ok(Some((note, header.learned_at)))
 }
 

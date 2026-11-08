@@ -3,8 +3,9 @@
 //! The run's, the credential's and the delegation parents' bounds are three
 //! separate typed descriptions, and none of them is a Grant. The policy's
 //! concrete class ceilings are dated descriptions of configured rows, with
-//! no verdict: class verdicts stay unavailable. Execution rechecks every one
-//! of them, and nothing here is read back as authority.
+//! no verdict: the per-class verdicts beside them are their own lines
+//! (`class_verdicts`, FIX 20734). Execution rechecks every one of them, and
+//! nothing here is read back as authority.
 //!
 //! A `null` value is the source's own none (no bound, no holder); a whole
 //! description no host produced is left out of the brief and named on its
@@ -15,7 +16,7 @@
 //! verified ([`brief_credential_ceiling`]); the parent ceiling and the class
 //! ceilings are read from the store
 //! ([`crate::Vault::self_brief_parent_ceiling`],
-//! [`crate::Vault::self_brief_ceilings`]). None of them writes anything.
+//! [`crate::Vault::self_brief_class_reads`]). None of them writes anything.
 
 use std::collections::BTreeSet;
 

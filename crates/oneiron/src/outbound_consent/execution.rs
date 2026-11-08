@@ -23,6 +23,7 @@ use super::scope::{
     ScopedMcpCall, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason,
     evaluate_scoped_mcp_call,
 };
+pub(super) use super::scoped_prepared_effect::scoped_prepared_effect;
 use super::tool_call::PreparedToolCall;
 
 /// Counted output of one consent-bound durable dispatch.
@@ -195,52 +196,14 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
             prepared_call.for_agent_run(fenced)
         }
     };
-    let call = prepared_call.call().clone();
-    // FIX 6424 part 3: the gate input pins this prepared call.
-    let gate = super::approval::scoped_mcp_pinned_gate_input(
-        principal_ref,
+    let prepared = scoped_prepared_effect(
+        vault,
         grant_id,
+        principal_ref,
+        attempt_id,
+        call_seq,
         &prepared_call,
-        attempt_id,
-        call_seq,
-    );
-    let idempotency_supported = prepared_call.idempotency_supported();
-    // The Send class follows the dispatched tool's own effect (FIX 8688): a
-    // tool its approved slate row declares read-only never debits `Sends`;
-    // any other tool on a counterparty-communication catalog does.
-    let budget_class = {
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        crate::connector_key::scoped_tool_effect_in_txn(
-            &vault.store,
-            &txn,
-            &call.server,
-            prepared_call.is_read_only(),
-        )?
-        .budget_class()
-    };
-    let prepared = crate::outbound_chokepoint::PreparedEffect {
-        attempt_id,
-        call_seq,
-        server: call.server,
-        tool: call.tool,
-        payload: prepared_call.frozen_bytes().to_vec(),
-        idempotency_supported,
-        resolved_endpoint: Some(call.resolved_endpoint),
-        gate,
-        budget_class,
-        authorization: crate::outbound_chokepoint::PreparedAuthorization::ScopedMcp {
-            grant_id,
-            principal_ref: principal_ref.to_owned(),
-            prepared: Box::new(prepared_call.clone()),
-        },
-        verified_actor: None,
-        owner_proof: None,
-        dedupe_key: None,
-        suppression_receipt: None,
-        admission_ceiling: None,
-        co_actor: None,
-        exclusive_route: None,
-    };
+    )?;
     // FIX 4747 slices 5, 7: a call an agent run makes goes only while the
     // run's machine holds the run.
     let mut transport = ScopedResultTransport::new(sender)
