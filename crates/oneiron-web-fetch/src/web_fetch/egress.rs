@@ -13,11 +13,12 @@
 //! the node's own addresses afresh at every check, so an address assigned
 //! after boot is refused too (FIX 6101). The fetcher checks every page it is
 //! asked for, each crawl page included, before any rung runs; it hands each
-//! rung the guard ([`Renderer::render_guarded`]) for the hops and addresses
+//! rung the guard in the page's [`RenderContext`] for the hops and addresses
 //! the rung reaches, and checks the navigation-final URL every rung hands
-//! back. The host's transport (the client
-//! [`build_web_fetch_client`](super::build_web_fetch_client) builds) checks
-//! every name it connects to, a redirect's included, through
+//! back. The readability rung checks each redirect hop it follows before it
+//! sends it, and its transport (the client
+//! [`build_single_hop_client`](super::build_single_hop_client) builds)
+//! checks every name it connects to through
 //! [`HostedEgressGuard::refuses_resolved`], and fails that connection with
 //! the [`HostedEgressRefusal`]; a host browser checks each request it sends
 //! with [`HostedEgressGuard::check_request`]. Every one of these refusals
@@ -38,8 +39,8 @@ use reqwest::Url;
 
 use super::render::{redact_url_credentials, validated_web_url};
 use super::{
-    RenderedPage, Renderer, RendererError, RendererErrorKind, RendererResult, WebFetchError,
-    WebFetchResult, WebFetcher,
+    RenderContext, RenderedPage, Renderer, RendererError, RendererErrorKind, RendererResult,
+    WebFetchError, WebFetchResult, WebFetcher,
 };
 
 pub use crate::web_acquisition::HOSTED_INFRASTRUCTURE_REASON;
@@ -174,6 +175,21 @@ impl HostedEgressGuard {
         match self.refuses(resolved_ip) {
             Some(refused) => Err(refused.request_error(request_url)),
             None => Ok(()),
+        }
+    }
+
+    /// Why a redirect hop to `url` is refused before it is sent: an address
+    /// literal by its address, and a listed private name at an origin no
+    /// entry lists (FIX 7657). A named hop's addresses are checked by the
+    /// client's resolver as it connects.
+    pub(super) fn refuses_hop(&self, url: &Url) -> Option<HostedEgressRefusal> {
+        let literal = url
+            .host_str()
+            .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
+            .and_then(|host| host.parse::<IpAddr>().ok());
+        match literal {
+            Some(ip) => self.refuses(ip),
+            None => self.refuses_origin(url),
         }
     }
 
@@ -402,9 +418,9 @@ pub use crate::web_acquisition::HostedEgressRefusal;
 impl WebFetcher {
     /// Makes this a managed (hosted) node's fetcher (SCAN C447): every page
     /// it is asked for, each crawl page included, is refused before any rung
-    /// runs when the guard refuses it; each rung renders with the guard
-    /// ([`Renderer::render_guarded`]); and the navigation-final URL each
-    /// rung hands back is checked too. Takes a shared reference, so a host
+    /// runs when the guard refuses it; each rung renders with the guard in
+    /// the page's [`RenderContext`]; and the navigation-final URL each rung
+    /// hands back is checked too. Takes a shared reference, so a host
     /// installs it on a ladder it was handed, at first use; a fetcher that
     /// already carries a guard keeps it. A self-hosted node's fetcher
     /// carries none.
@@ -413,27 +429,27 @@ impl WebFetcher {
         let _ = self.egress.set(guard);
     }
 
-    /// The guard's check of `url`, when this fetcher carries one.
-    pub(super) fn admit_destination(&self, url: &Url) -> WebFetchResult<()> {
+    /// `context` carrying this fetcher's guard, when it has one: the context
+    /// every rung of one page renders in.
+    pub(super) fn render_context(&self, context: RenderContext) -> RenderContext {
         match self.egress.get() {
-            Some(guard) => guard.admit(url),
-            None => Ok(()),
+            Some(guard) => context.with_hosted_guard(Arc::clone(guard)),
+            None => context,
         }
     }
 
-    /// Runs one rung: unguarded on a self-hosted node; on a managed one
-    /// through [`Renderer::render_guarded`], with the navigation-final URL it
-    /// hands back checked as well (FIX 6101).
+    /// Runs one rung in `context`; on a managed node, with the
+    /// navigation-final URL it hands back checked as well (FIX 6101).
     pub(super) fn render_rung(
         &self,
         renderer: &dyn Renderer,
         url: &str,
+        context: &RenderContext,
     ) -> RendererResult<RenderedPage> {
-        let Some(guard) = self.egress.get() else {
-            return renderer.render(url);
-        };
-        let page = renderer.render_guarded(url, guard)?;
-        guard.admit_landing(&page)?;
+        let page = renderer.render(url, context)?;
+        if let Some(guard) = context.hosted_guard() {
+            guard.admit_landing(&page)?;
+        }
         Ok(page)
     }
 }

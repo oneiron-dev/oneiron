@@ -4,6 +4,7 @@
 mod actions;
 mod actor_dispatch;
 mod admission;
+mod admission_intent;
 mod board_observations;
 mod board_setup;
 mod booking_call;
