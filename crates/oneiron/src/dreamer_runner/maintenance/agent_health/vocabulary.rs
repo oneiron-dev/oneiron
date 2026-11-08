@@ -340,6 +340,10 @@ pub struct AgentHealthCard {
     /// The newest ask of the Coach (`ask_coach`), and its answer once drafted.
     #[serde(default)]
     pub coach: Option<AgentHealthCoachAsk>,
+    /// An erase scrubbed an unattributed Coach draft on this card. Kept
+    /// across newer asks so saved copies cannot regain the erased text.
+    #[serde(default)]
+    pub legacy_draft_scrubbed: bool,
     /// The typed brief the newest finding's review observed on the TASK
     /// (`brief`): a witness, never a launch snapshot. An ask and an outcome
     /// receipt each keep their own copy.
