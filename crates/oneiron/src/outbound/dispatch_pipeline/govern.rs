@@ -224,6 +224,44 @@ fn prepared_gate_effect(
     ))
 }
 
+/// The gate input and frozen payload of a send not yet dispatched, built as
+/// `dispatch_prepared` builds them, with no write (FIX 22102): `request`
+/// prepared under `verified_actor`, frozen and validated, and the Gate input
+/// composed over its frozen payload. It resolves no delivery window, runs no
+/// admission stage, provisions no binding authority, and reaches no sink or
+/// dispatch.
+/// # Errors
+/// The request's own refusal at preparation or freeze (an unknown channel or
+/// verb, an off-record session, an unsettled mention, a sender or replay that
+/// does not match its admitted binding), or a storage failure.
+pub(crate) fn outbound_preflight_effect(
+    vault: &Vault,
+    request: OutboundDispatchRequest,
+    verified_actor: (crate::EntityId, crate::edge::EdgeActorClass),
+) -> Result<(ExternalEffectGateInput, Vec<u8>), OutboundDispatchError> {
+    let mut prepared = super::request_binding::PreparedOutboundDispatch::prepare(
+        vault,
+        request,
+        Some(verified_actor),
+        None,
+    )?;
+    prepared.freeze_and_validate(vault)?;
+    let payload = prepared
+        .payload
+        .take()
+        .ok_or(crate::error::Error::InvariantViolation(
+            "missing outbound payload",
+        ))?;
+    let effect = gate_input(
+        &prepared.request,
+        prepared.verb_contract,
+        prepared.policy_risk,
+        Some(payload.as_slice()),
+        prepared.native_mail_recipient,
+    );
+    Ok((effect, payload))
+}
+
 /// FIX 6424: the approve-once digest a held `effect` names, 64 lower-hex,
 /// the one the Gate's spend lookup composes; `None` for an effect whose
 /// family pins no target.

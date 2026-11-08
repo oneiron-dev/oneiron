@@ -161,6 +161,9 @@ impl ExternalEffectJudgment {
         {
             self.decision = judged.decision;
         }
+        // An owner press releases the message only where it releases every
+        // recipient (FIX 22102).
+        self.press_supplies_authority &= judged.press_supplies_authority;
         if self.envelope_reservation.is_none() {
             self.envelope_reservation = judged.envelope_reservation;
         }
@@ -504,6 +507,10 @@ fn judge_counterparty_policy(
         })
         .transpose()?
         .flatten();
+    // The one proposed public effect a publish press can release.
+    let publish_press_target = hydrated_effect.channel == "artifact"
+        && hydrated_effect.verb == "publish"
+        && hydrated_effect.brief_ref.is_some();
     if let Some(effect) = input.external_effect.as_mut() {
         // A proven envelope reservation is the live standing Grant that
         // authorizes this send. An earlier matched grant keeps its ref when
@@ -519,10 +526,7 @@ fn judge_counterparty_policy(
             mail_retry_authorized || ((mail_once || source_reply) && approve_once.is_some());
         // Only a still-available marker looked up by the engine-computed,
         // exact publish digest can release this one proposed public effect.
-        effect.artifact_publish_approve_once = approve_once.is_some()
-            && hydrated_effect.channel == "artifact"
-            && hydrated_effect.verb == "publish"
-            && hydrated_effect.brief_ref.is_some();
+        effect.artifact_publish_approve_once = approve_once.is_some() && publish_press_target;
         // ONE-1752: the same post-conversion seam. Hydration cannot reach a
         // context that does not exist until `gate_input()` builds it, so the
         // override it resolved is written on here, once, before evaluation.
@@ -820,9 +824,16 @@ fn judge_counterparty_policy(
     } else {
         None
     };
+    // A preflight reads whether the owner's press on this one effect would
+    // supply the external-effect authority it lacks (FIX 22102).
+    let press_supplies_authority = decision
+        .reason_codes()
+        .contains(&GateReasonCode::PendingExternalEffectAuthority)
+        && policy.press_supplies_external_effect_authority(&input, mail_once, publish_press_target);
     Ok(ExternalEffectJudgment {
         decision,
         created_at,
+        press_supplies_authority,
         input,
         binding,
         grant_ref,

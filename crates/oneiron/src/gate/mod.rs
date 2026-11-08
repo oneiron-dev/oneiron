@@ -197,21 +197,16 @@ use self::dreamer_precommit::{
     DREAMER_DEGENERATE_VALUE_PREFIXES, DREAMER_RUNTIME_RECORD_PREDICATES, DreamerPrecommitInput,
     validate_dreamer_precommit,
 };
-#[allow(unused_imports)] // read by can(effect), FIX 22102 slice 1b
-pub(crate) use self::effect::ExternalEffectJudgment;
-#[allow(unused_imports)] // read by can(effect), FIX 22102 slice 1b
-pub(crate) use self::effect::hydrate_external_effect_contact_at;
-#[allow(unused_imports)] // read by can(effect), FIX 22102 slice 1b
-pub(crate) use self::effect::judge_external_effect_in_txn;
 pub(crate) use self::effect::live_grant_covering_effect_in_txn;
 pub(crate) use self::effect::{
     ApprovalContext, ApprovalTarget, BrowserSendTarget, CampaignLegFacts,
-    ChannelIdentityLifecycleFacts, ExternalEffectGovernance, LinearMirrorFacts, OutboundSendFacts,
-    PairAdmission, ScopedMcpCallFacts, check_external_effect_policy,
-    check_external_effect_policy_pair, code_wait_approval_digest, code_wait_standing_bound,
-    counterparty_send_override_in_txn, evaluate_external_effect_policy,
-    external_effect_approval_digest, hydrate_external_effect_contact,
-    native_mail_cold_approval_digest, record_external_effect_policy,
+    ChannelIdentityLifecycleFacts, ExternalEffectGovernance, ExternalEffectPreflight,
+    LinearMirrorFacts, OutboundSendFacts, PairAdmission, PreflightBudget, PreflightVerdict,
+    ScopedMcpCallFacts, check_external_effect_policy, check_external_effect_policy_pair,
+    code_wait_approval_digest, code_wait_standing_bound, counterparty_send_override_in_txn,
+    evaluate_external_effect_policy, external_effect_approval_digest,
+    hydrate_external_effect_contact, judge_external_effect_in_txn,
+    native_mail_cold_approval_digest, preflight_answer_in_txn, record_external_effect_policy,
     record_held_external_effect_policy,
 };
 pub(crate) use self::effect::{ExternalEffectCheck, check_external_effect_policy_paced};
