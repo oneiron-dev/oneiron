@@ -90,8 +90,10 @@ impl Vault {
             BlobContent::Bytes(bytes) => {
                 dir.import_sealing(&digest, len, &mut Cursor::new(bytes), false, instance)?
             }
+            // Checked as it streams: other bytes than the measured body fail
+            // the copy before it publishes under this digest (FIX 22074).
             BlobContent::File(file) => {
-                dir.import_sealing(&digest, len, &mut file.reader()?, false, instance)?
+                dir.import_sealing(&digest, len, &mut file.checked_reader()?, false, instance)?
             }
         };
         Ok(Some(StagedPendingBody {
