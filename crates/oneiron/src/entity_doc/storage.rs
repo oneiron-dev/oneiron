@@ -17,8 +17,10 @@ use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+mod body;
 mod history;
 mod repo_index;
+pub(crate) use body::body_with_document;
 pub(crate) use history::{record_bodies_at_in_txn, record_body_history_in_txn};
 pub(crate) use repo_index::reindex_repo_document_in_txn;
 
@@ -746,6 +748,22 @@ pub(crate) fn resolve_record_body(
     body_with_document(&h.field, body, &doc)
 }
 
+/// The exact resolved output length without allocating its text or output bytes.
+/// Loading the document and decoding its pointer and metadata still allocate.
+pub(crate) fn resolve_record_body_len(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    body: &[u8],
+) -> Result<u64> {
+    let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? else {
+        return Ok(body.len() as u64);
+    };
+    require_live(store, txn, entity)?;
+    let doc = load(store, txn, &h)?;
+    body::body_len_with_document(&h.field, body, &doc)
+}
+
 /// The common document, not a second revision-owned text document.
 pub(crate) fn record_document(
     store: &impl crate::store::ManifestDbs,
@@ -786,46 +804,4 @@ pub(crate) fn record_body_at(
     }
     let version = doc.fork(frontier)?;
     body_with_document(&h.field, body, &version)
-}
-
-/// A typed read projection of the body and metadata at one document version.
-pub(crate) fn body_with_document(
-    field: &TextField,
-    body: &[u8],
-    doc: &EntityDoc,
-) -> Result<Vec<u8>> {
-    match field {
-        TextField::Utf8Body => Ok(doc.text().into_bytes()),
-        TextField::MapField(field) => {
-            let value = rmpv::decode::read_value(&mut std::io::Cursor::new(body))
-                .map_err(|_| Error::CorruptedIndex("document pointer row"))?;
-            let rmpv::Value::Map(mut fields) = value else {
-                return Err(Error::CorruptedIndex("document pointer row"));
-            };
-            fields.retain(|(key, _)| {
-                key.as_str() != Some("entity_doc_ref")
-                    && key.as_str() != Some(field.as_str())
-                    && !key.as_str().is_some_and(super::metadata::is_metadata_field)
-            });
-            fields.push((
-                rmpv::Value::from(field.as_str()),
-                rmpv::Value::from(doc.text()),
-            ));
-            let record_fields = doc.record_fields()?;
-            for (key, value) in doc.metadata()? {
-                if key == *field {
-                    return Err(Error::CorruptedIndex(
-                        "body field duplicated in document metadata",
-                    ));
-                }
-                if record_fields.contains(&key) {
-                    fields.push((rmpv::Value::from(key), value));
-                }
-            }
-            let mut out = Vec::new();
-            rmpv::encode::write_value(&mut out, &rmpv::Value::Map(fields))
-                .map_err(|_| invalid("document view encoding"))?;
-            Ok(out)
-        }
-    }
 }

@@ -15,6 +15,7 @@ mod can;
 mod catalog_fragment;
 mod comm_widen;
 mod connector;
+mod campaign_enrollment;
 mod connector_call;
 mod connector_pack;
 mod connector_reply_retry;
@@ -65,6 +66,9 @@ mod proxy;
 mod receipts_page;
 mod record_erase;
 mod reply;
+// FIX 13274: the owner reviews and settles a retained document-copy edit.
+#[cfg(feature = "sync")]
+mod repo_copy_edit;
 #[cfg(feature = "sync")]
 mod repo_manifest_conflict;
 mod research;
@@ -309,6 +313,12 @@ pub struct TaskCreateRequest {
     /// Milestone; absent is a root.
     #[serde(default)]
     pub parent_ref: Option<String>,
+    /// When the TASK falls due, Unix seconds (FIX 4749). A due TASK is a
+    /// watcher: it ticks once on `schedule.tick` after this time, and a hook
+    /// bound to that tick returns Nothing or Enqueue. Only a brief-less
+    /// standard task carries one; absent is no tick.
+    #[serde(default)]
+    pub due_at: Option<u64>,
 }
 
 /// The create spec one `tasks.create` request names, owned by the
@@ -335,6 +345,10 @@ pub fn task_create_spec(
     };
     let spec = match input.ttl {
         Some(ttl) => spec.with_ttl(ttl),
+        None => spec,
+    };
+    let spec = match input.due_at {
+        Some(due_at) => spec.with_due_at(due_at),
         None => spec,
     };
     let spec = match parent_ref {
@@ -451,6 +465,7 @@ pub use self::catalog_fragment::{
 };
 pub use self::comm_widen::*;
 pub use self::connector::*;
+pub use self::campaign_enrollment::*;
 pub use self::connector_call::*;
 pub use self::connector_pack::*;
 pub use self::connector_reply_retry::*;
@@ -501,6 +516,8 @@ pub use self::proxy::*;
 pub use self::receipts_page::*;
 pub use self::record_erase::*;
 pub use self::reply::*;
+#[cfg(feature = "sync")]
+pub use self::repo_copy_edit::*;
 #[cfg(feature = "sync")]
 pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
