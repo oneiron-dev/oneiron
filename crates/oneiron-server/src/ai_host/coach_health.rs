@@ -211,6 +211,9 @@ fn parse_draft(text: &str) -> Option<AgentHealthCoachDraft> {
 fn message(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text, signature: None }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     }
 }

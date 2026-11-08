@@ -341,7 +341,10 @@ fn carried(resident: &EntityId, craft: &LlmMessage) -> Option<LlmMessage> {
 fn system(text: String) -> LlmMessage {
     LlmMessage {
         role: LlmMessageRole::System,
-        content: vec![ContentPart::Text { text, signature: None }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     }
 }
 

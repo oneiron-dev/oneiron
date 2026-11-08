@@ -256,7 +256,7 @@ pub(super) async fn generate(
                 text:
                     serde_json::json!({"schema_validation_errors":errors,"required_schema":schema})
                         .to_string(),
-                        signature: None,
+                signature: None,
             }],
         });
     }

@@ -9,13 +9,14 @@ pub(super) mod projection;
 mod run;
 mod session;
 mod storage;
+mod tail;
 
 use std::cell::Cell;
 use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::receipt::{ReceiptKind, hex_lower};
+use crate::receipt::hex_lower;
 use crate::runtime_hooks::block::HookBlock;
 use crate::runtime_hooks::lineage::LineageLink;
 use crate::runtime_hooks::outcome::{BlockRequest, HookOutcome};
@@ -35,54 +36,6 @@ use super::{
 };
 
 use run::RunRecord;
-
-/// Receipts the input's tail carries.
-const RECEIPT_TAIL: usize = 8;
-/// The tail's kinds: the full receipt family (FIX 1429).
-const RECEIPT_TAIL_KINDS: [ReceiptKind; 13] = [
-    ReceiptKind::Outbound,
-    ReceiptKind::Gate,
-    ReceiptKind::IdentityLifecycle,
-    ReceiptKind::ScopedRead,
-    ReceiptKind::Share,
-    ReceiptKind::ArtifactSettle,
-    ReceiptKind::ProposalOutcome,
-    ReceiptKind::CommitmentLifecycle,
-    ReceiptKind::Extraction,
-    ReceiptKind::ServedForm,
-    ReceiptKind::Hook,
-    ReceiptKind::ReferenceRefusal,
-    ReceiptKind::TaskLifecycle,
-];
-/// A room chain's receipt tail: base's family tail and the room's own Hook
-/// receipts, one per receipt (the room's wins), newest first, cut at
-/// [`RECEIPT_TAIL`] (FIX 5429). With no room receipt, base's tail as it is.
-fn merged_tail(
-    base: Vec<crate::memory::MemoryReceipt>,
-    room: Vec<crate::memory::MemoryReceipt>,
-) -> Vec<crate::memory::MemoryReceipt> {
-    if room.is_empty() {
-        return base;
-    }
-    let mut tail = room;
-    for receipt in base {
-        if !tail
-            .iter()
-            .any(|kept| kept.kind == receipt.kind && kept.receipt_ref == receipt.receipt_ref)
-        {
-            tail.push(receipt);
-        }
-    }
-    tail.sort_by(|left, right| {
-        right
-            .created_at
-            .cmp(&left.created_at)
-            .then_with(|| left.kind.cmp(&right.kind))
-            .then_with(|| left.receipt_ref.cmp(&right.receipt_ref))
-    });
-    tail.truncate(RECEIPT_TAIL);
-    tail
-}
 
 /// The host verb a pre-hook may never skip: a skipped compaction overflows
 /// the next turn (ARCH-0080 §5).
@@ -464,31 +417,7 @@ impl<'c> Chain<'c> {
         now: u64,
         turn: Option<Arc<TaskWorkTurn>>,
     ) -> Self {
-        let kinds = RECEIPT_TAIL_KINDS.map(|kind| kind.as_str().to_owned());
-        let base = vault
-            .memory(call.actor, filter::edge_class(call.class))
-            .receipts_of_kinds(RECEIPT_TAIL, &kinds)
-            .ok();
-        // A chain in a room also reads the room's own Hook receipts, which
-        // base's family does not hold, each with its source rows (FIX 5429).
-        let (records, sources): (Vec<_>, Vec<_>) = match &storage {
-            VerbHookStorage::Session(hooks) => hooks
-                .room_hook_receipts(vault, call.reader.as_ref(), RECEIPT_TAIL)
-                .unwrap_or_default()
-                .into_iter()
-                .unzip(),
-            VerbHookStorage::Canonical => (Vec::new(), Vec::new()),
-        };
-        let room = crate::memory::Memory::room_tail_receipts(records);
-        let room_sources = room
-            .iter()
-            .map(|receipt| receipt.receipt_ref.clone())
-            .zip(sources)
-            .collect();
-        let tail = base
-            .map(|base| merged_tail(base, room))
-            .and_then(|receipts| serde_json::to_value(receipts).ok())
-            .unwrap_or_else(|| Value::Array(Vec::new()));
+        let (tail, room_sources) = tail::receipt_tail(vault, storage, call);
         Self {
             vault,
             storage,

@@ -123,13 +123,15 @@ impl GeminiAccumulator {
                             )?,
                         );
                     } else {
-                        events.extend(self.assembly.text_with_signature(
-                            &part_id,
-                            text,
-                            part.get("thoughtSignature")
-                                .and_then(Value::as_str)
-                                .map(str::to_owned),
-                        )?);
+                        events.extend(
+                            self.assembly.text_with_signature(
+                                &part_id,
+                                text,
+                                part.get("thoughtSignature")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_owned),
+                            )?,
+                        );
                     }
                 } else if let Some(call) = part.get("functionCall") {
                     self.end_text(&mut events)?;

@@ -2,15 +2,17 @@
 //! per settled proposal, appended in the transaction of the door that
 //! settles it. The sequence is drawn there, so feed order is commit order.
 //! A settlement no fact binding reads appends nothing (FIX 22154). The
-//! runner prunes the rows every hook binding has passed, and an erase leaves
-//! a row that names the erased proposal or settler at its sequence with
-//! nothing in it (FIX 22141).
+//! runner and each housekeeping pass prune the rows every hook binding has
+//! passed (FIX 22180), and an erase leaves a row that names the erased
+//! proposal or settler at its sequence with nothing in it (FIX 22141).
 
+use std::collections::BTreeSet;
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
 use crate::ports::EntityStoreRead;
+use crate::runtime_hooks::store::source_erased_in_txn;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -67,7 +69,9 @@ impl SettledRow {
 /// settlement with no reader there ([`super::has_reader_in_txn`]: hooks
 /// off, or no enabled fact binding that takes `proposal.settled` follows
 /// the feed) is one no hook reads, so it appends nothing (FIX 22154); a
-/// binding enabled later starts at the feed head, past it.
+/// binding enabled later starts at the feed head, past it. One whose
+/// proposal or settler a permanent erase fenced appends nothing either: the
+/// erase's scrub would have emptied it (FIX 22191).
 pub(crate) fn record_settlement_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -81,14 +85,20 @@ pub(crate) fn record_settlement_in_txn(
     )? {
         return Ok(());
     }
+    if source_erased_in_txn(vault, txn, &fact.proposal)?
+        || source_erased_in_txn(vault, txn, &fact.settled_by)?
+    {
+        return Ok(());
+    }
     let (position, row) = prepare_settlement_in_txn(vault, txn, fact)?;
+    let sequence = position.0;
     SETTLED.put(
         &vault.store,
         txn,
-        &position.0,
+        &sequence,
         &SettlementFeedRow::Settled(row),
     )?;
-    SETTLED_NEXT.put(&vault.store, txn, &(), &position.0)
+    SETTLED_NEXT.put(&vault.store, txn, &(), &sequence)
 }
 
 pub(in crate::runtime_hooks) fn prepare_settlement_in_txn(
@@ -275,14 +285,15 @@ pub(super) fn delete_settlements_in_txn(
     Ok(())
 }
 
-/// Erases `id` from the settlement feed in the caller's erase write: each
-/// row whose proposal or settler is `id` becomes
-/// [`SettlementFeedRow::Erased`] at its own sequence. A complete scan, as
-/// the other hook carriers' scrub; a row erased already stays as it is.
+/// Erases `ids` from the settlement feed in the caller's erase write: each
+/// row whose proposal or settler is one of them becomes
+/// [`SettlementFeedRow::Erased`] at its own sequence. One complete scan for
+/// all of them, as the other hook carriers' scrub; a row erased already
+/// stays as it is.
 pub(super) fn scrub_settlements_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
+    ids: &BTreeSet<EntityId>,
 ) -> Result<()> {
     let mut named = Vec::new();
     for row in SETTLED.iter_from(&vault.store, txn, &[])? {
@@ -290,7 +301,7 @@ pub(super) fn scrub_settlements_in_txn(
         if matches!(
             &row,
             SettlementFeedRow::Settled(settled)
-                if settled.proposal == *id || settled.settled_by == *id
+                if ids.contains(&settled.proposal) || ids.contains(&settled.settled_by)
         ) {
             named.push(sequence);
         }

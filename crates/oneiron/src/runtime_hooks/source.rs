@@ -3,8 +3,9 @@
 //! can carry an old time, and the notify counter is process-local. The
 //! engine's own hook feeds live in submodules: the settlement feed in
 //! `settlement`, and the two watcher sources (FIX 4749) in `schedule` and
-//! `surface_inbound`. Those three are the feeds the runner prunes and an
-//! erase scrubs; the claim changelog is neither.
+//! `surface_inbound`. Those three are the feeds the runner and each
+//! housekeeping pass prune and an erase scrubs; the claim changelog is
+//! neither.
 
 mod schedule;
 mod settlement;
@@ -21,8 +22,9 @@ use crate::{EntityId, Error, Result, Vault};
 
 use super::{filter, store};
 
-pub(crate) use schedule::index_task_due_in_txn;
-pub(super) use schedule::{TickDetails, release_due_ticks};
+pub(super) use schedule::TickDetails;
+pub(crate) use schedule::{index_task_due_in_txn, next_tick_release_at, release_due_ticks};
+pub(super) use settlement::{SettledRow, prepare_settlement_in_txn, settlement_fact_in_txn};
 pub(crate) use settlement::{record_settlement_in_txn, record_timeout_demotion_in_txn};
 pub(super) use surface_inbound::SurfaceInboundRow;
 pub(crate) use surface_inbound::record_surface_inbound_in_txn;
@@ -331,7 +333,6 @@ pub(super) struct SourceBatch {
 pub use crate::consent::settlement_fact::{SettledFact, SettledOutcome, SettlementKind};
 
 use settlement::settlements_after_in_txn;
-pub(super) use settlement::{SettledRow, prepare_settlement_in_txn, settlement_fact_in_txn};
 
 /// Up to `max_entries` facts after `after` (exclusive) in `source`.
 pub(super) fn read_after(
@@ -582,17 +583,18 @@ pub(super) fn delete_feed_rows_in_txn(
     }
 }
 
-/// Erases `id` from the three hook feeds in the caller's erase write: an
+/// Erases `ids` from the three hook feeds in the caller's erase write: an
 /// erased TASK's due index rows, and every settlement, tick or inbound row
-/// that names it, each kept at its sequence with nothing in it.
+/// that names one, each kept at its sequence with nothing in it. One walk
+/// of each feed for all of them.
 pub(super) fn scrub_hook_feeds_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
+    ids: &std::collections::BTreeSet<EntityId>,
 ) -> Result<()> {
-    settlement::scrub_settlements_in_txn(vault, txn, id)?;
-    schedule::scrub_task_ticks_in_txn(vault, txn, id)?;
-    surface_inbound::scrub_inbound_events_in_txn(vault, txn, id)
+    settlement::scrub_settlements_in_txn(vault, txn, ids)?;
+    schedule::scrub_task_ticks_in_txn(vault, txn, ids)?;
+    surface_inbound::scrub_inbound_events_in_txn(vault, txn, ids)
 }
 
 /// The changelog position of a binding claim's latest write, in the

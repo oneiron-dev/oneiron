@@ -180,7 +180,10 @@ pub async fn run_task_realize(
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text, signature: None }],
+                content: vec![ContentPart::Text {
+                    text,
+                    signature: None,
+                }],
             },
         ],
         tools: Vec::new(),

@@ -142,7 +142,10 @@ impl ChatMessage {
         };
         LlmMessage {
             role,
-            content: vec![ContentPart::Text { text: self.text(), signature: None }],
+            content: vec![ContentPart::Text {
+                text: self.text(),
+                signature: None,
+            }],
         }
     }
 }

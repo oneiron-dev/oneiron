@@ -65,9 +65,14 @@ impl<'a> LocalEventStream<'a> {
                     part_id: part_id.clone(),
                     text: text.clone(),
                 }));
-                self.pending
-                    .push_back(Ok(LlmStreamEvent::TextEnd { part_id, signature: None }));
-                self.content.push(ContentPart::Text { text, signature: None });
+                self.pending.push_back(Ok(LlmStreamEvent::TextEnd {
+                    part_id,
+                    signature: None,
+                }));
+                self.content.push(ContentPart::Text {
+                    text,
+                    signature: None,
+                });
             }
             LocalOutputPart::Reasoning {
                 part_id,

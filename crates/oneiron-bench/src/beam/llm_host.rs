@@ -394,7 +394,10 @@ impl ModelSession {
 fn message(role: LlmMessageRole, text: &str) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text: text.into(), signature: None }],
+        content: vec![ContentPart::Text {
+            text: text.into(),
+            signature: None,
+        }],
     }
 }
 fn refusal(reason: &str) -> BeamError {

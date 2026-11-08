@@ -17,6 +17,8 @@
 //! host's admitted settler runs a turn. A retry of the call's invocation
 //! reads the row: still held, or what its turn came to.
 
+mod end;
+
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
@@ -31,7 +33,7 @@ use crate::memory::{
 };
 use crate::receipt::CallReceiptInput;
 use crate::receipt::admission::{ADMISSION_INTENT_ACTIVE, refuse_held_intent_in_txn};
-use crate::runtime_hooks::filter;
+use crate::runtime_hooks::{filter, store};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::task_verb::sdk::AgentVerb;
@@ -44,6 +46,8 @@ use super::credential::{
 };
 use super::state::DrainScope;
 use super::{InvocationId, hook_class, run_failed_transient};
+
+pub(in crate::runtime_hooks) use end::scrub_erased_paced_in_txn;
 
 /// The verbs a budget window's pace holds in the line: share creation and
 /// the channel identity lifecycle requests the Gate paces (Engine 14:34 B).
@@ -63,14 +67,10 @@ pub fn is_paced_verb(verb: &str) -> bool {
 }
 /// How long a paced call waits for its turn when the host sets no wait.
 pub const PACED_VERB_WAIT_DEFAULT_SECS: u64 = 7 * 24 * 60 * 60;
-/// How long an ended call's row stays for its caller's retry.
-const PACED_VERB_KEEP_SECS: u64 = 7 * 24 * 60 * 60;
 /// How long a turn that failed on a passing fault waits before its next try.
 const PACED_VERB_RETRY_SECS: u64 = 60;
 /// The most rows one expiry pass ends or deletes.
 const PACED_VERB_EXPIRE_MAX: usize = 256;
-/// What a call whose deadline passed before its turn ends with.
-const EXPIRED: &str = "this paced call's deadline passed before its turn; it never ran";
 
 /// Held calls, by invocation.
 const CALLS: SideTable<[u8; 16], PacedVerbCall, Named> =
@@ -248,7 +248,11 @@ pub(crate) fn hold_paced_verb_call(
                 (row.state != PacedState::Ended).then(|| held(row.next_eligible_at, row.deadline))
             );
         }
-        if !check.retain_in_txn(vault, txn, &reference, &binding) {
+        // Args naming an erased row are never held: the call would run on
+        // that row on its turn (FIX 22240).
+        if store::erased_by_args_in_txn(vault, txn, &args)?.is_some()
+            || !check.retain_in_txn(vault, txn, &reference, &binding)
+        {
             return Ok(None);
         }
         let now = vault.store.clock.now_recorded_at();
@@ -433,7 +437,8 @@ fn not_retained() -> SavedOutcome {
 enum Claim {
     /// The call is the turn's to run.
     Taken,
-    /// Its effect had landed: it ended without running.
+    /// Its effect had landed, or its args name an erased row: it ended
+    /// without running.
     Ended,
     /// Another took it, it ended, or its window or deadline moved.
     Skipped,
@@ -594,6 +599,11 @@ impl Vault {
             }
             if current.deadline <= now || current.next_eligible_at > now {
                 return Ok(Claim::Skipped);
+            }
+            // Args naming a row erased since end the call unrun (FIX 22240).
+            if let Some(erased) = store::erased_by_args_in_txn(self, txn, &current.args)? {
+                end::end_erased_in_txn(self, txn, key, current, &erased, now, false)?;
+                return Ok(Claim::Ended);
             }
             current.state = PacedState::Running;
             CALLS.put(&self.store, txn, &key, &current)?;
@@ -762,60 +772,6 @@ impl Vault {
                 }
             }
             WITNESSES.delete(&self.store, txn, &key).map(drop)
-        })
-    }
-
-    /// Ends each held call whose deadline passed, unrun, its witness
-    /// dropped, and deletes ended rows past their keep; at most `limit`
-    /// rows. A call a turn runs now is left to that turn. It charges,
-    /// spends and runs nothing, so any housekeeping pass may call it.
-    /// Returns how many rows it ended or deleted.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors as they occur.
-    pub fn expire_paced_verb_calls(&self, limit: usize) -> Result<usize> {
-        self.with_write_txn_grouped(|txn| {
-            let now = self.store.clock.now_recorded_at();
-            let mut touched = 0;
-            for (key, mut row) in CALLS.scan(&self.store, txn)? {
-                if touched >= limit {
-                    break;
-                }
-                if row.state == PacedState::Ended {
-                    if row
-                        .ended_at
-                        .is_some_and(|at| at.saturating_add(PACED_VERB_KEEP_SECS) <= now)
-                    {
-                        CALLS.delete(&self.store, txn, &key)?;
-                        touched += 1;
-                    }
-                    continue;
-                }
-                if row.deadline > now || self.verb_hook_state.drain_holds(InvocationId(key)) {
-                    continue;
-                }
-                row.outcome = Some(if row.landed {
-                    not_retained()
-                } else {
-                    refuse_held_intent_in_txn(
-                        self,
-                        txn,
-                        row.actor,
-                        filter::edge_class(row.class),
-                        InvocationId(key),
-                        MEMORY_CODE_INVALID_STATE,
-                        EXPIRED,
-                    )?;
-                    SavedOutcome::error(MEMORY_CODE_INVALID_STATE.to_owned(), EXPIRED, None)
-                });
-                row.state = PacedState::Ended;
-                row.ended_at = Some(now);
-                CALLS.put(&self.store, txn, &key, &row)?;
-                WITNESSES.delete(&self.store, txn, &key)?;
-                touched += 1;
-            }
-            Ok(touched)
         })
     }
 

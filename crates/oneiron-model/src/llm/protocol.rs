@@ -188,10 +188,7 @@ pub enum ContentPart {
     /// no `data:` prefix. Only a row that admits
     /// [`LlmCapability::AudioInput`](crate::llm::LlmCapability::AudioInput)
     /// takes it; a wire with no audio encoder refuses it.
-    Audio {
-        media_type: String,
-        data: String,
-    },
+    Audio { media_type: String, data: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
