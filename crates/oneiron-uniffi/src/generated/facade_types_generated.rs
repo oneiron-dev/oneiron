@@ -2021,10 +2021,6 @@ pub struct HealthReviewReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub exact_measured: Option<f64>,
-    #[serde(rename = "diagnostics")]
-    pub diagnostics: Vec<String>,
-    #[serde(rename = "evidence")]
-    pub evidence: Vec<String>,
     #[serde(
         rename = "observed_brief",
         default,

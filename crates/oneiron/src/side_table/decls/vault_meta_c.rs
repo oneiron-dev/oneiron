@@ -172,6 +172,9 @@ side_tables! {
     /// The latest wake waiting for a free live health-review slot (FIX 9224).
     /// Key: target attempt id16 + big-endian lease generation4.
     COACH_AGENT_HEALTH_LIVE_PENDING: VaultMeta b"coach:agent_health_live_pending:v1:" Named Engine;
+    /// One agent-health review state's frozen DIAGNOSTICs and evidence ids (FIX 8082), shared by
+    /// every outcome receipt of that state. Ids only. Key: the `health_review:` digest32.
+    COACH_AGENT_HEALTH_REVIEW_STATE: VaultMeta b"coach:agent_health_review_state:v1:" Named;
     /// Where the Coach's unclear-note clustering resumes (FIX 7824): the unclear-ledger key of the
     /// last outcome a pass finished, cleared at the ledger's end. Key: ().
     COACH_ATTRIBUTION_LABEL_CURSOR: VaultMeta b"coach:attribution_label_cursor:v1" Named Engine;

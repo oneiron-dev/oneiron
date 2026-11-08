@@ -263,7 +263,7 @@ export type AgentHealthCoachApplication = { by: EntityId; at: number; skill: Ent
 /** `oneiron::dreamer_runner::maintenance::agent_health::ask::AgentHealthCoachAsk` */
 export type AgentHealthCoachAsk = { asked_by: EntityId; asked_at: number; diagnostic?: EntityId | null; attempt: string; observed_brief?: HealthBriefPin | null; answer?: AgentHealthCoachAnswer | null; application?: AgentHealthCoachApplication | null }
 /** `oneiron::dreamer_runner::maintenance::agent_health::outcomes::HealthReviewReceipt` */
-export type HealthReviewReceipt = { receipt: string; outcome: AgentHealthOutcome; by: EntityId; by_owner: boolean; at: number; reviewer: string; reviewer_revision?: EntityId | null; dial: number; measured: number; exact_dial?: number | null; exact_measured?: number | null; diagnostics: EntityId[]; evidence: EntityId[]; observed_brief?: HealthBriefPin | null; label?: boolean | null; projected: boolean }
+export type HealthReviewReceipt = { receipt: string; outcome: AgentHealthOutcome; by: EntityId; by_owner: boolean; at: number; reviewer: string; reviewer_revision?: EntityId | null; dial: number; measured: number; exact_dial?: number | null; exact_measured?: number | null; observed_brief?: HealthBriefPin | null; label?: boolean | null; projected: boolean }
 /** `oneiron::dreamer_runner::maintenance::agent_health::environment::HealthCauseSource` */
 export type HealthCauseSource = { source: EntityId; receipt: string; skill?: EntityId | null; label: string; share: number; judge_revision?: string | null; displaced_by?: string | null }
 /** `oneiron::dreamer_runner::maintenance::agent_health::silence::HealthOtherSession` */
