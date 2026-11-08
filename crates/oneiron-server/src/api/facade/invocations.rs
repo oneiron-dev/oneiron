@@ -550,21 +550,15 @@ fn replayed_reply(
 ) -> Result<(StatusCode, serde_json::Value, bool), FacadeApiError> {
     let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let (body, hook_notice) = match outcome.release {
-        Some(release) => replayed_claim_value(
-            vault,
-            auth,
-            verb,
-            release,
-            owner_whole_vault_export,
-        )
-        .map_err(|_| {
-            FacadeApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                MEMORY_CODE_INTERNAL,
-                "saved invocation reply is malformed",
-                ["Report this saved-reply mismatch."],
-            )
-        })?,
+        Some(release) => replayed_claim_value(vault, auth, verb, release, owner_whole_vault_export)
+            .map_err(|_| {
+                FacadeApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    MEMORY_CODE_INTERNAL,
+                    "saved invocation reply is malformed",
+                    ["Report this saved-reply mismatch."],
+                )
+            })?,
         None => (
             rereleased_refusal(vault, auth, outcome.body),
             outcome.refusal_hook_notice == Some(true),
