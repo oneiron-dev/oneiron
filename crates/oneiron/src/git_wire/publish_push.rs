@@ -34,7 +34,7 @@ pub(super) const REMOTE_READ_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const PUBLISH_PUSH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// Captured output of one remote read or exact push: a few lines.
-const PUBLISH_OUTPUT_BYTES: usize = 1024 * 1024;
+pub(super) const PUBLISH_OUTPUT_BYTES: usize = 1024 * 1024;
 
 /// What one authenticated read saw at a mirror's branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,7 +105,7 @@ impl GitWire<'_> {
         name: &GitRefName,
     ) -> Result<GitRemoteTip> {
         let egress = OriginRelayEgress::read(relay_url, ticket)?;
-        let env = self.relay_env(repo, egress, REMOTE_READ_TIMEOUT)?;
+        let env = self.relay_env(repo, egress, REMOTE_READ_TIMEOUT, PUBLISH_OUTPUT_BYTES)?;
         let argv = FrozenGitArgv::remote_ref(relay_url, name)?;
         let output = spawn_git(&env, &GitCommandSpec::wire(&repo.repo_root, &argv))?;
         remote_tip(&output, name)
@@ -164,7 +164,7 @@ impl GitWire<'_> {
         hold: &Path,
     ) -> Result<GitPublishPushOutcome> {
         let egress = OriginRelayEgress::push(relay_url, ticket)?;
-        let env = self.relay_env(repo, egress, PUBLISH_PUSH_TIMEOUT)?;
+        let env = self.relay_env(repo, egress, PUBLISH_PUSH_TIMEOUT, PUBLISH_OUTPUT_BYTES)?;
         let argv = FrozenGitArgv::publish_push(relay_url, name, commit, expected)?;
         let command = GitCommandSpec::wire(&repo.repo_root, &argv).holding(hold);
         let output = spawn_git(&env, &command)?;
@@ -172,12 +172,14 @@ impl GitWire<'_> {
     }
 
     /// The relay profile of one call through the served host's mirror relay,
-    /// bound to `repo`.
-    fn relay_env(
+    /// bound to `repo`, under the direct call's own `timeout` and output
+    /// bound `output_bytes`.
+    pub(super) fn relay_env(
         &self,
         repo: &GitWireRepo,
         egress: OriginRelayEgress,
         timeout: Duration,
+        output_bytes: usize,
     ) -> Result<GitWireProcessEnv> {
         if self.canonical_common_dir(&repo.repo_root)? != repo.common_dir {
             return Err(invalid("git wire repository binding changed"));
@@ -185,7 +187,7 @@ impl GitWire<'_> {
         let mut env = self
             .process_env
             .clone()
-            .with_limits(timeout, PUBLISH_OUTPUT_BYTES)?;
+            .with_limits(timeout, output_bytes)?;
         env.origin_relay = Some(egress);
         Ok(env)
     }

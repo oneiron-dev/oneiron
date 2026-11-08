@@ -171,7 +171,11 @@ fn spawn_git_child(
         command.env("GIT_COMMON_DIR", common);
     }
     if let Some(root) = &process_env.hub_root {
-        super::hub_read::configure(&mut command, root)?;
+        if process_env.hub_local_only {
+            super::hub_read::configure_local(&mut command, root)?;
+        } else {
+            super::hub_read::configure(&mut command, root)?;
+        }
     }
     if let Some(egress) = &process_env.mirror_egress {
         super::mirror_push::configure(&mut command, egress);
@@ -211,7 +215,7 @@ fn spawn_git_child(
     };
     let out_reader = child.stdout.take().map(|pipe| spawn_reader(pipe, cap));
     let err_reader = child.stderr.take().map(|pipe| spawn_reader(pipe, cap));
-    // An import leg's profile, an exact publish's relay push and a retained
+    // An import leg's profile, an origin mirror's relay push and a retained
     // call lift the wall-clock bound (Rule 5); every other child keeps it.
     let relay_lifts = process_env
         .origin_relay

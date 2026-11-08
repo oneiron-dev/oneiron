@@ -14,8 +14,10 @@ mod campaign_split;
 mod catalog_fragment;
 mod comm_widen;
 mod connector;
+mod campaign_enrollment;
 mod connector_call;
 mod connector_pack;
+mod connector_reply_retry;
 mod connector_slate;
 mod connector_slate_revision;
 mod connector_witness_read_grant;
@@ -35,6 +37,7 @@ mod federation;
 mod federation_burst;
 mod feedback;
 mod files;
+mod follower_keyframe;
 mod free_time_policy;
 mod git_push_grant;
 mod goal_optimize;
@@ -49,6 +52,7 @@ mod live_run;
 mod live_voice;
 mod mesh;
 mod model_manifest;
+mod model_pack;
 mod note_history;
 mod off_record;
 mod off_record_rooms;
@@ -61,6 +65,11 @@ mod proxy;
 mod receipts_page;
 mod record_erase;
 mod reply;
+// FIX 13274: the owner reviews and settles a retained document-copy edit.
+#[cfg(feature = "sync")]
+mod repo_copy_edit;
+#[cfg(feature = "sync")]
+mod repo_manifest_conflict;
 mod research;
 mod reservoir_sources;
 mod residence;
@@ -303,6 +312,12 @@ pub struct TaskCreateRequest {
     /// Milestone; absent is a root.
     #[serde(default)]
     pub parent_ref: Option<String>,
+    /// When the TASK falls due, Unix seconds (FIX 4749). A due TASK is a
+    /// watcher: it ticks once on `schedule.tick` after this time, and a hook
+    /// bound to that tick returns Nothing or Enqueue. Only a brief-less
+    /// standard task carries one; absent is no tick.
+    #[serde(default)]
+    pub due_at: Option<u64>,
 }
 
 /// The create spec one `tasks.create` request names, owned by the
@@ -329,6 +344,10 @@ pub fn task_create_spec(
     };
     let spec = match input.ttl {
         Some(ttl) => spec.with_ttl(ttl),
+        None => spec,
+    };
+    let spec = match input.due_at {
+        Some(due_at) => spec.with_due_at(due_at),
         None => spec,
     };
     let spec = match parent_ref {
@@ -444,8 +463,10 @@ pub use self::catalog_fragment::{
 };
 pub use self::comm_widen::*;
 pub use self::connector::*;
+pub use self::campaign_enrollment::*;
 pub use self::connector_call::*;
 pub use self::connector_pack::*;
+pub use self::connector_reply_retry::*;
 pub use self::connector_slate::*;
 pub use self::connector_slate_revision::*;
 pub use self::connector_witness_read_grant::*;
@@ -465,6 +486,7 @@ pub use self::federation::*;
 pub use self::federation_burst::*;
 pub use self::feedback::*;
 pub use self::files::*;
+pub use self::follower_keyframe::*;
 pub use self::free_time_policy::*;
 pub use self::git_push_grant::*;
 pub use self::goal_optimize::*;
@@ -479,6 +501,7 @@ pub use self::live_run::*;
 pub use self::live_voice::*;
 pub use self::mesh::*;
 pub use self::model_manifest::*;
+pub use self::model_pack::*;
 pub use self::note_history::*;
 pub use self::off_record::*;
 pub use self::off_record_rooms::*;
@@ -491,6 +514,10 @@ pub use self::proxy::*;
 pub use self::receipts_page::*;
 pub use self::record_erase::*;
 pub use self::reply::*;
+#[cfg(feature = "sync")]
+pub use self::repo_copy_edit::*;
+#[cfg(feature = "sync")]
+pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;

@@ -220,6 +220,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/health", get(health))
         .route("/.well-known/oneiron", get(pairing::descriptor))
         .route("/v1/core/pairing/links", post(pairing::create_link))
+        .route(
+            "/v1/owner/artifacts/backend-pairing",
+            post(artifact_backend_pairing::create),
+        )
         .route("/v1/core/pairing/redeem", post(pairing::redeem))
         .route("/v1/core/pairing/oauth", post(pairing::oauth_exchange))
         .route("/v1/core/slips/revoke", post(pairing::revoke))
@@ -344,6 +348,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // FIX 922: a kit-only restore's read of the sealed cloud bundle.
         // Keyless; each request is signed with the kit's owner anchor.
         .merge(self::recovery_bundle::routes())
+        .merge(self::owner_routes::recovery_kit_target_routes::authority_recovery_routes())
         // ARCH-0052 D5: everyone in a room keeps their own copy of an
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The

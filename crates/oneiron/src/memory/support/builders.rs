@@ -255,6 +255,27 @@ impl Memory<'_> {
         self
     }
 
+    /// Records the caller origin the host observed at root admission. This
+    /// is separate from read locality and destination and changes no gate.
+    #[must_use]
+    pub fn with_caller_origin(mut self, origin: crate::agent_dispatch::CallerOrigin) -> Self {
+        self.caller_origin = Some(origin);
+        self
+    }
+
+    /// The host's explicit origin, or an in-process host invocation when
+    /// that is known. Default on-device read locality proves no connection.
+    #[must_use]
+    pub fn caller_origin(&self) -> crate::agent_dispatch::CallerOrigin {
+        self.caller_origin.unwrap_or_else(|| {
+            if self.native_invocation() {
+                crate::agent_dispatch::CallerOrigin::NativeHost
+            } else {
+                crate::agent_dispatch::CallerOrigin::Unknown
+            }
+        })
+    }
+
     /// Binds the off-record session the host's request names (its
     /// `x-oneiron-session`) for this surface's principal, the request's own:
     /// context, not authority. Inside one the live registry holds anonymous
@@ -372,10 +393,12 @@ impl Memory<'_> {
     /// door named, if any, and with nothing else on the surface its door
     /// could not rebuild (a host origin, a machine signer, a TASK host, an
     /// off-record session or a thread's turn). A slip's is its verified slip
-    /// and the binding its request was admitted on; a managed vault's
-    /// attested owner's is the person, the actor this surface is bound to as
-    /// a human, with no slip (FIX 11063). `None` resumes only on the
-    /// caller's retry.
+    /// and the binding its request was admitted on; a self-hosted root's,
+    /// read through its host action with no person's proof, is that action's
+    /// durable identity, rooted in this very slip (FIX 4744); a managed
+    /// vault's attested owner's is the person, the actor this surface is
+    /// bound to as a human, with no slip (FIX 11063). `None` resumes only on
+    /// the caller's retry.
     #[must_use]
     pub fn verb_ask_credential(&self) -> Option<crate::runtime_hooks::verb::VerbAskCredential> {
         use crate::runtime_hooks::verb::{
@@ -402,8 +425,12 @@ impl Memory<'_> {
         }
         let instrument = self.credential_instrument.clone()?;
         let witness = match instrument.source {
+            VerbAskCredentialSource::Slip { slip, .. } if self.read_proof.is_none() => {
+                VerbAskCredentialWitness::HostAction(
+                    self.root_host_action(&slip, &instrument.vault)?,
+                )
+            }
             VerbAskCredentialSource::Slip { .. } => {
-                self.read_proof.as_ref()?;
                 VerbAskCredentialWitness::Slip(self.invocation_slip.clone()?)
             }
             VerbAskCredentialSource::AttestedOwner { holder } => {
@@ -419,6 +446,25 @@ impl Memory<'_> {
             on_device: self.locality == crate::claim::CallerLocality::OnDevice,
         };
         Some(VerbAskCredential::new(reference, witness))
+    }
+
+    /// The durable identity of the host action this surface reads through
+    /// (FIX 4744): only a self-hosted root's, bound for this surface's own
+    /// actor, acting under the root minted as `slip` for `vault`. The dev
+    /// mode has no root, and an unrelated slip has no host action, so
+    /// neither has one.
+    fn root_host_action(
+        &self,
+        slip: &[u8; 32],
+        vault: &[u8; 32],
+    ) -> Option<crate::authority::HostActionIdentity> {
+        let action = self.host_action.as_ref()?;
+        let actor = action.actor();
+        if actor.entity_ref() != self.actor || actor.actor_class() != self.actor_class {
+            return None;
+        }
+        let identity = action.guard().durable_identity(self.vault);
+        identity.acts_under(slip, vault).then_some(identity)
     }
 
     /// The managed vault's attested owner this surface's caller is, as the

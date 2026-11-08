@@ -33,12 +33,12 @@ mod bodies;
 pub(crate) use self::admitted::{ReplyAdmission, ReplyBody, ReplySpool};
 pub(crate) use self::bodies::{
     FinishedOutput, StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
-    code_run_body_row_key, code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
-    retire_unlanded_inline_body_keys_in_txn,
+    code_run_body_in_file_in_txn, code_run_body_row_key, code_run_inline_body_of_row,
+    lift_code_run_file_hold_in_txn, retire_unlanded_inline_body_keys_in_txn,
 };
 pub(super) use self::bodies::{
     body_drifted, finish_output, finish_output_sourced, load_whole_body, open_body_file,
-    owned_body, raw_put_publishes_descriptor, read_body_row_range,
+    owned_body, raw_put_descriptor_in_txn, read_body_row_range,
 };
 
 /// The replay record of one run, keyed by run id.

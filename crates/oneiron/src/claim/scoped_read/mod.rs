@@ -23,6 +23,7 @@ use oneiron_retrieval::pipeline::ScoredEntity;
 mod claim_admission;
 mod context_pack_filter;
 mod diagnostic_reads;
+mod edge_claims;
 mod facet_gate;
 mod frozen;
 mod graph_reads;
@@ -150,6 +151,9 @@ pub struct ScopedRead<'a> {
     /// `ScopedRead::with_judged_at`.
     judged_at: Option<u64>,
 }
+
+mod owned;
+pub use owned::OwnedScopedRead;
 
 mod admission;
 mod commitment_reminder_wording;
