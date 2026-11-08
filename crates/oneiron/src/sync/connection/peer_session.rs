@@ -2,23 +2,27 @@
 //! 2026-10-19; ARCH-0023b `#home-down`, `#peer-fetch`).
 //!
 //! The home served a session once the session's first round completed: its
-//! opening (`SyncConnection::connect_and_sync`) applied the home's root and
-//! windows, replayed the queue and saw the home take it (vector rounds to
-//! convergence, or the home's residence acknowledgments), and said `Synced`.
+//! opening (`SyncConnection::open_sync_session`) applied the home's root
+//! and windows, replayed the queue and saw the home take it (vector rounds
+//! to convergence, or the home's residence acknowledgments), and said
+//! `Synced`.
 //! A session that ends before that, by a close or an error, the home did not
 //! serve, whatever it sent first.
 //!
 //! The reconnect loop keeps one [`HomeReach`]. Each home session the home did
 //! not serve counts: a dial nobody answers, an upgrade or a hello the home
-//! refuses, a window export fault, a failed queue replay or convergence, a
-//! close before the round completes. Once they have counted for
+//! refuses, a window export fault, a queue replay or convergence the home
+//! failed, a close before the round completes. Once they have counted for
 //! [`HOME_DOWN_AFTER_SECS`] in a row, the home is down, said once in the log,
 //! and the next sessions go to the machines the peer dialer lists, the
 //! standby home first, a failed one giving way to the next at the next
 //! attempt. When every listed peer has failed once, one attempt goes to the
 //! home again, then the peers once more. Only a home session the home served
 //! resets the count and ends peer mode, said once; however that session ends
-//! later, it counts nothing.
+//! later, it counts nothing. A home session that fails on a fault of this
+//! machine's own instead (FIX 22107: its store or queue, its full-resync
+//! markers, an encode, the recovery it needs first) says nothing of the home:
+//! it counts nothing, resets nothing, and a turn a probe gave the home stays.
 //!
 //! A peer session (`SyncClient::peer_session`) exchanges
 //! updates both ways as a home session does (queue replay, vector rounds,
@@ -37,10 +41,11 @@
 //! that frame is the home's root ([`first_frame_is_root`]), the peer session
 //! ends and the next session is the home's, which replays the queue the peer
 //! sessions never cleared, so everything converges at the home. The home
-//! stays down through that turn. A turn that ends before its round completes
-//! sends the next session straight back to a peer, with no new count, so a
-//! home that sends its root and then fails costs one failed session per
-//! probe, not a gap in sync.
+//! stays down through that turn. A turn the far end ends before its round
+//! completes sends the next session straight back to a peer, with no new
+//! count, so a home that sends its root and then fails costs one failed
+//! session per probe, not a gap in sync. A turn this machine's own fault ends
+//! stays with the home for the next session (FIX 22107).
 //!
 //! With no peer dialer (no mesh here) nothing in this module moves: the home
 //! is never counted down.
@@ -60,6 +65,8 @@ use crate::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
 use crate::sync::peer_route::{HOME_DOWN_AFTER_SECS, HOME_PROBE_SECS, HOME_PROBE_TIMEOUT_SECS};
 use crate::sync::transport::TAG_SYNC_UPDATE;
 use crate::{EntityId, Vault};
+
+use super::session::SessionFault;
 
 /// Whether the first frame the far end sent a session is its root
 /// (`TAG_SYNC_UPDATE`). A home sends its root first only once it has
@@ -143,16 +150,21 @@ impl HomeReach {
         }
     }
 
-    /// A session to `peer` (or to the home, `None`) ended before its first
-    /// round completed. A home session counts, the home answering it or not:
-    /// once the home has served none for [`HOME_DOWN_AFTER_SECS`] in a row,
-    /// it is down, said once. A home already down stays down, said nothing,
-    /// and the turn a probe gave it ends here. Returns whether the next
-    /// session goes to a peer on the first backoff step: the home was counted
-    /// down by this session, or its turn failed.
-    pub(super) fn failed(&mut self, peer: Option<EntityId>) -> bool {
+    /// A session to `peer` (or to the home, `None`) ended on `fault` before
+    /// its first round completed. A home session the far end failed counts,
+    /// the home answering it or not: once the home has served none for
+    /// [`HOME_DOWN_AFTER_SECS`] in a row, it is down, said once. A home
+    /// already down stays down, said nothing, and the turn a probe gave it
+    /// ends here. A home session that failed on this machine's own fault
+    /// (FIX 22107) counts nothing, resets nothing and ends no turn. Returns
+    /// whether the next session goes to a peer on the first backoff step: the
+    /// home was counted down by this session, or its turn failed.
+    pub(super) fn failed(&mut self, peer: Option<EntityId>, fault: &SessionFault) -> bool {
         if let Some(peer) = peer {
             self.tried.insert(peer);
+            return false;
+        }
+        if fault.is_local() {
             return false;
         }
         let since = *self.unserved_since.get_or_insert_with(Instant::now);
@@ -174,8 +186,8 @@ impl HomeReach {
 
     /// A peer session's probe received the home's root: the next session is
     /// the home's. The home stays down until a home session completes its
-    /// first round; a turn that fails sends the next session back to a peer
-    /// with no new count.
+    /// first round; a turn the far end fails sends the next session back to
+    /// a peer with no new count.
     pub(super) fn home_returned(&mut self) {
         self.tried.clear();
         self.home_turn = true;
