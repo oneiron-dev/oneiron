@@ -140,7 +140,7 @@ impl OfferLadder {
     ) -> LlmResult<LlmResponse> {
         let sources = Some(sources);
         let deadline = self.host_wait();
-        self.generate_from(run, request, selector, &|| true, deadline, true, sources)
+        self.generate_from(run, request, selector, &|| true, deadline, true, sources, None)
             .await
             .map(|(response, _)| response)
     }
@@ -164,6 +164,7 @@ impl OfferLadder {
         deadline: CallDeadline,
         may_fall_back: bool,
         sources: Option<&'a dyn SourceAdmission>,
+        observer: Option<&'a (dyn Fn(&LlmRequest) -> bool + Send + Sync)>,
     ) -> ServedFuture<'a> {
         self.generate_from_streamed(
             run,
@@ -173,6 +174,7 @@ impl OfferLadder {
             deadline,
             may_fall_back,
             sources,
+            observer,
             false,
         )
     }
@@ -192,6 +194,7 @@ impl OfferLadder {
         deadline: CallDeadline,
         may_fall_back: bool,
         sources: Option<&'a dyn SourceAdmission>,
+        observer: Option<&'a (dyn Fn(&LlmRequest) -> bool + Send + Sync)>,
         prefer_stream: bool,
     ) -> ServedFuture<'a> {
         Box::pin(async move {
@@ -203,6 +206,7 @@ impl OfferLadder {
                 deadline,
                 may_fall_back,
                 sources,
+                observer,
                 prefer_stream,
                 RungPrompt::Configured,
             )
@@ -224,6 +228,7 @@ impl OfferLadder {
         deadline: CallDeadline,
         may_fall_back: bool,
         sources: Option<&dyn SourceAdmission>,
+        observer: Option<&(dyn Fn(&LlmRequest) -> bool + Send + Sync)>,
         prefer_stream: bool,
         prompt: RungPrompt<'_>,
     ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
@@ -262,6 +267,7 @@ impl OfferLadder {
                             deadline,
                             false,
                             sources,
+                            observer,
                             prefer_stream,
                         )
                         .await;
@@ -290,6 +296,7 @@ impl OfferLadder {
                         index,
                         may_send,
                         sources,
+                        observer,
                         prefer_stream,
                         prompt,
                         &mut walk,
