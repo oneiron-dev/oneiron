@@ -24,14 +24,7 @@ impl Lift<oneiron::memory::ClaimView> for crate::WireClaimView {
             stale,
             claim,
         } = view;
-        // Consume both opaque leaves before propagating an encoding error.
-        let value = WireJson::lift(value);
-        let scope = match scope {
-            None | Some(serde_json::Value::Null) => Ok(None),
-            Some(scope) => WireJson::lift(scope).map(Some),
-        };
-        let value = value?;
-        let scope = scope?;
+        let (value, scope) = lift_json(value, scope)?;
         Ok(Self {
             claim_ref,
             short_ref,
@@ -54,6 +47,19 @@ impl Lift<oneiron::memory::ClaimView> for crate::WireClaimView {
             claim: lift_record("claim review:claim", &claim)?,
         })
     }
+}
+
+pub(super) fn lift_json(
+    value: serde_json::Value,
+    scope: Option<serde_json::Value>,
+) -> Result<(WireJson, Option<WireJson>), OneironError> {
+    // Consume both opaque leaves before propagating an encoding error.
+    let value = WireJson::lift(value);
+    let scope = match scope {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(scope) => WireJson::lift(scope).map(Some),
+    };
+    Ok((value?, scope?))
 }
 
 impl Lift<oneiron::memory::ClaimProposalReview> for crate::ClaimProposalReview {

@@ -110,8 +110,8 @@ pub(crate) use epoch_floor::{
 };
 pub use epoch_vector::{EpochEmbedder, TurnVector, room_turn_vector};
 pub(crate) use fold_words::{
-    FOLD_LEDGERS, fence_withdrawn_folds_in, land_folds_in_base, land_folds_in_overlay,
-    scrub_withdrawn_fold_summary_in_txn,
+    FOLD_LEDGERS, fence_withdrawn_folds_in, fold_words_id, fold_words_withdrawn_in,
+    land_folds_in_base, land_folds_in_overlay, scrub_withdrawn_fold_summary_in_txn,
 };
 pub(crate) use folds::escape_compacted_text;
 pub use gate::{
@@ -126,6 +126,9 @@ pub(crate) use hooks::host_compact_as_owner;
 pub use hooks::{
     CompactHooks, HOST_COMPACT, check_host_compact_rewrite,
     check_host_compact_rewrite_unverified_window, compact_invocation,
+};
+pub(crate) use hooks::{
+    keep_compact_hooks_in_room, post_compact_hooks_in_room, pre_compact_hooks_in_room,
 };
 pub use packet_source::{CompactionHostLog, CompactionSource, admit_compaction_source};
 pub(crate) use self_writer::{
