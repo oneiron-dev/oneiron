@@ -111,10 +111,7 @@ pub(super) async fn registered_actor(
         .map_err(|error| McpGatewayError::new(-32603, "engine_error", error.to_string()))?;
     let mut registry = server.mcp_registry.lock().await;
     let ceiling_exists = |actor_class: &str, actor_ref: &str| {
-        server
-            .vault
-            .gate_actor_ceiling_exists(actor_class, actor_ref)
-            .unwrap_or(false)
+        mcp_actor_ceiling_admits(server, &auth, actor_class, actor_ref)
     };
     // The registry is memory: it learns a credential when one is redeemed over
     // HTTP. A live paired slip it has not seen gets its record now, by the
