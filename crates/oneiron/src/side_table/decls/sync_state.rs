@@ -54,7 +54,8 @@ side_tables! {
     /// hash of the code).
     AUTHORITY_OAUTH_CODE: SyncState b"authority:oauth-code:v1:" Named;
     /// An OAuth token family: the grant, client and resource every token one code minted
-    /// stands on, and whether it is revoked. Key: hex32 (the family id).
+    /// stands on, whether it is revoked, and whether its first access slip stood. Key: hex32
+    /// (the family id).
     AUTHORITY_OAUTH_FAMILY: SyncState b"authority:oauth-family:v1:" Named;
     /// An OAuth authorization request waiting for, or holding, the owner's answer; its page's
     /// poll secret only as a keyed hash. Key: hex32 (the request id).
