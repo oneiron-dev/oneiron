@@ -380,6 +380,7 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         SelfEffect::RepoSnapshotsGet
         | SelfEffect::RepoSnapshotsRead
         | SelfEffect::RepoSymbolsDefinitions
+        | SelfEffect::RepoSymbolsNeighbors
         | SelfEffect::RepoViewsGet
         | SelfEffect::RepoViewsRead
         | SelfEffect::RepoMergeQueueObserve

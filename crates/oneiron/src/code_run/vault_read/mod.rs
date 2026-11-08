@@ -55,7 +55,8 @@ pub use self::contract::{
 };
 pub use self::error::{VaultReadError, VaultReadResult};
 pub use self::in_process::{
-    EmbeddedMediaSeed, InProcessVaultReadAdapter, MEDIA_UNAVAILABLE_ENGINE_CODE,
+    DeferredServedForms, EmbeddedMediaSeed, InProcessVaultReadAdapter,
+    MEDIA_UNAVAILABLE_ENGINE_CODE,
 };
 pub use self::remote::{CloudVaultReadAdapter, WireTransport, WireTransportVaultReadAdapter};
 pub use self::types::{

@@ -106,7 +106,7 @@ impl Slices {
 
 /// `vault.calendar.search` as a page: [`CalendarSearchRequest`]'s fields,
 /// a deadline, and the frontier an earlier page answered.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarSearchPageRequest {
     /// Calendar selectors; see [`CalendarSel`] for passport matching.
@@ -129,6 +129,10 @@ pub struct CalendarSearchPageRequest {
     /// none starts at the range's start. Needs a range.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_from: Option<u64>,
+    /// The caller's retrieval filter (FIX 3977): it narrows every EVENT the
+    /// page reads, conjoined with the calendar, window and name selectors.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 impl CalendarSearchPageRequest {
@@ -138,6 +142,7 @@ impl CalendarSearchPageRequest {
             range: self.range,
             text: self.text.clone(),
             limit: self.limit,
+            filter: self.filter.clone(),
         }
     }
 }

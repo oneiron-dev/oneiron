@@ -60,6 +60,12 @@ pub enum HousekeepingSweep {
     /// (FIX 14973, FIX 15259), and of the training examples past the
     /// drafter traffic's bound (FIX 15128).
     DrafterCorpusSweep,
+    /// Model pack retirement (FIX 5368, 20193): each retirement notice due
+    /// today, 60, 30 and 7 days before, and on the day the move of a pin, or
+    /// of the pack the vault follows, to its successor, recorded as a pack
+    /// change. Every host that runs the pass runs it: a serving host against
+    /// the access its offers hold, `oneiron maintain` against none.
+    ModelPackRetirement,
     /// Drops the OAuth server's rows past their lifetime (FIX 4902):
     /// authorization requests, codes, tokens, token families past their last
     /// refresh token, and stale metadata-document clients no sign-in uses.
@@ -120,7 +126,7 @@ pub const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -138,6 +144,7 @@ impl HousekeepingSweep {
         Self::BodyLineIndexRebuild,
         Self::AnnotationBodyAnchors,
         Self::DrafterCorpusSweep,
+        Self::ModelPackRetirement,
         Self::OAuthExpiry,
         Self::EsignReminders,
         Self::ConsultSettlement,
@@ -167,6 +174,7 @@ impl HousekeepingSweep {
             Self::BodyLineIndexRebuild => "body_line_index_rebuild",
             Self::AnnotationBodyAnchors => "annotation_body_anchors",
             Self::DrafterCorpusSweep => "drafter_corpus_sweep",
+            Self::ModelPackRetirement => "model_pack_retirement",
             Self::OAuthExpiry => "oauth_expiry",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
@@ -197,7 +205,10 @@ impl HousekeepingSweep {
     /// corpus sweep runs at open and daily, beside the night's own sweeps
     /// around its export, so a version superseded, rejected or erased
     /// between nights, or a write a stopped process left, keeps no sealed
-    /// bytes past the next start or day. The OAuth server's lapsed rows go
+    /// bytes past the next start or day. The model pack retirement pass runs
+    /// every minute, the lifecycle tick a serving host ran it on before it
+    /// joined the pass (FIX 20193), so a retirement day's move is recorded
+    /// within a minute of the day's start. The OAuth server's lapsed rows go
     /// hourly, as the lease, confirm and print expiries go besides their
     /// noted deadlines; a read drops each it finds lapsed, so nothing waits
     /// on them and they note no deadline.
@@ -238,6 +249,7 @@ impl HousekeepingSweep {
                 every: DAY,
                 at_open: true,
             },
+            Self::ModelPackRetirement => engine(MINUTE),
             Self::EsignReminders => Runner::Host(HostOnlyReason::NeedsAuthenticatedDispatch),
             Self::ConsultSettlement => Runner::Host(HostOnlyReason::NeedsHostDigestRoute),
             Self::PolicyHoldPrune => Runner::Host(HostOnlyReason::NeedsAuthenticatedOwner),
