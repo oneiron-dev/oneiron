@@ -169,3 +169,17 @@ impl TranscriptRetainedCaller {
         Ok(memory)
     }
 }
+
+impl TranscriptRetainedCaller {
+    /// Keep the narrowing made by work on this restored reader, including
+    /// checks that returned a pending hook or a storage error.
+    pub(crate) fn keep_narrowed_room(&mut self, memory: &Memory<'_>) {
+        if let (Some(saved), Some(turn)) = (&mut self.room, &memory.room_turn) {
+            let terms = turn.terms.get();
+            saved.worlds = terms.worlds;
+            saved.facets = terms.facets;
+            saved.clearance = terms.clearance;
+            saved.p7 = terms.p7;
+        }
+    }
+}

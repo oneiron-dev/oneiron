@@ -92,7 +92,12 @@ pub(super) fn check_discarded(
         }
         None => false,
     };
-    let alone = if header.entity_type == ENTITY_TYPE_NOTE {
+    // An ASSET's worlds ride its carried `InWorld` edges as a NOTE's do
+    // (FIX 22223).
+    let alone = if matches!(
+        header.entity_type,
+        ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET
+    ) {
         // The window's carrier, or the document an edge's endpoint hydration
         // reads its body from.
         match ctx.carrier_doc().or(ctx.body_refs) {
