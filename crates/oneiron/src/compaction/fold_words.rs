@@ -117,7 +117,8 @@ fn words_withdrawn(
     run: EntityId,
     record: &FoldRecord,
 ) -> Result<bool> {
-    fold_words_withdrawn_in(dbs, txn, run, record.fold, &record.sources)
+    Ok(fold_words_withdrawn_in(dbs, txn, run, record.fold, &record.sources)?
+        || home_changed(dbs, txn, record)?)
 }
 
 /// Whether the words of run `run`'s fold `fold`, written from `sources`,
@@ -139,7 +140,7 @@ pub(crate) fn fold_words_withdrawn_in(
             return Ok(true);
         }
     }
-    home_changed(dbs, txn, record)
+    Ok(false)
 }
 
 /// Takes the summary from every fold of run `run`'s `ledger` whose words
