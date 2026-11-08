@@ -37,7 +37,11 @@ impl<'a> RunTreeAdapter<'a> {
     /// Renders persisted rows for one run id into deterministic roots and
     /// children.
     pub fn read_run(&self, run_id: &str) -> Result<RunTree> {
-        render_run_tree_presorted(self.queue.list_run(run_id)?)
+        let txn = self.vault.store.env.read_txn()?;
+        let mut tree = render_run_tree_presorted(self.queue.list_run_in_txn(&txn, run_id)?)?;
+        tree.deletions =
+            crate::vault_cleanup::deletions_for_run_in_txn(&self.vault.store, &txn, run_id)?;
+        Ok(tree)
     }
 
     /// Renders one TASK's working rows and their run-tree descendants (FIX 11970).
