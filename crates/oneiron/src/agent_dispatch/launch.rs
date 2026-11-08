@@ -229,6 +229,8 @@ impl AgentDispatcher<'_> {
     /// run this machine takes over, in the take's write (FIX 4747 slice 6),
     /// as `handed_over_launch_reserve` rules from the launch statement
     /// `input` froze. A scope that already stands here for `attempt` is kept.
+    /// A pinned scope keeps the Grant `input` froze as its funding (FIX
+    /// 7766), as the dispatch's own reserve did.
     /// A room-bound run proves its join again under the scope it reserves
     /// under, as its dispatch did. `false` when this machine cannot fund it:
     /// the take writes nothing, and the run waits.
@@ -266,7 +268,15 @@ impl AgentDispatcher<'_> {
             HandedOverReserve::Unfunded => return Ok(false),
             HandedOverReserve::Reserve(LaunchReserve::Unmetered) => {}
             HandedOverReserve::Reserve(LaunchReserve::Pinned { unit, cap_units }) => {
-                self.open_pinned_scope_in_txn(txn, &attempt, Some(agent), unit, cap_units, now)?;
+                self.open_pinned_scope_in_txn(
+                    txn,
+                    &attempt,
+                    Some(agent),
+                    unit,
+                    cap_units,
+                    input.funding.clone(),
+                    now,
+                )?;
             }
             HandedOverReserve::Reserve(LaunchReserve::Child { parent, ask }) => {
                 match self.reserve_agent_in_txn(txn, &parent, &attempt, Some(agent), ask, now) {
