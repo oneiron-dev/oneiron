@@ -5,6 +5,11 @@ side_tables! {
     /// A pending cross-relationship access request awaiting the owner's approve/deny decision. Key:
     /// id16.
     ACCESS_REQUEST: VaultMeta b"access-request:v1:" LegacyJson;
+    /// FIX 4570: the SUMMARY one actor's compaction home wears as its self-model, by ref only;
+    /// set by the owner or the actor's own door, read through the actor's own scoped SUMMARY
+    /// read. Key: id16(actor).
+    ACTOR_SELF_MODEL_SUMMARY: VaultMeta b"actor:self_model_summary:v1:" Named Engine
+        => crate::code_run::erase_self_model_binding_actor_in_txn;
     /// Durable SessionEnd distill job for one ended sitting, queued in the same transaction that
     /// closes it and cleared once distilled. Key: id16.
     ACTOR_CLAIMS_DISTILL_PENDING_JOB: VaultMeta b"actor_claims:distill_pending:v1:" Raw;

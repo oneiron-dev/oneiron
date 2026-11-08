@@ -4,7 +4,9 @@
 //! the refusal of the peer's bytes. The far end's bytes that fail to apply
 //! cross it the same way (FIX 22153); a frame of this machine's own that does
 //! not encode is its own fault (FIX 22179); a home no residence dial reaches
-//! is the home's outage, never this machine's storage fault (FIX 22190).
+//! is the home's outage, never this machine's storage fault (FIX 22190); a
+//! residence call this machine withholds from a home that may not read the
+//! world is its own policy's refusal, never a storage fault (FIX 22217).
 
 use super::TransportError;
 use crate::error::{Error, SecretError, StoreError, SyncEngineContext, SyncError};
@@ -93,5 +95,17 @@ impl TransportError {
     /// own [`Self::Storage`]. It tells "home node offline".
     pub(crate) fn home_offline() -> Self {
         Self::WebSocket("home node offline".to_owned())
+    }
+
+    /// The transport error of a residence call this machine withholds from a
+    /// home that may not read the window's world (FIX 922 item 11, FIX
+    /// 22217): its own policy's refusal, final as the home's refusal of a
+    /// residence call is ([`Self::InvalidPayload`]). An owner's directive
+    /// it stops is reported refused once, and the upkeep's tasks send no
+    /// error for it. Never [`Self::Storage`]: a storage fault holds the
+    /// directives back and is tried again at every wake. It tells "home may
+    /// not read this world".
+    pub(crate) fn world_unreadable_by_home() -> Self {
+        Self::InvalidPayload("home may not read this world")
     }
 }
