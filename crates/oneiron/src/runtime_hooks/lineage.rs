@@ -216,12 +216,21 @@ pub(super) fn extend(
     (chain, reason)
 }
 
+/// Keeps `chain` behind the landed `row`. A row a permanent erase fenced
+/// before this write gets no chain back (review #6797): a proposal's intent
+/// can settle after its proposal is erased, as its dependencies name the
+/// source, not the row.
 pub(super) fn put_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     row: &[u8; 16],
     chain: &[LineageLink],
 ) -> Result<()> {
+    if let Ok(id) = EntityId::from_bytes(*row)
+        && super::store::source_erased_in_txn(vault, txn, &id)?
+    {
+        return Ok(());
+    }
     LINEAGE.put(
         &vault.store,
         txn,
