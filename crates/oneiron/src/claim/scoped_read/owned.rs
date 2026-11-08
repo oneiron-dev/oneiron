@@ -16,6 +16,7 @@ pub struct OwnedScopedRead {
     own_owner_authority: bool,
     records_cover: records_cover::ArtifactRecordsCover,
     judged_at: Option<u64>,
+    read_filter: Option<RetrievalFilter>,
     vault: Arc<crate::Vault>,
 }
 
@@ -44,6 +45,7 @@ impl ScopedRead<'_> {
             own_owner_authority,
             records_cover,
             judged_at,
+            read_filter,
         } = self;
         Ok(OwnedScopedRead {
             actor_key,
@@ -58,6 +60,7 @@ impl ScopedRead<'_> {
             own_owner_authority,
             records_cover,
             judged_at,
+            read_filter,
             vault,
         })
     }
@@ -80,6 +83,7 @@ impl OwnedScopedRead {
             own_owner_authority,
             records_cover,
             judged_at,
+            read_filter,
             vault,
         } = self;
         let read = ScopedRead {
@@ -97,6 +101,7 @@ impl OwnedScopedRead {
             own_owner_authority,
             records_cover,
             judged_at,
+            read_filter,
         };
         let result = operation(&read);
         let ScopedRead {
@@ -114,6 +119,7 @@ impl OwnedScopedRead {
             own_owner_authority,
             records_cover,
             judged_at,
+            read_filter,
         } = read;
         (
             Self {
@@ -129,6 +135,7 @@ impl OwnedScopedRead {
                 own_owner_authority,
                 records_cover,
                 judged_at,
+                read_filter,
                 vault,
             },
             result,
@@ -156,6 +163,7 @@ impl OwnedScopedRead {
             own_owner_authority,
             records_cover,
             judged_at,
+            read_filter,
             vault: _,
         } = self;
         Ok(ScopedRead {
@@ -173,6 +181,7 @@ impl OwnedScopedRead {
             own_owner_authority,
             records_cover,
             judged_at,
+            read_filter,
         })
     }
 }

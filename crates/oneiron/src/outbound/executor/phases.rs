@@ -210,8 +210,36 @@ pub(super) fn settle_failed_connector_task(
                 ..
             })
         );
+    // FIX 4747: a send that came back ambiguous and that no provider key
+    // makes safe to resend stays Pending and uncertain: it is looked up
+    // before any resend, on the attempt after this one.
+    let lookup_due = ambiguous
+        && matches!(
+            result.resolution,
+            Some(IntentResolution::Pending {
+                delivery: UnconfirmedDelivery::Unresolved,
+                retry: RetryDisposition::NoAutomaticRetry | RetryDisposition::DefiniteOnly,
+            })
+        );
     let past_deadline = |retry_at: u64| task.deadline_at.filter(|deadline| retry_at > *deadline);
-    if retryable {
+    if lookup_due {
+        let retry_at = now.saturating_add(UNCERTAIN_SEND_LOOKUP_DELAY_SECS);
+        result.receipt.fields.insert(
+            "dispatch_outcome".to_owned(),
+            result.outcome.as_str().to_owned(),
+        );
+        persist_send_receipt_and_retry(
+            vault,
+            attempt,
+            task_ref,
+            result.receipt,
+            UNCERTAIN_SEND_LOOKUP_DUE_REASON,
+            retry_at,
+            now,
+            SendReceiptOutcome::Ambiguous,
+            transport_dispatched,
+        )?;
+    } else if retryable {
         // A provider that stated its own cool-down (a rate-limit
         // `retry_after`) is obeyed exactly; without one the
         // generic transport curve still applies. The instant is
@@ -313,6 +341,44 @@ pub(super) fn settle_failed_connector_task(
             },
         )?;
     }
+    Ok(())
+}
+
+/// Parks a send that may have gone out and that no provider lookup could
+/// settle (FIX 4747): its TASK holds for the owner's word, the first time
+/// with one inbox ask to each live owner, and the attempt's audit receipt
+/// and its re-arm at the answer poll commit together. Nothing was sent.
+pub(super) fn park_uncertain_send(
+    vault: &Vault,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task_ref: EntityId,
+    task: &ConnectorSendTask,
+    mut result: OutboundDispatchResult,
+) -> Result<(), ConnectorTaskExecutorError> {
+    // FIX 10955: the transport already ran inside dispatch; read the clock
+    // again for this settlement.
+    let now = vault.now_recorded_at();
+    super::super::uncertain_send::hold_uncertain_send(vault, task, now)?;
+    let transport_dispatched = result
+        .receipt
+        .fields
+        .get("delivery_may_have_occurred")
+        .is_some_and(|value| value == "true");
+    result.receipt.fields.insert(
+        "dispatch_outcome".to_owned(),
+        result.outcome.as_str().to_owned(),
+    );
+    persist_send_receipt_and_retry(
+        vault,
+        attempt,
+        task_ref,
+        result.receipt,
+        UNCERTAIN_SEND_AWAITS_OWNER_REASON,
+        now.saturating_add(UNCERTAIN_SEND_ANSWER_POLL_SECS),
+        now,
+        SendReceiptOutcome::Ambiguous,
+        transport_dispatched,
+    )?;
     Ok(())
 }
 
