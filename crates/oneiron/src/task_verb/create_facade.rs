@@ -66,6 +66,7 @@ fn create_proposal_identity(value: &Value) -> Vec<u8> {
 impl Memory<'_> {
     /// Mints one TASK plus one linked realizing attempt when the actor's live
     /// definition/manifest ceiling permits Auto; otherwise parks one proposal.
+    /// A watch TASK mints with no attempt: its due tick settles it (FIX 22121).
     ///
     /// A create carrying a typed brief is a post: it runs through the one
     /// task highway (OF-220), which owns its idempotency, settlement and
@@ -386,6 +387,7 @@ impl Memory<'_> {
             consult: validated.consult.clone(),
             ttl: validated.ttl,
             due_at: validated.due_at,
+            watch: validated.watch,
             state: Some(TaskExecutionState::Queued),
             provenance: provenance.clone(),
             created_at: now,
@@ -395,15 +397,10 @@ impl Memory<'_> {
             subproject_ref: None,
             team: None,
         });
+        // FIX 4749: the storage door files a standard TASK with a due time
+        // in the watcher due index as this body lands, as it files a synced
+        // copy; a consult carries the stamp but never ticks.
         self.put_task_body_in_txn(wtxn, task_ref, &body, now)?;
-        // FIX 4749: a standard TASK with a due time commits with its row in
-        // the due index, which the hook runner releases as its
-        // `schedule.tick`. A consult carries the stamp but never ticks.
-        if let Some(due_at) = validated.due_at
-            && validated.kind == TaskKind::Standard
-        {
-            crate::runtime_hooks::index_task_due_in_txn(self.vault(), wtxn, task_ref, due_at)?;
-        }
         // A TASK is born in its writer's world and facet (ARCH-0067 §5).
         if self.birth_position() != BirthPosition::default() {
             stamp_task_birth(&self.vault().store, wtxn, task_ref, self.birth_position())?;
@@ -545,6 +542,10 @@ impl Memory<'_> {
     /// a live binding's, a host-bound post's, or the one an approved
     /// proposal or wave plan witnessed. `None` is an unstamped root; a root
     /// witness keeps caller provenance and the conversation, when known.
+    ///
+    /// Every create route lands here, so a watch TASK (FIX 22121) queues
+    /// no realizing attempt and dispatches nothing on any of them: the
+    /// hooks on its due tick do its work, and that tick settles it.
     pub(super) fn route_created_task_with_origin_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -553,6 +554,9 @@ impl Memory<'_> {
         origin: Option<&TaskCreateOrigin>,
         now: u64,
     ) -> MemoryResult<TaskRouteOutcome> {
+        if let Some(due_at) = validated.watch_due_at() {
+            return Ok(TaskRouteOutcome::WatchTick { due_at });
+        }
         match validated.assignee {
             // Absent assignee is the schema-v1 representation of the Dreamer
             // lane and routes identically — old rows are never rewritten.
