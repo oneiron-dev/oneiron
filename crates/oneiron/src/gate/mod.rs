@@ -202,7 +202,7 @@ pub(crate) use self::effect::{
     ChannelIdentityLifecycleFacts, ExternalEffectGovernance, ExternalEffectJudgment,
     ExternalEffectPreflight, LinearMirrorFacts, OutboundSendFacts, PairAdmission, PreflightBudget,
     PreflightVerdict, ScopedMcpCallFacts, check_external_effect_policy,
-    check_external_effect_policy_pair, code_wait_approval_digest,
+    check_external_effect_policy_pair, code_wait_approval_digest, code_wait_standing_bound,
     counterparty_send_override_in_txn, evaluate_external_effect_policy,
     external_effect_approval_digest, hydrate_external_effect_contact, judge_external_effect_in_txn,
     native_mail_cold_approval_digest, preflight_answer_in_txn, preflight_words,
