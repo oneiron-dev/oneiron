@@ -134,7 +134,9 @@ impl Sending {
     ///
     /// # Errors
     ///
-    /// A frame that does not encode.
+    /// [`crate::sync::TransportError::Storage`] for a Data or End frame of
+    /// this side's own that does not encode: its own fault, never the
+    /// receiver's (FIX 22190).
     pub(super) fn poll(
         &mut self,
         peer: &AssetBodyPeer<'_>,
@@ -170,7 +172,7 @@ impl Sending {
                     offset: self.sent,
                     bytes: &bytes,
                 })
-                .into_result()?,
+                .into_own_frame()?,
             );
             self.sent += take as u64;
         }
@@ -199,7 +201,7 @@ impl Sending {
                 attempt: self.attempt,
                 complete,
             })
-            .into_result()?,
+            .into_own_frame()?,
         );
         sent.ended = true;
         Ok(sent)

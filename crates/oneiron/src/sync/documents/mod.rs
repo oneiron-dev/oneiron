@@ -21,6 +21,7 @@ pub(crate) use destination::text_withheld;
 pub use destination::{
     admit_document_destination_in_txn, document_frame_withheld, document_frame_withheld_for,
 };
+pub(crate) use entity::retire_journal_in_txn;
 pub(crate) mod storage;
 #[cfg(test)]
 mod tests;
@@ -478,9 +479,11 @@ impl EntityDocument {
 
     /// Privileged embedding/authority import, without peer grant admission.
     /// STATE replaces, never merges a shallow copy. NOTE still refuses raw bytes.
-    /// Socket writes must use [`Self::import_from_peer`] instead.
+    /// Socket writes must use [`Self::import_from_peer`] instead. This door
+    /// alone carries the owner's authority to take a canonical restore's
+    /// successor in place of the text held here (FIX 3553).
     pub fn import(&self, kind: u8, bytes: &[u8]) -> Result<()> {
-        self.import_admitted(kind, bytes, |_| Ok(()))
+        self.import_admitted_as(kind, bytes, |_| Ok(()), true)
     }
 
     /// Append a peer update only if its grant and live ledger selector still
@@ -555,15 +558,29 @@ impl EntityDocument {
 
     /// The internal admitted importer: `admit` judges the text in the
     /// writer that lands it, which takes a STATE as well as an UPDATE
-    /// (FIX 8861). Its callers choose which kinds they let through.
+    /// (FIX 8861). Its callers choose which kinds they let through. A grant
+    /// to write text is no authority to replace history, so no successor is
+    /// taken here (FIX 3553).
     pub(super) fn import_admitted(
         &self,
         kind: u8,
         bytes: &[u8],
         admit: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
+        self.import_admitted_as(kind, bytes, admit, false)
+    }
+
+    /// [`Self::import_admitted`], where `takes_successor` names the owner's
+    /// authority to take a canonical restore's successor (FIX 3553).
+    fn import_admitted_as(
+        &self,
+        kind: u8,
+        bytes: &[u8],
+        admit: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+        takes_successor: bool,
+    ) -> Result<()> {
         self.refuse_raw_note()?;
-        self.import_record(kind, bytes, admit)?;
+        self.import_record(kind, bytes, admit, takes_successor)?;
         // The document now held can prove a `regenerates` link owed on its
         // entity (FIX 6204).
         super::bridge::wake_regenerates_after_document(&self.vault, &[self.id]);

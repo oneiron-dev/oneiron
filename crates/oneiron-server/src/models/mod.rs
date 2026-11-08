@@ -583,11 +583,7 @@ fn build_native_local(
     provider: &ProviderConfig,
     config: &ModelsConfig,
 ) -> Option<NativeLocal> {
-    let chat = matches!(
-        provider.kind,
-        ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
-    );
-    if !chat || provider.responses_socket.is_some() {
+    if !speaks_native_local(provider) {
         return None;
     }
     let routes = worker_host::native_local_routes(name, provider, &config.workers);
@@ -642,6 +638,18 @@ fn build_native_local(
     _config: &ModelsConfig,
 ) -> Option<NativeLocal> {
     None
+}
+
+/// Whether `provider`'s chat calls may go over the native channel of a
+/// managed EXL3 worker bound to it (I2-LOCAL): an OpenAI-compatible chat
+/// provider holding no Responses socket, which keeps its socket and HTTP
+/// path, as its own transport does.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn speaks_native_local(provider: &ProviderConfig) -> bool {
+    matches!(
+        provider.kind,
+        ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
+    ) && provider.responses_socket.is_none()
 }
 
 /// `model` on `provider` over `native` alone, as a rung at `position`: the

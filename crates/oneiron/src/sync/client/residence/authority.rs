@@ -131,7 +131,7 @@ pub(crate) async fn catch_up_authority(
 ) -> Result<usize, TransportError> {
     let budgets = residence_budgets(vault)?;
     let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
-        return Err(TransportError::Storage("home node offline".into()));
+        return Err(TransportError::home_offline());
     };
     // A checkpoint that cannot be read this round holds back no tail.
     if let Some(pin) = &config.authority_checkpoint_pin

@@ -687,32 +687,53 @@ impl ImapMailWire<'_> {
     }
 
     /// The highest UID in the open `folder` whose own `Message-ID` names
-    /// `provider_id`, read a bounded batch at a time: for an id the server
-    /// cannot be searched for.
+    /// `provider_id`: for an id the server cannot be searched for (fix list
+    /// row 18242). One search answers the UIDs the folder holds; the UID map
+    /// names those it learned under the folder's UIDVALIDITY, and only the
+    /// others are read for their `Message-ID`, a bounded batch at a time.
+    /// The map learns them, so a later look reads only mail that arrived
+    /// since.
     fn scan_for(
         &self,
         open: &mut OpenSession,
+        source: EntityId,
         folder: usize,
         status: FolderStatus,
         provider_id: &str,
     ) -> Result<Option<u64>> {
         let place = open.folders[folder].clone();
         let top = uid_next_of(&mut open.session, status)?;
+        if top <= 1 {
+            return Ok(None);
+        }
+        let present = open.session.uid_ranges(1, top - 1)?;
+        let folder_key = uid_map_folder_key(&place);
+        let mut known = BTreeSet::new();
         let mut best = None;
-        let mut low = 1;
-        while low < top {
-            let high = low.saturating_add(DEPARTURE_BATCH - 1).min(top - 1);
-            let fetched = open.session.uid_fetch(
-                &format!("{low}:{high}"),
-                "UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]",
-            )?;
-            for message in &fetched {
-                if fetched_id(message, &place, status.uid_validity).as_deref() == Some(provider_id)
-                {
-                    best = best.max(message.uid());
+        for (uid, row) in self.mapped_uids(source, folder_key)? {
+            if row.uid_validity == status.uid_validity && ranges_hold(&present, uid) {
+                known.insert(uid);
+                if row.provider_id == provider_id {
+                    best = best.max(Some(uid));
                 }
             }
-            low = high + 1;
+        }
+        let unknown = without(&present, &known);
+        for batch in (UidBatches {
+            ranges: unknown.iter(),
+            current: None,
+        }) {
+            let fetched = open.session.uid_fetch(
+                &range_set(&batch),
+                "UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]",
+            )?;
+            let learned = learned_ids(&fetched, &place, status.uid_validity, top);
+            for (uid, id) in &learned {
+                if id == provider_id {
+                    best = best.max(Some(*uid));
+                }
+            }
+            self.remember_uids(source, folder_key, status.uid_validity, learned)?;
         }
         Ok(best)
     }
@@ -792,7 +813,7 @@ impl ImapMailWire<'_> {
                     // when its own Message-ID is the one asked for.
                     self.exact_hit(open, folder, status, &uids, provider_id)?
                 }
-                None => self.scan_for(open, folder, status, provider_id)?,
+                None => self.scan_for(open, source.source_ref, folder, status, provider_id)?,
             };
             if let Some(uid) = hit {
                 found.push(Location {
@@ -1006,17 +1027,10 @@ impl ImapMailWire<'_> {
             return Ok(held);
         }
         let present = open.session.uid_ranges(1, top - 1)?;
-        let folder_key = *blake3::hash(place.digest.as_bytes()).as_bytes();
-        let mut prefix = source.as_bytes().to_vec();
-        prefix.extend_from_slice(&folder_key);
-        let mapped = {
-            let txn = self.vault.store.env.read_txn()?;
-            UIDS.iter_from(&self.vault.store, &txn, &prefix)?
-                .collect::<Result<Vec<_>>>()?
-        };
+        let folder_key = uid_map_folder_key(place);
         let mut known = BTreeSet::new();
         let mut stale = Vec::new();
-        for ((_, _, uid), row) in mapped {
+        for (uid, row) in self.mapped_uids(source, folder_key)? {
             if row.uid_validity != status.uid_validity {
                 stale.push(uid);
             } else if ranges_hold(&present, uid) {
@@ -1035,24 +1049,22 @@ impl ImapMailWire<'_> {
                 &range_set(&batch),
                 "UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]",
             )?;
-            let learned: Vec<(u64, String)> = fetched
-                .iter()
-                .filter_map(|message| {
-                    let uid = message.uid().filter(|&uid| uid < top)?;
-                    // Only an answer that carries the section asked for
-                    // names the message: an unsolicited update (its flags)
-                    // carries none.
-                    message
-                        .value_starting("BODY[HEADER.FIELDS")
-                        .and_then(Item::bytes)?;
-                    Some((uid, fetched_id(message, place, status.uid_validity)?))
-                })
-                .collect();
+            let learned = learned_ids(&fetched, place, status.uid_validity, top);
             held.extend(learned.iter().map(|(_, id)| id.clone()));
             self.remember_uids(source, folder_key, status.uid_validity, learned)?;
         }
         self.forget_uids(source, folder_key, &stale)?;
         Ok(held)
+    }
+
+    /// The UID map's rows of one folder of `source`, by UID.
+    fn mapped_uids(&self, source: EntityId, folder_key: [u8; 32]) -> Result<Vec<(u64, HeldUid)>> {
+        let mut prefix = source.as_bytes().to_vec();
+        prefix.extend_from_slice(&folder_key);
+        let txn = self.vault.store.env.read_txn()?;
+        UIDS.iter_from(&self.vault.store, &txn, &prefix)?
+            .map(|row| row.map(|((_, _, uid), held)| (uid, held)))
+            .collect()
     }
 
     /// Records which message each of the `learned` UIDs of a folder holds.
@@ -1090,6 +1102,33 @@ impl ImapMailWire<'_> {
             Ok(())
         })
     }
+}
+
+/// The key the UID map files a folder's rows under: the BLAKE3 of its
+/// digest.
+fn uid_map_folder_key(place: &Folder) -> [u8; 32] {
+    *blake3::hash(place.digest.as_bytes()).as_bytes()
+}
+
+/// Which message each UID below `top` of a `Message-ID` fetch names. Only
+/// an answer that carries the section asked for names its message: an
+/// unsolicited update (its flags) carries none.
+fn learned_ids(
+    fetched: &[Fetched],
+    place: &Folder,
+    uid_validity: u64,
+    top: u64,
+) -> Vec<(u64, String)> {
+    fetched
+        .iter()
+        .filter_map(|message| {
+            let uid = message.uid().filter(|&uid| uid < top)?;
+            message
+                .value_starting("BODY[HEADER.FIELDS")
+                .and_then(Item::bytes)?;
+            Some((uid, fetched_id(message, place, uid_validity)?))
+        })
+        .collect()
 }
 
 /// The UIDs of ascending `ranges` not in `known`, as ascending ranges.

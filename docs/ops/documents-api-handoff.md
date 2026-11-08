@@ -280,3 +280,27 @@ from an omitted setting. With no setting, the old serialized profile/key fields,
 order and hash remain unchanged. Numeric defaults, profile-name gates, asset and
 package admission, actor/rights/secret checks, and land/propose/rebind ordering are
 unchanged. The generated SDK carries the optional request field.
+## Nested DOCX story paragraph reads
+
+The native `read_docx_scoped_blocks` reader includes paragraphs inside nested
+tables of the exact named story. Existing top-level and direct-cell results
+keep their order and lookup priority; new descendants follow them. Descendants
+use their real native paragraph ids and accepted inline text, not an enclosing
+cell alias. Existing tracked/structural, literal-prefix and inline-anchor locks
+are retained through all cell ancestors, and locked content stays readable.
+The body-only read and the ordinary all-story reply are unchanged. This native
+reader extension does not by itself establish nested live-unit projection,
+annotation freshness, shared-body editing or whole ParagraphAsk support.
+
+### Nested tables in named DOCX stories
+
+The native `read_docx_body` story list includes nested tables after its previous
+blocks. Table and paragraph ids remain local to the exact story scope. Existing
+story-table import, text edits, and diff use these actual ids without a new
+locator shape. The body-only read and scoped paragraph read are unchanged.
+
+Native story-cell edits resolve the actual nested table and its own guard in
+both transaction-base and live state. Ancestor tracking and vertical-merge laws
+remain in force; same-transaction insertions retain their existing insertion
+semantics. No selector falls back to a sibling, ancestor, other story, or body.
+This retained source slice is not a production compile or a full FIX 14487 claim.
