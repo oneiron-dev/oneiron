@@ -59,6 +59,17 @@ impl<'a> RepoKnownCheck<'a> {
         hash: &[u8; 32],
     ) -> Result<Self> {
         let record = crate::codebase::snapshot_asset_entity_id(hash)?;
+        Self::for_record_in_txn(vault, txn, known, record)
+    }
+
+    /// The known-value check for the actual stored ASSET `record`, using
+    /// its own kept-value rulings in the same transaction as the sweep.
+    pub(crate) fn for_record_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        known: &'a KnownValues,
+        record: EntityId,
+    ) -> Result<Self> {
         let owner_kept = owner_kept_in_txn(vault, txn, LiftFamily::Records, record.as_bytes())?;
         let kept = if owner_kept {
             KeptValues::default()

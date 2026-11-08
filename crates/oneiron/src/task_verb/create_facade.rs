@@ -380,6 +380,7 @@ impl Memory<'_> {
             spec: validated.spec.clone(),
             consult: validated.consult.clone(),
             ttl: validated.ttl,
+            due_at: validated.due_at,
             state: Some(TaskExecutionState::Queued),
             provenance: provenance.clone(),
             created_at: now,
