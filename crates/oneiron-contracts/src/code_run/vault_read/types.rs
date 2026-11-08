@@ -92,6 +92,10 @@ pub struct CoreQueryRequest {
         alias = "count_mode"
     )]
     pub count_mode: CountMode,
+    /// The caller's retrieval filter (FIX 3977): it only narrows what the
+    /// read's scoped lane admits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<crate::gate::ReadFilterInput>,
 }
 
 /// A query's affect: valence in -1..=1, arousal and dominance in 0..=1.
@@ -104,7 +108,7 @@ pub struct CoreQueryAffect {
 }
 
 /// Accepted `POST /v1/core/hydrate` request body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CoreHydrateRequest {
     /// Canonical short reference in `shortId:contentHashHex` form.
@@ -130,10 +134,14 @@ pub struct CoreHydrateRequest {
     /// rather than in full.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,
+    /// The caller's retrieval filter (FIX 3977): it only narrows what the
+    /// read's scoped lane admits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<crate::gate::ReadFilterInput>,
 }
 
 /// Accepted `POST /v1/core/batch/shortId/hydrate` request body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CoreBatchShortIdHydrateRequest {
     /// Canonical short references in `shortId:contentHashHex` form.
@@ -160,6 +168,10 @@ pub struct CoreBatchShortIdHydrateRequest {
     /// rather than in full.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,
+    /// The caller's retrieval filter (FIX 3977): it only narrows what the
+    /// read's scoped lane admits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<crate::gate::ReadFilterInput>,
 }
 
 /// Canonical transport body for the accepted
@@ -168,7 +180,7 @@ pub struct CoreBatchShortIdHydrateRequest {
 /// An HTTP `WireTransport` places `id` in the route path and `view` in the
 /// query while still carrying this canonical JSON body at the `round_trip`
 /// seam.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CoreMemoryTimelineRequest {
     /// Hex entity id whose supersession chain is requested.
@@ -177,6 +189,10 @@ pub struct CoreMemoryTimelineRequest {
     /// timeline record carries no `item` projection to view.
     #[serde(default)]
     pub view: Option<View>,
+    /// The caller's retrieval filter (FIX 3977): it only narrows what the
+    /// read's scoped lane admits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<crate::gate::ReadFilterInput>,
 }
 
 /// M8-reserved ask request payload. Opaque on purpose.

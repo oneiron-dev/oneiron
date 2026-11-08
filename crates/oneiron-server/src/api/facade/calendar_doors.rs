@@ -196,6 +196,7 @@ pub(crate) async fn calendar_connector_write(
         move |server, memory, owner| {
             let view = memory.calendar_read(&oneiron::calendar::CalendarReadRequest {
                 event_ref: input.event_ref.clone(),
+                filter: None,
             })?;
             if view.value.is_none() {
                 return Err(
