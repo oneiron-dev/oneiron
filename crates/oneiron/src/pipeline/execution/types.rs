@@ -62,6 +62,7 @@ pub(super) struct RetrievalTxnOutput {
     /// The pack's critical candidates before its cuts, and those the cuts
     /// left out (FIX 9760). Empty outside a pack run.
     pub(super) critical: crate::context_pack::PackCriticalAccounting,
+    pub(super) replay_inputs_memory: Option<super::super::trace::ReplayInputsMemory>,
 }
 
 /// Pending-embedding markers are base rows only (K6: a room keeps no `pe:`
