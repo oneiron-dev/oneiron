@@ -15,6 +15,7 @@ use crate::code_run::{
 const DIVERGED: &str = "the pinned source made another call where an earlier entry settled one";
 const NESTED_CALLABLE: &str = "a callable the pinned entry calls returned past its wait, halted or stored outputs: it cannot resume inside it";
 const CALLABLE_PARKED: &str = "a callable the pinned entry calls parked before its body ran";
+const REOPEN_REDIRECTED: &str = "a hook redirected a callable the pinned entry runs again: its earlier calls belong to another body";
 const FRAME_UNCONSUMED: &str =
     "a callable the pinned entry resumed returned before every call it settled earlier";
 const UNREADABLE: &str = "a settled call's row does not decode";
@@ -130,6 +131,11 @@ impl ProgramInjection {
             // The same call runs its body again: its row's answer is the
             // body's unwinding, never its result.
             ProgramResumeKind::OpenCallable => {
+                // A body a hook redirected before ran another callable: its
+                // calls are not this one's to answer.
+                if settled.row.rewritten_request.is_some() {
+                    return self.hold(REOPEN_REDIRECTED);
+                }
                 return match settled.row.program_answer_for(call) {
                     Ok(ProgramRowAnswer::Settled(_)) if matches!(call, SelfCall::SkillsCall(_)) => {
                         self.reopening = true;
@@ -213,15 +219,28 @@ impl ProgramInjection {
         }
     }
 
+    /// A hook rewrote the call at `seq`: one that runs a callable's body
+    /// again holds the entry, as the body it runs is not the one its earlier
+    /// calls came from (FIX 5878). Its calls are refused from here on, so
+    /// none takes effect.
+    pub(in crate::engine_executor) fn redirected(&mut self, seq: u64) {
+        if self.reopened.last() == Some(&seq) && self.held.is_none() {
+            self.held = Some(REOPEN_REDIRECTED);
+        }
+    }
+
     /// Every call of the entry, in its source's order, once it ended: a
-    /// held entry, or one whose source ended before every settled call,
-    /// holds instead.
+    /// held entry, one whose source ended before every settled call, or
+    /// one a callable it ran again did not return from, holds instead.
     pub(super) fn settle(self) -> Result<Vec<ProgramLogEntry>, &'static str> {
         if let Some(held) = self.held {
             return Err(held);
         }
         if !self.calls.is_empty() {
             return Err(UNCONSUMED);
+        }
+        if !self.reopened.is_empty() {
+            return Err(FRAME_UNCONSUMED);
         }
         Ok(self.log)
     }
