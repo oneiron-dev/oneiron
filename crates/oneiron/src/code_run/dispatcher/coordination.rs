@@ -696,9 +696,10 @@ impl<'a> HostSelfDispatcher<'a> {
                 super::super::payload::self_call_request_value(&SelfCall::TasksWait(handle))?;
             for call in &record.bridge_calls {
                 // Observed generations are an outcome fact of the dispatched
-                // wait: compare against the effective request (FIX 1442).
+                // wait: compare against the effective request (FIX 1442), by
+                // its identity once an erase took its words (FIX 6534).
                 if call.effect == SelfEffect::TasksWait
-                    && call.rewritten_request.as_ref().unwrap_or(&call.request) == &request
+                    && call.dispatched_request_is(&request)?
                     && let SelfDispatchOutcome::TaskAskStatus(
                         crate::task_verb::TaskAskStatus::Changed { generation, .. },
                     ) = super::super::payload::decode_self_dispatch_outcome(&call.outcome)?

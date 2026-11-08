@@ -229,6 +229,9 @@ fn rejoin_in_txn(
             agent,
             calibration_sample,
             payer,
+            // A free-time cycle's root opens with no funding Grant (FIX
+            // 7766), and every scope below reads its root's: none moves.
+            funding: None,
         });
     }
     Ok(scopes)

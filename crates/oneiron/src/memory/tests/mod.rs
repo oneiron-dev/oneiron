@@ -638,6 +638,7 @@ fn claim_list_and_scoped_get_agree_on_a_claim_outside_the_actors_grant() {
             predicate: None,
             lifecycle: None,
             limit: 10,
+            filter: None,
         })
         .expect("claim list");
     assert_eq!(
@@ -714,6 +715,7 @@ fn every_memory_read_verb_returns_a_receipt() {
         predicate: None,
         lifecycle: None,
         limit: 10,
+        filter: None,
     };
     let neighbors = NeighborOpts {
         limit: 10,
@@ -721,12 +723,14 @@ fn every_memory_read_verb_returns_a_receipt() {
     };
     let calendar = crate::CalendarReadRequest {
         event_ref: subject.to_hex(),
+        filter: None,
     };
     let search = crate::CalendarSearchRequest {
         calendars: Vec::new(),
         range: None,
         text: None,
         limit: 10,
+        filter: None,
     };
     let window = test_time(0);
 
@@ -940,6 +944,7 @@ fn a_deleted_shell_is_absent_from_every_memory_read() {
             predicate: None,
             lifecycle: None,
             limit: 10,
+            filter: None,
         })
         .expect("claim list");
     assert!(listed.value.is_empty());
@@ -994,6 +999,7 @@ fn a_deleted_shell_is_absent_from_every_memory_read() {
     let calendar = memory
         .calendar_read(&crate::CalendarReadRequest {
             event_ref: id.to_hex(),
+            filter: None,
         })
         .expect("calendar read");
     assert!(calendar.value.is_none());

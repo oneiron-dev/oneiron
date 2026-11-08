@@ -375,6 +375,7 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 | `hard_erase_sweep` | day; hour while an erasure waits | the history an erase left in sync carriers (the 30-day erasure deadline) |
 | `ppr_cache_eviction` | day | cached graph walks older than the longest serve window (168 h) |
 | `drafter_corpus_sweep` | day, and at start | drafter training examples past the newest `DRAFTER_EXAMPLES_KEPT` (their keys retire), sealed drafter corpora no prepared, training or returned drafter version names, and stray files in a kept one |
+| `model_pack_retirement` | minute | a model pack's retirement: its notices 60, 30 and 7 days before (none while your model manifest outranks the pack), and on the day the move to its successor, with the change notice and its revert. `oneiron maintain` holds no model offers, so it sends no retiring model's notice |
 
 The signing sweeps and the cache eviction walk their records a page at a time and go on from
 where they stopped on the next pass. A sweep that fails, or that could not finish some of its
