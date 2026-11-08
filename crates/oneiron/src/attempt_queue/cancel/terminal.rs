@@ -595,6 +595,7 @@ fn landing_successor(
         },
         lease_owner: None,
         attempt_count: 0,
+        lease_expirations: Vec::new(),
         claimed_at: None,
         scheduled_at,
         retry_of: Some(source.id),
