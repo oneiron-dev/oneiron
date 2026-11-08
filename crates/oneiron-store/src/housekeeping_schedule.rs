@@ -64,7 +64,11 @@ pub enum HousekeepingSweep {
     /// today, 60, 30 and 7 days before, and on the day the move of a pin, or
     /// of the pack the vault follows, to its successor, recorded as a pack
     /// change. Every host that runs the pass runs it: a serving host against
-    /// the access its offers hold, `oneiron maintain` against none.
+    /// the access its offers hold, on its vault and each shared environment
+    /// it keeps open, `oneiron maintain` against the access the router
+    /// `serve` would build holds, from its `[models]` config and the vault's
+    /// mesh discovery rows (FIX 22059, 22189). A stopped vault is woken on
+    /// the first day to come on which the pass owes work.
     ModelPackRetirement,
     /// Due signing reminders.
     EsignReminders,

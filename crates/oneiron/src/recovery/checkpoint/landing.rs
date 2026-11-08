@@ -157,7 +157,7 @@ impl Vault {
         Self::check_open_config(&config)?;
         let claim_row_floor = super::claim_order::plan_floor(&mut image, &opened_entities)?;
         // Each row is counted at the length it lands at (FIX 6025, 6232).
-        let lengths = super::landing_lengths::LandingRowLengths::of(&image, &retired);
+        let lengths = super::landing_lengths::LandingRowLengths::of(&image, &retired)?;
         // The opened payload rows land beside them, counted the same way.
         let payload_rows = opened
             .as_ref()
@@ -336,7 +336,10 @@ impl Vault {
                 &BTreeSet::new(),
                 &BTreeSet::new(),
             )?;
-            crate::channel_identity_provider::prune_line_chat_archive_pins_in_txn(&vault.store, txn)?;
+            crate::channel_identity_provider::prune_line_chat_archive_pins_in_txn(
+                &vault.store,
+                txn,
+            )?;
             // A NOTE that cites a record this restore did not open, or one
             // the source erased since the cut, loses that citation and its
             // quote, history included, as the live erase scrubs it (FIX

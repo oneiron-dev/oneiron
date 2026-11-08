@@ -13,18 +13,31 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // logged search or turns a switched-off search on again (FIX 12560).
     // An import's queue, occurrences and progress stand with the rows they
     // landed, as the image holds them (FIX 12559).
+    (&t::MAIL_PACK_ATTACHMENT, CONTENT),
+    (&t::MAIL_PACK_ATTACHMENT_ERASE, CONTENT),
     (&t::MAIL_PACK_BODY_QUEUE, CONTENT),
+    (&t::MAIL_PACK_CALENDAR_RESOURCE, CONTENT),
+    (&t::MAIL_PACK_CALENDAR_SYNC, CONTENT),
     (&t::MAIL_PACK_COMPLIANCE_EVENT, LIVE),
     (&t::MAIL_PACK_COMPLIANCE_SETTING, LIVE),
+    // An owed forget stands with the rows it still owes, as the image holds them.
+    (&t::MAIL_PACK_FORGET_OWED, CONTENT),
     // An owed header retirement stands with the revision it names, as the
     // image holds it (FIX 15413).
     (&t::MAIL_PACK_HEADER_RETIREMENT, CONTENT),
+    // A UID names one message for as long as its UIDVALIDITY stands.
+    (&t::MAIL_PACK_IMAP_UID, CONTENT),
+    (&t::MAIL_PACK_MBOX_IMPORT, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE_ROW, CONTENT),
+    // A drafted reply stands as the vault held it: its state and its approval.
+    (&t::MAIL_PACK_REPLY_DRAFT, LIVE),
     // A source's owner, custody name and settings are live configuration.
     (&t::MAIL_PACK_SOURCE, LIVE),
     (&t::MAIL_PACK_SOURCE_INDEX, LIVE),
     (&t::MAIL_PACK_SYNC, CONTENT),
+    // A thread's epoch stands with the conversations it named.
+    (&t::MAIL_PACK_THREAD_EPOCH, CONTENT),
     (&t::ENTITY_TEXT_INDEXED_IDLE_DELAY_MS, CONTENT),
     // FIX 9970: a turn's unpersisted-wake label stands with the turn as the
     // image holds it, as the wakes its landing did record do.

@@ -136,6 +136,7 @@ mod linear_doors;
 mod live_run_doors;
 mod live_voice_doors;
 mod live_voice_settlement;
+mod mail_pack_doors;
 mod merge_queue_checker_doors;
 mod merge_queue_doors;
 mod mesh_doors;
@@ -146,6 +147,7 @@ mod model_setting_doors;
 mod model_step_doors;
 mod model_stream_doors;
 mod note_doors;
+mod oauth_authorization_doors;
 mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;
@@ -238,7 +240,9 @@ use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{
     connector_answer_as, connector_call_listing_as, connector_call_listing_on,
 };
-pub(crate) use export_transfer::{ExportTransfers, mcp_export_transfer};
+pub(crate) use export_transfer::{
+    ExportTransfers, mcp_export_transfer, owner_whole_vault_export_admitted,
+};
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{
@@ -430,6 +434,7 @@ fn unknown_verb(verb: &str) -> FacadeApiError {
 pub(crate) struct FacadeApiError {
     status: StatusCode,
     body: FacadeErrorEnvelope,
+    hook_notice: bool,
 }
 
 /// `{error: {...}}`, the same transport envelope shape `/v1/core` uses,

@@ -1,4 +1,4 @@
-//! FIX 5629, 6505, 4747, 5369: the taps a delivered notification offers, read
+//! FIX 5629, 6505, 4902, 4747, 5369: the taps a delivered notification offers, read
 //! when its row is read, from the refs its producer already wrote. Nothing here is
 //! stored: there is no action ledger, a settled or stale target offers no
 //! tap, and the door each tap names judges its target again when called.
@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::list::NotificationRow;
 use super::notification::NotificationKind;
+use crate::authority::OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER;
 use crate::claim::{WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestSettingChangeStatus};
 use crate::entity_id::EntityId;
 use crate::llm::model_pack::{MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER, MODEL_PACK_REVERT_VERB};
@@ -25,6 +26,8 @@ const STOCK_SWITCH_UNDO_VERB: &str = "vault.coach.training_offers.undo";
 const THREAD_JOIN_APPROVE_VERB: &str = "vault.rooms.thread_join.approve";
 /// A member's denial of a request to join a private thread.
 const THREAD_JOIN_DENY_VERB: &str = "vault.rooms.thread_join.deny";
+/// The owner's answer to an outside app's OAuth sign-in request (FIX 4902).
+const OAUTH_AUTHORIZATION_ANSWER_VERB: &str = "vault.oauth.authorization.answer";
 
 /// One tap a notification offers: the registered verb it calls and that
 /// verb's own input, so a client renders the button the engine describes.
@@ -56,10 +59,12 @@ impl Memory<'_> {
     /// The taps `row` offers this caller now: a pending digest settings ask
     /// is accepted or declined and an applied change undone (FIX 5629), a
     /// pending request to join a private thread is approved or denied
-    /// (FIX 6505), a send that may have gone out is sent again or left (FIX
-    /// 4747), and a model pack change is reverted (FIX 5369). An applied
-    /// stock switch offers the owner's undo while its binding still holds
-    /// (FIX 4663). Any other row, and a target that no longer reads or has
+    /// (FIX 6505), a waiting OAuth sign-in request is allowed at the tier it
+    /// asked for or denied (FIX 4902), a send that may have gone out is sent
+    /// again or left (FIX 4747), and a model pack change is reverted
+    /// (FIX 5369). An applied stock switch offers the owner's undo while
+    /// its binding still holds (FIX 4663). Any other row, and a target that
+    /// no longer reads or has
     /// settled, offers none.
     fn notification_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let producer = row.source.producer.as_str();
@@ -75,6 +80,9 @@ impl Memory<'_> {
             NotificationKind::ThreadJoinRequested if producer == THREAD_NOTICE_PRODUCER => {
                 self.thread_join_actions(row)
             }
+            NotificationKind::Ask if producer == OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER => {
+                self.oauth_authorization_actions(row)
+            }
             NotificationKind::Ask if producer == UNCERTAIN_SEND_NOTIFICATION_PRODUCER => {
                 self.uncertain_send_actions(row)
             }
@@ -83,8 +91,53 @@ impl Memory<'_> {
             {
                 self.model_pack_revert_actions(row)
             }
+            NotificationKind::Ask if producer == crate::mail_pack::MAIL_REPLY_ASK_PRODUCER => {
+                self.mail_reply_ask_actions(row)
+            }
             _ => Vec::new(),
         }
+    }
+
+    /// The producer names the request in `source.result`; the ask is the
+    /// vault owner's, and only his proof answers it. Shown while the request
+    /// still waits: allow at the tier it asked for, or deny. The owner's own
+    /// client may send another tier or a world with the same verb.
+    fn oauth_authorization_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let Some(request) = row
+            .source
+            .result
+            .as_deref()
+            .and_then(|request| EntityId::from_hex(request).ok())
+        else {
+            return Vec::new();
+        };
+        let vault = self.vault();
+        let asked = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)
+            .and_then(|txn| {
+                vault.oauth_authorization_tap_in(&txn, request, crate::unix_seconds_now())
+            });
+        let Ok(Some(tier)) = asked else {
+            return Vec::new();
+        };
+        let request_ref = request.to_hex();
+        vec![
+            NotificationAction::new(
+                OAUTH_AUTHORIZATION_ANSWER_VERB,
+                serde_json::json!({
+                    "request_ref": request_ref,
+                    "allow": true,
+                    "tier": tier.wire_name(),
+                }),
+            ),
+            NotificationAction::new(
+                OAUTH_AUTHORIZATION_ANSWER_VERB,
+                serde_json::json!({ "request_ref": request_ref, "allow": false }),
+            ),
+        ]
     }
 
     /// The producer names the connector-send TASK in `source.result`; the
