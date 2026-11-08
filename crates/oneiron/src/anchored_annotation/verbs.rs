@@ -122,6 +122,7 @@ impl Memory<'_> {
                 | (UnitFormat::Xlsx, Locator::Xlsx { .. })
                 | (UnitFormat::Pptx, Locator::Pptx { .. })
                 | (UnitFormat::Html, Locator::Html { .. })
+                | (UnitFormat::Text, Locator::Text { .. })
         );
         if !matches {
             return Err(MemoryError::bad_request(
