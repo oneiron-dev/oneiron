@@ -114,6 +114,10 @@ pub(crate) struct FacadeCall<'a> {
     /// owner-grade caller, and for an ingress that carries no per-call proof.
     forwarded: Option<oneiron::authority::ForwardedCallerProof>,
     signing_request_transport: Option<SigningRequestTransport>,
+    /// An artifact write's content its HTTP body held as a file (FIX
+    /// 22074): this call's alone. A call built for another, an action's
+    /// step, a socket's or settlement's, carries none.
+    blob_body: Option<super::blob_body::FacadeBlobBody>,
 }
 
 impl<'a> FacadeCall<'a> {
@@ -164,6 +168,9 @@ impl<'a> FacadeCall<'a> {
                     .and_then(|value| value.to_str().ok())
                     .map(str::to_owned),
             )),
+            blob_body: extensions
+                .get::<super::blob_body::FacadeBlobBody>()
+                .cloned(),
         }
     }
 
@@ -197,6 +204,7 @@ impl<'a> FacadeCall<'a> {
             surface: super::owner_binding::act_surface(auth),
             forwarded: None,
             signing_request_transport: None,
+            blob_body: None,
         }
     }
 
@@ -239,6 +247,7 @@ impl<'a> FacadeCall<'a> {
             surface: super::owner_binding::act_surface(auth),
             forwarded: None,
             signing_request_transport: None,
+            blob_body: None,
         }
     }
 
@@ -375,7 +384,21 @@ impl<'a> FacadeCall<'a> {
             surface: self.surface,
             forwarded: self.forwarded.clone(),
             signing_request_transport: self.signing_request_transport.clone(),
+            blob_body: self.blob_body.clone(),
         }
+    }
+
+    /// The content this call's body held as a file, when the call is of
+    /// `verb`, the verb it arrived for (FIX 22074).
+    pub(super) fn blob_body(&self, verb: &str) -> Option<&super::blob_body::FacadeBlobBody> {
+        self.blob_body.as_ref().filter(|body| body.verb() == verb)
+    }
+
+    /// The digest of the input of this call of `verb` as it arrived, when
+    /// its body held content as a file: its JSON input lacks that content.
+    pub(super) fn arrival_digest(&self, verb: &str) -> Option<&str> {
+        self.blob_body(verb)
+            .map(super::blob_body::FacadeBlobBody::digest)
     }
 }
 
@@ -395,6 +418,7 @@ pub(super) struct OwnedFacadeCall {
     surface: ActSurface,
     forwarded: Option<oneiron::authority::ForwardedCallerProof>,
     signing_request_transport: Option<SigningRequestTransport>,
+    blob_body: Option<super::blob_body::FacadeBlobBody>,
 }
 
 impl OwnedFacadeCall {
@@ -413,6 +437,7 @@ impl OwnedFacadeCall {
             surface: self.surface,
             forwarded: self.forwarded.clone(),
             signing_request_transport: self.signing_request_transport.clone(),
+            blob_body: self.blob_body.clone(),
         }
     }
 }

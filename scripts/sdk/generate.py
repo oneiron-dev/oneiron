@@ -248,6 +248,14 @@ for row in ROWS:
     pointers = row['refs']
     if not pointers or len(set(pointers)) != len(pointers) or not all(isinstance(p, str) and re.fullmatch(r'(/(\*|[a-z_][a-z0-9_]*))+', p) for p in pointers):
         raise ValueError(f'{row["name"]}: refs are distinct JSON pointers of field names and `*`')
+# FIX 22074: `file_call` is the engine call of a row whose `content_base64`
+# its host decoded into a file (`body`), run behind the row's own checks. Only
+# a plain memory row with no prose links has one.
+for row in ROWS:
+    if 'file_call' in row and (not isinstance(row['file_call'], str) or row.get('context', 'memory') != 'memory'
+                               or row.get('host_door') or row.get('server_door') or 'prose_links' in row
+                               or 'body' not in row['file_call']):
+        raise ValueError(f'{row["name"]}: file_call is a plain memory row\'s engine call on `body`')
 # 2690: a `readable` entry is `rows`, a top-level field, or a nested path of
 # fields joined by `.`, any of them suffixed `[*]` to take every item of an
 # array (`reviewed[*].artifact_ref`). The facade checks each hex entity id at
@@ -2037,6 +2045,13 @@ def outputs():
             core += f"{core_cfg(r)}pub fn {method}<S: crate::board_verb::LiveBoardSource>(context: &mut crate::board_verb::BoardVerbContext<'_, S>, {binding}: {r['input']}) -> Result<{r['output']}, crate::board_verb::BoardVerbError> {{ {result} }}\n"
         else:
             core += f"{core_cfg(r)}pub fn {method}(memory: &Memory<'_>, {binding}: {r['input']}) -> MemoryResult<{r['output']}> {{ {checks} {result} }}\n"
+        # FIX 22074: a row whose content its host may hold as a file gets a
+        # second engine fn that reads it there, behind the same checks.
+        if 'file_call' in r:
+            file_call = r['file_call']
+            file_result = file_call[:-1] if file_call.endswith('?') else f'Ok({file_call})'
+            file_result = prose_links_check(r) + record_refs_check(r) + file_result
+            core += f"{core_cfg(r)}pub fn {method}_file(memory: &Memory<'_>, {binding}: {r['input']}, body: &crate::blob_artifact::BlobBodyFile<'_>) -> MemoryResult<{r['output']}> {{ {checks} {file_result} }}\n"
     # FIX 1210: the record-ref check a row's engine fn runs before its call,
     # alone, for a door that refuses a ref its caller cannot read before that
     # fn runs: the refusal is receipted as the fn's would be, and no call runs.

@@ -597,6 +597,9 @@ pub struct InboxMarkRequest {
 mod memory_requests;
 pub use memory_requests::*;
 
+mod blob_input;
+pub use blob_input::{invoke_blob_input, takes_blob_input};
+
 include!("generated/verb_catalog.rs");
 include!("generated/run_verb_catalog.rs");
 include!("generated/sdk_generated.rs");

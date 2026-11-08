@@ -20,11 +20,12 @@ mod owner_json;
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{HeaderMap, header};
+use futures_util::StreamExt as _;
 use tokio::sync::mpsc;
 
 use crate::api::transfer::{self, BodyReader};
@@ -166,6 +167,23 @@ impl Unspooled {
             ),
         }
     }
+}
+
+/// `body`, ended with an error once more than `limit` bytes of it arrived,
+/// whether or not it declared its length; `over` says so.
+pub(super) fn capped(body: Body, limit: u64, over: Arc<AtomicBool>) -> Body {
+    let mut arrived = 0u64;
+    Body::from_stream(body.into_data_stream().map(move |piece| {
+        let piece = piece?;
+        arrived = arrived.saturating_add(piece.len() as u64);
+        if arrived > limit {
+            over.store(true, Ordering::Relaxed);
+            return Err(axum::Error::new(io::Error::other(
+                "the request body exceeds its route's bound",
+            )));
+        }
+        Ok(piece)
+    }))
 }
 
 /// The length `headers` declare for the body.

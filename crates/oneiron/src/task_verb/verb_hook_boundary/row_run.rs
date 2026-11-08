@@ -181,7 +181,22 @@ pub fn row(
     args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
 ) -> MemoryResult<Value> {
-    row_with_saved(memory, verb, args, run, false).0
+    row_with_saved(memory, verb, args, |args, _| run(args), false).0
+}
+
+/// [`row`] for a call one member of whose args its host holds as a file
+/// ([`crate::runtime_hooks::verb::hold_member`], FIX 22074): `run` also
+/// learns whether the args passed the chain untouched, with no hook live on
+/// them, so the held file is still that member's. Args a hook was to read,
+/// and those a saved call resumed with, carry the member as JSON. Its
+/// result comes back beside the notice bit, as [`row_with_notice`] gives it.
+pub(crate) fn row_holding_member(
+    memory: &Memory<'_>,
+    verb: &str,
+    args: Value,
+    run: impl FnOnce(Value, bool) -> MemoryResult<Value>,
+) -> (MemoryResult<Value>, Option<bool>) {
+    row_with_saved(memory, verb, args, run, false)
 }
 
 /// [`row`] with the content-free notice bit from the actual pre chain,
@@ -198,7 +213,7 @@ pub fn row_with_notice(
     args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
 ) -> (MemoryResult<Value>, Option<bool>) {
-    row_with_saved(memory, verb, args, run, false)
+    row_with_saved(memory, verb, args, |args, _| run(args), false)
 }
 
 /// A workflow's caller-only retry from its retained tool checkpoint. The
@@ -215,14 +230,14 @@ pub fn row_retained(
     args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
 ) -> MemoryResult<Value> {
-    row_with_saved(memory, verb, args, run, true).0
+    row_with_saved(memory, verb, args, |args, _| run(args), true).0
 }
 
 fn row_with_saved(
     memory: &Memory<'_>,
     verb: &str,
     mut args: Value,
-    run: impl FnOnce(Value) -> MemoryResult<Value>,
+    run: impl FnOnce(Value, bool) -> MemoryResult<Value>,
     require_saved: bool,
 ) -> (MemoryResult<Value>, Option<bool>) {
     // A call a budget window paced answers from its held row until its turn
@@ -284,7 +299,10 @@ fn row_with_saved(
             .landing
             .is_some()
             .then(crate::authority::restriction_only_clock);
-        let ran = run(CustodySecret::restored(secret.as_ref(), pre.args.clone()));
+        let ran = run(
+            CustodySecret::restored(secret.as_ref(), pre.args.clone()),
+            pre.passed_through(),
+        );
         drop(restriction);
         notice = Some(revoke_lands::caller_notice(&pre).is_some());
         let result = match ran {

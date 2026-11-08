@@ -353,6 +353,7 @@ pub fn stop_refusal(stop: VerbHookStop, session: Option<&HookSession>) -> Memory
     error
 }
 
+pub(crate) use row_run::row_holding_member;
 pub use row_run::{
     browser_row_pre, row, row_pre, row_retained, row_tapped, row_with_notice, typed_row,
     typed_row_validated,
