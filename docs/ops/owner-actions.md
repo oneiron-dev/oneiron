@@ -569,7 +569,7 @@ like any other reveal; approve once opens the agent's next read of that file.
 
 When a write's mask lifts a key out of a record, or marks a file, you get one inbox notice for
 that record, whatever number of keys it held. The notice lists each key's handle, its kind and
-where it sat. Answer each key one of four ways:
+where it sat. Answer each key using an action in its `actions` list:
 
 ```sh
 oneiron api raw GET '/v1/owner/secrets/found?pending=true'    # each record, its keys and what may still be done
@@ -591,8 +591,21 @@ oneiron api raw POST /v1/owner/secrets/found/not-a-secret --data '{"handle": "sc
   value an earlier revoke erased can't be marked not a secret; if the value appears again, its new
   finding can.
 
-Each answer writes its receipt. Not a secret works only for a key found in a record's body or in a
-file. A key in a claim or a text field keeps its handle.
+Each answer writes its receipt. The listing's `actions` says what is available for that key.
+The native text rulings support a record's body, a text field, a claim or a file; a signed MACHINE
+claim whose history owns its body keeps its handle. A repository finding supports **Not a secret**
+only and leaves its bytes, history and marks unchanged.
+
+To keep a real secret as text by choice, rather than declare a false hit, use **Kept as text**
+(`kept_as_text` in the action list):
+
+```sh
+oneiron api raw POST /v1/owner/secrets/found/keep-as-text --data '{"handle": "sc12"}'
+```
+
+This uses the same native restore, custody revoke and kept-value screen as **Not a secret**, but
+records the owner's distinct choice and receipt reason. It does not declare that the value is
+not a secret. Use it only where the key's `actions` lists `kept_as_text`.
 
 To re-enter a kept value after marking a key **Not a secret** or **Kept as text**, use the
 `re_enter` action on its card. Include settled keys in the listing with `pending=false`:
@@ -1054,6 +1067,29 @@ leaves what the interest queue still holds as one remainder job, due a policy in
 The step reports that remainder as `deferred` and does not wait for it. A lane job that another
 wake already holds queued (one Coach host job per kind, one curator slot, one remainder) stays
 under that wake's root, not this one.
+
+## Let the Dreamer apply its nightly identity links
+
+Nightly continuations propose `SameAs` links. They apply those links only under the owner's
+standing action grant for this vault's Dreamer; without one, each link remains proposed.
+To mint that existing grant through the SDK, MCP or HTTP facade:
+
+```sh
+oneiron api call vault.consent.create_nightly_link_grant --data '{}'
+```
+
+Over HTTP, call `POST /v1/core/facade/vault.consent.create_nightly_link_grant` with `{}` and
+an owner credential. Over MCP, pass `{"spec": {}}`. The vault resolves its own Dreamer System
+principal and mints exactly `dreamer.nightly_link.apply` on `dreamer:nightly-links`, without a
+project target or budget. No actor id or class comes from the request, and no grant is minted
+by default. The generic standing-action request's project/audience envelope does not express
+this bound.
+
+The answer is the normal consent receipt, including `grant_ref`. It appears in
+`vault.consent.registry`; withdraw it with `vault.consent.revoke`, passing
+`{"grant": "<grant_ref>"}`. The landing transaction still checks that the grant is active and
+its issuer is a live vault owner. Minting it changes no reader scope, trust, model policy or
+other Dreamer setting, and does not start a night step.
 
 ## Revert anything the Dreamer changed
 

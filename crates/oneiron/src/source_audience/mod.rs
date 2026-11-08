@@ -31,8 +31,8 @@
 //! bound row on another lane stay out of replication
 //! ([`withheld_from_replication_in`]); and a row a source landed, read where
 //! its binding is absent, reads to no one. A vault that holds no policy
-//! binds no row, and the conjunct answers at once for every row no source
-//! landed.
+//! binds no row, and until a row a source landed is written here the
+//! conjunct answers at once from each row's own stamp (fix list row 16255).
 
 pub(crate) mod carried;
 pub(crate) mod checkpoint;
@@ -90,6 +90,9 @@ const RECORDS: SideTable<EntityId, EntityId, Named> =
 /// Each row this vault reads to no one meanwhile, and why.
 const HELD: SideTable<EntityId, HeldBack, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_HELD);
+/// Whether a row a source landed was ever written here (fix list row
+/// 16255).
+const LANDED: SideTable<(), bool, Named> = SideTable::new(&side_table::SOURCE_AUDIENCE_LANDED);
 /// The thread policy of one thread of a source policy, by the source policy
 /// and the BLAKE3 of the source's own thread key. A second policy another
 /// install minted for the same thread before the two met is filed beside it,
@@ -236,9 +239,36 @@ pub(crate) fn lift_hold_in_txn(
     Ok(true)
 }
 
+/// Whether a row a source landed was ever written here, by any door: a
+/// pack landing, a replica's receipt, a logical archive's import or a
+/// restore of an image that held one (fix list row 16255). Until one is, no
+/// row's words came from one, so the walk answers from each row's own stamp.
+pub(crate) fn any_landed_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(LANDED.get(&vault.store, txn, &())?.unwrap_or(false))
+}
+
+/// Notes, in the write that materializes it, a row a source landed: one
+/// whose own body carries the source-audience obligation, valid or
+/// malformed, whatever its kind, as the walk reads a row's stamp (fix list
+/// rows 16255, 16256). Every base write of a row runs it, whoever writes.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn note_landed_in(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    body: &[u8],
+) -> Result<()> {
+    if obligation::body_names_obligation(body) && LANDED.get(store, txn, &())? != Some(true) {
+        LANDED.put(store, txn, &(), &true)?;
+    }
+    Ok(())
+}
+
 /// Whether the vault holds any policy, or a derived row's carried policies
 /// (fix list row 17207): one that holds neither binds no row, and no read of
-/// it walks.
+/// it walks until a row a source landed is written here ([`any_landed_in`]).
 pub(crate) fn any_policy_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
     Ok(POLICIES.iter_from(&vault.store, txn, &[])?.next().is_some()
         || DERIVED.iter_from(&vault.store, txn, &[])?.next().is_some())

@@ -43,6 +43,45 @@ pub(in crate::api::facade) fn door_admits(
             | "vault.skills.attribution.positive.retire" => {
                 owner_proof(auth, server, verb).map(drop)
             }
+            // Doors with no host row whose own door refuses its caller up
+            // front run that same check here (FIX 1817), so a hook never
+            // fires on a call the door refuses.
+            "vault.shares.view" | "vault.shares.revoke" | "vault.notes.follow_citation" => {
+                super::super::share_doors::principal(server, auth, verb).map(drop)
+            }
+            "vault.weave.link.wrong" => {
+                super::super::weave_doors::person_lens(server, auth, verb, "labels a link")
+                    .map(drop)
+            }
+            "vault.weave.item.wrong" => {
+                super::super::weave_doors::person_lens(server, auth, verb, "labels an item")
+                    .map(drop)
+            }
+            "vault.weave.lens" => super::super::weave_doors::own_caller(
+                server,
+                auth,
+                verb,
+                "renders the credential's own lens",
+            )
+            .map(drop),
+            "vault.weave.digest" => super::super::weave_doors::own_caller(
+                server,
+                auth,
+                verb,
+                "reads the credential's own digest",
+            )
+            .map(drop),
+            "vault.graph.ask"
+            | "vault.graph.admit"
+            | "vault.questions.create"
+            | "vault.questions.edit"
+            | "vault.questions.pause"
+            | "vault.questions.backfill"
+            | "vault.questions.read"
+            | "vault.questions.refresh"
+            | "vault.questions.schedule" => {
+                super::super::graph_ask_doors::asker(auth, server, verb).map(drop)
+            }
             _ => Ok(()),
         };
     };
@@ -413,6 +452,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultConsentDeny
         | Row::VaultConsentFailureSignalsHeld
         | Row::VaultConsentCreateStandingGrant
+        | Row::VaultConsentCreateNightlyLinkGrant
         | Row::VaultConsentRegistry
         | Row::VaultConsentRevoke
         | Row::VaultConsentBypassGrantWarning
@@ -563,6 +603,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeProposalSettle
         | Row::VaultCodeProposalSettlement
         | Row::VaultCodeOplog
+        | Row::VaultCodeSecretsGet
+        | Row::VaultCodeSecretsPropose
         | Row::VaultResultsStatus
         | Row::VaultResultsRecover
         | Row::VaultResultsRead
@@ -570,8 +612,6 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeModelHealCount
         | Row::VaultCodeTypeDiagnostics
         | Row::VaultCodeCorrections
-        | Row::VaultCodeWaitsResolve
-        | Row::VaultCodeWaitsReceipt
         | Row::VaultCodeExport
         | Row::VaultCodeImport
         | Row::VaultCodeReposGet
@@ -587,6 +627,9 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeOriginAuthorityGet
         | Row::VaultCodeOriginAuthoritySet
         | Row::VaultCodeOriginPublications
+        | Row::VaultCodeSecretsPurgeRequest
+        | Row::VaultCodeSecretsPurgeGet
+        | Row::VaultCodeSecretsPurgeExecute
         | Row::VaultCodeCheckoutBind
         | Row::VaultArtifactsKeepOutline
         | Row::VaultArtifactsDeclineOutline
@@ -675,6 +718,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultMembersLeave
         | Row::VaultMembersInvitations
         | Row::VaultMembersAccept
+        | Row::VaultMembersAcceptWithCredential
         | Row::VaultMembersDecline
         | Row::VaultMembersWithdrawInvitation
         | Row::VaultMembersInvitationSlip
@@ -694,7 +738,9 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultTrustedContactsConsent
         | Row::VaultTrustedContactsRevoke
         | Row::VaultSharedPolicyPropose
-        | Row::VaultSharedPolicyAnswer => {
+        | Row::VaultSharedPolicyAnswer
+        | Row::VaultCodeWaitsResolve
+        | Row::VaultCodeWaitsReceipt => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)
         }
         // The voice bank's rows (FIX 4393): a live person on their own proof,
@@ -727,6 +773,9 @@ pub(in crate::api::facade) fn door_admits(
         // bound principal whose one Grant the engine door admits.
         Row::VaultCodeExportPreview | Row::VaultCodeExportPreviewRead => {
             crate::api::facade::origin_doors::preview_admits(server, auth, verb)
+        }
+        Row::VaultCodeCheckoutHolderBind => {
+            crate::api::facade::origin_doors::checkout_holder_admits(server, auth)
         }
         // The vault's review policy rows (FIX 8268): a live Owner, or a bound
         // principal whose one Grant the engine door admits.
