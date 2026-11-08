@@ -587,6 +587,7 @@ pub(crate) fn short_content_hash_in_txn(
 pub(crate) fn file_put_body_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
+    id: &EntityId,
     entity_type: u8,
     data: &[u8],
 ) -> Result<Option<(Vec<u8>, AssetBodyFacts)>> {
@@ -600,6 +601,11 @@ pub(crate) fn file_put_body_in_txn(
         return Ok(None);
     };
     let facts = AssetBodyFacts::of(data);
+    // A local pack map carrier keeps its row: its reader hashes the stored
+    // row against the head pin (FIX 22091).
+    if crate::registry::pack_byte_map::names_pack_map_carrier(id, &facts.blake3) {
+        return Ok(None);
+    }
     // A marked file keeps its row: a serving door reads its keys' spans over
     // the bytes it holds.
     if crate::store::file_key_masks::masked_file_in_txn(store, txn, &facts.blake3)?.is_some() {
