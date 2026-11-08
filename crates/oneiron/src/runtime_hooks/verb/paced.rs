@@ -297,7 +297,7 @@ pub(crate) fn paced_verb_reply(memory: &Memory<'_>, verb: &str) -> Option<Memory
 type ListedReply = MemoryResult<(Value, Option<Vec<EntityId>>)>;
 
 /// [`paced_verb_reply`] with the rows the saved result was derived from.
-fn paced_verb_reply_listed(memory: &Memory<'_>, verb: &str) -> Option<ListedReply> {
+pub(crate) fn paced_verb_reply_listed(memory: &Memory<'_>, verb: &str) -> Option<ListedReply> {
     if !PACED_VERBS.contains(&verb) {
         return None;
     }
