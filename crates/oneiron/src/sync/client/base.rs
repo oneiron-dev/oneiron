@@ -125,6 +125,10 @@ pub struct SyncClient {
     /// G6/G7), rechecked at each use; `Unknown` until a connection proves one.
     /// Cleared at every connect.
     pub(crate) home_peer: crate::authority::PeerMachine,
+    /// Whether the far end served this connection's sync (FIX 4748): the
+    /// first frame it sent was its root. The device counts its home down by
+    /// it. Cleared at every connect.
+    pub(crate) home_served: bool,
     /// The peer this connection syncs with while its home is down (FIX 4748),
     /// set before each connect; `None` for a session with the home. A peer
     /// session confirms nothing: no queue or document journal clears on its
@@ -253,6 +257,7 @@ impl SyncClient {
             sealed_updates: Default::default(),
             staged_body_pulls: Default::default(),
             home_peer: crate::authority::PeerMachine::Unknown,
+            home_served: false,
             peer_session: None,
             peer_receipt: None,
             kept_out_peer_copies: HashMap::new(),

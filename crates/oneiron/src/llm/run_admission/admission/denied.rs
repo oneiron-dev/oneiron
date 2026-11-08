@@ -57,15 +57,30 @@ pub enum RunDenied {
     /// 11768): content-free, receipt-visible.
     #[error("the world's order admits no route this call walks")]
     WorldRouteNotAdmitted,
+    /// The run's work is funded by an owner's agent Grant that names
+    /// `expected` (FIX 7766), and the live allocation the call would hold is
+    /// another wallet's, or one whose wallet the host did not name
+    /// (`live: None`). The call takes no hold and never falls back to that
+    /// allocation.
+    #[error("the live allocation is not the funding grant's wallet")]
+    AllocationWalletMismatch {
+        expected: crate::federation::WalletRef,
+        live: Option<crate::federation::WalletRef>,
+    },
 }
 
 impl From<RunDenied> for LlmError {
     fn from(denied: RunDenied) -> Self {
         match denied {
             RunDenied::Budget { denied } => Self::BudgetDenied(denied),
+            // No allocation of the funding grant's wallet is live: as with
+            // none at all, nothing funds the call (FIX 7766).
             RunDenied::NoAllocation
             | RunDenied::AllocationExhausted
-            | RunDenied::ResidentShareSpent { .. } => Self::BudgetDenied(BudgetDenied::Exhausted),
+            | RunDenied::ResidentShareSpent { .. }
+            | RunDenied::AllocationWalletMismatch { .. } => {
+                Self::BudgetDenied(BudgetDenied::Exhausted)
+            }
             // The account owner's question holds the work: never a spent
             // budget (FIX 9924).
             RunDenied::AllocationRefused {
