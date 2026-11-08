@@ -306,13 +306,13 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         ) {
             Ok(_) => DreamerAttemptExecution::Completed {
                 completed_units: run.charges.units,
-                step_hashes: run.charges.step_hashes.clone(),
+                step_bindings: run.charges.step_bindings.clone(),
             },
             Err(Error::ConcurrentWrite(_)) => compose_again(&run.charges, ctx.now_ms),
             Err(error) if waits_on_residency(&error) => residency_deferral(
                 ctx.now_ms,
                 run.charges.units,
-                run.charges.step_hashes.clone(),
+                run.charges.step_bindings.clone(),
             ),
             Err(error) => run
                 .charges

@@ -8,6 +8,11 @@
 //! roster per vault; the live board names persons by handle, and a handle the
 //! reader's cached roster does not hold carries its name inline.
 
+mod prepared;
+pub(crate) use prepared::{
+    PreparedAgentPerson, prepare_agent_person_after_puts_in_txn, prepare_agent_person_in_txn,
+};
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::one_line_token;
@@ -498,15 +503,7 @@ pub(crate) fn ensure_agent_person_in_txn(
         return Ok(());
     }
     if vault.store.port_entity_record(&*txn, &person)?.is_none() {
-        let mut body = Vec::new();
-        rmpv::encode::write_value(
-            &mut body,
-            &rmpv::Value::Map(vec![(
-                rmpv::Value::from("display_name"),
-                rmpv::Value::from(name),
-            )]),
-        )
-        .map_err(|_| crate::Error::InvariantViolation("agent person body encoding failed"))?;
+        let body = agent_person_body(name)?;
         vault
             .batch_in()
             .put(
@@ -533,6 +530,19 @@ pub(crate) fn seeded_agent_person_ids(agent: EntityId) -> Result<(EntityId, Enti
         EntityId::derive(SEEDED_SUBSTRATE_DOMAIN, &[agent.as_bytes()])?,
         EntityId::derive(SEEDED_ANCHOR_DOMAIN, &[agent.as_bytes()])?,
     ))
+}
+
+fn agent_person_body(name: &str) -> Result<Vec<u8>> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("display_name"),
+            rmpv::Value::from(name),
+        )]),
+    )
+    .map_err(|_| crate::Error::InvariantViolation("agent person body encoding failed"))?;
+    Ok(body)
 }
 
 /// [`ensure_agent_person_in_txn`] for a seeded system agent (FIX 12098):
