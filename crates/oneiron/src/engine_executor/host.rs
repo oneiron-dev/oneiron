@@ -96,6 +96,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The rows the run's recorded verb answers were served from, `None`
     /// when one kept no set (DEC-0005).
     recorded_rows: Option<Vec<EntityId>>,
+    /// The records whose words the run's recorded fold answers copy (FIX
+    /// 18924): known dependencies of each value it stores, apart from rows.
+    recorded_fold_sources: Vec<EntityId>,
     pub(super) bridge_calls: Vec<CodeRunBridgeCall>,
     /// What this step's guest read, for the step's replay context: each
     /// response it handed out, at the position of the row that answers it
@@ -200,6 +203,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             bound: Vec::new(),
             receipts: Vec::new(),
             recorded_rows: Some(Vec::new()),
+            recorded_fold_sources: Vec::new(),
             bridge_calls: Vec::new(),
             context_capture: StepContextCapture::new(replay_context::captured_reader_child(
                 gated_write,
@@ -293,6 +297,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         }
         self.bindings = record.bindings.clone();
         self.recorded_rows = record.agent_verb_rows();
+        self.recorded_fold_sources = crate::code_run::recorded_fold_words(&record.bridge_calls)
+            .into_iter()
+            .flat_map(|word| word.sources)
+            .collect();
         // The skills and other runs' result rows its earlier steps' callables
         // answered from, so this step judges its results with them too
         // (FIX 5763).
