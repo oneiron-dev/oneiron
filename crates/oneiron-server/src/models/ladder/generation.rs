@@ -285,7 +285,15 @@ impl OfferLadder {
                 };
                 sent[index] = true;
                 match self
-                    .send(call, index, may_send, sources, prefer_stream, prompt, &mut walk)
+                    .send(
+                        call,
+                        index,
+                        may_send,
+                        sources,
+                        prefer_stream,
+                        prompt,
+                        &mut walk,
+                    )
                     .await?
                 {
                     Sent::Answer(response, sent_call) => {

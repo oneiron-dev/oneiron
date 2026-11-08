@@ -107,7 +107,8 @@ impl<'run, 'binding> PreparedRunCommit<'run, 'binding> {
             at,
         } = self;
         // A body that ran across a permanent erase keeps its content-free
-        // run identity, never the erased bytes or a pending effect.
+        // run identity, never erased bytes, an erased actor or a pending effect.
+        store::scrub_erased_actor_in_txn(vault, txn, &mut memo, run.entry.actor)?;
         let erased = store::dependencies_erased_in_txn(vault, txn, &memo.derivation.dependencies)?;
         if erased {
             store::scrub_memo_payload(&mut memo);
