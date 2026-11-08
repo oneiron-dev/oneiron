@@ -120,6 +120,7 @@ impl Vault {
                 AGENT_PACK_TRAVEL,
                 &[b"knowledge", agent.as_bytes(), &index.to_be_bytes()],
             )?;
+            body.scope_facet = self.default_facet_in_txn(txn)?;
             self.put_claim_in_txn(txn, &id, &body, occurred, at)?;
         }
         Ok(agent)

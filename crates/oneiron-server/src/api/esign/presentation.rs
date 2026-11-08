@@ -112,7 +112,8 @@ pub(super) async fn layout(
 /// `POST /sign/preview`: the item's fields laid out on its pinned PDF's
 /// pages. The PDF is inspected as the editor's geometry door inspects its
 /// own (FIX 12230): its bytes leased from this machine's memory and the lease
-/// grown for its parse, on a blocking worker.
+/// grown for its parse, on a blocking thread. It uses an installed inspection
+/// worker through the same selector; hosts without one keep the native path.
 pub(super) async fn preview(
     State(server): State<Arc<SyncServer>>,
     SigningIngress { token, admitted }: SigningIngress,
@@ -141,6 +142,7 @@ pub(super) async fn preview(
     let memory = server.memory.clone();
     let stream_decode_bytes = server.vault.esign_stream_decode_bytes();
     let vault = Arc::clone(&server.vault);
+    let inspection_server = Arc::clone(&server);
     let (page, pages) = match tokio::task::spawn_blocking(move || {
         let deadline = std::time::Instant::now() + super::ingress::MEMORY_WAIT;
         let (page, bytes, lease) = match vault.esign_preview_for_capability_leased_as(
@@ -161,7 +163,13 @@ pub(super) async fn preview(
                 return Err(super::ingress::memory_refused(refusal));
             }
         };
-        match parse_lease::inspected(lease, deadline, &bytes, stream_decode_bytes) {
+        match parse_lease::inspected_with_worker(
+            &inspection_server,
+            lease,
+            deadline,
+            &bytes,
+            stream_decode_bytes,
+        ) {
             Ok(pages) => Ok((page, pages)),
             Err(response) => Err(response),
         }
