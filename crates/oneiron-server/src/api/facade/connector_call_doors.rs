@@ -18,6 +18,9 @@
 //! inside a write transaction.
 use std::sync::Arc;
 
+mod status;
+pub(crate) use status::connector_call_status;
+
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{Memory, MemoryError, MemoryResult};
 use oneiron::outbound_consent::{ConnectorCallRequest, ConnectorSource};

@@ -196,6 +196,26 @@ pub trait ResourcePort: Send + Sync {
     /// [`ResourceRefusal::Deadline`] once a deadline the caller itself gave
     /// the operation passed; without one, never.
     fn checkpoint(&self) -> Result<(), ResourceRefusal>;
+
+    /// Tracks one structure's allocation lifetime explicitly. Unlike a
+    /// dropped opaque reservation, this scope gives its bytes back when
+    /// the structure is freed, even without a machine live-memory reading.
+    fn allocation(&self) -> Box<dyn ResourceAllocation>;
+}
+
+/// One structure's pending and allocated memory. Keep it until the
+/// structure is freed; dropping it releases both, never transferring freed
+/// temporaries into the operation's cumulative allocated charge.
+pub trait ResourceAllocation: Send + Sync {
+    /// Reserves `bytes` more before an allocation, with the same measured
+    /// versus estimated admission contract as [`ResourcePort::reserve`].
+    /// A refusal leaves this scope unchanged.
+    fn grow(&mut self, bytes: u64, measured: u64) -> Result<(), ResourceRefusal>;
+
+    /// Names the structure's TOTAL live bytes after an allocation, release
+    /// or ownership transfer. Pending room is consumed once; unused room
+    /// and freed bytes return to the line. Never waits or refuses.
+    fn materialized(&mut self, bytes: u64);
 }
 
 /// The port of a caller without a host (a command line, an example, the
@@ -207,7 +227,7 @@ pub trait ResourcePort: Send + Sync {
 #[derive(Debug, Default)]
 pub struct MeasuringPort {
     /// The most bytes one reservation asked past the free memory read then.
-    shortfall: std::sync::atomic::AtomicU64,
+    shortfall: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl MeasuringPort {
@@ -232,6 +252,30 @@ impl ResourcePort for MeasuringPort {
     fn checkpoint(&self) -> Result<(), ResourceRefusal> {
         Ok(())
     }
+
+    fn allocation(&self) -> Box<dyn ResourceAllocation> {
+        Box::new(MeasuringAllocation {
+            shortfall: Arc::clone(&self.shortfall),
+        })
+    }
+}
+
+struct MeasuringAllocation {
+    shortfall: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl ResourceAllocation for MeasuringAllocation {
+    fn grow(&mut self, bytes: u64, _measured: u64) -> Result<(), ResourceRefusal> {
+        if let Some(free) = oneiron_contracts::limit_ask::available_memory_bytes() {
+            self.shortfall.fetch_max(
+                bytes.saturating_sub(free),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+        Ok(())
+    }
+
+    fn materialized(&mut self, _bytes: u64) {}
 }
 
 /// Bytes reserved from one port: grown by each [`Self::take`], in steps of
@@ -352,6 +396,12 @@ impl Resources {
             spare: 0,
             held: Vec::new(),
         }
+    }
+
+    /// One structure's explicitly tracked allocation lifetime.
+    #[must_use]
+    pub fn allocation(&self) -> Box<dyn ResourceAllocation> {
+        self.port.allocation()
     }
 
     /// The operation's checkpoint.
