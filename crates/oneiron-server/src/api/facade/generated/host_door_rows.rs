@@ -5,6 +5,7 @@
 //! new host door fails to compile until it names its check there. A row
 //! whose table entry says `"host_door_precheck": false` checks nothing
 //! before its hooks; those rows:
+//! - `vault.commitments.ledger`
 //! - `self.focus.wakes`
 //! - `vault.shape.apply`
 //! - `vault.shape.groups`
@@ -34,6 +35,9 @@
 //! - `vault.weave.admin.item.wrong`
 //! - `vault.step_up.totp.reset`
 //! - `vault.inbox.groups.resolve`
+//! - `vault.skill_hubs.clawhub.search`
+//! - `vault.skill_hubs.clawhub.import`
+//! - `vault.skills.proposal.settle`
 //! - `vault.skills.optimize.tradeoff_asks.resolve`
 //! - `vault.packs.sections.propose`
 //! - `vault.packs.sections.list`
@@ -45,11 +49,13 @@
 //! - `vault.shared.deletion`
 //! - `vault.org_admin.powers`
 //! - `vault.trusted_contacts.concern.deliver`
+//! - `vault.files.sources.exclude`
 //! - `vault.drafters.list_as`
 //! - `vault.drafters.revert_as`
 //! - `vault.roots.requests.cancel`
 //! - `vault.policy.outbound.decide`
 //! - `vault.policy.relay.decide`
+//! - `vault.connectors.replies.retry_failed`
 //! - `vault.secrets.lift_history`
 //! - `vault.settings.inference_defaults`
 //! - `vault.settings.inference_defaults.replace`
@@ -94,7 +100,11 @@
 //! - `vault.messages.react`
 //! - `vault.settings.web_connector`
 //! - `vault.settings.web_connector.replace`
+//! - `vault.settings.model_pack`
+//! - `vault.settings.model_pack.replace`
+//! - `vault.model_pack.revert`
 //! - `vault.connectors.web.usage`
+//! - `ai.streams.release`
 //! - `ai.anonymous_chat`
 //! - `vault.models.trials.resend_arm`
 //! - `ai.options`
@@ -104,6 +114,8 @@
 //! - `vault.questions.create`
 //! - `vault.questions.edit`
 //! - `vault.questions.pause`
+//! - `vault.questions.prepare`
+//! - `vault.questions.admit`
 //! - `vault.questions.backfill`
 //! - `vault.questions.read`
 //! - `vault.questions.outcome_windows`
@@ -139,6 +151,9 @@
 //! - `self.run.attach`
 //! - `self.folds.describe`
 //! - `self.history`
+//! - `vault.sync.repo_manifests.conflict.review`
+//! - `vault.sync.repo_manifests.conflict.discard`
+//! - `vault.dreamer.follower.keyframe`
 //! - `connector.answer`
 //! - `self.browser.open`
 //! - `self.browser.observe`
@@ -391,6 +406,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultMembersLeave,
     VaultMembersInvitations,
     VaultMembersAccept,
+    VaultMembersAcceptWithCredential,
     VaultMembersDecline,
     VaultMembersWithdrawInvitation,
     VaultSharedObject,
@@ -512,6 +528,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
     VaultCoachTrainingOffersSources,
+    VaultCoachTrainingRunsCancel,
     VaultDraftersList,
     VaultDraftersStatus,
     VaultDraftersPolicySet,
@@ -618,6 +635,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     HostCompact,
     HostWake,
     HostBudgetHit,
+    VaultHooksChecks,
     VaultHooksReplay,
     VaultHooksRegenDue,
     VaultHooksRegenGet,
@@ -645,8 +663,11 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCodeProposalSettle,
     VaultCodeProposalSettlement,
     VaultCodeOplog,
+    VaultCodeSecretsGet,
+    VaultCodeSecretsPropose,
     ExecuteCode,
     VaultCodeModelHealCount,
+    VaultCodeCorrections,
     VaultCodeTypeDiagnostics,
     VaultCodeWaitsResolve,
     VaultCodeWaitsReceipt,
@@ -679,6 +700,10 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
+    VaultCodeSecretsPurgeRequest,
+    VaultCodeSecretsPurgeGet,
+    VaultCodeSecretsPurgeExecute,
+    VaultCodeCheckoutHolderBind,
     VaultCodeCheckoutBind,
     VaultCodeViewsMaterialize,
     VaultCodeViewsGet,
@@ -906,6 +931,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCustodyMembersDrainCommit,
     VaultCustodyMembersDrainFolder,
     VaultCustodyMembersReenrol,
+    VaultFilesSourcesConvert,
 }
 impl HostDoorRow {
     /// The row `verb` names, when it is one.
@@ -1122,6 +1148,7 @@ impl HostDoorRow {
             "vault.members.leave" => Self::VaultMembersLeave,
             "vault.members.invitations" => Self::VaultMembersInvitations,
             "vault.members.accept" => Self::VaultMembersAccept,
+            "vault.members.accept_with_credential" => Self::VaultMembersAcceptWithCredential,
             "vault.members.decline" => Self::VaultMembersDecline,
             "vault.members.withdraw_invitation" => Self::VaultMembersWithdrawInvitation,
             "vault.shared.object" => Self::VaultSharedObject,
@@ -1257,6 +1284,7 @@ impl HostDoorRow {
             }
             "vault.coach.training_offers.pilots.get" => Self::VaultCoachTrainingOffersPilotsGet,
             "vault.coach.training_offers.sources" => Self::VaultCoachTrainingOffersSources,
+            "vault.coach.training_runs.cancel" => Self::VaultCoachTrainingRunsCancel,
             "vault.drafters.list" => Self::VaultDraftersList,
             "vault.drafters.status" => Self::VaultDraftersStatus,
             "vault.drafters.policy.set" => Self::VaultDraftersPolicySet,
@@ -1365,6 +1393,7 @@ impl HostDoorRow {
             "host.compact" => Self::HostCompact,
             "host.wake" => Self::HostWake,
             "host.budget.hit" => Self::HostBudgetHit,
+            "vault.hooks.checks" => Self::VaultHooksChecks,
             "vault.hooks.replay" => Self::VaultHooksReplay,
             "vault.hooks.regen.due" => Self::VaultHooksRegenDue,
             "vault.hooks.regen.get" => Self::VaultHooksRegenGet,
@@ -1396,8 +1425,11 @@ impl HostDoorRow {
             "vault.code.proposal_settle" => Self::VaultCodeProposalSettle,
             "vault.code.proposal_settlement" => Self::VaultCodeProposalSettlement,
             "vault.code.oplog" => Self::VaultCodeOplog,
+            "vault.code.secrets.get" => Self::VaultCodeSecretsGet,
+            "vault.code.secrets.propose" => Self::VaultCodeSecretsPropose,
             "execute_code" => Self::ExecuteCode,
             "vault.code.model_heal_count" => Self::VaultCodeModelHealCount,
+            "vault.code.corrections" => Self::VaultCodeCorrections,
             "vault.code.type_diagnostics" => Self::VaultCodeTypeDiagnostics,
             "vault.code.waits.resolve" => Self::VaultCodeWaitsResolve,
             "vault.code.waits.receipt" => Self::VaultCodeWaitsReceipt,
@@ -1430,6 +1462,10 @@ impl HostDoorRow {
             "vault.code.origin.authority.get" => Self::VaultCodeOriginAuthorityGet,
             "vault.code.origin.authority.set" => Self::VaultCodeOriginAuthoritySet,
             "vault.code.origin.publications" => Self::VaultCodeOriginPublications,
+            "vault.code.secrets.purge.request" => Self::VaultCodeSecretsPurgeRequest,
+            "vault.code.secrets.purge.get" => Self::VaultCodeSecretsPurgeGet,
+            "vault.code.secrets.purge.execute" => Self::VaultCodeSecretsPurgeExecute,
+            "vault.code.checkout.holder.bind" => Self::VaultCodeCheckoutHolderBind,
             "vault.code.checkout.bind" => Self::VaultCodeCheckoutBind,
             "vault.code.views.materialize" => Self::VaultCodeViewsMaterialize,
             "vault.code.views.get" => Self::VaultCodeViewsGet,
@@ -1661,6 +1697,7 @@ impl HostDoorRow {
             "vault.custody.members.drain.commit" => Self::VaultCustodyMembersDrainCommit,
             "vault.custody.members.drain.folder" => Self::VaultCustodyMembersDrainFolder,
             "vault.custody.members.reenrol" => Self::VaultCustodyMembersReenrol,
+            "vault.files.sources.convert" => Self::VaultFilesSourcesConvert,
             _ => return None,
         })
     }
@@ -1673,7 +1710,8 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
     HostDoorRow::from_verb(verb).is_some()
         || matches!(
             verb,
-            "self.focus.wakes"
+            "vault.commitments.ledger"
+                | "self.focus.wakes"
                 | "vault.shape.apply"
                 | "vault.shape.groups"
                 | "vault.shape.groups.resolve"
@@ -1703,6 +1741,9 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.weave.admin.item.wrong"
                 | "vault.step_up.totp.reset"
                 | "vault.inbox.groups.resolve"
+                | "vault.skill_hubs.clawhub.search"
+                | "vault.skill_hubs.clawhub.import"
+                | "vault.skills.proposal.settle"
                 | "vault.skills.optimize.tradeoff_asks.resolve"
                 | "vault.packs.sections.propose"
                 | "vault.packs.sections.list"
@@ -1714,11 +1755,13 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.shared.deletion"
                 | "vault.org_admin.powers"
                 | "vault.trusted_contacts.concern.deliver"
+                | "vault.files.sources.exclude"
                 | "vault.drafters.list_as"
                 | "vault.drafters.revert_as"
                 | "vault.roots.requests.cancel"
                 | "vault.policy.outbound.decide"
                 | "vault.policy.relay.decide"
+                | "vault.connectors.replies.retry_failed"
                 | "vault.secrets.lift_history"
                 | "vault.settings.inference_defaults"
                 | "vault.settings.inference_defaults.replace"
@@ -1763,7 +1806,11 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.messages.react"
                 | "vault.settings.web_connector"
                 | "vault.settings.web_connector.replace"
+                | "vault.settings.model_pack"
+                | "vault.settings.model_pack.replace"
+                | "vault.model_pack.revert"
                 | "vault.connectors.web.usage"
+                | "ai.streams.release"
                 | "vault.models.trials.resend_arm"
                 | "ai.options"
                 | "ai.ask_image"
@@ -1772,6 +1819,8 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.questions.create"
                 | "vault.questions.edit"
                 | "vault.questions.pause"
+                | "vault.questions.prepare"
+                | "vault.questions.admit"
                 | "vault.questions.backfill"
                 | "vault.questions.read"
                 | "vault.questions.outcome_windows"
@@ -1807,6 +1856,9 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "self.run.attach"
                 | "self.folds.describe"
                 | "self.history"
+                | "vault.sync.repo_manifests.conflict.review"
+                | "vault.sync.repo_manifests.conflict.discard"
+                | "vault.dreamer.follower.keyframe"
                 | "connector.answer"
                 | "self.browser.open"
                 | "self.browser.observe"

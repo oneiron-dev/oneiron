@@ -231,7 +231,7 @@ pub struct AgentSpawnInput {
 
 /// One spawn field as the parent sets it (ARCH-0079 #seed-pin): a seed is
 /// where the planner starts, weighted in runs; a pin is never overridden.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum SpawnKnob<T> {
     Seed { value: T, weight_runs: f64 },
@@ -266,7 +266,7 @@ pub enum SpawnCare {
 }
 
 /// A coordination pattern by its word.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SpawnPattern {
     Solo,
@@ -552,7 +552,8 @@ pub struct ReportBlockedOutput {
 }
 
 /// `self.agents.spawn`'s output: the queued attempt, the widening its
-/// spawn proposed instead, or an erased target that launched nothing.
+/// spawn proposed instead, or an erase of its target or its asker that
+/// launched nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum AgentSpawnOutput {
@@ -580,6 +581,9 @@ pub enum AgentSpawnOutput {
     /// An erase took the AGENT_DEF the planned spawn's plan seats: nothing
     /// launched (Engine 10-22).
     TargetErased { kind: AgentSpawnKind },
+    /// An erase of its asker took the planned spawn's intent: nothing
+    /// launched (FIX 9183).
+    AskerErased { kind: AgentSpawnKind },
 }
 
 /// The `kind` every `self.agents.spawn` output carries.
@@ -587,6 +591,37 @@ pub enum AgentSpawnOutput {
 #[serde(rename_all = "snake_case")]
 pub enum AgentSpawnKind {
     AgentSpawn,
+}
+
+/// The one projection of a spawn's answer onto `self.agents.spawn`'s
+/// output, for the guest's reply and the host door alike (FIX 9183).
+impl From<crate::code_run::SelfAgentSpawnResult> for AgentSpawnOutput {
+    fn from(result: crate::code_run::SelfAgentSpawnResult) -> Self {
+        use crate::code_run::SelfAgentSpawnResult;
+        let kind = AgentSpawnKind::AgentSpawn;
+        match result {
+            SelfAgentSpawnResult::Queued {
+                attempt_ref,
+                launch,
+                unapplied,
+            } => Self::Queued {
+                kind,
+                attempt: crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes()),
+                launch,
+                unapplied,
+            },
+            SelfAgentSpawnResult::ProposedWiden {
+                proposal_ref,
+                unapplied,
+            } => Self::ProposedWiden {
+                kind,
+                proposal: proposal_ref,
+                unapplied,
+            },
+            SelfAgentSpawnResult::TargetErased => Self::TargetErased { kind },
+            SelfAgentSpawnResult::AskerErased => Self::AskerErased { kind },
+        }
+    }
 }
 
 /// `self.leader.pattern`'s output: the pattern loaded, as the leader reads

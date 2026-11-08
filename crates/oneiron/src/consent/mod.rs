@@ -54,6 +54,7 @@ mod ask_holders;
 mod bound;
 mod browser;
 pub mod bypass_lifecycle;
+pub(crate) mod code_settlement;
 pub mod code_wait_state;
 mod codec;
 mod contact_clearance;
@@ -119,8 +120,8 @@ pub use self::owner_reason::{
 };
 pub use self::registry::{
     AGENT_GRANT_CLASS, CONSENT_REVOKE_COMMAND, ConsentRegistry, ConsentRegistryAgentGrant,
-    ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow, ConsentRevokeAction,
-    SUPPORT_GRANT_CLASS,
+    ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow, ConsentRegrantAction,
+    ConsentRevokeAction, SUPPORT_GRANT_CLASS,
 };
 /// FIX 6424 part 2a: the approve-once digest an owner's press on one
 /// campaign enrollment's outbound leg names, by the Gate's own composer over

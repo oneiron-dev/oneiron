@@ -91,7 +91,9 @@ async fn serve_with_handles(
     // So is the custody anchor door's credential, on its own pipe when the
     // supervisor hands one: never the environment (FIX 5788, FIX 6517).
     let anchor = host.custody_anchor_credentials(config.backup.custody_anchor_url.as_deref())?;
-    let mut vault_config = config.base_vault_config();
+    let mut vault_config = config
+        .base_vault_config()
+        .with_checkpoint_host_holds_recipient(host.checkpoint_host_holds_recipient());
     // The supervisor delivered this vault's data key at boot (FIX 4531).
     vault_config.privacy.data_key_custody = oneiron::VaultDataKeyCustody::SupervisorDelivered;
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
@@ -231,6 +233,7 @@ async fn serve_with_handles(
                 .as_ref()
                 .map(crate::config::DesktopConfig::guest),
         )
+        .with_artifact_backend(config.artifact_backend.clone())?
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
@@ -432,7 +435,6 @@ async fn serve_with_handles(
     // (FIX 11851): captured before `verified` spends the restore. `None`
     // without a restore, and the watch's first look is then unplanned as
     // today.
-    #[cfg(target_os = "linux")]
     let restore_fresh = restore
         .as_ref()
         .map(|restore| restore.fresh_recipients().to_vec());
@@ -494,6 +496,19 @@ async fn serve_with_handles(
     } else if managed.escrow_recipient.is_some() || managed.break_glass_recipient.is_some() {
         // A process host's argv escrow recipient files as they stand later: a
         // file replaced after the start seals at the next look (FIX 11852).
+        super::carrier_watch::spawn_argv_watch(
+            Arc::clone(&state),
+            Arc::clone(&vault),
+            managed.clone(),
+            shutdown.clone(),
+            restore_fresh,
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    if managed.escrow_recipient.is_some() || managed.break_glass_recipient.is_some() {
+        // A non-Linux process host gets the same late seal as Linux: the VM
+        // companion and carrier stay Linux-only, the argv watch does not.
         super::carrier_watch::spawn_argv_watch(
             Arc::clone(&state),
             Arc::clone(&vault),

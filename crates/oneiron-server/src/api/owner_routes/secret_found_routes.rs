@@ -12,6 +12,8 @@
 //! - not a secret: the value goes back where the mask left its handle, the
 //!   custody record is revoked, and the write door stops reading it as a hit
 //!   in that record;
+//! - keep as text: the owner keeps the secret in the record by choice, with
+//!   its distinct ruling and receipt rather than a false-hit ruling;
 //! - re-enter: a key ruled no secret whose custody key no longer opens its
 //!   kept value takes the value again (FIX 7404).
 //!
@@ -95,6 +97,19 @@ pub(super) fn owner_table() -> OwnerTable {
         (
             OwnerRoute {
                 method: "post",
+                path: "/secrets/found/keep-as-text",
+                summary: "Keeps the found secret as text by the owner's explicit choice, without ruling it a false hit.",
+                row: None,
+                shape: Some(RestShape::json(
+                    found_key_body_schema,
+                    found_key_settled_schema,
+                )),
+            },
+            post(keep_as_text),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
                 path: "/secrets/found/re-enter",
                 summary: "Seals the kept value of a key ruled no secret again, where its custody key no longer opens it.",
                 row: None,
@@ -109,7 +124,7 @@ pub(super) fn owner_table() -> OwnerTable {
 }
 
 /// The OpenAPI schema of `POST /v1/owner/secrets/found/delete`'s body (FIX 11611),
-/// shared with `POST /v1/owner/secrets/found/not-a-secret`: [`FoundKey`].
+/// shared with the not-a-secret and keep-as-text routes: [`FoundKey`].
 pub(crate) fn found_key_body_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<FoundKey>()
 }
@@ -120,7 +135,7 @@ pub(crate) fn grant_found_key_body_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<GrantFoundKey>()
 }
 
-/// The OpenAPI schema of the three found-key answers (FIX 11611): [`SettledView`].
+/// The OpenAPI schema of the found-key answers (FIX 11611): [`SettledView`].
 pub(crate) fn found_key_settled_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<SettledView>()
 }
@@ -178,7 +193,7 @@ struct KeyView {
     place: String,
     found_at: u64,
     settled: Option<SettledView>,
-    /// `rotate`, `delete`, `grant`, `not_a_secret`: what may still be done.
+    /// The native action names: what may still be done for this key.
     actions: Vec<&'static str>,
 }
 
@@ -344,6 +359,29 @@ async fn not_a_secret(
         Ok(server
             .vault()
             .rule_found_key_not_a_secret(&owner, surface, &request.handle)?
+            .into())
+    })
+    .await?;
+    Ok(Json(settled))
+}
+
+/// `POST /v1/owner/secrets/found/keep-as-text` with `{"handle"}`: the owner
+/// keeps the secret as text, rather than overruling the scan as a false hit.
+async fn keep_as_text(
+    auth: CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<FoundKey>,
+) -> OwnerReply<SettledView> {
+    let owner = owner(&auth, &server)?;
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
+    let request = payload.read(&server).await?;
+    let settled = blocking(move || -> OwnerResult<SettledView> {
+        Ok(server
+            .vault()
+            .keep_found_key_as_text(&owner, surface, &request.handle)?
             .into())
     })
     .await?;

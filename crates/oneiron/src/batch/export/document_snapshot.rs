@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use super::snapshot_body::{asset_folded, row_body, row_live_in_txn};
+use super::snapshot_body::{asset_folded, row_body, row_exported_in_txn, row_live_in_txn};
 use super::{
     ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryLedger, ExportEdge,
     ExportManifest, ExportScope, ExportSecretsNulledManifest, ExportSnapshotEntityBody,
@@ -30,6 +30,7 @@ use crate::write_envelope::WriteActor;
 /// why the egress door withholds the run's occurrence of it, if it does.
 pub(crate) struct ExportSnapshotRun {
     pub(crate) run_id: EntityId,
+    pub(crate) birth_world: Option<EntityId>,
     pub(crate) outputs: Vec<(
         crate::store::result_manifest::CodeRunRawOutput,
         Option<&'static str>,
@@ -82,7 +83,8 @@ impl Vault {
     /// that answers in one frame. [`Self::export_whole_vault_to`] writes it
     /// to a file instead. Live off-record overlay rows, deleted shells,
     /// archive tombstones, credential custody rows and unpublished LFS chunks
-    /// are excluded. No caller can disable nulling.
+    /// are excluded; a record a cleanup archive filed away goes with its
+    /// retained body (FIX 21912). No caller can disable nulling.
     ///
     /// The owner's own archive carries custody secret values unless
     /// `include_secrets` is false (owner ruling 2026-10-17: "all your data is
@@ -121,13 +123,14 @@ impl Vault {
     /// reader off this device: an export-first removal's export (OF-163),
     /// in the same shape as a whole-vault archive and re-importable alike,
     /// written to `sink` as it is built (FIX 3679): no archive is read back
-    /// whole. No run's results go with it; a run names no world to scope it
-    /// by. Each record's side rows and stored files go with it as they do in
-    /// the whole-vault archive, never past `records`, and no vault-wide row
-    /// does (FIX 3681). Its diary reads are `reader`'s, the owner who
-    /// receives it. `freeze` reads in the archive's own snapshot, before its
-    /// rows, so what it answers (the removal's frozen positions, FIX-LIST
-    /// 8224) and the bytes archived are one state.
+    /// whole. No run's results go with a record-scoped archive: selecting
+    /// records does not select a run's complete result set. Each record's
+    /// side rows and stored files go with it as they do in the whole-vault
+    /// archive, never past `records`, and no vault-wide row does (FIX 3681).
+    /// Its diary reads are `reader`'s, the owner who receives it. `freeze`
+    /// reads in the archive's own snapshot, before its rows, so what it
+    /// answers (the removal's frozen positions, FIX-LIST 8224) and the bytes
+    /// archived are one state.
     pub(crate) fn export_records_archive<W: Write + Seek, T>(
         &self,
         records: &BTreeSet<EntityId>,
@@ -296,13 +299,10 @@ impl Vault {
         // diary it carries or counts as held, and a receipt source, pack
         // source or skill source carrier another section is folded from.
         let mut sources = BTreeSet::new();
-        // A run names no world, so a caller off this device gets no run's
-        // results: none of a device-local world's may leave it (DEC-0005).
-        // Each run whose results go with it is a source, on this device only.
-        if locality == CallerLocality::OnDevice && only.is_none() && cut == ExportCut::Archive {
-            sources.extend(self.export_run_results_in_txn(&rtxn, &mut writer)?);
-        }
         let device_only = crate::settings::device_local_worlds_for(self, &rtxn, &destination)?;
+        if only.is_none() && cut == ExportCut::Archive {
+            sources.extend(self.export_run_results_in_txn(&rtxn, &device_only, &mut writer)?);
+        }
         let mut included = BTreeSet::new();
         // The root of each thread a carried TURN is of (FIX 6427).
         let mut thread_roots = crate::workspace_roster::ExportThreadRoots::default();
@@ -370,8 +370,11 @@ impl Vault {
                 &rtxn,
                 &id,
                 header.entity_type,
-            )? || !row_live_in_txn(&self.store, &rtxn, &id)?
-            {
+            )? || !(if scope == ExportScope::WholeVault {
+                row_exported_in_txn(&self.store, &rtxn, &id)?
+            } else {
+                row_live_in_txn(&self.store, &rtxn, &id)?
+            }) {
                 continue;
             }
             // FIX 1496 S5: an epoch summary stays home when any transitive
@@ -548,31 +551,15 @@ impl Vault {
             None
         };
         // OF-013: the floors travel so an import never numbers an epoch under
-        // one a purge removed. A floor whose session a device-local world
-        // keeps stays here, as the session's own row does.
+        // one a purge removed; a device-local world keeps its own.
         if scope == ExportScope::WholeVault {
-            for (session, epoch, turn_end) in
-                crate::compaction::epoch_floors_in_txn(&self.store, &rtxn)?
-            {
-                if crate::settings::device_only_withholds(
-                    &self.store,
-                    &rtxn,
-                    &device_only,
-                    &session,
-                )
-                .or_else(|error| match error {
-                    Error::CorruptedIndex(_) => Ok(true),
-                    error => Err(error),
-                })? {
-                    continue;
-                }
-                sources.insert(session);
-                writer.epoch_floor(&super::ExportEpochFloor {
-                    session: session.to_hex(),
-                    epoch,
-                    turn_end,
-                })?;
-            }
+            super::epoch_floors::write_epoch_floors_in_txn(
+                &self.store,
+                &rtxn,
+                &device_only,
+                &mut sources,
+                &mut writer,
+            )?;
         }
         // FIX 2768, 3681: each carried record's side rows go with it, in a
         // records archive as in the whole-vault one, read in this snapshot
@@ -647,12 +634,23 @@ impl Vault {
     fn export_run_results_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
+        device_only: &BTreeSet<EntityId>,
         writer: &mut DocumentWriter<'_>,
     ) -> Result<Vec<EntityId>> {
         let mut runs = Vec::new();
         let mut bodies = BTreeSet::new();
         for (run_id, outputs) in self.code_run_result_manifests_in_txn(rtxn)? {
             let replay = self.get_code_run_replay_record_in_txn(rtxn, &run_id)?;
+            let birth_world = replay.as_ref().and_then(|record| record.birth_world);
+            if crate::settings::device_only_withholds_run(
+                self,
+                rtxn,
+                device_only,
+                run_id,
+                birth_world,
+            )? {
+                continue;
+            }
             let determinism = replay.as_ref().and_then(|record| record.determinism);
             let bindings = replay.map(|record| record.bindings).unwrap_or_default();
             let mut occurrences = Vec::with_capacity(outputs.len());
@@ -703,6 +701,7 @@ impl Vault {
                 .collect();
             writer.run(ExportSnapshotRun {
                 run_id,
+                birth_world,
                 outputs: occurrences,
                 bindings,
                 determinism,
