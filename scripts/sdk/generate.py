@@ -2268,6 +2268,44 @@ UNIFFI_RESULTS = {
 # Generated records with an owned codec for a nested opaque JSON result.
 # `types.root()` still emits their public records before this codec is selected.
 UNIFFI_GENERATED_RESULT_LIFTS = {
+    'crate::lens::InspectionResolved': 'InspectionResolved',
+    'crate::lens::LensSelectionResolved': 'LensSelectionResolved',
+    'crate::claim::WeaveReportView': 'WeaveReportView',
+    'crate::lens::LensFrameCard': 'LensFrameCard',
+    'crate::claim::ScopedReadResult<crate::lens::LensFrameCard>': 'ScopedReadResultLensFrameCard',
+    'crate::claim::WeaveDigestView': 'WeaveDigestView',
+    'crate::lens::LensListPage': 'LensListPage',
+    'crate::agent_inbox_lens::InboxItemView': 'InboxItemView',
+    'crate::inbox::NotificationPage': 'NotificationPage',
+    'crate::inbox::NotificationRow': 'NotificationRow',
+    'crate::task_verb::sdk::OffRecordResultCards': 'OffRecordResultCards',
+    'crate::memory::result_doors::ResultReadView': 'ResultReadView',
+    'crate::vault_shape::ShapeRead': 'ShapeRead',
+    'crate::vault_shape::ShapePlan': 'ShapePlan',
+    'crate::vault_shape::ShapeApplyReceipt': 'ShapeApplyReceipt',
+    'crate::memory::ShapeItemReceipt': 'ShapeItemReceipt',
+    'crate::inbox::UnifiedInboxGroupPage': 'UnifiedInboxGroupPage',
+    'crate::inbox::InboxGroupResolution': 'InboxGroupResolution',
+    'crate::task_verb::sdk::FeedbackSubjectPreview': 'FeedbackSubjectPreview',
+    'crate::task_verb::sdk::OffRecordResultRead': 'OffRecordResultRead',
+    'crate::memory::ShapePlanCardView': 'ShapePlanCardView',
+    'crate::dreamer_runner::maintenance::identity::IdentityActNow': 'IdentityActNow',
+    'crate::task_verb::sdk::BrowserObservationPage': 'BrowserAnswerObservationPage',
+    'crate::task_verb::sdk::BrowserImageOutput': 'BrowserAnswerImageOutput',
+    'crate::task_verb::sdk::BrowserFindOutput': 'BrowserAnswerFindOutput',
+    'crate::task_verb::sdk::BrowserWaitForOutput': 'BrowserAnswerWaitForOutput',
+    'crate::task_verb::sdk::BrowserExpectOutput': 'BrowserAnswerExpectOutput',
+    'crate::task_verb::sdk::BrowserScreenshotOutput': 'BrowserAnswerScreenshotOutput',
+    'crate::task_verb::sdk::BrowserLibraryFindOutput': 'BrowserAnswerLibraryFindOutput',
+    'crate::task_verb::sdk::BrowserLibraryDraftOutput': 'BrowserAnswerDraftOutput',
+    'crate::task_verb::sdk::BrowserDemonstrationStartOutput': 'BrowserAnswerDemonstrationStarted',
+    'crate::task_verb::sdk::BrowserDemonstrationStopOutput': 'BrowserAnswerDemonstrationOutput',
+    'crate::task_verb::sdk::BrowserLibraryRetireOutput': 'BrowserAnswerLibraryRetireOutput',
+    'crate::task_verb::sdk::BrowserLibraryRetiredOutput': 'BrowserAnswerLibraryRetiredOutput',
+    'crate::task_verb::sdk::BrowserHandoverOutput': 'BrowserAnswerHandoverOutput',
+    'crate::task_verb::sdk::BrowserSwitchEngineOutput': 'BrowserAnswerSwitchEngineOutput',
+    'crate::task_verb::sdk::BrowserLibraryProposeOutput': 'BrowserAnswerProposeOutput',
+    'crate::task_verb::sdk::BrowserLibraryRunOutput': 'BrowserAnswerLibraryRunOutput',
     'crate::task_verb::sdk::BrowserBatchOutput': 'BrowserAnswerBatchOutput',
     'crate::edit_settle::PendingProposalView': 'PendingProposalView',
     'crate::memory::ClaimProposalReview': 'ClaimProposalReview',
@@ -2403,7 +2441,37 @@ def uniffi_export(row, types, census):
             if owned and owned != mirror:
                 raise ValueError(f'{row["name"]}: its owned result codec must keep the generated record {mirror}')
             output = mirror
-            if owned:
+            if row['output'] == 'Vec<crate::vault_shape::ShapeInboxGroup>':
+                result = 'crate::codec::lift_shape_groups(output)'
+            elif row['output'] == 'crate::task_verb::sdk::AiAnswer':
+                result = f'crate::codec::lift_ai_answer({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::AiVideoJob':
+                result = f'crate::codec::lift_ai_video_job({name}, output)'
+            elif row['output'] == 'crate::task_verb::sdk::AskImageAnswer':
+                result = f'crate::codec::lift_ask_image({name}, output)'
+            elif row['output'] == 'crate::llm::manifest::doors::ModelRoleInvocation':
+                result = f'crate::codec::lift_model_role_invocation({name}, output)'
+            elif row['output'] == 'crate::llm::model_step::ModelStepReceipt':
+                result = f'crate::codec::lift_model_step_receipt({name}, output)'
+            elif row['output'] == 'crate::llm::model_stream::ModelStreamEvents':
+                result = f'crate::codec::lift_model_stream_events({name}, output)'
+            elif row['output'] == 'crate::llm::model_stream::ModelStreamTerminal':
+                result = f'crate::codec::lift_model_stream_terminal({name}, output)'
+            elif row['output'] == 'Option<crate::llm::model_step::SettledStepView>':
+                result = f'crate::codec::lift_settled_step({name}, output)'
+            elif row['output'] == 'Option<crate::dreamer_runner::SettledProgramStepView>':
+                result = f'crate::codec::lift_settled_program_step({name}, output)'
+            elif row['output'] == 'crate::llm::catalog_doors::ModelTrialView':
+                result = f'crate::codec::lift_model_trial({name}, output)'
+            elif row['output'] == 'crate::llm::catalog_doors::ModelBindingProposal':
+                result = f'crate::codec::lift_model_binding_proposal({name}, output)'
+            elif row['output'] == 'crate::campaign::surface::SavedQueryRecordView':
+                result = f'crate::codec::lift_saved_query_record({name}, output)'
+            elif row['output'] == 'crate::campaign::surface::SavedQueryReadResult':
+                result = f'crate::codec::lift_saved_query_read({name}, output)'
+            elif row['output'] == 'crate::campaign::surface::SavedQueryEvaluationReceipt':
+                result = f'crate::codec::lift_saved_query_evaluation({name}, output)'
+            elif owned:
                 result = 'Lift::lift(output)'
             elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
                 nested_voice = ''
