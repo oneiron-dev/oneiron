@@ -18,6 +18,7 @@ pub(super) use self::effect_consent::{
 };
 pub(crate) use self::effect_contacts::{
     counterparty_send_override_in_txn, hydrate_external_effect_contact,
+    hydrate_external_effect_contact_at,
 };
 pub(crate) use self::effect_grants::live_grant_covering_effect_in_txn;
 use self::effect_grants::{
@@ -26,7 +27,7 @@ use self::effect_grants::{
 };
 pub(crate) use self::effect_paced::{ExternalEffectCheck, check_external_effect_policy_paced};
 pub(crate) use self::effect_pair::{PairAdmission, check_external_effect_policy_pair};
-pub(crate) use self::evaluate::evaluate_external_effect_policy;
+pub(crate) use self::evaluate::{evaluate_external_effect_policy, judge_external_effect_in_txn};
 pub(crate) use self::record::{
     check_external_effect_policy, record_external_effect_policy, record_held_external_effect_policy,
 };
@@ -94,6 +95,85 @@ pub(crate) struct ExternalEffectGovernance {
     envelope_wait: Option<crate::outbound_grant::ChannelIdentityGrantRetention>,
     budget_target: Option<ExternalEffectBudgetTarget>,
     scoped_capability: Option<connector_key::ScopedCapabilityProvenance>,
+}
+
+/// The external-effect judgment before any decision id exists: what
+/// [`evaluate_external_effect_policy`] decides, read-only (FIX 22102). A writer
+/// turns it into [`ExternalEffectGovernance`] with [`Self::into_governance`]; a
+/// preflight reads its outcome and drops it, which commits nothing.
+pub(crate) struct ExternalEffectJudgment {
+    decision: GateDecision,
+    created_at: u64,
+    input: GateEvaluatorInput,
+    binding: GateConsentBinding,
+    grant_ref: Option<String>,
+    approve_once: Option<crate::consent::ApproveOnceAuthorization>,
+    approval_context: ApprovalContext,
+    ask_consent: Option<crate::llm::decision::AskConsent>,
+    matched_grant: Option<StandingOutboundGrant>,
+    /// Fix list row 17645: the standing grants that released the other
+    /// recipients of one message to several, each once and none of them
+    /// `matched_grant`; recorded as used when the message is admitted.
+    recipient_grants: Vec<StandingOutboundGrant>,
+    /// OF-374: the sender row's envelope slot covering this send, spent only
+    /// when the decision is recorded as an admitting Allow.
+    envelope_reservation: Option<crate::outbound_grant::ChannelIdentityGrantReservation>,
+    /// FIX 7948: the place in its envelope's line a send meets at a full
+    /// window when that envelope is all that covers it. The chokepoint keeps
+    /// it in place of an admission; nothing records it as one.
+    envelope_wait: Option<crate::outbound_grant::ChannelIdentityGrantRetention>,
+    budget_target: Option<ExternalEffectBudgetTarget>,
+    scoped_capability: Option<connector_key::ScopedCapabilityProvenance>,
+}
+
+impl ExternalEffectJudgment {
+    pub(crate) fn into_governance(self, decision_id: GateDecisionId) -> ExternalEffectGovernance {
+        ExternalEffectGovernance {
+            decision_id,
+            decision: self.decision,
+            created_at: self.created_at,
+            input: self.input,
+            binding: self.binding,
+            grant_ref: self.grant_ref,
+            approve_once: self.approve_once,
+            approval_context: self.approval_context,
+            ask_consent: self.ask_consent,
+            matched_grant: self.matched_grant,
+            recipient_grants: self.recipient_grants,
+            envelope_reservation: self.envelope_reservation,
+            envelope_wait: self.envelope_wait,
+            budget_target: self.budget_target,
+            scoped_capability: self.scoped_capability,
+        }
+    }
+
+    // read by can(effect), FIX 22102 slice 1b
+    #[allow(dead_code)]
+    #[must_use]
+    pub(crate) fn outcome(&self) -> GateOutcome {
+        self.decision.outcome()
+    }
+
+    // read by can(effect), FIX 22102 slice 1b
+    #[allow(dead_code)]
+    pub(crate) fn decision(&self) -> &GateDecision {
+        &self.decision
+    }
+
+    // read by can(effect), FIX 22102 slice 1b
+    #[allow(dead_code)]
+    #[must_use]
+    pub(crate) fn created_at(&self) -> u64 {
+        self.created_at
+    }
+
+    /// The actual hydrated consent composition for a live scoped-MCP hold.
+    /// It is metadata for an owner question, never admission authority.
+    // read by can(effect), FIX 22102 slice 1b
+    #[allow(dead_code)]
+    pub(crate) fn ask_consent(&self) -> Option<&crate::llm::decision::AskConsent> {
+        self.ask_consent.as_ref()
+    }
 }
 
 impl ExternalEffectGovernance {
