@@ -295,6 +295,7 @@ impl ActionRegistry {
                     seq: 0,
                     step_start: 0,
                     earlier: &[],
+                    reply_publisher: None,
                 },
                 call.clone(),
             )
