@@ -570,6 +570,7 @@ pub enum AgentVerb {
     VaultConsentDeny,
     VaultConsentCreateStandingGrant,
     VaultConsentCreateAutoWeaveGrant,
+    VaultConsentCreateNightlyLinkGrant,
     VaultConsentRegistry,
     VaultConsentFailureSignalsHeld,
     VaultConsentRevoke,
@@ -697,9 +698,11 @@ pub enum AgentVerb {
     VaultCodeSymbolsRenew,
     VaultCodeSymbolsRelease,
     VaultCodeProposalSubmit,
+    VaultCodeProposalRereview,
     VaultCodeConflictRecord,
     VaultCodeConflictView,
     VaultCodeProposalResolve,
+    VaultCodeProposalResolveRereview,
     VaultCodeProposalReview,
     VaultCodeProposalSettle,
     VaultCodeProposalSettlement,
@@ -739,6 +742,7 @@ pub enum AgentVerb {
     VaultCodeOriginPublishApprove,
     VaultCodeOriginPublishExecute,
     VaultCodeOriginPublishCancel,
+    VaultDevicesPredecessorName,
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
@@ -1292,6 +1296,7 @@ pub enum AgentVerb {
     VaultFilesSourcesConvert,
     VaultSyncRepoManifestsConflictReview,
     VaultSyncRepoManifestsConflictDiscard,
+    VaultDreamerFollowerKeyframe,
     ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
@@ -1899,6 +1904,7 @@ impl AgentVerb {
         Self::VaultConsentDeny,
         Self::VaultConsentCreateStandingGrant,
         Self::VaultConsentCreateAutoWeaveGrant,
+        Self::VaultConsentCreateNightlyLinkGrant,
         Self::VaultConsentRegistry,
         Self::VaultConsentFailureSignalsHeld,
         Self::VaultConsentRevoke,
@@ -2026,9 +2032,11 @@ impl AgentVerb {
         Self::VaultCodeSymbolsRenew,
         Self::VaultCodeSymbolsRelease,
         Self::VaultCodeProposalSubmit,
+        Self::VaultCodeProposalRereview,
         Self::VaultCodeConflictRecord,
         Self::VaultCodeConflictView,
         Self::VaultCodeProposalResolve,
+        Self::VaultCodeProposalResolveRereview,
         Self::VaultCodeProposalReview,
         Self::VaultCodeProposalSettle,
         Self::VaultCodeProposalSettlement,
@@ -2068,6 +2076,7 @@ impl AgentVerb {
         Self::VaultCodeOriginPublishApprove,
         Self::VaultCodeOriginPublishExecute,
         Self::VaultCodeOriginPublishCancel,
+        Self::VaultDevicesPredecessorName,
         Self::VaultCodeOriginAuthorityGet,
         Self::VaultCodeOriginAuthoritySet,
         Self::VaultCodeOriginPublications,
@@ -2621,6 +2630,7 @@ impl AgentVerb {
         Self::VaultFilesSourcesConvert,
         Self::VaultSyncRepoManifestsConflictReview,
         Self::VaultSyncRepoManifestsConflictDiscard,
+        Self::VaultDreamerFollowerKeyframe,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
@@ -3249,6 +3259,7 @@ impl AgentVerb {
             Self::VaultConsentDeny => "vault.consent.deny",
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
             Self::VaultConsentCreateAutoWeaveGrant => "vault.consent.create_auto_weave_grant",
+            Self::VaultConsentCreateNightlyLinkGrant => "vault.consent.create_nightly_link_grant",
             Self::VaultConsentRegistry => "vault.consent.registry",
             Self::VaultConsentFailureSignalsHeld => "vault.consent.failure_signals_held",
             Self::VaultConsentRevoke => "vault.consent.revoke",
@@ -3382,9 +3393,11 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRenew => "vault.code.symbols.renew",
             Self::VaultCodeSymbolsRelease => "vault.code.symbols.release",
             Self::VaultCodeProposalSubmit => "vault.code.proposal_submit",
+            Self::VaultCodeProposalRereview => "vault.code.proposal_rereview",
             Self::VaultCodeConflictRecord => "vault.code.conflict_record",
             Self::VaultCodeConflictView => "vault.code.conflict_view",
             Self::VaultCodeProposalResolve => "vault.code.proposal_resolve",
+            Self::VaultCodeProposalResolveRereview => "vault.code.proposal_resolve_rereview",
             Self::VaultCodeProposalReview => "vault.code.proposal_review",
             Self::VaultCodeProposalSettle => "vault.code.proposal_settle",
             Self::VaultCodeProposalSettlement => "vault.code.proposal_settlement",
@@ -3424,6 +3437,7 @@ impl AgentVerb {
             Self::VaultCodeOriginPublishApprove => "vault.code.origin.publish.approve",
             Self::VaultCodeOriginPublishExecute => "vault.code.origin.publish.execute",
             Self::VaultCodeOriginPublishCancel => "vault.code.origin.publish.cancel",
+            Self::VaultDevicesPredecessorName => "vault.devices.predecessor.name",
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
             Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
             Self::VaultCodeOriginPublications => "vault.code.origin.publications",
@@ -3991,6 +4005,7 @@ impl AgentVerb {
             Self::VaultSyncRepoManifestsConflictDiscard => {
                 "vault.sync.repo_manifests.conflict.discard"
             }
+            Self::VaultDreamerFollowerKeyframe => "vault.dreamer.follower.keyframe",
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
@@ -4600,6 +4615,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
+                | Self::VaultConsentCreateNightlyLinkGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
@@ -4727,9 +4743,11 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeProposalRereview
                 | Self::VaultCodeConflictRecord
                 | Self::VaultCodeConflictView
                 | Self::VaultCodeProposalResolve
+                | Self::VaultCodeProposalResolveRereview
                 | Self::VaultCodeProposalReview
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
@@ -4769,6 +4787,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginPublishApprove
                 | Self::VaultCodeOriginPublishExecute
                 | Self::VaultCodeOriginPublishCancel
+                | Self::VaultDevicesPredecessorName
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -5300,6 +5319,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictReview
                 | Self::VaultSyncRepoManifestsConflictDiscard
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -5958,6 +5978,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
+                | Self::VaultConsentCreateNightlyLinkGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
@@ -6085,9 +6106,11 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeProposalRereview
                 | Self::VaultCodeConflictRecord
                 | Self::VaultCodeConflictView
                 | Self::VaultCodeProposalResolve
+                | Self::VaultCodeProposalResolveRereview
                 | Self::VaultCodeProposalReview
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
@@ -6127,6 +6150,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginPublishApprove
                 | Self::VaultCodeOriginPublishExecute
                 | Self::VaultCodeOriginPublishCancel
+                | Self::VaultDevicesPredecessorName
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -6658,6 +6682,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictReview
                 | Self::VaultSyncRepoManifestsConflictDiscard
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -7469,6 +7494,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
+                | Self::VaultConsentCreateNightlyLinkGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
@@ -7586,9 +7612,11 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeProposalRereview
                 | Self::VaultCodeConflictRecord
                 | Self::VaultCodeConflictView
                 | Self::VaultCodeProposalResolve
+                | Self::VaultCodeProposalResolveRereview
                 | Self::VaultCodeProposalReview
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
@@ -7625,6 +7653,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginPublishApprove
                 | Self::VaultCodeOriginPublishExecute
                 | Self::VaultCodeOriginPublishCancel
+                | Self::VaultDevicesPredecessorName
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -8112,6 +8141,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictReview
                 | Self::VaultSyncRepoManifestsConflictDiscard
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -8503,6 +8533,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
+                | Self::VaultConsentCreateNightlyLinkGrant
                 | Self::VaultConsentRevoke
                 | Self::VaultConsentCreateBypassGrant
                 | Self::VaultConsentGraduationPolicySet
@@ -8573,8 +8604,10 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeProposalRereview
                 | Self::VaultCodeConflictRecord
                 | Self::VaultCodeProposalResolve
+                | Self::VaultCodeProposalResolveRereview
                 | Self::VaultCodeProposalReview
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeSecretsPropose
@@ -8591,6 +8624,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginPublishApprove
                 | Self::VaultCodeOriginPublishExecute
                 | Self::VaultCodeOriginPublishCancel
+                | Self::VaultDevicesPredecessorName
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeSecretsPurgeRequest
                 | Self::VaultCodeSecretsPurgeExecute
@@ -8904,6 +8938,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictDiscard
+                | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
@@ -9554,6 +9589,7 @@ impl AgentVerb {
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
+            Self::VaultConsentCreateNightlyLinkGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentFailureSignalsHeld => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
@@ -9681,9 +9717,11 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRenew => &["spec"],
             Self::VaultCodeSymbolsRelease => &["spec"],
             Self::VaultCodeProposalSubmit => &["spec"],
+            Self::VaultCodeProposalRereview => &["spec"],
             Self::VaultCodeConflictRecord => &["spec"],
             Self::VaultCodeConflictView => &["spec"],
             Self::VaultCodeProposalResolve => &["spec"],
+            Self::VaultCodeProposalResolveRereview => &["spec"],
             Self::VaultCodeProposalReview => &["spec"],
             Self::VaultCodeProposalSettle => &["spec"],
             Self::VaultCodeProposalSettlement => &["spec"],
@@ -9723,6 +9761,7 @@ impl AgentVerb {
             Self::VaultCodeOriginPublishApprove => &["spec"],
             Self::VaultCodeOriginPublishExecute => &["spec"],
             Self::VaultCodeOriginPublishCancel => &["spec"],
+            Self::VaultDevicesPredecessorName => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
@@ -10276,6 +10315,7 @@ impl AgentVerb {
             Self::VaultFilesSourcesConvert => &["spec"],
             Self::VaultSyncRepoManifestsConflictReview => &["spec"],
             Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
+            Self::VaultDreamerFollowerKeyframe => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -10884,6 +10924,7 @@ impl AgentVerb {
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
+            Self::VaultConsentCreateNightlyLinkGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentFailureSignalsHeld => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
@@ -11011,9 +11052,11 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRenew => &["spec"],
             Self::VaultCodeSymbolsRelease => &["spec"],
             Self::VaultCodeProposalSubmit => &["spec"],
+            Self::VaultCodeProposalRereview => &["spec"],
             Self::VaultCodeConflictRecord => &["spec"],
             Self::VaultCodeConflictView => &["spec"],
             Self::VaultCodeProposalResolve => &["spec"],
+            Self::VaultCodeProposalResolveRereview => &["spec"],
             Self::VaultCodeProposalReview => &["spec"],
             Self::VaultCodeProposalSettle => &["spec"],
             Self::VaultCodeProposalSettlement => &["spec"],
@@ -11053,6 +11096,7 @@ impl AgentVerb {
             Self::VaultCodeOriginPublishApprove => &["spec"],
             Self::VaultCodeOriginPublishExecute => &["spec"],
             Self::VaultCodeOriginPublishCancel => &["spec"],
+            Self::VaultDevicesPredecessorName => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
@@ -11606,6 +11650,7 @@ impl AgentVerb {
             Self::VaultFilesSourcesConvert => &["spec"],
             Self::VaultSyncRepoManifestsConflictReview => &["spec"],
             Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
+            Self::VaultDreamerFollowerKeyframe => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -13321,6 +13366,9 @@ impl AgentVerb {
             Self::VaultConsentCreateAutoWeaveGrant => {
                 "The owner grants a writer auto-weave in one project, research campaign or governed skill: a standing research.auto_weave grant the claim door records past Proposed."
             }
+            Self::VaultConsentCreateNightlyLinkGrant => {
+                "The owner lets this vault's Dreamer apply the SameAs links its nightly continuations propose; nothing is granted by default."
+            }
             Self::VaultConsentRegistry => {
                 "The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."
             }
@@ -13460,10 +13508,10 @@ impl AgentVerb {
                 "The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."
             }
             Self::VaultClaimsReview => {
-                "The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content."
+                "The owner or explicitly granted holder reviews one readable proposed claim: its content-bound review_id, opener and tray row. A native claim-review Grant grants no read access."
             }
             Self::VaultClaimsSettle => {
-                "The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused."
+                "The owner or explicitly granted holder approves or rejects exactly a reviewed proposed claim through the gate. Its Settlement names the actual person or Grant; owner-critical obligations still require owner proof."
             }
             Self::VaultCraftCandidates => {
                 "The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins."
@@ -13698,6 +13746,9 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => {
                 "Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed."
             }
+            Self::VaultCodeProposalRereview => {
+                "Submit a fresh Proposed review of verified redacted bytes from an approved file proposal. Owner only. The change supplies fresh attribution and policy; the engine fills content. The original stays unchanged; nothing lands."
+            }
             Self::VaultCodeConflictRecord => {
                 "Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves."
             }
@@ -13706,6 +13757,9 @@ impl AgentVerb {
             }
             Self::VaultCodeProposalResolve => {
                 "Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands."
+            }
+            Self::VaultCodeProposalResolveRereview => {
+                "Submit a fresh Proposed review of verified redacted bytes from an approved conflict resolution. Owner only. Current conflict checks and fresh attribution stay; the engine fills content. The original stays unchanged; nothing lands."
             }
             Self::VaultCodeProposalReview => {
                 "Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt."
@@ -13823,6 +13877,9 @@ impl AgentVerb {
             }
             Self::VaultCodeOriginPublishCancel => {
                 "Cancel one pending or approved exact publish request; a request whose push is in flight or that already settled stays as it is."
+            }
+            Self::VaultDevicesPredecessorName => {
+                "Name a predecessor device key for this install under the owner's proof; pending predecessor sweeps run separately."
             }
             Self::VaultCodeOriginAuthorityGet => {
                 "Read one served origin authority and this host identity under the owner credential."
@@ -15424,6 +15481,9 @@ impl AgentVerb {
             }
             Self::VaultSyncRepoManifestsConflictDiscard => {
                 "The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."
+            }
+            Self::VaultDreamerFollowerKeyframe => {
+                "The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed."
             }
             Self::ConnectorAnswer => {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."
