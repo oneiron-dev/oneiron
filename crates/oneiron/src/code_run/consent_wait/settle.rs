@@ -557,7 +557,7 @@ pub(crate) fn active_authority_holds_in_txn(
     txn: &heed::RoTxn<'_>,
     row: &CodeConsentWaitRow,
 ) -> bool {
-    original_authority_holds_in_txn(vault, txn, row.active_binding())
+    original_authority_holds_in_txn(vault, txn, &row.active_binding())
 }
 
 /// The code-bound approval wait `wait_id` admits its effect under, proved
