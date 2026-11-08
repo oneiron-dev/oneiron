@@ -438,7 +438,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/repo_provenance_trailer.rs` | src | s | 2 fn · 2 const | — | Repository provenance trailer grammar and exact entity-reference parsing |
 | `src/restore_admission.rs` | src | s | 2 struct · 3 enum · 9 fn | Rejected, RestoreAdmissionError, RestoreAdmissionReason, RestoreDestinationState, RestorePhase | Why a cold managed restore refused (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md): a… |
 | `src/result_body_erasure.rs` | src | s | 1 fn | — | The typed unavailable a read of erased reply content answers with |
-| `src/result_body_pins.rs` | src | s | 4 struct · 8 fn | PinCounts, RebuildEntry, ResultBodyPin, ResultBodyPins | Reader pins: a result body a reader holds is never deleted |
+| `src/result_body_pins.rs` | src | m | 4 struct · 1 enum · 14 fn | PinCounts, RebuildEntry, ResultBodyPin, ResultBodyPins, RetiringFile | Reader pins: a result body a reader holds is never deleted |
 | `src/result_body_rows.rs` | src | s | 2 fn · 3 const | — | The raw result body rows (`CODE_RUN_RAW_OUTPUT`): each row keyed by its body's content handle, where its… |
 | `src/result_manifest.rs` | src | s | 1 struct · 1 enum · 4 fn · 4 const | CodeRunOutputKind, CodeRunOutputPreview | Result-body manifests, occurrence identifiers and their format bounds |
 | `src/result_memory.rs` | src | s | 3 struct · 7 fn | ResultHold, ResultMemoryPool, ResultShare | The memory code-mode result bodies may hold (OF-190 B++) |

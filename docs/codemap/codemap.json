@@ -723,13 +723,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_def/portable_source.rs",
      "purpose": "Immutable captured agent source",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -1384,7 +1384,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/resident/result.rs",
@@ -7169,6 +7169,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/base_apply/asset_file_bodies.rs",
+     "purpose": "The bytes of an interpreted ASSET body file in the batch door (FIX 22075): text, a container or a body a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/base_apply/edge.rs",
      "purpose": "—",
      "surface": {
@@ -7389,7 +7399,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 2
      }
     },
@@ -8042,13 +8052,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -8152,7 +8162,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/put_apply/apply/admission.rs",
@@ -9105,6 +9115,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BlobBodyFile"
+     ],
+     "path": "src/blob_artifact/body_file.rs",
+     "purpose": "A blob body an ingress door hands over as a file (FIX 22074): the server decodes a request's base64 member…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BornFromArtifact",
       "BornFromSource"
      ],
@@ -9136,7 +9160,7 @@
      "path": "src/blob_artifact/create.rs",
      "purpose": "`vault.artifacts.create` (OF-181): one artifact with its first version, the composite `POST…",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -10032,9 +10056,9 @@
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 2,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -10120,7 +10144,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 19,
+      "fn": 20,
       "struct": 21
      }
     },
@@ -10146,7 +10170,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "BlobArtifactAppendOutcome",
@@ -10159,7 +10183,7 @@
       "const": 1,
       "crate-vis": 29,
       "enum": 1,
-      "fn": 9,
+      "fn": 11,
       "re-export": 1,
       "struct": 2
      }
@@ -17373,12 +17397,27 @@
      "purpose": "One named verb registry for validated UI events and agent calls",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 14,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 7,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActionBlobInput"
+     ],
+     "path": "src/code_run/actions/blob_input.rs",
+     "purpose": "An action's verb input whose one base64 member its host holds as a file (FIX 22096, Engine ruling E4 = C on…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -17399,7 +17438,7 @@
      "purpose": "Shared action execution under the principal and binding of the host",
      "surface": {
       "crate-vis": 1,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -18172,7 +18211,7 @@
      "path": "src/code_run/dispatcher/program_step.rs",
      "purpose": "A turn program's code run (DOOR-141 PR2): the program's own leased try, lent to the one callable SKILL its…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -18782,7 +18821,7 @@
      "path": "src/code_run/replay/cursor.rs",
      "purpose": "The cursor that replays a code run's recorded bridge calls in order and answers each with its stored…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 1
      }
@@ -36634,7 +36673,7 @@
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 6,
       "re-export": 16
      }
@@ -37052,7 +37091,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 13,
-      "fn": 9,
+      "fn": 10,
       "re-export": 3
      }
     },
@@ -37068,6 +37107,16 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_settle/pending/body_file.rs",
+     "purpose": "A waiting native output past the inline size keeps its bytes in a body file, not in its row (FIX 20812): one…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -54947,13 +54996,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/structural/puts.rs",
      "purpose": "Generic structural puts, habit check-ins, and blob artifact verbs",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -65613,7 +65662,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/receipt/archive_source/custody.rs",
@@ -65712,7 +65761,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ActionInputs",
@@ -65730,7 +65779,7 @@
       "const": 4,
       "crate-vis": 4,
       "enum": 2,
-      "fn": 13,
+      "fn": 16,
       "re-export": 1,
       "struct": 6
      }
@@ -67716,6 +67765,7 @@
      "path": "src/registry/pack_byte_map/mod.rs",
      "purpose": "Per-vault runtime-kind handles",
      "surface": {
+      "crate-vis": 1,
       "re-export": 1
      }
     },
@@ -68622,7 +68672,7 @@
      "path": "src/result_body/files.rs",
      "purpose": "Body directory work for the collector, done through the directory's descriptor: nothing here follows a link",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
      }
     },
     {
@@ -69505,7 +69555,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/verb/chain.rs",
@@ -69603,6 +69653,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/held_member.rs",
+     "purpose": "One string member of a call's args its host holds as a file, outside the JSON args, until a verb hook would…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -69612,9 +69673,9 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 19,
-      "fn": 13,
-      "re-export": 10,
+      "crate-vis": 20,
+      "fn": 14,
+      "re-export": 11,
       "struct": 2,
       "type": 1
      }
@@ -74614,7 +74675,7 @@
      "path": "src/skill_hub/pack_catalog/codec.rs",
      "purpose": "Canonical source-bearing ASSET envelopes: immutable content, not authority",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -77163,13 +77224,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/asset_body/mod.rs",
      "purpose": "ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18)",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 28
      }
     },
     {
@@ -77179,7 +77240,7 @@
      "path": "src/store/asset_body/read.rs",
      "purpose": "Reading ASSET bodies whatever plane holds them (FIX 3677): a logical reader that streams a body file…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -77193,13 +77254,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/asset_body/stage.rs",
      "purpose": "Staging an ASSET body from a reader before the transaction that puts it (FIX 3677): the body streams into…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -77500,13 +77561,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/body_envelope/custody.rs",
      "purpose": "Body instances in typed custody (KS-2A, FIX 5683 part A; owner KEY STORE = A)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 19
      }
     },
     {
@@ -81790,6 +81851,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sweep/carrier_facts.rs",
+     "purpose": "What the compaction scrub reads in an owning adapter's carrier, kept for each carrier body file the vault…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -81846,7 +81917,7 @@
      "path": "src/sweep/mod.rs",
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -88882,7 +88953,7 @@
      "purpose": "The verb-hook boundary of one SDK row (ARCH-0080 §3, attach point 1)",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 19,
       "re-export": 1,
       "struct": 1
@@ -88895,6 +88966,7 @@
      "path": "src/task_verb/verb_hook_boundary/row_run.rs",
      "purpose": "The row boundary's run of one call (ARCH-0080 §3): its pre chain, the row and its post chain",
      "surface": {
+      "crate-vis": 1,
       "fn": 8
      }
     },
@@ -91209,6 +91281,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 3,
       "fn": 5,
       "re-export": 13,
@@ -91297,7 +91370,7 @@
      "path": "src/vault_shape/seed.rs",
      "purpose": "The seed's store: each revision is one immutable ASSET row in the replicated ledger, the same carrier a…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -91508,6 +91581,16 @@
       "fn": 4,
       "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/blob_input.rs",
+     "purpose": "The artifact write rows a host runs with their `content_base64` already decoded into a file (FIX 22074…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -92150,7 +92233,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1386
+      "fn": 1389
      }
     },
     {
@@ -92543,7 +92626,7 @@
      "path": "src/verbs/memory_requests.rs",
      "purpose": "Typed inputs for the public memory verbs in the SDK inventory",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 2,
       "re-export": 3,
@@ -92612,7 +92695,7 @@
      "surface": {
       "fn": 8,
       "mod": 1,
-      "re-export": 113,
+      "re-export": 114,
       "struct": 33
      }
     },
@@ -98171,14 +98254,14 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 187,
+     "files": 188,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 86,
+     "files": 87,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98346,7 +98429,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 265,
+     "files": 266,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98654,7 +98737,7 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99256,9 +99339,9 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 70,
+     "files": 71,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Runtime hooks (ARCH-0080)"
     },
@@ -99466,7 +99549,7 @@
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)"
     },
     "sweep": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99620,7 +99703,7 @@
      "purpose": "Verb catalog vocabulary used by core admission and action surfaces"
     },
     "verbs": {
-     "files": 128,
+     "files": 129,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -99683,9 +99766,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 234,
+   "over_bar": 239,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7110,
+   "source_files": 7117,
    "test_files": 895
   },
   "oneiron-android": {
@@ -106477,7 +106560,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 99,
+      "const": 100,
       "crate-vis": 1
      }
     },
@@ -109884,7 +109967,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "OpcPackage",
@@ -109896,7 +109979,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 11,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -110577,7 +110660,7 @@
     "opc_package": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline"
     },
@@ -110652,7 +110735,7 @@
      "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its named cell style…"
     }
    },
-   "over_bar": 7,
+   "over_bar": 8,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
    "source_files": 179,
    "test_files": 14
@@ -118483,7 +118566,7 @@
      "path": "src/actions.rs",
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry",
      "surface": {
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -120270,6 +120353,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/blob_artifacts/streamed.rs",
+     "purpose": "The artifact write routes' bodies, streamed (FIX 22074)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -120296,7 +120389,7 @@
      "path": "src/api/body_spool.rs",
      "purpose": "An owner request's body, spooled (FIX 8195, FIX 7917, Rule 5)",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 34
      }
     },
     {
@@ -120316,7 +120409,7 @@
      "path": "src/api/body_spool/json.rs",
      "purpose": "One JSON object decoded as it is read, its bulk string members streamed (FIX 7917, Rule 5)",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -121604,7 +121697,7 @@
      "path": "src/api/facade/action_routes.rs",
      "purpose": "OF-181: the app's one action layer over HTTP, for both its callers",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -121738,6 +121831,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/blob_body.rs",
+     "purpose": "A facade artifact write's `content_base64`, spooled and decoded into a file before the call (FIX 22074…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -121794,7 +121897,7 @@
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 32
      }
     },
     {
@@ -122804,7 +122907,7 @@
      "path": "src/api/facade/invocations.rs",
      "purpose": "The facade's invocation claims: one call per client-named invocation id (OF-580)",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -124580,13 +124683,23 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/envelope/blob_body.rs",
+     "purpose": "A tool-first `tools/call`'s `arguments.spec.content_base64`, spooled and decoded into a file before the call…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/envelope/http.rs",
      "purpose": "The MCP gateway's Streamable HTTP side: its routes, its connection stamp and each POST's reply",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 16
      }
     },
     {
@@ -134012,7 +134125,7 @@
      "path": "src/mcp/endpoint_args.rs",
      "purpose": "Endpoint tool argument envelopes: setup, execute-code, paging, and verbs",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 4,
       "struct": 9
@@ -134150,7 +134263,7 @@
      "path": "src/mcp/mod.rs",
      "purpose": "MCP connector actor registry",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 2,
       "re-export": 12
      }
@@ -134197,7 +134310,7 @@
      "purpose": "MCP page budgets, cursors, snapshots, and canonical-JSON digests",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 24,
       "struct": 3
@@ -139543,7 +139656,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 766,
+     "files": 769,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -140084,7 +140197,7 @@
    },
    "over_bar": 65,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1826,
+   "source_files": 1829,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -146145,18 +146258,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PinCounts",
       "RebuildEntry",
       "ResultBodyPin",
-      "ResultBodyPins"
+      "ResultBodyPins",
+      "RetiringFile"
      ],
      "path": "src/result_body_pins.rs",
      "purpose": "Reader pins: a result body a reader holds is never deleted",
      "surface": {
-      "fn": 8,
+      "enum": 1,
+      "fn": 14,
       "struct": 4
      }
     },
@@ -150300,7 +150415,7 @@
     "result_body_pins": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Reader pins: a result body a reader holds is never deleted"
     },
