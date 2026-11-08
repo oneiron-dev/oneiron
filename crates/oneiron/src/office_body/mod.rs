@@ -135,7 +135,9 @@ use oneiron_xlsx_formula::RecalcClock;
 use oneiron_xlsx_formula::engine::FormualizerEngine;
 use serde::{Deserialize, Serialize};
 
-pub use oneiron_docedit::resource::{RESERVE_STEP, ResourcePort, ResourceRefusal, Resources};
+pub use oneiron_docedit::resource::{
+    RESERVE_STEP, ResourceAllocation, ResourcePort, ResourceRefusal, Resources,
+};
 use records::{EXPORT_AUTHORS, EXPORTS, FORKS, OfficeBodyRead, OfficeBodySource, SOURCES};
 pub use records::{
     ForkState, HeldDeckId, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportAuthor,
