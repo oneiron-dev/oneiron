@@ -34,16 +34,21 @@ use oneiron::{
     LlmStreamEvent, Vault, WriteActor,
 };
 
-use super::{CONTINUE_INSTRUCTION, text_message};
+use super::model_call::Recorder;
+use super::{CONTINUE_INSTRUCTION, TurnSources, text_message};
 use crate::ai_host::{AiHandle, CHAT_ROLE, ChatBreakpointCall, ChatSelfMode};
 use crate::models::RoleCall;
+
+mod breakpoint;
+
+pub(super) use breakpoint::{PendingSeed, TurnMeter, enter, keep};
 
 /// What a self agent's answer brings to its breakpoint.
 pub(crate) struct AnswerBreakpoint {
     mode: ChatSelfMode,
-    /// The log a chat turn's request was assembled from; a reused prefix
-    /// carries none and seals no flight.
-    log: Option<ChatLog>,
+    /// The log the request was assembled from, with whether it also opens
+    /// a compaction flight. A reused prefix carries no log.
+    log: Option<BreakpointLog>,
     locality: CallerLocality,
     reader: WriteActor,
     instructions_digest: Option<String>,
@@ -58,6 +63,21 @@ pub(crate) struct AnswerBreakpoint {
     craft: Vec<ManifestEntry>,
 }
 
+/// An ordinary turn compacts its log; an action only captures its exact
+/// target-bound request for a later Retry.
+enum BreakpointLog {
+    Compact(ChatLog),
+    CaptureOnly(ChatLog),
+}
+
+impl BreakpointLog {
+    fn log(&self) -> &ChatLog {
+        match self {
+            Self::Compact(log) | Self::CaptureOnly(log) => log,
+        }
+    }
+}
+
 /// A chat turn's self mode and the log its caller read.
 pub(super) struct SelfChat {
     mode: ChatSelfMode,
@@ -66,10 +86,10 @@ pub(super) struct SelfChat {
 
 /// `chat_compaction_sources`: the self mode of `agent`'s answer in
 /// `conversation_ref`, its log read from the retained ledger as `reader`
-/// reads it, `history_lines` raw messages after its summaries. `None` keeps
+/// reads it (a room's audience through the room's held projection, FIX
+/// 5031), `history_lines` raw messages after its summaries. `None` keeps
 /// the chat path as it was: a non-self agent, a row on the retained turns,
-/// a room's audience, a conversation with no ledger yet, or a log the
-/// caller could not read.
+/// a conversation with no ledger yet, or a log the caller could not read.
 pub(super) fn self_chat(
     ai: &AiHandle,
     vault: &Vault,
@@ -81,8 +101,7 @@ pub(super) fn self_chat(
     let mode = ai.chat_self_mode(vault, agent)?;
     let conversation = resolve_entity_ref(vault, conversation_ref).ok()?;
     match read_chat_log(reader, conversation, mode.hot_turns(), history_lines) {
-        Ok(Some(log)) => Some(SelfChat { mode, log }),
-        Ok(None) => None,
+        Ok(log) => Some(SelfChat { mode, log }),
         Err(_) => {
             tracing::info!(
                 reason = "chat_log_unread",
@@ -151,7 +170,7 @@ impl SelfChat {
         let instructions_digest = self.mode.instructions().map(digest_hex);
         AnswerBreakpoint {
             mode: self.mode,
-            log: Some(self.log),
+            log: Some(BreakpointLog::Compact(self.log)),
             locality,
             reader,
             instructions_digest,
@@ -162,6 +181,43 @@ impl SelfChat {
     }
 }
 
+/// Captures only a board-less Retry's exact target-bound call. It keeps no
+/// flight and changes neither this request nor its admission.
+pub(crate) fn action_breakpoint(
+    ai: &AiHandle,
+    vault: &Vault,
+    action: &TurnActionAttempt,
+    agent: EntityId,
+    log: ChatLog,
+    craft: Vec<ManifestEntry>,
+    assembled: &[LlmMessage],
+    admitted: &RoleCall,
+) -> Option<AnswerBreakpoint> {
+    if action.action != TurnAction::Retry
+        || serde_json::to_vec(&admitted.request.messages).ok()?
+            != serde_json::to_vec(assembled).ok()?
+    {
+        return None;
+    }
+    let mode = ai.chat_self_mode(vault, agent)?;
+    let instructions_digest = mode.instructions().map(digest_hex);
+    let (actor, class) = action.requester().ok()?;
+    Some(AnswerBreakpoint {
+        mode,
+        log: Some(BreakpointLog::CaptureOnly(log)),
+        locality: if action.off_device {
+            CallerLocality::OffDevice
+        } else {
+            CallerLocality::OnDevice
+        },
+        reader: WriteActor::new(actor, class),
+        instructions_digest,
+        source: None,
+        recalled: false,
+        craft,
+    })
+}
+
 /// Marks where a self turn's request ends, as its fork marks it (FIX 4930).
 /// A request that cannot carry the mark is sent unmarked.
 pub(super) fn mark_prefix(request: &mut LlmRequest) {
@@ -170,141 +226,20 @@ pub(super) fn mark_prefix(request: &mut LlmRequest) {
     }
 }
 
-/// What the reply keeps once it is saved, and whether its own captured
-/// call answered it.
-pub(super) struct PendingSeed {
-    seed: Option<ChatBreakpoint>,
-    live: Arc<AtomicBool>,
-}
-
-impl PendingSeed {
-    /// Whether the call it was entered with answered: `false` once a reused
-    /// prefix's captured rung gave way to today's call (OF-490 reads this
-    /// for the craft the reply was shown).
-    pub(super) fn answered_live(&self) -> bool {
-        self.live.load(Ordering::Acquire)
-    }
-}
-
-/// The turn's meter, as the flight's own guard is opened on it.
-pub(super) struct TurnMeter {
-    pub(super) payer: WriteActor,
-    pub(super) funding: Option<PayerPerson>,
-    pub(super) budget_units: u64,
-}
-
-/// The answer's breakpoint, right before its stream: the seed its reply
-/// keeps (a chat turn's, captured from its own admitted call; a reuse's,
-/// its source's again), and, for a chat turn past its threshold, its flight
-/// queued off the answer's path. `message` is the reply's MESSAGE.
-pub(super) fn enter(
-    ai: &AiHandle,
-    vault: &Arc<Vault>,
-    breakpoint: AnswerBreakpoint,
-    admitted: &RoleCall,
-    message: EntityId,
-    meter: TurnMeter,
-) -> PendingSeed {
-    let AnswerBreakpoint {
-        mode,
-        log,
-        locality,
-        reader,
-        instructions_digest,
-        source,
-        recalled,
-        craft,
-    } = breakpoint;
-    let seed = match source {
-        Some(source) => Some(source),
-        None if recalled => None,
-        None => log.as_ref().and_then(|log| {
-            capture_seed(
-                mode.agent(),
-                reader,
-                log,
-                instructions_digest,
-                craft,
-                admitted,
-            )
-        }),
-    };
-    if let Some(log) = log {
-        let call = ChatBreakpointCall {
-            vault: Arc::clone(vault),
-            mode,
-            log,
-            locality,
-            payer: meter.payer,
-            funding: meter.funding,
-            budget_units: meter.budget_units,
-            message,
-        };
-        match crate::server::blocking(|| ai.enter_chat_breakpoint(call, admitted)) {
-            Ok(()) | Err(ConversationCompactionUnavailable::Quiet) => {}
-            Err(why) => tracing::info!(
-                reason = why.as_str(),
-                "a chat turn's own compaction is unavailable; its log stays raw"
-            ),
-        }
-    }
-    PendingSeed {
-        seed,
-        live: Arc::new(AtomicBool::new(true)),
-    }
-}
-
-/// The seed a chat turn's reply keeps: its request exactly as the rung its
-/// walk takes now sends it, the rung by ref, the log's sources, and the
-/// craft rows the host's snapshot read for it (FIX 9439). None for a log
-/// whose turns were not all pinned, or a call no rung takes now.
-fn capture_seed(
-    agent: EntityId,
-    reader: WriteActor,
-    log: &ChatLog,
-    instructions_digest: Option<String>,
-    craft: Vec<ManifestEntry>,
-    admitted: &RoleCall,
-) -> Option<ChatBreakpoint> {
-    if !log.pinned {
-        return None;
-    }
-    let (rung, request) = admitted.ladder.live_rung(&admitted.request)?;
-    let digest = request.canonical_hash().ok()?;
-    Some(ChatBreakpoint {
-        agent,
-        reader: reader.entity_ref(),
-        reader_class: reader.actor_class() as u8,
-        conversation: log.conversation,
-        branch: log.branch,
-        session: log.session,
-        request: serde_json::to_string(&request).ok()?,
-        request_digest: hex(&digest),
-        rung: ChatBreakpointRung {
-            offer_digest: oneiron::code_run::live_fork_offer_digest(&rung.offer)?,
-            provider: rung.provider,
-            position: rung.position,
-            wire_model: rung.wire_model,
-        },
-        instructions_digest,
-        sources: log.sources.clone(),
-        summaries: log.summaries.clone(),
-        craft_entries: craft,
-    })
-}
-
 /// The answer's stream. With no `today` it is the admitted call's own, as
 /// it always was. A reused prefix sends first on its captured rung: when
 /// that rung fails before it speaks, the call is sent as the action would
 /// always have sent it, on `today`'s route.
 pub(super) fn open_stream(
     run: &RunAdmission,
+    today_run: &RunAdmission,
     admitted: RoleCall,
     today: Option<RoleCall>,
     pending: Option<&PendingSeed>,
+    recorder: &Recorder,
 ) -> LlmResult<LlmStream<'static>> {
     let Some(today) = today else {
-        return admitted.ladder.stream(run, admitted.request, None);
+        return recorder.stream(run, admitted);
     };
     let live = pending.map_or_else(
         || Arc::new(AtomicBool::new(true)),
@@ -313,10 +248,16 @@ pub(super) fn open_stream(
     if let Err(reason) = live_attempt_headroom(run) {
         live.store(false, Ordering::Release);
         live_fork_unavailable(reason);
-        return today.ladder.stream(run, today.request, None);
+        return recorder.stream(today_run, today);
     }
-    match admitted.ladder.stream(run, admitted.request, None) {
-        Ok(stream) => Ok(first_or_today(stream, run.clone(), today, live)),
+    match recorder.stream(run, admitted) {
+        Ok(stream) => Ok(first_or_today(
+            stream,
+            today_run.clone(),
+            today,
+            live,
+            recorder.clone(),
+        )),
         Err(error)
             if matches!(
                 &error,
@@ -327,7 +268,7 @@ pub(super) fn open_stream(
         }
         Err(_) => {
             live.store(false, Ordering::Release);
-            today.ladder.stream(run, today.request, None)
+            recorder.stream(today_run, today)
         }
     }
 }
@@ -368,6 +309,7 @@ struct FirstLeg {
     run: RunAdmission,
     today: RoleCall,
     used: Arc<AtomicBool>,
+    recorder: Recorder,
 }
 
 /// `live`, unless its first event is a failure: then `today`'s stream.
@@ -376,12 +318,14 @@ fn first_or_today(
     run: RunAdmission,
     today: RoleCall,
     used: Arc<AtomicBool>,
+    recorder: Recorder,
 ) -> LlmStream<'static> {
     let first = Leg::First(Box::new(FirstLeg {
         live,
         run,
         today,
         used,
+        recorder,
     }));
     LlmStream::new(futures_util::stream::unfold(first, |leg| async move {
         match leg {
@@ -391,6 +335,7 @@ fn first_or_today(
                     run,
                     today,
                     used,
+                    recorder,
                 } = *first;
                 match live.next().await {
                     Some(Ok(event)) => Some((Ok::<LlmStreamEvent, _>(event), Leg::Rest(live))),
@@ -407,7 +352,7 @@ fn first_or_today(
                     _ => {
                         used.store(false, Ordering::Release);
                         drop(live);
-                        match today.ladder.stream(&run, today.request, None) {
+                        match recorder.stream(&run, today) {
                             Ok(mut stream) => {
                                 stream.next().await.map(|item| (item, Leg::Rest(stream)))
                             }
@@ -420,35 +365,6 @@ fn first_or_today(
             Leg::Done => None,
         }
     }))
-}
-
-/// Keeps the saved reply's breakpoint, when its own captured call answered
-/// it. A breakpoint that is not kept leaves the reply's actions to run as
-/// they always did.
-pub(super) fn keep(
-    vault: &Vault,
-    pending: Option<PendingSeed>,
-    saved: Option<&MessageStreamReceipt>,
-) {
-    let (
-        Some(PendingSeed {
-            seed: Some(seed),
-            live,
-        }),
-        Some(receipt),
-    ) = (pending, saved)
-    else {
-        return;
-    };
-    if !live.load(Ordering::Acquire) {
-        return;
-    }
-    let kept = crate::server::blocking(|| {
-        keep_chat_breakpoint(vault, receipt.message_id, receipt.generation, seed)
-    });
-    if let Err(error) = kept {
-        tracing::warn!(kind = ?error.kind(), "a chat reply's breakpoint was not kept");
-    }
 }
 
 /// What a queued Continue or Retry answers with (FIX 4465 D).
@@ -472,6 +388,8 @@ pub(crate) struct ChatReused {
     /// craft message names it: what the reused call is shown, never today's.
     /// Empty for a request captured with none.
     pub(crate) craft: Vec<ManifestEntry>,
+    /// The rows in this captured request, not today's fallback.
+    pub(crate) sources: Option<Vec<EntityId>>,
 }
 
 /// `reuse_chat_breakpoint`: a self agent's Retry clones its reply's kept
@@ -494,7 +412,7 @@ pub(crate) fn reuse_chat_breakpoint(
     let Some(mode) = ai.chat_self_mode(vault, context.agent) else {
         return ChatReuse::Today;
     };
-    let seed = match chat_breakpoint(vault, action.conversation, action.message) {
+    let mut seed = match chat_breakpoint(vault, action.conversation, action.message) {
         Ok(Some(seed)) => seed,
         Ok(None) => return ChatReuse::Unavailable("breakpoint_missing"),
         Err(_) => return ChatReuse::Unavailable("breakpoint_unreadable"),
@@ -520,11 +438,36 @@ pub(crate) fn reuse_chat_breakpoint(
     let Some(mut request) = seed.captured_request() else {
         return ChatReuse::Unavailable("request_changed");
     };
-    let asks = request.messages.last().is_some_and(|last| {
-        last.role == LlmMessageRole::User && message_text(last) == context.user_text
-    });
+    // The captured call closes with the user's words, or with its opener
+    // right after them (FIX 14676).
+    let opened = captured_opener(&request.messages, &context.user_text);
+    let asks = opened
+        || request
+            .messages
+            .last()
+            .is_some_and(|last| asks_with(last, &context.user_text));
     if !asks {
         return ChatReuse::Unavailable("user_turn_changed");
+    }
+    // A Retry answers now, so it closes with today's opener, never the
+    // captured one; a Continue keeps the one its saved reply followed.
+    if opened && action.action == TurnAction::Retry {
+        request.messages.pop();
+        if let Some(opener) = super::turn_opener(ai.chat_settings().turn_opener, vault) {
+            request
+                .messages
+                .push(text_message(LlmMessageRole::User, opener));
+        }
+        // The Retry's reply follows the opener sent now, so the breakpoint
+        // that reply keeps names this request and its digest, and a later
+        // Continue of it resends the same opener. The original reply's own
+        // breakpoint row is left as it was.
+        let (Ok(text), Ok(digest)) = (serde_json::to_string(&request), request.canonical_hash())
+        else {
+            return ChatReuse::Unavailable("request_changed");
+        };
+        seed.request = text;
+        seed.request_digest = hex(&digest);
     }
     // The craft it showed is what the host kept with it, never what its
     // user text reads as (FIX 9439).
@@ -536,7 +479,16 @@ pub(crate) fn reuse_chat_breakpoint(
     let Some(ladder) = readmit_rung(ai, vault, &seed, &request) else {
         return ChatReuse::Unavailable("rung_not_admitted");
     };
+    let mut sources = TurnSources::of_agent(seed.agent);
+    sources.add(Some(&seed.summaries));
+    for span in &seed.sources {
+        sources.add(Some(&[span.turn]));
+        sources.add(Some(&span.messages));
+    }
+    sources.craft(&seed.craft_entries);
+    sources.add(context.user_sources.as_deref());
     if action.action == TurnAction::Continue && !context.saved.is_empty() {
+        sources.add(Some(&[action.assistant_turn, action.message]));
         let prefill = ladder.supports(&request.model, &LlmCapability::AssistantPrefill);
         request.messages.push(text_message(
             LlmMessageRole::Assistant,
@@ -576,6 +528,7 @@ pub(crate) fn reuse_chat_breakpoint(
             craft: Vec::new(),
         },
         craft,
+        sources: sources.rows(),
     }))
 }
 
@@ -601,7 +554,23 @@ fn readmit_rung(
     admitted.ladder.live_fork_ladder(&rung)
 }
 
-fn message_text(message: &LlmMessage) -> String {
+/// Whether `message` is the user's turn whose words are `user_text`.
+fn asks_with(message: &LlmMessage, user_text: &str) -> bool {
+    message.role == LlmMessageRole::User && message_text(message) == user_text
+}
+
+/// Whether `messages` close with the turn's opener alone right after the
+/// user's turn whose words are `user_text` (FIX 14676).
+pub(super) fn captured_opener(messages: &[LlmMessage], user_text: &str) -> bool {
+    let [.., user, opener] = messages else {
+        return false;
+    };
+    asks_with(user, user_text)
+        && opener.role == LlmMessageRole::User
+        && oneiron::context_board::is_turn_opener_line(&message_text(opener))
+}
+
+pub(super) fn message_text(message: &LlmMessage) -> String {
     message
         .content
         .iter()

@@ -118,6 +118,8 @@ impl Memory<'_> {
                     sealed_artifact: item.sealed_artifact,
                     sealed_version: item.sealed_version,
                     sha256: crate::entity_id::bytes_to_hex_lower(item.sha256.as_slice()),
+                    profile: item.profile,
+                    active_content: item.active_content,
                 })
                 .collect(),
         });

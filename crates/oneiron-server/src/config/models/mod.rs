@@ -30,18 +30,23 @@ mod browser_planner;
 mod compaction;
 mod decision_read;
 mod decisions;
+mod drafter_trainers;
 mod drafting;
 mod dreamer_wording;
 mod levels;
 mod media;
 mod planner;
 mod provider;
+pub mod sessions;
 pub mod snapshots;
 #[cfg(test)]
 mod tests;
 mod training;
+mod validation;
 mod voice;
+mod worker_controller;
 mod workers;
+pub(crate) use worker_controller::worker_controller_config;
 
 pub use browser_planner::{BROWSER_PLANNER_ROLE, NEEDS_AGENT_BEFORE_CHAT, unbound_row_is_no_seat};
 pub use compaction::CompactionSettings;
@@ -52,13 +57,14 @@ pub use decisions::{
     BigReply, BigSettings, BookingParseSettings, ConnectorSlateSettings, DecisionsSettings,
     ImagePickSettings, ImportAudienceSettings, SeatPickSettings, SystemOneSettings,
 };
+pub use drafter_trainers::DrafterTrainerSettings;
 pub use dreamer_wording::DreamerWording;
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use media::{LiveAsrOptions, MediaSeatConfig, MediaSettings};
 pub use planner::{PlannerSeatSetting, PlannerSettings};
 pub use provider::{
     OutputLimitField, ProviderConfig, ProviderKind, RequestCodec, RequestCompression,
-    ResponseFormatWire, ResponsesSocket,
+    ResponseFormatWire, ResponsesSocket, SiwcProvider,
 };
 pub use training::{TRAINING_SERVICE_UNIT, TrainingConnectorSettings, TrainingSettings};
 pub use voice::VoiceSettings;
@@ -68,6 +74,7 @@ pub use workers::{
 
 use levels::{RoleFile, Shorthand};
 use provider::ProviderFile;
+use validation::{resolve_aliases, validate_ladders};
 
 /// `[models]` as written in the config file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -113,6 +120,8 @@ pub(crate) struct ModelsFile {
     training: training::TrainingFile,
     snapshots: Option<snapshots::SnapshotPolicyFile>,
     #[serde(default)]
+    sessions: sessions::SessionsFile,
+    #[serde(default)]
     workers: BTreeMap<String, workers::WorkerFile>,
 }
 
@@ -131,6 +140,8 @@ struct DreamerFile {
     task_prompt_file: Option<PathBuf>,
     person_about_prompt: Option<String>,
     person_about_prompt_file: Option<PathBuf>,
+    compaction_check_prompt: Option<String>,
+    compaction_check_prompt_file: Option<PathBuf>,
     urgent_digest_question: Option<String>,
     drafting: Option<drafting::DraftingFile>,
     /// `[models.dreamer.wording]`: the host's wording of the engine's asks
@@ -149,6 +160,7 @@ struct DreamerFile {
 struct ChatFile {
     history_turns: Option<usize>,
     turn_budget_units: Option<u64>,
+    turn_opener: Option<TurnOpener>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -171,6 +183,7 @@ struct CodeModeFile {
     prompt_package: Option<PathBuf>,
     budget_units: Option<u64>,
     max_runs: Option<usize>,
+    step_wall_secs: Option<u64>,
     #[serde(default)]
     compaction: compaction::CompactionFile,
     #[serde(default)]
@@ -232,6 +245,9 @@ pub struct ModelsConfig {
     /// The trainer connectors (`[models.training]`); none by default.
     pub training: TrainingSettings,
     pub snapshots: snapshots::SnapshotPolicy,
+    /// Early computation of a session's next turn (`[models.sessions]`,
+    /// I1 = C).
+    pub sessions: sessions::SessionPreparePolicy,
     /// The model workers this server supervises or probes
     /// (`[models.workers]`), in id order; none by default.
     pub workers: Vec<WorkerConfig>,
@@ -298,6 +314,12 @@ pub struct DreamerSettings {
     /// The wording of the urgent digest's harm question (OF-194). Without
     /// one, the host's shipped wording.
     pub urgent_digest_question: Option<String>,
+    /// The rubric the compaction check reads a self-written summary by (FIX
+    /// 4814): the operator's `compaction_check_prompt` or
+    /// `compaction_check_prompt_file`, else the built-in rubric. Only the
+    /// wording changes; the typed support question, the parser and the
+    /// verdict kinds stay fixed.
+    pub compaction_check_rubric: String,
     pub(crate) drafting: drafting::DraftingSettings,
     /// The wording the engine's own asks go out in (FIX 8696): the shipped
     /// default for each piece the owner left unset.
@@ -314,6 +336,23 @@ pub struct ChatSettings {
     /// Earlier turns of the conversation sent with each chat turn.
     pub history_turns: usize,
     pub turn_budget_units: u64,
+    /// What closes a chat turn whose board rides (I1 = C turn order).
+    pub turn_opener: TurnOpener,
+}
+
+/// `[models.chat] turn_opener`: what closes a chat turn's call and a queued
+/// Continue's or Retry's, after the board's query part when the board rides,
+/// else right after the newest user message (ARCH-0067 §2: the log closes
+/// with a now-time turn opener the model completes; I1 = C turn order).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnOpener {
+    /// The engine's now-time line, sampled once as the turn is admitted.
+    #[default]
+    Clock,
+    /// None: the call ends at its board's query part, or at the newest user
+    /// message.
+    Off,
 }
 
 /// `[models.recall]`: what recall at high, xhigh and max may spend on the
@@ -345,6 +384,11 @@ pub struct CodeModeSettings {
     /// from this machine's cores and memory by default. Past it, runs wait
     /// their turn, round-robin across credentials.
     pub max_runs: usize,
+    /// One step's time allowance for guest execution and new host calls.
+    /// `None` keeps the runtime's own default wall; a positive value replaces
+    /// only the wall. A spent allowance stops the step at its next safe point
+    /// with the typed `step_deadline` stop, never a failure.
+    pub step_wall: Option<std::time::Duration>,
     pub compaction: CompactionSettings,
     pub check: CodeCheckSettings,
 }
@@ -393,6 +437,10 @@ const DEFAULT_CODE_MODE_BUDGET_UNITS: u64 = UNCAPPED_LIFETIME_UNITS;
 /// Two scorings of a 50-candidate block at about 300 tokens a candidate.
 const DEFAULT_RERANK_BUDGET_UNITS: u64 = 32_000;
 const DEFAULT_HISTORY_TURNS: usize = 24;
+/// The compaction check's built-in rubric (FIX 4465 B). An unset
+/// `compaction_check_prompt` keeps it word for word (FIX 4814).
+const DEFAULT_COMPACTION_CHECK_RUBRIC: &str =
+    include_str!("../../ai_host/dreamer/compaction_check_rubric.md");
 
 impl ModelsFile {
     /// Validates and expands the section. `base` is the config file's
@@ -450,6 +498,13 @@ impl ModelsFile {
                 self.dreamer.person_about_prompt_file,
                 base,
             )?,
+            compaction_check_rubric: levels::prompt_text(
+                "models.dreamer.compaction_check_prompt",
+                self.dreamer.compaction_check_prompt,
+                self.dreamer.compaction_check_prompt_file,
+                base,
+            )?
+            .unwrap_or_else(|| DEFAULT_COMPACTION_CHECK_RUBRIC.to_owned()),
             urgent_digest_question: self
                 .dreamer
                 .urgent_digest_question
@@ -480,6 +535,7 @@ impl ModelsFile {
                 .chat
                 .turn_budget_units
                 .unwrap_or(DEFAULT_TURN_BUDGET_UNITS),
+            turn_opener: self.chat.turn_opener.unwrap_or_default(),
         };
         let workflows = WorkflowSettings {
             enabled: self.workflows.enabled.unwrap_or(true),
@@ -493,6 +549,20 @@ impl ModelsFile {
                 .unwrap_or(DEFAULT_STEP_RETRY_BACKOFF_SECS),
         };
         let raw_budget_units = self.raw_budget_units.unwrap_or(DEFAULT_RAW_BUDGET_UNITS);
+        let step_wall = self
+            .code_mode
+            .step_wall_secs
+            .map(|secs| {
+                if secs == 0 {
+                    anyhow::bail!("models.code_mode.step_wall_secs must be greater than zero");
+                }
+                let wall = std::time::Duration::from_secs(secs);
+                if std::time::Instant::now().checked_add(wall).is_none() {
+                    anyhow::bail!("models.code_mode.step_wall_secs does not form a valid deadline");
+                }
+                Ok(wall)
+            })
+            .transpose()?;
         let code_mode = CodeModeSettings {
             prompt_package: self.code_mode.prompt_package.map(|path| match base {
                 Some(base) if path.is_relative() => base.join(path),
@@ -506,6 +576,7 @@ impl ModelsFile {
                 .code_mode
                 .max_runs
                 .unwrap_or_else(crate::mcp::CodeRunLimits::runs_for_this_machine),
+            step_wall,
             compaction: self.code_mode.compaction.resolve()?,
             check: self.code_mode.check.resolve(base)?,
         };
@@ -578,6 +649,7 @@ impl ModelsFile {
             planner,
             training,
             snapshots: self.snapshots.unwrap_or_default().resolve()?,
+            sessions: self.sessions.resolve(),
             workers,
         };
         if let Some(file) = self.decision_read {
@@ -615,115 +687,6 @@ impl CodeCheckFile {
             max_input_bytes: self.max_input_bytes.unwrap_or(DEFAULT_INPUT_BYTES),
         })
     }
-}
-
-fn validate_ladders(
-    providers: &BTreeMap<String, ProviderConfig>,
-    roles: &BTreeMap<ModelRole, Vec<Rung>>,
-) -> anyhow::Result<()> {
-    // Two provider spellings that map to one engine id would share one
-    // catalog row: one of them would silently run as the other.
-    let mut engine_ids: BTreeMap<oneiron::ModelId, &ModelRef> = BTreeMap::new();
-    for rung in roles.values().flatten() {
-        let Some(provider) = providers.get(&rung.model.provider) else {
-            continue;
-        };
-        let id = rung.model.engine_id(&provider.revision)?;
-        if let Some(other) = engine_ids.insert(id.clone(), &rung.model)
-            && other != &rung.model
-        {
-            anyhow::bail!(
-                "models {other} and {} both become engine id {id}; rename one",
-                rung.model
-            );
-        }
-    }
-    for (role, ladder) in roles {
-        let key = role_key(*role);
-        if *role == ModelRole::RetrievalEmbedder {
-            anyhow::bail!(
-                "models.roles.{key}: the retrieval embedder is configured in [embedder] (provider = \"endpoint\" takes any OpenAI-compatible /v1/embeddings server)"
-            );
-        }
-        let mut seen = std::collections::BTreeSet::new();
-        for rung in ladder {
-            let provider = providers.get(&rung.model.provider).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "models.roles.{key}: {} names provider {:?}, which [models.providers] does not define",
-                    rung.model,
-                    rung.model.provider
-                )
-            })?;
-            if provider.kind.media_only() {
-                anyhow::bail!(
-                    "models.roles.{key}: {} is on a media provider, which serves [models.media] seats only",
-                    rung.model
-                );
-            }
-            let tagger_role = *role == ModelRole::ExtractionEncoder;
-            if tagger_role != (provider.kind == ProviderKind::Oneironer) {
-                anyhow::bail!(
-                    "models.roles.{key}: {} is a {} provider; extraction_encoder takes a tagger (kind = \"oneironer\") and every other role takes a generating provider",
-                    rung.model,
-                    if provider.kind.generates() {
-                        "generating"
-                    } else {
-                        "tagger"
-                    }
-                );
-            }
-            if *role == ModelRole::Reranker && !provider.kind.reranks() {
-                anyhow::bail!(
-                    "models.roles.{key}: {} is not on an OpenAI-compatible provider; the reranker is called over /v1/rerank",
-                    rung.model
-                );
-            }
-            if !seen.insert(&rung.model) {
-                anyhow::bail!(
-                    "models.roles.{key}: {} appears twice in one ladder",
-                    rung.model
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-/// `[models.aliases]`: each target is the engine id
-/// (`provider/name@revision`) of a model a ladder names.
-fn resolve_aliases(
-    aliases: BTreeMap<String, String>,
-    providers: &BTreeMap<String, ProviderConfig>,
-    roles: &BTreeMap<ModelRole, Vec<Rung>>,
-) -> anyhow::Result<BTreeMap<String, oneiron::ModelId>> {
-    let configured = roles
-        .values()
-        .flatten()
-        .filter_map(|rung| {
-            let provider = providers.get(&rung.model.provider)?;
-            rung.model.engine_id(&provider.revision).ok()
-        })
-        .collect::<BTreeSet<_>>();
-    aliases
-        .into_iter()
-        .map(|(alias, target)| {
-            let id = target.parse::<oneiron::ModelId>().map_err(|error| {
-                anyhow::anyhow!(
-                    "models.aliases.{alias}: {target:?} is not a provider/name@revision model id: {error}"
-                )
-            })?;
-            anyhow::ensure!(
-                configured.contains(&id),
-                "models.aliases.{alias}: {id} is not a model [models] configures"
-            );
-            // An alias spelled as a configured id would silently reroute it.
-            anyhow::ensure!(
-                !configured.iter().any(|model| model.as_str() == alias),
-                "models.aliases.{alias}: the alias is a configured model's own id"
-            );
-            Ok((alias, id))
-        })
-        .collect()
 }
 
 impl ModelsConfig {

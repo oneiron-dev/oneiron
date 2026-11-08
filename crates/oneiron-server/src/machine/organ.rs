@@ -18,6 +18,10 @@ impl oneiron_organ_host::FloorLease for OrganLease {
         MemoryLease::grow_pending(&mut self.0, more, deadline, stopped).map_err(organ_refusal)
     }
 
+    fn materialized(&mut self, reserved: u64, actual: u64) {
+        MemoryLease::materialized(&mut self.0, reserved, actual);
+    }
+
     fn shrink(&mut self, bytes: u64) {
         MemoryLease::shrink(&mut self.0, bytes);
     }
@@ -41,6 +45,12 @@ pub(crate) struct OrganFloor(pub(crate) MachineMemory);
 
 #[cfg(unix)]
 impl oneiron_organ_host::MachineFloor for OrganFloor {
+    fn track_allocated(&self, bytes: u64) -> Box<dyn oneiron_organ_host::FloorLease> {
+        let mut lease = self.0.empty_lease();
+        lease.materialized(0, bytes);
+        Box::new(OrganLease(lease))
+    }
+
     fn lease(
         &self,
         bytes: u64,

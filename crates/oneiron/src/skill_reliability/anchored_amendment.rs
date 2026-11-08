@@ -33,11 +33,13 @@ use crate::learning::LearningCell;
 use crate::learning::evidence::cells_for_subject_in_txn;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_attribution::{
-    LateCreditReceipt, late_credit_receipt_in_txn, standing_credit_observation_in_txn,
+    LateCreditReceipt, StandingCreditObservation, late_credit_receipt_in_txn,
+    standing_credit_observation_in_txn,
 };
 
 /// One anchored pack-outcome observation held in a reliability cell,
-/// with the subject holding it and the attempt its stored context names.
+/// with the subject holding it and the attempt its stored context names,
+/// or its sealed credit names for a context-free row (FIX 11675).
 pub(super) struct AnchoredRow {
     pub(super) cell: LearningCell,
     pub(super) subject: EntityId,
@@ -48,7 +50,11 @@ pub(super) struct AnchoredRow {
 
 /// Every anchored pack-outcome observation in `subjects`' reliability
 /// cells for `executor`: evidence rows carrying their pack outcome
-/// context, each stamped with the subject holding it.
+/// context, each stamped with the subject holding it. A row whose context
+/// an erase cleared (FIX 8988) is recovered through its sealed credit
+/// receipt's key when the kept receipt, anchor and cell axis all validate;
+/// no context is reconstructed, and a missing credit or any mismatch leaves
+/// the row out, frozen as it stands (FIX 11675).
 ///
 /// # Errors
 ///
@@ -73,6 +79,27 @@ pub(super) fn anchored_rows_in_txn(
                     continue;
                 }
                 let Some(context) = &row.pack_attribution else {
+                    // FIX 11675: exact-credit recovery for a context-free row.
+                    // The native row sits under its sealed credit receipt's
+                    // key; validate the kept receipt, anchor and cell axis and
+                    // read the attempt off the credit. Missing credit or any
+                    // mismatch (including a cell without axis) skips the row.
+                    let Some(credit) = late_credit_receipt_in_txn(vault, txn, &receipt)? else {
+                        continue;
+                    };
+                    if credit.receipt_id != receipt
+                        || credit.anchor != row.anchor
+                        || held.cell.axis.as_deref() != Some(credit.axis.as_str())
+                    {
+                        continue;
+                    }
+                    rows.push(AnchoredRow {
+                        cell: held.cell.clone(),
+                        subject: *subject,
+                        receipt,
+                        attempt: credit.attempt_receipt.clone(),
+                        row,
+                    });
                     continue;
                 };
                 rows.push(AnchoredRow {
@@ -105,8 +132,11 @@ pub(super) enum AnchoredEffect {
 /// latest credit adjustment's mass, not only the sealed projection's — so
 /// a withdrawn amendment restores exactly what the credit side last wrote.
 /// The sealed credit gone, or erased to no attribution, leaves the row as
-/// it stands rather than guessed at. Either restatement keeps the stored
-/// row's receipt key, time, anchor, judge, goal revision and pack context;
+/// it stands rather than guessed at — except a context-free row recovered
+/// through its sealed credit still reads the latest retained masses, which
+/// need no attribution. Unknown latest mass or no surviving subject mass
+/// leaves it frozen and never newly withdraws (FIX 11675). Either restatement
+/// keeps the stored row's receipt key, time, anchor, judge, goal revision and pack context;
 /// only the observation and its weight ever move.
 ///
 /// # Errors
@@ -120,6 +150,17 @@ pub(super) fn effective_evidence_in_txn(
 ) -> Result<AnchoredEffect> {
     let row = &held.row;
     if let Some(share) = amended.get(&held.attempt) {
+        if row.pack_attribution.is_none() {
+            let Some(credit) = late_credit_receipt_in_txn(vault, txn, &held.receipt)? else {
+                return Ok(AnchoredEffect::Stand);
+            };
+            if matches!(
+                standing_credit_observation_in_txn(vault, txn, &credit, &held.subject)?,
+                StandingCreditObservation::Unknown
+            ) {
+                return Ok(AnchoredEffect::Stand);
+            }
+        }
         let evidence = restated(held, false, f64::from(*share));
         return Ok(if matches_row(row, &evidence) {
             AnchoredEffect::Stand
@@ -130,11 +171,11 @@ pub(super) fn effective_evidence_in_txn(
     let Some(credit) = late_credit_receipt_in_txn(vault, txn, &held.receipt)? else {
         return Ok(AnchoredEffect::Stand);
     };
-    if credit.attribution.is_none() {
+    if credit.attribution.is_none() && row.pack_attribution.is_some() {
         return Ok(AnchoredEffect::Stand);
     }
     match standing_credit_observation_in_txn(vault, txn, &credit, &held.subject)? {
-        Some((success, weight)) => {
+        StandingCreditObservation::Credited(success, weight) => {
             let evidence = restated(held, success, weight);
             Ok(if matches_row(row, &evidence) {
                 AnchoredEffect::Stand
@@ -142,11 +183,18 @@ pub(super) fn effective_evidence_in_txn(
                 AnchoredEffect::Record(evidence)
             })
         }
-        // Only a credited win's masses can move to nothing; a failed
-        // credit that never named this subject is not this leaf's row to
-        // judge.
-        None if credit.succeeded => Ok(AnchoredEffect::Withdraw),
-        None => Ok(AnchoredEffect::Stand),
+        // Failed direct credit moves to nothing only after its seating
+        // judgments are explicitly displaced. An unrelated failed credit
+        // is still not this leaf's row to judge.
+        StandingCreditObservation::Uncredited
+            if row.pack_attribution.is_some()
+                && (credit.succeeded || credit.direct_subjects.contains(&Some(held.subject))) =>
+        {
+            Ok(AnchoredEffect::Withdraw)
+        }
+        StandingCreditObservation::Unknown | StandingCreditObservation::Uncredited => {
+            Ok(AnchoredEffect::Stand)
+        }
     }
 }
 
@@ -234,7 +282,7 @@ pub(super) fn mint_flipped_from_credit_in_txn(
                 txn,
                 &credit,
             )?
-            .contains(skill);
+            .is_some_and(|subjects| subjects.contains(skill));
         }
         if !names {
             continue;

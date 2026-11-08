@@ -41,7 +41,7 @@ pub use speaker_handoff::{SpeakerHandoff, SpeakerHandoffBoundary, SpeakerHandoff
 pub use turn_actions::{
     TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionAuthority,
     TurnActionContext, TurnActionLine, TurnActionRebindReceipt, TurnActionRebindRequest,
-    TurnActionReceipt, TurnActionRequest,
+    TurnActionReceipt, TurnActionRequest, turn_action_hook_parent, turn_action_resumed_from_hook,
 };
 pub(crate) use visibility::{
     AudienceCache, anchors_own_windows_admit_in, conversation_summary_covers,
@@ -52,7 +52,6 @@ pub(crate) use visibility::{
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{RecordError, Result};
 use crate::{EntityId, Error, Vault, WriteActor};
-use serde::{Serialize, de::DeserializeOwned};
 
 use crate::store::conversation_body::invalid;
 fn state(reason: &'static str) -> Error {

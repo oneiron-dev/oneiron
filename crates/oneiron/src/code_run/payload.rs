@@ -2,17 +2,19 @@
 //! Entry: `self_call_request_value`.
 //! The request child owns request encoding; `code_run::types` owns call and outcome types.
 
+mod fold_words;
 mod observations;
 mod request;
 mod session_hooks;
 
+use oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR;
 use rmpv::Value;
 
 use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, EdgeActorClass, EntityId, Error, Result,
     ScoredEntity, WriteActor, WriteEnvelope, WriteProvenance,
     context_projection::ContextSpec,
-    error::{GateDenialOutcome, GateDenialReason},
+    error::{CodeError, GateDenialOutcome, GateDenialReason},
 };
 
 use super::dispatcher::SELF_PROVENANCE_SURFACE_KEY;
@@ -24,13 +26,16 @@ use super::support::{
 use super::types::{
     AgentVerbRefusalWords, SelfCall, SelfContextResult, SelfDeniedResult, SelfDispatchOutcome,
     SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfFailedResult,
-    SelfMemoryEdgeWriteResult, SelfMemoryWriteResult, SelfSpeechResult,
+    SelfMemoryEdgeWriteResult, SelfMemoryWriteResult, SelfSandboxProposalDiskFloor,
+    SelfSpeechResult, SelfStoredReply, SelfStoredReplyKind,
 };
 use super::{SelfLeaderCall, SummarizeEffort, coordination_codec};
 use crate::error::GateError;
 
+pub(super) use self::fold_words::{answer_fold_words, keep_erased_fold_words};
+pub(crate) use self::fold_words::{push_fold_word, recorded_fold_words};
 pub(crate) use self::observations::agent_verb_observations_of;
-pub(super) use self::request::self_call_request_value;
+pub(super) use self::request::{agent_verb_call_identity, self_call_request_value};
 
 fn context_spec_json(spec: &ContextSpec) -> Result<String> {
     serde_json::to_string(spec).map_err(|_| invalid_code_run_replay("context spec does not encode"))
@@ -98,12 +103,27 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                 ));
             }
             observations::keep_observations(&mut entries, &answer.observations)?;
+            session_hooks::keep_hooks(&mut entries, &answer.hooks)?;
             request_map(entries)
         }
         SelfDispatchOutcome::Failed(result) => request_map(vec![
             ("kind", Value::from("failed")),
             ("effect", Value::from(result.effect.as_str())),
             ("error", Value::from(result.error.as_str())),
+            (
+                "code",
+                result.code.as_deref().map_or(Value::Nil, Value::from),
+            ),
+            (
+                "disk_floor",
+                result.disk_floor.map_or(Value::Nil, |floor| {
+                    request_map(vec![
+                        ("needed", Value::from(floor.needed)),
+                        ("available", Value::from(floor.available)),
+                        ("reserve", Value::from(floor.reserve)),
+                    ])
+                }),
+            ),
         ]),
         SelfDispatchOutcome::Context(result) => request_map(vec![
             ("kind", Value::from("context")),
@@ -116,10 +136,17 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
             ("kind", Value::from("inference_defaults")),
             ("json", Value::from(json.as_str())),
         ]),
-        SelfDispatchOutcome::Fold(json) => request_map(vec![
-            ("kind", Value::from("fold")),
-            ("json", Value::from(json.as_str())),
-        ]),
+        SelfDispatchOutcome::Fold(answer) => {
+            let mut entries = vec![
+                ("kind", Value::from("fold")),
+                ("json", Value::from(answer.json.as_str())),
+            ];
+            // The folds it copies the words of, text-free (FIX 18924).
+            if !answer.words.is_empty() {
+                entries.push(("words", fold_words::fold_words_value(&answer.words)));
+            }
+            request_map(entries)
+        }
         SelfDispatchOutcome::TaskRefusal(result) => request_map(vec![
             ("kind", Value::from("task_refusal")),
             ("task_ref", entity_id_value(result.task_ref)),
@@ -163,6 +190,20 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
         ]),
         SelfDispatchOutcome::Team(answer) => json_outcome("team", answer)?,
         SelfDispatchOutcome::TeamSubmitted(answer) => json_outcome("team_submitted", answer)?,
+        SelfDispatchOutcome::StoredReply(stored) => {
+            let source_kind = match stored.kind {
+                SelfStoredReplyKind::InferenceDefaults => "inference_defaults",
+                SelfStoredReplyKind::TaskAskSettled => "task_ask_settled",
+                SelfStoredReplyKind::TaskAskWorldPrivacy => "task_ask_world_privacy",
+                SelfStoredReplyKind::TaskWaitSet => "task_wait_set",
+                SelfStoredReplyKind::TeamStartReceipt => "team_start_receipt",
+            };
+            request_map(vec![
+                ("kind", Value::from("stored_reply")),
+                ("source_kind", Value::from(source_kind)),
+                ("output", Value::from(stored.output.to_string())),
+            ])
+        }
     })
 }
 
@@ -189,9 +230,10 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
         "inference_defaults" => Ok(SelfDispatchOutcome::InferenceDefaults(
             str_value(map_get(entries, "json")?)?.to_owned(),
         )),
-        "fold" => Ok(SelfDispatchOutcome::Fold(
+        "fold" => Ok(SelfDispatchOutcome::Fold(super::FoldAnswer::new(
             str_value(map_get(entries, "json")?)?.to_owned(),
-        )),
+            fold_words::decode_fold_words(entries)?,
+        ))),
         "leader" => Ok(SelfDispatchOutcome::Leader(
             str_value(map_get(entries, "json")?)?.to_owned(),
         )),
@@ -300,11 +342,39 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
                 .map(|rows| decode_array(rows, entity_value))
                 .transpose()?,
             observations: observations::decode_observations(entries)?,
+            hooks: session_hooks::decode_hooks(entries)?,
+            stored_output: None,
         })),
-        "failed" => Ok(SelfDispatchOutcome::Failed(SelfFailedResult {
-            effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
-            error: str_value(map_get(entries, "error")?)?.to_owned(),
-        })),
+        "failed" => {
+            let code = match map_get(entries, "code")? {
+                Value::Nil => None,
+                value => Some(str_value(value)?.to_owned()),
+            };
+            let disk_floor = match map_get(entries, "disk_floor")? {
+                Value::Nil => None,
+                value => {
+                    let floor = expect_map(value, "disk-floor facts must be a map")?;
+                    Some(SelfSandboxProposalDiskFloor {
+                        needed: u64_value(map_get(floor, "needed")?)?,
+                        available: u64_value(map_get(floor, "available")?)?,
+                        reserve: u64_value(map_get(floor, "reserve")?)?,
+                    })
+                }
+            };
+            if disk_floor.is_some()
+                != (code.as_deref() == Some(MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR))
+            {
+                return Err(invalid_code_run_replay(
+                    "disk-floor facts contradict failure code",
+                ));
+            }
+            Ok(SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
+                error: str_value(map_get(entries, "error")?)?.to_owned(),
+                code,
+                disk_floor,
+            }))
+        }
         "speech" => {
             let order = u32::try_from(u64_value(map_get(entries, "order")?)?)
                 .map_err(|_| invalid_code_run_replay("speech order out of range"))?;
@@ -354,6 +424,23 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
             spec: serde_json::from_str(str_value(map_get(entries, "spec")?)?)
                 .map_err(|_| invalid_code_run_replay("context spec does not decode"))?,
         })),
+        "stored_reply" => {
+            let kind = match str_value(map_get(entries, "source_kind")?)? {
+                "inference_defaults" => SelfStoredReplyKind::InferenceDefaults,
+                "task_ask_settled" => SelfStoredReplyKind::TaskAskSettled,
+                "task_ask_world_privacy" => SelfStoredReplyKind::TaskAskWorldPrivacy,
+                "task_wait_set" => SelfStoredReplyKind::TaskWaitSet,
+                "team_start_receipt" => SelfStoredReplyKind::TeamStartReceipt,
+                _ => {
+                    return Err(invalid_code_run_replay("unknown stored reply source kind"));
+                }
+            };
+            Ok(SelfDispatchOutcome::StoredReply(SelfStoredReply {
+                kind,
+                output: serde_json::from_str(str_value(map_get(entries, "output")?)?)
+                    .map_err(|_| invalid_code_run_replay("invalid stored reply output"))?,
+            }))
+        }
         _ => Err(invalid_code_run_replay("unknown dispatch outcome kind")),
     }
 }
@@ -460,6 +547,15 @@ pub(super) fn replay_denied_trap_error(result: &SelfDeniedResult) -> Error {
 pub(super) fn replay_failed_trap_error(result: &SelfFailedResult) -> Error {
     if result.error == super::storage::RESPONSE_ERASED {
         return super::storage::response_erased_error("a replayed call's reply");
+    }
+    if result.code.as_deref() == Some(MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR)
+        && let Some(floor) = result.disk_floor
+    {
+        return Error::Code(CodeError::SandboxProposalDiskFloor {
+            needed: floor.needed,
+            available: floor.available,
+            reserve: floor.reserve,
+        });
     }
     invalid_code_run_replay("replayed failed self trap")
 }

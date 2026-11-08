@@ -34,13 +34,16 @@ pub(crate) fn attempt_read_context(
             about.extend(branch.facet_ref);
             if let Some(thing) = branch.thing {
                 about.extend(thing.entity);
-                about.extend(thing.audience);
+                about.extend(thing.audience.map(|audience| audience.entity()));
             }
             for part in &branch.parts {
                 about.push(part.conversation_ref);
                 about.extend(part.turns.iter().copied());
             }
             about
+        }
+        dreamer_consolidation::root_evidence::ROOT_BRIDGE_ATTEMPT_TYPE => {
+            dreamer_consolidation::root_evidence::root_bridge_read_context(input)?
         }
         dreamer_consolidation::DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE => {
             vec![crate::edit_distance::miner::miner_session_from_input(input).ok()?]

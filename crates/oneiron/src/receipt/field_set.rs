@@ -34,6 +34,9 @@ pub const FIELD_EXECUTOR_ROLE: &str = "executor_role";
 /// settled under, frozen at the terminal seal. Absent on receipts sealed
 /// before the stamp existed.
 pub const FIELD_LEASE_GENERATION: &str = "lease_generation";
+/// FIX 12306: the calling principal of an agent-dispatch or turn-program
+/// attempt, frozen on its pack receipt as canonical 32-lowercase-hex.
+pub(crate) const FIELD_ATTEMPT_CALLER: &str = "attempt.caller";
 /// OF-540: the exact `TeamReceipt.team_ref` of the attempt's team run.
 pub const FIELD_LEARNING_TEAM_REF: &str = "learning.team_ref";
 /// OF-540: the run's pattern token (`ceo_decides|committee|vote|market|rotation`).
@@ -342,6 +345,9 @@ pub fn append_task_type_fields(
             "typeRef node_id must not be empty",
         ));
     }
+    let learning_type = crate::learning::TypeRef::from(type_ref);
+    let encoded = serde_json::to_string(&learning_type)
+        .map_err(|_| Error::InvariantViolation("typeRef field encode failed"))?;
     receipt
         .fields
         .insert(FIELD_TYPE_REF_NODE.to_owned(), type_ref.node_id.clone());
@@ -349,6 +355,19 @@ pub fn append_task_type_fields(
         FIELD_TYPE_REF_TREE_VERSION.to_owned(),
         type_ref.tree_version.to_string(),
     );
+    receipt.fields.insert("typeRef".to_owned(), encoded);
+    Ok(())
+}
+
+/// Records the nearest-parent-first lineage frozen with a placement.
+/// An absent capture leaves `typeParents` unknown; a captured root has `[]`.
+pub(super) fn append_task_type_parent_fields(
+    receipt: &mut ReceiptRecord,
+    parents: &[crate::learning::TypeRef],
+) -> Result<()> {
+    let encoded = serde_json::to_string(parents)
+        .map_err(|_| Error::InvariantViolation("typeParents field encode failed"))?;
+    receipt.fields.insert("typeParents".to_owned(), encoded);
     Ok(())
 }
 
@@ -468,6 +487,17 @@ impl ReceiptRecord {
         self.fields.get(FIELD_LEASE_GENERATION)?.parse().ok()
     }
 
+    /// The calling principal frozen on an attempt's pack receipt (FIX 12306),
+    /// as a canonical entity id; `None` when it is absent or not canonical hex.
+    pub(crate) fn attempt_caller(&self) -> Option<EntityId> {
+        let spelled = self.fields.get(FIELD_ATTEMPT_CALLER)?;
+        let id = EntityId::from_hex(spelled).ok()?;
+        if id.to_hex() != spelled.as_str() {
+            return None;
+        }
+        Some(id)
+    }
+
     /// The spawn/task receipt law: a missing `typeRef` is invalid, never
     /// untyped. Returns the stamp, or refuses the receipt.
     pub fn require_task_type_ref(&self) -> Result<crate::task_type::TaskTypeRef> {
@@ -505,6 +535,25 @@ impl ReceiptRecord {
                     .map_err(|_| Error::InvalidClaimBody("malformed pack receipt executor role"))
             })
             .transpose()
+    }
+
+    /// Keeps the manifest and wire forms, removing only an erased entity's
+    /// retained-revision witness. Missing or malformed manifests stay unchanged.
+    pub(crate) fn erase_manifest_revision_pins(&mut self, erased: EntityId) -> bool {
+        let Some(mut manifest) = self.pack_manifest_entries() else {
+            return false;
+        };
+        if !crate::store::attempt_manifest::erase_manifest_revision_pins(&mut manifest, |entity| {
+            *entity == erased
+        }) {
+            return false;
+        }
+        let Ok(encoded) = serde_json::to_string(&manifest) else {
+            return false;
+        };
+        self.fields
+            .insert(FIELD_MANIFEST_ENTRIES.to_owned(), encoded);
+        true
     }
 
     /// The complete index/pull/claim sequence frozen by the terminal transaction.

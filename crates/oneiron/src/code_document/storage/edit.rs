@@ -19,6 +19,15 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::write_envelope::WriteActor;
 
+/// How [`Vault::admit_code_edit_in_txn`] admits a replacement: at the edit's
+/// landing, minting a custody record for each new secret, or as that
+/// admission's plan alone against the given known values, for a proof of
+/// the landing that writes nothing (FIX 21363).
+pub(super) enum EditAdmission {
+    Land,
+    Plan(std::sync::Arc<crate::store::known_value_index::KnownValues>),
+}
+
 impl Vault {
     /// Applies one operation and writes its head and ingress receipts.
     pub(super) fn apply_code_file_edit_in_txn(
@@ -31,6 +40,21 @@ impl Vault {
         actor: WriteActor,
     ) -> Result<CodeEditReceipt> {
         let (provenance, before, text) = Self::validate_code_file_edit(session, edit, metadata)?;
+        // A replacement that writes a secret the door can place lands its
+        // handle (FIX 2372; OF-067): the operation, its stamp and its ingress
+        // receipt then hold the edit as admitted, never the value.
+        let admitted =
+            self.admit_code_edit_in_txn(wtxn, &session.document_id, edit, EditAdmission::Land)?;
+        // The record and generation each handle it names stands at now: what
+        // a retry that offers the value again proves the same secret by
+        // (FIX 21363).
+        let custody = match &admitted {
+            Some(admitted) => {
+                self.landing_custody_in_txn(wtxn, &session.document_id, edit, admitted)?
+            }
+            None => Vec::new(),
+        };
+        let edit = admitted.as_ref().unwrap_or(edit);
         let candidate = doc_from_snapshot(
             &session
                 .doc
@@ -81,9 +105,11 @@ impl Vault {
         }
         // The edited file, read whole by the write door under the owner's
         // switch before any snapshot or receipt is written (OF-067). Its
-        // receipt binds the edit's bytes, so a replay can prove it the same
-        // edit: no handle can stand in a secret, and a hit refuses, unless
-        // the file read the same way before the edit.
+        // receipt binds the admitted edit's bytes, and a replay offers those
+        // or the value its custody binding proves (`replays_code_edit_in_txn`):
+        // a secret the replacement's admission did not place (one split
+        // across the file and the edit) refuses, unless the file read the
+        // same way before the edit.
         let mut stood = false;
         crate::batch::secret_scan::scan_document_in_txn(
             &self.store,
@@ -127,6 +153,7 @@ impl Vault {
             metadata_edit: metadata.cloned(),
             before: before.clone(),
             after: after.clone(),
+            custody,
         };
         let result = receipt.receipt()?;
         CODE_DOCUMENT_INGRESS.put(&self.store, wtxn, &operation, &receipt)?;
@@ -147,6 +174,63 @@ impl Vault {
         merged.set_peer_id(peer_id).map_err(|_| invalid())?;
         session.doc = merged;
         Ok(result)
+    }
+
+    /// `edit` with its replacement admitted as the batch door admits a text
+    /// field (FIX 2372): each secret the door's text rules place goes to
+    /// custody, under the document's carrier origin (the one its lifted keys
+    /// name), and leaves its handle; a value custody already holds keeps its
+    /// handle. `None` when the replacement is unchanged: the switch is off, it
+    /// holds no hit, or a hit it holds is one no span places, which the
+    /// whole-file read still judges as before. A [`EditAdmission::Plan`]
+    /// gives the handles of the values its matcher holds and mints and writes
+    /// nothing; any other secret refuses there.
+    pub(super) fn admit_code_edit_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        document: &[u8; 32],
+        edit: &CodeFileEdit,
+        admission: EditAdmission,
+    ) -> Result<Option<CodeFileEdit>> {
+        use crate::batch::secret_scan::{
+            Lifted, Part, SecretScanMode, admit_parts_in_txn, carrier_origin, plan_parts_in_txn,
+            predict_masked_text, scan_write_payload, secret_scan_mode_in_txn,
+        };
+        if edit.replacement.is_empty()
+            || secret_scan_mode_in_txn(&self.store, wtxn)? == SecretScanMode::Off
+            || scan_write_payload(edit.replacement.as_bytes()).is_ok()
+            || predict_masked_text(&edit.replacement).is_err()
+        {
+            return Ok(None);
+        }
+        let (origin, place) = carrier_origin(&crate::side_table::CODE_DOCUMENT_HEAD, document)?;
+        // The copy holds the value until the admission writes its handles
+        // back; a copy left as offered is wiped as it drops (FIX 1101).
+        let mut replacement = zeroize::Zeroizing::new(edit.replacement.clone());
+        let changed = match admission {
+            EditAdmission::Land => admit_parts_in_txn(
+                self,
+                wtxn,
+                origin,
+                &mut [(place.as_str(), Part::Text(&mut *replacement))],
+                &mut Lifted::default(),
+            )?,
+            EditAdmission::Plan(known) => plan_parts_in_txn(
+                self,
+                wtxn,
+                origin,
+                &mut [(place.as_str(), Part::Text(&mut *replacement))],
+                known,
+            )?,
+        };
+        Ok(changed.then(|| CodeFileEdit {
+            path: edit.path.clone(),
+            start: edit.start,
+            end: edit.end,
+            expected: edit.expected.clone(),
+            replacement: std::mem::take(&mut *replacement),
+            new_path: edit.new_path.clone(),
+        }))
     }
 
     /// The edit checked against its session before any write: its paths,

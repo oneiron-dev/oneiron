@@ -10,10 +10,12 @@ use serde_json::json;
 
 use super::super::coach::COACH_CODE_FIX_FACET;
 use super::super::coach_heal::HealRoute;
+use super::candidate_run::ReplayCandidate;
 use super::instruction::{CoachReplay, CoachScrubber};
+use super::publisher_refs::publisher_candidates_with_refs;
 use super::{
     BLOCKED_WORK_DOMAIN, CandidateRun, CodeFixJob, CodeFixSettled, CodeFixWork, PublisherCandidate,
-    PublisherCandidateKind, SealedRun, WORK,
+    SealedRun, WORK,
 };
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{COACH_HEAL_ATTEMPT_KIND, DreamerAttemptPayload, DreamerRunnerStore};
@@ -151,36 +153,34 @@ pub(super) fn enqueue_run_in_txn(
 }
 
 /// The candidates of `pinned` that `settled` holds no run of that stands,
-/// each as its id and kind: one it never ran, an engine pair it kept not
+/// with their full-slice input references: one it never ran, an engine pair it kept not
 /// run at another shadow protocol (FIX 1661/2144), and with `read_granted`
 /// one kept for want of the Coach's Grant (FIX 7031).
 pub(super) fn untried(
     settled: &CodeFixSettled,
     pinned: &[PublisherCandidate],
     read_granted: bool,
-) -> Vec<(String, PublisherCandidateKind)> {
-    pinned
-        .iter()
-        .filter(|candidate| {
-            !settled
-                .candidates
-                .iter()
-                .any(|run| run.candidate_id == candidate.id && run.tried(read_granted))
+) -> Vec<ReplayCandidate> {
+    publisher_candidates_with_refs(pinned)
+        .into_iter()
+        .filter(|(candidate, publisher_ref)| {
+            !settled.candidates.iter().any(|run| {
+                run.matches_publisher(&candidate.id, Some(publisher_ref)) && run.tried(read_granted)
+            })
         })
-        .map(|candidate| (candidate.id.clone(), candidate.kind.clone()))
+        .map(|(candidate, publisher_ref)| ReplayCandidate::publisher(candidate, publisher_ref))
         .collect()
 }
 
 /// Each of `candidates` kept as not run, for `reason`: it is not tried again.
-pub(super) fn not_run(
-    candidates: &[(String, PublisherCandidateKind)],
-    reason: CodeFixWithheld,
-) -> Vec<SealedRun> {
+pub(super) fn not_run(candidates: &[ReplayCandidate], reason: CodeFixWithheld) -> Vec<SealedRun> {
     candidates
         .iter()
-        .map(|(candidate_id, _)| {
+        .map(|candidate| {
             let run = CandidateRun {
-                candidate_id: candidate_id.clone(),
+                candidate_id: candidate.id.clone(),
+                coach_own: false,
+                publisher_ref: candidate.publisher_ref,
                 outcome: None,
                 export: CodeFixVerdict::Withheld { reason },
                 replay: None,

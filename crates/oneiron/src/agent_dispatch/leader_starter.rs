@@ -24,16 +24,13 @@ pub struct LeaderStarterSkills {
 }
 
 impl LeaderStarterSkills {
-    /// The installed starter shipped with the team-lead agent definition,
-    /// and the installed team-shape skill.
-    pub fn seeded() -> Result<Self> {
+    /// The installed team-lead and team-shape workflow defaults: their
+    /// current heads, else the existing derived references.
+    pub fn seeded(vault: &crate::Vault) -> Result<Self> {
         Ok(Self {
-            starter: EntityId::derive(
-                crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
-                &[b"team-lead"],
-            )?,
+            starter: super::skill_default::workflow_default(vault, "team-lead")?,
             pattern: None,
-            team_shape: super::team_shape::team_shape_skill()?,
+            team_shape: super::team_shape::team_shape_default(vault)?,
         })
     }
 }

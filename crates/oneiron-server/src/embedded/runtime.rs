@@ -44,7 +44,10 @@ pub(super) fn worker_cap(limits: HostLimits) -> Option<usize> {
 /// app's share caps it, Tokio's default otherwise.
 pub(super) fn engine_runtime(workers: Option<usize>) -> std::io::Result<Runtime> {
     let mut builder = tokio::runtime::Builder::new_multi_thread();
-    builder.enable_all().thread_name(ENGINE_THREAD_NAME);
+    builder
+        .thread_stack_size(crate::ENGINE_THREAD_STACK_BYTES)
+        .enable_all()
+        .thread_name(ENGINE_THREAD_NAME);
     if let Some(workers) = workers {
         builder.worker_threads(workers);
     }
@@ -69,8 +72,7 @@ where
 {
     let caller = workers.is_none().then(Handle::current);
     let (finished, done) = oneshot::channel();
-    std::thread::Builder::new()
-        .name("oneiron-engine-serve".to_owned())
+    crate::engine_thread("oneiron-engine-serve".to_owned())
         .spawn(move || {
             let served = match caller {
                 Some(caller) => caller.block_on(serve()),

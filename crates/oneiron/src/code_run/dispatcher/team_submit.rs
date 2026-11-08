@@ -5,7 +5,10 @@
 //! inbox's existing path. Only an explicit submit writes a review; nothing is
 //! inferred from a run's end or a task's completion. The review stands in the
 //! scope the output was recorded under ([`super::team_submit_output`]), never
-//! the vault's default.
+//! the vault's default. A CLAIM or document revision output (FIX 2783) is
+//! read on the run's read lane ([`super::team_submit_entity`]); its review is
+//! about the CLAIM or the record that owns the document, and its
+//! `outputRevision` names the exact entity and revision.
 
 use std::cell::Cell;
 
@@ -13,8 +16,10 @@ use rmpv::Value;
 use sha2::{Digest, Sha256};
 
 use super::HostSelfDispatcher;
+use super::team_submit_entity::OutputReader;
 use super::team_submit_output::output_descriptor_in_txn;
 use crate::attempt_queue::AttemptId;
+use crate::claim::ScopedReadActorKey;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::team_submit::{
     OutputRevision, TEAM_DELIVERABLE_REVIEW_PREDICATE, TeamSubmitAnswer, TeamSubmitInput,
@@ -44,17 +49,24 @@ impl HostSelfDispatcher<'_> {
     pub(super) fn dispatch_team_submit(
         &self,
         input: TeamSubmitInput,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
-        Ok(match self.team_submit(input)? {
+        Ok(match self.team_submit(input, read_as)? {
             Ok(answer) => SelfDispatchOutcome::TeamSubmitted(answer),
             Err(code) => SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: SelfEffect::Team,
                 error: code.to_owned(),
+                code: None,
+                disk_floor: None,
             }),
         })
     }
 
-    fn team_submit(&self, input: TeamSubmitInput) -> Result<Submitted> {
+    fn team_submit(
+        &self,
+        input: TeamSubmitInput,
+        read_as: Option<ScopedReadActorKey>,
+    ) -> Result<Submitted> {
         let Some(leader) = self.agent_parent else {
             return Ok(Err("team_unbound"));
         };
@@ -78,11 +90,17 @@ impl HostSelfDispatcher<'_> {
         if !team.starts_with(&led_prefix) && team_run_binding(vault, leader, &team)?.is_none() {
             return Ok(Err("team_submit_not_led"));
         }
-        // The output as one snapshot reads it: proven, with the scope its own
-        // recorded claim carries. The writer reads it again before it writes.
+        // A CLAIM or document output is read on the run's read lane: the key
+        // its door admitted the call with, else the host turn's.
+        let reader = OutputReader::new(vault, output, || {
+            read_as.unwrap_or_else(|| self.host_turn_read_key())
+        });
+        // The output as one snapshot reads it: proven, with the scope its
+        // review stands in. The writer reads it again before it writes.
         let descriptor = {
+            let lane = reader.lane()?;
             let rtxn = vault.store.env.read_txn()?;
-            match output_descriptor_in_txn(vault, &rtxn, output)? {
+            match output_descriptor_in_txn(vault, &rtxn, lane.as_ref(), output)? {
                 Ok(descriptor) => descriptor,
                 Err(code) => return Ok(Err(code)),
             }
@@ -118,6 +136,8 @@ impl HostSelfDispatcher<'_> {
                 && descriptor.scopes(body)
         };
         let now = crate::unix_seconds_now();
+        // The writer's own lane, its grant clock prepared before it opens.
+        let lane = reader.lane()?;
         let refusal = Cell::new(None);
         let replay = Cell::new(false);
         let written = vault.put_claim_candidate_with_landing_and_after_apply(
@@ -132,7 +152,7 @@ impl HostSelfDispatcher<'_> {
             |txn| {
                 // The output still stands as it was read, in the same scope.
                 // One that changed under the submit is answered as missing.
-                let unproven = match output_descriptor_in_txn(vault, txn, output)? {
+                let unproven = match output_descriptor_in_txn(vault, txn, lane.as_ref(), output)? {
                     Ok(current) => (current != descriptor).then_some("team_submit_output_missing"),
                     Err(code) => Some(code),
                 };

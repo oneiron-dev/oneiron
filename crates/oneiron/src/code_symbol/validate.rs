@@ -4,6 +4,7 @@ use crate::batch::secret_scan;
 use crate::codebase::{CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
+use crate::git_wire::git_path_has_control;
 
 use super::types::{
     CODE_SYMBOL_KIND_MAX_BYTES, CODE_SYMBOL_NAME_MAX_BYTES, CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES,
@@ -59,7 +60,7 @@ pub(super) fn validate_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Re
         }
         previous_symbol = Some(symbol);
     }
-    Ok(())
+    super::relations::validate_relations(manifest)
 }
 
 pub(super) fn scan_code_symbol_manifest_metadata(manifest: &CodeSymbolManifest) -> Result<()> {
@@ -140,8 +141,25 @@ pub(super) fn validate_symbol_indexes(
     Ok(())
 }
 
+/// A symbol manifest's file path, a Git path's text (FIX 21326): a name
+/// outside UTF-8 holds its canonical escape, and the control-char check
+/// reads the path's own bytes, so the escape's NUL is none.
 pub(super) fn validate_manifest_path(path: &str) -> Result<()> {
-    validate_text(path, CODEBASE_FILE_PATH_MAX_BYTES, "file path")?;
+    if path.is_empty() || path.len() > CODEBASE_FILE_PATH_MAX_BYTES {
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "file path",
+        )));
+    }
+    if path.trim() != path {
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "text fields must not have leading or trailing whitespace",
+        )));
+    }
+    if git_path_has_control(path).unwrap_or(true) {
+        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "text fields must not contain control characters",
+        )));
+    }
     if path.starts_with('/') || path.contains('\\') {
         return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "file path must be repository-relative",
@@ -196,7 +214,7 @@ pub(super) fn validate_normalized_commit_hash(input: &str) -> Result<()> {
 }
 
 pub(super) fn validate_code_symbol_graph_edge(edge: &CodeSymbolGraphEdge) -> Result<()> {
-    if edge.source == edge.target {
+    if edge.source == edge.target && !matches!(edge.kind, EdgeKind::Calls | EdgeKind::Refs) {
         return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "code symbol graph edge cannot be a self-edge",
         )));
@@ -207,9 +225,13 @@ pub(super) fn validate_code_symbol_graph_edge(edge: &CodeSymbolGraphEdge) -> Res
         )));
     }
     match edge.kind {
-        EdgeKind::Mentions | EdgeKind::Attached => Ok(()),
+        EdgeKind::Mentions
+        | EdgeKind::Attached
+        | EdgeKind::Calls
+        | EdgeKind::Imports
+        | EdgeKind::Refs => Ok(()),
         _ => Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-            "code symbol graph edge kind must be Mentions or Attached",
+            "code symbol graph edge kind must be Mentions, Attached, Calls, Imports or Refs",
         ))),
     }
 }

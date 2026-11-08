@@ -343,6 +343,23 @@ impl AttemptQueue<'_> {
         self.working_rows_in_txn(&rtxn, ids)
     }
 
+    /// The working rows of `kind` alone, read through the kind index (FIX
+    /// 11318) so no row of another kind is decoded: a reader that wants one
+    /// kind's live tries pays for that kind's rows, never the whole ledger
+    /// (FIX 7870). Creation order.
+    pub(crate) fn working_kind_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &str,
+    ) -> Result<Vec<AttemptRecord>> {
+        let ids = crate::attempt_queue::index::kind_ids_in_txn(self.store, txn, kind)?;
+        Ok(self
+            .working_rows_in_txn(txn, ids)?
+            .into_iter()
+            .filter(|record| record.kind == kind)
+            .collect())
+    }
+
     /// Every row of `kind` through the kind index (FIX 11318), archived ones too, creation order.
     pub(crate) fn kind_rows_in_txn(
         &self,
@@ -453,8 +470,12 @@ impl AttemptQueue<'_> {
                 return Err(Error::CorruptedIndex("attempt run index"));
             };
             let record = decode_record(&raw_record, id)?;
-            if record.run_id.as_deref() != Some(run_id) {
-                return Err(Error::CorruptedIndex("attempt run index"));
+            if !crate::store::hashed_string_index_matches(
+                record.run_id.as_deref(),
+                run_id,
+                "attempt run index",
+            )? {
+                continue;
             }
             records.push(record);
         }
@@ -603,6 +624,31 @@ impl AttemptQueue<'_> {
             let keys =
                 DedupeIndexKeys::new(&record.kind, record.dedupe_actor_ref.as_deref(), dedupe_key);
             self.store.attempt_dedupe.delete(txn, &keys.primary[..])?;
+        }
+        Ok(())
+    }
+
+    /// Drops only entries derived from this row that still name this row.
+    /// A successor or another actor's current entry is never removed.
+    pub(in crate::attempt_queue) fn delete_owned_dedupe_entries_for_record(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        record: &AttemptRecord,
+    ) -> Result<()> {
+        let Some(dedupe_key) = record.dedupe_key.as_deref() else {
+            return Ok(());
+        };
+        let keys =
+            DedupeIndexKeys::new(&record.kind, record.dedupe_actor_ref.as_deref(), dedupe_key);
+        for key in std::iter::once(keys.primary).chain(keys.fallback_v1) {
+            let owned = self
+                .store
+                .attempt_dedupe
+                .get(txn, &key[..])?
+                .is_some_and(|value| *value == *record.id.as_bytes());
+            if owned {
+                self.store.attempt_dedupe.delete(txn, &key[..])?;
+            }
         }
         Ok(())
     }

@@ -5,8 +5,10 @@
 use serde_json::Value as JsonValue;
 
 /// Where a request may name its output limit: the two wire spellings and
-/// the engine's generic `max_output_tokens` param.
-const LIMIT_KEYS: [&str; 3] = ["max_tokens", "max_completion_tokens", "max_output_tokens"];
+/// the engine's generic `max_output_tokens` param. Prompt-cache warmth
+/// leaves each out of a prefix's identity (FIX 6492).
+pub(super) const LIMIT_KEYS: [&str; 3] =
+    ["max_tokens", "max_completion_tokens", "max_output_tokens"];
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct OutputCap {
@@ -25,7 +27,7 @@ impl OutputCap {
             return;
         };
         let mut asked: Option<u64> = None;
-        for key in LIMIT_KEYS {
+        for key in LIMIT_KEYS.into_iter().chain(std::iter::once(self.field)) {
             // Every spelling leaves the wire, parsed or not: an endpoint that
             // reads a spelling left behind would generate past the ceiling.
             if let Some(limit) = fields.remove(key).as_ref().and_then(token_count) {

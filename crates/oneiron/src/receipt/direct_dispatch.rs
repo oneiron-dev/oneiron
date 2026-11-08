@@ -13,6 +13,12 @@ use crate::side_table::{self, Named, SideTable};
 
 const DIRECT: SideTable<[u8; 32], DirectReceipt, Named> =
     SideTable::new(&side_table::OUTBOUND_DIRECT_RECEIPT);
+/// Whether a masked copy of a `OUTBOUND_DIRECT_RECEIPT` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn outbound_direct_receipt_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<DirectReceipt, Named>(bytes)
+}
+
 const VERSION: u8 = 2;
 /// Where the side-row wall says it found a secret in a direct receipt (OF-067).
 const DIRECT_PLACE: &str = "side:OUTBOUND_DIRECT_RECEIPT";
@@ -183,4 +189,36 @@ pub(super) fn receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
             Ok(row.receipt)
         })
         .collect()
+}
+
+/// Selects the newest matching direct receipt in the caller's snapshot.
+/// The immutable logical ref remains usable even when free-text fields are
+/// masked. Timestamp ties use receipt id, as a stable ordering only.
+pub(crate) fn latest_direct_dispatch_receipt_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    matches: impl Fn(&str, &ReceiptRecord) -> bool,
+) -> Result<Option<ReceiptRecord>> {
+    let mut latest: Option<ReceiptRecord> = None;
+    for entry in DIRECT.iter_raw_from(&vault.store, txn, &[])? {
+        let (key_bytes, raw) = entry?;
+        let row = DIRECT
+            .decode_value(&raw)
+            .map_err(|_| Error::CorruptedIndex("direct dispatch receipt"))?;
+        if row.version != VERSION
+            || row.receipt.receipt_kind != ReceiptKind::Outbound
+            || row.receipt.receipt_id != format!("{}:{}", row.logical_ref, evidence(&row.receipt))
+            || key_bytes.as_slice() != key(&row.logical_ref, &row.receipt)
+        {
+            return Err(Error::CorruptedIndex("direct dispatch receipt"));
+        }
+        if matches(&row.logical_ref, &row.receipt)
+            && latest.as_ref().is_none_or(|previous| {
+                super::kernel::receipt_newest_first_order(&row.receipt, previous).is_lt()
+            })
+        {
+            latest = Some(row.receipt);
+        }
+    }
+    Ok(latest)
 }

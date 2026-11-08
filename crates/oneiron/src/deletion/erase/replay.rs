@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::ports::EntityStoreRead;
+
 impl Vault {
     /// Reason-aware replay of a CRDT tombstone into the LOCAL active store —
     /// the ONE primitive every sync replay surface routes through (Observer
@@ -45,15 +47,30 @@ impl Vault {
         // cannot load it still replays; the in-txn signer refuses if it must sign.
         let _ = self.prepare_install_signing();
         let applied = self.store.env.write_txn().and_then(|mut wtxn| {
-            let (outcome, _changed) =
+            let rekeys = decode_tombstone_value(raw_value)
+                .is_hard()
+                .then(|| crate::channel_identity::AssignmentRekeys::begin(&self.store));
+            let is_claim = EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
+                .as_deref()
+                .and_then(EntityMetadataHeader::parse)
+                .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM);
+            let (outcome, _changed, effects) =
                 self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
+            let claims_changed = is_claim && outcome.changed_local_state();
+            if let Some(rekeys) = rekeys {
+                rekeys.finish(&self.store, &mut wtxn)?;
+            }
             wtxn.commit()?;
-            Ok(outcome)
+            Ok((outcome, effects, claims_changed))
         });
         self.store.flush_legal_hold_refusals_settled();
         // A fence its actor scrub committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
-        let outcome = applied?;
+        let (outcome, effects, claims_changed) = applied?;
+        if claims_changed {
+            self.verb_hook_bindings_changed();
+        }
+        effects.committed(self);
         while self.collect_lfs_garbage(32)? != 0 {}
         #[cfg(unix)]
         self.collect_released_result_bodies(256)?;
@@ -74,7 +91,8 @@ impl Vault {
     ///
     /// Also returns the other documents whose local reads this apply changed
     /// (citing NOTEs, rewritten merge events, a restamped subject edge's
-    /// endpoints); the caller notifies them only after its commit.
+    /// endpoints), and actual native cancellation generations. The caller
+    /// publishes their notices and cancellation signals only after its root commit.
     ///
     /// Every branch, the absent-id ones included, ends at one post-effect
     /// hook: a Grant a decision seal names decides seal standing again in
@@ -85,7 +103,11 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         raw_value: &[u8],
-    ) -> Result<(ReplayedTombstoneOutcome, Vec<EntityId>)> {
+    ) -> Result<(
+        ReplayedTombstoneOutcome,
+        Vec<EntityId>,
+        crate::deletion::ErasureEffects,
+    )> {
         // A Grant this replica holds, live or as a deleted shell, that its
         // peer deleted (a user delete or a hard erase, never an archive)
         // stays known withdrawn here, judged by its stored type alone
@@ -109,7 +131,11 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         raw_value: &[u8],
-    ) -> Result<(ReplayedTombstoneOutcome, Vec<EntityId>)> {
+    ) -> Result<(
+        ReplayedTombstoneOutcome,
+        Vec<EntityId>,
+        crate::deletion::ErasureEffects,
+    )> {
         let decoded = decode_tombstone_value(raw_value);
         self.replayed_tombstone_protection_in_txn(wtxn, id, &decoded)?;
         // A held world keeps its pads on either reason, before any work here
@@ -119,6 +145,15 @@ impl Vault {
         // replica holds the WORLD row (fix 7). A soft delete or an archive
         // keeps them: the world restores from old bundles.
         if decoded.is_hard() {
+            // Keep the positive body binding until its native disposition
+            // settles; the source fence then covers absent entity rows too.
+            crate::deletion::checkpoint_payload::settle_workflow_tool_payloads_for_reason_in_txn(
+                &self.store,
+                wtxn,
+                id,
+                decoded.reason,
+            )?;
+            crate::agent_dispatch::erase_workflow_tool_source_in_txn(&self.store, wtxn, id)?;
             self.destroy_world_keys_for_delete_in_txn(
                 wtxn,
                 *id,
@@ -132,7 +167,8 @@ impl Vault {
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         // Receiver-only room MESSAGE content must be erased before the TURN
         // loses its PartOf edges, even when the host never held the child.
-        crate::conversation::replay_room_message_tombstone(self, wtxn, *id, raw_value)?;
+        let mut effects =
+            crate::conversation::replay_room_message_tombstone(self, wtxn, *id, raw_value)?;
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
         // EdgeRef and sweep refs are only readable PRE-scrub. A hard replay of
         // a classified corrupt CLAIM takes the audited exception (FIX 7800).
@@ -156,8 +192,16 @@ impl Vault {
                 wtxn,
                 id,
             )?;
-            crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
-            crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
+            crate::skill_hub::retire_source_holder_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
+            crate::skill_hub::retire_refinement_holder_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
             let had_receipt_sources =
                 crate::receipt::receipt_archive_custody_exists(&self.store, wtxn, id)?;
             let had_birth_sources = crate::store::agent_birth_custody::birth_custody_exists_in_txn(
@@ -165,10 +209,25 @@ impl Vault {
                 wtxn,
                 id,
             )?;
-            crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
-            crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
+            crate::agent_def::retire_birth_sources_for_entity_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
+            crate::receipt::retire_receipt_archives_for_erased_id(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
             let had_body = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
+            // A peer's user delete of an actor releases its code runs'
+            // replies here too, before the body is truncated, even when no
+            // body is left: rows the actor owned may remain (FIX 15532). A
+            // hold refuses first, as the scrub below would.
+            self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+            #[cfg(unix)]
+            crate::code_run::soft_delete_actor_responses_in_txn(self, wtxn, id)?;
             let (existed, had_vector, ledger_changed) =
                 self.soft_erase_active_store_in_txn(wtxn, id, false, None)?;
             if had_vector {
@@ -213,6 +272,7 @@ impl Vault {
                         || had_merge_receipt,
                 },
                 changed_documents,
+                effects,
             ));
         }
 
@@ -228,10 +288,26 @@ impl Vault {
         let ledger_clear = self.tombstone_ledger_clear(id);
         if !self.active_delete_scope_exists_after_probe_in_txn(wtxn, id, ledger_clear)? {
             crate::claim::invalidate_weave_digest_source_in_txn(&self.store, wtxn, id)?;
-            crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
-            crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
-            crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
-            crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;
+            crate::skill_hub::retire_source_holder_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
+            crate::skill_hub::retire_refinement_holder_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
+            crate::agent_def::retire_birth_sources_for_entity_in_txn(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
+            crate::receipt::retire_receipt_archives_for_erased_id(
+                &crate::secret_custody::CustodyWrite::of(self),
+                wtxn,
+                id,
+            )?;
             // Hard-once-seen is durable LOCAL truth even when nothing local
             // was erased (never-materialized id): the permanent `dt:` marker
             // still gates a future re-put after hostile tombstone-map
@@ -240,6 +316,14 @@ impl Vault {
             if !HARD_DELETE_MARKER.contains(&self.store, &*wtxn, &marker_key)? {
                 HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
             }
+            // No canonical row here names it, but a residence copy may: its
+            // own, or a cached NOTE's that cites it. Both go now its marker
+            // stands, and each NOTE whose copy went is a changed document
+            // (FIX 18400).
+            #[cfg(feature = "sync")]
+            let residence_changed = crate::note::erase_residence_copies_of_in_txn(self, wtxn, id)?;
+            #[cfg(not(feature = "sync"))]
+            let residence_changed: Vec<EntityId> = Vec::new();
             if let Some((request_id, tombstone_reason)) =
                 decoded.request_id.zip(raw_value.first().copied())
             {
@@ -265,7 +349,11 @@ impl Vault {
             // rows that record it, so the purge's actor sweep runs (FIX 3654).
             // Its code runs' replies retire first, as the provenance door's
             // erase retires them, read before the sweep releases them (FIX
-            // 5718).
+            // 5718). Before them, the code-run outputs it sourced and the
+            // kept step starts it owns retire, as that door retires them
+            // (FIX 20329).
+            #[cfg(unix)]
+            crate::code_run::retire_sourced_code_outputs_in_txn(&self.store, wtxn, id)?;
             #[cfg(unix)]
             crate::code_run::retire_actor_responses_in_txn(&self.store, wtxn, id)?;
             // So do the responses its stamps named, as the provenance
@@ -281,26 +369,28 @@ impl Vault {
             crate::vault_cleanup::erase_in_txn(&self.store, wtxn, id)?;
             // A replayed erase holds no owner act here: the machine that made
             // it carries its custody revokes (FIX 11883).
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(
+            effects.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
                 crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
                 None,
-            )?;
+            )?);
             return Ok((
                 ReplayedTombstoneOutcome::HardPurged {
                     erased: false,
                     receipt_id: None,
                     sweep_key: None,
                 },
-                Vec::new(),
+                residence_changed,
+                effects,
             ));
         }
         // ARCH-0055 §9 (r6) on the RECEIVING side: a remote hard erase must
         // leave this replica as unreadable as the origin, so the local shells
         // of the erased head are cascaded here too — before the purge takes
         // the shell edges with it, in the caller's transaction.
-        let (cascaded_shells, mut changed_documents) =
+        let (cascaded_shells, mut changed_documents, shell_cancelled) =
             self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id, None)?;
-        let (_existed, citing) = self.purge_entity_active_store_in_txn(
+        effects.extend(shell_cancelled);
+        let (_existed, citing, purged_cancelled) = self.purge_entity_active_store_in_txn(
             wtxn,
             id,
             decoded.request_id.as_ref(),
@@ -308,6 +398,7 @@ impl Vault {
             None,
         )?;
         changed_documents.extend(citing);
+        effects.extend(purged_cancelled);
         // The replay reserves no topology delete, so the purge kept the
         // checkpoint payload leaves; the tombstone's own reason settles them.
         crate::deletion::checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn(
@@ -320,6 +411,13 @@ impl Vault {
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
         HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
+        crate::deletion::ActorErasureWriter::new(self, wtxn, *id).erase_planned_pack_revision()?;
+        crate::store::centroid_evidence::erase_centroid_source_as_in_txn(
+            crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
+        )?;
+        let mut erase = crate::deletion::ActorErasureWriter::new(self, &mut *wtxn, *id);
+        crate::feedback::erase_handoff_as_in_txn(&mut erase)?;
+        crate::attempt_queue::erase_feedback_triage_as_in_txn(&mut erase)?;
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = captured.refs() {
@@ -332,7 +430,7 @@ impl Vault {
         if let Some(corrupt) = captured.corrupt() {
             changed_documents.extend(self.scrub_corrupt_capture_in_txn(wtxn, corrupt, false)?);
         }
-        if let Some((request_id, tombstone_reason)) =
+        let recovered_authority_act = if let Some((request_id, tombstone_reason)) =
             decoded.request_id.zip(raw_value.first().copied())
         {
             let completed_local_authority =
@@ -348,7 +446,10 @@ impl Vault {
                     "remote replay completed a staged local deletion authority record"
                 );
             }
-        }
+            completed_local_authority.and_then(|(_, act)| act)
+        } else {
+            None
+        };
         let applied_at = mutation_recorded_at;
         let receipt_id = self.store.clock.entity_id()?;
         let mut scope = RedactionScope::entity(id);
@@ -375,13 +476,26 @@ impl Vault {
             sweep_extras(&captured),
         )?;
         if let Some(request) = decoded.request_id.as_ref() {
-            // A local shared act claimed this request before its purge was
-            // interrupted: this recovery's receipt is that act's receipt.
-            self.bind_recovered_act_receipt_in_txn(
-                wtxn,
-                &uuid::Uuid::from_bytes(*request).to_string(),
-                receipt_id.to_hex(),
-            )?;
+            let request_text = uuid::Uuid::from_bytes(*request).to_string();
+            let recovered_act = recovered_authority_act
+                .map(EntityId::from_bytes)
+                .transpose()?
+                .map(|act| act.to_hex());
+            if let Some(act) = recovered_act.as_deref()
+                && self.pending_authority_act_in_txn(wtxn, act)?.is_some()
+            {
+                // Only an original act still present can be claimed. An owner
+                // may have withdrawn it after interrupted publication; replay
+                // then keeps the ordinary receipt binder, not a recreated act.
+                self.claim_completed_authority_act_in_txn(
+                    wtxn,
+                    act,
+                    request_text,
+                    Some(receipt_id.to_hex()),
+                )?;
+            } else {
+                self.bind_recovered_act_receipt_in_txn(wtxn, &request_text, receipt_id.to_hex())?;
+            }
             clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
         }
         Ok((
@@ -391,6 +505,7 @@ impl Vault {
                 sweep_key: Some(sweep_key),
             },
             changed_documents,
+            effects,
         ))
     }
 

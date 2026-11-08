@@ -107,6 +107,10 @@ pub enum BackendError {
     Rejected { code: BackendRejectCode },
     #[error("seal backend returned malformed signature bytes")]
     MalformedSignature,
+    /// The backend's retained memory could not be reserved.
+    #[cfg(feature = "native")]
+    #[error("seal backend memory: {0}")]
+    Memory(crate::memory::SealMemoryRefusal),
 }
 
 /// Signing backend seam. Carries signing identity and a prehashed signing
@@ -194,14 +198,18 @@ pub enum SealWarning {
 
 mod report;
 pub use report::{
-    Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionKind,
-    RevisionReport, SignatureKind, SignatureReport, SignedRangeDigest, VerifyCheck,
-    VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport, VerifyVerdict,
+    ActiveContentFacts, Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications,
+    RevisionCoverage, RevisionKind, RevisionReport, SignatureKind, SignatureReport,
+    SignedRangeDigest, UncoveredByteRange, VerifyCheck, VerifyCheckKind, VerifyCheckStatus,
+    VerifyFindingCode, VerifyReport, VerifyVerdict,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedPdf {
-    pub bytes: Vec<u8>,
+    /// Shared output bytes. The native engine retains their reservation
+    /// with them (FIX 8452): clones share the buffer and its lease through
+    /// the `Arc`, and the lease drops with the last owner.
+    pub bytes: crate::SharedBytes,
     pub evidence_sha256: Sha256Digest,
     pub requested_profile: PadesProfile,
     pub achieved_profile: PadesProfile,
@@ -504,15 +512,17 @@ pub mod config {
         pub content_type: Option<String>,
     }
 
-    /// A fetched response. Its body is admitted memory (FIX 7655): its bytes
-    /// were reserved before they were allocated, and every owner shares them
-    /// and their reservation, so a clone copies no bytes. A custom fetcher
-    /// builds it with `AdmittedBytes::copy_from` (or `AdmittedBytes::empty`)
-    /// over the engine's `SealResourceLimits::memory`.
+    /// A fetched response. Its body and content type are admitted memory
+    /// (FIX 7655, FIX 8455): their bytes were reserved before they were
+    /// allocated, and every owner shares them and their reservation, so a
+    /// clone copies no bytes. A custom fetcher builds them with
+    /// `AdmittedBytes::copy_from` (or `AdmittedBytes::shared_empty`) and
+    /// `AdmittedStr::copy_from` (or `AdmittedStr::shared_empty`) over the engine's
+    /// `SealResourceLimits::memory`.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct FetchResponse {
         pub body: crate::memory::SharedBytes,
-        pub content_type: Option<String>,
+        pub content_type: Option<crate::memory::SharedStr>,
     }
 
     #[derive(Debug, thiserror::Error)]

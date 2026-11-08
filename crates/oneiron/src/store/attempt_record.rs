@@ -19,7 +19,7 @@ use crate::store::attempt_state::AttemptState;
 
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`crate::store::STORAGE_ABI_VERSION`] bump.
-pub(crate) const ATTEMPT_RECORD_VERSION: u8 = 3;
+pub(crate) const ATTEMPT_RECORD_VERSION: u8 = 5;
 
 /// Durable attempt row stored in LMDB.
 ///
@@ -36,6 +36,10 @@ pub struct AttemptRecord {
     /// Lease-generation fence WITHIN this one try. It does not count logical
     /// retries — those are separate rows.
     pub attempt_count: u32,
+    /// Runtime observations of expired leases, in reclaim order. These say
+    /// that cleanup observed expiry, not that the worker completed or failed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lease_expirations: Vec<AttemptLeaseExpiry>,
     #[serde(default)]
     pub claimed_at: Option<u64>,
     /// Instant a [`AttemptState::Scheduled`] row becomes claimable.
@@ -129,7 +133,8 @@ pub struct AttemptRecord {
     /// Operator-selected placement, separate from the immutable executor payload.
     #[serde(default)]
     pub placement: Option<AttemptPlacement>,
-    /// FIX 5240: each failure a same-intent requeue kept, oldest first.
+    /// Same-intent requeue failures, oldest first. An opt-in coalesced entry
+    /// counts consecutive equal failures without losing their time span.
     #[serde(default)]
     pub history: Vec<RequeuedFailure>,
     /// FIX 9579: the pause this row is held under while paused, kept here so
@@ -144,6 +149,19 @@ pub struct AttemptRecord {
     /// masked, by its key, so an identical retry still matches.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) signal_intents: Vec<SignalIntent>,
+}
+
+/// The runtime's observation of one expired lease, captured in the writer
+/// that requeues it, before its stored lease owner and clock are cleared.
+/// This is not worker-authored output or a terminal outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttemptLeaseExpiry {
+    pub attempt_count: u32,
+    pub lease_owner: String,
+    pub lease_updated_at: u64,
+    pub observed_at: u64,
+    pub lease_timeout_secs: u64,
 }
 
 /// Operator-selected worker and parent. An absent worker keeps ordinary claiming;
@@ -197,15 +215,19 @@ pub struct AttemptReadSet {
     pub reported: BTreeSet<String>,
 }
 
-/// One failed try a requeue kept on its row: when it was recorded, the lease
-/// it ended and the worker's reason.
+/// One failure, or a consecutive run of equal failures, a requeue kept.
+/// The lease generation plus the count names every failed generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequeuedFailure {
-    /// The vault's recorded instant the failure was kept at.
+    /// The vault's recorded instant of the first failure.
     pub at: u64,
-    /// The owner of the lease the failure ended.
+    /// The vault's recorded instant of the latest failure.
+    pub last_at: u64,
+    /// The number of consecutive failures this entry records, at least one.
+    pub count: u32,
+    /// The owner of every lease this entry records.
     pub lease_owner: String,
-    /// That lease's generation within the row.
+    /// The first failed lease's generation within the row.
     pub attempt_count: u32,
     /// The worker's reason, as it gave it.
     pub reason: String,
@@ -228,6 +250,8 @@ pub(crate) enum AttemptPause {
     Budget,
     /// OF-393: the cut waits on its launch approval.
     Fanout { launch_ref: EntityId },
+    /// FIX 7114: a workflow tool waits on this verb-hook invocation.
+    Hook { invocation: [u8; 16] },
 }
 
 /// A terminal try's durable exhaust: the output references it attached

@@ -36,7 +36,9 @@ pub(crate) fn attach_replicated_critical_confirm_in_txn(
 ) -> Result<()> {
     if body.lifecycle != ClaimLifecycleStatus::Active
         || body.approval != ClaimApprovalStatus::Auto
-        || crate::comm::is_restrictive_comm_predicate(store, wtxn, &body.predicate)?
+        || store
+            .record_hooks
+            .is_restrictive_comm_predicate(store, wtxn, &body.predicate)?
         || crate::claim::is_reserved_predicate(&body.predicate)
         || store
             .owner_answer_obligation_in_txn(wtxn, claim_id)?
@@ -127,6 +129,8 @@ pub(super) fn put_critical_confirm_item_in_txn(
         // local Dreamer envelope.
         dreamer_run_id: None,
         predicate: Some(body.predicate.clone()),
+        // A hold attached on sync has no deadline here.
+        expires_at: None,
     };
     // This also writes the exact-confirm index and the ordinary tray indexes.
     store.put_pending_gate_consent_in_txn(wtxn, &pending)?;

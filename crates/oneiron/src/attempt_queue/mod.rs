@@ -23,11 +23,14 @@ mod encoding;
 mod engine;
 mod executor;
 mod fanout_hold;
+mod hook_hold;
 mod index;
 mod kind_payload_erase;
 pub mod maintenance_predicate;
 mod observe;
 mod payload_erase;
+mod unserved_kinds;
+pub(crate) use payload_erase::ErasedByoaPayloads;
 mod payload_rebind;
 mod ports;
 mod read_set;
@@ -64,9 +67,11 @@ pub use cancel::{
 };
 pub use engine::{AttemptQueue, RequeueAttempt, RequeuedFailure};
 pub use fanout_hold::{FANOUT_HOLD_ACTOR, HoldAttemptForFanout};
+pub(crate) use hook_hold::HoldAttemptForHook;
 pub use read_set::{AttemptReadSet, ReadSetProducer};
 pub(crate) use telemetry::AttemptQueueCleanupMetrics;
 pub use telemetry::AttemptQueueCleanupMetricsSnapshot;
+pub use types::AttemptLeaseExpiry;
 pub use types::AttemptTerminalExhaust;
 pub use types::{
     AbandonAttempt, AbandonOutcome, AttemptEvent, AttemptId, AttemptInterventionEffect,
@@ -79,11 +84,13 @@ pub use types::{
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
 pub(crate) use kind_payload_erase::erase_kind_payloads_in_txn;
+pub(crate) use payload_erase::feedback_triage::erase_feedback_triage_as_in_txn;
 pub(crate) use payload_erase::{
     attempt_row_opaque, dispatch_payload_actor, erase_attempt_payload_actor_in_txn,
     erase_attempt_payload_actors_in_txn, erase_dispatch_payload_text_target,
     erase_model_step_failure_reasons_in_txn, scrub_hard_erased_payload_in_txn,
 };
+pub(crate) use unserved_kinds::drop_unserved_kinds;
 #[cfg(test)]
 pub(crate) fn encode_signal_record(record: &AttemptRecord) -> crate::Result<Vec<u8>> {
     encoding::encode_record(record)

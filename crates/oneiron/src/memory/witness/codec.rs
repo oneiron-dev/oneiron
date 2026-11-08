@@ -160,11 +160,23 @@ pub(crate) const IMPORTED_SOURCE_KEY: &str = "import_source";
 
 /// An imported TURN's body: the grouping speaker and the source. No PERSON
 /// byline — the source's speaker wrote these words, not whoever imported them.
-pub(super) fn encode_imported_turn_body(speaker: &str, source: &str) -> MemoryResult<Vec<u8>> {
-    encode_rmpv(&Value::Map(vec![
+/// Under a source landing's proof the body also carries the source-audience
+/// obligation, last (fix list row 16256); `source` stays import provenance.
+pub(super) fn encode_imported_turn_body(
+    speaker: &str,
+    source: &str,
+    source_audience: Option<&crate::source_audience::SourceAudienceBirth>,
+) -> MemoryResult<Vec<u8>> {
+    let body = encode_rmpv(&Value::Map(vec![
         (Value::from(WITNESS_TURN_SPEAKER_KEY), Value::from(speaker)),
         (Value::from(IMPORTED_SOURCE_KEY), Value::from(source)),
-    ]))
+    ]))?;
+    match source_audience {
+        Some(_) => {
+            Ok(crate::store::source_audience_obligation::encode_source_audience_required(&body)?)
+        }
+        None => Ok(body),
+    }
 }
 
 /// An imported TURN's or CONVERSATION's source is a birth fact (ARCH-0040):
@@ -271,7 +283,13 @@ pub(super) fn witness_message_envelope(message: &WitnessMessage) -> WitnessMessa
         author: message.author.as_str(),
         message_type: message.message_type.as_str(),
         content: message.content.as_str(),
-        parts: message.parts.clone(),
+        parts: message.parts.as_ref().map(|parts| {
+            parts
+                .iter()
+                .cloned()
+                .map(crate::store::witness_message_body::StoredMessagePart::Inline)
+                .collect()
+        }),
         metadata: message.metadata.as_ref().map(json_to_rmpv),
         is_visible: message.is_visible,
         order: message.order,

@@ -12,6 +12,12 @@ use crate::store::Store;
 const ATTEMPT_ATTRIBUTION: SideTable<[u8; 16], PackAttributionFields, Named> =
     SideTable::new(&side_table::ATTEMPT_PACK_ATTRIBUTION);
 
+/// Whether a masked copy of a `ATTEMPT_PACK_ATTRIBUTION` row still decodes as its typed value,
+/// for the historical lift sweep (FIX 2680).
+pub(crate) fn attempt_pack_attribution_accepts_masked(bytes: &[u8]) -> bool {
+    crate::side_table::decodes::<PackAttributionFields, Named>(bytes)
+}
+
 /// A contribution check is distinct from loading or citing an input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ContributionCheck {
@@ -154,6 +160,16 @@ pub(crate) fn put_attempt_pack_attribution_in_txn(
     fields: &PackAttributionFields,
 ) -> Result<()> {
     fields.validate()?;
+    // Bind the receipt's two type stamps at the producer write, not at completion.
+    if let Some(record) =
+        crate::attempt_queue::AttemptQueue::from_store(store).get_in_txn(txn, id)?
+        && let Some(type_ref) = crate::agent_dispatch::attempt_task_type_ref(&record)
+        && TypeRef::from(&type_ref) != fields.type_ref
+    {
+        return Err(Error::InvalidClaimBody(
+            "attempt type disagrees with attribution stamp",
+        ));
+    }
     let key = *id.as_bytes();
     if let Some(previous) = ATTEMPT_ATTRIBUTION.get(store, txn, &key)?
         && !fields.extends(&previous)

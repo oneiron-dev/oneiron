@@ -20,8 +20,8 @@ use oneiron::attempt_queue::{
 use oneiron::campaign::enrollment::{
     CampaignEnrollmentClaim, CampaignEnrollmentRunner, EnrollmentExecution, EnrollmentLegDrive,
     audience_programs, campaign_enrollment_event, campaign_home_node_designation,
-    decode_enrollment_attempt_payload, drive_enrollment_outbound_leg,
-    elect_campaign_home_node_designation, enroll_audience_wake, local_campaign_home_node_candidate,
+    decode_enrollment_attempt_payload, elect_campaign_home_node_designation, enroll_audience_wake,
+    local_campaign_home_node_candidate,
 };
 use oneiron::campaign::sender::CampaignChannelSender;
 use oneiron::channel_identity_provider::stalwart::{StalwartClient, StalwartConfig};
@@ -101,6 +101,7 @@ pub(crate) fn spawn(
     let signals = AttemptQueue::new(server.vault()).subscribe();
     tokio::spawn(async move {
         let mut signals = signals;
+        let mut repair_asks = true;
         loop {
             let more = {
                 let Some(server) = weak.upgrade() else {
@@ -109,8 +110,14 @@ pub(crate) fn spawn(
                 match admit() {
                     None => false,
                     Some(pass) => {
+                        let repair = std::mem::take(&mut repair_asks);
                         let ran = tokio::task::spawn_blocking(move || {
                             let _pass = pass;
+                            if repair {
+                                if let Err(error) = server.vault().repair_campaign_enrollment_owner_asks() {
+                                    tracing::warn!(%error, "campaign enrollment owner asks were not repaired");
+                                }
+                            }
                             pump(&server)
                         })
                         .await;
@@ -138,7 +145,7 @@ pub(crate) fn spawn(
                             break;
                         }
                     }
-                    _ = tokio::time::sleep(PUMP) => {}
+                    _ = tokio::time::sleep(PUMP) => { repair_asks = true; }
                 }
             }
         }
@@ -261,7 +268,7 @@ fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Se
         move || campaign_stalwart_client(&vault, placement.clone())
     });
     let now_ms = crate::runtime::wall_clock_ms();
-    let drive = drive_enrollment_outbound_leg(vault, node, attempt, &mut sender, now_ms);
+    let drive = vault.drive_enrollment_outbound_leg(node, attempt, &mut sender, now_ms);
     Some(match drive {
         Ok(EnrollmentLegDrive::Dispatched | EnrollmentLegDrive::NothingOwed) => {
             Settlement::Complete

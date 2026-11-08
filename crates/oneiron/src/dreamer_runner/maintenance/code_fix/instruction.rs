@@ -10,6 +10,7 @@ use std::rc::Rc;
 use serde_json::json;
 
 use super::admission::CoachReplayAdmission;
+use super::candidate_run::ReplayCandidate;
 use super::{CodeFixDecisions, CodeFixHost, CodeFixJob, PublisherCandidateKind, class_name};
 use crate::failure_signals::{
     CodeFixReplay, CodeFixSourceSnapshot, ExactReplay, ExactReplayRequest, ExportScrubber,
@@ -19,12 +20,6 @@ use crate::failure_signals::{
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
 use oneiron_model::llm::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
-
-const REPRODUCED_WORDING: &str = "Does the reply fail the way the failure describes?";
-const FIXED_WORDING: &str = "The reply before failed the way the failure describes. Does the \
-    reply after no longer fail that way?";
-const SAFE_WORDING: &str = "Is this text plainly made up, with no real person's name, contact \
-    detail, account, address, private fact or secret in it?";
 
 /// The Coach's in-vault replay of one job: the failing agent's call as the
 /// vault kept it, or rebuilt from the real failure, run with no tool run,
@@ -40,12 +35,8 @@ pub(super) struct CoachReplay<'a> {
     /// call its replay starts from and its engine pairs run from, and the
     /// texts its invented example may copy nothing of.
     pub(super) snapshot: &'a CodeFixSourceSnapshot,
-    /// The id of the Coach's own candidate, drafted from the job: a reply
-    /// under it reads the draft (FIX 6997).
-    pub(super) drafted: Option<String>,
-    /// Each candidate's id and what it is: the instruction it adds, or the
-    /// engine its matched pair runs (`engine`), never a prompt string.
-    pub(super) candidates: Vec<(String, PublisherCandidateKind)>,
+    /// Each candidate's actual origin and instruction or engine pin.
+    pub(super) candidates: Vec<ReplayCandidate>,
     /// What the vault kept of the request the failing call sent (FIX 1662),
     /// read again before each replay send: a copy since gone or changed is
     /// dropped and never sent again (FIX 6659), and once its capsule reads
@@ -99,8 +90,12 @@ impl CoachReplay<'_> {
             "conversation": conversation_state(conversation),
             "reply": reply,
         });
-        self.decisions
-            .yes("reproduced", REPRODUCED_WORDING, self.evidence, &state)
+        self.decisions.yes(
+            "reproduced",
+            &self.decisions.reproduced_wording,
+            self.evidence,
+            &state,
+        )
     }
 
     /// The real failing call: what the agent was briefed on and asked.
@@ -127,19 +122,21 @@ impl CoachReplay<'_> {
     /// took since the job read it, or one that no longer reads as it did, is
     /// dropped and never sent again, and the call may be rebuilt; a copy the
     /// job did not read is not taken up now. So is a copy the Coach's Grant
-    /// no longer admits, read again here before the send (FIX 8704).
+    /// no longer admits, read again here before the send (FIX 8704). A call
+    /// whose route prompt reads unavailable latches as an erased one does
+    /// (FIX 6255): no exact or rebuilt replay of it runs.
     fn live_exact(&self) -> Result<ExactReplay> {
-        if matches!(*self.exact.borrow(), ExactReplay::Erased) {
-            return Ok(ExactReplay::Erased);
+        if self.exact.borrow().runs_none() {
+            return Ok(self.exact.borrow().clone());
         }
         let live =
             self.snapshot
                 .replay
                 .pinned_exact(self.vault, &self.job.origin, self.admitted()?)?;
-        if matches!(live, ExactReplay::Erased) {
-            *self.exact.borrow_mut() = ExactReplay::Erased;
+        if live.runs_none() {
+            *self.exact.borrow_mut() = live.clone();
             *self.baseline.borrow_mut() = Some(None);
-            return Ok(ExactReplay::Erased);
+            return Ok(live);
         }
         let mut kept = self.exact.borrow_mut();
         if kept.request().is_some() && kept.request() == live.request() {
@@ -189,7 +186,7 @@ impl CoachReplay<'_> {
             return Ok(None);
         };
         let live = self.live_exact()?;
-        if matches!(live, ExactReplay::Erased) {
+        if live.runs_none() {
             return Ok(None);
         }
         if baseline.fidelity == ReplayFidelity::Rebuilt {
@@ -225,13 +222,14 @@ impl CoachReplay<'_> {
     }
 
     /// The call rebuilt from the failure's text, when it reproduces the
-    /// failure; none once the call's capsule reads erased, read again just
-    /// before the call is sent (FIX 6251).
+    /// failure; none once the call's capsule reads erased or its route
+    /// prompt unavailable, read again just before the call is sent (FIX
+    /// 6251, 6255): a failed exact send never rebuilds past them.
     fn rebuilt_baseline(&self) -> Result<Option<Baseline>> {
         let Some(conversation) = self.real_conversation() else {
             return Ok(None);
         };
-        if matches!(self.live_exact()?, ExactReplay::Erased) {
+        if self.live_exact()?.runs_none() {
             return Ok(None);
         }
         // The rebuilt call sends the failure's own texts alone.
@@ -273,14 +271,57 @@ impl CoachReplay<'_> {
             "before": before,
             "after": after,
         });
-        match self
-            .decisions
-            .yes("fixed", FIXED_WORDING, self.evidence, &state)
-        {
+        match self.decisions.yes(
+            "fixed",
+            &self.decisions.fixed_wording,
+            self.evidence,
+            &state,
+        ) {
             Some(true) => ShadowRun::Fixed,
             Some(false) => ShadowRun::NotFixed,
             None => ShadowRun::Unavailable,
         }
+    }
+
+    pub(super) fn shadow_candidate(&self, candidate: &ReplayCandidate) -> Result<ShadowRun> {
+        // Only an instruction is added to the agent's: an engine candidate
+        // runs as a matched pair of its own (`engine`).
+        let PublisherCandidateKind::Instruction { instruction: fix } = &candidate.kind else {
+            return Ok(ShadowRun::Unavailable);
+        };
+        // The kept request was read again last in `baseline`, just before
+        // this send: once the call's capsule reads erased there is none, and
+        // no after runs (FIX 6251).
+        let Some((baseline, exact)) = self.baseline()? else {
+            return Ok(ShadowRun::Unavailable);
+        };
+        let (conversation, before) = (&baseline.conversation, &baseline.before);
+        // The fix runs the way the failure was replayed: on the kept request
+        // when that reproduced it (FIX 1662) and its copy is still kept
+        // (FIX 6659), else on the rebuilt call.
+        let after = match exact {
+            Some(exact) => self.host.reply_exact(&with_fix(&exact, fix))?,
+            None => {
+                let instructions = &self.job.source.instructions;
+                let system = [instructions.as_str(), fix.as_str()]
+                    .into_iter()
+                    .filter(|text| !text.trim().is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                // The Coach's own fix is the draft's; a publisher's is the
+                // host's configuration, which adds no rows.
+                let rows = if candidate.coach_own {
+                    self.job.source_rows.clone()
+                } else {
+                    self.job.source.source_rows.clone()
+                };
+                self.host.reply(&system, conversation, rows)?
+            }
+        };
+        let Some(after) = after else {
+            return Ok(ShadowRun::Unavailable);
+        };
+        Ok(self.fixed(conversation, before, &after))
     }
 }
 
@@ -317,46 +358,14 @@ impl CodeFixReplay for CoachReplay<'_> {
     }
 
     fn shadow_replay(&self, _failure: &FailureSource, candidate_id: &str) -> Result<ShadowRun> {
-        // Only an instruction is added to the agent's: an engine candidate
-        // runs as a matched pair of its own (`engine`).
-        let Some((_, PublisherCandidateKind::Instruction { instruction: fix })) =
-            self.candidates.iter().find(|(id, _)| id == candidate_id)
-        else {
-            return Ok(ShadowRun::Unavailable);
-        };
-        // The kept request was read again last in `baseline`, just before
-        // this send: once the call's capsule reads erased there is none, and
-        // no after runs (FIX 6251).
-        let Some((baseline, exact)) = self.baseline()? else {
-            return Ok(ShadowRun::Unavailable);
-        };
-        let (conversation, before) = (&baseline.conversation, &baseline.before);
-        // The fix runs the way the failure was replayed: on the kept request
-        // when that reproduced it (FIX 1662) and its copy is still kept
-        // (FIX 6659), else on the rebuilt call.
-        let after = match exact {
-            Some(exact) => self.host.reply_exact(&with_fix(&exact, fix))?,
-            None => {
-                let instructions = &self.job.source.instructions;
-                let system = [instructions.as_str(), fix.as_str()]
-                    .into_iter()
-                    .filter(|text| !text.trim().is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                // The Coach's own fix is the draft's; a publisher's is the
-                // host's configuration, which adds no rows.
-                let rows = if self.drafted.as_deref() == Some(candidate_id) {
-                    self.job.source_rows.clone()
-                } else {
-                    self.job.source.source_rows.clone()
-                };
-                self.host.reply(&system, conversation, rows)?
-            }
-        };
-        let Some(after) = after else {
-            return Ok(ShadowRun::Unavailable);
-        };
-        Ok(self.fixed(conversation, before, &after))
+        match self
+            .candidates
+            .iter()
+            .find(|candidate| candidate.id == candidate_id)
+        {
+            Some(candidate) => self.shadow_candidate(candidate),
+            None => Ok(ShadowRun::Unavailable),
+        }
     }
 }
 
@@ -374,10 +383,12 @@ impl ExportScrubber for CoachScrubber<'_> {
             .measure_limit(EngineLimit::MaintenanceTextBytes, text.len() as u64);
         let state = json!({ "text": text });
         Ok(
-            match self
-                .decisions
-                .yes("export_safe", SAFE_WORDING, self.evidence, &state)
-            {
+            match self.decisions.yes(
+                "export_safe",
+                &self.decisions.export_safe_wording,
+                self.evidence,
+                &state,
+            ) {
                 Some(true) => ScrubRun::Clean,
                 Some(false) => ScrubRun::Flagged,
                 None => ScrubRun::Unavailable,

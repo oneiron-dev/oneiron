@@ -2,7 +2,9 @@
 //! the trusted and owner proposals take their base from the current
 //! checkout, a run's from the immutable commit its work is pinned at
 //! (PREMISE 3), and both are validated, kept under custody and written by
-//! the same code. No proposal lands a file here.
+//! the same code. No proposal lands a file here. Every changed path must be
+//! on the registered repository's retained whitelist, judged in the same
+//! final writer (FIX 4299, CODE-CUSTODY-01).
 
 use super::*;
 use crate::code_document::CodeOpProvenanceValidation;
@@ -123,6 +125,7 @@ impl Vault {
             critiques: Vec::new(),
             policy_critiques: Vec::new(),
             queue_review: None,
+            contract_reviews: Vec::new(),
             status: RepoProposalStatus::Proposed,
             resolves: None,
             settlement: None,
@@ -138,6 +141,8 @@ impl Vault {
         if let Err(refused) = check(&txn)? {
             return Ok(Err(refused));
         }
+        let paths = crate::codebase::proposed_file_paths(&prepared.row.files);
+        self.require_registered_edit_in_txn(&txn, None, &repo.locator(), paths)?;
         if let Some(opener) = opener {
             prepared.row.opener_lineage = opener.credential_lineage_in_txn(self, &txn)?;
         }
@@ -259,6 +264,7 @@ impl Vault {
             critiques: Vec::new(),
             policy_critiques: Vec::new(),
             queue_review: None,
+            contract_reviews: Vec::new(),
             status: RepoProposalStatus::Proposed,
             resolves: None,
             settlement: None,
@@ -273,6 +279,8 @@ impl Vault {
         if let Err(refused) = check(&txn)? {
             return Ok(Err(refused));
         }
+        let paths = crate::codebase::proposed_file_paths(&prepared.row.files);
+        self.require_registered_edit_in_txn(&txn, None, &repo.locator(), paths)?;
         prepared.persist_in_txn(self, &mut txn)?;
         txn.commit()?;
         Ok(Ok(prepared.row))

@@ -36,8 +36,11 @@ use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
+mod offers;
+
 pub(super) fn owner_table() -> OwnerTable {
     vec![
+        offers::route(),
         (
             OwnerRoute {
                 method: "get",
@@ -232,7 +235,7 @@ struct RevokeClearance {
 struct PreclearSet {
     /// The trusted set's name; each receipt names it.
     set_name: String,
-    /// 1..=256 distinct contacts, as 32 hex each.
+    /// The distinct contacts, at least one, as 32 hex each.
     contacts: Vec<String>,
     scope: Scope,
 }
@@ -398,24 +401,7 @@ async fn offer(
         let widen = vault
             .widen_proposal(&query.proposal_ref)?
             .ok_or_else(not_found)?;
-        let offer = proposal.offer;
-        Ok(OfferView {
-            canonical_delta: hex_bytes(&widen.canonical_delta),
-            proposal_ref: widen.proposal_ref,
-            proposer: widen.proposer,
-            owner_ref: widen.owner_ref,
-            created_at: widen.created_at,
-            expires_at: widen.expires_at,
-            contact: offer.contact_ref.to_hex(),
-            grant_ref: contact_clearance_ref(&offer.contact_ref),
-            revoke_command: CONTACT_CLEARANCE_REVOKE_COMMAND,
-            scope: offer.scope,
-            purpose: offer.purpose,
-            channel: offer.channel,
-            beneficiary: offer.beneficiary_ref,
-            ask: offer.ask_ref,
-            prior_clearance_digest: hex_bytes(&proposal.prior_clearance_digest),
-        })
+        Ok(OfferView::from((widen, proposal)))
     })
     .await?;
     Ok(Json(view))

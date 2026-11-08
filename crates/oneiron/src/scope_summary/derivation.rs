@@ -139,6 +139,24 @@ pub(super) fn declaration(
     Value::Map(fields)
 }
 
+/// Re-derive a NOTE declaration under the original requester's frozen bound,
+/// including its actual grant basis. Other summary targets are unchanged.
+fn inherited_declaration(
+    request: &super::ScopeSummaryRequest,
+    purpose: &str,
+    previous: Option<EntityId>,
+    original: &Value,
+) -> Result<Value> {
+    let mut input = declaration(request, purpose, previous);
+    if matches!(
+        request.target,
+        super::ScopeSummaryTarget::Sources { scope: None, .. }
+    ) {
+        super::request::inherit_note_requester_lane(original, &mut input)?;
+    }
+    Ok(input)
+}
+
 /// The projection row a declaration's summaries stand in: one per scope,
 /// purpose and requester. An admitted source set is not part of it (FIX
 /// 3198), so a later set for the same room replaces the earlier set's row
@@ -263,13 +281,14 @@ pub(super) fn register_in_txn(
     let request = decode_request(vault, txn, input)?;
     let (purpose, _, _, _) = options(vault, txn, input)?;
     let key = projection_key(&request, &purpose.id)?;
-    let normalized = declaration(&request, &purpose.id, None);
+    let normalized = inherited_declaration(&request, &purpose.id, None, input)?;
     let request = encode(&normalized)?;
-    let current_input = declaration(
+    let current_input = inherited_declaration(
         &decode_request(vault, txn, input)?,
         &purpose.id,
         Some(summary),
-    );
+        input,
+    )?;
     // An Arc is re-derived through its gate (FIX 7509 P8), never by an
     // observation, and its row keeps its gate state.
     let arc = super::arc::is_arc_declaration(input);
@@ -408,7 +427,7 @@ pub(crate) fn rederive_changed_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) 
     let rows = PROJECTION
         .iter_from(&vault.store, txn, b"")?
         .collect::<Result<Vec<_>>>()?;
-    for (key, mut projection) in rows {
+    for (key, projection) in rows {
         // An Arc is marked here, never queued or read (FIX 7509 P8): its
         // gate and backstop decide when it is written, and its row stays
         // owed when its summary goes.
@@ -428,39 +447,82 @@ pub(crate) fn rederive_changed_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) 
             continue;
         }
         let normalized = decode(&projection.request)?;
-        // A sitting's summary is not re-derived at the commit boundary (FIX
-        // 7509): no later write can fail on it. Its drift waits for the
-        // stale and nightly backstop.
         if super::session::is_session_declaration(&normalized) {
+            // Re-derivation must not fail a write that used to skip this
+            // sitting. A failed savepoint leaves its drift for the backstop.
+            let queued = vault
+                .store
+                .env
+                .nested_write_txn(txn)
+                .map_err(Error::from)
+                .and_then(|mut savepoint| {
+                    let queued = rederive_projection_in_txn(
+                        vault,
+                        &mut savepoint,
+                        &key,
+                        projection,
+                        current,
+                        &normalized,
+                    )?;
+                    savepoint.commit().map_err(Error::from)?;
+                    Ok(queued)
+                });
+            match queued {
+                // The savepoint's queue marks belong to it; wake the runner
+                // from the parent transaction only when a job was queued.
+                Ok(true) => crate::batch::queue_proactivity_change(vault, txn),
+                Ok(false) => {}
+                Err(error) => tracing::warn!(
+                    summary = %current.to_hex(),
+                    kind = ?error.kind(),
+                    "session summary re-derivation not queued"
+                ),
+            }
             continue;
         }
-        let request = decode_request(vault, txn, &normalized)?;
-        let purpose = normalized
-            .as_map()
-            .and_then(|fields| {
-                fields
-                    .iter()
-                    .find(|(key, _)| key.as_str() == Some("purpose"))
-            })
-            .and_then(|(_, value)| value.as_str())
-            .ok_or_else(|| invalid("projection has no purpose"))?;
-        let input = declaration(&request, purpose, Some(current));
-        let observed = match observation(vault, txn, &input) {
-            Ok(observed) => observed,
-            // Source erasure, a lost grant or a deleted scope never blocks
-            // the write that caused it. The queued attempt reports the refusal.
-            Err(Error::EntityNotFound | Error::InvalidClaimBody(_) | Error::Record(_)) => {
-                *blake3::hash(&encode(&input)?).as_bytes()
-            }
-            Err(error) => return Err(error),
-        };
-        if observed != projection.observed {
-            enqueue_in_txn(vault, txn, input)?;
-            projection.observed = observed;
-            PROJECTION.put(&vault.store, txn, &key, &projection)?;
-        }
+        rederive_projection_in_txn(vault, txn, &key, projection, current, &normalized)?;
     }
     Ok(())
+}
+
+/// Queue one changed projection and advance its observation together. A
+/// session calls this in its best-effort savepoint; other scopes retain
+/// their existing commit-boundary error behavior.
+fn rederive_projection_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &[u8; 32],
+    mut projection: Projection,
+    current: EntityId,
+    normalized: &Value,
+) -> Result<bool> {
+    let request = decode_request(vault, txn, normalized)?;
+    let purpose = normalized
+        .as_map()
+        .and_then(|fields| {
+            fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("purpose"))
+        })
+        .and_then(|(_, value)| value.as_str())
+        .ok_or_else(|| invalid("projection has no purpose"))?;
+    let input = inherited_declaration(&request, purpose, Some(current), normalized)?;
+    let observed = match observation(vault, txn, &input) {
+        Ok(observed) => observed,
+        // Source erasure, a lost grant or a deleted scope never blocks
+        // the write that caused it. The queued attempt reports the refusal.
+        Err(Error::EntityNotFound | Error::InvalidClaimBody(_) | Error::Record(_)) => {
+            *blake3::hash(&encode(&input)?).as_bytes()
+        }
+        Err(error) => return Err(error),
+    };
+    if observed == projection.observed {
+        return Ok(false);
+    }
+    enqueue_in_txn(vault, txn, input)?;
+    projection.observed = observed;
+    PROJECTION.put(&vault.store, txn, key, &projection)?;
+    Ok(true)
 }
 
 impl Vault {
@@ -474,12 +536,13 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             crate::conversation_dag::actor_in_txn(&self.store, txn, requester)?;
             let metadata = crate::entity_doc::summary_meta_in_txn(self, txn, &summary)?;
-            let mut request = decode_request(self, txn, &decode(&metadata.derivation.request)?)?;
+            let original = decode(&metadata.derivation.request)?;
+            let mut request = decode_request(self, txn, &original)?;
             request.requester = requester;
             enqueue_in_txn(
                 self,
                 txn,
-                declaration(&request, &metadata.purpose.id, Some(summary)),
+                inherited_declaration(&request, &metadata.purpose.id, Some(summary), &original)?,
             )
         })
     }

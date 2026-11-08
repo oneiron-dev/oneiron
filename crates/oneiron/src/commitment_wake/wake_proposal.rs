@@ -195,6 +195,14 @@ impl<'p, E> CommitmentWakeExecutor<'p, E> {
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for CommitmentWakeExecutor<'_, E> {
+    fn runs_coach_host_jobs(&self) -> bool {
+        self.inner.runs_coach_host_jobs()
+    }
+
+    fn runs_coach_heals(&self) -> bool {
+        self.inner.runs_coach_heals()
+    }
+
     async fn execute_partition_window<'w>(
         &mut self,
         window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
@@ -262,7 +270,7 @@ impl<E> CommitmentWakeExecutor<'_, E> {
             );
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         // Step 4: no planner is a typed COMPLETION, never a partition decode.
@@ -302,7 +310,7 @@ impl<E> CommitmentWakeExecutor<'_, E> {
         )?;
         Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         })
     }
 }
@@ -322,7 +330,7 @@ fn skip_completion(
     );
     DreamerAttemptExecution::Completed {
         completed_units: 0,
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     }
 }
 

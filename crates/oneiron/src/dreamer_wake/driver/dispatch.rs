@@ -11,6 +11,11 @@ use super::*;
 use crate::dreamer_consolidation::PreparedWake;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 
+/// The stage of an attempt the wake's frozen preparation does not hold: it
+/// ran nothing this pass, so it settles as a backlog wait, never as a
+/// selection deferral.
+pub(super) const BACKLOG_DEFERRED_STAGE: &str = "backlog_deferred";
+
 /// What one admitted attempt dispatches with: its pass, the attempt, the
 /// pass's cancellation and whether it was raised at the checkpoint, the
 /// wake's frozen preparation, the attempt's run line and its meter, and the
@@ -99,12 +104,12 @@ impl DreamerWakeDriver<'_> {
             // a backlog larger than one wake prepares: never admit it to
             // this snapshot or fall back to a newer per-attempt read. Past
             // the head, the pass ends here and the next prepares the rest.
-            stage = Some("backlog_deferred");
+            stage = Some(BACKLOG_DEFERRED_STAGE);
             backlog_left = prepared_wake.left_for_later(attempt_id);
             Ok(DreamerAttemptExecution::Deferred {
                 completed_units: 0,
                 retry_at: input.now.saturating_add(1),
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             })
         } else if let Some(crate::dreamer_consolidation::AttemptPreparation::Refused {
             reason,
@@ -130,16 +135,17 @@ impl DreamerWakeDriver<'_> {
                 retry_at: input
                     .now
                     .saturating_add(crate::dreamer_consolidation::RESIDENCY_RETRY_SECS),
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             })
         } else {
             // Pre-dispatch sync (FIX 11963): a wake ask raised while
             // the window settled trips the device work this attempt is
             // about to admit under.
             sync_wake_cancel(cancel, &self.device_cancel);
+            let attempt_deadline = self.deadline.for_admitted(admitted);
             let mut ctx = WakeAttemptContext {
                 vault: self.vault,
-                deadline: &self.deadline,
+                deadline: &attempt_deadline,
                 cancel: Some(cancel),
                 device_cancel: Some(self.device_cancel.clone()),
                 budget_id: line,
@@ -173,7 +179,7 @@ impl DreamerWakeDriver<'_> {
                     crate::vault_cleanup::run_vault_cleanup(self.vault, &attempt_id)?;
                     Ok(DreamerAttemptExecution::Completed {
                         completed_units: 0,
-                        step_hashes: Vec::new(),
+                        step_bindings: Vec::new(),
                     })
                 } else if admitted.status.attempt.kind
                     == crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND

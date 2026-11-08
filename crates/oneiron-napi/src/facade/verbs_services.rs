@@ -25,14 +25,14 @@ use super::convert::{
     recall_scope_to_engine, structural_put_to_engine,
 };
 use super::dtos::{
-    NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead,
-    NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval,
-    NapiCalendarInviteInput, NapiCalendarRange, NapiCalendarSearchRequest, NapiCalendarSel,
-    NapiClaimInput, NapiCommitOutcome, NapiCommitReceipt, NapiConsolidationJobInput,
-    NapiDreamerJobRef, NapiDreamerJobView, NapiEntityRefReceipt, NapiHabitCheckinInput,
-    NapiLexicalHit, NapiLexicalHits, NapiMemoryPack, NapiNeighborHit, NapiNeighborHits,
-    NapiNeighborOpts, NapiOutboundDraftInput, NapiOutboundIntentReceipt, NapiRecallScope,
-    NapiStructuralPutInput,
+    NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionAppendOutcome,
+    NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEvents, NapiCalendarFreebusy,
+    NapiCalendarFreebusyInterval, NapiCalendarInviteInput, NapiCalendarRange,
+    NapiCalendarSearchRequest, NapiCalendarSel, NapiClaimInput, NapiCommitOutcome,
+    NapiCommitReceipt, NapiConsolidationJobInput, NapiDreamerJobRef, NapiDreamerJobView,
+    NapiEntityRefReceipt, NapiHabitCheckinInput, NapiLexicalHit, NapiLexicalHits, NapiMemoryPack,
+    NapiNeighborHit, NapiNeighborHits, NapiNeighborOpts, NapiOutboundDraftInput,
+    NapiOutboundIntentReceipt, NapiRecallScope, NapiStructuralPutInput,
 };
 use super::input_error::caller_input_error;
 use super::numeric::claim_input_to_engine;
@@ -163,7 +163,7 @@ impl ActorScopedVault {
         run_ref: Option<String>,
         occurred_at: i64,
         learned_at: Option<i64>,
-    ) -> napi::Result<NapiBlobVersionView> {
+    ) -> napi::Result<NapiBlobVersionAppendOutcome> {
         let bytes = decode_blob_base64(&bytes_base64).map_err(caller_input_error)?;
         let request = AppendBlobVersionRequest {
             artifact_ref,
@@ -173,7 +173,7 @@ impl ActorScopedVault {
             learned_at: ts_opt_to_engine(learned_at, "learned_at").map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
-        let view = typed_row(&memory, "vault.artifacts.append", request, |input| {
+        let outcome = typed_row(&memory, "vault.artifacts.append", request, |input| {
             // Content a hook rewrote is decoded again, under the row's checks.
             if input.content_base64 != bytes_base64 {
                 return oneiron::task_verb::sdk::vault_artifacts_append(&memory, input);
@@ -187,27 +187,53 @@ impl ActorScopedVault {
             )
         })
         .map_err(facade_error)?;
-        Ok(NapiBlobVersionView {
-            artifact_ref: view.artifact_ref,
-            version: ts_from_engine(view.version, "version").map_err(boundary_error)?,
-            content_hash_hex: view.content_hash_hex,
-            claim_ref: view.claim_ref,
-            created_at: ts_from_engine(view.created_at, "created_at").map_err(boundary_error)?,
+        Ok(match outcome {
+            oneiron::memory::BlobVersionAppendOutcome::Landed(view) => {
+                NapiBlobVersionAppendOutcome {
+                    outcome: "landed".to_owned(),
+                    view: Some(NapiBlobVersionView {
+                        artifact_ref: view.artifact_ref,
+                        version: ts_from_engine(view.version, "version").map_err(boundary_error)?,
+                        content_hash_hex: view.content_hash_hex,
+                        claim_ref: view.claim_ref,
+                        created_at: ts_from_engine(view.created_at, "created_at")
+                            .map_err(boundary_error)?,
+                    }),
+                    proposal: None,
+                }
+            }
+            oneiron::memory::BlobVersionAppendOutcome::Proposed(proposal) => {
+                NapiBlobVersionAppendOutcome {
+                    outcome: "proposed".to_owned(),
+                    view: None,
+                    proposal: Some(
+                        serde_json::to_value(proposal)
+                            .map_err(|error| boundary_error(error.to_string()))?,
+                    ),
+                }
+            }
         })
     }
 
     /// BM25 text query over the engine index, with the read's receipt. The
-    /// standard N-API query (8 KiB) and result (1,000) caps apply.
+    /// standard N-API result (1,000) cap applies.
     #[napi]
     pub fn query_bm25(&self, query: String, limit: u32) -> napi::Result<NapiLexicalHits> {
-        crate::validate_query_len(&query).map_err(caller_input_error)?;
         let limit = crate::parse_search_limit(limit).map_err(caller_input_error)?;
         let memory = self.facade()?;
         let hits = typed_row(
             &memory,
             "vault.search.bm25",
-            QueryBm25Request { query, limit },
-            |input| memory.query_bm25(&input.query, input.limit),
+            QueryBm25Request {
+                query,
+                limit,
+                filter: None,
+            },
+            |input| {
+                memory
+                    .with_read_filter(input.filter.as_ref())
+                    .query_bm25(&input.query, input.limit)
+            },
         )
         .map_err(facade_error)?;
         Ok(NapiLexicalHits {
@@ -244,10 +270,13 @@ impl ActorScopedVault {
                     .map_err(caller_input_error)?,
                 limit: opts.limit as usize,
             },
+            filter: None,
         };
         let memory = self.facade()?;
         let hits = typed_row(&memory, "vault.neighbors", request, |input| {
-            memory.neighbors(&input.entity_ref, &input.opts)
+            memory
+                .with_read_filter(input.filter.as_ref())
+                .neighbors(&input.entity_ref, &input.opts)
         })
         .map_err(facade_error)?;
         Ok(NapiNeighborHits {
@@ -290,7 +319,6 @@ impl ActorScopedVault {
         token_budget: Option<f64>,
         reader_agent_ref: Option<String>,
     ) -> napi::Result<NapiMemoryPack> {
-        crate::validate_query_len(&query).map_err(caller_input_error)?;
         let limit = crate::parse_search_limit(limit).map_err(caller_input_error)?;
         let effort = RecallEffort::parse(&effort).ok_or_else(|| {
             caller_input_error(format!(
@@ -308,7 +336,7 @@ impl ActorScopedVault {
         let request = oneiron::task_verb::sdk::RecallRequest {
             query,
             effort: Some(effort),
-            scope: Some(recall_scope_to_engine(scope)),
+            scope: Some(recall_scope_to_engine(scope).map_err(facade_error)?),
             limit: Some(limit),
             format,
             token_budget,
@@ -318,6 +346,7 @@ impl ActorScopedVault {
             media: None,
             query_affect: None,
             telemetry: None,
+            filter: None,
         };
         let memory = self.facade()?;
         let pack = typed_row(&memory, "vault.recall", request, |request| {
@@ -465,7 +494,10 @@ impl ActorScopedVault {
         let read = typed_row(
             &memory,
             "vault.calendar.read",
-            CalendarReadRequest { event_ref },
+            CalendarReadRequest {
+                event_ref,
+                filter: None,
+            },
             |input| memory.calendar_read(&input),
         )
         .map_err(facade_error)?;
@@ -495,6 +527,7 @@ impl ActorScopedVault {
                 }),
             text: request.text,
             limit: request.limit,
+            filter: None,
         };
         let memory = self.facade()?;
         let events = typed_row(&memory, "vault.calendar.search", engine_request, |input| {

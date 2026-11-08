@@ -22,11 +22,19 @@ pub trait SelfDispatcher {
 /// (FIX 2135): frames queued on the run's own board connection, drained once
 /// the answer succeeded. They are no part of the verb's output, and each
 /// keeps the rows it was derived from, never mixed into the answer's own.
+///
+/// A call a run's off-record room served (a forwarded read, a room write)
+/// also names what each verb hook bound to its row did there (FIX 5425,
+/// CALLS-9 `session_hook_meta_shape`), as the room's own search does; empty
+/// for every other call.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentVerbAnswer {
     pub output: serde_json::Value,
     pub rows: Option<Vec<EntityId>>,
     pub observations: Vec<RunObservation>,
+    pub hooks: Vec<SessionHookDisposition>,
+    /// Native handoff only. The write receipt keeps this in its output manifests.
+    pub(crate) stored_output: Option<crate::code_run::CodeRunRawOutput>,
 }
 
 impl AgentVerbAnswer {
@@ -38,6 +46,37 @@ impl AgentVerbAnswer {
             output,
             rows,
             observations: Vec::new(),
+            hooks: Vec::new(),
+            stored_output: None,
+        }
+    }
+
+    /// This answer, naming what each of `hooks` did in the room that served
+    /// it.
+    #[must_use]
+    pub fn with_hooks(mut self, hooks: Vec<SessionHookDisposition>) -> Self {
+        self.hooks = hooks;
+        self
+    }
+
+    /// The guest's reply to this answer, before its budget envelope: its
+    /// output, framed as every verb's is, with what each verb hook did in the
+    /// room that served it under `hooks`, inside the output when the output
+    /// is an object, else beside it, as the room's search carries its own
+    /// (CALLS-9 `session_hook_meta_shape`). An answer no room hook ran on is
+    /// its output alone.
+    #[must_use]
+    pub fn guest_reply(&self) -> serde_json::Value {
+        if self.hooks.is_empty() {
+            return serde_json::json!({ "output": self.output });
+        }
+        let hooks = serde_json::to_value(&self.hooks).unwrap_or_default();
+        let mut output = self.output.clone();
+        if let Some(fields) = output.as_object_mut() {
+            fields.insert("hooks".to_owned(), hooks);
+            serde_json::json!({ "output": output })
+        } else {
+            serde_json::json!({ "output": output, "hooks": hooks })
         }
     }
 
@@ -156,6 +195,18 @@ pub trait AgentVerbDoor: Send + Sync {
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
 
+    /// Admits one speech call of the run (`effect` is `Speak`, `Think` or
+    /// `Express`, its trailing bubble included) with `destination`, where
+    /// the run's storage lands it. A door that rules on speech wherever it
+    /// lands admits it as [`Self::admit_run_call`] admits the bridge call.
+    fn admit_run_speech(
+        &self,
+        effect: SelfEffect,
+        _destination: RunSpeechDestination,
+    ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
+        self.admit_run_call(RunCall::Bridge(effect))
+    }
+
     /// The verified read key a host turn's hooks use, independently of the
     /// host's System write attribution. `None` is a typed no-read answer, not
     /// permission to reconstruct an actor or System lane (FIX 9841).
@@ -175,10 +226,11 @@ pub trait AgentVerbDoor: Send + Sync {
 
     /// Admits one read a run bound to an off-record session serves through
     /// the room's view (WILL L11-01): `vault.get`, `vault.hydrate`,
-    /// `vault.refs.resolve` or `vault.search.bm25`. The answer is the key
-    /// the read reads under: this door's caller, as its credential and
-    /// ceiling bind them now, never a wider key. A door that admits no such
-    /// read refuses it as a session-bound run's verbs were refused before.
+    /// `vault.refs.resolve`, `vault.search.bm25` or `vault.receipts` (FIX
+    /// 7355). The answer is the key the read reads under: this door's
+    /// caller, as its credential and ceiling bind them now, never a wider
+    /// key. A door that admits no such read refuses it as a session-bound
+    /// run's verbs were refused before.
     fn admit_session_read(
         &self,
         _verb: crate::task_verb::sdk::AgentVerb,
@@ -241,6 +293,21 @@ pub trait AgentVerbDoor: Send + Sync {
     /// own. A door that states no receipt ignores it.
     fn replay_row_receipt(&self, _receipt: &str) {}
 
+    /// A cached answer an action call's replay returns for `verb` (FIX
+    /// 8158), released again for this door's caller as it stands now. A
+    /// door that judges release refuses one derived from a row its caller
+    /// no longer reads, or one erased since (`Error::EntityNotFound`), and
+    /// withholds what its caller's destination may not hold; nothing runs
+    /// again. A door with no release judgment of its own returns it as it
+    /// was.
+    fn replay_action_answer(
+        &self,
+        _verb: &str,
+        answer: AgentVerbAnswer,
+    ) -> crate::Result<AgentVerbAnswer> {
+        Ok(answer)
+    }
+
     /// The run recorded the write's replay row for the answer this door
     /// just gave (FIX 10633): a door that keeps what its answer holds
     /// until then releases it now. A door that keeps nothing ignores it.
@@ -275,4 +342,15 @@ pub enum RunCall {
     /// A read of the run's own recorded output: by its context reference, or
     /// a resumed write's kept answer, read back from its receipt.
     RecordedOutput,
+}
+
+/// Where a run's speech lands, as its storage writes it
+/// (`ExecutorStorage::speech_destination`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunSpeechDestination {
+    /// The run's own derived conversation on canonical storage
+    /// (`canonical_speech_conversation_id_for_run`): part of the run's record.
+    OwnRunConversation,
+    /// The room of the off-record session the run is bound to.
+    SessionRoom,
 }

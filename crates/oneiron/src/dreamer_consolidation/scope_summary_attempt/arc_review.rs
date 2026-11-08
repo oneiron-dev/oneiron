@@ -370,15 +370,18 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let charges = &mut run.charges;
         let response = match outcome {
             Ok(StepOutcome::Finished {
-                response, memoized, ..
+                response,
+                memoized,
+                binding,
+                ..
             }) => {
                 if !memoized {
                     run.calls = run.calls.saturating_add(1);
                 }
                 if let Err(error) = charges.record_terminal(
                     ctx.vault,
-                    step_ctx.attempt_id,
-                    step_hash,
+                    binding.attempt_id,
+                    binding.step_hash,
                     &response.usage,
                 ) {
                     if !memoized {
@@ -419,6 +422,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 ));
             }
             Err(other) => {
+                if let DurableStepError::SpentLlm { usage, .. }
+                | DurableStepError::SpentFallback { usage, .. } = &other
+                {
+                    charges.record_usage(usage);
+                }
                 return Ok(Called::Exit(
                     charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other)),
                 ));
@@ -461,7 +469,7 @@ pub(super) fn store_exit(
     match error {
         Error::ConcurrentWrite(_) => compose_again(charges, now_ms),
         error if waits_on_residency(error) => {
-            residency_deferral(now_ms, charges.units, charges.step_hashes.clone())
+            residency_deferral(now_ms, charges.units, charges.step_bindings.clone())
         }
         error => charges.park_on_error(error),
     }

@@ -21,12 +21,12 @@ use oneiron::retrieval_quality as quality;
 use oneiron::task_verb::sdk;
 
 use crate::dto::{
-    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
-    ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt, ConsolidationJobInput,
-    DeleteReceipt, DeleteRequestState, DreamerJobRef, DreamerJobView, Effort, EntityRead,
-    EntityRefReceipt, EntityView, EntityViews, ExportReceipt, FacadeReceipt, ForgetSelector,
-    HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance,
-    MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
+    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView,
+    CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt,
+    ConsolidationJobInput, DeleteReceipt, DeleteRequestState, DreamerJobRef, DreamerJobView,
+    Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews, ExportReceipt, FacadeReceipt,
+    ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack,
+    MemoryProvenance, MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
     OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt,
     ReadScope, RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource,
     RecallScope, RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation,
@@ -35,6 +35,46 @@ use crate::dto::{
     WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 use crate::error::OneironError;
+
+mod ai_answers;
+pub(crate) use ai_answers::{lift_ai_answer, lift_ai_video_job};
+
+mod llm_responses;
+pub(crate) use llm_responses::{
+    lift_model_role_invocation, lift_model_step_receipt, lift_model_stream_events,
+    lift_model_stream_terminal, lift_settled_program_step, lift_settled_step,
+};
+mod model_usage;
+pub(crate) use model_usage::{lift_ask_image, lift_model_binding_proposal, lift_model_trial};
+mod ai_options;
+mod browser_answers;
+mod browser_batch;
+mod checkpoints;
+mod claims;
+mod core_write;
+mod diagnostics;
+mod feedback;
+mod generated_lenses;
+mod identity_act_now;
+mod key_value;
+mod lens_actions;
+mod lens_frames;
+mod lens_selections;
+mod notifications;
+mod policy_settings;
+mod proposal_results;
+mod proposals;
+mod results;
+mod saved_queries;
+pub(crate) use saved_queries::{
+    lift_saved_query_evaluation, lift_saved_query_read, lift_saved_query_record,
+};
+mod shape_groups;
+mod shape_plans;
+pub(crate) use shape_groups::lift_shape_groups;
+mod skill_callables;
+mod weave_reports;
+mod wire_json;
 
 /// Lowers a foreign value into the engine type `T`.
 pub(crate) trait Lower<T> {
@@ -61,6 +101,7 @@ fn failure(code: &str, message: String, suggestion: &str) -> OneironError {
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
         legal_hold: None,
+        room_join_hold: None,
     }
 }
 
@@ -80,6 +121,12 @@ pub(crate) fn lift_legal_hold_notice(
     notice: oneiron::error::LegalHoldNotice,
 ) -> Result<crate::facade_types_generated::LegalHoldNotice, OneironError> {
     lift_record("legal_hold", &notice)
+}
+
+pub(crate) fn lift_room_join_hold(
+    hold: oneiron::workspace_roster::RoomJoinHold,
+) -> Result<crate::facade_types_generated::RoomJoinHold, OneironError> {
+    lift_record("room_join_hold", &hold)
 }
 
 // ── the WireJson leaf ───────────────────────────────────────────────────
@@ -123,14 +170,6 @@ impl Lower<serde_json::Value> for WireJson {
                 "Send exactly one JSON value as canonical_json.",
             )
         })
-    }
-}
-
-impl Lift<serde_json::Value> for WireJson {
-    fn lift(value: serde_json::Value) -> Result<Self, OneironError> {
-        serde_json::to_string(&value)
-            .map(|canonical_json| Self { canonical_json })
-            .map_err(|error| internal(format!("could not encode a JSON value: {error}")))
     }
 }
 
@@ -493,6 +532,7 @@ impl Lower<oneiron::conversation_dag::QuoteSpan> for QuoteSpan {
 impl Lift<engine::WitnessReceipt> for WitnessReceipt {
     fn lift(value: engine::WitnessReceipt) -> Result<Self, OneironError> {
         Ok(Self {
+            turn_id: value.turn_id.to_hex(),
             turn_short_id: value.turn_short_id,
             message_short_ids: value.message_short_ids,
             receipt_ref: value.receipt_ref,
@@ -588,6 +628,15 @@ impl Lower<sdk::ClaimRefRequest> for String {
     }
 }
 
+impl Lower<sdk::ClaimHistoryRequest> for String {
+    fn lower(self) -> Result<sdk::ClaimHistoryRequest, OneironError> {
+        Ok(sdk::ClaimHistoryRequest {
+            claim_ref: self,
+            filter: None,
+        })
+    }
+}
+
 impl Lower<sdk::ForgetRequest> for ForgetSelector {
     fn lower(self) -> Result<sdk::ForgetRequest, OneironError> {
         match (self.short_ref, self.subject_ref, self.predicate) {
@@ -615,6 +664,7 @@ impl Lower<engine::ClaimListFilter> for ClaimListFilter {
             predicate: self.predicate,
             lifecycle: self.lifecycle,
             limit: self.limit.lower()?,
+            filter: None,
         })
     }
 }
@@ -692,6 +742,9 @@ impl Lift<engine::ClaimView> for ClaimView {
             source: view.source,
             world_ref: view.world_ref,
             scope: Lift::lift(view.scope)?,
+            claim_scope: lift_record("ClaimView.claim_scope", &view.claim_scope)?,
+            made_by: lift_record("ClaimView.made_by", &view.made_by)?,
+            claim: lift_record("ClaimView.claim", &view.claim)?,
             valid_from: optional_signed("valid_from", view.valid_from)?,
             valid_to: optional_signed("valid_to", view.valid_to)?,
             salience: view.salience,
@@ -780,13 +833,19 @@ impl Lift<engine::MemoryReceipt> for FacadeReceipt {
 
 impl Lower<sdk::HydrateRequest> for Vec<String> {
     fn lower(self) -> Result<sdk::HydrateRequest, OneironError> {
-        Ok(sdk::HydrateRequest { refs: self })
+        Ok(sdk::HydrateRequest {
+            refs: self,
+            filter: None,
+        })
     }
 }
 
 impl Lower<sdk::EntityRequest> for String {
     fn lower(self) -> Result<sdk::EntityRequest, OneironError> {
-        Ok(sdk::EntityRequest { entity_ref: self })
+        Ok(sdk::EntityRequest {
+            entity_ref: self,
+            filter: None,
+        })
     }
 }
 
@@ -796,6 +855,7 @@ impl Lower<sdk::QueryBm25Request> for (String, u32) {
         Ok(sdk::QueryBm25Request {
             query,
             limit: limit.lower()?,
+            filter: None,
         })
     }
 }
@@ -816,6 +876,7 @@ impl Lower<sdk::NeighborsRequest> for (String, NeighborOpts) {
         Ok(sdk::NeighborsRequest {
             entity_ref,
             opts: opts.lower()?,
+            filter: None,
         })
     }
 }
@@ -856,6 +917,7 @@ impl Lift<engine::EntityView> for EntityView {
             occurred_end: signed_seconds("occurred_end", view.occurred_end)?,
             learned_at: signed_seconds("learned_at", view.learned_at)?,
             body: Lift::lift(view.body)?,
+            made_by: lift_record("EntityView.made_by", &view.made_by)?,
         })
     }
 }
@@ -1021,14 +1083,14 @@ impl Lower<engine::BlobArtifactInput> for BlobArtifactInput {
     }
 }
 
-/// `vault.artifacts.append`'s arguments: the raw bytes are measured against
-/// the engine blob ceiling before they are base64-encoded for the request.
+/// `vault.artifacts.append`'s arguments: the raw bytes are base64-encoded
+/// for the request; the engine's append door measures their size against
+/// `blob_content_bytes` and never refuses it (FIX 76).
 impl Lower<sdk::AppendBlobVersionRequest>
     for (String, Vec<u8>, Option<String>, Option<i64>, Option<i64>)
 {
     fn lower(self) -> Result<sdk::AppendBlobVersionRequest, OneironError> {
         let (artifact_ref, content, run_ref, occurred_at, learned_at) = self;
-        engine::caps::check_blob_bytes(content.len())?;
         Ok(sdk::AppendBlobVersionRequest {
             artifact_ref,
             content_base64: base64::engine::general_purpose::STANDARD.encode(&content),
@@ -1045,6 +1107,19 @@ impl Lower<sdk::ReadBlobVersionRequest> for (String, u64) {
         Ok(sdk::ReadBlobVersionRequest {
             artifact_ref,
             version,
+        })
+    }
+}
+
+impl Lift<engine::BlobVersionAppendOutcome> for BlobVersionAppendOutcome {
+    fn lift(value: engine::BlobVersionAppendOutcome) -> Result<Self, OneironError> {
+        Ok(match value {
+            engine::BlobVersionAppendOutcome::Landed(view) => Self::Landed {
+                view: BlobVersionView::lift(view)?,
+            },
+            engine::BlobVersionAppendOutcome::Proposed(proposal) => Self::Proposed {
+                proposal: crate::PendingProposalView::lift(proposal)?,
+            },
         })
     }
 }
@@ -1205,6 +1280,14 @@ impl Lower<oneiron::code_run::vault_read::ContextPackMediaQuery> for RecallMedia
 
 /// A recall's query affect crosses as the engine's; the recall door refuses
 /// it out of range.
+/// A recall's caller retrieval filter, the generated record of the engine's
+/// `ReadFilterInput` (FIX 3977), lowered through its wire shape.
+impl Lower<engine::ReadFilterInput> for crate::facade_types_generated::ReadFilterInput {
+    fn lower(self) -> Result<engine::ReadFilterInput, OneironError> {
+        lower_record("vault.recall", self)
+    }
+}
+
 impl Lower<sdk::QueryAffect> for QueryAffect {
     fn lower(self) -> Result<sdk::QueryAffect, OneironError> {
         Ok(sdk::QueryAffect {
@@ -1235,6 +1318,27 @@ impl Lower<engine::RecallScope> for Option<RecallScope> {
 impl Lift<engine::MemoryItem> for MemoryItem {
     fn lift(item: engine::MemoryItem) -> Result<Self, OneironError> {
         Ok(Self {
+            asset_ref: item.asset_ref,
+            embedding_matches: item
+                .embedding_matches
+                .into_iter()
+                .map(|evidence| {
+                    let kind = |kind| match kind {
+                        oneiron::store::embedding::InputKind::Text => crate::InputKind::Text,
+                        oneiron::store::embedding::InputKind::Image => crate::InputKind::Image,
+                        oneiron::store::embedding::InputKind::Audio => crate::InputKind::Audio,
+                    };
+                    crate::EmbeddingMatchEvidence {
+                        space: evidence.space,
+                        embedding_kind: kind(evidence.embedding_kind),
+                        query_kind: kind(evidence.query_kind),
+                        score: f64::from(evidence.score),
+                        floor: f64::from(evidence.floor),
+                        strong: f64::from(evidence.strong),
+                        matched: evidence.matched,
+                    }
+                })
+                .collect(),
             short_id: item.short_id,
             source_revision_ref: item.source_revision_ref,
             kind: item.kind,

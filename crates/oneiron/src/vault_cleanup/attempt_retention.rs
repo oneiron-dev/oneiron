@@ -147,6 +147,35 @@ pub(super) fn eligible(
     .then_some(record))
 }
 
+/// The gated source rows of `entity`'s queue row (FIX 10494): the rows its
+/// producers recorded its inputs read from, through
+/// [`AttemptRecord::source_rows`], which reads unknown unless every declared
+/// producer reported completely. `entity` is the original 16-byte queue-id
+/// alias a [`CleanupCandidate`] carries, not a stored entity: it rehydrates
+/// to [`AttemptId`] for this lookup and is never listed itself.
+///
+/// `Ok(None)` is honest unknown: the row is gone, or its set never
+/// completed. `Some` holds only genuine known rows from that same decoded
+/// record; `Some([])` is only a genuinely declared-empty set. Raw `read_set`
+/// is never read. Storage errors propagate. A row the native operation
+/// skipped before decoding can be unreadable; this optional projection then
+/// stays unknown rather than turning that successful skip into an error.
+/// The operation's own validation and review's unreadable slots stay intact.
+pub(super) fn attempt_source_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity: EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    let id = AttemptId::from_bytes(entity.as_bytes())?;
+    let Some(raw) = JobQueueRead::port_job_row(&vault.store, txn, &id)? else {
+        return Ok(None);
+    };
+    let Ok(record) = decode_record(&raw, id) else {
+        return Ok(None);
+    };
+    Ok(record.source_rows().map(|rows| rows.to_vec()))
+}
+
 /// Every completed queue record retention would archive, the ledger read
 /// from its start.
 pub(super) fn scan(
@@ -170,6 +199,23 @@ pub(super) fn scan(
         }
     }
     Ok(())
+}
+
+/// Whether the attempt `entity` is still a completed attempt past retention
+/// in `txn`: a scan's candidate read again under the writer (FIX 7425).
+pub(super) fn still_eligible_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity: EntityId,
+) -> Result<bool> {
+    let id = AttemptId::from_bytes(entity.as_bytes())?;
+    if crate::store::attempt_retention::owner_retained_id(&id) {
+        return Ok(false);
+    }
+    let Some(raw) = JobQueueRead::port_job_row(&vault.store, txn, &id)? else {
+        return Ok(false);
+    };
+    Ok(eligible(vault, txn, id, &raw)?.is_some())
 }
 
 /// Archives one completed attempt for cleanup run `run` and answers its

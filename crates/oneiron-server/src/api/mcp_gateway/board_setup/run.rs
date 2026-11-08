@@ -14,7 +14,9 @@ use super::*;
 /// state are keyed on the run's own connection, and nothing is narrowed: the
 /// agent reads its board as a vault-wide connector of its own would:
 /// MEMORIES pins the policy manifest's rows its lane reads (FIX 2646). Its
-/// hook rows are those of the blocks [`run_hook_pins`] keeps.
+/// hook rows are those of the blocks [`run_hook_pins`] keeps. The persons
+/// the prefix of the run's delivered self brief holds on its roster go by
+/// bare handle (FIX 17594 D3).
 pub(crate) async fn run_current_board(
     server: &Arc<SyncServer>,
     actor: oneiron::WriteActor,
@@ -27,8 +29,23 @@ pub(crate) async fn run_current_board(
         super::board_observations::run_state(server, actor, connection, &read, &packs).await?;
     let mut rows = Vec::new();
     let pins = run_hook_pins(server, &read)?;
-    let (mut sections, omissions, hooks) =
-        run_board_sections(server, actor, &read, &packs, &pins, session, &mut rows)?;
+    // The agent's own board layout (BOARD-LAYOUT): the run's next board
+    // render is its next turn, so the pending batch projects here and the
+    // render that shows it activates it.
+    let (layout, layout_candidate) = server
+        .vault
+        .select_board_layout(actor.entity_ref(), true)
+        .map_err(|error| mcp_engine_error("board layout selection failed", error))?;
+    // The persons the model reads the run's delivered prefix with, and so
+    // already knows by bare handle; none before its turn one is delivered.
+    let resident = server
+        .self_brief_sessions
+        .lock()
+        .await
+        .acknowledged_residence(&(actor.entity_ref(), connection.0.clone()));
+    let (mut sections, omissions, hooks) = run_board_sections(
+        server, actor, &read, &packs, &pins, session, &layout, &resident, &mut rows,
+    )?;
     rows.extend(crate::device_local::changed_line_rows(&changes));
     rows.extend(crate::device_local::changed_line_rows(&board));
     sections.push(
@@ -44,7 +61,14 @@ pub(crate) async fn run_current_board(
     );
     let scope_label =
         crate::mcp::mcp_effective_scope_label(&crate::mcp::McpConnectorScope::vault_wide());
-    let mut state_rows = mcp_board_state_rows(&sections);
+    let cap_tok = oneiron::context_board::resolve_board_budget(
+        super::super::exec_board_verbs::run_board_budget_request(server),
+    )
+    .cap_tok;
+    let laid_out = oneiron::context_board::apply_board_layout(&sections, &layout, cap_tok);
+    let layout_candidate =
+        layout_candidate.map(|candidate| candidate.with_fold_baselines(&laid_out.fold_counts));
+    let mut state_rows = mcp_board_state_rows(&laid_out.sections);
     state_rows.extend(board.render());
     let state_hash = crate::mcp::mcp_board_state_hash(&scope_label, &state_rows);
     // The connection's published events are read under the run's own key,
@@ -67,6 +91,8 @@ pub(crate) async fn run_current_board(
         .observe_pack_inventory(&packs);
     Ok(McpBoardState {
         sections,
+        laid_out: laid_out.sections,
+        layout_candidate,
         scope_label,
         epoch,
         changes,
@@ -150,6 +176,64 @@ pub(super) fn run_hook_pins(
     Ok(pins)
 }
 
+/// The working set's pins (FIX 17594, WORKING SET A) for a `describe(self)`
+/// on a pumped run's door: the pins the run's board MEMORIES carries now,
+/// read as its board reads them, under the agent's own lane: the policy
+/// manifest's pins and the rows of the hook blocks [`run_hook_pins`] keeps
+/// ([`crate::api::context_board::lane_pins_projection`]), each with the
+/// revision it served. Nothing is recorded: the receipt and the hook
+/// deliveries stay with a board that goes out. A read that fails logs and
+/// leaves the family `None` (unavailable). A turn program a verified slip
+/// woke passes that slip's `waking_key`, and its pins are read under it, so
+/// none the slip excludes is named.
+pub(crate) fn run_brief_pins(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+    waking_key: Option<oneiron::claim::ScopedReadActorKey>,
+) -> Option<Vec<oneiron::context_board::BriefWorkingHandle>> {
+    let read = match waking_key {
+        Some(key) => Ok(server.vault.scoped_read(key)),
+        None => run_lane(server, actor),
+    };
+    let projected = read.and_then(|read| {
+        let pins = run_hook_pins(server, &read)?;
+        crate::api::context_board::lane_pins_projection(&read, &pins).map_err(super::mcp_api_error)
+    });
+    match projected {
+        Ok(pins) => {
+            crate::api::context_board::brief_pins_family(pins.as_ref().map(|pins| &pins.section))
+        }
+        Err(error) => {
+            tracing::warn!(
+                kind = error.kind,
+                "a run's self brief pins did not read; the brief names them unavailable"
+            );
+            None
+        }
+    }
+}
+
+/// The token budget a pumped run's self-brief prefix lays its `people`
+/// roster out under at an epoch boundary (FIX 17594 D3): the `people` share
+/// of the agent's live board layout under the run board's cap, as an HTTP
+/// board's brief lays out under the share of its own cap. `None` when the
+/// layout gives `people` no share.
+///
+/// # Errors
+///
+/// The agent's board layout did not read.
+pub(crate) fn run_brief_people_budget(
+    server: &SyncServer,
+    actor: oneiron::EntityId,
+) -> oneiron::Result<Option<usize>> {
+    let (layout, _) = server.vault.select_board_layout(actor, false)?;
+    let cap_tok = oneiron::context_board::resolve_board_budget(
+        super::super::exec_board_verbs::run_board_budget_request(server),
+    )
+    .cap_tok;
+    Ok(layout.share_tok("people", cap_tok))
+}
+
 /// The agent's own read lane, on this device.
 pub(super) fn run_lane(
     server: &SyncServer,
@@ -200,7 +284,9 @@ pub(super) fn run_lane_reads(
 /// MEMORIES the policy manifest and its hook `pins` reach, TASKS with its
 /// people and children, the SCRATCHPAD of the run's bound `session`, PACKS
 /// and the packs' own sections. `pins` tag the TASKS rows they name and pin
-/// their other rows into MEMORIES, as on a connector's board.
+/// their other rows into MEMORIES, as on a connector's board. The persons
+/// in `resident`, those the run's delivered self-brief prefix holds, are
+/// named by bare handle.
 pub(super) fn run_board_sections(
     server: &Arc<SyncServer>,
     actor: oneiron::WriteActor,
@@ -208,6 +294,8 @@ pub(super) fn run_board_sections(
     packs: &[(String, String)],
     pins: &[oneiron::context_board::HookPin],
     session: Option<&str>,
+    layout: &oneiron::context_board::BoardLayout,
+    resident: &std::collections::BTreeSet<oneiron::EntityId>,
     served: &mut Vec<oneiron::EntityId>,
 ) -> Result<
     (
@@ -243,9 +331,8 @@ pub(super) fn run_board_sections(
             .map_err(|error| mcp_engine_error("board people disclosure failed", error))?;
         people
     };
-    let resident = std::collections::BTreeSet::new();
     rows.attach_people(
-        &oneiron::context_board::PeopleView::new(&people, &resident),
+        &oneiron::context_board::PeopleView::new(&people, resident),
         &children,
     );
     served.extend(
@@ -255,7 +342,34 @@ pub(super) fn run_board_sections(
             .chain(rows.bare_jobs.iter().map(|job| job.id.as_str()))
             .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
     );
-    let mut tasks = rows.render();
+    let budget = oneiron::context_board::resolve_board_budget(
+        super::super::exec_board_verbs::run_board_budget_request(server),
+    );
+    // TASKS under the agent's layout: the fold line counts every admitted
+    // row; the filter and the share narrow only what the section lists.
+    let tasks_summary = rows.fold_summary(Some(actor.entity_ref()));
+    let filtered = layout
+        .filter("tasks")
+        .map(|filter| {
+            crate::api::context_board::filter_task_rows(
+                &server.vault,
+                read,
+                &oneiron::context_board::PeopleView::new(&people, resident),
+                Some(actor.entity_ref()),
+                filter,
+                &rows,
+            )
+        })
+        .transpose()
+        .map_err(|error| mcp_engine_error("board tasks filter failed", error))?;
+    let shown = filtered.as_ref().unwrap_or(&rows);
+    let mut tasks = match layout.share_tok("tasks", budget.cap_tok) {
+        None => shown.render(),
+        Some(budget) => shown.render_with_token_budget(budget),
+    };
+    if let Some(fold) = layout.fold("tasks") {
+        tasks.keep_rows_open(&rows, &fold.keep);
+    }
     tasks.pin_hook_tasks(&rows.intents, pins);
     let mut hooks = McpBoardHooks {
         blocks: tasks.tag_hook_pins(pins),
@@ -281,9 +395,13 @@ pub(super) fn run_board_sections(
         let presences = oneiron::context_board::WorldPresence::read_admitted(read, &allowed)
             .map_err(|error| mcp_engine_error("board worlds failed", error))?;
         served.extend(presences.iter().map(|world| world.id));
-        oneiron::context_board::WorldsSection::project(&presences, &authority, MCP_BOARD_WORLDS_CAP)
-            .board_section()
-            .map_err(mcp_board_frame_error)?
+        oneiron::context_board::WorldsSection::project(
+            &presences,
+            &authority,
+            layout.row_allotment("worlds", budget.cap_tok, MCP_BOARD_WORLDS_CAP),
+        )
+        .board_section()
+        .map_err(mcp_board_frame_error)?
     };
     // The fan-out launches that wait on an approver (OF-393): the agent's own
     // and those whose bound project lead or board role it holds live.
@@ -295,9 +413,15 @@ pub(super) fn run_board_sections(
         .map_err(mcp_facade_error)?;
     let tasks_section = oneiron::context_board::assemble_tasks_section(
         &tasks,
-        oneiron::context_board::fanout_action_rows(&launches),
+        oneiron::context_board::fanout_action_rows_for(&launches, layout, budget.cap_tok),
     )
-    .map_err(mcp_board_frame_error)?;
+    .map_err(mcp_board_frame_error)?
+    .with_fold_summary(tasks_summary)
+    .with_hook_pinned_ids(
+        pins.iter()
+            .flat_map(|pin| pin.refs.iter().copied())
+            .collect(),
+    );
     let mut sections = vec![verb_section, worlds_section];
     if let Some(memories) =
         crate::api::context_board::lane_pins_projection(read, pins).map_err(super::mcp_api_error)?
@@ -341,7 +465,7 @@ pub(super) fn run_board_sections(
             .memory(actor.entity_ref(), actor.actor_class())
             .at(oneiron::claim::CallerLocality::OnDevice),
         actor.actor_class(),
-        &oneiron::context_board::PeopleView::new(&people, &resident),
+        &oneiron::context_board::PeopleView::new(&people, resident),
     ));
     Ok((sections, omissions, hooks))
 }

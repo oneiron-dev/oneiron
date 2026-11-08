@@ -16,8 +16,8 @@ const TRUSTED_ORIGIN: SideTable<HexId, TrustedOrigin, Raw> =
 
 /// [`TRUSTED_ORIGIN`]'s value: the trusted body's hash, then the second this vault first
 /// trusted that body (FIX 10936), big-endian. A rewrite of the same body keeps the time, so
-/// what counts from it never moves. The vault-bootstrap seed writes the bare hash: it records
-/// no trust time.
+/// what counts from it never moves. The vault-bootstrap seed stamps the second it seeds
+/// (FIX 11770): the origin row carries hash plus big-endian time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TrustedOrigin {
     hash: [u8; 32],
@@ -196,7 +196,7 @@ pub(crate) fn manifest_is_trusted(
 
 /// The second this vault first trusted `body` at manifest `id` (FIX 10936): its trust stamp's
 /// time, kept across a rewrite of the same body. `None` when that body is not trusted there,
-/// or its stamp records no time (the bootstrap seed's).
+/// or its stamp is a bare hash that records no time.
 pub(crate) fn manifest_trusted_at(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -252,11 +252,15 @@ fn quarantine_current_in_txn(
 pub struct ManifestContribution {
     pub id: String,
     pub trusted: bool,
+    /// An untrusted contribution: a proposal that enters no effective policy,
+    /// narrowing included, until a policy holder authors its values through
+    /// the manifest put (FIX 8780).
     pub restrict_only: bool,
     pub quarantined: bool,
 }
 impl Vault {
-    /// Surface unauthenticated narrowing as actionable rows, without granting it authority.
+    /// Surface untrusted contributions as proposals a holder may act on,
+    /// without giving them any effect (FIX 8780).
     pub fn manifest_contributions(&self) -> Result<Vec<ManifestContribution>> {
         let txn = self.store.env.read_txn()?;
         let mut out = Vec::new();
@@ -451,6 +455,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
+                row_version: None,
                 data,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
@@ -537,6 +542,15 @@ impl Vault {
         let mut steps = vec![false; installs.len()];
         let mut txn = self.store.env.write_txn()?;
         let mut before = super::resolve_policy_manifest(&self.store, &txn)?;
+        // The owner's verb-class table is agent Grant authority the resolved
+        // policy does not carry: an install that widens it is no narrowing
+        // (FIX 8735 review). Only the default manifest declares it.
+        let default_id = super::default_policy_manifest_id()?;
+        let mut classes_before =
+            super::policy_manifest_doors::agent_verb_class_rows_for_store_in_txn(
+                &self.store,
+                &txn,
+            )?;
         folded(&txn);
         let mut placed = true;
         for ((id, data), step) in installs.iter().zip(&mut steps) {
@@ -544,9 +558,16 @@ impl Vault {
             // id (`install_shape_manifest`), so they never land in the
             // projection either (FIX 5956). Bytes that do not decode, the
             // write below refuses itself.
-            let quarantined = match super::owner_policy_manifest_as_stored(data.clone()) {
-                Ok(stored) => manifest_is_quarantined(&self.store, &txn, id, &stored)?,
-                Err(_) => false,
+            let stored = super::owner_policy_manifest_as_stored(data.clone()).ok();
+            let quarantined = match &stored {
+                Some(stored) => manifest_is_quarantined(&self.store, &txn, id, stored)?,
+                None => false,
+            };
+            let classes_after = match (&stored, *id == default_id) {
+                (Some(stored), true) => {
+                    super::policy_manifest_doors::agent_verb_class_rows_of_body(stored)
+                }
+                _ => classes_before.clone(),
             };
             if quarantined
                 || self
@@ -558,8 +579,13 @@ impl Vault {
             }
             let after = super::resolve_policy_manifest(&self.store, &txn)?;
             folded(&txn);
-            *step = super::resolution::manifest_resolution_narrows(&before, &after);
+            *step = super::resolution::manifest_resolution_narrows(&before, &after)
+                && super::policy_manifest_doors::verb_classes_narrow(
+                    &classes_before,
+                    &classes_after,
+                );
             before = after;
+            classes_before = classes_after;
         }
         for id in retires {
             placed = placed && quarantine_current_in_txn(self, &mut txn, id, None)?;
@@ -591,11 +617,23 @@ impl Vault {
     ) -> Result<bool> {
         let mut txn = self.store.env.write_txn()?;
         let before = super::resolve_policy_manifest(&self.store, &txn)?;
+        let classes_before = super::policy_manifest_doors::agent_verb_class_rows_for_store_in_txn(
+            &self.store,
+            &txn,
+        )?;
         folded(&txn);
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
         let after = super::resolve_policy_manifest(&self.store, &txn)?;
+        let classes_after = super::policy_manifest_doors::agent_verb_class_rows_for_store_in_txn(
+            &self.store,
+            &txn,
+        )?;
         folded(&txn);
-        if !super::resolution::manifest_resolution_narrows(&before, &after) {
+        // A widened verb-class table is agent Grant authority the resolved
+        // policy does not carry (FIX 8735 review).
+        if !super::resolution::manifest_resolution_narrows(&before, &after)
+            || !super::policy_manifest_doors::verb_classes_narrow(&classes_before, &classes_after)
+        {
             txn.abort();
             return Ok(false);
         }

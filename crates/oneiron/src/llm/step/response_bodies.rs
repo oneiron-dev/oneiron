@@ -85,14 +85,15 @@ pub(crate) fn retire_step_claim_in_rows(
 ///
 /// Storage and custody errors.
 pub(crate) fn retire_step_claim_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     key: &[u8],
 ) -> Result<()> {
+    let store = write.store;
     let Some(claim) = claim_of(key)? else {
         return Ok(());
     };
-    super::response_pins::release_step_response_pins_in_txn(store, wtxn, &claim, true)?;
+    super::response_pins::release_step_response_pins_in_txn(write, wtxn, &claim, true)?;
     let recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     store.port_entity_scrub(wtxn, &claim, ScrubbedRecord::Shell, recorded_at)?;
     crate::claim::remove_claim_projection_index(store, wtxn, claim)?;
@@ -131,6 +132,7 @@ fn stamp_erased_before_deindex_in_txn(
             started_at: now_ms,
             updated_at: now_ms,
             response_payload: None,
+            source: None,
             owners: StepStateOwners {
                 actor: None,
                 subject: None,
@@ -164,6 +166,7 @@ fn stamp_erased_before_deindex_in_rows(rows: &mut Rows, claim: EntityId) -> Resu
             started_at: 0,
             updated_at: 0,
             response_payload: None,
+            source: None,
             owners: StepStateOwners {
                 actor: None,
                 subject: None,

@@ -80,6 +80,7 @@ impl Vault {
         // Each input is a repo blob's copy where it is one (FIX 7608 slice 3).
         let repo_marks = super::repo_projection::pass_marks(self)?;
         let candidates = {
+            let _bodies = self.pin_all_result_bodies();
             let txn = self.store.env.read_txn()?;
             let delay = DEBOUNCE.get(&self.store, &txn, &())?.ok_or_else(|| {
                 Error::InvalidConfig("indexed idle delay manifest row is missing".into())
@@ -135,6 +136,7 @@ impl Vault {
             // The embedding space this work is done in, read with the staged
             // inputs it starts from.
             let (staged, epoch) = {
+                let _bodies = self.pin_all_result_bodies();
                 let txn = self.store.env.read_txn()?;
                 (
                     super::repo_projection::staged_inputs_in_txn(
@@ -221,6 +223,9 @@ impl Vault {
                 continue;
             }
             let generated_vector = staged.vector.is_none() && embedder.is_some();
+            // Only the staged vector's own filler locality goes with it; a
+            // vector generated here carries none (FIX 12783).
+            let staged_locality = staged.vector.as_ref().and(staged.locality);
             let vector = match staged.vector {
                 Some(vector) => Some((vector, staged.provenance)),
                 // The staged vector the work started from is gone, and the copy
@@ -285,6 +290,16 @@ impl Vault {
                 }
                 return Err(error);
             }
+            // The vector door cleared the locality as it wrote the row; the
+            // staged vector's own goes back in the same transaction.
+            if wrote_vector && let Some(locality) = staged_locality {
+                crate::embed::stamp_embedding_locality_in_txn(
+                    self,
+                    &mut txn,
+                    &input.entity,
+                    locality,
+                )?;
+            }
             if wrote_vector && generated_vector {
                 self.store
                     .clear_pending_embedding(&mut txn, &input.entity)?;
@@ -315,7 +330,7 @@ impl Vault {
             )?;
             crate::dreamer_wake::mark_on_publication_in_txn(&self.store, &mut txn, &input.entity)?;
             txn.commit()?;
-            if self.config.tagging.is_some() {
+            if self.tagging_marker_config().is_some() {
                 self.store.notify_attempt_observers();
             }
             published(IndexedPublication {
@@ -350,6 +365,7 @@ impl Vault {
         let mut gone = Vec::new();
         let repo_marks = super::repo_projection::pass_marks(self)?;
         let (candidates, epoch) = {
+            let _bodies = self.pin_all_result_bodies();
             let txn = self.store.env.read_txn()?;
             let mut candidates = Vec::new();
             for (id, ()) in REFILL.scan(&self.store, &txn)? {

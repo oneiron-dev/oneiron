@@ -1,8 +1,10 @@
 //! Sync server state and maintenance jobs, split by concern.
 mod artifact_previews;
 mod board_publisher;
+mod booking_calls;
 mod browser_seats;
 mod claim_vad_payment;
+mod cloud_registration_revokes;
 mod connector_events;
 mod connector_replies;
 mod connector_sends;
@@ -21,6 +23,8 @@ mod media_embedding;
 mod merge_queue_checker;
 mod message_stream;
 mod mirror_pushes;
+mod model_settings;
+mod model_setup;
 mod note_editors;
 #[cfg(unix)]
 mod organs;
@@ -35,15 +39,20 @@ mod recall;
 mod recall_hyde;
 mod recall_rerank;
 pub(crate) mod removal_delivery;
+mod residence_work;
 mod resident_pump;
 mod run_host_door;
+pub(crate) use run_host_door::RunMediaStep;
+pub(crate) mod self_brief_custody;
 mod space_move;
 mod tagging;
+mod trained_embedding;
 mod wave_door;
 mod web_fetch;
 mod windows;
 
 pub(crate) use self::artifact_previews::ArtifactPreviews;
+pub(crate) use self::board_publisher::ServeBackground;
 pub(crate) use self::browser_seats::{BrowserSeat, BrowserSeats, HandleLine};
 pub(crate) use self::core::BroadcastPayload;
 pub(crate) use self::core::ManagedIssuer;
@@ -59,6 +68,9 @@ pub(crate) use self::live_runs::{
 pub use self::media_door::MediaDoor;
 pub(crate) use self::media_door::{MediaRefusal, admit_media};
 pub(crate) use self::media_embedding::MediaEmbedRefusal;
+pub(crate) use self::model_setup::{
+    ModelSetupConfig, ModelSetupRuntime, ModelSlots, SharedModelSlots,
+};
 pub(crate) use self::note_editors::NoteEditors;
 pub use self::oversight::OversightStartError;
 pub(crate) use self::oversight::{HEALER_OVERSIGHT_EVERY, HealerOversight};
@@ -69,6 +81,7 @@ pub(crate) use self::reader_runner::{READER_CHILD_READ_ONLY, ReaderRunner, Reade
 pub(crate) use self::recall::blocking;
 pub(crate) use self::resident_pump::{LEASE_OWNER as RUN_LEASE_OWNER, seated_planner};
 pub(crate) use self::run_host_door::{RunHostDoor, answer_as_agent};
+pub(crate) use self::trained_embedding::TrainedEmbedding;
 pub(crate) use self::wave_door::{wave_plan, wave_receipt};
 
 #[cfg(test)]

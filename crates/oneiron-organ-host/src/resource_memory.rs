@@ -42,6 +42,12 @@ pub trait FloorLease: Send {
         stopped: &dyn Fn() -> bool,
     ) -> Result<(), FloorRefusal>;
 
+    /// Names `reserved` pending bytes allocated as `actual` bytes now held.
+    /// The live memory reading already counts that allocation, so growth
+    /// must not charge it again as pending. Never waits or refuses; a
+    /// reservation alone is not evidence of allocation.
+    fn materialized(&mut self, reserved: u64, actual: u64);
+
     /// Gives back at most `bytes` previously reserved by this lease. Never
     /// waits; used to roll back growth whose budget admission failed.
     fn shrink(&mut self, bytes: u64);
@@ -57,6 +63,11 @@ pub trait FloorLease: Send {
 /// server's implementation is its machine memory line, shared with every
 /// other lease it gives.
 pub trait MachineFloor: Send + Sync {
+    /// Records `bytes` already allocated, held until the returned lease drops.
+    /// This does not admit a new allocation and never waits or refuses. Use
+    /// the actual buffer capacity, and free the buffer before its lease.
+    fn track_allocated(&self, bytes: u64) -> Box<dyn FloorLease>;
+
     /// A lease of `bytes` of the machine's memory, held until what it returns
     /// drops: admitted as soon as they fit, waiting no later than `deadline`
     /// and no longer than `stopped` allows.

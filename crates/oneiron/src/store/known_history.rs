@@ -68,6 +68,9 @@ const INDEX_MISSING: &str = "known_value_index_missing";
 const HISTORY_MISSING: &str = "known_value_history_missing";
 const HISTORY_CORRUPT: &str = "known_value_history_corrupt";
 
+/// The domain of [`Store::known_history_witness_in_txn`]'s digest.
+const KNOWN_HISTORY_WITNESS_CONTEXT: &str = "oneiron known-value history witness v1";
+
 /// The master key's reference: its custody generation. Key: ().
 const INDEX: SideTable<(), u64, Raw> = SideTable::new(&side_table::SECRET_KNOWN_INDEX);
 
@@ -244,7 +247,53 @@ fn read_entries_tagged(
     Ok(entries)
 }
 
+fn master_or_mint(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    custody: LocalCustody<'_>,
+) -> Result<Zeroizing<[u8; 32]>> {
+    let master = index_subject(custody.binding())?;
+    let master = match INDEX.get(store, wtxn, &())? {
+        Some(at) => custody.read(&master.at(at))?,
+        None => {
+            let secret = custody.get_or_create(&master.at(0))?;
+            INDEX.put(store, wtxn, &(), &0)?;
+            secret
+        }
+    };
+    let key = copy_master(&master)?;
+    drop(master);
+    Ok(key)
+}
+
+/// The committed master, in a snapshot the caller holds under the custody
+/// read guard. Empty HISTORY does not hide a master used by PERSON prints.
+pub(super) fn master_in_snapshot(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &RoTxn<'_>,
+    custody: LocalCustody<'_>,
+) -> Result<Option<Zeroizing<[u8; 32]>>> {
+    INDEX
+        .get(dbs, txn, &())?
+        .map(|at| copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?))
+        .transpose()
+}
+
 impl Store {
+    /// The native index master for a run-only print, without a global
+    /// history holder. It obeys the custody writer's existing mint policy.
+    pub(crate) fn known_master_or_mint_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+    ) -> Result<Zeroizing<[u8; 32]>> {
+        if self.core.gate_custody_archived() {
+            return Err(Error::Store(StoreError::ArchivedVault));
+        }
+        self.core.key_custody.pin_in_txn(self, wtxn)?;
+        let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
+        master_or_mint(self, wtxn, custody)
+    }
+
     /// Records one value of the custody record `holder`, at record
     /// generation `generation`, in `wtxn`, the custody write's own
     /// transaction (KS-3). `entry` computes its entry under the master key,
@@ -271,17 +320,7 @@ impl Store {
         }
         self.core.key_custody.pin_in_txn(self, wtxn)?;
         let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
-        let master = index_subject(custody.binding())?;
-        let master = match INDEX.get(self, wtxn, &())? {
-            Some(at) => custody.read(&master.at(at))?,
-            None => {
-                let secret = custody.get_or_create(&master.at(0))?;
-                INDEX.put(self, wtxn, &(), &0)?;
-                secret
-            }
-        };
-        let key = copy_master(&master)?;
-        drop(master);
+        let key = master_or_mint(self, wtxn, custody)?;
         let secret = entry(&*key).to_secret();
         drop(key);
         let subject = holder_subject(custody.binding(), holder)?;
@@ -453,6 +492,26 @@ impl Store {
         }))
     }
 
+    /// The history the index holds in `txn`, a snapshot taken under the
+    /// custody read guard ([`Store::custody_snapshot`]), its ids and its
+    /// entries read in that one snapshot (FIX 8966): no value committed
+    /// before it is left out. `None` while the index keys no value or no
+    /// entry is live.
+    ///
+    /// # Errors
+    ///
+    /// Custody lost or damaged under an id, and storage faults.
+    pub(crate) fn known_history_in_snapshot(
+        &self,
+        txn: &RoTxn<'_>,
+    ) -> Result<Option<KnownHistory>> {
+        let Some(ids) = self.known_history_ids_in_txn(txn)? else {
+            return Ok(None);
+        };
+        let history = ids.read_in_snapshot(txn, &OverlayDb::canonical(self.core.raw.vault_meta))?;
+        Ok((!history.holders.is_empty()).then_some(history))
+    }
+
     /// The erase of the custody record `holder`, in `wtxn`, its purge's own
     /// transaction (KS-3): its committed known-value history goes, and one
     /// [`RetireCause::Erase`] intent is staged through the newest slot its
@@ -508,6 +567,32 @@ impl Store {
         holder: &EntityId,
     ) -> Result<bool> {
         HISTORY.contains(self, txn, holder)
+    }
+
+    /// A value-free witness of the history the index holds in `txn` (FIX
+    /// 8966): a digest of the master's reference and each holder's committed
+    /// slots, never an entry or a value. Two reads give one witness while no
+    /// value was learned or erased between them, so a record made under the
+    /// values custody knew can tell when they moved. `None` while the index
+    /// keys no value. Any snapshot reads it: no custody guard is taken.
+    ///
+    /// # Errors
+    ///
+    /// Storage faults.
+    pub(crate) fn known_history_witness_in_txn(&self, txn: &RoTxn<'_>) -> Result<Option<[u8; 32]>> {
+        let Some(index) = INDEX.get(self, txn, &())? else {
+            return Ok(None);
+        };
+        let mut digest = blake3::Hasher::new_derive_key(KNOWN_HISTORY_WITNESS_CONTEXT);
+        digest.update(&index.to_be_bytes());
+        for (holder, refs) in HISTORY.scan(self, txn)? {
+            digest.update(holder.as_bytes());
+            digest.update(&(refs.0.len() as u64).to_be_bytes());
+            for slot in refs.slots() {
+                digest.update(&slot.to_be_bytes());
+            }
+        }
+        Ok(Some(*digest.finalize().as_bytes()))
     }
 
     /// Carries out every staged known-value history retirement (KS-3), an
@@ -569,6 +654,28 @@ pub(crate) struct KnownHistoryIds {
 }
 
 impl KnownHistoryIds {
+    /// These fixed history ids read inside the caller's guard-held snapshot.
+    pub(super) fn read_in_snapshot(
+        &self,
+        txn: &RoTxn<'_>,
+        vault_meta: &OverlayDb,
+    ) -> Result<KnownHistory> {
+        let custody = LocalCustody::at(&self.binding);
+        let master = copy_master(&custody.read(&index_subject(&self.binding)?.at(self.index))?)?;
+        let mut holders = Vec::new();
+        for (holder, slots) in &self.holders {
+            let subject = holder_subject(&self.binding, holder)?;
+            if retirement_in_txn(vault_meta, txn, &subject)?.is_some() {
+                continue;
+            }
+            let entries = read_entries(custody, holder, slots.iter().copied())?;
+            if !entries.is_empty() {
+                holders.push((*holder, entries));
+            }
+        }
+        Ok(KnownHistory { master, holders })
+    }
+
     /// Each holder these ids name, in id order.
     pub(crate) fn holders(&self) -> impl Iterator<Item = &EntityId> {
         self.holders.iter().map(|(holder, _)| holder)
@@ -595,21 +702,7 @@ impl KnownHistoryIds {
         let history = {
             let txn = core.env.read_txn()?;
             let vault_meta = OverlayDb::canonical(core.raw.vault_meta);
-            let custody = LocalCustody::at(&self.binding);
-            let master =
-                copy_master(&custody.read(&index_subject(&self.binding)?.at(self.index))?)?;
-            let mut holders = Vec::new();
-            for (holder, slots) in &self.holders {
-                let subject = holder_subject(&self.binding, holder)?;
-                if retirement_in_txn(&vault_meta, &txn, &subject)?.is_some() {
-                    continue;
-                }
-                let entries = read_entries(custody, holder, slots.iter().copied())?;
-                if !entries.is_empty() {
-                    holders.push((*holder, entries));
-                }
-            }
-            KnownHistory { master, holders }
+            self.read_in_snapshot(&txn, &vault_meta)?
         };
         pass((!history.holders.is_empty()).then_some(&history))
     }

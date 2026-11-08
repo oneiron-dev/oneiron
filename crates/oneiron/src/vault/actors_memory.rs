@@ -82,6 +82,57 @@ impl ActorBound<'_> {
         self.vault
             .put_edge_provenance(claim_id, subject, body, self.actor_class, learned_at)
     }
+
+    /// Writes an `edge.provenance` Claim for an EXISTING structural edge
+    /// carrying the BOUND actor + class (FIX 7755: an explicitly authored
+    /// structural tie) — delegates to
+    /// [`Vault::put_structural_edge_provenance`] with the same fail-closed
+    /// binding check as [`ActorBound::put_edge_provenance`].
+    pub fn put_structural_edge_provenance(
+        &self,
+        claim_id: &EntityId,
+        subject: &EdgeRef,
+        body: &EdgeProvenanceClaimBody,
+        learned_at: u64,
+    ) -> Result<()> {
+        if body.actor_entity_ref != self.actor {
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
+                "body actor_entity_ref conflicts with the session-bound actor",
+            )));
+        }
+        self.vault.put_structural_edge_provenance(
+            claim_id,
+            subject,
+            body,
+            self.actor_class,
+            learned_at,
+        )
+    }
+
+    /// Cuts an EXISTING structural edge with the BOUND actor attached
+    /// (FIX 7755: an explicitly authored structural cut) — delegates to
+    /// [`Vault::delete_structural_edge_with_provenance`] with the same
+    /// fail-closed binding check as [`ActorBound::put_edge_provenance`].
+    pub fn delete_structural_edge_with_provenance(
+        &self,
+        claim_id: &EntityId,
+        subject: &EdgeRef,
+        body: &EdgeProvenanceClaimBody,
+        learned_at: u64,
+    ) -> Result<bool> {
+        if body.actor_entity_ref != self.actor {
+            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
+                "body actor_entity_ref conflicts with the session-bound actor",
+            )));
+        }
+        self.vault.delete_structural_edge_with_provenance(
+            claim_id,
+            subject,
+            body,
+            self.actor_class,
+            learned_at,
+        )
+    }
 }
 
 impl Vault {
@@ -317,16 +368,40 @@ impl Vault {
             .register_structural_kind_in_family(type_byte, short_id_prefix, family, pack)
     }
 
-    /// Allocates and persists the lowest free compiled-pack family slot.
-    /// A full family spills into pack overflow without losing its identity.
+    /// Allocates and persists the lowest free compiled-pack family slot for
+    /// the kind `identity` names, under `identity.pack`. A full family
+    /// spills into its zone's overflow range; when that is full too, the
+    /// kind interns through PackByteMap under `identity` (ARCH-0058
+    /// `#fail-soft`): name-bearing, its instances written by name, never a
+    /// count-full refusal. Interning mints no execution grant or trust.
+    ///
+    /// # Errors
+    /// A malformed identity or registration, a collision with a static or
+    /// registered kind, a prefix or name collision, or a store failure.
     pub fn allocate_structural_kind(
         &self,
         family: crate::registry::TypeByteFamily,
         short_id_prefix: impl Into<String>,
-        pack: impl Into<String>,
-    ) -> Result<StructuralKindRegistration> {
-        self.store
-            .allocate_structural_kind(family, short_id_prefix, pack)
+        identity: &crate::registry::pack_byte_map::PackKindIdentity,
+    ) -> Result<crate::registry::pack_byte_map::StructuralKindAllocation> {
+        use crate::registry::pack_byte_map::StructuralKindAllocation;
+        identity.validate()?;
+        if let Some(registration) =
+            self.store
+                .allocate_structural_kind(family, short_id_prefix, identity.pack.clone())?
+        {
+            return Ok(StructuralKindAllocation::Compiled(registration));
+        }
+        let installed = self.with_write_txn_grouped(|txn| {
+            self.install_pack_kinds_in_txn(txn, std::slice::from_ref(identity))
+        })?;
+        installed
+            .into_iter()
+            .next()
+            .map(StructuralKindAllocation::Pack)
+            .ok_or(crate::Error::InvariantViolation(
+                "a pack kind install answers its one kind",
+            ))
     }
 
     /// Returns the dynamic StructuralKind registration for `type_byte`, if

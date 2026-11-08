@@ -40,15 +40,30 @@ pub(crate) struct OAuthAct {
 const MAX_JWKS_BYTES: usize = 1024 * 1024;
 const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+/// How old a cached key set may be before a read with a known key id
+/// fetches it again (FIX 9530): a key the issuer removed stops verifying
+/// within this, while the issuer answers.
+const JWKS_REFRESH_AFTER: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+/// How long a key set stays trusted after its last good fetch (FIX 9530).
+/// Past it, a refresh that fails or returns a malformed set refuses every
+/// token, so a key the issuer removed cannot outlive an unreachable issuer.
+const JWKS_TRUST_LIFETIME: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 struct CachedJwks {
     body: String,
-    last_kid_miss_refresh: Option<std::time::Instant>,
+    /// When `body` was last fetched and validated.
+    fetched_at: std::time::Instant,
+    /// The last refresh tried, good or not: refreshes run at most once per
+    /// [`REFRESH_INTERVAL`].
+    last_refresh_try: Option<std::time::Instant>,
 }
 
 // Holding this short-lived lock across a bounded fetch coalesces concurrent
 // refreshes. The transport timeout ensures a request worker cannot wait
 // indefinitely, and importantly a failed refresh never evicts good material.
+// The HTTPS fetch runs on its own thread (FIX 9529), so it never panics
+// inside an async runtime while this lock is held; a lock some other panic
+// poisoned still serves, since it holds only validated key sets.
 static JWKS_CACHE: OnceLock<Mutex<HashMap<String, CachedJwks>>> = OnceLock::new();
 fn cache() -> &'static Mutex<HashMap<String, CachedJwks>> {
     JWKS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -72,8 +87,6 @@ fn bounded_file(path: &str) -> Result<String, ApiError> {
 }
 
 fn transport_fetch(uri: &str) -> Result<String, ApiError> {
-    use std::io::Read;
-
     #[cfg(test)]
     if let Some(transport) = test_transports()
         .lock()
@@ -96,6 +109,24 @@ fn transport_fetch(uri: &str) -> Result<String, ApiError> {
     if !uri.starts_with("https://") {
         return Err(ApiError::unauthorized());
     }
+    // reqwest's blocking client runs a runtime of its own, which panics when
+    // it is built or dropped inside an async runtime (FIX 9529). A thread of
+    // its own keeps it outside whatever runtime the caller is on; a panic
+    // there is an unauthorized answer, never a poisoned cache.
+    std::thread::scope(|scope| {
+        crate::engine_thread("oauth-key-fetch".into())
+            .spawn_scoped(scope, || https_fetch(uri))
+            .expect("failed to spawn thread")
+            .join()
+    })
+    .unwrap_or_else(|_| Err(ApiError::unauthorized()))
+}
+
+/// One bounded HTTPS GET of `uri`'s key set, on the calling thread, which
+/// must be outside any async runtime.
+fn https_fetch(uri: &str) -> Result<String, ApiError> {
+    use std::io::Read;
+
     let client = reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(FETCH_TIMEOUT)
@@ -144,47 +175,58 @@ fn test_transports() -> &'static Mutex<HashMap<String, TestTransport>> {
 fn fetch_jwks(uri: &str, refresh: bool) -> Result<String, ApiError> {
     let mut guard = cache().lock().map_err(|_| ApiError::unauthorized())?;
     let now = std::time::Instant::now();
-    let mut last_kid_miss_refresh = None;
+    // The cached set while it is still trusted; past its trust lifetime only
+    // a good fetch serves keys (FIX 9530).
+    let trusted = |entry: &CachedJwks| {
+        (now.duration_since(entry.fetched_at) < JWKS_TRUST_LIFETIME).then(|| entry.body.clone())
+    };
     if let Some(entry) = guard.get_mut(uri) {
-        if !refresh {
+        let due = now.duration_since(entry.fetched_at) >= JWKS_REFRESH_AFTER;
+        if !refresh && !due {
             return Ok(entry.body.clone());
         }
         if entry
-            .last_kid_miss_refresh
+            .last_refresh_try
             .is_some_and(|last| now.duration_since(last) < REFRESH_INTERVAL)
         {
-            return Ok(entry.body.clone());
+            return trusted(entry).ok_or_else(ApiError::unauthorized);
         }
         // Record the attempt before fetching so failures are rate-limited too.
-        // The cached body remains available if replacement fails.
-        entry.last_kid_miss_refresh = Some(now);
-        last_kid_miss_refresh = entry.last_kid_miss_refresh;
+        // The cached body remains available, while trusted, if replacement fails.
+        entry.last_refresh_try = Some(now);
     }
-    let body = match transport_fetch(uri) {
+    let fetched = transport_fetch(uri).and_then(|body| {
+        // Validate before replacement so malformed 2xx responses cannot
+        // clobber known-good material.
+        serde_json::from_str::<jsonwebtoken::jwk::JwkSet>(&body)
+            .map(|_| body)
+            .map_err(|_| ApiError::unauthorized())
+    });
+    let body = match fetched {
         Ok(body) => body,
         Err(error) => {
-            if let Some(entry) = guard.get(uri) {
-                return Ok(entry.body.clone());
-            }
-            return Err(error);
+            return match guard.get(uri) {
+                Some(entry) => trusted(entry).ok_or_else(ApiError::unauthorized),
+                None => Err(error),
+            };
         }
     };
-    // Validate before replacement so malformed 2xx responses cannot clobber
-    // known-good material.
-    if serde_json::from_str::<jsonwebtoken::jwk::JwkSet>(&body).is_err() {
-        if let Some(entry) = guard.get(uri) {
-            return Ok(entry.body.clone());
-        }
-        return Err(ApiError::unauthorized());
-    }
     guard.insert(
         uri.to_owned(),
         CachedJwks {
             body: body.clone(),
-            last_kid_miss_refresh,
+            fetched_at: now,
+            last_refresh_try: Some(now),
         },
     );
     Ok(body)
+}
+
+/// Public identity-provider keys through the existing HTTPS/cache/refresh
+/// path. The caller pins the provider URI and validates its own token claims;
+/// this supplies no relay or core authority.
+pub(crate) fn identity_provider_jwks(uri: &str, refresh: bool) -> Result<String, ApiError> {
+    fetch_jwks(uri, refresh)
 }
 
 /// Best-effort startup prefetch. Failures intentionally leave an empty or
@@ -366,7 +408,8 @@ mod tests {
             config.oauth_jwks_uri.clone().unwrap(),
             CachedJwks {
                 body: JWKS.into(),
-                last_kid_miss_refresh: None,
+                fetched_at: std::time::Instant::now(),
+                last_refresh_try: None,
             },
         );
     }

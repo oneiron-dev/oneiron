@@ -10,13 +10,15 @@ use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::store::Store;
 
 pub mod backup;
+pub(crate) mod board_layout;
 mod destination;
 mod device_local;
 mod device_only;
-pub mod model_versioning;
+pub use oneiron_store::settings::model_pack;
+pub use oneiron_store::settings::model_versioning;
 mod models;
 pub(crate) mod room_threads;
-pub mod web_connector;
+pub use oneiron_store::settings::web_connector;
 
 pub use destination::{
     CallerLocality, ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold,
@@ -27,13 +29,17 @@ pub(crate) use destination::{
 };
 pub(crate) use device_local::{
     device_local_keeps_among, device_local_worlds_at, device_local_worlds_for,
-    device_local_worlds_for_machine,
+    device_local_worlds_for_machine, off_device_readable_in,
 };
 pub(crate) use device_only::{
-    CarriedWorlds, carried_worlds_in, device_only_withholds, device_only_withholds_raw,
-    minted_worlds_in,
+    CarriedWorlds, carried_worlds_in, device_only_recipient_worlds,
+    device_only_recipient_worlds_raw, device_only_withholds, device_only_withholds_raw,
+    device_only_withholds_run, minted_worlds_in,
 };
 
+pub use board_layout::{
+    AgentBoardLayoutOverride, BOARD_LAYOUT_AGENT_OVERRIDES_MAX, BoardLayoutSettings,
+};
 pub use model_versioning::{
     DEFAULT_MODEL_STACK_CURRENT_ID, DEFAULT_MODEL_STACK_V1_ID, ModelStack, ModelStackDeprecation,
     ModelStackDeprecationStage, ModelStackDeprecationStatus, ModelStackDisclosure, ModelStackId,

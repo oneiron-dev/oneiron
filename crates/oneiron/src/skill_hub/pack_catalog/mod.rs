@@ -14,6 +14,7 @@ mod lenses;
 mod local;
 mod manifest;
 mod migrations;
+mod model_pack;
 mod organs;
 pub mod predicate_rewrites;
 mod setup;
@@ -41,6 +42,8 @@ pub use lenses::{
 pub use local::LOCAL_PACK_NAME;
 pub use manifest::{PackAdapter, PackKind, PackManifest};
 pub use migrations::PackMigration;
+pub(crate) use model_pack::AdmittedModelPacks;
+pub use model_pack::{InstalledModelPack, MODEL_PACK_FILE};
 pub use organs::{
     PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree, host_platform,
 };

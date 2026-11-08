@@ -64,6 +64,13 @@ impl LocalFileKeystore {
         self.dir.join(format!("{}.key", slot.name()))
     }
 
+    /// The key directory, checked and canonical: the hardware tier keeps its
+    /// sealed slots here too, under their own suffix (OF-168).
+    #[cfg(target_os = "linux")]
+    pub(crate) fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     fn sync_dir(&self) -> Result<()> {
         File::open(&self.dir).and_then(|d| d.sync_all()).map_err(io)
     }
@@ -91,7 +98,7 @@ impl LocalFileKeystore {
     }
 
     /// Removes stale temporary files for one slot, or every slot (FIX 8019).
-    fn sweep_temps(&self, slot: Option<&KeystoreSlot>) {
+    pub(crate) fn sweep_temps(&self, slot: Option<&KeystoreSlot>) {
         // Without /proc no pid is known gone, so every file is kept.
         if !Path::new("/proc").exists() {
             return;

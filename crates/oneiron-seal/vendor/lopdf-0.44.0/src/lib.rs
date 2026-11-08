@@ -1,5 +1,10 @@
 #![doc = include_str!("../README.md")]
-#![forbid(unsafe_code)]
+// `deny`, not `forbid`: `object.rs` holds the crate's only `unsafe`, the
+// audited stack-safe `Object` destruction (FIX 8446), scoped there with an
+// explicit `allow` and per-block SAFETY notes. Overwriting a place without
+// running its destructor is inexpressible in safe Rust, so `forbid` would
+// rule out any terminating drop for unbounded graphs.
+#![deny(unsafe_code)]
 #![deny(clippy::all)]
 
 pub mod content;
@@ -9,9 +14,11 @@ pub mod xobject;
 pub mod xref;
 
 #[macro_use]
-mod object;
+mod admitted;
 mod document;
 mod incremental_document;
+#[macro_use]
+mod object;
 
 mod bookmarks;
 mod cmap_section;
@@ -42,7 +49,7 @@ pub use object::{Dictionary, Object, ObjectId, Stream, StringFormat};
 
 pub use bookmarks::Bookmark;
 pub use common_data_structures::{decode_text_string, text_string};
-pub use decode_admission::{DecodeAdmission, DecodeAdmissionError};
+pub use decode_admission::{DecodeAdmission, DecodeAdmissionError, ReadProgress as DecodeReadProgress};
 pub use destinations::Destination;
 pub use encodings::{Encoding, encode_utf8, encode_utf16_be};
 pub use encryption::{EncryptionState, EncryptionVersion, Permissions};

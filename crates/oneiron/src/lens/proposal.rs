@@ -67,7 +67,7 @@ pub struct LensProposeRequest {
     pub pack_content_hash: String,
     /// The frozen generated-lens envelope (`kit_version`,
     /// `apps_contract_version`, `root`), validated as the renderer reads it.
-    pub compiled: serde_json::Value,
+    pub compiled: GeneratedLens,
     /// The authored prompt the tree was compiled from; regeneration reruns it.
     pub intent_prompt: String,
     /// What caused this proposal: a live task, ask, run or skill. The lens
@@ -227,9 +227,7 @@ impl Memory<'_> {
     /// over where this credential is bound to author (FIX 2136).
     pub fn lenses_propose(&self, input: LensProposeRequest) -> MemoryResult<LensProposalReceipt> {
         let skill_id = input.slot.skill()?;
-        let compiled: GeneratedLens = serde_json::from_value(input.compiled).map_err(|error| {
-            MemoryError::bad_request(format!("compiled is not a frozen lens tree: {error}"))
-        })?;
+        let compiled = input.compiled;
         if !matches!(
             lens_load_action(compiled.version_stamp(), LensVersionStamp::current()),
             LensLoadAction::MountCurrent

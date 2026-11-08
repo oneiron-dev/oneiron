@@ -11,17 +11,46 @@ use crate::entity_id::EntityId;
 use crate::secret_custody::{RunSecretHolder, SentPresentation};
 use crate::secret_lease::SecretGrantRef;
 
+use super::connector_call_input_resume::ConnectorResumeState;
 use super::result_scrub::OutboundResultSender;
 use super::tool_call::MutationIntent;
 
-/// One guest call: a catalog name, one of its tools, and the arguments. It
-/// carries no endpoint, credential, schema, grant or principal: the engine
-/// and the host resolve those beneath the name.
+/// Which interface a served connector call or schema read selects. This
+/// chooses a route, never a credential, grant or approved manifest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorSource {
+    Catalog,
+    Builtin,
+}
+
+impl ConnectorSource {
+    /// An omitted choice keeps the served door's implicit name selection.
+    #[must_use]
+    pub fn resolve(source: Option<Self>, name: &str) -> Self {
+        source.unwrap_or_else(|| {
+            if name == crate::web_connector::WEB_CONNECTOR_NAME {
+                Self::Builtin
+            } else {
+                Self::Catalog
+            }
+        })
+    }
+}
+
+/// One connector call and its arguments. It carries no endpoint,
+/// credential, schema, grant or principal: the engine and host resolve
+/// those beneath the name. Native catalog-only calls do not serve builtins.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorCallRequest {
-    /// The connector's catalog name.
+    /// The connector's name within the selected source.
     pub name: String,
+    /// Explicit catalog or builtin selection at a served door. When absent,
+    /// a served `web` call selects the builtin; other names select catalog.
+    /// Native catalog-only calls accept catalog or no explicit selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ConnectorSource>,
     /// The tool, as the connector's approved manifest names it.
     pub tool: String,
     /// The tool's arguments, a JSON object.
@@ -161,6 +190,7 @@ pub enum ConnectorCallOutcome {
         call_ref: EntityId,
         intent: Option<[u8; 32]>,
         input: ConnectorAwaitingInput,
+        budget_steering: Vec<String>,
     },
 }
 
@@ -213,10 +243,24 @@ pub trait ConnectorCallHost: OutboundResultSender {
     /// host that keeps no questions ignores it.
     fn abandon_awaiting_input(&mut self, _handle: &str) {}
 
-    /// The live questions `handle` names are kept on the call `call_ref`'s
-    /// row (FIX 3837): the host keeps that row current as the exchange goes
-    /// on. A host that keeps no questions ignores it.
+    /// Binds live questions to the row the engine is about to keep, before
+    /// that writer can publish their reply. This is in-memory only: no vault
+    /// writer or durable resume persistence. A failed commit abandons them.
     fn bind_awaiting_call(&mut self, _handle: &str, _call_ref: EntityId) {}
+
+    /// Takes the bound round's opaque resume state before the row writer opens.
+    /// The engine seals it in that writer; a host without resume state returns none.
+    fn take_awaiting_resume(
+        &mut self,
+        _handle: &str,
+        _call_ref: EntityId,
+    ) -> Option<ConnectorResumeState> {
+        None
+    }
+
+    /// The row and its reply committed. The host can mark an exchange that
+    /// already ended uncertain. A host without live questions ignores it.
+    fn awaiting_call_committed(&mut self, _handle: &str, _call_ref: EntityId) {}
 
     /// Takes the custody record the last `send` presented, as its door
     /// resolved it (FIX 5455): an empty list when it presented none, `None`

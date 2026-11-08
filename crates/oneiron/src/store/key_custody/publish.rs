@@ -25,6 +25,7 @@
 //! target answers covered, and the pass acks nothing for its older position,
 //! moves no watermark, advances no anchor and records no status.
 
+mod backup;
 mod pending;
 mod seal;
 
@@ -42,7 +43,7 @@ use super::protocol::{
     AckRecord, AnchorAdvance, AnchorStore, CustodyBatch, CustodyTarget, Lineage, PendingCode,
     TargetId, TargetKind, TargetPending, TargetPublication, TargetSpec,
 };
-use super::publication_policy::TargetRecipients;
+use super::publication_policy::{PolicyStanding, TargetRecipients};
 use super::targets::{RequiredSet, RetirementProgress, acked_seq};
 
 const STATUS: &str = "status";
@@ -275,6 +276,7 @@ impl Store {
     pub(crate) fn publish_custody(
         &self,
         recipients: &TargetRecipients,
+        standing: &PolicyStanding,
         given: &[&dyn CustodyTarget],
         outboxes: &[&OutboxTarget],
         anchor: Option<&dyn AnchorStore>,
@@ -288,8 +290,9 @@ impl Store {
             return Ok(Publication::nothing());
         }
         let journal = custody.journal()?;
-        let Some(mut publication) =
-            self.publish_pass(custody, &journal, recipients, given, outboxes, anchor)?
+        let Some(mut publication) = self.publish_pass(
+            custody, &journal, recipients, standing, given, outboxes, anchor,
+        )?
         else {
             // A newer pass covered this one and records its own status.
             return self.custody_publication();
@@ -304,11 +307,16 @@ impl Store {
     /// The pass [`Self::publish_custody`] records; `None` when a target held
     /// a newer head of this log than the pass sealed: a newer pass covers it
     /// (FIX 6394).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each argument is one input of the one publication pass"
+    )]
     fn publish_pass(
         &self,
         custody: LocalCustody<'_>,
         journal: &Journal,
         recipients: &TargetRecipients,
+        standing: &PolicyStanding,
         given: &[&dyn CustodyTarget],
         outboxes: &[&OutboxTarget],
         anchor: Option<&dyn AnchorStore>,
@@ -370,13 +378,20 @@ impl Store {
         // member's apart from a folder's or the residence home's.
         let groups = [&recipients.own, &recipients.hosted];
         let group = |spec: &TargetSpec| usize::from(matches!(spec.kind(), TargetKind::Hosted(_)));
-        let sealed = self.seal_batch(custody, journal, &groups, set.revision, |position| {
-            let mut behind = vec![false; groups.len()];
-            for spec in &specs {
-                behind[group(spec)] |= due(spec.id(), position);
-            }
-            behind
-        })?;
+        let sealed = self.seal_batch(
+            custody,
+            journal,
+            standing,
+            &groups,
+            set.revision,
+            |position| {
+                let mut behind = vec![false; groups.len()];
+                for spec in &specs {
+                    behind[group(spec)] |= due(spec.id(), position);
+                }
+                behind
+            },
+        )?;
         let (position, batches) = match sealed {
             Sealed::Nothing => return Ok(Some(Publication::nothing())),
             Sealed::At(position, batches) => {
@@ -627,6 +642,7 @@ impl Store {
         &self,
         spec: &TargetSpec,
         recipients: &CustodyRecipients,
+        standing: &PolicyStanding,
     ) -> Result<Option<CustodyBatch>> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(None);
@@ -646,10 +662,14 @@ impl Store {
         journal.reconcile()?;
         let acks = journal.acks()?;
         let reseal = recipients.data_key.is_some() && journal.root_only(spec.id());
-        let sealed =
-            self.seal_batch(custody, &journal, &[recipients], set.revision, |position| {
-                vec![reseal || acked_seq(&acks, spec.id(), position) != Some(position.seq)]
-            })?;
+        let sealed = self.seal_batch(
+            custody,
+            &journal,
+            standing,
+            &[recipients],
+            set.revision,
+            |position| vec![reseal || acked_seq(&acks, spec.id(), position) != Some(position.seq)],
+        )?;
         match sealed {
             Sealed::At(_, mut batches) => match batches.pop().flatten() {
                 Some(Ok(batch)) => Ok(Some(batch)),

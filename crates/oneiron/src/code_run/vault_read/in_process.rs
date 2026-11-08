@@ -1,6 +1,10 @@
 //! The in-process adapter: scoped reads against a live vault plus retrieval-budget control.
 
+mod deferred_forms;
 mod frames;
+mod media_query;
+
+pub use deferred_forms::DeferredServedForms;
 
 use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadActorKey};
 use crate::context_pack::{
@@ -8,7 +12,6 @@ use crate::context_pack::{
     EmptyContext, EmptyReason, FieldProfile, TokenAllocation,
 };
 use crate::memory::repo_secret_reads::masked_asset_body;
-use crate::pipeline::ScoredEntity;
 use crate::receipt::ServedForm;
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::vault::Vault;
@@ -45,7 +48,9 @@ pub struct InProcessVaultReadAdapter<'v> {
     scoped_read: ScopedRead<'v>,
     producers: Option<&'v crate::memory::ProducerRows>,
     media: Option<&'v [EmbeddedMediaSeed]>,
+    media_memory: Option<&'v crate::host_memory::MachineMemory>,
     image_pick: Option<crate::memory::ImagePick<'v>>,
+    deferred_forms: Option<&'v DeferredServedForms>,
 }
 
 /// The engine code a context pack or query naming `media` is refused with
@@ -57,6 +62,7 @@ pub const MEDIA_UNAVAILABLE_ENGINE_CODE: &str = "EMBEDDER_UNAVAILABLE";
 fn media_unavailable(method: VaultReadMethod) -> VaultReadError {
     VaultReadError::Engine {
         narrowing: None,
+        legal_hold: None,
         method,
         engine_code: MEDIA_UNAVAILABLE_ENGINE_CODE.to_owned(),
         message: "this host serves no ai.embed rung for media; retry without media".to_owned(),
@@ -85,7 +91,9 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             scoped_read: vault.scoped_read(actor_key),
             producers: None,
             media: None,
+            media_memory: None,
             image_pick: None,
+            deferred_forms: None,
         }
     }
 
@@ -181,46 +189,30 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         self
     }
 
-    /// Host media seeds, the one-space preset's text-slot seed among them,
-    /// are each one more ranked list beside the text and vector seeds, as on
-    /// the accepted route's `run_core_query`. A query asked in an affect
-    /// rides the seeded search, the one that takes it.
-    fn run_query(
+    /// Holds every form a hydrate serves in `forms` for the host to commit,
+    /// instead of committing it before the hydrate answers (FIX 26).
+    #[must_use]
+    pub fn deferring_served_forms(mut self, forms: &'v DeferredServedForms) -> Self {
+        self.deferred_forms = Some(forms);
+        self
+    }
+
+    /// Commits `served`, or holds it for the host that defers its forms.
+    fn record_served_forms(
         &self,
-        query: Option<&str>,
-        vector: Option<&[f32]>,
-        media: &[EmbeddedMediaSeed],
-        limit: usize,
-        affect: Option<oneiron_contracts::affect::Vad>,
-    ) -> VaultReadResult<crate::claim::ScopedReadResult<Vec<ScoredEntity>>> {
-        let results = if media.is_empty() && affect.is_none() {
-            match (query, vector) {
-                (Some(query), Some(vector)) => self.scoped_read.search(query, vector, limit, None),
-                (Some(query), None) => self.scoped_read.search_text(query, limit, None),
-                (None, Some(vector)) => self.scoped_read.search_vector(vector, limit, None),
-                (None, None) => self.scoped_read.read_receipt(None, 0).map(|receipt| {
-                    crate::claim::ScopedReadResult {
-                        value: Vec::new(),
-                        receipt,
-                    }
-                }),
+        method: VaultReadMethod,
+        served: &[ServedForm],
+    ) -> VaultReadResult<()> {
+        match self.deferred_forms {
+            Some(deferred) => {
+                deferred.defer(served);
+                Ok(())
             }
-        } else {
-            let media: Vec<_> = media
-                .iter()
-                .map(|seed| {
-                    (
-                        seed.space.as_str(),
-                        seed.kind,
-                        seed.vector.as_slice(),
-                        seed.kinds.as_slice(),
-                    )
-                })
-                .collect();
-            self.scoped_read
-                .search_seeded(query, vector, &media, limit, None, affect)
-        };
-        results.map_err(|error| engine_failure(VaultReadMethod::Query, &error))
+            None => self
+                .scoped_read
+                .commit_served_forms(served)
+                .map_err(|error| engine_failure(method, &error)),
+        }
     }
 
     fn query_op(&self, request: &CoreQueryRequest) -> VaultReadResult<CoreQueryResponse> {
@@ -228,7 +220,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
 
         let view = request.view.unwrap_or(View::Summary);
         let count_mode = request.count_mode.for_search_response();
-        let (limit, limit_clamped) = crate::memory::caps::clamp_search_limit(request.limit);
+        let limit = request.limit;
+        let limit_clamped = false;
         let fetch_limit = search_fetch_limit(count_mode, limit);
         if self.media.is_none() && request.media.is_some() {
             return Err(media_unavailable(METHOD));
@@ -308,15 +301,21 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let depth = request.resolved_depth();
         let edge_hop = depth.edge_hop.unwrap_or(0);
         let max_neighbors = depth.max_neighbors.unwrap_or(DEFAULT_MAX_NEIGHBORS);
-        let (limit, limit_clamped) = crate::memory::caps::clamp_search_limit(request.limit);
+        let limit = request.limit;
+        let limit_clamped = false;
         let candidate_limit = self
             .scoped_read
             .search_candidate_limit(limit)
             .map_err(|error| engine_failure(METHOD, &error))?;
-        let mut builder = self
+        // Every channel and neighbor takes this read's row gate, its bound
+        // caller filter included, before its cut (FIX 3977); the pack is
+        // still filtered under the read once it runs.
+        let plan = self
             .scoped_read
-            .vault()
-            .context_pack()
+            .context_pack_plan()
+            .map_err(|error| engine_failure(METHOD, &error))?;
+        let mut builder = plan
+            .admit(self.scoped_read.vault().context_pack())
             .limit(candidate_limit)
             .hydrate(true)
             .include_edges(false)
@@ -325,6 +324,9 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .max_neighbors(max_neighbors)
             .field_profile(FieldProfile::Standard)
             .for_destination(self.scoped_read.actor_key().destination());
+        if let Some(memory) = self.media_memory {
+            builder = builder.media_query_memory(memory);
+        }
         if let Some(model) = request.executor_model.as_deref() {
             builder = builder
                 .skill_executor(model)
@@ -433,7 +435,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .read_named(&[PointRead::short(&short_id, content_hash)], None)
             .map_err(|error| engine_failure(method, &error))?;
         let mut narrowing = hydrated.receipt;
-        let row = named_row(method, hydrated.value)?;
+        let row = named_row(method, hydrated.value)
+            .map_err(|error| error.with_read_receipt(narrowing.clone()))?;
         self.project_hydrate(
             method,
             short_id,
@@ -554,9 +557,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             view,
             &hydrate_reader(request.image_input, view),
         )?;
-        self.scoped_read
-            .commit_served_forms(served.as_slice())
-            .map_err(|error| engine_failure(METHOD, &error))?;
+        self.record_served_forms(METHOD, served.as_slice())?;
         Ok(response)
     }
 
@@ -621,10 +622,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             results.push(batch_item_from_result(reference.clone(), result)?);
         }
         // Every form the batch served is recorded in one write before it
-        // answers.
-        self.scoped_read
-            .commit_served_forms(&served)
-            .map_err(|error| engine_failure(METHOD, &error))?;
+        // answers, or held for the host that defers its forms.
+        self.record_served_forms(METHOD, &served)?;
         Ok(CoreBatchShortIdHydrateResponse { narrowing, results })
     }
 
@@ -721,10 +720,8 @@ fn resolve_retrieval_budget(
         selected_edges,
     );
     if let Some(retrieval) = retrieval {
-        // Each per-kind budget is served at the ceiling, as `limit` is.
-        let rows = |bucket: Option<usize>, default: usize| {
-            crate::memory::caps::clamp_search_limit(bucket.unwrap_or(default)).0
-        };
+        // Each per-kind budget is served whole, as `limit` is.
+        let rows = |bucket: Option<usize>, default: usize| bucket.unwrap_or(default);
         budget.claims = rows(retrieval.claims, budget.claims);
         budget.turns = rows(retrieval.turns, budget.turns);
         budget.summaries = rows(retrieval.summaries, budget.summaries);
@@ -762,15 +759,31 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
     ) -> VaultReadResult<VaultReadResponse> {
         // Keep request-local reader state isolated. Policy is re-resolved in
         // each body snapshot, so a retained actor binding is not retained authority.
-        // The fresh reader lists into the host's producer set.
+        // The fresh reader lists into the host's producer set, and holds its
+        // served forms for a host that defers them.
         let mut reader = Self::new(
             self.scoped_read.vault(),
             self.scoped_read.actor_key().clone(),
         );
         reader.producers = self.producers;
+        reader.deferred_forms = self.deferred_forms;
         reader.media = self.media;
+        reader.media_memory = self.media_memory;
         reader.image_pick = self.image_pick.clone();
-        match request.into_inner() {
+        let request = request.into_inner();
+        // The caller's own filter binds this request's fresh reader alone,
+        // never the backend's (FIX 3977).
+        let filter = match &request {
+            VaultReadRequest::Query(request) => request.filter.as_ref(),
+            VaultReadRequest::ContextPack(request) => request.filter.as_ref(),
+            VaultReadRequest::Hydrate(request) => request.filter.as_ref(),
+            VaultReadRequest::HydrateMany(request) => request.filter.as_ref(),
+            VaultReadRequest::MemoryTimeline(request) => request.filter.as_ref(),
+            _ => None,
+        }
+        .map(crate::memory::ReadFilterInput::to_filter);
+        reader.scoped_read = reader.scoped_read.with_read_filter(filter.as_ref());
+        match request {
             VaultReadRequest::Query(request) => {
                 reader.query_op(&request).map(VaultReadResponse::Query)
             }

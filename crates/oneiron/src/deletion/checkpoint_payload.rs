@@ -74,8 +74,30 @@ pub(crate) fn settle_checkpoint_payloads_for_reason_in_txn(
     reason: Option<TombstoneReason>,
 ) -> Result<()> {
     let disposition = disposition(reason);
+    if disposition == PayloadDisposition::Erase {
+        crate::store::checkpoint_payload::instance::erase_entity_before_first_capture_in_txn(
+            store, wtxn, id,
+        )?;
+    }
+    crate::agent_dispatch::settle_workflow_tool_payloads_in_txn(store, wtxn, id, disposition)?;
     for subtype in ENTITY_OWNED {
         settle_owner_in_txn(store, wtxn, subtype, id.as_bytes(), disposition)?;
     }
     Ok(())
+}
+
+/// Resolve the workflow body's positive source binding before a replay
+/// removes it. Entity-owned compartments keep their existing settle order.
+pub(crate) fn settle_workflow_tool_payloads_for_reason_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    reason: Option<TombstoneReason>,
+) -> Result<()> {
+    crate::agent_dispatch::settle_workflow_tool_payloads_in_txn(
+        store,
+        wtxn,
+        id,
+        disposition(reason),
+    )
 }

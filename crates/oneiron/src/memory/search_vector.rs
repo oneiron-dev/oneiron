@@ -39,6 +39,10 @@ pub struct VectorSearchRequest {
     pub limit: usize,
     #[serde(default)]
     pub lane: VectorSearchLane,
+    /// The caller's retrieval filter (FIX 3977): bound before candidate
+    /// generation, so it narrows every channel, seed and terminal read.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 impl VectorSearchRequest {
@@ -116,8 +120,18 @@ impl Memory<'_> {
         &self,
         input: &VectorSearchRequest,
     ) -> MemoryResult<ScopedReadResult<VectorSearchResult>> {
+        if let Some(filter) = &input.filter {
+            // Bind the caller's filter on this call's handle once, so every
+            // lane the search opens meets it (FIX 3977).
+            let bound = VectorSearchRequest {
+                filter: None,
+                ..input.clone()
+            };
+            return self.with_read_filter(Some(filter)).query_vector(&bound);
+        }
         input.validate()?;
-        let (mut limit, mut limit_clamped) = caps::clamp_search_limit(input.limit);
+        let mut limit = input.limit;
+        let mut limit_clamped = false;
         let skip_rescore = input.lane == VectorSearchLane::VoiceHot;
         if skip_rescore {
             let reduced =
@@ -134,10 +148,15 @@ impl Memory<'_> {
                 &input.kinds,
                 limit,
                 None,
+                None,
             ),
-            None => {
-                lane.search_vector_revisioned_with_rescore(&input.query, limit, None, skip_rescore)
-            }
+            None => lane.search_vector_revisioned_with_rescore(
+                &input.query,
+                limit,
+                None,
+                skip_rescore,
+                None,
+            ),
         }?;
         self.produced_from(found.hits.iter().map(|hit| hit.id));
         Ok(ScopedReadResult {

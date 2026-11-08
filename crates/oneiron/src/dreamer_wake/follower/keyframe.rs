@@ -195,7 +195,8 @@ pub(crate) struct KeyframeCommit<'a> {
 
 /// Stands a fold as the session's keyframe in one transaction: its result
 /// row, the coverage it folds and a new epoch. False, with nothing written,
-/// when this writer no longer holds the session or another fold stood.
+/// when this writer no longer holds the session, another fold stood, or a
+/// folded turn now belongs to an excluded conversation.
 pub(crate) fn commit_keyframe_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -209,6 +210,12 @@ pub(crate) fn commit_keyframe_in_txn(
     if session.state.keyframe != work.prior || session.state.covered_through >= work.covers_through
     {
         return Ok(false);
+    }
+    let excluded = vault.dreamer_excluded_conversations_in_txn(txn)?;
+    for turn in &work.turns {
+        if excluded.contains_turn(vault, txn, turn)? {
+            return Ok(false);
+        }
     }
     let key = (commit.writer.attempt, work.seq);
     let epoch = session.state.epoch.saturating_add(1);
@@ -236,10 +243,11 @@ pub(crate) fn commit_keyframe_in_txn(
 /// prepared suffix that asks of them goes, and every result forgets them.
 /// Withdrawn words are never sent again; the epoch moves on.
 pub(crate) fn erase_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     turns: &[EntityId],
 ) -> Result<()> {
+    let store = write.store;
     if turns.is_empty() {
         return Ok(());
     }
@@ -277,7 +285,40 @@ pub(crate) fn erase_in_txn(
             state::save_in_txn(store, txn, &session)?;
         }
     }
-    state::forget_results_in_txn(store, txn, turns)
+    state::forget_results_in_txn(write, txn, turns)
+}
+
+/// The exclusion hook, in the setter's transaction (FIX 12551(a)): the
+/// newly excluded conversations' framed words go, with the erase shape
+/// above, so content framed before the exclusion never rides a later ask.
+/// The frames name turns, not conversations, so the delta resolves
+/// through each candidate turn's conversation edge; folded words whose
+/// frames are already gone are found through the results. Spans stay
+/// queued and readings re-frame on demand, so un-excluding recovers.
+pub(crate) fn exclude_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    conversations: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if conversations.is_empty() {
+        return Ok(());
+    }
+    let store = &vault.store;
+    let mut candidates = state::result_turns_in_txn(store, txn)?;
+    for session in state::sessions_in_txn(store, txn)? {
+        for (_, frame) in state::frames_in_txn(store, txn, &session.key, 0)? {
+            candidates.insert(frame.turn);
+        }
+    }
+    let mut turns = Vec::new();
+    for turn in candidates {
+        if crate::dreamer_consolidation::redirty::conversation_in_txn(vault, txn, &turn)?
+            .is_some_and(|conversation| conversations.contains(&conversation))
+        {
+            turns.push(turn);
+        }
+    }
+    erase_in_txn(&crate::secret_custody::CustodyWrite::of(vault), txn, &turns)
 }
 
 impl Vault {

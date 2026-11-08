@@ -44,7 +44,10 @@ pub use files::RepoProposedFile;
 pub(super) use files::{native_bundle_queue_only, received_bundle_queue_only};
 pub(super) use guards::require_repo_artifact_in_txn;
 use guards::validate_conflict_in_txn;
-pub use queue_review::{QueueReviewAdmission, RepoProposalCritique, RepoProposalReview};
+pub use queue_review::{
+    ContractReviewEvidence, ContractReviewRequest, ContractReviewSettlement, QueueReviewAdmission,
+    RepoProposalCritique, RepoProposalReview,
+};
 pub(super) use submit::ProposalBase;
 
 /// Durable per-operation code proposal. Key: id16.
@@ -126,6 +129,10 @@ pub struct RepoProposal {
     /// The review its merge stack's admission sealed, if one admitted it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_review: Option<QueueReviewAdmission>,
+    /// The person reviews a removed public name routed it to, each with its
+    /// decision once made (FIX 4365).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contract_reviews: Vec<ContractReviewRequest>,
     pub status: RepoProposalStatus,
     /// The approved proposal this one resolves the lifted secret handles
     /// of (FIX 2938), when it was minted for exactly that at landing.
@@ -164,7 +171,11 @@ impl RepoProposal {
         vault: &Vault,
         frontier: &crate::code_document::CodeDocumentFrontier,
     ) -> Result<u32> {
-        if super::oplog::repo_mutation_repo_key(&RepoRef::parse(&self.repo)?) != frontier.repo {
+        if vault
+            .resolve_repo_identity(&RepoRef::parse(&self.repo)?)?
+            .as_str()
+            != frontier.repo
+        {
             return Err(invalid("reviewed file belongs to another document"));
         }
         if self.is_file_bundle() {
@@ -330,6 +341,24 @@ impl Vault {
         request: RepoMutationRequest,
         review: RepoProposalReview,
     ) -> Result<RepoProposal> {
+        let proposed = self.propose_repo_mutation_as_owner_checked::<std::convert::Infallible>(
+            owner,
+            repository,
+            request,
+            review,
+            |_| Ok(Ok(())),
+        )?;
+        Ok(proposed.unwrap_or_else(|never| match never {}))
+    }
+
+    fn propose_repo_mutation_as_owner_checked<R>(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        repository: EntityId,
+        request: RepoMutationRequest,
+        review: RepoProposalReview,
+        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<RepoProposal, R>> {
         let actor = request.actor_id;
         let repository_ref = request.repo_ref.clone();
         let session = request.session_id;
@@ -339,7 +368,7 @@ impl Vault {
             request.op_provenance.intent,
             request.op_provenance.substrate_ref,
         ];
-        let proposed = self.propose_repo_mutation_checked::<std::convert::Infallible>(
+        let proposed = self.propose_repo_mutation_checked(
             request,
             review,
             ProposalBase::CurrentCheckout,
@@ -363,10 +392,10 @@ impl Vault {
                 if Some(owner.revalidate_in_txn(self, txn)?) != actor {
                     return Err(invalid("proposal actor is not the authenticated owner"));
                 }
-                Ok(Ok(()))
+                check(txn)
             },
         )?;
-        Ok(proposed.unwrap_or_else(|never| match never {}))
+        Ok(proposed)
     }
     pub fn repo_proposal(&self, id: EntityId) -> Result<Option<RepoProposal>> {
         let txn = self.store.env.read_txn()?;
@@ -445,6 +474,7 @@ impl Vault {
                 "proposal requires unanimous independent multi-critic acceptance",
             ));
         }
+        row.require_registered_edit_at_acceptance_in_txn(self, &txn)?;
         row.status = RepoProposalStatus::Approved;
         store(self, &mut txn, &row)?;
         txn.commit()?;
@@ -677,10 +707,7 @@ pub(super) fn validate_conflict(
     let txn = vault.store.env.read_txn()?;
     validate_conflict_in_txn(vault, &txn, proposal)?;
     drop(txn);
-    let branch = super::support::utf8_trimmed(
-        super::git::run_git(root, &["branch".into(), "--show-current".into()])?,
-        "branch must be UTF-8",
-    )?;
+    let branch = super::conflict::current_branch(vault, root)?;
     if branch != *branch_name {
         return Err(invalid(
             "reviewed resolution requires its active conflict and branch",

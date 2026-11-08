@@ -54,7 +54,8 @@ const REVIEW_POINTER: SideTable<Vec<u8>, Vec<u8>, Raw> =
     SideTable::new(&side_table::CRITIC_REVIEW_RESULT_ID);
 
 /// Re-keys every terminal attempt receipt's frozen project stamp naming
-/// erased `entity` to one fresh opaque scope.
+/// erased `entity` to one fresh opaque scope, and removes its retained-revision
+/// witnesses from the manifest without changing the manifest's other fields.
 ///
 /// # Errors
 ///
@@ -75,7 +76,10 @@ pub(crate) fn erase_receipt_scope_in_txn(
         }
         match PACK_RECEIPT.decode_value(&value) {
             Ok(mut receipt) => {
-                if receipt.rescope_task_project(*entity, minted(vault, &mut scope)?) {
+                let scope_changed =
+                    receipt.rescope_task_project(*entity, minted(vault, &mut scope)?);
+                let pins_changed = receipt.erase_manifest_revision_pins(*entity);
+                if scope_changed || pins_changed {
                     PACK_RECEIPT.put(&vault.store, wtxn, &key, &receipt)?;
                 }
             }
@@ -382,6 +386,19 @@ pub(crate) fn erase_review_scope_in_txn(
             let (scope, _) = minted_pair(vault, &mut fresh)?;
             *principal = rmpv::Value::from(scope.to_hex());
             named_here = true;
+        }
+        // The receipts a review keeps (FIX 9780) name its caller as theirs:
+        // each takes the same opaque id as the review's own principal.
+        if let Some(rmpv::Value::Array(receipts)) = field_mut(&mut review, "receipts") {
+            for receipt in receipts {
+                if let Some(principal) =
+                    field_mut(receipt, "principal").filter(|p| p.as_str() == Some(named.as_str()))
+                {
+                    let (scope, _) = minted_pair(vault, &mut fresh)?;
+                    *principal = rmpv::Value::from(scope.to_hex());
+                    named_here = true;
+                }
+            }
         }
         if !named_here && !critic_touched {
             continue;

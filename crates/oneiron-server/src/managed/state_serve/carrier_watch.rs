@@ -1,4 +1,5 @@
-//! A vault VM's live look at its outbox carrier (FIX 6683, FIX 6684).
+//! Live looks at a vault VM's outbox carrier and a process host's argv recipients
+//! (FIX 6683, FIX 6684, FIX 11852).
 //!
 //! The companion's revision is read once at boot. This watch asks the
 //! companion again at each look, so `Ping` reports the carrier as it stands:
@@ -26,20 +27,28 @@
 //! standing.
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
+use oneiron_vault_contract::VmOutboxCompanionState as CompanionState;
 use oneiron_vault_contract::restore::{EscrowRole, FreshRecipient};
-use oneiron_vault_contract::vm_outbox::VM_GUEST_OUTBOX_DIR;
+#[cfg(target_os = "linux")]
+use oneiron_vault_contract::vm_outbox::{VM_GUEST_OUTBOX_DIR, vm_outbox_read_set};
+#[cfg(target_os = "linux")]
 use tokio::task::JoinHandle;
 
+#[cfg(target_os = "linux")]
 use self::diverged_ask::DivergedAsks;
 use super::admission::WriteKind;
 use super::boot_keys::{escrow_unspooled, seal_escrow_recipient, spool_escrow_capsules};
 use super::{ManagedArgs, ManagedShutdown, ManagedState};
 use crate::managed::restore::fresh_authorizes;
 
+#[cfg(target_os = "linux")]
 mod diverged_ask;
 
 /// How often the engine looks at its outbox companion and at the escrow
@@ -49,12 +58,56 @@ const LOOK_EVERY: Duration = Duration::from_secs(5);
 /// The file a VM's carrier delivers `role`'s escrow recipient in, as the
 /// companion lays the recipients out under its outbox's `recipients/`:
 /// read as it stands at each look, and by a cold restore's check.
-pub(in crate::managed) fn carrier_recipient(role: EscrowRole) -> PathBuf {
-    let file = match role {
+#[cfg(target_os = "linux")]
+fn carrier_recipient(role: EscrowRole) -> PathBuf {
+    carrier_recipients_dir().join(carrier_recipient_file(role))
+}
+
+/// `role`'s recipient file's name in [`carrier_recipients_dir`].
+#[cfg(target_os = "linux")]
+fn carrier_recipient_file(role: EscrowRole) -> &'static str {
+    match role {
         EscrowRole::Managed => "managed.pub",
         EscrowRole::BreakGlass => "break-glass.pub",
-    };
-    Path::new(VM_GUEST_OUTBOX_DIR).join("recipients").join(file)
+    }
+}
+
+/// The directory a VM's carrier lays both escrow recipients out in, one set.
+#[cfg(target_os = "linux")]
+fn carrier_recipients_dir() -> PathBuf {
+    Path::new(VM_GUEST_OUTBOX_DIR).join("recipients")
+}
+
+/// Both carrier recipients as they stood at one point between the carrier's
+/// sets, each role's with its path and a role with no file left out
+/// (FIX 7543). `None` while the carrier has a recipients set unfinished, or
+/// published one as they were read, and when they do not read: a look then
+/// seals neither and waits for a later one, and a cold restore's check
+/// leaves the carrier's files to that later look.
+#[cfg(target_os = "linux")]
+pub(in crate::managed) fn carrier_recipients_snapshot()
+-> Option<Vec<(EscrowRole, PathBuf, Vec<u8>)>> {
+    let roles = [EscrowRole::Managed, EscrowRole::BreakGlass];
+    let names = roles.map(carrier_recipient_file);
+    match vm_outbox_read_set(&carrier_recipients_dir(), &names) {
+        Ok(Some(read)) => Some(
+            roles
+                .into_iter()
+                .zip(read)
+                .filter_map(|(role, bytes)| {
+                    bytes.map(|bytes| (role, carrier_recipient(role), bytes))
+                })
+                .collect(),
+        ),
+        Ok(None) => None,
+        Err(error) => {
+            tracing::debug!(
+                %error,
+                "the carrier's escrow recipients did not read; a later look reads them"
+            );
+            None
+        }
+    }
 }
 
 /// Where the watch's recipient files come from, as its warns word them: a
@@ -63,21 +116,6 @@ pub(in crate::managed) fn carrier_recipient(role: EscrowRole) -> PathBuf {
 enum RecipientSource {
     Carrier,
     Argv,
-}
-
-/// How the outbox companion stands, as the engine last heard.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CompanionState {
-    /// It answered with its carrier's wire revision.
-    Up { revision: u32 },
-    /// It did not answer: it never came up, it ended, or its endpoint went.
-    Down,
-}
-
-impl CompanionState {
-    fn of(revision: Option<u32>) -> Self {
-        revision.map_or(Self::Down, |revision| Self::Up { revision })
-    }
 }
 
 /// What the watch has taken of each recipient the watched files hold.
@@ -104,6 +142,7 @@ struct Recipients {
 /// fresh recipients: the first look seals only to those (FIX 11851);
 /// `None` without a restore, and the first look is then unplanned as
 /// every later one is.
+#[cfg(target_os = "linux")]
 pub(super) fn spawn(
     state: Arc<ManagedState>,
     vault: Arc<oneiron::Vault>,
@@ -125,20 +164,24 @@ pub(super) fn spawn(
             let (state, vault, managed) =
                 (Arc::clone(&state), Arc::clone(&vault), Arc::clone(&managed));
             let looked = tokio::task::spawn_blocking(move || {
-                let files = [EscrowRole::Managed, EscrowRole::BreakGlass]
-                    .map(|role| (role, carrier_recipient(role)));
-                seal_watched_recipients(
+                // A recipients set the carrier has not published whole, or
+                // published as this look read it, is read at a later look,
+                // the restore's plan check with it (FIX 7543).
+                let Some(read) = carrier_recipients_snapshot() else {
+                    return (recipients, plan);
+                };
+                seal_read_recipients(
                     &state,
                     &vault,
                     &managed,
                     &mut recipients,
-                    &files,
+                    read,
                     plan.as_deref(),
                     RecipientSource::Carrier,
                 );
-                recipients
+                (recipients, None)
             });
-            recipients = looked.await.unwrap_or_default();
+            (recipients, plan_check) = looked.await.unwrap_or_default();
             tokio::select! {
                 () = &mut stopped => return,
                 () = tokio::time::sleep(LOOK_EVERY) => {}
@@ -207,6 +250,7 @@ pub(super) fn spawn_argv_watch(
 /// Takes the companion's answer to the question in flight once it came, and
 /// asks again; while it is still in flight, the last answer stands and no
 /// second question goes.
+#[cfg(target_os = "linux")]
 async fn look_at_companion(
     state: &ManagedState,
     asking: Option<JoinHandle<Option<u32>>>,
@@ -221,6 +265,7 @@ async fn look_at_companion(
 
 /// Takes the diverged copies' look in flight once it ended, and starts the
 /// next; while it is still in flight, no second one starts.
+#[cfg(target_os = "linux")]
 async fn look_at_diverged(
     state: &Arc<ManagedState>,
     vault: &Arc<oneiron::Vault>,
@@ -237,9 +282,10 @@ async fn look_at_diverged(
 
 /// Keeps the companion's answer for `Ping`, and says when it went down or
 /// came up.
+#[cfg(target_os = "linux")]
 fn note_companion(state: &ManagedState, revision: Option<u32>) {
-    let was = CompanionState::of(state.set_vm_outbox_revision(revision));
-    match CompanionState::of(revision) {
+    let was = CompanionState::from(state.set_vm_outbox_revision(revision));
+    match CompanionState::from(revision) {
         now if now == was => {}
         CompanionState::Down => tracing::warn!(
             reason = "vm_outbox_companion_down",
@@ -280,15 +326,33 @@ fn seal_watched_recipients(
     plan: Option<&[FreshRecipient]>,
     source: RecipientSource,
 ) {
+    let read = files
+        .iter()
+        .filter_map(|(role, path)| {
+            let bytes = std::fs::read(path).ok()?;
+            Some((*role, path.clone(), bytes))
+        })
+        .collect();
+    seal_read_recipients(state, vault, managed, recipients, read, plan, source);
+}
+
+/// [`seal_watched_recipients`] on recipient bytes already read, each with
+/// its role and path: a carrier look reads them as one set (FIX 7543).
+fn seal_read_recipients(
+    state: &ManagedState,
+    vault: &oneiron::Vault,
+    managed: &ManagedArgs,
+    recipients: &mut Recipients,
+    read: Vec<(EscrowRole, PathBuf, Vec<u8>)>,
+    plan: Option<&[FreshRecipient]>,
+    source: RecipientSource,
+) {
     let mut fresh = Vec::new();
-    for (role, path) in files {
-        let Ok(bytes) = std::fs::read(path) else {
-            continue;
-        };
+    for (role, path, bytes) in read {
         let label = role.label_prefix();
         let fingerprint = blake3::hash(&bytes);
         if let Some(plan) = plan
-            && !fresh_authorizes(plan, *role, &bytes)
+            && !fresh_authorizes(plan, role, &bytes)
         {
             if recipients.unplanned.insert(label, fingerprint) != Some(fingerprint) {
                 tracing::warn!(

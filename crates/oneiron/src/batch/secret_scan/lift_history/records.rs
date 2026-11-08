@@ -11,10 +11,15 @@ use std::borrow::Cow;
 use std::ops::Bound;
 
 use heed::{RoTxn, RwTxn};
+use zeroize::Zeroizing;
 
+use super::super::container::{Stop, is_sealed, masked_retained_repo_copy};
 use super::super::mask::REASON_KNOWN_VALUE;
 use super::super::mask::known_marks::{holds_unmarked_known, remark_known_file_in_txn};
+use super::super::mask::retained_repo::read::RepoKnownCheck;
 use super::super::write_payload_hit;
+#[cfg(feature = "sync")]
+use super::super::{CarrierText, carrier_texts_hit_in_txn, mark_carrier_text_in_txn};
 use super::{Done, LiftCause, LiftFamily, Page, proposals, record_text};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
@@ -51,6 +56,7 @@ pub(super) fn census(
     };
     let mut page = Page {
         read: 0,
+        known_reads: Vec::new(),
         hits: Vec::new(),
         next: None,
     };
@@ -62,6 +68,8 @@ pub(super) fn census(
     {
         let (key, raw) = row?;
         read += 1;
+        page.known_reads
+            .extend(record_id(&key).map(super::accounting::Source::Entity));
         if let Some(id) = record_id(&key)
             && census_hit(vault, txn, &id, &raw, known, known_only)?
         {
@@ -120,17 +128,23 @@ fn known_hit(
     let bytes = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
     let kept = KeptValues::for_records_in_txn(&vault.store, txn, [*id])?;
     let prior = masked_file_in_txn(&vault.store, txn, blake3::hash(bytes).as_bytes())?;
-    Ok(
-        holds_unmarked_known(bytes, known, |value| kept.holds(id, value), prior.as_ref())
-            .unwrap_or(true),
-    )
+    let checked = holds_unmarked_known(bytes, known, |value| kept.holds(id, value), prior.as_ref())
+        .and_then(|unmarked| {
+            if unmarked {
+                Ok(true)
+            } else {
+                known_file_residue(vault, txn, id, bytes, known)
+            }
+        });
+    Ok(checked.unwrap_or(true))
 }
 
 /// A known-value pass over record `key` (FIX 2781): a file's mark takes
 /// each value custody knows that it does not cover yet, past the owner's
-/// rulings, in the writer's transaction. Its bytes, its index text and its
-/// proposals stay as they are; any other record is passed over, and a file
-/// a legal hold keeps files a proposal as a lift does.
+/// rulings, in the writer's transaction. Its bytes and its index text stay
+/// as they are. A known value no current marked copy can cover files a
+/// proposal; otherwise its proposals stay as they are. Any other record is
+/// passed over, and a file a legal hold keeps files a proposal as a lift does.
 pub(super) fn remark(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Done> {
     let Some(id) = record_id(key) else {
         return Ok(Done::Clean);
@@ -151,11 +165,67 @@ pub(super) fn remark(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<D
         return Ok(Done::Propose(LiftCause::Held, REASON_KNOWN_VALUE));
     }
     let bytes = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
-    Ok(if remark_file(vault, txn, &id, bytes)? {
-        Done::Marked
-    } else {
-        Done::Clean
-    })
+    let added = remark_file(vault, txn, &id, bytes)?;
+    if let Some(known) = KnownValues::shared_in_writer(&vault.store, txn)?
+        && known_file_residue(vault, txn, &id, bytes, &known)?
+    {
+        return Ok(Done::Propose(LiftCause::File, REASON_KNOWN_VALUE));
+    }
+    Ok(if added { Done::Marked } else { Done::Clean })
+}
+
+/// Whether a known value remains outside the copy the file's current real
+/// marks can rebuild. Hidden members and container metadata never acquire
+/// unbuildable spans; the sweep leaves their residue for the owner.
+fn known_file_residue(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    bytes: &[u8],
+    known: &KnownValues,
+) -> Result<bool> {
+    if is_sealed(bytes, None) {
+        return Ok(false);
+    }
+    let check = RepoKnownCheck::for_record_in_txn(vault, txn, known, *id)?;
+    if !check.reads_known(bytes)? {
+        return Ok(false);
+    }
+    let prior = masked_file_in_txn(&vault.store, txn, blake3::hash(bytes).as_bytes())?;
+    let places = prior.as_ref().map(|mark| mark.places()).unwrap_or_default();
+    if places.is_empty() {
+        return Ok(true);
+    }
+    let copy = match masked_retained_repo_copy(bytes, &places) {
+        Ok(copy) => Zeroizing::new(copy),
+        Err(Stop::Refuse(_)) => return Ok(true),
+        Err(Stop::Fail(error)) => return Err(error),
+    };
+    check.reads_known(&copy)
+}
+
+/// The current known-value residue of the actual stored ASSET at `key`.
+/// Proposal closure and reopening read it in the same writer as the verdict.
+pub(super) fn known_file_residue_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    key: &[u8],
+    known: &KnownValues,
+) -> Result<bool> {
+    let Some(id) = record_id(key) else {
+        return Ok(false);
+    };
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? else {
+        return Ok(false);
+    };
+    if EntityMetadataHeader::parse(&raw)
+        .is_none_or(|header| header.entity_type != ENTITY_TYPE_ASSET)
+    {
+        return Ok(false);
+    }
+    let raw = materialized(vault, txn, &id, &raw)?;
+    let bytes = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    known_file_residue(vault, txn, &id, bytes, known)
 }
 
 /// The values custody knows in the file `bytes` ASSET `id` stores, marked
@@ -182,6 +252,37 @@ fn remark_file(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId, bytes: &[u8]) 
 /// Reads record `key` again in the writer's transaction and writes it again
 /// through its door when it still holds a hit.
 pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Done> {
+    let done = lift_record(vault, txn, key)?;
+    #[cfg(feature = "sync")]
+    if matches!(
+        done,
+        Done::Clean | Done::Masked { .. } | Done::Propose(LiftCause::File, _)
+    ) && let Some(id) = record_id(key)
+        && exists(vault, txn, key)?
+        && vault.get_entity_type_in_txn(txn, &id)? != Some(ENTITY_TYPE_NOTE)
+        && !crate::entity_doc::has_record_head(&vault.store, txn, &id)?
+        && let Some(read) = crate::entity_doc::sync_text_in(vault, txn, &id)?
+    {
+        let text = read.doc.get_text("body").to_string();
+        if let Some(reason) =
+            carrier_texts_hit_in_txn(&vault.store, txn, std::slice::from_ref(&text))?
+        {
+            if crate::store::legal_hold::held_in_txn(&vault.store, txn, id.as_bytes())? {
+                return Ok(done.with_proposal(Done::Propose(LiftCause::Held, reason)));
+            }
+            return Ok(
+                match mark_carrier_text_in_txn(vault, txn, id, "document", text.as_bytes())? {
+                    CarrierText::Clean | CarrierText::Marked => done,
+                    marked => done.with_proposal(super::retained::text_done(marked)),
+                },
+            );
+        }
+    }
+    Ok(done)
+}
+
+/// The record's existing body, index and staged-text lift.
+fn lift_record(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Done> {
     let Some(id) = record_id(key) else {
         return Ok(Done::Clean);
     };
@@ -223,6 +324,12 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
         }
         ENTITY_TYPE_ASSET => {
             mark_file(vault, txn, &id, &header, &raw)?;
+            let bytes = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+            if let Some(known) = KnownValues::shared_in_writer(&vault.store, txn)?
+                && known_file_residue(vault, txn, &id, bytes, &known)?
+            {
+                return Ok(Done::Propose(LiftCause::File, REASON_KNOWN_VALUE));
+            }
             // A file whose only hit was in its index text reads clean now.
             match raw
                 .get(ENTITY_METADATA_HEADER_LEN..)

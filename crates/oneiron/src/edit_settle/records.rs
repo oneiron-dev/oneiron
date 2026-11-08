@@ -21,7 +21,9 @@ use crate::receipt::ReceiptRecord;
 pub enum SettleConsent {
     /// The owner is settling the retained output directly (viewer select or
     /// discard). The owner action IS the consent — the fully implemented P1
-    /// path. `brief_ref` optionally names the assigning brief so the settle
+    /// path — once the settle writer verifies the actor is the vault's owner
+    /// (FIX 9620); anyone else is held to a standing grant on `brief_ref`.
+    /// `brief_ref` optionally names the assigning brief so the settle
     /// receipt joins that brief's project view.
     OwnerConsent { brief_ref: Option<String> },
     /// Rely on a standing brief×verb-class bundle grant to settle without a
@@ -115,6 +117,9 @@ pub struct SettlementRecord {
     pub actor_ref: Option<String>,
     /// The assigning brief this settle rode, if any.
     pub brief_ref: Option<String>,
+    /// The standing grant selected by authorization in the settlement's write
+    /// transaction; absent when the owner consented directly.
+    pub grant_ref: Option<String>,
     /// The artifact head version the select was appended ONTO — the D6 receipt's
     /// before-version ref (select only; a discard commits no version).
     pub before_version: Option<u64>,
@@ -145,6 +150,10 @@ pub struct SettlementRecord {
     /// The native deck transaction a Keep settled: its handoff hash, part
     /// diff report and context (made_by, thread, review renders).
     pub deck: Option<Box<crate::edit_roundtrip::DeckSettleEvidence>>,
+    /// The record's typed review without its words, once the owner's discard
+    /// took its artifact's payload off this machine and the words with it
+    /// (FIX 14534); `None` while the words stand.
+    pub discarded_words: Option<Box<super::DiscardedSettleWords>>,
 }
 
 /// One cell's kept answer, linked to the file version and consume-once receipt.

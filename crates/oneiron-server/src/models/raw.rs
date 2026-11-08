@@ -3,6 +3,8 @@
 //! run's gate.
 use std::sync::Arc;
 
+use futures_util::StreamExt;
+
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::{
     BudgetLine, HostAccount, KeyCustody, LeaseUnit, OfferBinding, OfferRoute, Payer, PayerPerson,
@@ -10,7 +12,7 @@ use oneiron::llm::run_admission::{
 };
 use oneiron::{
     BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmGenerateFuture,
-    LlmRequest, LlmStreamResult, ModelId,
+    LlmRequest, LlmStream, LlmStreamResult, ModelId,
 };
 
 use super::{ModelRouter, OfferLadder, ServedOffer};
@@ -193,7 +195,18 @@ impl LlmBackend for InjectedRuns {
             .raw
             .call(&request, Arc::clone(&self.receipts))
             .ok_or(FatalLlmError::InvalidRequest)?;
-        ladder.stream(&run, request, None)
+        let Some(planned) = self.planned.clone() else {
+            return ladder.stream(&run, request, None);
+        };
+        let (stream, mut answered) = ladder.stream_recorded(&run, request, None)?;
+        Ok(LlmStream::new(stream.map(move |event| {
+            // The producer sends the settled binding before its Done, even
+            // when it is one queued item ahead. No separate task drives it.
+            if let Ok(binding) = answered.try_recv() {
+                planned.answered(&run, binding.rung.model);
+            }
+            event
+        })))
     }
 }
 
@@ -227,6 +240,22 @@ pub(crate) fn funded_run(
     receipts: Arc<dyn RunReceiptSink>,
     payer: Option<PayerPerson>,
 ) -> RunAdmission {
+    grant_funded_run(run, meter, host, receipts, payer, None)
+}
+
+/// [`funded_run`] for work an owner's agent Grant funds (FIX 7766): the run
+/// freezes `funding`, the binding the host read from the work's spend root
+/// or its unmetered dispatch input before the run began, and each host-paid
+/// call holds only on a live allocation of that Grant's wallet. `None` is
+/// [`funded_run`]'s run.
+pub(crate) fn grant_funded_run(
+    run: impl Into<String>,
+    meter: BudgetGuard,
+    host: Option<Arc<HostAccount>>,
+    receipts: Arc<dyn RunReceiptSink>,
+    payer: Option<PayerPerson>,
+    funding: Option<oneiron::agent_dispatch::GrantSpendBinding>,
+) -> RunAdmission {
     let line = BudgetLine {
         limit_units: meter.read().limit_units,
         reserve_units: meter.reserve_units(),
@@ -236,5 +265,5 @@ pub(crate) fn funded_run(
     // Inside a hook's verdict its settlements are also kept for its record
     // (FIX 10075); the host's sink gets every receipt unchanged either way.
     let receipts = oneiron::llm::run_admission::captured_sink(receipts);
-    RunAdmission::with_payer(run, declaration, meter, host, receipts, payer)
+    RunAdmission::with_funding(run, declaration, meter, host, receipts, payer, funding)
 }

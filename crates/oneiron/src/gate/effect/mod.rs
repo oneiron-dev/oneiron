@@ -79,7 +79,12 @@ pub(crate) struct ExternalEffectGovernance {
     grant_ref: Option<String>,
     approve_once: Option<crate::consent::ApproveOnceAuthorization>,
     approval_context: ApprovalContext,
+    ask_consent: Option<crate::llm::decision::AskConsent>,
     matched_grant: Option<(EntityId, StandingOutboundGrant)>,
+    /// Fix list row 17645: the standing grants that released the other
+    /// recipients of one message to several, each once and none of them
+    /// `matched_grant`; touched as used when the message is admitted.
+    recipient_grants: Vec<(EntityId, StandingOutboundGrant)>,
     /// OF-374: the sender row's envelope slot covering this send, spent only
     /// when the decision is recorded as an admitting Allow.
     envelope_reservation: Option<crate::outbound_grant::ChannelIdentityGrantReservation>,
@@ -95,6 +100,12 @@ impl ExternalEffectGovernance {
     #[must_use]
     pub(crate) fn outcome(&self) -> GateOutcome {
         self.decision.outcome()
+    }
+
+    /// The actual hydrated consent composition for a live scoped-MCP hold.
+    /// It is metadata for an owner question, never admission authority.
+    pub(crate) fn ask_consent(&self) -> Option<&crate::llm::decision::AskConsent> {
+        self.ask_consent.as_ref()
     }
 
     /// The typed per-grant capability identity this governance verified, if the

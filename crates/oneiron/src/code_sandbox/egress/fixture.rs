@@ -153,8 +153,8 @@ pub(super) fn fetch(
         Ok(HttpResponse {
             url: url.to_string(),
             status: 200,
-            headers: vec![("content-type".into(), mime.into())],
-            body: bytes,
+            headers: vec![("content-type".into(), mime.as_bytes().to_vec())],
+            body: bytes.into(),
         })
     })())
 }

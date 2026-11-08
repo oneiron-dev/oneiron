@@ -206,6 +206,7 @@ fn the_rerank_door_sends_no_turn_with_a_message_whose_body_the_write_door_refuse
             format: None,
             as_of: None,
             deadline_ms: None,
+            filter: None,
         },
         |_| None,
         &crate::task_verb::sdk::RecallDoor {

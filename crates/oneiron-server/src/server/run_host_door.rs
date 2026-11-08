@@ -28,8 +28,11 @@
 //! `self.focus.*` and a keyed `describe`, run the engine's board dispatcher
 //! over the agent's own board on the run's own STREAM connection, which goes
 //! when the door does. Its `describe(self)` reads the run's own self brief,
-//! and its `vault.weave.lens` renders the agent's own lens on the run's
-//! line, its card held for the run (FIX 2086). A successful answer the run
+//! through the brief's custody once its prefix was delivered; a pumped run's
+//! brief is installed for its live run and lent to its executor through its
+//! `ResidentSelfBrief` port (FIX 17594 D3). Its `vault.weave.lens` renders the
+//! agent's own lens on the run's line, its card held for the run (FIX 2086).
+//! A successful answer the run
 //! reads as it stands carries the frame that connection queued, beside its
 //! output (FIX 2135). Each row's verb hooks fire once around it.
 use std::collections::BTreeSet;
@@ -41,7 +44,7 @@ use oneiron::claim::{CallerLocality, ScopedRead, ScopedReadActorKey};
 use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
 };
-use oneiron::context_board::StreamConnectionId;
+use oneiron::context_board::{BriefRunCeiling, StreamConnectionId};
 use oneiron::llm::decision::DecisionRung;
 use oneiron::llm::decision::questions::{
     closed_outcome_windows_in_lane, create_question_with_lane, edit_question_with_lane,
@@ -73,7 +76,8 @@ use super::wave_door::resume_held_wave;
 use super::{SyncServer, wave_plan, wave_receipt};
 use crate::ai_host::live_lease::LeaseLine;
 use crate::api::{
-    RunGuests, VerdictAsker, deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
+    BriefHostFacts, RunGuests, VerdictAsker, deliver_run_board_hooks, drop_run_board,
+    execute_run_board_verb,
 };
 use crate::decision_artifact::HostUnitDecider;
 use crate::decision_graph::LadderGraphAnswerer;
@@ -81,8 +85,13 @@ use crate::decision_verdict::{HELD_IMAGE, HeldImage, on_caller_payer, run_verdic
 use crate::slide_render::{AdmittedRenderer, RenderRefusal};
 
 mod board_carrier;
+mod graph_skill;
 mod host_rows;
+mod media_step;
 mod resident_rows;
+mod self_brief_port;
+
+pub(crate) use self::media_step::RunMediaStep;
 
 use self::host_rows::host_row;
 
@@ -121,11 +130,30 @@ pub(crate) struct RunHostDoor {
     /// The attempt the run's entry in flight serves (hex), which keys its
     /// media calls (FIX 2245); empty between entries and for a turn program.
     attempt: Mutex<Option<String>>,
+    /// The run ceiling of the dispatch attempt the run's entry in flight
+    /// serves, which its `describe(self)` states and reads its parent
+    /// ceiling from (FIX 17594); empty between entries and for a turn
+    /// program, which is bound to no dispatch attempt.
+    run_ceiling: Mutex<Option<BriefRunCeiling>>,
+    media_step: Mutex<Option<RunMediaStep>>,
     /// The live, verified slip whose turn woke a Dreamer turn program this
     /// door serves (FIX 8717): the reads this door admits for the run take
     /// its key. Its rows' surfaces take it from the call's origin. `None`
     /// for a pumped run and a program no slip woke.
     proof: Option<VerifiedSlip>,
+    /// What removes the self brief installed under the run's connection.
+    brief_lifetime: BriefLifetime,
+}
+
+/// What removes the self brief installed under a door's connection.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BriefLifetime {
+    /// The door's drop: a turn program's door, which no brief is lent to
+    /// (Engine call DREAMER A).
+    Door,
+    /// The retirement of the run's live run (Engine call RESUME C): a pumped
+    /// run's door, whose brief outlives a durable wait and the door with it.
+    LiveRun,
 }
 
 impl RunHostDoor {
@@ -143,11 +171,23 @@ impl RunHostDoor {
             line: Mutex::new(None),
             lease: Mutex::new(None),
             attempt: Mutex::new(None),
+            run_ceiling: Mutex::new(None),
+            media_step: Mutex::new(None),
             server: Arc::clone(server),
             actor,
             runtime,
             proof: None,
+            brief_lifetime: BriefLifetime::Door,
         }
+    }
+
+    /// This door, for a pumped run whose self brief lives with its live run
+    /// (FIX 17594 D3, Engine call RESUME C): dropping the door leaves the
+    /// brief, which the live run closes as it retires.
+    #[must_use]
+    pub(crate) fn with_live_run_brief_lifetime(mut self) -> Self {
+        self.brief_lifetime = BriefLifetime::LiveRun;
+        self
     }
 
     /// This door, bound to the waking slip's live view of the turn program
@@ -172,6 +212,12 @@ impl RunHostDoor {
         }
     }
 
+    /// The operator's own Git door base the run's checkouts point at (FIX
+    /// 7181); `None` keeps the run's own base.
+    pub(crate) fn git_door_base(&self) -> Option<String> {
+        self.server.config.git_door_base.clone()
+    }
+
     /// Binds the meter the run's next entry makes its model calls on, and
     /// the payer they bill, so its `ai.speech` spends there too, as its other
     /// model calls do (FIX 3194). `None` clears it once the entry ends.
@@ -191,10 +237,45 @@ impl RunHostDoor {
         *self.lease.lock().unwrap_or_else(PoisonError::into_inner) = lease;
     }
 
+    /// Binds the run ceiling of the dispatch attempt the run's next entry
+    /// serves, built from the facts its host already holds, so its
+    /// `describe(self)` states it and reads its parent ceiling from that
+    /// attempt (FIX 17594). `None` clears it once the entry ends.
+    pub(crate) fn bind_run_ceiling(&self, run_ceiling: Option<BriefRunCeiling>) {
+        *self
+            .run_ceiling
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = run_ceiling;
+    }
+
     /// Binds the attempt the run's next entry serves, which keys its media
     /// calls (FIX 2245). `None` clears it once the entry ends.
     pub(crate) fn bind_attempt(&self, attempt: Option<String>) {
         *self.attempt.lock().unwrap_or_else(PoisonError::into_inner) = attempt;
+    }
+
+    pub(crate) fn bind_media_step(&self, step: RunMediaStep) {
+        *self
+            .media_step
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(step);
+    }
+
+    /// Takes the entry's binding after native execution, before its outcome settles.
+    pub(crate) fn take_media_trap(&self) -> bool {
+        self.media_step
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .is_some_and(|step| step.trapped())
+    }
+
+    fn media_trapped(&self) -> bool {
+        self.media_step
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(RunMediaStep::trapped)
     }
 
     /// CUA E8b: what this run's browser reached for TASK `task`, kept as
@@ -226,6 +307,14 @@ impl AgentVerbDoor for RunHostDoor {
         origin: &HostWriteOrigin,
         invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        if self.media_trapped() {
+            return Err(oneiron::Error::DurableStepTrapped);
+        }
+        let media_step = self
+            .media_step
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         let line = self
             .line
             .lock()
@@ -265,6 +354,12 @@ impl AgentVerbDoor for RunHostDoor {
             })
             .flatten();
         let resident = resident_row(call.verb, &call.input);
+        // What the door holds for the run's own brief (FIX 17594), read only
+        // for `describe(self)`.
+        let brief = match resident {
+            Some(ResidentRow::SelfBrief) => self.brief_host_facts(),
+            _ => BriefHostFacts::default(),
+        };
         let (board, run_id) = (self.board.clone(), self.run_id);
         // The run's thread drives its own reactor; the row runs on the
         // server's runtime, which its model rungs block on, and the run's
@@ -294,6 +389,7 @@ impl AgentVerbDoor for RunHostDoor {
                     invocation,
                     &board,
                     line.as_ref(),
+                    &brief,
                     input,
                 )
                 .map(|(output, rows)| (output, Some(rows))),
@@ -318,9 +414,10 @@ impl AgentVerbDoor for RunHostDoor {
                         input,
                         line.as_ref(),
                         attempt.as_deref(),
+                        media_step.as_ref(),
                     )
                 }
-                None => answer_as_agent(
+                None => answer_as_agent_with_run(
                     &server,
                     actor,
                     &origin,
@@ -330,6 +427,8 @@ impl AgentVerbDoor for RunHostDoor {
                     held,
                     line.as_ref(),
                     attempt.as_deref(),
+                    Some(run_id),
+                    media_step.as_ref(),
                 ),
             })
         };
@@ -344,7 +443,11 @@ impl AgentVerbDoor for RunHostDoor {
             });
             receiver
         };
-        let Ok(answered) = receiver.recv() else {
+        let answered = receiver.recv();
+        if self.media_trapped() {
+            return Err(oneiron::Error::DurableStepTrapped);
+        }
+        let Ok(answered) = answered else {
             return Ok(Err(AgentVerbRefusal {
                 code: MEMORY_CODE_INTERNAL.to_owned(),
             }));
@@ -479,9 +582,21 @@ impl AgentVerbDoor for RunHostDoor {
 impl Drop for RunHostDoor {
     fn drop(&mut self) {
         let server = Arc::clone(&self.server);
-        let (actor, board) = (self.actor, self.board.clone());
-        self.runtime
-            .spawn(async move { drop_run_board(&server, actor, &board).await });
+        let board = self.board.clone();
+        // A turn program's brief goes with its door; a pumped run's stays for
+        // its live run, which closes it as the run retires (FIX 17594 D3).
+        let brief = (self.brief_lifetime == BriefLifetime::Door)
+            .then(|| (self.actor.entity_ref(), self.board.0.clone()));
+        self.runtime.spawn(async move {
+            drop_run_board(&server, &board).await;
+            if let Some(key) = brief {
+                server
+                    .self_brief_sessions
+                    .lock()
+                    .await
+                    .close_any_owner(&key);
+            }
+        });
     }
 }
 
@@ -599,11 +714,53 @@ pub(crate) fn answer_as_agent(
     line: Option<&RunAdmission>,
     attempt: Option<&str>,
 ) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
+    answer_as_agent_in_step(
+        server, actor, origin, invocation, verb, input, held, line, attempt, None,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one axis of the agent's call"
+)]
+pub(super) fn answer_as_agent_in_step(
+    server: &SyncServer,
+    actor: WriteActor,
+    origin: &HostWriteOrigin,
+    invocation: InvocationId,
+    verb: AgentVerb,
+    input: Value,
+    held: Option<HeldImage>,
+    line: Option<&RunAdmission>,
+    attempt: Option<&str>,
+    media_step: Option<&RunMediaStep>,
+) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
+    answer_as_agent_with_run(
+        server, actor, origin, invocation, verb, input, held, line, attempt, None, media_step,
+    )
+}
+
+fn answer_as_agent_with_run(
+    server: &SyncServer,
+    actor: WriteActor,
+    origin: &HostWriteOrigin,
+    invocation: InvocationId,
+    verb: AgentVerb,
+    input: Value,
+    held: Option<HeldImage>,
+    line: Option<&RunAdmission>,
+    attempt: Option<&str>,
+    run_id: Option<EntityId>,
+    media_step: Option<&RunMediaStep>,
+) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
     // The agent's task work waits its turn in the vault's line (Rule 5), as
     // a served caller's does, and runs on it.
-    let turn = verb
-        .is_task_work()
-        .then(|| Arc::new(server.vault.admit_task_work_blocking(actor.entity_ref())));
+    let turn = verb.is_task_work().then(|| {
+        Arc::new(server.vault.admit_task_work_blocking_observed(
+            actor.entity_ref(),
+            crate::api::admission_observer(),
+        ))
+    });
     let producers = ProducerRows::default();
     let memory = agent_memory(server, actor, origin, invocation)
         .with_task_decisions(server.decision_host().task_decisions()?)
@@ -628,6 +785,9 @@ pub(crate) fn answer_as_agent(
                     input,
                     line,
                     attempt,
+                    origin,
+                    run_id,
+                    media_step,
                     &mut evidence,
                 )
             })
@@ -683,6 +843,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::AiVideoCancel
             | AgentVerb::AiVerdict
             | AgentVerb::VaultGraphAsk
+            | AgentVerb::SelfSkillsGraph
             | AgentVerb::VaultQuestionsCreate
             | AgentVerb::VaultQuestionsEdit
             | AgentVerb::VaultQuestionsPause

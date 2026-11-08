@@ -6,9 +6,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::{ReceiptRecord, SessionLocalReceiptLog};
-use crate::session_overlay::{
-    OverlayKeyspace, RouteTarget, SessionOverlay, SessionWriteRoute, SnapshotLookup,
-};
+use crate::session_overlay::{RouteTarget, SessionOverlay, SessionWriteRoute};
 use crate::side_table::{SideCodec, SideKey, SideTable};
 use crate::vault::VaultId;
 use oneiron_retrieval::pipeline::ScoredEntity;
@@ -22,6 +20,10 @@ use super::telemetry::SessionRetrievalTelemetry;
 use super::types::{OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode};
 use crate::error::OffRecordError;
 
+mod checkpoint;
+mod counters;
+mod reader_txn;
+mod routed_side;
 mod type_feedback;
 mod vector_search;
 
@@ -632,16 +634,18 @@ impl OffRecordSession<'_> {
                 // base writer. The composed read is taken after the segment
                 // installs so it cannot miss a room-mate's just-applied row.
                 let overlay = self.entry.overlay.clone();
-                let segment = self.vault.with_write_txn_grouped(|wtxn| {
-                    let segment = overlay.install_txn_segment()?;
-                    self.participant_in_txn(wtxn)?;
-                    route.revalidate()?;
-                    let view = self.vault.store.session_view(overlay.clone())?;
-                    accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
-                    table.put(&view, wtxn, key, value)?;
-                    Ok(segment)
-                })?;
-                segment.commit()
+                self.vault.with_write_txn_grouped_after_commit(
+                    |wtxn| {
+                        let segment = overlay.install_txn_segment()?;
+                        self.participant_in_txn(wtxn)?;
+                        route.revalidate()?;
+                        let view = self.vault.store.session_view(overlay.clone())?;
+                        accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
+                        table.put(&view, wtxn, key, value)?;
+                        Ok(segment)
+                    },
+                    |segment| segment.commit(),
+                )
             }
             // A stretch on record writes here only while its saver holds.
             RouteTarget::Base => {
@@ -657,63 +661,6 @@ impl OffRecordSession<'_> {
                 })
             }
         }
-    }
-
-    /// One transaction over side tables on a route the caller captured, in
-    /// which `f` reads every row through the composed view and writes along
-    /// the route: [`Self::side_table_compare_and_put_routed`]'s two arms with
-    /// the body handed over. `f` gets the base write transaction too, so a
-    /// base row it writes (a spend scope) commits with the routed ones.
-    ///
-    /// While the room is off record the reads and writes are the view's,
-    /// staged into one segment that commits with the base transaction. Once
-    /// it is on record they write base, and only while the saver holds; the
-    /// reads stay composed, since a row may still be one an earlier
-    /// off-record run of the room wrote.
-    pub(crate) fn routed_side_txn<T>(
-        &self,
-        route: &SessionWriteRoute,
-        f: impl FnOnce(
-            &mut heed::RwTxn<'_>,
-            crate::side_table::RoutedDbs<'_>,
-            crate::side_table::RoutedDbs<'_>,
-        ) -> Result<T>,
-    ) -> Result<T> {
-        use crate::side_table::RoutedDbs;
-        route.require_recording(&self.session_ref)?;
-        match route.target() {
-            RouteTarget::Discard => unreachable!("anonymous recording refused above"),
-            RouteTarget::Overlay => {
-                let overlay = self.entry.overlay.clone();
-                let (segment, answer) = self.vault.with_write_txn_grouped(|wtxn| {
-                    let segment = overlay.install_txn_segment()?;
-                    self.participant_in_txn(wtxn)?;
-                    route.revalidate()?;
-                    let view = self.vault.store.session_view(overlay.clone())?;
-                    let answer = f(wtxn, RoutedDbs::Session(&view), RoutedDbs::Session(&view))?;
-                    Ok((segment, answer))
-                })?;
-                segment.commit()?;
-                Ok(answer)
-            }
-            RouteTarget::Base => self.with_saver_write_txn(self.saver_check_for(route)?, |wtxn| {
-                route.revalidate()?;
-                let view = self.vault.store.session_view(self.entry.overlay.clone())?;
-                f(wtxn, RoutedDbs::Session(&view), RoutedDbs::Base(self.vault))
-            }),
-        }
-    }
-
-    /// One composed read of side tables over overlay ∪ base, while the
-    /// handle's participant is in the room, checked in the read.
-    pub(crate) fn routed_side_read<T>(
-        &self,
-        f: impl FnOnce(&heed::RoTxn<'_>, crate::side_table::RoutedDbs<'_>) -> Result<T>,
-    ) -> Result<T> {
-        let view = self.read_view()?;
-        let rtxn = self.vault.store.env.read_txn()?;
-        self.participant_in_txn(&rtxn)?;
-        f(&rtxn, crate::side_table::RoutedDbs::Session(&view))
     }
 
     /// The base spend scopes this session's reader children spend under
@@ -765,15 +712,16 @@ impl OffRecordSession<'_> {
                 entry,
             )
         };
-        let (segment, written) = self.vault.with_write_txn_grouped(|wtxn| {
-            let segment = overlay.install_txn_segment()?;
-            self.participant_in_txn(wtxn)?;
-            route.revalidate()?;
-            let written = write(wtxn, apply)?;
-            Ok((segment, written))
-        })?;
-        segment.commit()?;
-        Ok(written)
+        self.vault.with_write_txn_grouped_after_commit(
+            |wtxn| {
+                let segment = overlay.install_txn_segment()?;
+                self.participant_in_txn(wtxn)?;
+                route.revalidate()?;
+                let written = write(wtxn, apply)?;
+                Ok((segment, written))
+            },
+            |(segment, written)| segment.commit().map(|()| written),
+        )
     }
 
     /// Atomically compare-and-put one routed side-table row and update one
@@ -860,65 +808,37 @@ impl OffRecordSession<'_> {
         let overlay = self.entry.overlay.clone();
         // A stretch on record writes into base only while its saver holds.
         let check = self.saver_check_for(route)?;
-        let (segment, total) = self.with_saver_write_txn(check, |wtxn| {
-            let segment = match target {
-                RouteTarget::Overlay => Some(overlay.install_txn_segment()?),
-                RouteTarget::Base | RouteTarget::Discard => None,
-            };
-            route.revalidate()?;
-            let view = self.vault.store.session_view(overlay.clone())?;
-            accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
-            let base = counter.get(&self.vault.store, wtxn, counter_key)?;
-            let delta = self.overlay_counter_delta(counter, counter_key)?;
-            let (next_counter, total) = update_counter(base, delta, target)?;
-            if target == RouteTarget::Overlay {
-                table.put(&view, wtxn, key, value)?;
-                counter.put(&view, wtxn, counter_key, &next_counter)?;
-                also(wtxn, RoutedDbs::Session(&view))?;
-            } else {
-                table.put(self.vault, wtxn, key, value)?;
-                counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
-                also(wtxn, RoutedDbs::Base(self.vault))?;
-            }
-            Ok((segment, total))
-        })?;
-        if let Some(segment) = segment {
-            segment.commit()?;
-        }
-        Ok(total)
-    }
-
-    /// This room's overlay-local contribution to an additive counter row;
-    /// `None` when the overlay holds no row for it.
-    fn overlay_counter_delta<K: SideKey, V, C: SideCodec<V>>(
-        &self,
-        counter: &SideTable<K, V, C>,
-        key: &K,
-    ) -> Result<Option<V>> {
-        match self
-            .entry
-            .overlay
-            .snapshot()?
-            .lookup_single(OverlayKeyspace::VaultMeta, &counter.key_bytes(key))
-        {
-            SnapshotLookup::Present(value) => counter.decode_value(&value).map(Some),
-            SnapshotLookup::Passthrough | SnapshotLookup::Tombstone => Ok(None),
-        }
-    }
-
-    /// The base and room-overlay components of an additive side-table
-    /// counter. Ordinary composed reads intentionally keep shadow semantics;
-    /// only additive counters opt into this explicit merge.
-    #[cfg(test)]
-    pub(crate) fn side_table_counter_components<K: SideKey, V, C: SideCodec<V>>(
-        &self,
-        counter: &SideTable<K, V, C>,
-        key: &K,
-    ) -> Result<(Option<V>, Option<V>)> {
-        let overlay = self.overlay_counter_delta(counter, key)?;
-        let rtxn = self.vault.store.env.read_txn()?;
-        self.participant_in_txn(&rtxn)?;
-        Ok((counter.get(&self.vault.store, &rtxn, key)?, overlay))
+        self.with_saver_write_txn_after_commit(
+            check,
+            |wtxn| {
+                let segment = match target {
+                    RouteTarget::Overlay => Some(overlay.install_txn_segment()?),
+                    RouteTarget::Base | RouteTarget::Discard => None,
+                };
+                route.revalidate()?;
+                let view = self.vault.store.session_view(overlay.clone())?;
+                accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
+                let base = counter.get(&self.vault.store, wtxn, counter_key)?;
+                let delta = self.overlay_counter_delta(counter, counter_key)?;
+                let (next_counter, total) = update_counter(base, delta, target)?;
+                if target == RouteTarget::Overlay {
+                    table.put(&view, wtxn, key, value)?;
+                    counter.put(&view, wtxn, counter_key, &next_counter)?;
+                    also(wtxn, RoutedDbs::Session(&view))?;
+                } else {
+                    table.put(self.vault, wtxn, key, value)?;
+                    counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
+                    also(wtxn, RoutedDbs::Base(self.vault))?;
+                }
+                Ok((segment, total))
+            },
+            |(segment, total)| {
+                if let Some(segment) = segment {
+                    segment.commit()?;
+                }
+                Ok(total)
+            },
+        )
     }
 
     /// Composed side-table read over overlay ∪ base. A run's handle reads
@@ -953,13 +873,30 @@ impl OffRecordSession<'_> {
     /// vault's; the vault's `bodies/` once it is on record.
     pub(crate) fn body_dir(&self, target: RouteTarget) -> Result<crate::store::BodyDir> {
         match target {
-            RouteTarget::Overlay => self
-                .vault
-                .store
-                .session_body_dir(&self.session_ref, true)?
-                .ok_or(Error::InvariantViolation(
-                    "off-record body directory missing",
-                )),
+            RouteTarget::Overlay => {
+                let state = session_entry_state(&self.entry)?;
+                if state.gone {
+                    return Err(Error::OffRecord(OffRecordError::OffRecordSessionNotFound {
+                        session_ref: self.session_ref.clone(),
+                    }));
+                }
+                if state.record.closing {
+                    return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
+                        session_ref: self.session_ref.clone(),
+                    }));
+                }
+                let _io = self.entry.live_spill.io()?;
+                let mut dir = self
+                    .vault
+                    .store
+                    .session_body_dir(&self.session_ref, true)?
+                    .ok_or(Error::InvariantViolation(
+                        "off-record body directory missing",
+                    ))?;
+                self.entry.live_spill.attach(&dir)?;
+                dir.live_spill = Some(Arc::clone(&self.entry.live_spill));
+                Ok(dir)
+            }
             RouteTarget::Base => self.vault.store.body_dir(),
             RouteTarget::Discard => Err(Error::InvariantViolation(
                 "anonymous routes write no result bodies",
@@ -973,6 +910,45 @@ impl OffRecordSession<'_> {
         digest: [u8; 32],
     ) -> crate::store::result_body_pins::ResultBodyPin {
         self.vault.pin_result_body(digest)
+    }
+
+    /// Notes a detached line-index rebuild for the body `digest` in this
+    /// session's vault (FIX 1186b): the session arm's forward, beside
+    /// [`Self::pin_result_body`].
+    pub(crate) fn note_body_line_index_rebuild(&self, digest: [u8; 32], len: u64) {
+        self.vault.note_body_line_index_rebuild(digest, len)
+    }
+
+    /// Notes the scan-bound search credit issued for the window (`digest`,
+    /// `base`, `len`): the exact emitted (`offset`, `line`, `credit`), kept
+    /// in memory on this session's vault only (FIX 1189 discount, #4311 P1-B).
+    pub(crate) fn note_search_credit(
+        &self,
+        digest: [u8; 32],
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) {
+        self.vault
+            .note_search_credit(digest, base, len, offset, line, credit);
+    }
+
+    /// Whether (`offset`, `line`, `credit`) is the credit this session's
+    /// vault last issued for the window (`digest`, `base`, `len`): the full
+    /// tuple must match, else the resume takes no discount.
+    pub(crate) fn valid_search_credit(
+        &self,
+        digest: [u8; 32],
+        base: u64,
+        len: u64,
+        offset: u64,
+        line: u64,
+        credit: u64,
+    ) -> bool {
+        self.vault
+            .valid_search_credit(digest, base, len, offset, line, credit)
     }
 
     /// The custody read guard of this session's vault, for a body read that
@@ -1004,6 +980,14 @@ impl OffRecordSession<'_> {
         self.vault.known_source()
     }
 
+    /// Run-local output prints from this session's vault, live per frame.
+    pub(crate) fn run_known_source(
+        &self,
+        exec_run: crate::EntityId,
+    ) -> Result<crate::store::known_value_index::RunKnownSource> {
+        self.vault.run_known_source(exec_run)
+    }
+
     /// The `[limits]` rows of this session's vault.
     pub(crate) fn limit_watch(&self) -> &crate::limit_ask::LimitWatch {
         self.vault.limit_watch()
@@ -1012,6 +996,11 @@ impl OffRecordSession<'_> {
     /// A share of the result-memory pool for one run in this session.
     pub(crate) fn result_share(&self) -> crate::store::result_memory::ResultShare {
         self.vault.result_share()
+    }
+
+    /// Wall milliseconds from this session's vault clock.
+    pub(crate) fn now_recorded_ms(&self) -> u64 {
+        self.vault.now_recorded_ms()
     }
 
     /// Identity of the vault this session belongs to.
