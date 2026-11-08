@@ -411,12 +411,9 @@ pub(crate) fn record_agent_run_effect_mark_in_txn(
     let intent = bytes_to_hex_lower(intent_id);
     let mut spent_ask = None;
     update_agent_run_task_body_in_txn(vault, wtxn, holding.task_ref, now, |body| {
-        match body
-            .effects
-            .iter_mut()
-            .find(|mark| mark.intent_id == intent)
-        {
-            Some(mark) if mark.generation < holding.generation => {
+        match body.effects.iter().position(|m| m.intent_id == intent) {
+            Some(at) if body.effects[at].generation < holding.generation => {
+                let mark = &mut body.effects[at];
                 spent_ask = mark
                     .owner_ask
                     .filter(|ask| ask.answer.is_none())

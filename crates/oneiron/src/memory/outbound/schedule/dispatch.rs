@@ -146,7 +146,12 @@ impl Memory<'_> {
         let Some(host) = self.task_host() else {
             return Ok(None);
         };
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)?;
         let Some(task_ref) = crate::agent_dispatch::agent_run_send_task_id_in(
             self.vault,
             &txn,
