@@ -243,17 +243,24 @@ impl PolicyManifestResolution {
         };
         let proposed = definition == Some(PolicyApprovalCeiling::Proposed);
         let mut target_free_codes = Vec::new();
-        if proposed || below_auto(actor_class) {
-            target_free_codes.push(GateReasonCode::PendingActorCeiling);
-        }
-        if proposed {
+        let mut scoped_mcp_codes = Vec::new();
+        if self.is_fail_closed() {
+            // A policy held fail-closed (no manifest at all) holds every
+            // external effect on its missing authority alone, before any
+            // ceiling is read, as the Gate's evaluation does.
             target_free_codes.push(GateReasonCode::PendingExternalEffectAuthority);
-        }
-        let scoped_mcp_codes = if !proposed && below_auto(SCOPED_MCP_ACTOR_CLASS) {
-            vec![GateReasonCode::PendingActorCeiling]
+            scoped_mcp_codes.push(GateReasonCode::PendingExternalEffectAuthority);
         } else {
-            Vec::new()
-        };
+            if proposed || below_auto(actor_class) {
+                target_free_codes.push(GateReasonCode::PendingActorCeiling);
+            }
+            if proposed {
+                target_free_codes.push(GateReasonCode::PendingExternalEffectAuthority);
+            }
+            if !proposed && below_auto(SCOPED_MCP_ACTOR_CLASS) {
+                scoped_mcp_codes.push(GateReasonCode::PendingActorCeiling);
+            }
+        }
         let mut verdicts = Vec::new();
         for id in crate::outbound_grant::standing_outbound_grant_ids_for_principal(
             store, txn, &actor_ref,
