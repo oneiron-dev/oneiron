@@ -38783,6 +38783,28 @@ async fn vault_esign_signing_signature(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
 }
+async fn vault_esign_signing_preview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let (output, hook_notice) = facade_invoke_with_notice(
+        server,
+        call,
+        actor,
+        class,
+        "vault.esign.signing.preview",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers).with_hook_notice(hook_notice == Some(true)))
+}
 async fn vault_esign_seal_get(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -55665,6 +55687,14 @@ fn boxed_vault_esign_signing_signature<'a>(
     Box::pin(vault_esign_signing_signature(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_esign_signing_preview<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_esign_signing_preview(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_esign_seal_get<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -59489,6 +59519,9 @@ async fn call_verb_row(
         "vault.esign.signing.image" => boxed_vault_esign_signing_image(server, call, input).await,
         "vault.esign.signing.signature" => {
             boxed_vault_esign_signing_signature(server, call, input).await
+        }
+        "vault.esign.signing.preview" => {
+            boxed_vault_esign_signing_preview(server, call, input).await
         }
         "vault.esign.seal.get" => boxed_vault_esign_seal_get(server, call, input).await,
         "vault.conversations.create" => boxed_vault_conversations_create(server, call, input).await,

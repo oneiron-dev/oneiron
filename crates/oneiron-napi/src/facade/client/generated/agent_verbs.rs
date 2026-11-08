@@ -9945,6 +9945,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_esign_signing_preview(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.esign.signing.preview", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_esign_seal_get(
         &self,
         input: serde_json::Value,
