@@ -928,6 +928,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.repo.symbols.declare", post(facade_route))
         .route("/vault.repo.symbols.renew", post(facade_route))
         .route("/vault.repo.symbols.release", post(facade_route))
+        .route("/vault.repo.model.generate", post(facade_route))
         .route("/vault.repo.proposal_submit", post(facade_route))
         .route("/vault.repo.merge_queue.enqueue", post(facade_route))
         .route("/vault.repo.checkout.bind", post(facade_route))

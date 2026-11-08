@@ -10,9 +10,9 @@
 //! **thread policy** names its source policy and the people the thread was
 //! shared with by an explicit act; its readers are the source's readers as
 //! they are now, plus those. Each imported row (a mail CONVERSATION, its
-//! TURNs and MESSAGEs, an attachment ASSET and its blob artifacts) is bound
-//! to one policy at birth ([`bind_record_in_txn`]), and the binding never
-//! moves.
+//! TURNs and MESSAGEs, a calendar's EVENTs, the artifact an attachment or a
+//! calendar resource is kept in) is bound to one policy at birth
+//! ([`bind_record_in_txn`]), and the binding never moves.
 //!
 //! Every audience read meets the binding before anything else
 //! ([`readable_with_read_in`], called from the private-thread conjunct
@@ -46,7 +46,6 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::source_audience_obligation::SourceAudienceObligation;
 use crate::{EntityId, Vault};
@@ -645,7 +644,8 @@ pub(crate) fn thread_policy_in_txn(
 /// Binds the row `record` to `policy` at its birth, in the writer that
 /// lands it. A row bound already stays where it was born: a second bind to
 /// the same policy changes nothing, and one to another policy is refused.
-/// Only a CONVERSATION, TURN or MESSAGE whose live bytes in `txn` carry the
+/// Only a row of a kind a source landing binds (a CONVERSATION, TURN or
+/// MESSAGE, an EVENT, a BLOB_ARTIFACT) whose live bytes in `txn` carry the
 /// source-audience obligation is bound (fix list row 16256): the stamp in
 /// its own body is what tells every later read it is a source's row. The
 /// bind takes away the birth mark its landing left on the row.
@@ -660,12 +660,9 @@ pub(crate) fn bind_record_in_txn(
     }
     let stamped = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, record)?
         .is_some_and(|raw| {
-            crate::batch::EntityMetadataHeader::parse(&raw).is_some_and(|header| {
-                matches!(
-                    header.entity_type,
-                    ENTITY_TYPE_CONVERSATION | ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE
-                )
-            }) && obligation::row_obligation(&raw) == SourceAudienceObligation::Required
+            crate::batch::EntityMetadataHeader::parse(&raw)
+                .is_some_and(|header| obligation::bound_kind(header.entity_type))
+                && obligation::row_obligation(&raw) == SourceAudienceObligation::Required
         });
     if !stamped {
         return Err(Error::InvalidConfig(

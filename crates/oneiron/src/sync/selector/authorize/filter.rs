@@ -424,9 +424,16 @@ pub(in crate::sync::selector) fn filter_window_doc(
         if kind == EdgeKind::SameAs && !coreference.allows(src, tgt) {
             return;
         }
+        // A kept row's `InWorld` edge to the window's own world crosses
+        // beside it, though the WORLD row sits in base reality: the receiver
+        // lands it on its foreign copy of that world (FIX 22223).
+        let window_world = kind == EdgeKind::InWorld
+            && kept.contains(&src)
+            && matches!(selector.world, SyncSelectorWorld::World(world) if world.entity_id() == tgt);
         if (kept.contains(&src) && kept.contains(&tgt))
             || (kept.contains(&src) && authorized_base.contains(&tgt))
             || (kept.contains(&tgt) && authorized_base.contains(&src))
+            || window_world
         {
             let _ = map_insert_bytes(&out_edges, raw_key, value);
         }

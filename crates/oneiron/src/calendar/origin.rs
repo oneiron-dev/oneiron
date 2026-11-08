@@ -11,6 +11,8 @@ use crate::ports::EdgeStoreRead;
 use crate::ports::{EntityStore, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Raw, SideTable};
+use crate::source_audience::SourceAudienceBirth;
+use crate::store::source_audience_obligation::SOURCE_AUDIENCE_REQUIRED_KEY;
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -296,6 +298,8 @@ impl Vault {
     }
     /// Apply imported name/time drift without changing the EVENT's origin union.
     /// Native and extracted fields survive; imported provenance follows the source.
+    /// A source's stamped EVENT is rewritten under its landing's `birth`, its
+    /// stamp kept last (fix list row 16256).
     pub(in crate::calendar) fn update_calendar_import_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -303,6 +307,7 @@ impl Vault {
         input: &CalendarEventInput,
         occurred: TimeRange,
         at: u64,
+        birth: Option<&SourceAudienceBirth>,
     ) -> Result<()> {
         let origin = live_origin(&self.store, txn, event)?
             .ok_or(invalid("calendar EVENT requires live calendar.origin"))?;
@@ -331,9 +336,22 @@ impl Vault {
                 Value::from(input.external_id.as_deref().unwrap_or_default()),
             );
         }
-        self.batch_in()
-            .put(&event, ENTITY_TYPE_EVENT, occurred, at, &encode(&value)?)
-            .apply(txn)
+        if let Some(stamp) = fields
+            .iter()
+            .position(|(name, _)| name.as_str() == Some(SOURCE_AUDIENCE_REQUIRED_KEY))
+        {
+            let stamp = fields.remove(stamp);
+            fields.push(stamp);
+        }
+        let body = encode(&value)?;
+        let batch = self.batch_in();
+        let batch = match birth {
+            Some(birth) => {
+                batch.put_source_bound(&event, ENTITY_TYPE_EVENT, occurred, at, &body, birth)
+            }
+            None => batch.put(&event, ENTITY_TYPE_EVENT, occurred, at, &body),
+        };
+        batch.apply(txn)
     }
 
     pub fn create_native_calendar_event(
