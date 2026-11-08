@@ -17,13 +17,19 @@ use oneiron::origin::smart_http::ScanBounds;
 
 use crate::http_listener::ConnectionLimits;
 
+mod machine_floors;
 mod override_keys;
 
+use machine_floors::{memory_floor, request_body_floor};
 pub(super) use override_keys::LimitsConfigOverride;
 
 /// `limits.task_work`'s default: past ten times the fleet's 200 agents, as
 /// its sibling queues (`decision_reads`, `lfs_transfers`) sit.
 const TASK_WORK: usize = 2_048;
+
+/// Operator-overridable input-worker default, recorded as the open
+/// "L05 FIX65/68 context_reads worker admission" call, not a ruled bound.
+const CONTEXT_READS: usize = 2_048;
 
 /// Resolved limits.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -80,6 +86,9 @@ pub struct LimitsConfig {
     /// is one pack of prompts, however many the model server's slots take at
     /// once; the rest wait their turn there.
     pub decision_reads: usize,
+    /// Context-pack input workers held at once. Past it, callers wait their
+    /// fair turn without a new deadline or count refusal.
+    pub context_reads: usize,
     /// Task work (`can`, `ask`, `wait`, `tasks.answer`) the vault runs at
     /// once. Past it, each caller's work waits its fair turn, up to
     /// `queue_wait_timeout_ms`, then runs anyway: it is never refused.
@@ -210,6 +219,7 @@ impl Default for LimitsConfig {
             embedder_requests: 2_048,
             embedder_answer_bytes: 256 * 1024 * 1024,
             decision_reads: 2_048,
+            context_reads: CONTEXT_READS,
             task_work: TASK_WORK,
             renderer_work: crate::slide_render::default_turns(),
             lfs_quota_bytes: 64 * 1024 * 1024 * 1024,
@@ -245,23 +255,6 @@ impl Default for LimitsConfig {
     }
 }
 
-/// An eighth of the machine's memory for what LFS transfers hold in memory,
-/// and as much for app-tier state kept between frames and for media replies,
-/// each at least 256 MiB; 2 GiB when the platform does not say.
-/// `limits.request_body_bytes`'s default: a 1024th of the machine's memory
-/// (the least of its RAM and its container limit), the share the input-caps
-/// plan gives one body read into a typed request, never under 64 MiB, the
-/// facade's own body bound; 64 MiB when memory cannot be read.
-fn request_body_floor() -> u64 {
-    const FLOOR: u64 = 64 * 1024 * 1024;
-    crate::machine::memory_bytes().map_or(FLOOR, |memory| (memory / 1024).max(FLOOR))
-}
-
-fn memory_floor() -> u64 {
-    const MIB: u64 = 1024 * 1024;
-    crate::machine::memory_bytes().map_or(2_048 * MIB, |memory| (memory / 8).max(256 * MIB))
-}
-
 impl LimitsConfig {
     /// The listener's share of these limits.
     pub(crate) fn connections(&self) -> ConnectionLimits {
@@ -292,6 +285,7 @@ impl LimitsConfig {
             embedder_requests,
             embedder_answer_bytes,
             decision_reads,
+            context_reads,
             task_work,
             renderer_work,
             lfs_quota_bytes,
@@ -473,6 +467,7 @@ impl LimitsConfig {
             codebase_manifest_files,
             recall_query_bytes,
             requested_result_rows,
+            tournament_lineage_rows,
             embedding_dimensions,
             shared_merge_evidence_rows,
             memory_reason_evidence_rows,
@@ -494,6 +489,7 @@ impl LimitsConfig {
         set(&mut self.embedder_requests, embedder_requests);
         set(&mut self.embedder_answer_bytes, embedder_answer_bytes);
         set(&mut self.decision_reads, decision_reads);
+        set(&mut self.context_reads, context_reads);
         set(&mut self.task_work, task_work);
         set(&mut self.renderer_work, renderer_work);
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
@@ -784,6 +780,7 @@ impl LimitsConfig {
             (EngineLimit::CodebaseManifestFiles, codebase_manifest_files),
             (EngineLimit::RecallQueryBytes, recall_query_bytes),
             (EngineLimit::RequestedResultRows, requested_result_rows),
+            (EngineLimit::TournamentLineageRows, tournament_lineage_rows),
             (EngineLimit::EmbeddingDimensions, embedding_dimensions),
             (
                 EngineLimit::SharedMergeEvidenceRows,
@@ -822,6 +819,7 @@ impl LimitsConfig {
             ("embedder_requests", self.embedder_requests as u64),
             ("embedder_answer_bytes", self.embedder_answer_bytes),
             ("decision_reads", self.decision_reads as u64),
+            ("context_reads", self.context_reads as u64),
             ("task_work", self.task_work as u64),
             ("renderer_work", self.renderer_work as u64),
             ("lfs_quota_bytes", self.lfs_quota_bytes),

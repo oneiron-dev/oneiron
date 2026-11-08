@@ -93,9 +93,15 @@ pub struct EnqueuedTask {
     pub body: String,
     #[serde(default)]
     pub assignee: Option<String>,
-    /// Unix seconds.
+    /// When the TASK falls due, Unix seconds: it lands as the TASK's own
+    /// due time and ticks on `schedule.tick` (FIX 4749).
     #[serde(default)]
     pub due_at: Option<u64>,
+    /// The TASK is a watch TASK (FIX 22121): it needs `due_at`, queues no
+    /// work, and its tick settles it. A watcher repeats by enqueuing its
+    /// next watch TASK from the hook on its tick.
+    #[serde(default)]
+    pub watch: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

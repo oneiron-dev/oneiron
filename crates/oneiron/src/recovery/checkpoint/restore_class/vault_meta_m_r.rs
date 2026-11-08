@@ -140,7 +140,15 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OUTBOUND_INTENT_PARTY, LIVE),
     (&t::OUTBOUND_INTENT_PARTY_OF, LIVE),
     (&t::OUTBOUND_INTENT_LATE_RECIPIENT, LIVE),
+    // A parked task question stands with the live send and its live custody
+    // key (FIX 16029): live state replaces the image's; absent stays absent.
+    // Its owner Ask restores as content (DECISION_ASK), so the poller's pass
+    // (`forget_ended_remote_task_inputs`) reconciles the two: an Ask of a
+    // question no row holds is withdrawn, and a waiting row's missing Ask is
+    // queued again, each Ask checked by its typed identity, never its number.
+    (&t::OUTBOUND_REMOTE_TASK_INPUT, LIVE),
     (&t::OUTBOUND_REMOTE_TASK_POLL, LIVE),
+    (&t::OUTBOUND_REMOTE_TASK_SESSION_END, LIVE),
     (&t::OUTBOUND_INTENT_UNAVAILABLE, LIVE),
     (&t::OUTBOUND_SUPPRESSION_INDEX, LIVE),
     (&t::OUTBOUND_SUPPRESSION_RECEIPT, LIVE),
@@ -192,6 +200,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PORTS_DEPENDENT_WALK_CHECK, LIVE),
     (&t::PORTS_DEPENDENT_WALK_POLICY, LIVE),
     (&t::PORTS_DEPENDENT_WALK_SETTLED, CONTENT),
+    (&t::PORTS_DOCUMENT_MUTATION_HEAD, CONTENT),
     (&t::PORTS_ID_FLOOR, LIVE),
     (&t::PORTS_STALE, CONTENT),
     (&t::PORTS_TOMBSTONE, CONTENT),
