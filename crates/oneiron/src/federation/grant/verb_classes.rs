@@ -12,12 +12,12 @@ use oneiron_authority::federation::{
 };
 use rmpv::Value;
 
-use super::{FEDERATION_GRANT_BODY_KEYS, FederationGrant};
+use super::FederationGrant;
 use crate::error::Result;
 use crate::federation::FederationGrantKind;
 use crate::federation::codec::{invalid_grant, optional_value};
 
-const KEY_VERB_CLASSES: &str = FEDERATION_GRANT_BODY_KEYS[13];
+pub(super) const KEY_VERB_CLASSES: &str = "verb_classes";
 
 /// The body entry of `grant`'s verb classes, when it names any.
 pub(super) fn body_entry(grant: &FederationGrant) -> Option<(Value, Value)> {
