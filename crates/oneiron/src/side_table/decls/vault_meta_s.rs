@@ -675,8 +675,9 @@ side_tables! {
     SKILL_OPTIMIZE_OFFER: VaultMeta b"skill_optimize:offer:v1:" Named
         => crate::skill_optimize::erase_offer_source_in_txn;
     /// The vault owner's one answer to a training offer, with any switch or train intent. Key:
-    /// id16 (offer).
-    SKILL_OPTIMIZE_OFFER_ANSWER: VaultMeta b"skill_optimize:offer_answer:v1:" Named;
+    /// id16 (offer). Its scrub leaves an erased actor's answers naming no one.
+    SKILL_OPTIMIZE_OFFER_ANSWER: VaultMeta b"skill_optimize:offer_answer:v1:" Named
+        => crate::skill_optimize::erase_offer_answer_actor_in_txn;
     /// An immutable owner-nominated seat/candidate pin for a Coach offer. Key: id16.
     SKILL_OPTIMIZE_OFFER_CANDIDATE: VaultMeta b"skill_optimize:offer_candidate:v1:" Named;
     /// One check of a training offer's promise against later receipts. Key: id16 (offer) + id16

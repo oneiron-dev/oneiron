@@ -3727,16 +3727,16 @@ export type ComputeDestination = "on_device" | { self_hosted: { host: string } }
 export type TrainingOffer = { id: EntityId; seat: EvalSeat; offer_skill?: [EntityId, string] | null; drafted_on?: string | null; attempt: AttemptId; incumbent: OfferModelPin; candidate: OfferCandidate; baseline: OfferOption; alternatives: OfferOption[]; workload: SeatWorkload; cost: OfferCost; evidence: OfferEvidence; destination: ComputeDestination; previous?: EntityId | null; what_changed?: string | null; check_at: number; offered_at: number; source_rows?: EntityId[] | null; digest: string }
 /** `oneiron::skill_optimize::offer::snapshot::OfferAnswer` */
 export type OfferAnswer = "keep_baseline" | "approve_switch" | "approve_train" | "decline" | "postpone"
+/** `oneiron::skill_optimize::offer_switch::SwitchOwner` */
+export type SwitchOwner = string
 /** `oneiron::skill_optimize::offer::snapshot::OfferIntent` */
 export type OfferIntent = { switch: { seat: EvalSeat; from: OfferModelPin; to: OfferModelPin } } | { train: { seat: EvalSeat; base: OfferModelPin; recipe_ref: string; destination: ComputeDestination } }
 /** `oneiron::skill_optimize::offer::snapshot::OfferAnswerRecord` */
-export type OfferAnswerRecord = { offer: EntityId; answer: OfferAnswer; owner: EntityId; authentication: string; offer_digest: string; intent?: OfferIntent | null; at: number }
+export type OfferAnswerRecord = { offer: EntityId; answer: OfferAnswer; owner: SwitchOwner; authentication?: string | null; offer_digest: string; intent?: OfferIntent | null; at: number }
 /** `oneiron::skill_optimize::offer::snapshot::OfferCheckOutcome` */
 export type OfferCheckOutcome = "held" | "broken" | "currency_mismatch" | "promised_score_unknown" | "promised_cost_unknown" | "unverifiable_no_calls" | "unverifiable_no_meter" | "unverifiable_not_bound" | "unverifiable_no_model_role" | "unverifiable_mixed_model" | "unverifiable_no_usage" | "unverifiable_unpriced_model" | "unverifiable_unknown_currency" | "unverifiable_unpriced_cache" | "unverifiable_mixed_currency" | "unverifiable_sum_overflow" | "unverifiable_unclassified"
 /** `oneiron::skill_optimize::offer::snapshot::OfferCheck` */
 export type OfferCheck = { id: EntityId; offer: EntityId; receipt_refs: string[]; observed_monthly_cost?: number | null; observed_score?: number | null; held?: boolean | null; outcome: OfferCheckOutcome; note?: string | null; at: number; source_rows?: EntityId[] | null }
-/** `oneiron::skill_optimize::offer_switch::SwitchOwner` */
-export type SwitchOwner = string
 /** `oneiron::training_pack::types::TrainingOwner` */
 export type TrainingOwner = string
 /** `oneiron_model::model_binding::ModelRole` */
