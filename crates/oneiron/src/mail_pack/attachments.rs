@@ -459,9 +459,24 @@ fn claim_artifact(
             return Ok(None);
         }
         if let Some(data) = &body {
+            // Born stamped under its source's audience and bound to its
+            // thread's, in this one write (fix list row 16256).
+            let audience = SOURCES
+                .get(&vault.store, txn, &source)?
+                .ok_or(crate::Error::EntityNotFound)?
+                .audience;
+            let birth = source_audience::SourceAudienceBirth::mint_in(vault, txn, &audience)?;
+            let stamped = birth.stamp_in_txn(vault, txn, &artifact, data)?;
             vault
                 .batch_in()
-                .put(&artifact, ENTITY_TYPE_BLOB_ARTIFACT, occurred, at, data)
+                .put_source_bound(
+                    &artifact,
+                    ENTITY_TYPE_BLOB_ARTIFACT,
+                    occurred,
+                    at,
+                    &stamped,
+                    &birth,
+                )
                 .apply(txn)?;
             source_audience::bind_record_in_txn(vault, txn, &artifact, &row.thread)?;
         }

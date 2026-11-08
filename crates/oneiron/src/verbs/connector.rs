@@ -225,27 +225,39 @@ impl From<OutboundScheduleRequest> for OutboundDraftInput {
     }
 }
 
+/// The draft and continuation `connector.outbound.schedule` schedules
+/// `input` as, under the default schedule context: a sender-selection
+/// question rides the continuation with the counterparty class passed
+/// beside it, and a counterparty class without a selection is dropped.
+/// `can({effect})` judges the same pair (FIX 22102).
+pub(crate) fn outbound_schedule_parts(
+    input: OutboundScheduleRequest,
+) -> (
+    OutboundDraftInput,
+    crate::outbound::OutboundScheduleContinuation,
+) {
+    let continuation = crate::outbound::OutboundScheduleContinuation {
+        selection: input.selection.clone().map(|selection| {
+            crate::outbound::OutboundSendSelection {
+                request: selection,
+                counterparty_class: input.counterparty_class.clone(),
+            }
+        }),
+        ..Default::default()
+    };
+    (OutboundDraftInput::from(input), continuation)
+}
+
 /// `connector.outbound.schedule`: the gated schedule `Memory` already serves.
 pub fn connector_outbound_schedule_draft(
     memory: &Memory<'_>,
     input: OutboundScheduleRequest,
 ) -> MemoryResult<OutboundIntentReceipt> {
-    if let Some(selection) = input.selection.clone() {
-        let continuation = crate::outbound::OutboundScheduleContinuation {
-            selection: Some(crate::outbound::OutboundSendSelection {
-                request: selection,
-                counterparty_class: input.counterparty_class.clone(),
-            }),
-            ..Default::default()
-        };
-        let draft = OutboundDraftInput::from(input);
-        memory.schedule_outbound_with_continuation(
-            &draft,
-            &crate::memory::OutboundScheduleContext::default(),
-            &continuation,
-            None,
-        )
-    } else {
-        memory.schedule_outbound(&input.into())
-    }
+    let (draft, continuation) = outbound_schedule_parts(input);
+    memory.schedule_outbound_with_continuation(
+        &draft,
+        &crate::memory::OutboundScheduleContext::default(),
+        &continuation,
+        None,
+    )
 }
