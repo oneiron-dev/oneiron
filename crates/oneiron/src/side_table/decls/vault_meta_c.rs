@@ -422,8 +422,12 @@ side_tables! {
     CODE_RUN_REPLAY_CAPSULE: VaultMeta b"code_run:replay_capsule:v1:" Named Authored [accepts: crate::code_run::code_run_replay_capsule_accepts_masked]
         => crate::code_run::erase_capsule_actor_in_txn;
     /// Whose reply content one code-run replay record holds (FIX 5718): the run it is (its own,
-    /// or a write receipt's run) and the actor its host stamped, or Erased once that actor's erase
-    /// took it. The capsule table's scrub erases it. Key: id16(record).
+    /// or a write receipt's run) and one of three states. Kept: the replies are there, for the
+    /// actor its host stamped. Deleted: a soft delete of that actor took them (FIX 15532). The
+    /// row keeps the actor and the reply bodies it released, for that actor's hard erase (FIX
+    /// 6591). Erased: an erase took them, or a late write found the actor's hard-delete marker,
+    /// so its hard erasure is complete. The row names no actor. Deleted and Erased read as
+    /// erased, for good. Key: id16(record).
     CODE_RUN_RESPONSE_OWNER: VaultMeta b"code_run:response_owner:v1:" Named Engine;
     /// The owner's value-free dismissal of one code-run secret lift proposal. The
     /// occurrence's secret/taint marks stay unchanged. Key: string(handle/occurrence).
@@ -441,9 +445,12 @@ side_tables! {
     /// id16(wait) + be64(generation).
     CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored [accepts: crate::store::executor_wait_delivery::code_run_wait_delivery_accepts_masked];
     /// Who held each code-run wait's reply (FIX 5718): one row per run delivered a reply of the
-    /// wait, at the generation it parked, naming the actor its run's replies are, or Erased once
-    /// that actor's erase took them. It outlives the wait's waiter and delivery rows. The capsule
-    /// table's scrub erases it. Key: id16(wait) + id16(run) + be64(generation).
+    /// wait, at the generation it parked, in one of three states. Kept: the run holds the reply,
+    /// for the actor its replies are. Deleted: a soft delete of that actor took it (FIX 15532).
+    /// The row keeps the actor only for that actor's hard erase (FIX 6591). Erased: an erase
+    /// took it, or a late write found the actor's hard-delete marker. The row names no actor.
+    /// Deleted and Erased read as erased, for good. It outlives the wait's waiter and delivery
+    /// rows. Key: id16(wait) + id16(run) + be64(generation).
     CODE_RUN_WAIT_HOLDER: VaultMeta b"code_run:wait_holder:v1:" Named Engine;
     /// The code runs parked on a wait (`p` + id16(wait) + id16(run), value be64(generation)) and
     /// the reply the wait settled with (`s` + id16(wait), value JSON). Key: u8 tag + id16 [+ id16].

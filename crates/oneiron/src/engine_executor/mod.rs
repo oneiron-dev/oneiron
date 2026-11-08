@@ -59,9 +59,9 @@ pub(crate) use self::step_evidence::step_evidence_page;
 pub(crate) use self::store::{
     RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, bridge_result_output_path, clean_for_context,
     holds_reply_content, is_result_output_path, mask_known_text, observation_output_path,
-    parse_result_read_path, result_handle_json, result_read_path_for, script_output_path,
-    store_agent_verb_write_answer, store_ordinal_base, store_result_output_path,
-    write_receipt_result_output_path,
+    parse_result_read_path, result_handle_json, result_read_path_for, resumed_output_wait,
+    script_output_path, store_agent_verb_write_answer, store_ordinal_base,
+    store_result_output_path, terminal_output_seq, write_receipt_result_output_path,
 };
 pub use self::types::{
     CallableProgram, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
