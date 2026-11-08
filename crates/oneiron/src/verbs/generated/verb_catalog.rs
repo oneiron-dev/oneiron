@@ -1309,6 +1309,7 @@ pub enum AgentVerb {
     VaultMailComplianceSet,
     VaultMailComplianceLog,
     VaultMailSourcesSyncStatus,
+    VaultMailSourcesImportMbox,
     VaultMailSourcesSync,
     VaultMailInbox,
     VaultMailThreadsRead,
@@ -2664,6 +2665,7 @@ impl AgentVerb {
         Self::VaultMailComplianceSet,
         Self::VaultMailComplianceLog,
         Self::VaultMailSourcesSyncStatus,
+        Self::VaultMailSourcesImportMbox,
         Self::VaultMailSourcesSync,
         Self::VaultMailInbox,
         Self::VaultMailThreadsRead,
@@ -4060,6 +4062,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSet => "vault.mail.compliance.set",
             Self::VaultMailComplianceLog => "vault.mail.compliance.log",
             Self::VaultMailSourcesSyncStatus => "vault.mail.sources.sync_status",
+            Self::VaultMailSourcesImportMbox => "vault.mail.sources.import_mbox",
             Self::VaultMailSourcesSync => "vault.mail.sources.sync",
             Self::VaultMailInbox => "vault.mail.inbox",
             Self::VaultMailThreadsRead => "vault.mail.threads.read",
@@ -5399,6 +5402,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailSourcesImportMbox
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
@@ -6783,6 +6787,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailSourcesImportMbox
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
@@ -8264,6 +8269,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceLog
                 | Self::VaultMailSourcesSyncStatus
+                | Self::VaultMailSourcesImportMbox
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
@@ -9074,6 +9080,7 @@ impl AgentVerb {
                 | Self::VaultMailThreadsShare
                 | Self::VaultMailThreadsUnshare
                 | Self::VaultMailComplianceSet
+                | Self::VaultMailSourcesImportMbox
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
@@ -10472,6 +10479,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
             Self::VaultMailSourcesSyncStatus => &["spec"],
+            Self::VaultMailSourcesImportMbox => &["spec"],
             Self::VaultMailSourcesSync => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
@@ -11828,6 +11836,7 @@ impl AgentVerb {
             Self::VaultMailComplianceSet => &["spec"],
             Self::VaultMailComplianceLog => &["spec"],
             Self::VaultMailSourcesSyncStatus => &["spec"],
+            Self::VaultMailSourcesImportMbox => &["spec"],
             Self::VaultMailSourcesSync => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
@@ -15675,7 +15684,7 @@ impl AgentVerb {
                 "The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing."
             }
             Self::VaultMailSourcesConnect => {
-                "Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."
+                "Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members."
             }
             Self::VaultMailSourcesList => {
                 "The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted."
@@ -15706,6 +15715,9 @@ impl AgentVerb {
             }
             Self::VaultMailSourcesSyncStatus => {
                 "Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."
+            }
+            Self::VaultMailSourcesImportMbox => {
+                "The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place."
             }
             Self::VaultMailSourcesSync => {
                 "The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."

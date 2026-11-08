@@ -37,7 +37,7 @@ use crate::memory::{MemoryError, MemoryResult};
 use crate::{EntityId, Result, Vault};
 
 /// Seconds in the month a "recent months" setting counts.
-const MONTH_SECONDS: u64 = 30 * 86_400;
+pub(super) const MONTH_SECONDS: u64 = 30 * 86_400;
 
 /// How much one step reads from the provider. The host sets its cadence;
 /// these bound one step so many sources share a host fairly.
@@ -117,7 +117,7 @@ impl MailSyncReport {
 
 /// Whether a message's headers say it lands under `row`'s copy setting:
 /// never trash, spam or a draft; for recent months, nothing older.
-fn copies(headers: &MailHeaders, newer_than: Option<u64>) -> bool {
+pub(super) fn copies(headers: &MailHeaders, newer_than: Option<u64>) -> bool {
     !headers.trash_or_spam
         && !headers.draft
         && newer_than.is_none_or(|cutoff| headers.received_at >= cutoff)
