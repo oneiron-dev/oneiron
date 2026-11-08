@@ -150,8 +150,9 @@ pub use crate::outbound_consent::scoped_mcp_approve_once_digest;
 pub(crate) use self::bound::bound_exceeded;
 pub(crate) use self::doors::QueuedCheckApproval;
 pub(crate) use self::doors::{
-    DerivedGrantOrigin, DerivedGrantSetting, OwnerAuthoredWrite, approve_once_authorization_in_txn,
-    approve_once_decision_in_txn, person_is_live_for_store_in_txn, person_is_live_in_txn,
+    DerivedGrantOrigin, DerivedGrantSetting, OwnerAuthoredWrite, active_standing_grant_rows_in_txn,
+    approve_once_authorization_in_txn, approve_once_decision_in_txn,
+    person_is_live_for_store_in_txn, person_is_live_in_txn,
     record_standing_grant_use_for_store_in_txn, revoke_standing_grant_in_txn,
     spend_approve_once_in_txn, standing_grant_is_active_in_txn, standing_grant_row_in_txn,
     standing_grant_rows_in_txn,

@@ -30,7 +30,7 @@ const ERASED_AUTHOR_HOLD: ExportDiaryHoldReason = ExportDiaryHoldReason::NotCove
 /// one once erased. `None` is a body that is no diary, never a diary whose
 /// author is unknown.
 pub(crate) fn diary_author(body: &[u8]) -> Option<NoteActor> {
-    crate::store::note_body::decode_note_body_using(body, crate::store::note_body::NoteKind::wire)
+    crate::store::note_body::decode_note_core_using(body, crate::store::note_body::NoteKind::wire)
         .ok()
         .filter(|note| note.kind == crate::store::note_body::NoteKind::Diary)
         .map(|note| note.author_ref)

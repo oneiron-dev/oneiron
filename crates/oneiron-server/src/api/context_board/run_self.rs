@@ -12,13 +12,13 @@
 //! and rendered whole: the agent, the person its subject anchor names, the
 //! owner's agent Grants that stand for the agent, the run, credential and
 //! parent ceilings and the communication limits its host holds the facts
-//! for ([`BriefHostFacts`]), the policy's class ceilings, the scratchpad of
-//! the session its host binds, the pins its host's board admits now, the
-//! result names the run its host binds has bound, the line the run's entry
-//! spends on, the clock and the skills the run's own session loaded. Every
-//! field no host resolves is left out of the brief and named on one
-//! unavailable line ([`oneiron::context_board::SelfBrief::render`]), never
-//! stated as a value.
+//! for ([`BriefHostFacts`]), the policy's class ceilings and the per-class
+//! verdicts beside them, the scratchpad of the session its host binds, the
+//! pins its host's board admits now, the result names the run its host
+//! binds has bound, the line the run's entry spends on, the clock and the
+//! skills the run's own session loaded. Every field no host resolves is left
+//! out of the brief and named on one unavailable line
+//! ([`oneiron::context_board::SelfBrief::render`]), never stated as a value.
 
 use oneiron::authority::CommReach;
 use oneiron::context_board::{
@@ -204,15 +204,15 @@ pub(crate) async fn describe_self_for_run(
 /// `actor`, with the ceilings its host holds the facts for (`host`). Each
 /// field no host produces for a run (FIX-LIST: the self-brief producers) is
 /// `None`; so is the principal when no subject anchor names the person
-/// behind the agent, so are the grants, the parent ceiling, the comm reach
-/// and the class ceilings when their read fails, so are the run and parent
-/// ceilings and the comm reach when the host bound no dispatch attempt, so
-/// are the replay bindings when the host bound no replay run, the run holds
-/// no replay record or its read fails, so are the credential ceiling and the
-/// credential's comm reach when it verified no slip, so is the scratchpad
-/// when it binds no session, so are the pins when its board's pin read
-/// fails, and so are the budget lease and budget when no line binds the
-/// run's entry.
+/// behind the agent, so are the grants, the parent ceiling, the comm reach,
+/// the class ceilings and the class verdicts when their read fails, so are
+/// the run and parent ceilings and the comm reach when the host bound no
+/// dispatch attempt, so are the replay bindings when the host bound no
+/// replay run, the run holds no replay record or its read fails, so are the
+/// credential ceiling and the credential's comm reach when it verified no
+/// slip, so is the scratchpad when it binds no session, so are the pins when
+/// its board's pin read fails, and so are the budget lease and budget when
+/// no line binds the run's entry.
 /// [`oneiron::context_board::SelfBrief::render`] leaves each `None` field
 /// out and names it unavailable. A credentialed agent's describe(self) with
 /// no installed snapshot resolves its brief here too, over its own
@@ -288,20 +288,23 @@ pub(super) fn resolved_state(
             .ok()
             .flatten()
     });
-    // CLASSES (FIX 17594): the concrete class ceilings the resolved policy
-    // holds for the agent and its live definition ceiling, dated, read in
-    // one snapshot. Class verdicts stay unavailable. A failed read leaves
-    // the ceilings unavailable.
-    let ceilings = server
+    // CLASSES (FIX 17594, FIX 20734): the concrete class ceilings the
+    // resolved policy holds for the agent and its live definition ceiling,
+    // and beside them the per-class verdicts, each with its bound, all dated
+    // and read in one snapshot. A failed read leaves both unavailable.
+    let (ceilings, class_verdicts) = server
         .vault
-        .self_brief_ceilings(actor)
+        .self_brief_class_reads(actor)
         .inspect_err(|error| {
             tracing::warn!(
                 kind = ?error.kind(),
-                "the self brief's class ceilings did not read; the brief names them unavailable"
+                "the self brief's class ceilings and verdicts did not read; \
+                 the brief names them unavailable"
             );
         })
-        .ok();
+        .ok()
+        .map(|reads| (reads.ceilings, reads.class_verdicts))
+        .unzip();
     // WORKING SET (FIX 17594): the result names the run the host bound has
     // bound, read from that run's replay record. Only a host-bound run is a
     // trusted run identity: a session label proves no replay ownership. The
@@ -343,6 +346,7 @@ pub(super) fn resolved_state(
             credential_ceiling: host.communication_credential_ceiling,
         },
         ceilings,
+        class_verdicts,
         budget_lease_id: line.map(|line| line.run().to_owned()),
         budget: line.map(RunAdmission::read),
         clock_ms,

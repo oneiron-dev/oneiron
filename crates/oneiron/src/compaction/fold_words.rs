@@ -117,8 +117,10 @@ fn words_withdrawn(
     run: EntityId,
     record: &FoldRecord,
 ) -> Result<bool> {
-    Ok(fold_words_withdrawn_in(dbs, txn, run, record.fold, &record.sources)?
-        || home_changed(dbs, txn, record)?)
+    Ok(
+        fold_words_withdrawn_in(dbs, txn, run, record.fold, &record.sources)?
+            || home_changed(dbs, txn, record)?,
+    )
 }
 
 /// Whether the words of run `run`'s fold `fold`, written from `sources`,
