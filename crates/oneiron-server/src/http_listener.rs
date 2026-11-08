@@ -561,6 +561,37 @@ pub(crate) fn idle_body(body: Incoming, idle: Duration) -> Body {
     Body::new(IdleBody::new(body, idle, None, None))
 }
 
+/// `request` on `routes`, outside this listener's connection pool, as its own
+/// requests run on the router: the body under the body-idle limit, the
+/// request's explicit credential revocation scoped over the route and checked
+/// before each body frame, and the revoked reply when a revocation ended the
+/// read. The startup gate's held requests run here (FIX 22117).
+pub(crate) async fn route_revocable(
+    routes: Router,
+    request: hyper::Request<Incoming>,
+    idle: Duration,
+) -> axum::response::Response {
+    let (parts, body) = request.into_parts();
+    let ended = hyper::body::Body::is_end_stream(&body);
+    let revocation = (!ended).then(BodyRevocation::default);
+    with_body_revocation(revocation.clone(), async move {
+        let body = Body::new(IdleBody::new(body, idle, None, revocation.clone()));
+        let request = hyper::Request::from_parts(parts, body);
+        let response = match tower::ServiceExt::oneshot(routes, request).await {
+            Ok(response) => response,
+            Err(never) => match never {},
+        };
+        if revocation
+            .as_ref()
+            .is_some_and(BodyRevocation::ended_revoked)
+        {
+            return revoked_response();
+        }
+        response
+    })
+    .await
+}
+
 impl hyper::body::Body for IdleBody {
     type Data = Bytes;
     type Error = BoxError;

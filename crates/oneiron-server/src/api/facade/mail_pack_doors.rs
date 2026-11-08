@@ -1,4 +1,4 @@
-//! `vault.mail.pack.install` and `vault.mail.sources.sync` on a served vault
+//! `vault.mail.pack.install`, `vault.mail.sources.sync` and `vault.mail.reply.approve` on a served vault
 //! (FIX 12559): the owner installs the engine's own Mail & Calendar pack, and
 //! runs one import step of a source, under the proof `/v1/owner` takes from
 //! the request. The generated HTTP and MCP dispatchers both enter here; an
@@ -6,7 +6,9 @@
 
 use std::sync::Arc;
 
-use oneiron::mail_pack::{MailSourceSyncRequest, MailSyncReport};
+use oneiron::mail_pack::{
+    MailReplyApproveRequest, MailReplyDraftView, MailSourceSyncRequest, MailSyncReport,
+};
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{EmptyRequest, PackPutReceipt};
 
@@ -46,4 +48,25 @@ pub(crate) async fn vault_mail_sources_sync(
     })
     .await
     .map_err(|_| internal("vault.mail.sources.sync"))?
+}
+
+/// `vault.mail.reply.approve` (FIX 15420): a mailbox's own person approves
+/// one reviewed revision of a drafted reply from that mailbox, on their own
+/// proof: the owner as `/v1/owner` admits them, or a member on their own
+/// verified human slip (fix list row 17644 follow-up), which lends no owner
+/// authority. Its send runs on the blocking pool, as the send wires are
+/// blocking HTTP.
+pub(crate) async fn vault_mail_reply_approve(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: MailReplyApproveRequest,
+) -> MemoryResult<MailReplyDraftView> {
+    let person =
+        super::agent_definition_doors::member_proof(server, auth, "vault.mail.reply.approve")?;
+    let server = Arc::clone(server);
+    super::clock_ingress::run_blocking(move || -> MemoryResult<MailReplyDraftView> {
+        server.vault().approve_mail_reply(&person, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.mail.reply.approve"))?
 }

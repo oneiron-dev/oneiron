@@ -468,6 +468,11 @@ fn task_page_slot_in(
         presence.due_at = task.due_at;
         return Ok(Some(TaskPageSlot::Projected(presence)));
     }
+    // FIX 4747: an agent run's portable record is the engine's, no person's
+    // task: it never takes a TASKS row; the run shows through its jobs.
+    if crate::agent_dispatch::is_agent_run_task_in(vault, rtxn, task_ref)? {
+        return Ok(None);
+    }
     // P2 F6 (role fold): only the `Task` role folds into the TASKS section.
     // Goal / Milestone / Habit / HabitCheckin roles are not tasks and must not
     // render as TASKS rows (nor enter the cancel fallback below). Both

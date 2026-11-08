@@ -375,6 +375,7 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 | `hard_erase_sweep` | day; hour while an erasure waits | the history an erase left in sync carriers (the 30-day erasure deadline) |
 | `ppr_cache_eviction` | day | cached graph walks older than the longest serve window (168 h) |
 | `drafter_corpus_sweep` | day, and at start | drafter training examples past the newest `DRAFTER_EXAMPLES_KEPT` (their keys retire), sealed drafter corpora no prepared, training or returned drafter version names, and stray files in a kept one |
+| `model_pack_retirement` | minute | a model pack's retirement: its notices 60, 30 and 7 days before (none while your model manifest outranks the pack), and on the day the move to its successor, with the change notice and its revert. `oneiron maintain` holds no model offers (only a serving host has them), so it sends no retiring model's notice; `serve` sends it |
 
 The signing sweeps and the cache eviction walk their records a page at a time and go on from
 where they stopped on the next pass. A sweep that fails, or that could not finish some of its
@@ -396,8 +397,8 @@ counted as refused.
 
 A managed vault that is stopped between uses tells its supervisor when to wake it: a
 `housekeeping` entry in its wake ledger carries the next secret-lease expiry, voice-print
-retention deadline, critical-confirm window or waiting erasure. Cache and retention hygiene never
-wake a vault.
+retention deadline, critical-confirm window, waiting erasure, or model pack notice mark or
+retirement day. Cache and retention hygiene never wake a vault.
 Signing reminders, consult digests, moderation-hold pruning, the TASK attribution pump, attempt
 lease reclaim and self-heal detector runs need authority only the host holds; the report lists
 them as `host_only` with the reason.
@@ -1042,7 +1043,11 @@ fields of its reply:
   `already_queued: true`.
 
 The resident Dreamer picks the step up at once: its deadline watch reads the queue again after
-every `host.wake`. Poll the root until `outcome.state` is not `running`:
+every `host.wake`. Poll the root until `outcome.state` is not `running`.
+`awaiting_host` still has unfinished work: it is not success, and `settled` stays false.
+Those jobs remain queued for their normal Coach host consumer; inspect the root again after
+that consumer serves them. This status does not say the host is absent or unavailable.
+To inspect the root:
 
 ```
 oneiron api call vault.sieve.settlements.get --data '{"wake":"<attempt>"}'
@@ -1051,7 +1056,11 @@ oneiron api call vault.sieve.settlements.get --data '{"wake":"<attempt>"}'
 (Over MCP, the `vault.sieve.settlements.get` tool with `{"spec": {"wake": "<attempt>"}}`.)
 `jobs` lists every job under the root; `outcome` says what they came to:
 
-- `running`: a job is still queued, leased, landing or scheduled (`outcome.waiting_on`).
+- `running`: a job is still queued, leased, landing or scheduled (`outcome.waiting_on`),
+  other than the all-host-queued case below. A leased or landing Coach job is still `running`.
+- `awaiting_host`: every job in `outcome.waiting_on` is queued or scheduled on `coach.host`
+  or `coach.heal`. Every job, its lineage and its queue eligibility remain unchanged; the
+  status does not mark it completed or claim a missing consumer has been installed.
 - `succeeded`: every job completed. `outcome.result_refs` and `outcome.conclusions` are what
   they produced.
 - `partial`: nothing is running, but a job is parked or paused (`parked`, with its cause), was
@@ -2872,6 +2881,31 @@ oneiron api raw GET /v1/owner/status
 oneiron api raw POST /v1/owner/backups
 oneiron api raw POST /v1/owner/maintain
 oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
+```
+
+## The operator's admin routes
+
+On a self-hosted vault, the host operator runs the admin commands without an owner slip. The
+operator's own credential comes from `oneiron token operator` on the stopped vault; it is never
+an owner or a person, and it reaches `/v1/operator/*` only. The host's root also passes. A
+managed vault serves none of these routes to its operator.
+
+| Route | What it does |
+|---|---|
+| `GET /v1/operator/status` | The same answer as `GET /v1/owner/status`. |
+| `GET /v1/operator/backups` | This vault's backups, oldest first. |
+| `POST /v1/operator/backups` | Takes one backup now, under the server's backup lock and retention. |
+| `POST /v1/operator/backups/rehearse` | `{}` or `{"file": "<name>"}`: a restore rehearsal in a scratch copy; the vault does not change. |
+| `POST /v1/operator/maintain` | Every housekeeping sweep now, as `POST /v1/owner/maintain` without `lift_secrets`. |
+
+A restore over the vault and the named repairs of `oneiron maintain` need a stopped vault, so they
+stay CLI commands. Lifting secrets is an owner act and has no operator route. Owner recovery is
+an owner act too: the operator's credential gets 403 at `/v1/operator/shared/recover-owner`.
+With the credential's `token` in `ONEIRON_SECRET` and its `binding_key` in `ONEIRON_BINDING_KEY`:
+
+```sh
+oneiron api raw GET /v1/operator/status
+oneiron api raw POST /v1/operator/backups
 ```
 
 ## Shared-merge evidence questions
