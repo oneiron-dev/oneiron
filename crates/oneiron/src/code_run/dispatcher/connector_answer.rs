@@ -26,6 +26,7 @@ impl HostSelfDispatcher<'_> {
     ) -> Result<SelfDispatchOutcome> {
         let refused = |code: String| {
             SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
                 effect: SelfEffect::ConnectorAnswer,
                 outcome: code,
                 reason_codes: Vec::new(),

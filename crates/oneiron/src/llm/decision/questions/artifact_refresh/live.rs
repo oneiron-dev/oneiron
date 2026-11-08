@@ -71,8 +71,10 @@ impl Asking<'_> {
                         .collect(),
                 ))
             }
-            Selection::Paragraphs { blocks, .. } => {
-                let Some(live) = vault.live_paragraphs(&artifact, pin(artifact))? else {
+            Selection::Paragraphs { blocks, scope, .. } => {
+                let Some(live) =
+                    vault.live_scoped_paragraphs_until(&artifact, pin(artifact), *scope, None)?
+                else {
                     return Ok(None);
                 };
                 Some(Changed::Blocks(
