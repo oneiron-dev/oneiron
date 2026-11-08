@@ -198,20 +198,17 @@ pub(super) fn receipt_fields(notices: &[WorldRecipientNotice]) -> Vec<(String, S
     fields
 }
 
-/// Drops every notice field only the owner reads from `receipts` when
-/// `reader` is not the owner (`secret_sight`, as his export asks): any other
-/// reader sees each notice's type, world ref and reason, never the world's
-/// name. A reader whose standing cannot be read is not the owner.
+/// Drops every notice field only the owner reads from `receipts` when the
+/// reader is not the owner (`owner`, its `secret_sight` as his export asks
+/// it, read only when a receipt names such a field): any other reader sees
+/// each notice's type, world ref and reason, never the world's name. A
+/// reader whose standing cannot be read is not the owner.
 pub(crate) fn screen_owner_notice_fields(
-    reader: &crate::memory::Memory<'_>,
+    owner: impl FnOnce() -> bool,
     receipts: &mut [crate::receipt::ReceiptRecord],
 ) {
     let names = |fields: &BTreeMap<String, String>| fields.keys().any(|key| owner_only(key));
-    if !receipts.iter().any(|receipt| names(&receipt.fields))
-        || reader
-            .secret_sight()
-            .is_ok_and(|sight| sight == crate::secret_custody::SecretSight::Owner)
-    {
+    if !receipts.iter().any(|receipt| names(&receipt.fields)) || owner() {
         return;
     }
     for receipt in receipts {

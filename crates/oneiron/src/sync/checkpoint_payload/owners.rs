@@ -31,7 +31,9 @@ use crate::sync::bridge::{format_edge_key, parse_edge_key};
 use crate::sync::carrier_parts::is_part_key;
 use crate::sync::custody::CUSTODY_MAP;
 use crate::sync::document_pins::DOCUMENT_PINS_MAP;
-use crate::sync::ingest::{PEER_ORIGIN_MAP, admit_peer_origin_carrier};
+use crate::sync::ingest::{
+    MESSAGE_WRITER_MAP, PEER_ORIGIN_MAP, admit_peer_origin_carrier, admit_writer_proof_carrier,
+};
 use crate::sync::message_docs::MESSAGE_DOCS_MAP;
 use crate::sync::origin_positions::ORIGIN_POSITIONS_MAP;
 use crate::sync::repo_manifests::REPO_MANIFESTS_MAP;
@@ -40,12 +42,14 @@ use crate::sync::room_turns::ROOM_TURNS_MAP;
 use crate::sync::row_birth::ROW_BIRTHS_MAP;
 use crate::sync::schema::ASSET_BODY_REFS_MAP;
 use crate::sync::selector::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
+use crate::sync::source_audiences::SOURCE_AUDIENCES_MAP;
 use crate::sync::withdrawn_cutoffs::{
     CarriedCutoff, EPOCH_FLOOR, WITHDRAWN_CUTOFFS_MAP, admit_withdrawn_cutoff_carrier,
+    epoch_floor_scope,
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
-pub(super) const WINDOW_ROOTS: [&str; 22] = [
+pub(crate) const WINDOW_ROOTS: [&str; 24] = [
     "entities",
     "edges",
     "tombstones",
@@ -54,6 +58,7 @@ pub(super) const WINDOW_ROOTS: [&str; 22] = [
     ROW_BIRTHS_MAP,
     ORIGIN_POSITIONS_MAP,
     PEER_ORIGIN_MAP,
+    MESSAGE_WRITER_MAP,
     WITHDRAWN_CUTOFFS_MAP,
     "documents",
     "document_heads",
@@ -68,6 +73,7 @@ pub(super) const WINDOW_ROOTS: [&str; 22] = [
     MESSAGE_DOCS_MAP,
     REPO_MANIFESTS_MAP,
     ASSET_BODY_REFS_MAP,
+    SOURCE_AUDIENCES_MAP,
 ];
 
 /// Whether a key holding a digest of what it carries (a pin's, a part's, a
@@ -140,13 +146,21 @@ pub(crate) fn root_entry(
             (Some(id), Ok(())) => structure(vec![OwnerRef::entity(&id)]),
             _ => undecodable(),
         },
+        // A writer's proof holds while its MESSAGE row does (FIX 12113).
+        MESSAGE_WRITER_MAP => match (entity, admit_writer_proof_carrier(key, &binary(value))) {
+            (Some(id), Ok(())) => structure(vec![OwnerRef::entity(&id)]),
+            _ => undecodable(),
+        },
         WITHDRAWN_CUTOFFS_MAP => match admit_withdrawn_cutoff_carrier(key, &binary(value)) {
             Ok(CarriedCutoff::Withdrawn(artifact, _)) => {
                 structure(vec![OwnerRef::entity(&artifact)])
             }
-            Ok(CarriedCutoff::EpochFloor(session, _, _)) => {
-                structure(vec![OwnerRef::entity(&session)])
-            }
+            Ok(CarriedCutoff::EpochFloor(scope, _, _)) => structure(
+                std::iter::once(scope.session)
+                    .chain(scope.conversation)
+                    .map(|id| OwnerRef::entity(&id))
+                    .collect(),
+            ),
             Err(_) => undecodable(),
         },
         "documents" | "document_heads" | "head_move_receipts" | "note_forks" | "note_proposals" => {
@@ -162,6 +176,7 @@ pub(crate) fn root_entry(
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::entry(key, value),
         MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::entry(key, value),
         REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::entry(key, value),
+        SOURCE_AUDIENCES_MAP => crate::sync::source_audiences::checkpoint::entry(key, value),
         // KS-2 carries every ASSET byte, a by-reference body's too.
         ASSET_BODY_REFS_MAP => Placement::Dispatched(OtherClient::Body),
         _ => Placement::unclassified(None, SyncUnclassified::UnknownRoot),
@@ -235,6 +250,7 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
         | ROW_BIRTHS_MAP
         | ORIGIN_POSITIONS_MAP
         | PEER_ORIGIN_MAP
+        | MESSAGE_WRITER_MAP
         | ROOM_TURNS_MAP
         | ASSET_BODY_REFS_MAP => id_key(key),
         "edges" => match parse_edge_key(key) {
@@ -246,7 +262,13 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
             }
             _ => KeyClass::Payload,
         },
-        WITHDRAWN_CUTOFFS_MAP => id_key(key.strip_prefix(EPOCH_FLOOR).unwrap_or(key)),
+        // A conversation's floor names its session, then its conversation
+        // (FIX 5029).
+        WITHDRAWN_CUTOFFS_MAP => match key.strip_prefix(EPOCH_FLOOR) {
+            Some(filed) if epoch_floor_scope(filed).is_ok() => KeyClass::Opaque,
+            Some(_) => KeyClass::Payload,
+            None => id_key(key),
+        },
         "documents" | "document_heads" | "head_move_receipts" | "note_forks" | "note_proposals" => {
             crate::sync::note::checkpoint::key_class(root, key)
         }
@@ -254,6 +276,7 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::key_class(key),
         MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::key_class(key),
         REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::key_class(key),
+        SOURCE_AUDIENCES_MAP => crate::sync::source_audiences::checkpoint::key_class(key),
         // A side row's key may spell a platform handle.
         ROOM_FACTS_MAP => KeyClass::Payload,
         _ => return Some(SyncUnclassified::UnknownRoot),

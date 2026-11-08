@@ -157,6 +157,7 @@ mod window {
         "edges",
         "entities",
         "message_docs",
+        "message_writers",
         "note_proposals",
         "peer_origins",
         "pins",
@@ -166,6 +167,7 @@ mod window {
         "room_turns",
         "row_born_with",
         "row_births",
+        "source_audiences",
         "tombstones",
         "withdrawn_cutoffs",
     ];

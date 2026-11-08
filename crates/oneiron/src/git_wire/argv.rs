@@ -12,6 +12,7 @@ use super::{
     GitWireResult,
 };
 use crate::error::Result;
+use oneiron_store::git_wire::path_text::git_path_os_str;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -179,13 +180,19 @@ impl FrozenGitArgv {
     /// `ls-tree -z <tree> -- :(top,literal)<name>`: only the entry `name`
     /// names in one tree, so the output stays one entry however wide the tree
     /// is. The magic reads `name` as one literal component from the root,
-    /// never as a glob or as relative to the working directory.
+    /// never as a glob or as relative to the working directory. `name` is a
+    /// Git path's text, so a name outside UTF-8 reaches Git as its own bytes
+    /// (FIX 21326).
     pub(super) fn read_tree_entry(tree: &GitOid, name: &str) -> GitWireResult<Self> {
-        if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
-            return Err(invalid("git tree entry name must be one path component"));
+        let one_component = || invalid("git tree entry name must be one path component");
+        if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+            return Err(one_component());
         }
+        let name = git_path_os_str(name).map_err(|_| one_component())?;
         let mut tail = os_args(&["ls-tree", "-z", tree.as_str(), "--"]);
-        tail.push(OsString::from(format!(":(top,literal){name}")));
+        let mut pathspec = OsString::from(":(top,literal)");
+        pathspec.push(&*name);
+        tail.push(pathspec);
         Ok(Self::frozen(GitWireOperation::ReadTree, tail))
     }
 
@@ -306,37 +313,6 @@ impl FrozenGitArgv {
         Self::frozen(GitWireOperation::PublishRefs, tail).with_stdin(payload.into_bytes())
     }
 
-    /// `push --porcelain --no-verify -- <url> +<oid>:<ref>... :<ref>...`: the
-    /// mirror takes exactly the named pairs, forced, and loses exactly the
-    /// named deletions. Never `--mirror`: keep-refs and unpublished refs stay
-    /// home.
-    pub(super) fn mirror_push(
-        url: &str,
-        refs: &[(GitRefName, GitOid)],
-        deletions: &[GitRefName],
-    ) -> GitWireResult<Self> {
-        validate_argv_token(url)?;
-        let mut tail = os_args(&[
-            "push",
-            "--porcelain",
-            "--no-verify",
-            "--no-recurse-submodules",
-            "--",
-        ]);
-        tail.push(OsString::from(url));
-        for (name, oid) in refs {
-            tail.push(OsString::from(format!(
-                "+{}:{}",
-                oid.as_str(),
-                name.as_str()
-            )));
-        }
-        for name in deletions {
-            tail.push(OsString::from(format!(":{}", name.as_str())));
-        }
-        Ok(Self::frozen(GitWireOperation::MirrorPush, tail))
-    }
-
     /// `ls-remote --refs -- <url> <ref>`: what one https mirror holds at one
     /// full ref (FIX 6866). A ref the mirror lacks is absent from a
     /// successful listing; the caller takes only the exact name.
@@ -435,6 +411,32 @@ impl FrozenGitArgv {
             GitWireOperation::WorktreePrune,
             os_args(&["worktree", "prune"]),
         )
+    }
+
+    /// `reflog expire --expire=now --all`: drops every reflog entry of the
+    /// store (FIX 7608 slice 10). No argument is the caller's; its stdout
+    /// is spooled, so a store of any size runs with no wall-clock bound
+    /// (Rule 5).
+    pub(super) fn expire_reflogs() -> Self {
+        let mut argv = Self::frozen(
+            GitWireOperation::ExpireReflogs,
+            os_args(&["reflog", "expire", "--expire=now", "--all"]),
+        );
+        argv.retained = RetainedGitIo::default().with_spooled_stdout();
+        argv
+    }
+
+    /// `gc --prune=now --quiet`: repacks what refs reach and deletes every
+    /// object none reaches (FIX 7608 slice 10). No argument is the
+    /// caller's; its stdout is spooled, so a store of any size runs with no
+    /// wall-clock bound (Rule 5).
+    pub(super) fn collect_objects() -> Self {
+        let mut argv = Self::frozen(
+            GitWireOperation::CollectObjects,
+            os_args(&["gc", "--prune=now", "--quiet"]),
+        );
+        argv.retained = RetainedGitIo::default().with_spooled_stdout();
+        argv
     }
 
     pub(super) const fn operation(&self) -> GitWireOperation {

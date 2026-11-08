@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::git_wire::{GitOid, GitRefName};
+use crate::llm::BrokerIsolation;
 use crate::memory::merge_queue_doors::MergeQueueCheckWorkView;
 use crate::memory::origin_doors::CodePushIngressView;
 
@@ -95,6 +96,41 @@ pub struct ExternalImportReceipt {
     pub receive_provenance: Option<EntityId>,
     /// That update's Published publication.
     pub publication: Option<EntityId>,
+    /// How the newest attempt that set out to fetch the source's Git-LFS
+    /// objects carried them (FIX 19876), from its saved facts. `None` when
+    /// no attempt fetched any. Not whether the objects arrived; the door
+    /// judges that.
+    pub lfs_transfer: Option<ExternalImportLfsTransfer>,
+}
+
+/// How one import attempt's Git-LFS fetch went out (FIX 19876): the route
+/// its batch calls and object actions took, the broker's isolation and how
+/// many credential echoes it rewrote.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ExternalImportLfsTransfer {
+    /// Who sent the requests, recorded before the first.
+    pub route: ExternalImportLfsRoute,
+    /// How the credential broker is kept apart from this vault's process,
+    /// once an exchange reached it; `None` when none did, or when the
+    /// attempt did not record its end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broker_isolation: Option<BrokerIsolation>,
+    /// How many action header values of the batch replies the broker
+    /// rewrote to its placeholder, each the binding's credential handed
+    /// back for an action; the broker installed it again only on an action
+    /// at the source's own origin. A count, never a value; zero for an
+    /// anonymous source.
+    #[serde(default)]
+    pub credential_rewrites: u64,
+}
+
+/// Who sent an import's Git-LFS requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalImportLfsRoute {
+    /// The serving host's credential broker, which alone installed the
+    /// import's binding when it named one.
+    Broker,
 }
 
 /// Where an import stands, derived from its saved facts and the door's

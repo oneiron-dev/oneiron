@@ -115,6 +115,7 @@ impl StoredBody {
             lines: self.lines,
             complete: self.complete,
             input_rows: None,
+            producing_step_start: None,
             preview: CodeRunOutputPreview {
                 codec: self.preview_codec.clone(),
                 text: self.preview_text.clone(),

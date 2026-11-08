@@ -123,10 +123,11 @@ impl<'de> Deserialize<'de> for RepoPortableId {
 
 /// One repo's manifest, as every vault that holds it names the repo. Phases
 /// 2 and 3 add their fields under a version bump.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoManifest {
     /// The repo's portable id.
+    #[schemars(with = "String")]
     pub portable: RepoPortableId,
     /// [`REPO_MANIFEST_VERSION`].
     pub version: u16,
@@ -141,6 +142,7 @@ pub struct RepoManifest {
     pub visible_refs: Vec<(String, String)>,
     /// The LFS objects those refs carry, ascending: pointers, never bytes.
     #[serde(with = "lfs_oids")]
+    #[schemars(with = "Vec<String>")]
     pub lfs_pointers: Vec<LfsOid>,
     /// The epoch of the owner's origin cut in force that names the refs
     /// writer (FIX 15740), else 0.
@@ -158,7 +160,7 @@ pub struct RepoManifest {
 /// The refs writer's signature on a manifest (FIX 12765): the machine that
 /// wrote it, and its Ed25519 signature over
 /// [`RepoManifest::writer_signing_bytes`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoManifestWriter {
     /// The machine whose key signed.
@@ -277,6 +279,49 @@ fn code_anchor_live(vault: &Vault, txn: &heed::RoTxn<'_>, code: &EntityId) -> Re
             ..
         }
     ))
+}
+
+/// The portable id that stands for the repository at `repo` in `txn`
+/// (FIX 12761): the one standing id among the live CODE entities whose
+/// stored locator names the same repository (`RepoRef::same_repository`,
+/// commit ignored). `None` when none stands for it, or when two distinct
+/// standing ids do (two PROJECT anchors of one location): no first row is
+/// picked. A CODE row that is not live or whose locator does not parse
+/// names nothing. It reads only; it never mints or repairs.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn standing_portable_id_for_location_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    repo: &crate::codebase::RepoRef,
+) -> Result<Option<RepoPortableId>> {
+    let mut found: Option<[u8; 32]> = None;
+    for row in BY_CODE.iter_from(&vault.store, txn, &[])? {
+        let (code, portable) = row?;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_CODE_ARTIFACT,
+            body,
+        } = live_entity_row_in_txn(&vault.store, txn, &code)?
+        else {
+            continue;
+        };
+        let Some(located) = crate::code_artifact::decode_code_artifact_body(&body)
+            .ok()
+            .and_then(|artifact| crate::codebase::RepoRef::parse(&artifact.repo_ref).ok())
+        else {
+            continue;
+        };
+        if !located.same_repository(repo) {
+            continue;
+        }
+        match found {
+            None => found = Some(portable),
+            Some(seen) if seen == portable => {}
+            Some(_) => return Ok(None),
+        }
+    }
+    Ok(found.map(RepoPortableId))
 }
 
 /// Removes every repo manifest anchored at erased CODE entity `id`: the

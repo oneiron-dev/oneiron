@@ -15,6 +15,7 @@
 //! where a reference binds them.
 
 pub(crate) mod client;
+pub(crate) mod home_proof;
 mod landing;
 pub(crate) mod references;
 mod send;

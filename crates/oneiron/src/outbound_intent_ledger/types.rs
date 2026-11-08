@@ -11,12 +11,9 @@ use crate::error::{Error, SecretError};
 
 /// Current schema version for device-local outbound intent rows.
 ///
-/// v4 keeps the payload in its stored form: bare, or an envelope that names
-/// the admitting actor and keeps the request clear, sealed under the row's
-/// own custody key, or erased (FIX 9283, 9372, 2328). These rows are
-/// device-local and pre-release, so v4 is read exclusively: there is no
-/// old-schema reader.
-pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 5;
+/// v6 keeps the original Gate-minted pinned approval in the Pending row that
+/// commits its spend. Only this canonical format is accepted.
+pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 6;
 
 /// Binding format emitted and accepted by this greenfield ledger.
 pub const OUTBOUND_BINDING_VERSION: u64 = 2;
@@ -151,78 +148,7 @@ pub struct BudgetChargeMarker {
     pub accounted_at_ms: u64,
 }
 
-/// Machine-readable reason that requires caller escalation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum IntentEscalationReason {
-    NonIdempotentAmbiguous,
-    NonIdempotentPending,
-    ConnectorRevoked,
-    BindingInvalid,
-    PreviouslyAbandoned,
-    CorruptLedgerRow,
-    DedupeReservationReplaced,
-    DedupeSuppressed,
-    /// The owner stopped the try that admitted the send (FIX 7188): the row
-    /// keeps what it knew of its delivery.
-    OwnerStopped,
-    /// The owner set the tool to `never allow` (DEC-0006) before this
-    /// request was sent: it stops, keeping what it knew of its delivery.
-    ConnectorSlateNeverAllow,
-    /// The actor that admitted this send was erased before it settled: its
-    /// request is gone and it is never sent again, keeping what it knew of
-    /// its delivery (FIX 9283).
-    ActorErased,
-    /// The person a send went to was erased before it settled: its request
-    /// is gone and it is never sent again (FIX 10953).
-    RecipientErased,
-    /// The owner erased this call's frozen request (KS7-4b): it is never
-    /// sent again, and the row keeps only its evidence.
-    OwnerErased,
-    /// The provider reported that the remote task it accepted the send as
-    /// failed or was cancelled (FIX 7960).
-    RemoteTaskFailed,
-}
-
-impl IntentEscalationReason {
-    pub(super) const fn as_str(self) -> &'static str {
-        match self {
-            Self::NonIdempotentAmbiguous => "non_idempotent_ambiguous",
-            Self::NonIdempotentPending => "non_idempotent_pending",
-            Self::ConnectorRevoked => "connector_revoked",
-            Self::BindingInvalid => "binding_invalid",
-            Self::PreviouslyAbandoned => "previously_abandoned",
-            Self::CorruptLedgerRow => "corrupt_ledger_row",
-            Self::DedupeReservationReplaced => "dedupe_reservation_replaced",
-            Self::DedupeSuppressed => "dedupe_suppressed",
-            Self::OwnerStopped => "owner_stopped",
-            Self::ConnectorSlateNeverAllow => "connector_key_slate_never_allow",
-            Self::ActorErased => "actor_erased",
-            Self::RecipientErased => "recipient_erased",
-            Self::OwnerErased => "owner_erased",
-            Self::RemoteTaskFailed => "remote_task_failed",
-        }
-    }
-
-    pub(super) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "non_idempotent_ambiguous" => Some(Self::NonIdempotentAmbiguous),
-            "non_idempotent_pending" => Some(Self::NonIdempotentPending),
-            "connector_revoked" => Some(Self::ConnectorRevoked),
-            "binding_invalid" => Some(Self::BindingInvalid),
-            "previously_abandoned" => Some(Self::PreviouslyAbandoned),
-            "corrupt_ledger_row" => Some(Self::CorruptLedgerRow),
-            "dedupe_reservation_replaced" => Some(Self::DedupeReservationReplaced),
-            "dedupe_suppressed" => Some(Self::DedupeSuppressed),
-            "owner_stopped" => Some(Self::OwnerStopped),
-            "connector_key_slate_never_allow" => Some(Self::ConnectorSlateNeverAllow),
-            "actor_erased" => Some(Self::ActorErased),
-            "recipient_erased" => Some(Self::RecipientErased),
-            "owner_erased" => Some(Self::OwnerErased),
-            "remote_task_failed" => Some(Self::RemoteTaskFailed),
-            _ => None,
-        }
-    }
-}
+pub use super::escalation::IntentEscalationReason;
 
 /// Typed scrubbed outcome persisted for replay decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -253,6 +179,10 @@ pub struct OutboundCallRequest {
     /// only by the verified scoped-MCP admission path (ONE-1885). Ordinary
     /// connector calls carry `None` and can never gain one from their text.
     capability_provenance: Option<ScopedCapabilityProvenance>,
+    /// The vault owner whose authenticated word admitted this call, if one
+    /// did (FIX 11591): every later send of it rechecks that this owner is
+    /// still a live owner.
+    authorizing_owner: Option<EntityId>,
     pub now_ms: u64,
 }
 
@@ -275,6 +205,7 @@ impl OutboundCallRequest {
             authorization_binding: None,
             resolved_endpoint: None,
             capability_provenance: None,
+            authorizing_owner: None,
             now_ms,
         }
     }
@@ -292,6 +223,14 @@ impl OutboundCallRequest {
         capability: ScopedCapabilityProvenance,
     ) -> Self {
         self.capability_provenance = Some(capability);
+        self
+    }
+
+    /// Names the owner whose proof admission revalidated under its writer
+    /// (FIX 11591).
+    #[must_use]
+    pub(crate) fn with_authorizing_owner(mut self, owner: Option<EntityId>) -> Self {
+        self.authorizing_owner = owner;
         self
     }
 
@@ -553,6 +492,7 @@ pub(crate) trait OutboundSender {
 }
 
 pub(crate) use crate::consent::approval_proof::AdmittedApproval;
+use crate::consent::approval_proof::PinnedApproval;
 
 /// What a call's ledger row keeps outside the call's checkpoint compartment
 /// (KS7-5, FIX 12117): its budget marker, recorded outcome, sticky delivery
@@ -605,12 +545,17 @@ pub struct IntentLedgerRecord {
     pub idempotency_supported: bool,
     pub authorization_binding: Option<OutboundAuthorizationBinding>,
     pub(crate) admitted_approval: Option<AdmittedApproval>,
+    pub(crate) pinned_approval: Option<PinnedApproval>,
     pub binding_version: u64,
     pub resolved_endpoint: Option<String>,
     /// Typed per-grant capability identity, or `None` for every ordinary
     /// connector row. This durable value — never the row's connector text — is
     /// what recovery reads to decide a capability-only prohibition (ONE-1885).
     pub(super) capability_provenance: Option<ScopedCapabilityProvenance>,
+    /// The vault owner whose authenticated word admitted this send, or
+    /// `None` when no owner's proof carried it (FIX 11591). A send whose
+    /// owner is no longer a live owner stops before any transport.
+    pub(crate) authorizing_owner: Option<EntityId>,
     pub budget_accounting: BudgetChargeMarker,
     pub recorded_outcome: Option<RecordedOutboundOutcome>,
     /// Sticky evidence that some attempt of this logical send may have delivered.
@@ -668,9 +613,11 @@ impl IntentLedgerRecord {
             idempotency_supported,
             authorization_binding: request.authorization_binding,
             admitted_approval: None,
+            pinned_approval: None,
             binding_version: OUTBOUND_BINDING_VERSION,
             resolved_endpoint: request.resolved_endpoint,
             capability_provenance: request.capability_provenance,
+            authorizing_owner: request.authorizing_owner,
             budget_accounting,
             recorded_outcome: None,
             delivery_uncertain: false,
@@ -744,6 +691,7 @@ impl fmt::Debug for IntentLedgerRecord {
             .field("binding_version", &self.binding_version)
             .field("resolved_endpoint", &self.resolved_endpoint)
             .field("capability_provenance", &self.capability_provenance)
+            .field("authorizing_owner", &self.authorizing_owner)
             .field("budget_accounting", &self.budget_accounting)
             .field("recorded_outcome", &self.recorded_outcome)
             .field("delivery_uncertain", &self.delivery_uncertain)
