@@ -264,7 +264,7 @@ pub(crate) trait OutboundTransport {
     /// the send's terminal bridge settles a turn program's step with it
     /// (DOOR-141 PR2). The outcome stays the ACK contract above; by default
     /// a transport hands on none.
-    fn settled_result(&self) -> Option<&[u8]> {
+    fn take_settled_result(&mut self) -> Option<crate::outbound_consent::RawOutboundBody> {
         None
     }
 

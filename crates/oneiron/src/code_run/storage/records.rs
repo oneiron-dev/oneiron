@@ -249,16 +249,39 @@ impl Vault {
         prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
         also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<CodeRunReplayGeneration> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let generation = self.put_code_run_replay_record_if_generation_in_txn(
+            &mut wtxn,
+            record,
+            expected,
+            healed_model,
+            prepare,
+            also,
+        )?;
+        wtxn.commit()?;
+        Ok(generation)
+    }
+
+    /// The native replay compare, erase fence and append in a caller's writer,
+    /// so a reply body and the receipt naming it can commit together.
+    pub(crate) fn put_code_run_replay_record_if_generation_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        healed_model: Option<&ModelId>,
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+        also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+    ) -> Result<CodeRunReplayGeneration> {
         REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
-        let mut wtxn = self.store.env.write_txn()?;
-        let current = REPLAY_RECORDS.get(&self.store, &wtxn, &record.run_id)?;
+        let current = REPLAY_RECORDS.get(&self.store, wtxn, &record.run_id)?;
         replay_generation_matches(current.as_ref(), expected)?;
         let next_heal_count = healed_model
             .map(|model| {
                 let key = model.as_str().to_owned();
                 let current = MODEL_HEAL_COUNTS
-                    .get(&self.store, &wtxn, &key)?
+                    .get(&self.store, wtxn, &key)?
                     .map_or(0, |count| count.0);
                 let next = current
                     .checked_add(1)
@@ -266,19 +289,17 @@ impl Vault {
                 Ok::<_, Error>((key, next))
             })
             .transpose()?;
-        prepare(&mut wtxn)?;
+        prepare(wtxn)?;
         let record = record.over_held(current.as_ref());
         // A record whose replies an erase took stays erased (FIX 5718).
-        let record = fence_replay_in_txn(self, &mut wtxn, record)?;
-        REPLAY_RECORDS.put(self, &mut wtxn, &record.run_id, &record)?;
+        let record = fence_replay_in_txn(self, wtxn, record)?;
+        REPLAY_RECORDS.put(self, wtxn, &record.run_id, &record)?;
         if let Some((key, count)) = next_heal_count {
-            MODEL_HEAL_COUNTS.put(&self.store, &mut wtxn, &key, &HealCount(count))?;
+            MODEL_HEAL_COUNTS.put(&self.store, wtxn, &key, &HealCount(count))?;
         }
-        also(&mut wtxn)?;
-        wtxn.commit()?;
+        also(wtxn)?;
         Ok(next_generation)
     }
-
     /// Loads the replay record for `run_id`, if present.
     pub fn get_code_run_replay_record(
         &self,

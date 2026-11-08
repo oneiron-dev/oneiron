@@ -115,7 +115,9 @@ pub(in crate::api::ai::chat) fn host_args_kept(
 /// row's verb hooks fire on it (ARCH-0080 §3), reading under `hooked`'s key.
 /// A turn that keeps no record runs them on `session` (FIX 5380). The answer
 /// is the caller's view of the row's receipt; `written` takes the MESSAGE
-/// rows from the receipt itself, and stays `None` when no witness ran here.
+/// rows from the receipt itself and `written_turn` its TURN (FIX 5033), and
+/// each stays `None` when no witness ran here. `native_turn` takes the
+/// receipt's turn id.
 pub(in crate::api::ai::chat) fn witness_through_row(
     vault: &Vault,
     memory: &Memory<'_>,
@@ -124,6 +126,7 @@ pub(in crate::api::ai::chat) fn witness_through_row(
     session: Option<&verb_hook_boundary::HookSession>,
     binding: Option<&oneiron::memory::SessionWitnessBinding>,
     written: &mut Option<Vec<EntityId>>,
+    written_turn: &mut Option<EntityId>,
     native_turn: &mut Option<EntityId>,
 ) -> Result<Result<Value, VerbHookStop>, MemoryError> {
     let args = serde_json::to_value(turn)
@@ -149,6 +152,7 @@ pub(in crate::api::ai::chat) fn witness_through_row(
             };
             *native_turn = Some(receipt.turn_id);
             *written = sources::witnessed(&receipt);
+            *written_turn = sources::witnessed_turn(&receipt);
             serde_json::to_value(receipt)
                 .map_err(|_| MemoryError::bad_request("witness receipt does not encode"))
         },
@@ -162,6 +166,7 @@ pub(in crate::api::ai::chat) fn witness_through_row(
     {
         *native_turn = Some(receipt.turn_id);
         *written = sources::witnessed(&receipt);
+        *written_turn = sources::witnessed_turn(&receipt);
     }
     Ok(ended)
 }

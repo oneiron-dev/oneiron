@@ -24327,6 +24327,10 @@ class MailSyncStatusView(TypedDict):
     bodies: int
     bodies_waiting: int
     deleted_at_provider: int
+    claim_rechecks_pending: int
+    claim_rechecks_checked: int
+    claim_rechecks_review_needed: int
+    claim_rechecks_obsolete: int
     last_step_at: NotRequired[int | None]
     last_error: NotRequired[str | None]
 class MailMboxImportRequest(TypedDict):
