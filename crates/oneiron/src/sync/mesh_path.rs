@@ -21,6 +21,11 @@ use crate::side_table::{self, Named, SideTable};
 const PATH_RECEIPTS: SideTable<String, MeshPathReceipt, Named> =
     SideTable::new(&side_table::SYNC_MESH_PATH_RECEIPT);
 
+/// The ALPN sync rides (OF-535): the sync server's HTTP/1.1 routes and their
+/// WebSocket upgrades, on one long-lived stream per connection. A peer sync
+/// session's receipt names it (FIX 4748).
+pub const SYNC_ALPN: &[u8] = b"oneiron/sync/1";
+
 /// How long a path receipt is kept: 90 days.
 pub const MESH_PATH_RECEIPT_RETAIN_MS: u64 = 90 * 24 * 60 * 60 * 1000;
 
