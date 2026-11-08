@@ -3282,6 +3282,11 @@ export_facade! {
     let output = client.vault_shares_create(&input)?;
     crate::codec::lift_record("vault.shares.create", &output)
 };
+"vault.shares.issue_view_link" => fn vault_shares_issue_view_link(&self, input: ShareViewLinkRequest) -> PairingLink = |client| {
+    let input: oneiron::task_verb::sdk::ShareViewLinkRequest = crate::codec::lower_record("vault.shares.issue_view_link", input)?;
+    let output = client.vault_shares_issue_view_link(&input)?;
+    crate::codec::lift_record("vault.shares.issue_view_link", &output)
+};
 "vault.shares.revoke" => fn vault_shares_revoke(&self, input: ShareRevokeRequest) -> ShareRevokeReceipt = |client| {
     let input: oneiron::task_verb::sdk::ShareRevokeRequest = crate::codec::lower_record("vault.shares.revoke", input)?;
     let output = client.vault_shares_revoke(&input)?;
