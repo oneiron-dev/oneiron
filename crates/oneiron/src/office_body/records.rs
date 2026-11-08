@@ -165,6 +165,18 @@ impl OfficeRecalcZone {
     }
 }
 
+/// A node's ids in a kept deck export whose Keep did not bind the deck
+/// (FIX 12346). The held projection's bindings are authoritative for that
+/// export even when the live deck was already bound elsewhere.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeldDeckId {
+    pub node: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_id: Option<String>,
+}
+
 /// An export version and the exact body it projects. The version keeps a
 /// pointer to its body frontier, not a second body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +191,10 @@ pub struct OfficeBodyExportRecord {
     /// `None` for DOCX and XLSX, and for a deck export a Keep did not bind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rebind_frontier: Option<Vec<u8>>,
+    /// The held export's ids by node when its Keep did not rebind the deck
+    /// (FIX 12346). `None` for a rebound deck and for DOCX and XLSX.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_ids: Option<Vec<HeldDeckId>>,
     pub source_version: u64,
     pub actor: BodyActor,
     /// The author the export showed; empty once its actor was erased.
