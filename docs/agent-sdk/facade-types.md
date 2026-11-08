@@ -6756,7 +6756,7 @@ export type ModelPackSetting = { preference: ModelPackPreference; active?: Model
 /** `oneiron::llm::model_pack::change::ModelPackRevertRequest` */
 export type ModelPackRevertRequest = { change_ref: string }
 /** `oneiron::llm::model_pack::change::ModelPackRevertBlock` */
-export type ModelPackRevertBlock = "superseded" | "no_previous_pack" | "not_installed" | "retired"
+export type ModelPackRevertBlock = "superseded" | "no_previous_pack" | "not_installed" | "retired" | "frozen_ref_pins_newer"
 /** `oneiron::llm::model_pack::change::ModelPackRevert` */
 export type ModelPackRevert = { blocked?: ModelPackRevertBlock | null; setting: ModelPackSetting }
 /** `oneiron_store::settings::web_connector::WebConnectorUsageRead` */
