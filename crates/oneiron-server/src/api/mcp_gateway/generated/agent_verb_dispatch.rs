@@ -5887,7 +5887,11 @@ async fn execute_agent_verb_listing(
     // A retry of a call its budget window paced meets the paced line here,
     // before its hooks or its row run again: still held, or the saved answer
     // of the drain's turn (FIX 19034).
-    if let Some(output) = super::verb_hooks::mcp_row_paced_reply(server, tool, actor, &memory)? {
+    if let Some((output, producers)) =
+        super::verb_hooks::mcp_row_paced_reply(server, tool, actor, &memory)?
+    {
+        // Released by the rows the saved answer was derived from (FIX 22259).
+        served.listed(producers);
         return Ok((
             output,
             crate::mcp::McpPageSource::complete(1),
