@@ -596,8 +596,6 @@ class HealthReviewReceipt(TypedDict):
     measured: int
     exact_dial: NotRequired[float | None]
     exact_measured: NotRequired[float | None]
-    diagnostics: list[EntityId]
-    evidence: list[EntityId]
     observed_brief: NotRequired[HealthBriefPin | None]
     label: NotRequired[bool | None]
     projected: bool
