@@ -381,6 +381,7 @@ fn keyed_bodies_never_surface_through_generic_facade_scoped_or_pack_reads() {
         min_confidence: 0.0,
         min_salience: 0.0,
         deny_all: false,
+        caller_excludes_stale: false,
         credential: None,
     };
     for include_stale in [false, true] {

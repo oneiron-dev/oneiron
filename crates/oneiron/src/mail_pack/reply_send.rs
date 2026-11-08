@@ -2,12 +2,15 @@
 //! through (fix list rows 17872, 17643): the common recorded dispatcher's
 //! last step, after its gate, ledger and the owner's one press for exactly
 //! this revision. It sends only the frozen reply the dispatched intent
-//! names, from the source's own mailbox to the recipient the dispatch bound,
+//! names, from the source's own mailbox to the recipients the dispatch
+//! bound, every one of a reply to several among them (fix list row 17645),
 //! with the hygiene headers the dispatch froze.
 //!
 //! - **IMAP.** Submitted over SMTP (RFC 6409) to the server the mailbox's
 //!   credential names, read at the source's door with effector
 //!   `connector:smtp`: a credential bound for reading only sends nothing.
+//!   One `RCPT` per recipient; a refused one is `smtp_envelope_refused`, as
+//!   for a send to one, and a reply to several resets before the data goes.
 //! - **Microsoft 365.** One MIME `POST /me/sendMail` on Graph with the
 //!   mailbox's own token (effector `connector:microsoft365`), once `/me`
 //!   shows the token is the mailbox's. A `202` is the send taken; a token
@@ -105,7 +108,8 @@ impl<'v> ReplySink<'v> {
                     client_name,
                 )?;
                 session.authenticate(&account.username, &auth)?;
-                let submitted = session.submit(&self.message.from, &self.message.to, raw);
+                let recipients = self.message.delivery_addresses();
+                let submitted = session.submit(&self.message.from, &recipients, raw);
                 session.quit();
                 outcome = Some(submitted);
                 Ok(())
@@ -205,6 +209,11 @@ impl OutboundExecutionSink for ReplySink<'_> {
         if self.message.to != recipient || self.message.to != request.intent.target {
             return OutboundExecutionOutcome::failed("mail_reply_target_mismatch");
         }
+        // Fix list row 17645: the message's recipients are the admitted
+        // ones, every one in its role and place, or it does not send.
+        if self.message.recipients != request.intent.recipients {
+            return OutboundExecutionOutcome::failed("mail_reply_recipients_mismatch");
+        }
         let Ok(raw) = self.message.render(&request.hygiene_headers) else {
             return OutboundExecutionOutcome::failed("mail_reply_headers_invalid");
         };
@@ -251,5 +260,11 @@ impl OutboundExecutionSink for ReplySink<'_> {
                     .with_possible_delivery()
             }
         }
+    }
+
+    /// One SMTP transaction or one Graph `sendMail` delivers the frozen
+    /// reply to every recipient it names (fix list row 17645).
+    fn delivers_recipient_lists(&self) -> bool {
+        true
     }
 }
