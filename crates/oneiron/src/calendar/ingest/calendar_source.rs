@@ -1,10 +1,10 @@
 //! A pack calendar source's pulled changes (FIX 12559 rows 3 and 5), landed
 //! through the connector admission under the source's own system: each
-//! resource is archived in an artifact bound to the source's audience at
-//! birth, then admitted, its EVENTs bound at birth by the admission
-//! ([`crate::mail_pack::bind_calendar_source_row_in_txn`]); a provider
-//! delete marks the source's passport absent and cancels, as a connector
-//! pull's does.
+//! resource is archived in an artifact stamped with the source's audience
+//! and bound to it at birth, then admitted, its EVENTs stamped and bound at
+//! birth by the admission ([`crate::mail_pack::calendar_source_landing_in`]);
+//! a provider delete marks the source's passport absent and cancels, as a
+//! connector pull's does.
 
 use super::admission::{PollAdmission, VerdictFold};
 use crate::calendar::CalendarError;
@@ -45,7 +45,7 @@ pub(crate) fn apply_calendar_source_change(
         RemoteCalendarChange::Upsert(object) => Ok(CalendarSourceChange::Applied {
             span: apply_upsert(vault, system, object, now)?,
         }),
-        RemoteCalendarChange::Delete { uid, .. } => {
+        RemoteCalendarChange::Delete { uid, .. } | RemoteCalendarChange::Omitted { uid, .. } => {
             let record = format!("calendar-source:{system}:{uid}");
             super::delete_connector_resource(vault, system, record.as_str(), uid, now)?;
             Ok(CalendarSourceChange::Deleted)
@@ -237,8 +237,8 @@ struct ArchivedResource {
 }
 
 /// Archives one pulled resource of `(system, uid)`: one artifact per
-/// resource, bound to the source's audience in its birth commit, then one
-/// version per body.
+/// resource, stamped with the source's audience and bound to it in its
+/// birth commit, then one version per body.
 fn archive_source_resource(
     vault: &Vault,
     system: &str,
@@ -262,11 +262,25 @@ fn archive_source_resource(
             ),
         )?;
         vault.with_write_txn_grouped(|txn| {
-            vault
-                .batch_in()
-                .put(&artifact_id, ENTITY_TYPE_BLOB_ARTIFACT, at, now, &data)
+            let batch = vault.batch_in();
+            let Some(landing) = crate::mail_pack::calendar_source_landing_in(vault, txn, system)?
+            else {
+                return batch
+                    .put(&artifact_id, ENTITY_TYPE_BLOB_ARTIFACT, at, now, &data)
+                    .apply(txn);
+            };
+            let stamped = landing.stamp_in_txn(vault, txn, &artifact_id, &data)?;
+            batch
+                .put_source_bound(
+                    &artifact_id,
+                    ENTITY_TYPE_BLOB_ARTIFACT,
+                    at,
+                    now,
+                    &stamped,
+                    landing.birth(),
+                )
                 .apply(txn)?;
-            crate::mail_pack::bind_calendar_source_row_in_txn(vault, txn, system, &artifact_id)
+            landing.bind_in_txn(vault, txn, &artifact_id)
         })?;
     }
     let actor = super::ensure_ics_import_actor(vault, now)?;
