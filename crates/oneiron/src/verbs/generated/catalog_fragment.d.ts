@@ -6925,7 +6925,7 @@ declare const vault: Sdk.VaultHost & {
     react(input: Sdk.MessageReactionRequest): Promise<Sdk.MessageReactionReceipt | StoredResult>;
   };
   model_pack: {
-    /** Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing. */
+    /** Reverts a model pack change, its notice's one tap: pins the pack before it, installed or kept by a same-name update, while the change is the vault's last and that pack is served at its bytes; else answers why and changes nothing. */
     revert(input: Sdk.ModelPackRevertRequest): Promise<Sdk.ModelPackRevert | StoredResult>;
   };
   models: {

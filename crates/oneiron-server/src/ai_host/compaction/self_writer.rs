@@ -5,8 +5,10 @@
 //! agent's own Grant, and freezes them for the flight's calls. A flight on
 //! the retained turns is the house compaction call on the cheap writer,
 //! wearing that home: the agent's own compaction model when its definition
-//! names one (FIX 4472), else the row's cheap model (FIX 6029), and the
-//! house route's model, writing as the agent, where that one is not served.
+//! names one (FIX 4472), else the active model pack's compaction model where
+//! this host serves it (FIX 20042), else the row's cheap model (FIX 6029),
+//! and the house route's model, writing as the agent, where that one is not
+//! served.
 //! Each call is admitted as exactly that model. The agent writes only the
 //! summary; the host records who wrote it, what ran it and what it cost.
 //!
@@ -144,12 +146,14 @@ impl SelfCompactionBackend {
         }
     }
 
-    /// The cheap writer under `row` (FIX 6029; FIX 4472): the agent's own
-    /// compaction model when its definition names one, else the row's cheap
-    /// model. One not served here, or the row's served wider than the row
-    /// allows, gives way to the house route's model, which writes as the
-    /// agent: a flight that compacted before still compacts. The agent's
-    /// own model served wider than the row is refused, as it always was.
+    /// The cheap writer under `row` (FIX 6029; FIX 4472; FIX 20042): the
+    /// agent's own compaction model when its definition names one, else the
+    /// active model pack's compaction model where this host serves it within
+    /// the row's bound ([`Self::pack_writer`]), else the row's cheap model.
+    /// One not served here, or the row's served wider than the row allows,
+    /// gives way to the house route's model, which writes as the agent: a
+    /// flight that compacted before still compacts. The agent's own model
+    /// served wider than the row is refused, as it always was.
     fn cold_writer(&self, row: &SelfCompactionDefault) -> ColdWriter {
         let served = |model: &ModelId| {
             self.route
@@ -159,9 +163,19 @@ impl SelfCompactionBackend {
                 .map(|(locality, _)| locality)
         };
         let own = self.definition.compaction_model.is_some();
-        let preferred =
-            oneiron::agent_def::resolve_compaction_model(&self.definition, &row.cheap_model);
-        if let Some(locality) = served(preferred)
+        let pack = if own { None } else { self.pack_writer(row)? };
+        let preferred = oneiron::agent_def::resolve_compaction_model(
+            &self.definition,
+            pack.as_ref().map(|(model, _)| model),
+            &row.cheap_model,
+        );
+        // The pack's pick runs at the route its access serves it on; any
+        // other model, at the route its own offers serve it.
+        let locality = match &pack {
+            Some((model, locality)) if model == preferred => Some(*locality),
+            _ => served(preferred),
+        };
+        if let Some(locality) = locality
             && (own || locality <= row.locality)
         {
             return within(row, preferred.clone(), locality);
@@ -172,6 +186,44 @@ impl SelfCompactionBackend {
             .ok_or(SelfCompactionUnavailable::ModelNotServed)?;
         let locality = served(&house).ok_or(SelfCompactionUnavailable::ModelNotServed)?;
         within(row, house, locality)
+    }
+
+    /// The active model pack's compaction model (FIX 20042), with the route
+    /// this host serves it on, by the rule a role's pick is served on
+    /// (`ModelRuntime::model_pack_served`), when its call would be admitted
+    /// and fit: that route within the row's bound and within the compaction
+    /// role's configured route, which bounds every seat-bound call
+    /// (`admit_seat_bound`), and a window known for the model
+    /// (`input_allowances`). `None` with no
+    /// router, no seat, no pick, or a pick past any of these: the row's
+    /// cheap model writes instead, so a pack never stops a writer that works
+    /// (review #6722). A pack read that fails refuses as an unreadable row
+    /// does, as a role's pick refuses its call.
+    fn pack_writer(
+        &self,
+        row: &SelfCompactionDefault,
+    ) -> Result<Option<(ModelId, ModelLocality)>, SelfCompactionUnavailable> {
+        let models = &self.route.models;
+        let (Some(router), Some(seat)) = (models.router(), models.seat(self.route.role)) else {
+            return Ok(None);
+        };
+        let choice = self
+            .route
+            .vault
+            .model_pack_compaction_choice(&router.access_snapshot())
+            .map_err(|_| SelfCompactionUnavailable::PolicyUnreadable)?;
+        let ceiling = models
+            .configured_route_role(&self.route.vault, self.route.role, seat)
+            .ok()
+            .map(|route| route.locality);
+        Ok(choice.and_then(|choice| {
+            let (locality, _) = models.model_pack_served(&choice)?;
+            let model = choice.variant.model;
+            (locality <= row.locality
+                && ceiling.is_some_and(|ceiling| locality <= ceiling)
+                && self.route.allowances.contains_key(&model))
+            .then_some((model, locality))
+        }))
     }
 
     /// The vault's self-compaction row, as it reads now.
