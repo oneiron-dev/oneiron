@@ -7,6 +7,11 @@
 //! canonical bytes from an offset, a WANT by its hashes from an index, each
 //! page within one frame. The server keeps nothing between pages: each
 //! request repeats its whole exchange, and the cursor its last reply named.
+//!
+//! A socket carries each request and reply as one envelope. HTTP carries each
+//! as a stream of frames with an end frame (FIX 145, [`stream`]): a request
+//! of any length is decoded as it arrives, and a reply is written as its
+//! client takes it, neither held whole.
 
 use super::loro_support::{map_for_each_value_bytes, map_insert_bytes};
 use super::schema::create_window_doc;
@@ -23,7 +28,9 @@ use crate::{EntityId, TimeRange, Vault};
 
 /// Binary-envelope schema, independent from Git-LFS basic transfer.
 pub const CHUNK_SYNC_VERSION: u8 = 2;
-/// Hard bound on one control/data envelope, not an object-size cap.
+/// The most one frame carries: a socket's envelope whole, or one frame of an
+/// HTTP exchange's stream (FIX 145). A frame's bound, never an exchange's or
+/// an object's.
 pub const MAX_CHUNK_SYNC_FRAME: usize = 8 * 1024 * 1024;
 /// The hashes one page reads and sends at most (4 MiB of chunk bytes): the
 /// width a reply is built in, never a bound on an exchange.
@@ -156,8 +163,9 @@ pub(crate) fn decode_chunk_response(bytes: &[u8]) -> Result<ChunkSyncResponse> {
     decode(bytes)
 }
 
-/// Encodes one bounded request for HTTP or WebSocket transport. Its HAVE and
-/// WANT may hold any number of hashes its frame carries (FIX 8183).
+/// Encodes one request as a socket's envelope. Its HAVE and WANT may hold any
+/// number of hashes its frame carries (FIX 8183); HTTP carries a request as a
+/// stream instead ([`write_chunk_request_stream`], FIX 145).
 pub fn encode_chunk_request(request: &ChunkSyncRequest) -> Result<Vec<u8>> {
     encode(request)
 }
@@ -201,7 +209,28 @@ pub fn serve_chunk_request_reading(
     peer: PeerMachine,
     reader: LfsMarkedReader<'_>,
 ) -> Result<Vec<u8>> {
-    let request: ChunkSyncRequest = decode(bytes)?;
+    encode(&answer_chunk_request(
+        vault,
+        principal,
+        scope,
+        decode(bytes)?,
+        peer,
+        reader,
+    )?)
+}
+
+/// [`serve_chunk_request_reading`] for a request its transport already
+/// decoded from its stream ([`read_chunk_request_stream`], FIX 145), judged
+/// exactly as an envelope's is: the page it asks for, for the transport to
+/// write as its client takes it ([`write_chunk_response_stream`]).
+pub fn answer_chunk_request(
+    vault: &Vault,
+    principal: EntityId,
+    scope: FederationGrantScope,
+    request: ChunkSyncRequest,
+    peer: PeerMachine,
+    reader: LfsMarkedReader<'_>,
+) -> Result<ChunkSyncResponse> {
     let selector = decode_sync_selector(&request.selector)?;
     if selector.member_ref != principal {
         return Err(invalid());
@@ -410,7 +439,7 @@ pub fn serve_owner_chunk_request_reading(
     if !request.selector.is_empty() {
         return Err(invalid());
     }
-    respond(vault, request, peer, reader)
+    encode(&respond(vault, request, peer, reader)?)
 }
 
 fn respond(
@@ -418,7 +447,7 @@ fn respond(
     request: ChunkSyncRequest,
     peer: PeerMachine,
     reader: LfsMarkedReader<'_>,
-) -> Result<Vec<u8>> {
+) -> Result<ChunkSyncResponse> {
     let oid = LfsOid::from_bytes(request.oid);
     // Where the object may go is judged first, for every reader. A marked
     // object's read is the host's to build, for it alone: an unmarked one
@@ -435,7 +464,7 @@ fn respond(
     };
     let manifest = vault.lfs_manifest(oid)?.ok_or_else(invalid)?;
     let read = read.and_then(LfsReadAuthority::reference);
-    encode(&page::reply(vault, oid, &manifest, request, read, mark)?)
+    page::reply(vault, oid, &manifest, request, read, mark)
 }
 
 /// Pulls an object through a bounded authenticated transport exchange. The HAVE
@@ -443,9 +472,11 @@ fn respond(
 /// received chunk is verified, scanned and staged through the same writer as
 /// HTTP upload. The result publishes only after whole-object SHA verification.
 ///
-/// `exchange` must use the host's authenticated connection. It carries opaque
-/// bounded frames, so the engine never handles bearer credentials itself.
-pub fn pull_lfs_object<F>(
+/// `exchange` must use the host's authenticated connection. It sends one
+/// request stream and answers with the reply stream as it arrives, which is
+/// read as its frames come and taken only once its end frame is read (FIX
+/// 145), so the engine never handles bearer credentials itself.
+pub fn pull_lfs_object<F, R>(
     target: &Vault,
     oid: LfsOid,
     selector: &SyncSelector,
@@ -454,7 +485,8 @@ pub fn pull_lfs_object<F>(
     mut exchange: F,
 ) -> Result<LfsPutOutcome>
 where
-    F: FnMut(&[u8]) -> Result<Vec<u8>>,
+    F: FnMut(&[u8]) -> Result<R>,
+    R: std::io::Read,
 {
     let selector = encode_sync_selector(selector)?;
     let mut request = ChunkSyncRequest {
@@ -469,7 +501,7 @@ where
     // The manifest comes in pages, each going on where the last ended.
     let mut pages = page::ManifestPages::default();
     loop {
-        let response: ChunkSyncResponse = decode(&exchange(&encode_chunk_request(&request)?)?)?;
+        let response = read_chunk_response_stream(exchange(&request_stream(&request)?)?)?;
         let ChunkSyncResponse::Manifest(page) = response else {
             return Err(invalid());
         };
@@ -493,7 +525,7 @@ where
         let mut want = request.clone();
         want.want = Some(vec![chunk.hash]);
         want.have.clone_from(&have);
-        let reply: ChunkSyncResponse = decode(&exchange(&encode_chunk_request(&want)?)?)?;
+        let reply = read_chunk_response_stream(exchange(&request_stream(&want)?)?)?;
         let ChunkSyncResponse::Chunks(mut page) = reply else {
             return Err(invalid());
         };
@@ -512,11 +544,23 @@ where
     })
 }
 
+/// `request` as the bytes of one stream, for a transport that sends it whole.
+fn request_stream(request: &ChunkSyncRequest) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    write_chunk_request_stream(request, &mut bytes)?;
+    Ok(bytes)
+}
+
 mod download;
 mod page;
 mod read;
+pub mod stream;
 pub use download::ChunkDownload;
 pub use read::{ChunkMark, ChunkRead, LfsMarkedReader, LfsReadAuthority};
+pub use stream::{
+    CHUNK_STREAM_FRAME_BYTES, read_chunk_request_stream, read_chunk_response_stream,
+    write_chunk_request_stream, write_chunk_response_stream,
+};
 
 #[cfg(test)]
 mod tests;

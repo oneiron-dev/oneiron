@@ -58,7 +58,7 @@ pub enum EngineScan {
     /// The sync rematerialization markers and quarantine rows a pack's
     /// exclusion index reads.
     PackQuarantineRows,
-    /// The legacy lexical-hint claims a target's hint lookup walks.
+    /// The CLAIM rows a target's lexical-hint lookup walks.
     LexicalHintRows,
     /// The graduation answer log a gate receipt query projects.
     AnswerReceiptRows,
@@ -181,6 +181,11 @@ pub enum EngineScan {
     /// The records one private-thread walk reaches from one record: its
     /// places and the sources of its words.
     PrivateThreadAncestryRecords,
+    /// The records one room P7 decision's word-source walk judges from one
+    /// record: its messages, and every record and MESSAGE a summary it
+    /// copies came from (once withheld past four times the ancestor depth;
+    /// FIX 9787).
+    WordSourceRecords,
     /// One trusted policy manifest's room-policy rows, each fold.
     RoomPolicyRows,
     /// One trusted policy manifest's room-thread holder rows, each fold.

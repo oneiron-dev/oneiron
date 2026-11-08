@@ -96,6 +96,11 @@ pub(crate) struct ConnectionLimits {
     pub(crate) body_idle_timeout: Duration,
     /// How long the loop waits for a free permit before it looks again.
     pub(crate) queue_wait: Duration,
+    /// The most one connection's HTTP/1 read buffer holds, and so the
+    /// largest piece of a request body one read hands a route; `None` keeps
+    /// hyper's own. A listener whose routes reserve room for a body's next
+    /// piece before they read it sets it to that room (FIX 149).
+    pub(crate) max_read_buffer_bytes: Option<usize>,
 }
 
 /// What a stranger past its address's share reads before it is closed.
@@ -361,6 +366,9 @@ async fn serve_from_pool(
             builder
                 .timer(TokioTimer::new())
                 .header_read_timeout(limits.header_read_timeout);
+            if let Some(bytes) = limits.max_read_buffer_bytes {
+                builder.max_buf_size(bytes);
+            }
             let mut connection = pin!(builder.serve_connection(io, service).with_upgrades());
             // A closed or reset connection is the peer's business, not an
             // error of this server's.

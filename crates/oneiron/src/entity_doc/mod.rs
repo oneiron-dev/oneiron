@@ -84,6 +84,8 @@ pub use history_erase::TextHistoryErase;
 pub(crate) use history_erase::admit_history_erase_in_txn;
 pub(crate) use lift::lift_entity_text_in_txn;
 pub use metadata::MetadataEdit;
+// A NOTE's meta map keeps its editable fields in this same encoding (FIX 7784).
+pub(crate) use metadata::{decode_metadata_value, encode_value as encode_metadata_value};
 pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 #[cfg(feature = "sync")]
 pub(crate) use pins::PinMerge;

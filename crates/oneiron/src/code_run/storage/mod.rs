@@ -2,6 +2,7 @@
 
 mod compaction;
 mod continuation;
+mod corrections;
 mod folds;
 mod lift;
 mod model_seat;
@@ -45,13 +46,14 @@ pub(crate) use self::reader_folds::{
 };
 pub(crate) use self::reader_jobs::{
     NewReaderJob, ReportOutcome, SpawnAdmission, SpendBook, WaitSetOutcome,
+    settle_evaporated_reader_spend,
 };
 pub use self::reader_jobs::{ReaderJobs, SummaryMember, SummaryRead};
 pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{
-    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
-    code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
-    retire_unlanded_inline_body_keys_in_txn,
+    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
+    code_run_body_in_file_in_txn, code_run_body_row_key, code_run_inline_body_of_row,
+    lift_code_run_file_hold_in_txn, retire_unlanded_inline_body_keys_in_txn,
 };
 pub(crate) use self::replay_bodies::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,
@@ -112,7 +114,8 @@ pub(crate) use self::wait_delivery::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
 pub(crate) use self::wait_delivery::{
-    deliver_wait_in_txn, deliver_wait_listing_in_txn, settled_wait_reply_in_txn,
+    clear_parked_wait_in_txn, deliver_wait_in_txn, deliver_wait_listing_in_txn,
+    settled_wait_reply_in_txn,
 };
 // DOOR-141 PR3b: a turn program's resume checkpoint and its wait.
 pub(crate) use self::program_resume::{
