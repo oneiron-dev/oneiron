@@ -211,6 +211,7 @@ pub fn meeting_transcript(args: MeetingTranscriptArgs) -> anyhow::Result<()> {
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: false,
+                host_paid: false,
                 seat_effort: None,
             };
             let mut caps = MediaCaps::for_operation(operation);
