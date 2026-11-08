@@ -302,6 +302,28 @@ pub(crate) fn message_stream_finality_in_txn(
 ) -> Result<Option<(StreamFinality, EntityId)>> {
     Ok(receipt(vault, txn, *message)?.map(|done| (done.finality, done.generation)))
 }
+/// The generations of a MESSAGE its stream lifecycle still holds (FIX 5033):
+/// the latest terminal's, which a read of the MESSAGE's latest generation
+/// addresses, and the in-flight or recoverable stream's, while its recovery
+/// seed stands. `None` when a recovery seed stands that does not decode: its
+/// generation is unknown, so the caller holds every generation.
+pub(crate) fn message_stream_held_generations_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    message: &EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    let active = ACTIVE.get_lenient(&vault.store, txn, message)?;
+    if active.is_none() && ACTIVE.contains(&vault.store, txn, message)? {
+        return Ok(None);
+    }
+    let latest = receipt(vault, txn, *message)?.map(|done| done.generation);
+    Ok(Some(
+        latest
+            .into_iter()
+            .chain(active.map(|seed| seed.generation))
+            .collect(),
+    ))
+}
 /// A finalized continuation changed the final words its TURN projects:
 /// re-dirty the TURN in this commit so consolidation selects it again, past
 /// every scope cursor. The TURN row stays byte-identical, so a DAG record TURN

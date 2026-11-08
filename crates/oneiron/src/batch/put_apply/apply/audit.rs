@@ -159,6 +159,9 @@ pub(super) fn audit_and_stage_body(
         row_version,
         data,
     )?;
+    // FIX 4817: the row's new revision withdraws, in this commit, each
+    // self-written summary that wore the row as a home part at another one.
+    crate::ports::withdraw_changed_home_dependents_in_txn(write, wtxn, &fixed.id)?;
     // FIX 12113: which machine wrote the MESSAGE row just staged, for the
     // reverse scan to vouch for its exact bytes beside it: this one for a
     // local put, the lane's verified writer for a replicated one.
