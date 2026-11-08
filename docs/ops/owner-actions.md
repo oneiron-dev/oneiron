@@ -1042,7 +1042,11 @@ fields of its reply:
   `already_queued: true`.
 
 The resident Dreamer picks the step up at once: its deadline watch reads the queue again after
-every `host.wake`. Poll the root until `outcome.state` is not `running`:
+every `host.wake`. Poll the root until `outcome.state` is not `running`.
+`awaiting_host` still has unfinished work: it is not success, and `settled` stays false.
+Those jobs remain queued for their normal Coach host consumer; inspect the root again after
+that consumer serves them. This status does not say the host is absent or unavailable.
+To inspect the root:
 
 ```
 oneiron api call vault.sieve.settlements.get --data '{"wake":"<attempt>"}'
@@ -1051,7 +1055,11 @@ oneiron api call vault.sieve.settlements.get --data '{"wake":"<attempt>"}'
 (Over MCP, the `vault.sieve.settlements.get` tool with `{"spec": {"wake": "<attempt>"}}`.)
 `jobs` lists every job under the root; `outcome` says what they came to:
 
-- `running`: a job is still queued, leased, landing or scheduled (`outcome.waiting_on`).
+- `running`: a job is still queued, leased, landing or scheduled (`outcome.waiting_on`),
+  other than the all-host-queued case below. A leased or landing Coach job is still `running`.
+- `awaiting_host`: every job in `outcome.waiting_on` is queued or scheduled on `coach.host`
+  or `coach.heal`. Every job, its lineage and its queue eligibility remain unchanged; the
+  status does not mark it completed or claim a missing consumer has been installed.
 - `succeeded`: every job completed. `outcome.result_refs` and `outcome.conclusions` are what
   they produced.
 - `partial`: nothing is running, but a job is parked or paused (`parked`, with its cause), was
@@ -1067,6 +1075,29 @@ leaves what the interest queue still holds as one remainder job, due a policy in
 The step reports that remainder as `deferred` and does not wait for it. A lane job that another
 wake already holds queued (one Coach host job per kind, one curator slot, one remainder) stays
 under that wake's root, not this one.
+
+## Let the Dreamer apply its nightly identity links
+
+Nightly continuations propose `SameAs` links. They apply those links only under the owner's
+standing action grant for this vault's Dreamer; without one, each link remains proposed.
+To mint that existing grant through the SDK, MCP or HTTP facade:
+
+```sh
+oneiron api call vault.consent.create_nightly_link_grant --data '{}'
+```
+
+Over HTTP, call `POST /v1/core/facade/vault.consent.create_nightly_link_grant` with `{}` and
+an owner credential. Over MCP, pass `{"spec": {}}`. The vault resolves its own Dreamer System
+principal and mints exactly `dreamer.nightly_link.apply` on `dreamer:nightly-links`, without a
+project target or budget. No actor id or class comes from the request, and no grant is minted
+by default. The generic standing-action request's project/audience envelope does not express
+this bound.
+
+The answer is the normal consent receipt, including `grant_ref`. It appears in
+`vault.consent.registry`; withdraw it with `vault.consent.revoke`, passing
+`{"grant": "<grant_ref>"}`. The landing transaction still checks that the grant is active and
+its issuer is a live vault owner. Minting it changes no reader scope, trust, model policy or
+other Dreamer setting, and does not start a night step.
 
 ## Revert anything the Dreamer changed
 

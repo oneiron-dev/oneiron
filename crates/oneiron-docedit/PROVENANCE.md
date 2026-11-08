@@ -234,6 +234,19 @@ is not an old-format reader, default or migration. A later change after they
 land requires fresh current versions. No numeric ceiling, default, dependency,
 error kind, test or runtime/Word proof is added by this extension.
 
+The exact move-deletion range change (2026-11-05, FIX 13300 partial) touches
+`src/tracked_model.rs`. Eligible destination clones reconstruct their original
+moved text using actual revision identities. When it equals the full paired
+source text, inner deletions retain their character ranges instead of searching
+for unique substrings. Repeated text maps to its own occurrence; empty material
+ranges leave the source unchanged. Hard breaks and opaque inlines retain their
+nodes and receive the deletion status when their one-character span is selected.
+Empty material deletions also leave nonaligned sources unchanged, matching the
+exact-range no-op; destination revision repair still runs. Nonempty nonaligned
+clones keep the existing unique-text mapping, including its non-text statuses.
+Move eligibility, pairing, marker repair and resolution order are unchanged;
+nonaligned ambiguity and suppressed destination pilcrows remain open.
+
 The table-cell fallback change (2026-11-06, FIX 17480) touches
 `src/native_patch/table.rs`. When retained text mapping and the field-aware cut
 cannot apply, the existing rebuild keeps the first paragraph's terminal run
