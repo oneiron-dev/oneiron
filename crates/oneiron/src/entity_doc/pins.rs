@@ -199,7 +199,7 @@ impl Vault {
     ) -> Result<CitationPin> {
         self.with_write_txn_grouped(|txn| {
             super::forks::authorize(self, txn, authorization, entity, actor)?;
-            let h = storage::head(&self.store, txn, entity)?;
+            let h = storage::head_by_owner_kind(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &h)?;
             let origin = doc.fork(&anchor.frontier)?;
             let (start, end) = super::verbs::resolve(&origin, *entity, anchor)?;
@@ -235,7 +235,7 @@ impl Vault {
     /// pins have no scalar oldest; callers use `entity_text_pin_floor` instead.
     pub fn oldest_entity_text_pin(&self, entity: &EntityId) -> Result<Option<CitationPin>> {
         let txn = self.store.env.read_txn()?;
-        let h = storage::head(&self.store, &txn, entity)?;
+        let h = storage::head_by_owner_kind(&self.store, &txn, entity)?;
         let doc = storage::load(&self.store, &txn, &h)?;
         let all = pins(self, &txn, entity)?;
         for candidate in &all {
@@ -268,7 +268,7 @@ impl Vault {
     /// were numeric revisions.
     pub fn entity_text_pin_floor(&self, entity: &EntityId) -> Result<Vec<u8>> {
         let txn = self.store.env.read_txn()?;
-        let h = storage::head(&self.store, &txn, entity)?;
+        let h = storage::head_by_owner_kind(&self.store, &txn, entity)?;
         let doc = storage::load(&self.store, &txn, &h)?;
         floor(self, &txn, entity, &h.incarnation, &doc, &doc.frontier())
     }
@@ -277,7 +277,7 @@ impl Vault {
     /// safe: Loro keeps that frontier's complete state, dropping only predecessors.
     pub fn check_entity_text_purge(&self, entity: &EntityId, requested: &[u8]) -> Result<()> {
         let txn = self.store.env.read_txn()?;
-        let h = storage::head(&self.store, &txn, entity)?;
+        let h = storage::head_by_owner_kind(&self.store, &txn, entity)?;
         let doc = storage::load(&self.store, &txn, &h)?;
         let allowed = floor(self, &txn, entity, &h.incarnation, &doc, requested)?;
         if decode_frontier(&allowed)? != decode_frontier(requested)? {
@@ -367,7 +367,7 @@ impl Vault {
                 act,
                 &receipt_id,
             )?;
-            let mut h = storage::head(&self.store, txn, entity)?;
+            let mut h = storage::head_by_owner_kind(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &h)?;
             let applied = floor(self, txn, entity, &h.incarnation, &doc, requested)?;
             let old_state = doc.text();
@@ -398,8 +398,11 @@ impl Vault {
                 .roll_checkpoint_payload_for_purge_in_txn(txn, entity)?;
             // A purge changes no text, so only this takes the new floor to
             // the live window that carries a MESSAGE's document (FIX 3552).
+            // A proposal artifact has no row for a window to carry.
             #[cfg(feature = "sync")]
-            crate::batch::queue_committed_rows(self, txn, std::iter::once(*entity).collect());
+            if h.owner_kind == storage::DocumentOwnerKind::Entity {
+                crate::batch::queue_committed_rows(self, txn, std::iter::once(*entity).collect());
+            }
             Ok(receipt)
         })?;
         registry.remove(entity);
@@ -464,7 +467,7 @@ impl Vault {
         }
         let through = match through {
             Some(bytes) => bytes.to_vec(),
-            None => self.read_entity_doc(entity, EntityDoc::frontier)?,
+            None => live_frontier_by_owner_kind(self, entity)?,
         };
         Ok(self.purge_entity_text_history(
             entity,
@@ -727,6 +730,15 @@ fn quotes_document(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId, pin: &Cita
     proven().unwrap_or(false)
 }
 
+/// The live frontier of `owner`'s document, its head read by the owner kind
+/// it names ([`storage::head_by_owner_kind`]): what an owner's history erase
+/// runs through when it names no frontier.
+pub(super) fn live_frontier_by_owner_kind(vault: &Vault, owner: &EntityId) -> Result<Vec<u8>> {
+    let txn = vault.store.env.read_txn()?;
+    let h = storage::head_by_owner_kind(&vault.store, &txn, owner)?;
+    Ok(storage::load(&vault.store, &txn, &h)?.frontier())
+}
+
 pub(super) fn entity_type(vault: &Vault, entity: &EntityId) -> Result<Option<u8>> {
     let txn = vault.store.env.read_txn()?;
     Ok(
@@ -778,6 +790,14 @@ pub(super) fn floor(
     )? {
         protected.push(receipt.applied);
     }
+    // A proposal artifact's history keeps every version its record names,
+    // so its measured window reads as it did (FIX 11535).
+    protected.extend(crate::edit_distance::artifact_window_refs_in_txn(
+        &vault.store,
+        txn,
+        entity,
+        incarnation,
+    )?);
     for pin in protected {
         let f = decode_frontier(&pin)?;
         let vv = doc
