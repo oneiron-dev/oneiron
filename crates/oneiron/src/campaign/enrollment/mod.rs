@@ -33,6 +33,7 @@
 mod approval;
 mod audience;
 mod detection;
+mod held;
 mod home_node;
 mod manual;
 mod outbound_leg;
@@ -44,7 +45,8 @@ mod storage;
 mod target;
 
 pub(crate) use self::approval::{
-    drop_enrollment_asks_of_call_in_txn, erase_enrollment_ask_actor_in_txn,
+    drop_enrollment_asks_of_actor_in_txn, drop_enrollment_asks_of_call_in_txn,
+    erase_enrollment_ask_actor_in_txn,
 };
 pub(crate) use self::manual::manual_enrollment_candidate_in_txn;
 pub(crate) use self::reconcile::{
@@ -57,6 +59,7 @@ pub use self::detection::{
     CampaignEnrollmentEvent, DetectEnrollment, EnrollmentDetection, accept_enrollment_baseline,
     campaign_enrollment_event, detect_enrollment,
 };
+pub use self::held::CampaignEnrollmentHeldCall;
 pub use self::home_node::{
     CampaignHomeNodeAdmission, CampaignHomeNodeCandidate, CampaignHomeNodeClass,
     CampaignHomeNodeDesignation, campaign_home_node_designation,
@@ -93,7 +96,6 @@ pub use self::storage::{
 // (FIX 2636); `EnrollmentOutboundLeg` and `run_enrollment_outbound_leg` stay
 // module-private, and the `#[cfg(test)]` seam below keeps them reachable to
 // `tests.rs`.
-
 #[cfg(test)]
 mod tests;
 
