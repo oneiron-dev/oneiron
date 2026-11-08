@@ -55,9 +55,9 @@ impl Memory<'_> {
             return Ok(None);
         }
         let support = self.stage_claim_support_in_txn(content, write)?;
-        let closure_envelope =
+        let landing =
             self.apply_claim_candidate_in_txn(content, write, candidate, envelope, occurred)?;
-        self.finish_claim_write_in_txn(content, write, support, &closure_envelope)?;
+        self.finish_claim_write_in_txn(content, write, support, &landing)?;
         Ok(None)
     }
 
