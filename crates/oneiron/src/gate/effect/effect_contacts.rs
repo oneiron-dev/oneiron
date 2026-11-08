@@ -44,6 +44,16 @@ pub(crate) fn hydrate_external_effect_contact(
     effect: &ExternalEffectGateInput,
     policy: &crate::gate::PolicyManifestResolution,
 ) -> Result<(ExternalEffectGateInput, Option<SendOverrideMatch>, bool)> {
+    hydrate_external_effect_contact_at(store, txn, effect, policy, None)
+}
+
+pub(crate) fn hydrate_external_effect_contact_at(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &crate::gate::PolicyManifestResolution,
+    override_now: Option<u64>,
+) -> Result<(ExternalEffectGateInput, Option<SendOverrideMatch>, bool)> {
     let mut hydrated = effect.clone();
     let Some(party_ref) = effect.counterparty.as_deref() else {
         return Ok((hydrated, None, false));
@@ -128,12 +138,13 @@ pub(crate) fn hydrate_external_effect_contact(
     // revocation is not an opt-out, so no override lifts it (nor does the
     // opt-out posture; see the evaluator).
     let send_override = if hydrated.counterparty_opted_out && !any_revoked {
-        counterparty_send_override_in_txn(
+        counterparty_send_override_at_in_txn(
             store,
             txn,
             party_ref,
             &channel_class,
             hydrated.send_ref.as_deref(),
+            override_now,
         )?
     } else {
         // Nothing to override. The token names the DECISION SOURCE of an
@@ -158,6 +169,28 @@ pub(crate) fn counterparty_send_override_in_txn(
     channel_class: &str,
     send_ref: Option<&str>,
 ) -> Result<Option<SendOverrideMatch>> {
+    counterparty_send_override_at_in_txn(store, txn, party_ref, channel_class, send_ref, None)
+}
+
+/// The owner's `comm.send_override` head for this send, read on the caller's
+/// transaction.
+///
+/// Expiry is measured on the engine's trusted clock, never a caller timestamp:
+/// a one-shot override is expiry-bound at mint, and letting the requester
+/// supply "now" would hand them the lifetime too. A comm-side failure is
+/// propagated, never swallowed — an unreadable override head means the send
+/// holds, exactly like no override at all, and never becomes a silent allow.
+/// `now` is the caller's recording time; `None` samples the store clock here,
+/// as a writer's judgment does. A read-only preflight passes its own peeked
+/// time so that nothing moves the clock floor (FIX 22102).
+pub(crate) fn counterparty_send_override_at_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    party_ref: &str,
+    channel_class: &str,
+    send_ref: Option<&str>,
+    now: Option<u64>,
+) -> Result<Option<SendOverrideMatch>> {
     let Some(party) = comm_result(
         store
             .record_hooks
@@ -172,7 +205,7 @@ pub(crate) fn counterparty_send_override_in_txn(
         &party,
         channel_class,
         send_ref,
-        store.clock.now_recorded_at(),
+        now.unwrap_or_else(|| store.clock.now_recorded_at()),
     ))
 }
 
