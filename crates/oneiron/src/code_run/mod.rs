@@ -165,14 +165,15 @@ pub(crate) use self::result_read::{
 };
 pub use self::storage::ReadWorldUnknown;
 pub(crate) use self::storage::SessionCheckpointBody;
+pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply, WithdrawnFoldAnswer,
     erase_gone_actors_in_live_overlays, erase_settled_reply_of_erased_run_in_txn,
-    redact_fold_answers, replay_carriage, replay_owners, response_erased_error,
-    retire_actor_responses_in_txn, retire_fold_answers_in_txn, retire_sourced_code_outputs_in_txn,
-    wait_reply_in_txn,
+    redact_fold_answers, release_settled_for_caller_in_txn, replay_carriage, replay_owners,
+    response_erased_error, retire_actor_responses_in_txn, retire_fold_answers_in_txn,
+    retire_sourced_code_outputs_in_txn, soft_delete_actor_responses_in_txn, wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
