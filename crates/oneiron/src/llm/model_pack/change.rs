@@ -88,8 +88,11 @@ pub enum ModelPackRevertBlock {
     Retired,
     /// The hub ref the pack before the change came from is frozen to other
     /// bytes, the newer version's, so its drift check refuses the version
-    /// the change recorded. The owner lifts the freeze or moves it to that
-    /// version, then reverts.
+    /// the change recorded. The owner lifts the freeze, then reverts: the
+    /// newer version stays in effect while the freeze is lifted, so the
+    /// change still stands. Moving the freeze to the older bytes instead
+    /// ends the newer version first, a change of its own that supersedes
+    /// this one (review #6755).
     FrozenRefPinsNewer,
 }
 
