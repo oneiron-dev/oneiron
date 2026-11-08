@@ -204,6 +204,18 @@ Every paired slip carries a slip id, its identity. Two pairings of identical cla
     - `"encryption_key"`: base64 of 1600 bytes;
     - `"machine_proof"`: 128 hex.
   - The proof is the install key's signature over `b"oneiron/machine-profile/v1\0" || vault_id || machine || machine_key || device_class UTF-8 || 0x00 || suite (u16 BE) || encryption_key`.
+  - **Pairing an already-held machine again.** Keep the enrolment request and also
+    send top-level `"machine_possession"`: 128 hex, the install key's Ed25519
+    signature over `b"oneiron/pairing-machine-possession/v1\0" || vault_id || machine || machine_key || BLAKE3(binding_transcript)`.
+    Use the raw 32-byte hash of `pairing_binding_transcript_pinned` for this
+    redemption, including its code, holder, new connection binding key and
+    optional checkpoint pin. The logged `machine_proof` does not replace this
+    fresh possession proof; a held machine's class-only revision needs it too.
+    `Vault::machine_possession_proof` signs this transcript for the local install.
+  - A successful credential-only re-pair replies with `"re_paired": true`. It
+    keeps the live machine's identity, profile, role and keys, issues the new slip
+    without re-enrolling or re-sealing the machine, and does not revoke earlier
+    slips. The flag is omitted otherwise.
 - **Naming the machine on later requests.** A request names its machine with `x-oneiron-machine: {"machine": "<32 hex>", "signature": "<128 hex>"}`. The signature is the install key's, over `b"oneiron/machine-proof/v1\0" || vault_id || machine || BLAKE3(slip token) || binding timestamp (u64 BE) || binding nonce UTF-8`.
   - The header rides the request's own `x-oneiron-binding` proof, so it is single-use with it.
   - A missing, malformed or unverifiable header never refuses the request. The peer is then an unknown machine.
@@ -296,7 +308,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
 - trigger phrases:
   - "change inference default tier"
   - "edit ASR or TTS route"
-- safety: Mutating; requires an owner-grade bearer. The seven purpose rows and four speech lanes must all be present. Extraction defaults on-device; a nonlocal extraction default needs an owner-edited `extraction_max_locality` bound and a host-installed request egress predicate. Voice overrides follow the editable `voice_precedence` policy and cannot widen the vault lane. The owner manifest and explicit model pins still govern actual routes.
+- safety: Mutating; requires an owner-grade bearer. The seven purpose rows, four speech lanes and `self_compaction` row must all be present. Extraction defaults on-device; a nonlocal extraction default needs an owner-edited `extraction_max_locality` bound and a host-installed request egress predicate. Voice overrides follow the editable `voice_precedence` policy and cannot widen the vault lane. The owner manifest and explicit model pins still govern actual routes.
 
 #### decision-read-probe - `POST /v1/llm/decision_read`
 
@@ -449,6 +461,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
   - "assemble this turn's context"
   - "get pending notifications"
 - safety: Read-only aggregation with a POST body; requires core read auth. Retrieval, when requested, runs the same scoped context-pack pipeline as `POST /v1/core/context-pack` and advances the caller's cursor.
+- board layout: The board renders under the caller's own board layout (`self.board.layout`, `self.board.fold`, `self.board.unfold`, `self.board.size`, `self.board.filter`, `self.board.replace`): section shares of the cap, sections folded to one live summary line with an optional note and kept rows, and per-section filters. A hydration with a `turn` projects the pending batch and its accepted TURN commit applies it; without a `turn` the live layout renders and nothing applies. `board_budget.folded` and `board_budget.fitted` name the sections the layout folded or fitted. Optional `tasks_budget_tok` selects this hydration's concrete task rows by tokens and wins over the TASKS share; it cannot exceed the effective whole-board cap. See `docs/ops/context-board-layout.md`.
 
 #### core-conversations-list - `GET /v1/core/conversations`
 
@@ -656,9 +669,9 @@ Methods: `GET` and `PUT` on the two Tier-1 inference-defaults routes.
 
 Authentication: `Authorization: Bearer <owner-grade credential>`; a scoped core token is not enough.
 
-`GET` returns `{ "purposes": { ... }, "voice": { ... } }`. Purpose keys are `extraction`, `consolidation`, `answer_gen`, `auto_check`, `tool_routing`, `voice`, and `eval`. Voice keys are `asr_live`, `asr_batch`, `tts_live`, and `tts_batch`. Each row contains a `tier` string and `locality` (`on_device`, `own_server`, or `third_party`). `voice_precedence` is `nested_narrowing` (shipped default) or `vault_only`; `extraction_max_locality` is the owner-authored widest extraction destination (shipped `on_device`).
+`GET` returns `{ "purposes": { ... }, "voice": { ... }, "voice_precedence": "...", "extraction_max_locality": "...", "self_compaction": { "source": "...", "cheap_model": "...", "locality": "..." } }`. Purpose keys are `extraction`, `consolidation`, `answer_gen`, `auto_check`, `tool_routing`, `voice`, and `eval`. Voice keys are `asr_live`, `asr_batch`, `tts_live`, and `tts_batch`. Each purpose or voice row contains a `tier` string and `locality` (`on_device`, `own_server`, or `third_party`). `voice_precedence` is `nested_narrowing` (shipped default) or `vault_only`; `extraction_max_locality` is the owner-authored widest extraction destination (shipped `on_device`). The required `self_compaction` row contains `source` (`auto`, `retained_turns`, or `live_fork`), `cheap_model` (a model id) and `locality` (the same locality values). The shipped `source` is `auto`: each compaction uses the live fork while its prefix is warm in the provider prompt cache, otherwise the cheap writer on retained turns. Preserve this row when replacing the whole table.
 
-`PUT` sends the whole table as JSON, capped at 16 KiB. It validates all eleven rows and returns the stored table; invalid rows return `400 invalid_defaults`, and non-owner credentials return `403 owner_required`. Read-modify-write from an agent so other rows are not dropped. An override cannot widen its vault voice lane. Nonlocal extraction also needs an installed host egress predicate to admit the actual request before budget or provider work. A row is a preference, not permission to relabel an already bound remote model as local; the model-role binding door refuses an unbound locality change.
+`PUT` sends the whole table as JSON, capped at 16 KiB. It validates all eleven rows. A live policy-power holder receives `200` with the stored table; another admitted caller receives `202` with `{ "proposed": <kept proposal> }`, and the active defaults stay unchanged. Credential grade alone does not grant policy power. Invalid rows return `400 invalid_defaults`, and non-owner credentials return `403 owner_required`. Read-modify-write from an agent so other rows are not dropped. An override cannot widen its vault voice lane. Nonlocal extraction also needs an installed host egress predicate to admit the actual request before budget or provider work. A row is a preference, not permission to relabel an already bound remote model as local; the model-role binding door refuses an unbound locality change.
 
 ### Decision Read Probe
 
@@ -1077,6 +1090,9 @@ Request body:
 - `time` optional: `since`, occurred range, or learned range filters.
 - `budget` optional: `max_item_tokens`, `max_field_chars`, and retrieval item budgets.
 - `reader` optional: `definition` (hex agent-definition id the caller can read) and `task_family`. The definition's memory profile picks this reader's optional memory for the family (absent: its default). It only narrows: the smaller token budget and the narrower view win. A reader set to no optional memory gets an empty pack with `state.kind` `skipped` and `state.reason` `skipped_by_profile`; pinned rows and the standing prefix stay.
+- `signals_since` optional: include reaction signals recorded at or after this Unix time for the reader's authored records. `signals_person` names that PERSON; a delegated credential may name only its own bound person. An owner credential without a bound person must supply it.
+- `signals_after` optional: the exclusive cursor from the previous successful signal page. `signals_limit` names a positive page size (at most 1000 per page). Scope, disclosure and optional room filtering run before pagination; withheld signals never become output cursors.
+- `signals_deadline_ms` optional: the caller's signal read/filter/page budget, 1 to 60000 milliseconds, starting after pack assembly when the signal read begins. Requires `signals_since`; invalid values are `400 BAD_REQUEST` before paid work. Omitted, the original complete feed runs without a signal deadline. Checks are cooperative between native operations and around sorting/page construction, not hard preemption. Expiry returns `408 DEADLINE_EXCEEDED` with `details.field` set to `signals_deadline_ms`; no context-pack success, partial signal page or advanced `signals_next` is published. Retry from the previous successful cursor with a larger budget or no deadline. This does not set the pack's retrieval `deadline_exceeded` statistic.
 
 Current response:
 
@@ -1637,6 +1653,7 @@ Fully specified entries:
 
 Codes the server's HTTP error type defines:
 
+- `DEADLINE_EXCEEDED` (408): the explicit signal-read budget expired; retry from the previous successful cursor without advancing it.
 - `BAD_REQUEST`
 - `UNAUTHORIZED`
 - `FORBIDDEN`
@@ -1648,6 +1665,7 @@ Codes the server's HTTP error type defines:
 - `INVALID_STATE`
 - `SNAPSHOT_MISMATCH`
 - `DAILY_BUDGET_EXHAUSTED`
+- `TOO_MANY_ATTEMPTS`
 - `MIRROR_NOT_READY`
 - `UNSUPPORTED_FORMAT`
 - `NOT_ACCEPTABLE`

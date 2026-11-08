@@ -120,6 +120,61 @@ fn digest_instances_in_txn<D: SideTableDbs>(
     Ok(instances)
 }
 
+/// The governed instances that exist before an erase releases its body
+/// references: current and remembered digest instances, plus actual inline
+/// ASSET bindings. Unlike ERASED notes, this inventory precedes the erase.
+pub(crate) fn governed_body_instances_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    digests: &[[u8; 32]],
+    inline_assets: &[EntityId],
+) -> Result<BTreeSet<[u8; 16]>> {
+    let mut instances = BTreeSet::new();
+    for digest in digests {
+        instances.extend(digest_instances_in_txn(store, txn, digest)?);
+    }
+    for asset in inline_assets {
+        if let Some(instance) = INLINE_ASSETS.get(store, txn, asset)? {
+            instances.insert(instance);
+        }
+    }
+    Ok(instances)
+}
+
+/// Adds to `keys` the full `vault_meta` keys of the erase debts the body
+/// `digest` carries: each of its instances an erase owes a retirement, and
+/// every erase's note of that instance. A purge that keeps the body keeps
+/// them, so its last release still stages the retirement and the erase's
+/// receipt still names it.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "sync")]
+pub(crate) fn owed_erase_side_keys_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    digest: &[u8; 32],
+    keys: &mut std::collections::HashSet<Vec<u8>>,
+) -> Result<()> {
+    let mut owed = BTreeSet::new();
+    for instance in digest_instances_in_txn(store, txn, digest)? {
+        if ERASE_PENDING.contains(store, txn, &instance)? {
+            keys.insert(ERASE_PENDING.key_bytes(&instance));
+            owed.insert(instance);
+        }
+    }
+    if owed.is_empty() {
+        return Ok(());
+    }
+    for noted in ERASED.scan_keys(store, txn, b"")? {
+        if owed.contains(&noted.1) {
+            keys.insert(ERASED.key_bytes(&noted));
+        }
+    }
+    Ok(())
+}
+
 /// Drops the remembered `instances` of `digest`, each retired now.
 fn forget_remembered_in_txn<D: SideTableDbs>(
     dbs: &D,

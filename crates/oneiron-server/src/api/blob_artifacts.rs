@@ -137,6 +137,9 @@ pub(super) struct ProposeDeck {
     /// The envelope Keep gives the version, with the task or ask it answers.
     #[serde(default)]
     made_by: Option<MadeBy>,
+    /// The delta receipt id this rework answers (FIX 11967).
+    #[serde(default)]
+    delta_receipt: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -150,6 +153,9 @@ pub(super) struct ProposeOutput {
     report: Value,
     #[serde(default)]
     made_by: Option<MadeBy>,
+    /// The delta receipt id this rework answers (FIX 11967).
+    #[serde(default)]
+    delta_receipt: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -393,18 +399,36 @@ pub(super) async fn view(
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
+    let owner = super::owner_routes::owner(&auth, &server).ok();
     let view = blocking_read(move || {
         let vault = server.vault();
-        let view = match caveat_lane(vault, &auth)? {
-            None => vault.blob_artifact_view(&id),
-            // A tree the lane does not admit whole reads as absent. A
-            // records caveat that names the artifact covers its own version
-            // rows for the records check alone (FIX 8245): every other check
-            // still judges each of them.
-            Some(lane) => {
-                let lane = lane.with_artifact_records_cover(&[id]);
-                vault.blob_artifact_view_admitted(&id, |rows| lane.all_refs_readable(rows))
-            }
+        let caveat = caveat_lane(vault, &auth)?.map(|lane| lane.with_artifact_records_cover(&[id]));
+        let view = match caveat.as_ref() {
+            None => vault.blob_artifact_view_for_reader(&id, None, None),
+            // A records caveat covers this artifact's own version rows,
+            // while every other check still judges each row (FIX 8245).
+            Some(lane) => vault.blob_artifact_view_admitted_for_reader(&id, None, lane),
+        }
+        .map_err(|error| core_engine_error("artifact read failed", error))?;
+        if view.is_some() {
+            return Ok(view);
+        }
+        let Some(owner) = owner.as_ref() else {
+            return Ok(None);
+        };
+        let action = super::host_action::host_action_of(vault, &auth)
+            .transpose()
+            .map_err(super::host_action::host_action_refusal)?;
+        let key = vault
+            .queue_check_owner_read_key(owner, auth.verified_slip(), action.as_ref())
+            .map_err(|error| core_engine_error("artifact read failed", error))?;
+        let reader = vault
+            .scoped_read(key.for_destination(&auth.destination()))
+            .with_artifact_records_cover(&[id]);
+        let view = if caveat.is_some() {
+            vault.blob_artifact_view_admitted_for_reader(&id, Some(owner), &reader)
+        } else {
+            vault.blob_artifact_view_for_reader(&id, Some(owner), Some(&reader))
         };
         view.map_err(|error| core_engine_error("artifact read failed", error))
     })
@@ -498,6 +522,7 @@ async fn export(
         .map(|s| parse_entity_id_param(s, "principal_ref"))
         .transpose()?;
     let host_owner = host_action.map(|action| action.actor().entity_ref());
+    let owner = super::owner_routes::owner(&auth, &server).ok();
     let file = blocking_read(move || {
         let vault = server.vault();
         let failed = |error: oneiron::Error| core_engine_error("artifact export failed", error);
@@ -548,8 +573,30 @@ async fn export(
             }
         }
         let file = vault
-            .export_blob_artifact_as(&id, Some(pinned), sight)
+            .export_blob_artifact_for_reader(&id, Some(pinned), sight, None, None)
             .map_err(failed)?;
+        let file = if file.is_some() {
+            file
+        } else if let Some(owner) = owner.as_ref() {
+            let action = super::host_action::host_action_of(vault, &auth)
+                .transpose()
+                .map_err(super::host_action::host_action_refusal)?;
+            let key = vault
+                .queue_check_owner_read_key(owner, auth.verified_slip(), action.as_ref())
+                .map_err(failed)?;
+            let reader = vault.scoped_read(key.for_destination(&auth.destination()));
+            vault
+                .export_blob_artifact_for_reader(
+                    &id,
+                    Some(pinned),
+                    sight,
+                    Some(owner),
+                    Some(&reader),
+                )
+                .map_err(failed)?
+        } else {
+            None
+        };
         let by = bound.or(host_owner);
         if let (Some(file), Some(by)) = (&file, by) {
             vault
@@ -821,6 +868,7 @@ pub(super) async fn propose_deck(
                         reader,
                         (actor, now),
                         &read_rows,
+                        request.delta_receipt.as_deref(),
                     )
                     .map(|pending| Ok(json!(pending)))
                     .map_err(failed)
@@ -874,11 +922,19 @@ pub(super) async fn propose_output(
         report: request.report.to_string(),
         made_by: request.made_by,
     };
+    let delta_receipt = request.delta_receipt;
     let pending = blocking_read(move || {
         let vault = server.vault();
         let reader = made_by_reader(vault, &auth, output.made_by.as_ref())?;
         vault
-            .propose_native_output(&id, &output, reader, actor, vault.now_recorded_at())
+            .propose_native_output(
+                &id,
+                &output,
+                reader,
+                actor,
+                vault.now_recorded_at(),
+                delta_receipt.as_deref(),
+            )
             .map_err(|error| core_engine_error("native output proposal failed", error))
     })
     .await?;

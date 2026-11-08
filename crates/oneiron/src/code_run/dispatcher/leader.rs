@@ -20,7 +20,7 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::{DecisionBandPolicy, DecisionDial, HeldLadder};
 use crate::memory::MemoryResult;
 use crate::retrieval_depth::RetrievalDeadline;
-use crate::skill::LoadedSkillPack;
+use crate::skill::{LoadedSkillPack, SkillBodyWitness, SkillFileSpan};
 use crate::task_type::PlacementDecisions;
 use crate::team::{LeasedSpawnRequest, PatternLaunchRunner, PlannedSpawnHost, SpawnPhase};
 use crate::workspace_roster::{ProjectProofVersion, ProjectRecord, ProjectWriteProof};
@@ -43,6 +43,9 @@ const SPAWN_UNLAUNCHED: &str = "this planned spawn is planned but did not launch
      under the same intent key to launch it";
 const SPAWN_UNQUEUED: &str = "this planned spawn's launch names no queued agent; ask again \
      under a new intent key";
+/// FIX 9183: every erase stores its cause on the intent, so an erased view
+/// without one is a damaged row.
+const SPAWN_ERASED_UNCAUSED: &str = "planned spawn intent erased without its cause";
 
 /// The host's planner (OF-541, OF-389): the skills, seats, executor and
 /// ladders a planned spawn, its type placement and the leader's advice read
@@ -192,6 +195,9 @@ impl HostSelfDispatcher<'_> {
             .zip(planner_clock.as_ref())
             .map(|(host, clock)| host.planner(clock));
         let spawn_host = PlannedSpawnHost {
+            // FIX 4973: a leased spawn inherits its leased parent's frozen
+            // origin in reserve; this host value never replaces it.
+            caller_origin: crate::agent_dispatch::CallerOrigin::Unknown,
             seats: &planner.seats,
             skills: &planner.skills,
             executor: &planner.executor,
@@ -207,8 +213,8 @@ impl HostSelfDispatcher<'_> {
             context,
         };
         // FIX 9180: each seat the plan and its launch resolve is noted as it
-        // resolves; an erased target's answer keeps no ask (its row scrubs
-        // it), whether or not a seat is left to note.
+        // resolves; an erased answer, its asker's or its target's, keeps no
+        // ask (its row scrubs it), whether or not a seat is left to note.
         let capture = &self.spawn_capture;
         let observe = move |seat| capture.observe(seat);
         let dispatcher = AgentDispatcher::new(vault).observing_seats(&observe);
@@ -223,12 +229,14 @@ impl HostSelfDispatcher<'_> {
         let attempt_ref = match view.phase {
             SpawnPhase::Launched => view.root_attempt.ok_or_else(|| refused(SPAWN_UNQUEUED))?,
             SpawnPhase::Planned => return Err(refused(SPAWN_UNLAUNCHED)),
-            // The erase of the target its plan seats is the typed answer: no
-            // other key or launch is asked for (Engine 10-22).
+            // The erase of its asker or of the target its plan seats is the
+            // typed answer: no other key or launch is asked for (Engine
+            // 10-22). FIX 9183: it answers the cause the intent stored.
             SpawnPhase::Erased => {
-                return Ok(SelfDispatchOutcome::AgentSpawn(
-                    SelfAgentSpawnResult::TargetErased,
-                ));
+                let erasure = view
+                    .erasure
+                    .ok_or(Error::CorruptedIndex(SPAWN_ERASED_UNCAUSED))?;
+                return Ok(SelfDispatchOutcome::AgentSpawn(erasure.into()));
             }
             SpawnPhase::Refused => {
                 tracing::warn!(
@@ -344,7 +352,11 @@ impl HostSelfDispatcher<'_> {
                 at,
             )?),
             SelfLeaderCall::Pattern { skill } => {
-                pattern_json(&self.reload_leader_pattern(skill, &planner.executor, at)?)
+                let loaded = self.reload_leader_pattern(skill, &planner.executor, at)?;
+                let answer = pattern_json(&loaded);
+                // The pattern's files its answer carries exactly (FIX 3608).
+                self.witness_skill_body(&answer, pattern_witness(&loaded));
+                answer
             }
             SelfLeaderCall::Split { leader, slice } => {
                 return self.dispatch_leader_split(leader, slice);
@@ -674,4 +686,23 @@ fn pattern_json(loaded: &LoadedSkillPack) -> serde_json::Value {
                 .collect()
         }),
     })
+}
+
+/// The skill body [`pattern_json`] carries of `loaded` (FIX 3608): each file
+/// whose bytes are UTF-8, which its text holds exactly. A file the answer
+/// decodes lossily is no span of the body; `None` when no file is exact.
+fn pattern_witness(loaded: &LoadedSkillPack) -> Option<SkillBodyWitness> {
+    let files = loaded
+        .source_files
+        .iter()
+        .flatten()
+        .filter(|file| std::str::from_utf8(&file.content).is_ok())
+        .map(|file| SkillFileSpan::whole(&file.path, &file.content))
+        .collect();
+    SkillBodyWitness::of_files(
+        loaded.entity,
+        &loaded.record.skill_id,
+        &loaded.record.version,
+        files,
+    )
 }

@@ -17,10 +17,13 @@ use crate::{EntityId, Vault};
 mod asset_body_refs;
 mod budget;
 mod capture;
+mod containers;
 mod peer_origins;
 mod rebuild;
 mod row_births;
 mod snapshot_ops;
+mod source_audiences;
+mod validation_work;
 mod vocabulary;
 mod withdrawn_cutoffs;
 pub use asset_body_refs::CanonicalAssetBodyRef;
@@ -29,12 +32,17 @@ pub use budget::RecoveryBudgetOverrun;
 #[cfg(test)]
 pub(super) use budget::held_bytes;
 pub use capture::capture_canonical_window;
-pub(crate) use capture::{capture_canonical_window_within, prepare_artifact_pads};
+pub(crate) use capture::{
+    CanonicalCapture, capture_canonical_window_within, prepare_artifact_pads,
+};
+pub(super) use containers::ExpectedContainers;
 pub use peer_origins::CanonicalPeerOrigin;
 pub use rebuild::rebuild_vault_window_from_canonical;
 #[cfg(feature = "sync")]
 pub(crate) use rebuild::{RebuildAt, rebuild_page, rebuild_start};
 pub use row_births::CanonicalRowBirth;
+pub use source_audiences::CanonicalSourceAudience;
+pub(crate) use validation_work::CanonicalValidation;
 pub use vocabulary::{
     CanonicalBaseEdge, CanonicalContainerManifest, CanonicalCustodyTransition,
     CanonicalDocumentFork, CanonicalDocumentPin, CanonicalDocumentPurge, CanonicalDocumentReceipt,
@@ -71,6 +79,9 @@ impl CanonicalEntityDocument {
             + metadata_size(&self.metadata)
             + self.record_fields.iter().map(String::len).sum::<usize>()
             + self.birth_actor.map_or(0, |actor| actor.len())
+            + self.origin.as_ref().map_or(0, |origin| {
+                origin.incarnation.len() + 12 * origin.version.len()
+            })
             + self.history.as_ref().map_or(0, |history| {
                 let versions = history.versions.iter().map(|version| {
                     16 + 4 * version.parents.len()
@@ -98,7 +109,7 @@ impl CanonicalEntityDocument {
     }
 }
 
-fn metadata_size(fields: &BTreeMap<String, Vec<u8>>) -> usize {
+pub(super) fn metadata_size(fields: &BTreeMap<String, Vec<u8>>) -> usize {
     fields
         .iter()
         .map(|(field, value)| field.len() + value.len())
@@ -112,6 +123,18 @@ impl CanonicalSnapshot {
     /// an artifact too large is never held whole before it is refused.
     pub(crate) fn encode_within(&self, limit: usize) -> Result<Vec<u8>> {
         self.validate()?;
+        self.encode_validated_within(limit)
+    }
+
+    /// Encode the same immutable source whose validation groups just completed.
+    pub(super) fn encode_validated_within(&self, limit: usize) -> Result<Vec<u8>> {
+        let mut bytes = self.encode_validated_payload_within(limit)?;
+        seal_recovery_artifact(CANONICAL_SNAPSHOT_ARTIFACT_TYPE, &mut bytes);
+        Ok(bytes)
+    }
+
+    /// The same bounded encoding, with its reserved header left for the checksum page.
+    pub(super) fn encode_validated_payload_within(&self, limit: usize) -> Result<Vec<u8>> {
         let mut out = BoundedWriter {
             bytes: Vec::new(),
             budget: ByteBudget::new(limit.min(CANONICAL_SNAPSHOT_MAX_BYTES)),
@@ -120,7 +143,6 @@ impl CanonicalSnapshot {
         // Room for the envelope header, sealed once the payload is written.
         std::io::Write::write_all(&mut out, &[0; super::HEADER_LEN]).map_err(|_| out.refusal())?;
         rmp_serde::encode::write_named(&mut out, self).map_err(|_| out.refusal())?;
-        seal_recovery_artifact(CANONICAL_SNAPSHOT_ARTIFACT_TYPE, &mut out.bytes);
         Ok(out.bytes)
     }
 
@@ -128,59 +150,9 @@ impl CanonicalSnapshot {
         self.container_manifests = self.expected_containers();
     }
     pub(super) fn expected_containers(&self) -> Vec<CanonicalContainerManifest> {
-        let mut rows = Vec::new();
-        for name in [
-            "entities",
-            "edges",
-            "tombstones",
-            "retained_claim_worlds",
-            "documents",
-            "entity_documents",
-            "document_heads",
-            "head_move_receipts",
-            "note_forks",
-            "note_proposals",
-            "custody",
-            "room_turns",
-            "room_facts",
-            "document_pins",
-            "peer_origins",
-            "row_births",
-            "withdrawn_cutoffs",
-            "asset_body_refs",
-        ] {
-            rows.push(CanonicalContainerManifest {
-                container_id: name.to_owned(),
-                container_kind: "map".to_owned(),
-                schema_version: 1,
-                source_entity_id: None,
-            });
-        }
-        for doc in &self.entity_documents {
-            for (name, kind) in [("body", "text"), ("meta", "map")] {
-                rows.push(CanonicalContainerManifest {
-                    container_id: format!(
-                        "entity_doc/{}/{name}",
-                        crate::entity_id::bytes_to_hex_lower(&doc.entity_id)
-                    ),
-                    container_kind: kind.to_owned(),
-                    schema_version: 1,
-                    source_entity_id: Some(doc.entity_id),
-                });
-            }
-        }
-        for doc in &self.doc_snapshots {
-            for (name, kind) in [("body", "text"), ("note", "map"), ("authorship", "map")] {
-                rows.push(CanonicalContainerManifest {
-                    container_id: format!("{}/{name}", doc.key()),
-                    container_kind: kind.to_owned(),
-                    schema_version: 1,
-                    source_entity_id: Some(doc.entity_id),
-                });
-            }
-        }
-        rows.sort_by(|a, b| a.container_id.cmp(&b.container_id));
-        rows
+        let mut expected = containers::ExpectedContainers::default();
+        while !expected.advance_row(self) {}
+        expected.into_rows()
     }
 }
 

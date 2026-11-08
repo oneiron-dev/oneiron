@@ -10,6 +10,7 @@ use super::{
     coach_reads_pads_in_txn, diary_entries_in_txn, live_note_in_txn, standing_request_in_txn,
     work_vault_admin_in_txn,
 };
+use crate::batch::secret_scan::LiftedKeys;
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ConsentReceipt, GrantBound,
 };
@@ -67,6 +68,7 @@ impl Vault {
                 occurred_at: row.asked_at,
                 receipt_ref: None,
                 payload_ref: Some(handle),
+                approval_digest: None,
                 concern: None,
                 diary_review: Some(AgentInboxDiaryReview {
                     request,
@@ -109,6 +111,7 @@ impl Memory<'_> {
                     });
                 }
             }
+            self.mask_diary_entries_in_txn(txn, &mut entries)?;
             let receipt = gate.finish_in_txn(self.vault, txn)?;
             let Some(read) = receipt.agents.into_iter().next() else {
                 return Ok(DiaryReadOutcome::Granted {
@@ -133,6 +136,22 @@ impl Memory<'_> {
                 _ => DiaryReadOutcome::NotCovered,
             })
         })
+    }
+
+    fn mask_diary_entries_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entries: &mut [DiaryEntry],
+    ) -> MemoryResult<()> {
+        if !entries.is_empty() && self.reads_lifted_keys_masked_in_txn(txn)? {
+            for entry in entries {
+                let keys = LiftedKeys::of_in_txn(&self.vault.store, txn, [&entry.markdown])?;
+                if let Some(markdown) = keys.masked(&entry.markdown) {
+                    entry.markdown = markdown;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// `self.memory.diary.review`: this agent's Y/N to a reader's reason.
@@ -351,6 +370,7 @@ impl Memory<'_> {
                     });
                 }
             }
+            self.mask_diary_entries_in_txn(txn, &mut entries)?;
             if reader == agent {
                 return Ok(DiaryReadOutcome::Granted {
                     read: None,

@@ -20,23 +20,23 @@ pub(crate) use facet_identity::validate_local_identity_body;
 mod facet_validation;
 mod gate_mode;
 mod gate_staging;
-mod leader_chat_admission;
+use oneiron_store::batch::leader_chat_admission;
 mod lexical_query_hints;
 mod ops_derived_copies;
 mod ops_pipeline;
 mod person_substrate;
 mod phonetic_apply;
 mod session_delete;
-pub(crate) use phonetic_apply::checkpoint;
-pub(crate) mod phonetic_codes;
 pub use self::phonetic_codes::generate_phonetic_codes;
+pub(crate) use oneiron_store::batch::phonetic_codes;
+pub(crate) use phonetic_apply::checkpoint;
 mod prepared_index;
 mod put_apply;
 pub(crate) use person_substrate::sweep_scope_stamps;
 #[cfg(feature = "sync")]
 mod recovery_shell;
-pub(crate) mod row_put;
-pub(crate) mod shared_vault_write;
+pub(crate) use oneiron_store::batch::row_put;
+pub(crate) use oneiron_store::batch::shared_vault_write;
 #[cfg(feature = "sync")]
 pub(crate) use recovery_shell::restore_recovery_shell_in_txn;
 mod short_id;
@@ -54,6 +54,8 @@ pub(crate) use self::vad_postcommit::VadPostcommitScope;
 pub(crate) use self::vad_postcommit::queue_committed_rows;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_committed_rows_in_txn;
+pub(crate) use self::vad_postcommit::queue_consent_answer;
+pub(crate) use self::vad_postcommit::queue_decision_answer;
 pub(crate) use self::vad_postcommit::queue_notification_change;
 pub(crate) use self::vad_postcommit::queue_pad_tombstone_window;
 pub(crate) use self::vad_postcommit::queue_proactivity_change;
@@ -62,6 +64,7 @@ pub(crate) use self::vad_postcommit::queue_room_join;
 pub(crate) use self::vad_postcommit::queue_settled_tasks;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_task_updates;
+pub(crate) use self::vad_postcommit::queue_verb_hook_ask_change;
 
 pub(crate) use self::authority_log::{
     validate_replicated_authority_log_beside_for_local_vault,
@@ -83,8 +86,6 @@ pub(crate) use self::deindex::{
     delete_door_protected, drop_seeded_actor_row, stage_cascade_tombstone_in_txn,
 };
 pub(crate) use self::facet_validation::{validate_facet_of_edge, validate_replayed_facet_of_edge};
-#[cfg(test)]
-pub(crate) use self::lexical_query_hints::legacy_lexical_query_hint_claim_ids_for_target;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
 pub(crate) use self::lexical_query_hints::validate_staged_raw_put;
 #[cfg(test)]

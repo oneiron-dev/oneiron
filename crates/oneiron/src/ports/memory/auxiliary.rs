@@ -168,18 +168,9 @@ impl TombstoneStore for Memory {
             .filter(|(source, _)| source.document == *id)
             .flat_map(|(_, ids)| ids.iter().copied())
             .collect();
+        // The dependents go stale; none is queued for regeneration (FIX 12327).
         for dependent in dependents {
             self.port_retrieval_mark_stale(txn, &dependent)?;
-            self.port_job_enqueue(
-                txn,
-                EnqueueAttempt {
-                    kind: "derived.regenerate".into(),
-                    payload: [id.as_bytes().as_slice(), dependent.as_bytes()].concat(),
-                    dedupe_key: Some(format!("{}:{}", id.to_hex(), dependent.to_hex())),
-                    run_id: None,
-                    now: 0,
-                },
-            )?;
         }
         self.port_retrieval_mark_stale(txn, id)
     }
@@ -343,7 +334,10 @@ impl BlobStore for Memory {
     ) -> Result<bool> {
         let hard = matches!(
             reason,
-            DeleteReason::UserHardDelete | DeleteReason::GdprDelete | DeleteReason::PolicyDelete
+            DeleteReason::UserHardDelete
+                | DeleteReason::OwnerErase
+                | DeleteReason::GdprDelete
+                | DeleteReason::PolicyDelete
         );
         let Some((_, refs)) = txn.blobs.get_mut(hash) else {
             return Ok(false);

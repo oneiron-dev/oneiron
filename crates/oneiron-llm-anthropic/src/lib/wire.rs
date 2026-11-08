@@ -177,18 +177,19 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
                 }
             }
             Some("thinking") => {
-                if let Some(text) = block
+                let text = block
                     .get("thinking")
                     .or_else(|| block.get("text"))
                     .and_then(JsonValue::as_str)
-                    && !text.is_empty()
-                {
+                    .unwrap_or_default();
+                let signature = block
+                    .get("signature")
+                    .and_then(JsonValue::as_str)
+                    .map(str::to_owned);
+                if !text.is_empty() || signature.is_some() {
                     content.push(ContentPart::Reasoning {
                         text: text.to_owned(),
-                        signature: block
-                            .get("signature")
-                            .and_then(JsonValue::as_str)
-                            .map(str::to_owned),
+                        signature,
                         reasoning_kind: oneiron::ReasoningPartKind::Full,
                         data: None,
                     });
@@ -207,6 +208,7 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
                     call_id: call_id.to_owned(),
                     name: name.to_owned(),
                     input: block.get("input").cloned().unwrap_or(JsonValue::Null),
+                    signature: None,
                 });
             }
             Some("redacted_thinking") => {
@@ -322,6 +324,7 @@ fn anthropic_content_part(part: &ContentPart) -> Option<JsonValue> {
             call_id,
             name,
             input,
+            ..
         } => Some(json!({
             "type": "tool_use",
             "id": call_id,
@@ -372,7 +375,11 @@ fn anthropic_tool(tool: &LlmToolSpec) -> JsonValue {
     })
 }
 
-pub(super) fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
+/// The usage an Anthropic Messages `usage` object reports: input with its
+/// cache reads and writes counted in, and output. A relayed reply's own
+/// body is read through it too (FIX 15702).
+#[must_use]
+pub fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
     let input_tokens = u64_field(usage, "input_tokens");
     let cache_read = u64_field(usage, "cache_read_input_tokens");
     let cache_write = u64_field(usage, "cache_creation_input_tokens");

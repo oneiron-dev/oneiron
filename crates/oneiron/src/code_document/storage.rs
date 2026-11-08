@@ -334,6 +334,10 @@ impl Vault {
                 || receipt.session_id != session.session_id
                 || receipt.actor != Some(actor)
                 || receipt.provenance != session.provenance
+                // A masked edit's receipt holds its handles, never the
+                // value: a replay offering the value again is not proved the
+                // same edit (a rotated custody record names a new value
+                // under the same handle), so it refuses (FIX 2372).
                 || receipt.edit != *edit
                 || receipt.metadata_edit.as_ref() != metadata
             {
@@ -471,6 +475,42 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let doc = load_frontier(&self.store, &rtxn, tested)?;
         Ok(doc.get_text("body").to_string())
+    }
+
+    /// The BLAKE3 of each exact text the document state `tested` grew from,
+    /// as the document's own retained history proves them (FIX 8967): the
+    /// state before and after every operation `tested` holds whole, birth
+    /// text first, each read from its stored, checked snapshot. No caller
+    /// names a source, and `tested`'s own text is the caller's to hash.
+    ///
+    /// # Errors
+    /// A store failure, or a stored state that does not check.
+    pub(crate) fn code_document_source_hashes_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        tested: &CodeDocumentFrontier,
+    ) -> Result<Vec<[u8; 32]>> {
+        let Some(head) = load_head(&self.store, txn, &tested.document_id)? else {
+            return Ok(Vec::new());
+        };
+        let mut states = std::collections::BTreeSet::from([tested.op_fold]);
+        let mut hashes = Vec::new();
+        for receipt in head
+            .receipts
+            .iter()
+            .filter(|receipt| receipt.within(&tested.version))
+        {
+            for state in [&receipt.before, &receipt.after] {
+                if !states.insert(state.op_fold) {
+                    continue;
+                }
+                let text = load_frontier(&self.store, txn, state)?
+                    .get_text("body")
+                    .to_string();
+                hashes.push(*blake3::hash(text.as_bytes()).as_bytes());
+            }
+        }
+        Ok(hashes)
     }
 
     pub fn code_document_receipts(&self, document_id: &[u8; 32]) -> Result<Vec<CodeEditReceipt>> {

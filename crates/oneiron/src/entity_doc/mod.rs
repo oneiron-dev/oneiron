@@ -11,10 +11,12 @@ mod citation_floor;
 mod commit_receipts;
 mod doc_actor;
 mod document;
-pub mod document_resources;
+pub use oneiron_store::entity_doc::document_resources;
 mod forks;
 mod history_erase;
 mod lift;
+#[cfg(feature = "sync")]
+mod local_discard;
 mod message_parts;
 mod message_stream;
 mod metadata;
@@ -28,6 +30,7 @@ pub(crate) use promotion_evidence::{
     promotion_evidence_source_in_txn, retain_fresh_claim_citations_in_txn,
     verify_promotion_evidence_in_txn,
 };
+pub(crate) use quote_citation::{source_texts_at_in_txn, span_in_masked_sight};
 mod recovery;
 mod registry;
 mod summary;
@@ -36,8 +39,9 @@ pub(crate) use summary::{
     summary_meta_through_in, summary_read_in_txn, summary_text_in_txn,
 };
 pub mod review_explainer;
-mod side_keys;
+use oneiron_store::entity_doc::side_keys;
 mod storage;
+mod succession;
 #[cfg(feature = "sync")]
 mod sweep;
 mod token_uses;
@@ -46,6 +50,8 @@ pub(crate) use token_uses::engine_stamp_token;
 mod sync;
 pub(crate) use citation_floor::record_citation_floor_in_txn;
 pub(crate) use commit_receipts::commit_input_rows_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use local_discard::discard_local_copies_in_txn;
 pub(crate) use message_parts::append_message_parts_in_txn;
 pub(crate) use message_stream::{
     append_message_stream_in_txn, authorize_message_continuation_in_txn,
@@ -73,6 +79,8 @@ pub use history_erase::TextHistoryErase;
 pub(crate) use history_erase::admit_history_erase_in_txn;
 pub(crate) use lift::lift_entity_text_in_txn;
 pub use metadata::MetadataEdit;
+// A NOTE's meta map keeps its editable fields in this same encoding (FIX 7784).
+pub(crate) use metadata::{decode_metadata_value, encode_value as encode_metadata_value};
 pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 #[cfg(feature = "sync")]
 pub(crate) use pins::PinMerge;
@@ -84,7 +92,8 @@ pub use storage::TextField;
 pub(crate) use storage::{
     body_with_document, document_text_fields, erase_in_txn, guard_record_put, has_record_head,
     pointer_field_in, record_bodies_at_in_txn, record_body_at, record_body_history_in_txn,
-    record_document, record_head_bytes, reindex_repo_document_in_txn, resolve_record_body,
+    record_document, record_head_bytes, record_head_key, record_head_row_in_txn, record_head_slot,
+    reindex_repo_document_in_txn, resolve_record_body, resolve_record_body_len,
 };
 #[cfg(feature = "sync")]
 pub(crate) use sweep::{compact_entity_doc_for_sweep, entity_doc_slots_in};
@@ -109,6 +118,24 @@ pub(crate) fn source_frontier_in_txn(
     let doc = storage::load(store, txn, &head)?;
     let mut pin = head.incarnation.into_bytes();
     pin.extend_from_slice(&doc.frontier());
+    Ok(Some(pin))
+}
+
+/// The pin [`source_frontier_in_txn`] names for `frontier`, a retained state
+/// of `entity`'s record document the caller has proved (FIX 10203): the
+/// document's identity and that frontier. `None` for an unmigrated row.
+pub(crate) fn source_frontier_at_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &crate::EntityId,
+    frontier: &[u8],
+) -> crate::Result<Option<Vec<u8>>> {
+    if !storage::has_record_head(store, txn, entity)? {
+        return Ok(None);
+    }
+    let head = storage::head(store, txn, entity)?;
+    let mut pin = head.incarnation.into_bytes();
+    pin.extend_from_slice(frontier);
     Ok(Some(pin))
 }
 

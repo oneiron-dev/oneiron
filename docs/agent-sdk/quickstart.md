@@ -15,7 +15,7 @@ Node 20 or newer. The package ships prebuilt native artifacts for macOS
 SDKs, embedded `Oneiron.open()` is currently supported only on Unix
 (macOS/Linux). On other targets, including Windows, use `Oneiron.connect()`
 to reach a server on a supported host; embedded open fails closed because
-writer locking is unsupported.
+writer locking is unsupported. One verb is narrower: `putCodebaseSnapshot` refuses SharedArrayBuffer-backed inputs on Node runtimes below 22.21 (22.x) / 24.9 (24+), which cannot measure the shared backing.
 
 ## Quickstart
 
@@ -264,6 +264,11 @@ you want to act as instead.
 | `handle.vault.recall(query, opts?)` | `MemoryPack` |
 | `handle.vault.receipts(limit?, kinds?)` | `FacadeReceipt[]`: the gate decision ledger, or the receipts of the named kinds (`gate`, `hook`, `outbound`, ...) |
 
+Approval-required inbox rows from held outbound receipts may carry
+`approval_digest`, the exact 64-lowercase-hex digest already on that receipt.
+Other inbox rows omit it. Gate decision receipts and the claim-only pending
+tray do not gain a digest through this projection; it adds no approval or
+release authority.
 Witness-read grants (`vault.connectors.read_grants.grant` and `.revoke`)
 keep earlier lifecycle generations. For kind `scoped_read`, `vault.receipts`
 projects a created receipt for each stored generation and a revoked receipt
@@ -400,7 +405,10 @@ No input chooses another actor, world, owner, entity ID, or erasure reason.
 Namespaces compare complete literal string segments. Search accepts exact
 field-equality filters, not operators or semantic queries. Results have lexical
 namespace/key order. Namespace rows are deduplicated after optional depth
-truncation. `limit` is 1–1000 and `offset` is 0–1000000. Pages are individual live
+truncation. `limit` is 1–1000 and `offset` is any nonnegative integer. Namespaces
+and keys may be any length; past the `[limits]` rows `keyed_namespace_segments`,
+`keyed_namespace_bytes` and `keyed_key_bytes` the engine asks whether everything is
+okay and serves them whole. Pages are individual live
 snapshots; concurrent mutations can shift subsequent offsets.
 
 Keyed bodies never appear in generic recall, context packs, scoped hydration,
@@ -429,9 +437,12 @@ history, or receipts. Keep the true source and use a separate key for generated
 output. Only a genuine new user statement may be submitted as `user_stated`.
 Never relabel model output or delete then put to bypass the protection.
 
-Erased shells and malformed rows are not live heads. Reads skip them and never
-fall back to superseded values. Unrelated keys remain usable. Replaying a
-request against an erased/malformed revision refuses instead of restoring it.
+Erased shells and malformed rows are not live heads. Nor is a value the
+canonical claim read withholds: deleted, archived or withdrawn words, a stale
+value, or a value whose recorded source was deleted or is being withdrawn.
+Reads skip them and never fall back to superseded values; a put at that key
+writes a fresh head. Unrelated keys remain usable. Replaying a request against
+an erased/malformed revision refuses instead of restoring it.
 
 Delete retracts the caller's current claim and returns `existed` plus receipt
 refs. It is idempotent while absent and retains history. It is not an owner

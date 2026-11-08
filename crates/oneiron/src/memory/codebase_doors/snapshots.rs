@@ -8,8 +8,8 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 use crate::codebase::{
-    CodebaseFileEntry, CodebaseSnapshot, RepoIngestConfig, RepoRef, snapshot_asset_entity_id,
-    validate_project_id,
+    CodebaseFileEntry, CodebaseSnapshot, CodebaseSnapshotMount, RepoIngestConfig, RepoRef,
+    snapshot_asset_entity_id, validate_project_id,
 };
 use crate::origin::secret_projection::reveal::RepoReadDoor;
 use crate::temporal::TimeRange;
@@ -23,7 +23,8 @@ impl Memory<'_> {
     /// `vault.code.snapshots.ingest`: one committed tree imported through the
     /// unchanged engine importer, which reads the commit tree (never the dirty
     /// checkout), applies custody in its final writer and extracts Rust
-    /// symbols. No repository is registered and no receipt is minted.
+    /// symbols. A capture receipt commits with the snapshot; no repository
+    /// is registered.
     pub fn code_snapshot_ingest_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -35,7 +36,8 @@ impl Memory<'_> {
         let commit = pinned_commit(folder, &input.pointer.commit)?;
         let config = RepoIngestConfig::new(folder, NO_EDITABLE_WHITELIST)?;
         let (occurred, learned_at) = self.codebase_import_time();
-        let imported = self.vault.ingest_local_repo_at_commit(
+        let imported = self.vault.ingest_local_repo_at_commit_as(
+            owner,
             input.project_id,
             &config,
             &commit,
@@ -43,11 +45,14 @@ impl Memory<'_> {
             learned_at,
         )?;
         self.produced_from([imported.code_artifact_id]);
-        Ok(snapshot_view(imported.code_artifact_id, &imported.snapshot))
+        let mut view = snapshot_view(imported.code_artifact_id, &imported.snapshot);
+        view.capture_receipt = imported.capture_receipt_ref;
+        Ok(view)
     }
 
     /// `vault.code.snapshots.get`: the manifest of exactly the pinned
-    /// snapshot. `None` when the artifact is absent or withheld.
+    /// snapshot, omitting files its custody report reads as absent. `None`
+    /// when the artifact is absent or withheld.
     pub fn code_snapshot_get_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -56,7 +61,7 @@ impl Memory<'_> {
         self.codebase_owner(owner)?;
         Ok(self
             .codebase_pinned(input.repo, &input.snapshot)?
-            .map(|mount| snapshot_view(mount.code_artifact_id(), mount.snapshot())))
+            .map(|mount| mounted_snapshot_view(&mount)))
     }
 
     /// `vault.code.snapshots.read`: one file of the pinned snapshot, read
@@ -109,8 +114,8 @@ impl Memory<'_> {
         let Some(mount) = self.codebase_pinned(input.repo, &input.snapshot)? else {
             return Ok(None);
         };
+        let mut view = mounted_snapshot_view(&mount);
         let mut views = mount.projected_file_views(|_| true)?;
-        let mut view = snapshot_view(mount.code_artifact_id(), mount.snapshot());
         for file in &mut view.files {
             file.projection = views.remove(&file.path);
         }
@@ -247,6 +252,12 @@ fn pinned_text(bytes: Vec<u8>) -> MemoryResult<(String, String)> {
     Ok((content, text_sha256))
 }
 
+fn mounted_snapshot_view(mount: &CodebaseSnapshotMount<'_>) -> CodeSnapshotView {
+    let mut view = snapshot_view(mount.code_artifact_id(), mount.snapshot());
+    view.files.retain(|file| !mount.is_withheld(&file.path));
+    view
+}
+
 fn snapshot_view(repo: EntityId, snapshot: &CodebaseSnapshot) -> CodeSnapshotView {
     CodeSnapshotView {
         repo,
@@ -256,6 +267,7 @@ fn snapshot_view(repo: EntityId, snapshot: &CodebaseSnapshot) -> CodeSnapshotVie
         snapshot: bytes_to_hex_lower(&snapshot.fork_hash),
         scope_key: bytes_to_hex_lower(&snapshot.scope_key),
         files: snapshot.files.iter().map(snapshot_file).collect(),
+        capture_receipt: None,
     }
 }
 

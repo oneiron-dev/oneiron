@@ -482,6 +482,9 @@ fn mirror_loop(mirror: &LiveMirror, manager: &Weak<WindowManager>) {
         if pending.setup_retry {
             manager.retry_setup_rows();
         }
+        // Each pass, woken or timed out: the windows a changed source
+        // audience rides take its change (fix list row 17203).
+        manager.drive_policy_wakes();
     }
 }
 

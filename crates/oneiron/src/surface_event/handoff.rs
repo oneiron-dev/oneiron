@@ -537,6 +537,9 @@ pub(super) fn admit_surface_event_once_in_txn(
     Ok(match outcome {
         EnqueueOutcome::Enqueued(attempt) => {
             super::comm_intake::record_comm_inbound_in_txn(vault, wtxn, event)?;
+            // FIX 4749: the event joins the `surface.inbound` feed fact hooks
+            // follow, in the write that admits it.
+            crate::runtime_hooks::record_surface_inbound_in_txn(vault, wtxn, attempt.id, event)?;
             AdmittedSurfaceEvent {
                 attempt,
                 replayed: false,
@@ -789,3 +792,5 @@ pub fn surface_event_run_id(correlation_id: &str) -> String {
 }
 
 const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+
+mod phone_line;

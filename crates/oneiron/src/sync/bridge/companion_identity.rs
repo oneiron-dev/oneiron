@@ -8,7 +8,7 @@ use crate::edge::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, SyncError};
-use crate::sync::ingest::{EntityStep, IngestCtx, ingest_entity_in_txn};
+use crate::sync::ingest::{EntityStep, IngestCtx, ingest_entity_in_txn, land_source_audience_in};
 use crate::sync::loro_support::{TombstoneIndex, map_get_bytes};
 use crate::sync::quarantine::{
     QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
@@ -143,6 +143,10 @@ fn validate_replicated_identity_topology_record_before_mutation(
     id: &EntityId,
     record: &crate::identity_topology::StoredIdentityOpEvent,
 ) -> Result<()> {
+    // FIX 10188: a part lives only under the id its manifest and index
+    // derive. Its decision is judged whole, once every part is here, by the
+    // effective fold that reconciliation below runs.
+    crate::identity_topology::validate_operation_part_id(id, record)?;
     vault.validate_identity_disposition_binding_in_txn(rtxn, id, record)?;
     vault
         .validate_replicated_identity_topology_event_in_txn(rtxn, record)
@@ -294,6 +298,10 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     }
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
     let step = ingest_entity_in_txn(&ingest, &mut savepoint, &hex_id, Some(&blob))?;
+    // The endpoint lands with its carried binding, as the entity observer
+    // lands it, or waits pending with the edge (fix list row 16256).
+    let step =
+        land_source_audience_in(vault, &mut savepoint, Some(doc), window_key, &hex_id, step)?;
     if let EntityStep::Quarantine(refusal) = step {
         drop(savepoint);
         // A typed remote rejection of the endpoint rejects the edge with it

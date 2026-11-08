@@ -66,7 +66,13 @@ impl AiHost {
                 ladder: decisions.ladder().clone(),
                 dial: decisions.dial(oneiron::llm::decision::DecisionRung::Big),
                 bands: decisions.bands(),
-                wording: PROJECT_DETECTION_WORDING.to_owned(),
+                wording: models
+                    .map(|models| models.dreamer.wording.project_detection().to_owned())
+                    .unwrap_or_else(|| {
+                        crate::config::models::DreamerWording::default()
+                            .project_detection()
+                            .to_owned()
+                    }),
                 budget: PROJECT_DETECTION_BUDGET,
             });
         }
@@ -197,9 +203,10 @@ impl AiHost {
         let budgets = budgets.unwrap_or_else(crate::models::ModelHostBudgets::unhosted);
         // Its ladders read chat replies on the vault's line (FIX 10626).
         let rests = OfferCooldowns::in_vault_with(Arc::clone(&vault), budgets.clone());
-        let mut runtime = ModelRuntime::build_hosted_on(models, broker, rests, &budgets)
-            .with_receipts(receipts)
-            .with_media_vault(Arc::clone(&vault));
+        let mut runtime =
+            ModelRuntime::build_hosted_on(models, broker, rests, &budgets, vault.privacy_posture())
+                .with_receipts(receipts)
+                .with_media_vault(Arc::clone(&vault));
         if let Some(account) = account {
             runtime = runtime.with_host_account(account);
         }

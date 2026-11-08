@@ -62,6 +62,7 @@ pub(crate) mod ai;
 mod anonymous_chat;
 // FIX 8238: an answer's resources kept until the answer is encoded.
 pub(crate) mod answer_hold;
+mod artifact_backend_pairing;
 mod artifacts;
 // OF-469: a kept authority checkpoint and its attestations, for adoption.
 mod authority_checkpoint;
@@ -107,6 +108,8 @@ pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_work
 pub(crate) mod off_record_rooms;
 mod org_admin;
 mod pairing;
+// FIX 12477: the redeem door's per-address failure backoff, held by the server.
+pub(crate) use self::pairing::PairingRedeemBackoff;
 // FIX 922: the kit door to the sealed cloud bundle.
 mod recovery_bundle;
 mod sessions;
@@ -141,6 +144,7 @@ pub(crate) use self::feedback_inbox::FloodCap;
 // the serve wire, the door window, and the single-writer landing all live in
 // `oneiron::origin::smart_http`.
 mod git_http;
+pub(crate) use self::git_http::install_origin_git_transport;
 mod git_lfs;
 mod transfer;
 pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers};
@@ -153,6 +157,9 @@ pub(crate) use llm::MeshLlm;
 pub(crate) use llm::record_raw_response;
 mod mcp_gateway;
 mod memory;
+// FIX 1435: the direct native read routes cross the verb-hook boundary, and a
+// read that an ask stopped runs again through its own route.
+pub(crate) mod native_read_hooks;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
 // depth cost gate, the extractive answer for the model-free tiers, and the
 // citation gate over whatever a host composer returns.
@@ -174,13 +181,14 @@ pub(crate) use owner_routes::owner;
 // recorded owner, and takes the owner's media and hook-replay doors; its
 // media spends on its run's line (FIX 6083).
 pub(crate) use self::facade::{
-    ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
-    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run, ai_video_for_run,
-    ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
+    ai_image_for_run_step, ai_media_as_owner, ai_media_for_run, ai_options_for_program,
+    ai_video_as_owner, ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run,
+    ai_video_for_run, ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
 pub(crate) use owner_routes::managed_owner_proof;
 mod packs;
 mod params;
+mod phone_line;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
 // (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its
 // consumers), so the non-test build sees a contract with no caller — the
@@ -191,6 +199,8 @@ pub(crate) use context_board::{action_board, freeze_chat_context, record_action_
 #[allow(dead_code)]
 mod reactive;
 mod report;
+// ABC transport rows T1, T3, T4: the API's request floor.
+mod request_floor;
 mod routes;
 mod run_tree;
 mod saved_query;
@@ -226,11 +236,12 @@ pub(crate) use self::mcp_gateway::{
     MCP_PROTOCOL_VERSION, McpBoardOmissions, mcp_admit_scoped_call, resolve_mcp_gateway_actor,
 };
 pub(crate) use self::mcp_gateway::{
-    McpCallContext, ReaderChildDoor, RunGuests, VerdictAsker, WorkflowPreflight,
-    deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
-    execute_run_board_verb_in_session, mcp_gateway, mcp_stream_reads_task, mcp_stream_task_row,
-    mcp_tool_first_gateway, person_socket_admits, preflight_task_workflow, resolve_mcp_caller,
-    ride_run_carrier, run_session_reads,
+    McpCallContext, McpCodeRunContinuations, ReaderChildDoor, RunGuests, VerdictAsker,
+    WorkflowPreflight, deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
+    execute_run_board_verb_in_session, mcp_gateway, mcp_method_not_allowed, mcp_stream_reads_task,
+    mcp_stream_task_row, mcp_tool_first_gateway, person_socket_admits, preflight_task_workflow,
+    reenter_ready_mcp_code_runs, resolve_mcp_caller, ride_run_carrier, run_brief_people_budget,
+    run_brief_pins, run_session_reads,
 };
 pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
@@ -297,6 +308,7 @@ pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
 /// listener.
 pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
     artifact_routes()
+        .merge(self::artifacts::backend_routes())
         .layer(axum::Extension(self::artifacts::ArtifactOnlyListener))
         .layer(middleware::from_fn_with_state(
             server.clone(),
@@ -336,7 +348,6 @@ pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
                     "max_windows_per_connection": 8,
                     "max_frame_size_bytes": 1048576,
                     "max_update_payload_bytes": 1048576,
-                    "max_ephemeral_payload_bytes": 65536,
                     "max_ephemeral_snapshot_bytes": 262144
                 },
                 "runtime": {
@@ -411,7 +422,38 @@ fn require_entity_type(
     expected_type: u8,
     resource: &'static str,
 ) -> Result<(), ApiError> {
-    match server.vault.get_entity_type(id) {
+    require_entity_type_lookup(
+        server.vault.get_entity_type(id),
+        id,
+        expected_type,
+        resource,
+    )
+}
+
+/// [`require_entity_type`] in the route's snapshot `txn`, so the type it
+/// checks is the one the route then admits and serves (FIX 10782).
+fn require_entity_type_in_txn(
+    vault: &oneiron::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &oneiron::EntityId,
+    expected_type: u8,
+    resource: &'static str,
+) -> Result<(), ApiError> {
+    require_entity_type_lookup(
+        vault.get_entity_type_in_txn(txn, id),
+        id,
+        expected_type,
+        resource,
+    )
+}
+
+fn require_entity_type_lookup(
+    lookup: oneiron::Result<Option<u8>>,
+    id: &oneiron::EntityId,
+    expected_type: u8,
+    resource: &'static str,
+) -> Result<(), ApiError> {
+    match lookup {
         Ok(Some(actual)) if actual == expected_type => Ok(()),
         Ok(Some(_)) => Err(ApiError::bad_request(
             format!("{resource} id does not reference a {resource} entity"),

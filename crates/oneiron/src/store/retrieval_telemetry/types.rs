@@ -1,19 +1,19 @@
-//! Retrieval-telemetry record, trace, signal, and blend-weight types.
+//! Core half of `store::retrieval_telemetry::types`: its store-layer items live in `oneiron_store::retrieval_telemetry::types` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::collections::BTreeMap;
+pub(crate) use oneiron_store::retrieval_telemetry::types::*;
 
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-
+use super::run_store::RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT;
+use crate::attempt_queue::AttemptId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::retrieval_quality::{
     ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality, RetrievalQualityReport,
 };
 use crate::store::retrieval_signal::Signal;
-
-use super::run_store::RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT;
-
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use uuid::Uuid;
 // The signal and blend-weight vocabulary is defined in `oneiron-contracts` (retrieval's
 // fusion scores with it); `From<Signal>` stays here with the pipeline's channel enum.
 pub use oneiron_contracts::retrieval_telemetry::{
@@ -69,19 +69,6 @@ pub enum RetrievalAction {
     /// carry this tag (the end-of-utterance full-quality pass logs as
     /// `Pipeline`) — that is what makes wasted-retrieval budget measurable.
     Speculative,
-}
-
-impl From<Signal> for RetrievalSignal {
-    fn from(signal: Signal) -> Self {
-        match signal {
-            Signal::Vector => Self::Vector,
-            Signal::Text => Self::Text,
-            Signal::Phonetic => Self::Phonetic,
-            Signal::Temporal => Self::Temporal,
-            Signal::Ppr => Self::Ppr,
-            Signal::Hyde => Self::Hyde,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -478,6 +465,23 @@ pub struct RetrievalRunRecord {
     /// is never stamped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query_expander_id: Option<String>,
+    /// The host-bound leased attempt whose dispatcher requested this retrieval.
+    /// None means no such binding was captured; this is not read authority.
+    pub dispatch_attempt: Option<AttemptId>,
+    /// Witness of the run's two actual typed policy reads (FIX 7315): the
+    /// manifest ref both the claim-aging and retrieval-weights reads agreed
+    /// on, byte-exact, when weights were present. Both witness fields are
+    /// Some only together; any absence or mismatch keeps both None. This
+    /// witnesses only those two priors, not sole cause, composed policy,
+    /// criticality, authority or scope.
+    pub policy_manifest_ref: Option<String>,
+    /// Body digest the run's two actual typed policy reads agreed on (FIX
+    /// 7315): the blake3 hex of the SAME manifest body both reads decoded.
+    /// See [`Self::policy_manifest_ref`].
+    pub policy_manifest_body_hash: Option<String>,
+    /// Stable `Reranker::id` label of the scorer actually applied for this
+    /// recorded attempt, NOT a validated model revision or checkpoint hash.
+    pub reranker_id: Option<String>,
     pub signals: Vec<RetrievalSignal>,
     pub result_ids: Vec<[u8; 16]>,
     pub score_breakdown: Vec<RetrievalScoreBreakdown>,
@@ -542,6 +546,10 @@ impl RetrievalRunRecord {
             replay_inputs: None,
             turn: None,
             query_expander_id: None,
+            dispatch_attempt: None,
+            policy_manifest_ref: None,
+            policy_manifest_body_hash: None,
+            reranker_id: None,
             score_breakdown,
             total_in_scope,
             claims_suppressed,

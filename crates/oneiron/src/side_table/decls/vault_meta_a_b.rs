@@ -105,7 +105,7 @@ side_tables! {
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named
-        => crate::learning::erase_receipt_scope_in_txn;
+        => crate::receipt::erase_attempt_receipt_actor_in_txn;
     /// The store-order index over AUTHORITY_LOG rows (FIX 12369): the sequence a row took when
     /// first stored here, to the row's entity id, so a resumed fold range-scans only the rows
     /// stored past its continuation. Derived in the storing write transaction; runtime-tier.
@@ -176,6 +176,14 @@ side_tables! {
     /// The saved fork alarm for one key a held handoff retired, kept until the owner acknowledges
     /// it. Key: string (signer suite ":" key hex).
     AUTHORITY_HANDOFF_ALARM: VaultMeta b"authority:handoff-alarm:v1:" Raw;
+    /// The digest of the leave-notice delegation a settled ReRoot's root signed beside it (FIX
+    /// 7932), written in the transaction that settled the handoff and never rewritten. Key:
+    /// hash32 (the ReRoot's entry hash).
+    AUTHORITY_LEAVE_NOTICE_DELEGATION_BY_HANDOFF: VaultMeta b"authority:leave-notice-delegation-by-handoff:v1:" Raw;
+    /// One leave-notice delegation's canonical bytes (FIX 7932): a root's signed, purpose-limited
+    /// hand-on of leave-notice verification to its ReRoot's successor. Immutable authority
+    /// evidence. Key: bytes32 (its digest).
+    AUTHORITY_LEAVE_NOTICE_DELEGATION: VaultMeta b"authority:leave-notice-delegation:v1:" Raw;
     /// One claim-authoring campaign (OF-366): its strategy skill pin, fixed config, strategy pin
     /// and BEAM promotion receipt. Key: id16 (root attempt).
     AUTORESEARCH_AUTHORING: VaultMeta b"autoresearch:authoring:v1:" Named;
@@ -327,6 +335,9 @@ side_tables! {
     /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
     BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored [accepts: crate::browser_library::browser_workflow_accepts_masked]
         => crate::browser_library::erase_workflow_actor_in_txn;
+    /// Native host allocation selection, balances and original holds. Key: ().
+    BUDGET_HOST_ACCOUNT: VaultMeta b"budget.host.account.v1\0" Named Engine
+        => crate::llm::run_admission::allocation::erase_actor_in_txn;
     /// FIX 7767: one resident's share of the host-paid allocation as the owner set it, and what
     /// its settled calls charged the allocation generation they ran on. Key: id16 (resident).
     BUDGET_RESIDENT_SHARE: VaultMeta b"budget.resident.share.v1\0" Named Engine
@@ -342,6 +353,12 @@ side_tables! {
     /// In-flight reservation marker preventing duplicate dispatch of the same build/verify action.
     /// Key: bytes32 (action key).
     BUILD_CACHE_RUNNING_RESERVATION: VaultMeta b"build_cache:running:v2:" Raw;
+    /// Actual in-flight native hard purges, emptied before commit. Key: entity16.
+    BYOA_EXHAUST_ACTIVE_PURGE: VaultMeta b"byoa:exhaust_active_purge:v1:" Named;
+    /// A native terminal capture's artifact, version, claim and hash. Key: attempt16.
+    BYOA_EXHAUST_CAPTURE: VaultMeta b"byoa:exhaust_capture:v1:" Named;
+    /// An accepted exhaust erase's sources, inventory and owed retirements. Key: attempt16.
+    BYOA_EXHAUST_ERASE: VaultMeta b"byoa:exhaust_erase:v1:" Named;
     /// A staged-job artifact erase owed after its legal hold lifts. Key: hash32 (job digest).
     BYOA_STAGED_INPUT_ERASE: VaultMeta b"byoa:staged_input_erase:v1:" Named;
 }

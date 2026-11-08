@@ -70,6 +70,22 @@ pub struct RepoCheckoutBindInput {
     pub endpoint: Option<String>,
 }
 
+/// `input` with the host's own Git door base in its endpoint when the host
+/// sets one (FIX 7181): the operator's setting wins over the base a run
+/// names, so a run cannot point its checkout at another door. With none set
+/// the run's own base stays, as before; GitWire's door grammar validates
+/// whichever stands.
+#[must_use]
+pub fn with_host_door_base(
+    mut input: RepoCheckoutBindInput,
+    host_base: Option<&str>,
+) -> RepoCheckoutBindInput {
+    if let Some(base) = host_base {
+        input.endpoint = Some(base.to_owned());
+    }
+    input
+}
+
 /// `self.code.checkout.bind`'s answer. No host path is shown.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoCheckoutBindOutput {
@@ -465,7 +481,7 @@ impl Memory<'_> {
 /// under this vault's serving root, `<name>.git`, that is the very
 /// directory the name serves. `None` for anything else, an imported working
 /// folder included.
-fn served_repo_name(vault: &crate::Vault, anchor: &RepoRef) -> Option<String> {
+pub(super) fn served_repo_name(vault: &crate::Vault, anchor: &RepoRef) -> Option<String> {
     let RepoRef::LocalFolder { path, .. } = anchor else {
         return None;
     };

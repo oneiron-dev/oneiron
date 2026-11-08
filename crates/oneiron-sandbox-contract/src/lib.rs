@@ -10,11 +10,10 @@ pub use path::{MAX_PATH_COMPONENT_BYTES, MAX_WORKSPACE_PATH_BYTES, WORKSPACE_ROO
 pub use workspace::{OutputReservation, WorkspaceShape};
 
 /// The streaming snapshot host/guest wire. Hosts and guests must match exactly.
-pub const GUEST_PROTOCOL_VERSION: u32 = 2;
+pub const GUEST_PROTOCOL_VERSION: u32 = 3;
 
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_COMPONENT_BYTES: usize = 64 * 1024 * 1024;
-pub const MAX_REQUESTS: usize = 16_384;
 pub const MAX_FILE_BYTES: usize = 1024 * 1024;
 /// One frame of a streamed proposed file. Its JSON byte-array encoding (at
 /// most four bytes a byte) fits one [`MAX_FRAME_BYTES`] frame; the file itself

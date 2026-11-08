@@ -341,6 +341,13 @@ impl People {
     /// rest are counted, never dropped silently.
     #[must_use]
     pub fn residence(&self, pinned: &[EntityId]) -> PeoplePrefix {
+        self.residence_within(pinned, PEOPLE_PREFIX_BUDGET_TOK)
+    }
+
+    /// [`Self::residence`] under `budget_tok`: the `people` share of the
+    /// agent's board layout, laid out at an epoch boundary (BOARD-LAYOUT).
+    #[must_use]
+    pub fn residence_within(&self, pinned: &[EntityId], budget_tok: usize) -> PeoplePrefix {
         let mut order: Vec<usize> = Vec::with_capacity(self.rows.len());
         let mut placed = BTreeSet::new();
         for id in pinned {
@@ -359,7 +366,7 @@ impl People {
             let row = &self.rows[at];
             let line = xml_safe(&row.toon_row());
             let cost = crate::count_context_pack_tokens(&line).max(1);
-            if more > 0 || spent + cost > PEOPLE_PREFIX_BUDGET_TOK {
+            if more > 0 || spent + cost > budget_tok {
                 more += 1;
                 continue;
             }
@@ -645,6 +652,13 @@ fn person_name(body: &[u8]) -> Option<String> {
             .ok()?
             .get("display_name")?
             .as_str()
+            .map(str::to_owned)
+    })
+    .or_else(|| {
+        fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("name"))
+            .and_then(|(_, value)| value.as_str())
             .map(str::to_owned)
     })
     .filter(|name| !name.trim().is_empty())

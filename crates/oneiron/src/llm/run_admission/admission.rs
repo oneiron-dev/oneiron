@@ -4,7 +4,7 @@
 //! locality and the offer that pays.
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::super::{
@@ -22,9 +22,11 @@ use super::work_context::WorkContext;
 mod denied;
 mod media;
 mod origin;
+mod raw;
 pub use denied::RunDenied;
 pub(super) use origin::CallOrigin;
 pub use origin::RunAttribution;
+pub use raw::RawDispatch;
 
 /// The subject of the `Denied` row for a selector the run could not resolve:
 /// the row keeps none of the selector's bytes.
@@ -84,6 +86,7 @@ pub(super) struct RunInner {
     pub(super) attribution: Option<RunAttribution>,
     /// The host marked the run as memory work (FIX 11003).
     memory_work: AtomicBool,
+    model_call_index: AtomicU64,
     receipts: Arc<dyn RunReceiptSink>,
     calls: Mutex<BTreeMap<String, CallFacts>>,
     /// The open paid-connector permits' leases. A model permit's lease is in
@@ -208,6 +211,7 @@ impl RunAdmission {
                 payer,
                 attribution,
                 memory_work: AtomicBool::new(false),
+                model_call_index: AtomicU64::new(0),
                 receipts,
                 calls: Mutex::new(BTreeMap::new()),
                 paid: Mutex::new(BTreeSet::new()),
@@ -252,8 +256,12 @@ impl RunAdmission {
 
     /// This run, for calls `actor` acted to start (FIX 8970): every permit
     /// admitted through the handle names it as its initiator, in its facts
-    /// and on its `Admitted` receipt. Attribution only: who pays, the line
-    /// and every admission rule are the run's, unchanged.
+    /// and on its `Admitted` receipt.
+    ///
+    /// For host-paid calls that draw on a resident share, the initiator
+    /// selects that resident; without one, the bound run's served agent is
+    /// used. That resident's pinned share can refuse admission and receives
+    /// settlement charges. The run's payer and budget line are unchanged.
     #[must_use]
     pub fn initiated_by(&self, actor: Option<crate::EntityId>) -> Self {
         Self {
@@ -292,6 +300,14 @@ impl RunAdmission {
     #[must_use]
     pub fn instance(&self) -> crate::EntityId {
         self.inner.instance
+    }
+
+    /// Next 1-based evidence stamp, not an admission ordinal. Cloned handles
+    /// share this RunInner counter, so atomic fetch_add gives concurrent records
+    /// distinct keys without changing the instance or resetting on revision.
+    #[must_use]
+    pub fn next_model_call_index(&self) -> u64 {
+        self.inner.model_call_index.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// The rows the host named as this run's input sources, if it named any

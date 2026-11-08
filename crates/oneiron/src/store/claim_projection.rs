@@ -1,6 +1,6 @@
 //! Rebuildable claim projections maintained at the shared put chokepoint.
 use crate::scan_check::ScanCount;
-use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
+use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable, SideTableDbs};
 use crate::store::EngineScan;
 use crate::store::Store;
 use crate::write_envelope::claim_body::ClaimBody;
@@ -172,11 +172,12 @@ pub(crate) fn remove_claim_projection_index_in_rows(
     Ok(())
 }
 pub(crate) fn maintain_claim_projection_index(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     body: &ClaimBody,
 ) -> Result<()> {
+    let store = write.store;
     remove_claim_projection_index(store, txn, id)?;
     let hash = predicate_hash(&body.predicate);
     let mut reverse_keys = vec![PREDICATE_INDEX.key_bytes(&(hash, id))];
@@ -186,7 +187,7 @@ pub(crate) fn maintain_claim_projection_index(
         .unwrap_or_else(crate::write_envelope::claim_body::base_world_id);
     reverse_keys.push(WORLD_INDEX.key_bytes(&(world, id)));
     WORLD_INDEX.put(store, txn, &(world, id), &())?;
-    crate::blob_artifact::record_version_claim(store, txn, body)?;
+    crate::blob_artifact::record_version_claim(write, txn, body)?;
     if body.approval == ClaimApprovalStatus::Proposed
         && body.lifecycle == ClaimLifecycleStatus::Active
         && body.source == Some(ClaimSource::Generated)
@@ -249,6 +250,21 @@ pub(crate) fn claim_ids_for_predicate_in_txn(
     })?;
     Ok(ids)
 }
+
+/// Whether claim `id` sits in `predicate`'s posting list in this view: one
+/// point read, no body decode. An exclusion hint for recall, never a grant
+/// (FIX 21959).
+pub(crate) fn claim_has_predicate_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    predicate: &str,
+) -> Result<bool> {
+    Ok(PREDICATE_INDEX
+        .get(dbs, txn, &(predicate_hash(predicate), *id))?
+        .is_some_and(|stored| stored == predicate))
+}
+
 /// A predicate index row: `(predicate hash, claim id)` and its value.
 type PredicateRow = Result<(([u8; 32], EntityId), String)>;
 

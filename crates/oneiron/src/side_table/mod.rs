@@ -11,7 +11,7 @@ pub(crate) mod classified;
 mod codec;
 mod decls;
 mod erased;
-mod key;
+use oneiron_store::side_table::key;
 mod raw_reverse;
 #[cfg(test)]
 mod tests;
@@ -135,6 +135,16 @@ pub(crate) struct StagedRow {
 }
 
 impl StagedRow {
+    /// The actual backing capacity of this row's encoded value.
+    pub(crate) fn value_capacity_bytes(&self) -> u64 {
+        self.value.capacity() as u64
+    }
+
+    /// The actual backing capacity of this row's encoded key.
+    pub(crate) fn key_capacity_bytes(&self) -> u64 {
+        self.key.capacity() as u64
+    }
+
     pub(crate) fn put(&self, dbs: &impl SideTableDbs, txn: &mut RwTxn<'_>) -> Result<()> {
         let admitted = self
             .decl

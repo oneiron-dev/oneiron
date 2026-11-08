@@ -335,6 +335,7 @@ impl Vault {
                     generation: 0,
                     pending: 0,
                     birth_frontier: None,
+                    restored: None,
                 };
                 storage::persist(self, txn, &message, &mut head, &incoming, None)?;
                 if incoming.doc.is_shallow() {
@@ -495,7 +496,12 @@ fn switched_in(
         )));
     }
     let left = std::mem::replace(&mut head.document, carried.document.clone());
-    storage::move_pointer(&vault.store, txn, message, &head.document)?;
+    storage::move_pointer(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        txn,
+        message,
+        &head.document,
+    )?;
     storage::persist(vault, txn, message, &mut head, &doc, None)?;
     if doc.doc.is_shallow() {
         vault.store.port_document_shallow_since_put(

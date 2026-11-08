@@ -1,7 +1,7 @@
-//! Frozen typed argv: one constructor per git verb plus the token validators.
+//! Core half of `git_wire::argv`: its store-layer items live in `oneiron_store::git_wire::argv` and are
+//! re-exported here; the items below stay in the engine.
 
-use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+pub(crate) use oneiron_store::git_wire::argv::*;
 
 use super::config::{GIT_WIRE_MAX_ARG_BYTES, GIT_WIRE_MAX_REF_BYTES};
 use super::failure::invalid;
@@ -12,6 +12,9 @@ use super::{
     GitWireResult,
 };
 use crate::error::Result;
+use oneiron_store::git_wire::path_text::git_path_os_str;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 /// A frozen git argv: a fixed verb, validated argument positions, and an
 /// optional stdin payload.
@@ -177,13 +180,19 @@ impl FrozenGitArgv {
     /// `ls-tree -z <tree> -- :(top,literal)<name>`: only the entry `name`
     /// names in one tree, so the output stays one entry however wide the tree
     /// is. The magic reads `name` as one literal component from the root,
-    /// never as a glob or as relative to the working directory.
+    /// never as a glob or as relative to the working directory. `name` is a
+    /// Git path's text, so a name outside UTF-8 reaches Git as its own bytes
+    /// (FIX 21326).
     pub(super) fn read_tree_entry(tree: &GitOid, name: &str) -> GitWireResult<Self> {
-        if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
-            return Err(invalid("git tree entry name must be one path component"));
+        let one_component = || invalid("git tree entry name must be one path component");
+        if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+            return Err(one_component());
         }
+        let name = git_path_os_str(name).map_err(|_| one_component())?;
         let mut tail = os_args(&["ls-tree", "-z", tree.as_str(), "--"]);
-        tail.push(OsString::from(format!(":(top,literal){name}")));
+        let mut pathspec = OsString::from(":(top,literal)");
+        pathspec.push(&*name);
+        tail.push(pathspec);
         Ok(Self::frozen(GitWireOperation::ReadTree, tail))
     }
 
@@ -304,37 +313,6 @@ impl FrozenGitArgv {
         Self::frozen(GitWireOperation::PublishRefs, tail).with_stdin(payload.into_bytes())
     }
 
-    /// `push --porcelain --no-verify -- <url> +<oid>:<ref>... :<ref>...`: the
-    /// mirror takes exactly the named pairs, forced, and loses exactly the
-    /// named deletions. Never `--mirror`: keep-refs and unpublished refs stay
-    /// home.
-    pub(super) fn mirror_push(
-        url: &str,
-        refs: &[(GitRefName, GitOid)],
-        deletions: &[GitRefName],
-    ) -> GitWireResult<Self> {
-        validate_argv_token(url)?;
-        let mut tail = os_args(&[
-            "push",
-            "--porcelain",
-            "--no-verify",
-            "--no-recurse-submodules",
-            "--",
-        ]);
-        tail.push(OsString::from(url));
-        for (name, oid) in refs {
-            tail.push(OsString::from(format!(
-                "+{}:{}",
-                oid.as_str(),
-                name.as_str()
-            )));
-        }
-        for name in deletions {
-            tail.push(OsString::from(format!(":{}", name.as_str())));
-        }
-        Ok(Self::frozen(GitWireOperation::MirrorPush, tail))
-    }
-
     /// `ls-remote --refs -- <url> <ref>`: what one https mirror holds at one
     /// full ref (FIX 6866). A ref the mirror lacks is absent from a
     /// successful listing; the caller takes only the exact name.
@@ -435,6 +413,32 @@ impl FrozenGitArgv {
         )
     }
 
+    /// `reflog expire --expire=now --all`: drops every reflog entry of the
+    /// store (FIX 7608 slice 10). No argument is the caller's; its stdout
+    /// is spooled, so a store of any size runs with no wall-clock bound
+    /// (Rule 5).
+    pub(super) fn expire_reflogs() -> Self {
+        let mut argv = Self::frozen(
+            GitWireOperation::ExpireReflogs,
+            os_args(&["reflog", "expire", "--expire=now", "--all"]),
+        );
+        argv.retained = RetainedGitIo::default().with_spooled_stdout();
+        argv
+    }
+
+    /// `gc --prune=now --quiet`: repacks what refs reach and deletes every
+    /// object none reaches (FIX 7608 slice 10). No argument is the
+    /// caller's; its stdout is spooled, so a store of any size runs with no
+    /// wall-clock bound (Rule 5).
+    pub(super) fn collect_objects() -> Self {
+        let mut argv = Self::frozen(
+            GitWireOperation::CollectObjects,
+            os_args(&["gc", "--prune=now", "--quiet"]),
+        );
+        argv.retained = RetainedGitIo::default().with_spooled_stdout();
+        argv
+    }
+
     pub(super) const fn operation(&self) -> GitWireOperation {
         self.operation
     }
@@ -456,65 +460,4 @@ impl FrozenGitArgv {
             .as_ref()
             .map(|(path, commit)| (path.as_path(), commit))
     }
-}
-
-/// Stdin revisions for a `--stdin` walk: each of `include`, then each of
-/// `exclude` as `^<oid>`.
-fn revision_lines(include: &[GitOid], exclude: &[GitOid]) -> Vec<u8> {
-    let mut payload = Vec::new();
-    for oid in include {
-        payload.extend_from_slice(oid.as_str().as_bytes());
-        payload.push(b'\n');
-    }
-    for oid in exclude {
-        payload.push(b'^');
-        payload.extend_from_slice(oid.as_str().as_bytes());
-        payload.push(b'\n');
-    }
-    payload
-}
-
-pub(super) fn os_args(args: &[&str]) -> Vec<OsString> {
-    args.iter().map(|arg| OsString::from(*arg)).collect()
-}
-
-fn validate_revision(revision: &str) -> Result<()> {
-    if revision.is_empty() || revision.len() > GIT_WIRE_MAX_REF_BYTES {
-        return Err(invalid("git revision must be non-empty and bounded"));
-    }
-    if revision.starts_with('-') {
-        return Err(invalid("git revision must not be parsed as an option"));
-    }
-    if revision
-        .bytes()
-        .any(|byte| byte.is_ascii_control() || byte == b' ')
-    {
-        return Err(invalid(
-            "git revision must not contain control or space bytes",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_path_arg(path: &Path) -> Result<()> {
-    if path.as_os_str().is_empty() {
-        return Err(invalid("git path argument must be non-empty"));
-    }
-    if path.as_os_str().as_encoded_bytes().contains(&0) {
-        return Err(invalid("git path argument must not contain NUL"));
-    }
-    if !path.is_absolute() {
-        return Err(invalid("git path argument must be absolute"));
-    }
-    Ok(())
-}
-
-pub(super) fn validate_argv_token(arg: &str) -> Result<()> {
-    if arg.len() > GIT_WIRE_MAX_ARG_BYTES {
-        return Err(invalid("git argument exceeds the frozen length bound"));
-    }
-    if arg.contains('\0') {
-        return Err(invalid("git argument must not contain NUL"));
-    }
-    Ok(())
 }

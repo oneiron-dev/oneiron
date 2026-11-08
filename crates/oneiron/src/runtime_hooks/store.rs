@@ -17,7 +17,8 @@ use super::body::{HookBudgetOverrun, HookPreparation, HookSettledCallRef};
 use super::grant::HookGrant;
 use super::lineage::LineageLink;
 use super::source::{
-    self, ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SettlementPosition,
+    self, ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SchedulePosition,
+    SettlementPosition, SurfaceInboundPosition,
 };
 
 pub(crate) use erase::scrub_hook_source_in_txn;
@@ -121,6 +122,8 @@ pub(super) struct CursorRow {
 enum CursorPosition {
     ClaimChangelog([u8; 16]),
     Settlement(u64),
+    Schedule(u64),
+    SurfaceInbound(u64),
 }
 
 impl CursorRow {
@@ -131,6 +134,10 @@ impl CursorRow {
                     CursorPosition::ClaimChangelog(position.0)
                 }
                 FactPosition::Settlement(position) => CursorPosition::Settlement(position.0),
+                FactPosition::Schedule(position) => CursorPosition::Schedule(position.0),
+                FactPosition::SurfaceInbound(position) => {
+                    CursorPosition::SurfaceInbound(position.0)
+                }
             }),
             paused: false,
             updated_at: at,
@@ -152,6 +159,12 @@ impl CursorRow {
             }
             CursorPosition::Settlement(sequence) => {
                 FactPosition::Settlement(SettlementPosition(sequence))
+            }
+            CursorPosition::Schedule(sequence) => {
+                FactPosition::Schedule(SchedulePosition(sequence))
+            }
+            CursorPosition::SurfaceInbound(sequence) => {
+                FactPosition::SurfaceInbound(SurfaceInboundPosition(sequence))
             }
         })
     }
@@ -515,7 +528,7 @@ pub(super) enum HookRunRef {
 }
 
 impl HookRunRef {
-    const fn key(self) -> RunKey {
+    pub(super) const fn key(self) -> RunKey {
         match self {
             Self::Fact(key) | Self::Verb(key) => key,
         }
@@ -620,6 +633,36 @@ fn hook_run_read_rows_in(
             .chain(evidence)
             .collect(),
     ))
+}
+
+/// The source rows of a room Hook receipt's run (FIX 5429): the rows its
+/// verb run read and the rows its input showed, sorted. `None` when that
+/// receipt's provenance is unknown, so a room tail withholds it: the run is
+/// not a saved verb run, its input also showed content no host names rows
+/// for, or it ran on a write, whose args and answer are its caller's own
+/// content and name no row another reader could be checked against.
+pub(super) fn hook_verb_run_source_rows_in(
+    dbs: &impl SideTableDbs,
+    rtxn: &heed::RoTxn<'_>,
+    key: &RunKey,
+) -> Result<Option<Vec<EntityId>>> {
+    let Some(run) = super::verb::VERB_RUNS.get(dbs, rtxn, key)? else {
+        return Ok(None);
+    };
+    if run.unattributed
+        || crate::task_verb::verb_hook_boundary::row_domain(&run.verb) == super::VerbDomain::Write
+    {
+        return Ok(None);
+    }
+    let mut rows: Vec<EntityId> = run
+        .reads
+        .into_iter()
+        .flat_map(|pin| pin.rows.into_iter().map(|row| row.id))
+        .chain(run.dependencies)
+        .collect();
+    rows.sort_unstable();
+    rows.dedup();
+    Ok(Some(rows))
 }
 
 /// The Hook receipt projector: runs, newest first within the query's bound,

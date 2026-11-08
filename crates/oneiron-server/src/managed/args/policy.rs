@@ -113,6 +113,21 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.custody_anchor_credentials_fd.is_some(),
         ArgvUse::Read,
     ),
+    (
+        "checkpoint-host-holds-recipient-fd",
+        |args| args.checkpoint_host_holds_recipient_fd.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "host-legal-listen-fd",
+        |args| args.host_legal_listen_fd.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "host-legal-uid",
+        |args| args.host_legal_uid.is_some(),
+        ArgvUse::Read,
+    ),
     ("restore", |args| args.restore, ArgvUse::Read),
     (
         "restore-input-fd",
@@ -417,7 +432,7 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
     ),
     // The host's public addresses, which the supervisor owns and passes on:
-    // its https origin and the URLs a kit dials. The settings file never
+    // its https origin, the URLs a kit dials and its Git door. The settings file never
     // sets them, and no auth layer is built from them.
     (
         "oauth-resource-indicator",
@@ -427,6 +442,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "kit-bundle-public-urls",
         |args| args.kit_bundle_public_urls.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "git-door-base",
+        |args| args.git_door_base.is_some(),
         ArgvUse::Read,
     ),
     // The owner's own choices, which the supervisor passes on (FIX 4488).
@@ -525,11 +545,6 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "ephemeral-timeout-ms",
         |args| args.ephemeral_timeout_ms.is_some(),
-        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
-    ),
-    (
-        "max-ephemeral-payload-bytes",
-        |args| args.max_ephemeral_payload_bytes.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
     ),
     (

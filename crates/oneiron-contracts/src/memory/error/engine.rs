@@ -9,6 +9,18 @@ impl From<Error> for MemoryError {
             return Self::verb_hook(*stop);
         }
         let message = err.to_string();
+        if let Error::Gate(GateError::ShareCreatePaced { next_eligible_at }) = err {
+            return Self {
+                resets_at: vec![next_eligible_at],
+                ..Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    message,
+                    &[
+                        "Retry the share creation at the Unix time in resets_at; nothing was recorded or charged.",
+                    ],
+                )
+            };
+        }
         // FIX 3194: an outage keeps when to call again as its field.
         if let Error::ProviderUnavailable { retry_after } = err {
             return Self {
@@ -42,17 +54,17 @@ impl From<Error> for MemoryError {
         }
         // The hold is a valid write parked on the parties it names, not a
         // bad request: INVALID_STATE, filed by the join it names.
-        if matches!(
-            err,
-            Error::Record(crate::error::RecordError::RoomJoinHeld(_))
-        ) {
-            return Self::new(
-                MEMORY_CODE_INVALID_STATE,
-                message,
-                &[
-                    "File the join with vault.rooms.join and the intent_key named here; the write goes through once those parties consent.",
-                ],
-            );
+        if let Error::Record(crate::error::RecordError::RoomJoinHeld(hold)) = err {
+            return Self {
+                room_join_hold: Some(hold),
+                ..Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    message,
+                    &[
+                        "File the join with vault.rooms.join and the intent_key named here; the write goes through once those parties consent.",
+                    ],
+                )
+            };
         }
         // The hold names the live call a room's assembly waits on: refresh
         // that call's roster and speaker entries, then assemble again.

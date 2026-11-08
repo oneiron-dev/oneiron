@@ -40,8 +40,8 @@ use super::{Answering, TurnCredential, text_message};
 use crate::api::context_board::BoardSectionSource;
 use crate::api::credential_memory;
 use crate::models::{
-    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
-    reply_committed, turn_admitted,
+    AuthorityVerdict, CheckpointAuthority, NextTurnSource, ReplyCommit, RestoreClaim,
+    SnapshotScope, reply_committed, reply_committed_preparing, turn_admitted,
 };
 pub(crate) use actions::ActionSession;
 
@@ -113,15 +113,17 @@ impl Reader {
 /// The board as the turn placed it (I1 = C turn order).
 pub(super) struct BoardView {
     /// The text and sections of its state part, right before the newest
-    /// user message, or its omission's note, with no section.
-    pub(super) state: (String, Vec<BoardSectionSource>),
+    /// user message, or its omission's note, with no section; `None` when
+    /// nothing stands at the board's place.
+    pub(super) state: Option<(String, Vec<BoardSectionSource>)>,
     /// The message right after the newest user message, when the turn has
     /// one.
     pub(super) tail: Option<TurnTail>,
 }
 
-/// The User message that closes a turn whose board rides: the board's query
-/// part, then the turn's opener.
+/// The User message that closes a turn: the board's query part when the
+/// board rides, then the turn's opener; the opener alone otherwise (FIX
+/// 14676).
 pub(super) struct TurnTail {
     pub(super) text: String,
     /// The query part's sections; none when the tail is the opener alone.
@@ -136,7 +138,8 @@ pub(super) struct Assembled<'a> {
     pub(super) self_chat: Option<&'a SelfChat>,
     /// The messages before the board went in.
     pub(super) messages: &'a [LlmMessage],
-    /// The board, when it rides, or its omission's note.
+    /// The board, when it rides, or its omission's note, and the opener
+    /// that closes the call.
     pub(super) board: Option<&'a BoardView>,
     /// The answering agent, and the craft notes it was shown, when it was.
     pub(super) agent: EntityId,
@@ -232,11 +235,7 @@ fn admitted_with_sources(
         context.fence = TrustFence::Guest;
         segments.push(context);
     }
-    if let Some(BoardView {
-        state: (block, sections),
-        ..
-    }) = assembled.board
-    {
+    if let Some((block, sections)) = assembled.board.and_then(|board| board.state.as_ref()) {
         let at = messages
             .iter()
             .rposition(|message| message.role == LlmMessageRole::User)?;
@@ -366,8 +365,8 @@ impl PathDependencies {
             .flat_map(|board| {
                 board
                     .state
-                    .1
                     .iter()
+                    .flat_map(|(_, sections)| sections)
                     .chain(board.tail.iter().flat_map(|tail| &tail.sections))
             })
             .flat_map(|section| &section.dependencies)
@@ -610,12 +609,15 @@ impl CheckpointAuthority for ChatAuthority {
 /// The turn's authority is held until the outcome ends even when the turn
 /// wrote no rows, so a restore for its call rechecks under it instead of
 /// running cold; only the commit handoff still needs `written` (FIX 11287).
+/// With `next`, what the conversation's next turn is known to start with,
+/// the session prepares that once the successor is published (I1 = C).
 pub(super) fn commit_on_answer(
     segments: Option<TurnSegments>,
     reader: &Reader,
     credential: &TurnCredential,
     written: Option<&[EntityId]>,
     turn: EntityId,
+    next: Option<Arc<dyn NextTurnSource>>,
     answering: Answering,
 ) -> Answering {
     let Some(segments) = segments else {
@@ -647,7 +649,7 @@ pub(super) fn commit_on_answer(
     // so edition-2024 disjoint capture would otherwise drop `_turn` when
     // this returns and the restore would run cold (FIX 11287).
     let retain_turn = segments._turn.clone();
-    let message = handle.message_id();
+    let expected_message = handle.recorded_message_id();
     let (finished, forwarded) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         // Held until the outcome ends, whatever the turn wrote.
@@ -657,16 +659,31 @@ pub(super) fn commit_on_answer(
         };
         let whole = ended.result.is_ok()
             && ended.saved.as_ref().is_some_and(|saved| {
-                saved.message_id == message && saved.finality == StreamFinality::Final
+                let matches = match expected_message {
+                    Some(message) => saved.message_id == message,
+                    None => ended.native.as_ref().is_some_and(|finished| {
+                        matches!(&finished.outcome,
+                            oneiron::memory::SessionStreamOutcome::Retained(receipt) if receipt == saved)
+                    }),
+                };
+                matches && saved.finality == StreamFinality::Final
             });
         let saved = ended.saved.clone().filter(|_| whole);
+        let native_commit = ended
+            .native
+            .as_ref()
+            .and_then(|finished| Some((finished.turn_id?, finished.text.clone())));
         // The outcome goes on as it ended; nothing waits for the session.
         let _ = finished.send(ended);
         if let (Some(saved), Some(authority)) = (saved, commit_authority) {
             // The committed successor carries the current full lane-admitted
             // MESSAGE text, not the raw accepted stream text; a reread that
             // does not resolve stays cold (FIX 13020).
-            let text = crate::server::blocking(|| reader.committed_text(&saved));
+            let message = saved.message_id;
+            let text = match &native_commit {
+                Some((_, text)) => Some(text.clone()),
+                None => crate::server::blocking(|| reader.committed_text(&saved)),
+            };
             let Some(text) = text else {
                 return;
             };
@@ -674,23 +691,27 @@ pub(super) fn commit_on_answer(
             // 10367): HEAD does not always move to this reply's TURN, and
             // naming the TURN anyway drops the session at the next fork.
             // No HEAD stands or reads: the TURN names it, as before.
-            let head = segments
-                .manifest
-                .anchor()
-                .map(|anchor| anchor.conversation)
-                .and_then(|conversation| {
-                    crate::server::blocking(|| vault.local_head(&conversation).ok().flatten())
-                })
-                .unwrap_or(turn);
-            reply_committed(
-                &segments.manifest,
-                ReplyCommit {
-                    head,
-                    message,
-                    text,
-                },
-                Arc::new(authority),
-            );
+            let head = native_commit.map(|(turn, _)| turn).unwrap_or_else(|| {
+                segments
+                    .manifest
+                    .anchor()
+                    .map(|anchor| anchor.conversation)
+                    .and_then(|conversation| {
+                        crate::server::blocking(|| vault.local_head(&conversation).ok().flatten())
+                    })
+                    .unwrap_or(turn)
+            });
+            let commit = ReplyCommit {
+                head,
+                message,
+                text,
+            };
+            match next {
+                Some(next) => {
+                    reply_committed_preparing(&segments.manifest, commit, Arc::new(authority), next)
+                }
+                None => reply_committed(&segments.manifest, commit, Arc::new(authority)),
+            }
         }
     });
     Answering {

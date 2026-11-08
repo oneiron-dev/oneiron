@@ -6,17 +6,24 @@
 //! A part travels as an inline body of its own, sealed under its instance,
 //! its descriptor naming the row it recomposes into ([`ReplayPartCarried`]):
 //! a replay row's, whose image row holds its skeleton, or a capsule's,
-//! whose row travels as it is. A carried start's whole body travels
-//! nowhere: its body row goes without its bytes, and no file or descriptor
-//! carries its file, so no stream holds an ask its parts carry apart.
+//! whose row travels as it is. A carried start is kept as shared pieces
+//! (FIX 4192). FIX 4192 review fix: each piece that holds its content (its
+//! config, its record's frame, each element) travels nowhere, as its whole
+//! body did before. Its body row goes without its bytes, and no file or
+//! descriptor carries its file, so only the rest, bound to the rest's
+//! owners, carries that content: the erase that retires the rest retires
+//! every copy of it. Its nodes and its manifest hold only digests and
+//! lengths, and travel as any body does. A content piece a start that
+//! travels whole also names travels with that start, as its body did.
 //!
 //! A restore reads each part's stream as it reads any inline body, checked
 //! against its instance and digest, then recomposes each destination once
 //! ([`land`]), every part's disposition known, before any row lands: a row
-//! from its reply or its skeleton, a start from its rest, republished
-//! inline under the same occurrence. A start whose rest retired goes as a
-//! retired body does. Each recomposed destination is counted at its grouped
-//! length before anything is opened ([`landed_lengths`]).
+//! from its reply or its skeleton, a start from its rest, its pieces put
+//! back inline where their rows lack their bytes and its manifest under the
+//! same occurrence. A start whose rest retired goes as a retired body does.
+//! Each recomposed destination is counted at its grouped length before
+//! anything is opened ([`landed_lengths`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -77,8 +84,8 @@ pub(in crate::recovery::checkpoint) fn carried_part(
 
 /// The step starts a census carries as parts, found by their capsules'
 /// typed refs before it notes a row, whichever row it meets first: each
-/// start's parts by its capsule row, and the digests their whole bodies
-/// rest under, which no stream carries.
+/// start's parts by its capsule row, and the digests of the start pieces
+/// that hold their content (FIX 4192 review fix), which no stream carries.
 pub(super) struct StartIndex {
     starts: BTreeMap<Vec<u8>, ReplayParts>,
     digests: BTreeSet<[u8; 32]>,
@@ -86,27 +93,50 @@ pub(super) struct StartIndex {
 
 impl StartIndex {
     /// Every kept start `txn` holds whose prefix holds an ask a checkpoint
-    /// carries apart.
+    /// carries apart, with its content pieces (FIX 4192 review fix). A
+    /// content piece a kept start that travels whole names stays out: it
+    /// travels with that start, as its whole body did. So does one another
+    /// holder keeps, a descriptor outside the starts' piece paths or a
+    /// result row holding its own body: it travels under its own shared
+    /// body instance, and that holder keeps it whatever the start's rest
+    /// does.
     fn of(store: &Store, txn: &RoTxn<'_>) -> Result<Self> {
         let mut index = Self {
             starts: BTreeMap::new(),
             digests: BTreeSet::new(),
         };
+        let mut whole_content = BTreeSet::new();
+        let mut scopes = BTreeSet::new();
         for kept in crate::code_run::kept_step_starts_in_txn(store, txn)? {
-            if let Some(parts) = crate::code_run::step_start_parts(&kept.bytes) {
-                index.digests.insert(kept.digest);
-                index.starts.insert(kept.row, parts);
+            scopes.insert((kept.run, kept.actor));
+            let content = crate::code_run::step_start_content_pieces(&kept.bytes)?;
+            match crate::code_run::step_start_parts(&kept.bytes) {
+                Some(parts) => {
+                    index.digests.extend(content);
+                    index.starts.insert(kept.row, parts);
+                }
+                None => whole_content.extend(content),
             }
         }
+        let mut stripped = BTreeSet::new();
+        for digest in index.digests {
+            if !whole_content.contains(&digest)
+                && !crate::code_run::start_piece_held_apart_in_txn(store, txn, &digest, &scopes)?
+            {
+                stripped.insert(digest);
+            }
+        }
+        index.digests = stripped;
         Ok(index)
     }
 }
 
 /// FIX 9180: the census of a `vault_meta` row a carried step start names:
 /// its capsule's row carries the start's parts and travels as it is, and
-/// its whole body's row travels without its bytes, which no file or
-/// descriptor carries either. `None` for any other row. The first
-/// `vault_meta` row the census meets indexes every kept start.
+/// the row of each of its pieces that holds its content (FIX 4192 review
+/// fix) travels without its bytes, which no file or descriptor carries
+/// either. `None` for any other row. The first `vault_meta` row the census
+/// meets indexes every kept start.
 ///
 /// # Errors
 ///
@@ -262,12 +292,14 @@ fn live_part<'r>(
 /// now each part's disposition is known (its instance `retired`, or its
 /// plaintext `read`), before any row lands. A replay row is recomposed from
 /// its live reply, or from its skeleton when the reply retired; a step
-/// start from its live rest, republished among the rows held inline under
-/// the same occurrence, or, its rest retired, left as a retired body
-/// leaves one. Either way each live ask goes back in its call, and each
-/// retired one's call answers `TargetErased`, the one precedence
-/// `crate::code_run::recompose_replay_row` defines. The whole bodies the
-/// starts rested under are settled last.
+/// start from its live rest, its pieces republished among the rows held
+/// inline and its manifest under the same occurrence (FIX 4192), or, its
+/// rest retired, left as a retired body leaves one. Either way each live
+/// ask goes back in its call, and each retired one's call answers
+/// `TargetErased`, the one precedence `crate::code_run::recompose_replay_row`
+/// defines. The bodies the starts rested under without their bytes are
+/// settled last: FIX 4192 review fix, each content piece of a start whose
+/// rest retired goes unless a live start lands it again.
 ///
 /// # Errors
 ///
@@ -278,11 +310,15 @@ pub(super) fn land(
     image: &mut CheckpointImage,
     read: &ReadParts,
     retired: &BTreeSet<[u8; 16]>,
+    unlanded: &mut Vec<[u8; 32]>,
 ) -> Result<()> {
     let destinations = destinations(&image.inline_bodies);
     if destinations.is_empty() {
         return Ok(());
     }
+    // FIX 4192 review fix: a start piece's file row holds its bytes only
+    // when the image carries its file.
+    let files: BTreeSet<[u8; 32]> = image.bodies.iter().map(|(digest, _)| *digest).collect();
     let rows = image
         .databases
         .get_mut("vault_meta")
@@ -310,16 +346,46 @@ pub(super) fn land(
             Some(rest) => {
                 let bytes = crate::code_run::recompose_step_start(rest, &requests)?;
                 if let Some((before, after)) =
-                    crate::code_run::republish_step_start_in_rows(rows, row, &bytes)?
+                    crate::code_run::republish_step_start_in_rows(rows, row, &bytes, &files)?
                 {
-                    rested.insert(before);
-                    landed.insert(after);
+                    rested.extend(before);
+                    landed.extend(after);
                 }
             }
-            None => rested.extend(crate::code_run::drop_step_start_in_rows(rows, row)?),
+            None => rested.extend(crate::code_run::drop_step_start_in_rows(rows, row, &files)?),
         }
     }
-    crate::code_run::settle_start_bodies_in_rows(rows, &rested, &landed)
+    crate::code_run::settle_start_bodies_in_rows(rows, &rested, &landed)?;
+    // Their body rows are gone. After reopening, the destination can
+    // journal their actual instances before removing unheld inline keys.
+    unlanded.extend(rested.difference(&landed).copied());
+    Ok(())
+}
+
+/// The length the `vault_meta` row `key`, `value` in the image now, lands
+/// at as an inline body's row (FIX 4192): its first bytes and its carried
+/// body, unless its instance `retired`.
+fn inline_landed_len(
+    image: &CheckpointImage,
+    retired: &BTreeSet<[u8; 16]>,
+    key: &[u8],
+    value: &[u8],
+) -> u64 {
+    image
+        .inline_bodies
+        .iter()
+        .find(|carried| {
+            carried.database == "vault_meta"
+                && carried.key == key
+                && carried.replay.is_none()
+                && !carried.superseded
+                && !retired.contains(&carried.instance)
+        })
+        .map_or(value.len() as u64, |carried| {
+            carried
+                .landed_len
+                .unwrap_or_else(|| u64::from(carried.keep).saturating_add(carried.len))
+        })
 }
 
 /// The value of the row `key` among sorted `rows`.
@@ -335,8 +401,10 @@ fn image_row<'r>(rows: &'r [(Vec<u8>, Vec<u8>)], key: &[u8]) -> Option<&'r [u8]>
 /// (`retired`): a replay row's at its recomposed length, never one part's;
 /// a start's body row at its recomposed body held inline, or its capsule's
 /// row beside its own length when the image keeps no body row to stand for
-/// it; a start whose rest retired leaves its body row nothing. No margin is
-/// added.
+/// it; a start whose rest retired leaves its body row nothing. FIX 4192:
+/// the start's body row is its manifest's, which lands as any inline body
+/// does; the pieces the restore puts back count at most the recomposed
+/// body beside it. No margin is added.
 pub(in crate::recovery::checkpoint) fn landed_lengths(
     image: &CheckpointImage,
     retired: &BTreeSet<[u8; 16]>,
@@ -385,8 +453,13 @@ pub(in crate::recovery::checkpoint) fn landed_lengths(
         } else {
             0
         };
-        if image_row(rows, &body_row).is_some() {
-            lengths.push((body_row, body));
+        if let Some(value) = image_row(rows, &body_row) {
+            let manifest = if live {
+                inline_landed_len(image, retired, &body_row, value)
+            } else {
+                0
+            };
+            lengths.push((body_row, body.saturating_add(manifest)));
         } else if body > 0 {
             let beside = (capsule.len() as u64)
                 .saturating_add(body_row.len() as u64)

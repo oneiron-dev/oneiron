@@ -301,6 +301,18 @@ impl Memory<'_> {
                         ));
                     }
                     validate_regeneration(self.vault, txn, &state.seed)?;
+                    // A Retry opened after its requester's hard erase stores
+                    // no slip: that erase's one-time scrub of stored seeds
+                    // has already run (FIX 10765, after FIX 10668).
+                    if let Some(action) = state.seed.action.as_mut() {
+                        let requester = action.actor;
+                        if self
+                            .vault
+                            .local_hard_delete_marker_exists_in_txn(txn, &requester)?
+                        {
+                            action.scrub_actor_instrument(&requester);
+                        }
+                    }
                     // Supplied initial content is the first checkpoint.
                     storage::ACTIVE.put(
                         &self.vault.store,
@@ -598,6 +610,11 @@ pub(super) fn authorize(
     text: &str,
     edits_document: bool,
 ) -> MessageStreamResult<()> {
+    // A generation an erase dropped writes and publishes nothing more (FIX
+    // 9973), judged in this write's own snapshot.
+    if storage::stream_generation_erased_in_txn(vault, txn, seed)? {
+        return Err(MessageStreamError::StreamNotFound);
+    }
     verify_actor_binding_in_txn(vault, txn, seed.actor, seed.class()?)?;
     if vault.local_hard_delete_marker_exists_in_txn(txn, &seed.message_id)? {
         return Err(Error::EntityNotFound.into());

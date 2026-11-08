@@ -149,9 +149,12 @@ fn birth_message_in_txn(
     let mut pointer = Vec::new();
     rmpv::encode::write_value(&mut pointer, &rmpv::Value::Map(fields))
         .map_err(|_| invalid("message document pointer"))?;
-    vault
-        .store
-        .port_entity_document_pointer_put(txn, entity, &pointer)?;
+    vault.store.port_entity_document_pointer_put(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        txn,
+        entity,
+        &pointer,
+    )?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
@@ -160,6 +163,7 @@ fn birth_message_in_txn(
         generation: 0,
         pending: 0,
         birth_frontier: Some(doc.frontier()),
+        restored: None,
     };
     storage::stamp_document_birth(&vault.store, txn, entity, actor, at, door)?;
     storage::persist(vault, txn, entity, &mut head, &doc, None)?;

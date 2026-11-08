@@ -124,6 +124,26 @@ pub struct ServeArgs {
     #[arg(long = "custody-anchor-credentials-fd")]
     pub custody_anchor_credentials_fd: Option<i32>,
 
+    /// Supervisor-only pipe carrying one public checkpoint host-order recipient
+    /// object (`bundle_b64`, `fingerprint`), then EOF. Missing or unusable
+    /// material leaves checkpoint receipts at `recipient_missing`; it never
+    /// prevents a managed vault from starting.
+    #[arg(
+        long = "checkpoint-host-holds-recipient-fd",
+        requires = "managed_by_hypnos"
+    )]
+    pub checkpoint_host_holds_recipient_fd: Option<i32>,
+
+    /// Manager-created HOST legal-copy listener, inherited only by a native
+    /// managed process. Paired with the manager's actual kernel UID.
+    #[arg(long = "host-legal-listen-fd", requires_all = ["managed_by_hypnos", "host_legal_uid"])]
+    pub host_legal_listen_fd: Option<i32>,
+
+    /// Kernel UID allowed on that same inherited HOST listener; never a
+    /// tenant identity or an ordinary owner credential.
+    #[arg(long = "host-legal-uid", requires_all = ["managed_by_hypnos", "host_legal_listen_fd"])]
+    pub host_legal_uid: Option<u32>,
+
     /// Managed mode's cold restore start (LC FIX 5384/5385): the vault the
     /// plan on `--restore-input-fd` names is restored into `--data-dir` from
     /// its signed artifact, verified and kept, then served as an ordinary
@@ -513,6 +533,14 @@ pub struct ServeArgs {
     #[arg(long)]
     pub oauth_resource_indicator: Option<String>,
 
+    /// The host's own Git door base, `https://<host>/git` (or `http` on
+    /// loopback), that a run's checkout bind names instead of the caller's
+    /// endpoint (`ONEIRON_GIT_DOOR_BASE`; FIX 7181). Unset: the caller's
+    /// explicit endpoint stands. In managed mode the supervisor passes it,
+    /// as it owns the vault's public addresses.
+    #[arg(long, value_parser = git_door_base)]
+    pub git_door_base: Option<String>,
+
     /// Comma-separated public URLs a recovery kit may dial and sign its
     /// fetches for, one per address the home answers on
     /// (`ONEIRON_KIT_BUNDLE_PUBLIC_URLS`). Empty: `--oauth-resource-indicator`.
@@ -611,10 +639,6 @@ pub struct ServeArgs {
     /// Loro ephemeral-store inactivity timeout in milliseconds.
     #[arg(long)]
     pub ephemeral_timeout_ms: Option<i64>,
-
-    /// Maximum Loro-native ephemeral payload bytes accepted from one frame.
-    #[arg(long)]
-    pub max_ephemeral_payload_bytes: Option<usize>,
 
     /// Maximum encoded hub snapshot bytes retained/sent to late joiners.
     #[arg(long)]
@@ -717,6 +741,16 @@ fn parse_runtime_provider_kind(value: &str) -> Result<RuntimeProviderKind, Strin
 /// closed instead of resolving to a default.
 fn parse_privacy_posture(value: &str) -> Result<HostingPrivacyPosture, String> {
     value.parse()
+}
+
+/// Clap value parser for `--git-door-base` (FIX 7181): the same door
+/// grammar GitWire binds a checkout to, so a bad base stops the start.
+fn git_door_base(value: &str) -> Result<String, String> {
+    oneiron::git_wire::validate_checkout_door(value)
+        .map(|()| value.to_owned())
+        .map_err(|_| {
+            "expected the host's Git door: https://<host>/git, or http on loopback".to_owned()
+        })
 }
 
 /// Clap value parser for `--trusted-organ-build`: a blake3 digest, 64 hex,
