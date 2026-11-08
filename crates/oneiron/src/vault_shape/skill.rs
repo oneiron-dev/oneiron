@@ -6,8 +6,8 @@ use super::invalid;
 use super::live::ShapeSources;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
-use crate::skill_hub::HubSyncDisposition;
 use crate::skill_hub::pack_catalog::hub_pin;
+use crate::skill_hub::{HubSyncDisposition, SkillImportRows};
 use crate::write_envelope::skill_record::SkillLifecycle;
 use crate::{EntityId, TimeRange, Vault};
 use schemars::JsonSchema;
@@ -46,9 +46,10 @@ impl Vault {
     /// the row declares. The fetched package's id and the row's version are
     /// checked before any skill write (FIX 10202), and the import commits
     /// that same package: a source carrying another skill or version refuses
-    /// the item and leaves skill state unchanged. `sources` lists the
-    /// candidate as soon as it lands; an import refused before it lands one
-    /// reads rows it does not name, so they are unknown.
+    /// the item and leaves skill state unchanged. `sources` lists the rows
+    /// the item stands on as far as the import got, whether it lands or is
+    /// refused (FIX 11699): the hub its source names once that row is read,
+    /// the stored skill a content dedup answers, and the skill it lands.
     pub(super) fn import_shape_skill(
         &self,
         owner: &AuthenticatedOwner,
@@ -63,9 +64,10 @@ impl Vault {
             end: now,
         };
         owner.revalidate(self)?;
+        let mut read = SkillImportRows::default();
         let imported = match source {
             ShapeSkillSource::Library { subtree } => self.import_default_hub_skill_expecting(
-                owner, subtree, skill_id, version, occurred, now,
+                owner, subtree, skill_id, version, occurred, now, &mut read,
             ),
             ShapeSkillSource::Hub {
                 hub,
@@ -78,11 +80,12 @@ impl Vault {
                 .and_then(|hub| {
                     let pin = hub_pin(pin_type, pin_value)?;
                     self.import_skill_from_hub_ref_expecting(
-                        owner, hub, folder, pin, publisher, skill_id, version,
+                        owner, hub, folder, pin, publisher, skill_id, version, &mut read,
                     )
                 }),
         };
-        let entity = imported.inspect_err(|_| sources.unknown())?;
+        read.rows().for_each(|id| sources.list(id));
+        let entity = imported?;
         sources.list(entity);
         let record = self
             .get_skill_record(&entity)?
