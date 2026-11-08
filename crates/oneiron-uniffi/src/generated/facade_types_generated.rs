@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1264 facade rows, 4595 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1216.
+// UniFFI census: 1265 facade rows, 4596 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1217.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -39631,6 +39631,16 @@ pub struct CodeProposalSubmitted {
     pub status: RepoProposalStatus,
 }
 
+/// `oneiron::memory::code_doors::types::CodeProposalRereviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeProposalRereviewRequest {
+    #[serde(rename = "original")]
+    pub original: String,
+    #[serde(rename = "change")]
+    pub change: CodeProposalSubmitRequest,
+}
+
 /// `oneiron::memory::code_doors::conflict_types::CodeConflictRecordRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -39720,6 +39730,16 @@ pub struct CodeProposalResolveRequest {
     pub conflict: String,
     #[serde(rename = "branch")]
     pub branch: String,
+}
+
+/// `oneiron::memory::code_doors::conflict_types::CodeProposalResolveRereviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeProposalResolveRereviewRequest {
+    #[serde(rename = "original")]
+    pub original: String,
+    #[serde(rename = "change")]
+    pub change: CodeProposalResolveRequest,
 }
 
 /// `oneiron::claim::learning_predicate::LearningPredicate`.
@@ -42737,16 +42757,6 @@ pub struct OriginPublishApproveRequest {
     pub review_digest: String,
     #[serde(rename = "code_repo", default, skip_serializing_if = "Option::is_none")]
     pub code_repo: Option<String>,
-}
-
-/// `oneiron::memory::device_succession::DevicePredecessor`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct DevicePredecessor {
-    #[serde(rename = "client")]
-    pub client: String,
-    #[serde(rename = "device_key")]
-    pub device_key: String,
 }
 
 /// `oneiron::origin::residence::OriginResidence`.
