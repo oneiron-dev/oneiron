@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1312 facade rows, 4735 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1264.
+// UniFFI census: 1313 facade rows, 4738 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1265.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -5013,6 +5013,8 @@ pub enum ConnectorSendTaskOutcome {
     Failed,
     #[serde(rename = "ambiguous")]
     Ambiguous,
+    #[serde(rename = "owner_declined_resend")]
+    OwnerDeclinedResend,
 }
 
 /// `oneiron::consult_ladder::ladder_state::LadderTerminalDisposition`.
@@ -27194,6 +27196,39 @@ pub struct OutboundCallRequestEraseRequest {
 pub struct OutboundCallRequestErased {
     #[serde(rename = "erased")]
     pub erased: bool,
+}
+
+/// `oneiron::verbs::uncertain_send::UncertainSendAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct UncertainSendAnswer {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "resend")]
+    pub resend: bool,
+}
+
+/// `oneiron::outbound::connector_task::UncertainSendAnswerOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum UncertainSendAnswerOutcome {
+    #[serde(rename = "resend_released")]
+    ResendReleased,
+    #[serde(rename = "declined")]
+    Declined,
+    #[serde(rename = "already_settled")]
+    AlreadySettled,
+}
+
+/// `oneiron::verbs::uncertain_send::UncertainSendAnswered`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct UncertainSendAnswered {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "resend")]
+    pub resend: bool,
+    #[serde(rename = "outcome")]
+    pub outcome: UncertainSendAnswerOutcome,
 }
 
 /// `oneiron::verbs::research::ResearchChildWire`.

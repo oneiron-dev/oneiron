@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1365 code-mode rows (1323 host rows, 42 run rows), 4800 declarations.
-// Replies: 1173 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1366 code-mode rows (1324 host rows, 42 run rows), 4803 declarations.
+// Replies: 1174 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -315,7 +315,7 @@ declare namespace Sdk {
   type TaskBoardStatus = "running" | "scheduled" | "queued" | "done" | "failed";
   type TaskKind = "standard" | "consult" | "reconciliation";
   type TaskTerminalDisposition = "completed" | "rejected" | "failed" | "expired" | "abandoned" | "cancelled";
-  type ConnectorSendTaskOutcome = "delivered" | "failed" | "ambiguous";
+  type ConnectorSendTaskOutcome = "delivered" | "failed" | "ambiguous" | "owner_declined_resend";
   type LadderTerminalDisposition = "approved" | "overridden" | "rejected" | "failed" | "escalated" | "countered" | "abandoned";
   type CancelRejectionPathology = { attempt_id: string; rejections: number; threshold: number; last_status?: string | null };
   type CommReach = "parent" | "subtree" | "project" | "vault";
@@ -1746,6 +1746,9 @@ declare namespace Sdk {
   type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null; erase_complete_at?: number | null; final_ref?: string | null; custody?: RecordEraseCustody | null };
   type OutboundCallRequestEraseRequest = { attempt: EntityId; call_seq: number };
   type OutboundCallRequestErased = { erased: boolean };
+  type UncertainSendAnswer = { task_ref: EntityId; resend: boolean };
+  type UncertainSendAnswerOutcome = "resend_released" | "declined" | "already_settled";
+  type UncertainSendAnswered = { task_ref: EntityId; resend: boolean; outcome: UncertainSendAnswerOutcome };
   type ResearchChildWire = { root: EntityId; parent: EntityId; agent: EntityId; intent_key: string; briefing: string };
   type ResearchChildReceipt = { root: EntityId; parent: EntityId; child: EntityId };
   type ResearchArchiveWire = { root: EntityId };
@@ -7110,6 +7113,12 @@ declare const vault: Sdk.VaultHost & {
     configure(input: Sdk.OrgAdminConfigureRequest): Promise<Sdk.OrgAdminConfigured | StoredResult>;
     /** The caller reads only the organization's fixed named Admin powers that their own credential carries. */
     powers(input: Sdk.OrgAdminPowersRequest): Promise<Sdk.OrgAdminPowers | StoredResult>;
+  };
+  outbound: {
+    uncertain_send: {
+      /** The owner answers the ask on a scheduled send that may have gone out and that the provider cannot confirm: send it once more, or leave it unsent. */
+      answer(input: Sdk.UncertainSendAnswer): Promise<Sdk.UncertainSendAnswered | StoredResult>;
+    };
   };
   outbound_calls: {
     request: {
