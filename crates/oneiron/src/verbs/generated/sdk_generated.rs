@@ -2002,6 +2002,20 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             #[cfg(feature = "sync")]
             (
+                "vault.sync.documents.copy_edit.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RepoCopyEditReviewRequest,
+                >(),
+            ),
+            #[cfg(feature = "sync")]
+            (
+                "vault.sync.documents.copy_edit.settle",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RepoCopyEditSettleRequest,
+                >(),
+            ),
+            #[cfg(feature = "sync")]
+            (
                 "vault.sync.retained_work.wait.set",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::RetainedWorkWaitSetRequest,
@@ -3032,6 +3046,15 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::consent::lifecycle::ApproveOnceRequest,
                 >(),
+            ),
+            (
+                "vault.campaign.held",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.campaign.approve_once",
+                crate::code_run::vault_read::request_schema::<CampaignEnrollmentApproveOnceRequest>(
+                ),
             ),
             (
                 "vault.connectors.calls.approve_once",
@@ -6781,6 +6804,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteReadRequest>(),
             ),
             (
+                "vault.notes.read_indexed",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteIndexedReadRequest>(
+                ),
+            ),
+            (
                 "vault.notes.history",
                 crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
             ),
@@ -7783,6 +7811,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.federation.burst.policy",
     "vault.federation.burst.policy.set",
     "vault.sync.quarantine.held_edits",
+    "vault.sync.documents.copy_edit.review",
+    "vault.sync.documents.copy_edit.settle",
     "vault.sync.retained_work.wait.set",
     "vault.federation.burst.ingress",
     "vault.federation.burst.disposition",
@@ -7930,6 +7960,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.policy.owner.configure",
     "vault.policy.owner.row.change",
     "vault.consent.approve_once",
+    "vault.campaign.held",
+    "vault.campaign.approve_once",
     "vault.connectors.calls.approve_once",
     "vault.connectors.replies.retry_failed",
     "vault.consent.deny",
@@ -8347,6 +8379,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.notes.follow_citation",
     "vault.notes.author_take",
     "vault.notes.read",
+    "vault.notes.read_indexed",
     "vault.notes.history",
     "vault.notes.fork",
     "vault.notes.forks.read",
@@ -9215,6 +9248,14 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             Vec<(u64, crate::task_verb::sdk::SyncHeldEditEvidence)>,
         >(),
         #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.review" => crate::code_run::vault_read::request_schema::<
+            Option<crate::task_verb::sdk::RepoCopyEditReviewView>,
+        >(),
+        #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.settle" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::RepoCopyEditSettleView,
+        >(),
+        #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => crate::code_run::vault_read::request_schema::<u64>(),
         #[cfg(feature = "sync")]
         "vault.federation.burst.ingress" => crate::code_run::vault_read::request_schema::<
@@ -9667,6 +9708,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::policy_model::PolicyRowReceipt>()
         }
         "vault.consent.approve_once" => crate::code_run::vault_read::request_schema::<
+            crate::consent::lifecycle::ConsentActReceipt,
+        >(),
+        "vault.campaign.held" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::campaign::enrollment::CampaignEnrollmentHeldCall>,
+        >(),
+        "vault.campaign.approve_once" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
         >(),
         "vault.connectors.calls.approve_once" => crate::code_run::vault_read::request_schema::<
@@ -10942,6 +10989,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.notes.read" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>,
         >(),
+        "vault.notes.read_indexed" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>,
+        >(),
         "vault.notes.history" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>,
         >(),
@@ -11765,6 +11815,10 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert(
                 "parent_ref".to_owned(),
                 schema.pointer("/properties/parent_ref")?.clone(),
+            );
+            properties.insert(
+                "due_at".to_owned(),
+                schema.pointer("/properties/due_at")?.clone(),
             );
             &["spec"]
         }
@@ -13966,6 +14020,22 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -15152,6 +15222,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.consent.approve_once" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.held" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.approve_once" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19696,6 +19780,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.notes.read_indexed" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.notes.history" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20879,6 +20970,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             validate_input_vault_sync_quarantine_held_edits(value)?
         }
         #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.review" => {
+            validate_input_vault_sync_documents_copy_edit_review(value)?
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.settle" => {
+            validate_input_vault_sync_documents_copy_edit_settle(value)?
+        }
+        #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => {
             validate_input_vault_sync_retained_work_wait_set(value)?
         }
@@ -21155,6 +21254,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.policy.outbound.decide" => validate_input_vault_policy_outbound_decide(value)?,
         "vault.policy.relay.decide" => validate_input_vault_policy_relay_decide(value)?,
         "vault.consent.approve_once" => validate_input_vault_consent_approve_once(value)?,
+        "vault.campaign.held" => validate_input_vault_campaign_held(value)?,
+        "vault.campaign.approve_once" => validate_input_vault_campaign_approve_once(value)?,
         "vault.connectors.calls.approve_once" => {
             validate_input_vault_connectors_calls_approve_once(value)?
         }
@@ -22009,6 +22110,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.author_take" => validate_input_vault_notes_author_take(value)?,
         "vault.notes.from_entity" => validate_input_vault_notes_from_entity(value)?,
         "vault.notes.read" => validate_input_vault_notes_read(value)?,
+        "vault.notes.read_indexed" => validate_input_vault_notes_read_indexed(value)?,
         "vault.notes.history" => validate_input_vault_notes_history(value)?,
         "vault.notes.fork" => validate_input_vault_notes_fork(value)?,
         "vault.notes.forks.read" => validate_input_vault_notes_forks_read(value)?,
@@ -24192,6 +24294,22 @@ fn validate_input_vault_sync_quarantine_held_edits(value: &serde_json::Value) ->
 }
 #[cfg(feature = "sync")]
 #[inline(never)]
+fn validate_input_vault_sync_documents_copy_edit_review(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::RepoCopyEditReviewRequest = decode(value.clone())?;
+    Ok(())
+}
+#[cfg(feature = "sync")]
+#[inline(never)]
+fn validate_input_vault_sync_documents_copy_edit_settle(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::RepoCopyEditSettleRequest = decode(value.clone())?;
+    Ok(())
+}
+#[cfg(feature = "sync")]
+#[inline(never)]
 fn validate_input_vault_sync_retained_work_wait_set(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::RetainedWorkWaitSetRequest = decode(value.clone())?;
     Ok(())
@@ -25162,6 +25280,16 @@ fn validate_input_vault_policy_relay_decide(value: &serde_json::Value) -> Memory
 #[inline(never)]
 fn validate_input_vault_consent_approve_once(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::consent::lifecycle::ApproveOnceRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_campaign_held(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: EmptyRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_campaign_approve_once(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: CampaignEnrollmentApproveOnceRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -28728,6 +28856,11 @@ fn validate_input_vault_notes_read(value: &serde_json::Value) -> MemoryResult<()
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_notes_read_indexed(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::note::NoteIndexedReadRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_notes_history(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
     Ok(())
@@ -29912,6 +30045,14 @@ pub fn invoke(
             invoke_vault_sync_quarantine_held_edits(memory, value)
         }
         #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.review" => {
+            invoke_vault_sync_documents_copy_edit_review(memory, value)
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.settle" => {
+            invoke_vault_sync_documents_copy_edit_settle(memory, value)
+        }
+        #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => {
             invoke_vault_sync_retained_work_wait_set(memory, value)
         }
@@ -30188,6 +30329,8 @@ pub fn invoke(
         "vault.policy.outbound.decide" => invoke_vault_policy_outbound_decide(memory, value),
         "vault.policy.relay.decide" => invoke_vault_policy_relay_decide(memory, value),
         "vault.consent.approve_once" => invoke_vault_consent_approve_once(memory, value),
+        "vault.campaign.held" => invoke_vault_campaign_held(memory, value),
+        "vault.campaign.approve_once" => invoke_vault_campaign_approve_once(memory, value),
         "vault.connectors.calls.approve_once" => {
             invoke_vault_connectors_calls_approve_once(memory, value)
         }
@@ -31020,6 +31163,7 @@ pub fn invoke(
         "vault.notes.author_take" => invoke_vault_notes_author_take(memory, value),
         "vault.notes.from_entity" => invoke_vault_notes_from_entity(memory, value),
         "vault.notes.read" => invoke_vault_notes_read(memory, value),
+        "vault.notes.read_indexed" => invoke_vault_notes_read_indexed(memory, value),
         "vault.notes.history" => invoke_vault_notes_history(memory, value),
         "vault.notes.fork" => invoke_vault_notes_fork(memory, value),
         "vault.notes.forks.read" => invoke_vault_notes_forks_read(memory, value),
@@ -33885,6 +34029,28 @@ fn invoke_vault_sync_quarantine_held_edits(
 }
 #[cfg(feature = "sync")]
 #[inline(never)]
+fn invoke_vault_sync_documents_copy_edit_review(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_sync_documents_copy_edit_review(
+        memory,
+        decode(value)?,
+    )?)
+}
+#[cfg(feature = "sync")]
+#[inline(never)]
+fn invoke_vault_sync_documents_copy_edit_settle(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_sync_documents_copy_edit_settle(
+        memory,
+        decode(value)?,
+    )?)
+}
+#[cfg(feature = "sync")]
+#[inline(never)]
 fn invoke_vault_sync_retained_work_wait_set(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -35186,6 +35352,20 @@ fn invoke_vault_consent_approve_once(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_consent_approve_once(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_campaign_held(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_campaign_held(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_campaign_approve_once(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_campaign_approve_once(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_connectors_calls_approve_once(
@@ -39788,6 +39968,13 @@ fn invoke_vault_notes_read(
     encode(vault_notes_read(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_notes_read_indexed(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_notes_read_indexed(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_notes_history(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -44006,6 +44193,20 @@ pub fn vault_sync_quarantine_held_edits(
     )
 }
 #[cfg(feature = "sync")]
+pub fn vault_sync_documents_copy_edit_review(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RepoCopyEditReviewRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::RepoCopyEditReviewView>> {
+    crate::task_verb::sdk::host_only(memory, "vault.sync.documents.copy_edit.review", &input)
+}
+#[cfg(feature = "sync")]
+pub fn vault_sync_documents_copy_edit_settle(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RepoCopyEditSettleRequest,
+) -> MemoryResult<crate::task_verb::sdk::RepoCopyEditSettleView> {
+    crate::task_verb::sdk::host_only(memory, "vault.sync.documents.copy_edit.settle", &input)
+}
+#[cfg(feature = "sync")]
 pub fn vault_sync_retained_work_wait_set(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::RetainedWorkWaitSetRequest,
@@ -45460,6 +45661,26 @@ pub fn vault_consent_approve_once(
     crate::consent::lifecycle::approve_once(
         memory.vault(),
         &memory.embedded_owner("vault.consent.approve_once")?,
+        input,
+    )
+}
+pub fn vault_campaign_held(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::campaign::enrollment::CampaignEnrollmentHeldCall>> {
+    crate::task_verb::sdk::campaign_enrollment_held(
+        memory.vault(),
+        &memory.embedded_owner("vault.campaign.held")?,
+        _input,
+    )
+}
+pub fn vault_campaign_approve_once(
+    memory: &Memory<'_>,
+    input: CampaignEnrollmentApproveOnceRequest,
+) -> MemoryResult<crate::consent::lifecycle::ConsentActReceipt> {
+    crate::task_verb::sdk::approve_campaign_enrollment_once(
+        memory.vault(),
+        &memory.embedded_owner("vault.campaign.approve_once")?,
         input,
     )
 }
@@ -47572,10 +47793,11 @@ pub fn vault_workflows_dispatch(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::WorkflowDispatchRequest,
 ) -> MemoryResult<crate::task_verb::sdk::WorkflowRunView> {
-    crate::task_verb::sdk::dispatch_workflow_as(
+    crate::task_verb::sdk::dispatch_workflow_as_with_origin(
         memory.vault(),
         &memory.embedded_owner("vault.workflows.dispatch")?,
         input,
+        memory.caller_origin(),
     )
 }
 pub fn vault_workflows_dispatch_bound(
@@ -50975,6 +51197,12 @@ pub fn vault_notes_read(
     input: crate::note::NoteReadRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>> {
     memory.read_note(&input)
+}
+pub fn vault_notes_read_indexed(
+    memory: &Memory<'_>,
+    input: crate::note::NoteIndexedReadRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>> {
+    memory.read_indexed_note(&input)
 }
 pub fn vault_notes_history(
     memory: &Memory<'_>,
