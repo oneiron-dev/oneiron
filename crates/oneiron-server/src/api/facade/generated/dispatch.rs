@@ -22200,6 +22200,40 @@ async fn vault_code_proposal_submit(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_code_proposal_rereview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.proposal_rereview")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.proposal_rereview", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.code.proposal_rereview", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_proposal_rereview(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_conflict_record(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -22282,6 +22316,41 @@ async fn vault_code_proposal_resolve(
     let mut hooks = facade_hooks_pre(server, call, "vault.code.proposal_resolve", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_code_proposal_resolve(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_proposal_resolve_rereview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.proposal_resolve_rereview")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.proposal_resolve_rereview", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.code.proposal_resolve_rereview", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_proposal_resolve_rereview(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -46862,6 +46931,14 @@ fn boxed_vault_code_proposal_submit<'a>(
     Box::pin(vault_code_proposal_submit(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_code_proposal_rereview<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_proposal_rereview(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_code_conflict_record<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -46884,6 +46961,14 @@ fn boxed_vault_code_proposal_resolve<'a>(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> FacadeRowFuture<'a> {
     Box::pin(vault_code_proposal_resolve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_proposal_resolve_rereview<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_proposal_resolve_rereview(server, call, input))
 }
 #[inline(never)]
 fn boxed_vault_code_proposal_review<'a>(
@@ -53081,10 +53166,16 @@ async fn call_verb_row(
         "vault.code.symbols.renew" => boxed_vault_code_symbols_renew(server, call, input).await,
         "vault.code.symbols.release" => boxed_vault_code_symbols_release(server, call, input).await,
         "vault.code.proposal_submit" => boxed_vault_code_proposal_submit(server, call, input).await,
+        "vault.code.proposal_rereview" => {
+            boxed_vault_code_proposal_rereview(server, call, input).await
+        }
         "vault.code.conflict_record" => boxed_vault_code_conflict_record(server, call, input).await,
         "vault.code.conflict_view" => boxed_vault_code_conflict_view(server, call, input).await,
         "vault.code.proposal_resolve" => {
             boxed_vault_code_proposal_resolve(server, call, input).await
+        }
+        "vault.code.proposal_resolve_rereview" => {
+            boxed_vault_code_proposal_resolve_rereview(server, call, input).await
         }
         "vault.code.proposal_review" => boxed_vault_code_proposal_review(server, call, input).await,
         "vault.code.proposal_settle" => boxed_vault_code_proposal_settle(server, call, input).await,

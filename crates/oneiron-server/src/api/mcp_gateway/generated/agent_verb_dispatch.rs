@@ -843,9 +843,11 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.code.symbols.renew" => a.spec.clone().ok_or_else(invalid),
         "vault.code.symbols.release" => a.spec.clone().ok_or_else(invalid),
         "vault.code.proposal_submit" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.proposal_rereview" => a.spec.clone().ok_or_else(invalid),
         "vault.code.conflict_record" => a.spec.clone().ok_or_else(invalid),
         "vault.code.conflict_view" => a.spec.clone().ok_or_else(invalid),
         "vault.code.proposal_resolve" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.proposal_resolve_rereview" => a.spec.clone().ok_or_else(invalid),
         "vault.code.proposal_review" => a.spec.clone().ok_or_else(invalid),
         "vault.code.proposal_settle" => a.spec.clone().ok_or_else(invalid),
         "vault.code.proposal_settlement" => a.spec.clone().ok_or_else(invalid),
@@ -3714,6 +3716,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.code.proposal_submit" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.code.proposal_rereview" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.code.conflict_record" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -3721,6 +3726,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.proposal_resolve" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.proposal_resolve_rereview" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.proposal_review" => {
@@ -7083,9 +7091,15 @@ async fn execute_agent_verb_row_on(
         "vault.code.symbols.renew" => boxed_mcp_verb_row_vault_code_symbols_renew(row).await,
         "vault.code.symbols.release" => boxed_mcp_verb_row_vault_code_symbols_release(row).await,
         "vault.code.proposal_submit" => boxed_mcp_verb_row_vault_code_proposal_submit(row).await,
+        "vault.code.proposal_rereview" => {
+            boxed_mcp_verb_row_vault_code_proposal_rereview(row).await
+        }
         "vault.code.conflict_record" => boxed_mcp_verb_row_vault_code_conflict_record(row).await,
         "vault.code.conflict_view" => boxed_mcp_verb_row_vault_code_conflict_view(row).await,
         "vault.code.proposal_resolve" => boxed_mcp_verb_row_vault_code_proposal_resolve(row).await,
+        "vault.code.proposal_resolve_rereview" => {
+            boxed_mcp_verb_row_vault_code_proposal_resolve_rereview(row).await
+        }
         "vault.code.proposal_review" => boxed_mcp_verb_row_vault_code_proposal_review(row).await,
         "vault.code.proposal_settle" => boxed_mcp_verb_row_vault_code_proposal_settle(row).await,
         "vault.code.proposal_settlement" => {
@@ -43255,6 +43269,58 @@ async fn mcp_verb_row_vault_code_proposal_submit(row: McpVerbRow<'_>) -> McpVerb
     mcp_agent_verb_output(output, source)
 }
 #[inline(never)]
+fn boxed_mcp_verb_row_vault_code_proposal_rereview<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_code_proposal_rereview(row))
+}
+async fn mcp_verb_row_vault_code_proposal_rereview(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.code.proposal_rereview", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::memory::code_doors::CodeProposalRereviewRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) =
+        Box::pin(crate::api::facade::host_doors::vault_code_proposal_rereview(server, auth, input))
+            .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
 fn boxed_mcp_verb_row_vault_code_conflict_record<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
     Box::pin(mcp_verb_row_vault_code_conflict_record(row))
 }
@@ -43398,6 +43464,61 @@ async fn mcp_verb_row_vault_code_proposal_resolve(row: McpVerbRow<'_>) -> McpVer
     let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_code_proposal_resolve(
         server, auth, input,
     ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_code_proposal_resolve_rereview<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_code_proposal_resolve_rereview(row))
+}
+async fn mcp_verb_row_vault_code_proposal_resolve_rereview(
+    row: McpVerbRow<'_>,
+) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.code.proposal_resolve_rereview", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::memory::code_doors::CodeProposalResolveRereviewRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(
+        crate::api::facade::host_doors::vault_code_proposal_resolve_rereview(server, auth, input),
+    )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
     served.listed(crate::api::facade::host_doors::support::ListedRows::rows(

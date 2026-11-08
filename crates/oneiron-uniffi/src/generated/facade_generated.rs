@@ -3471,6 +3471,11 @@ export_facade! {
     let output = client.vault_code_proposal_submit(&input)?;
     crate::codec::lift_record("vault.code.proposal_submit", &output)
 };
+"vault.code.proposal_rereview" => fn vault_code_proposal_rereview(&self, input: CodeProposalRereviewRequest) -> CodeProposalSubmitted = |client| {
+    let input: oneiron::memory::code_doors::CodeProposalRereviewRequest = crate::codec::lower_record("vault.code.proposal_rereview", input)?;
+    let output = client.vault_code_proposal_rereview(&input)?;
+    crate::codec::lift_record("vault.code.proposal_rereview", &output)
+};
 "vault.code.conflict_record" => fn vault_code_conflict_record(&self, input: CodeConflictRecordRequest) -> CodeConflictView = |client| {
     let input: oneiron::memory::code_doors::CodeConflictRecordRequest = crate::codec::lower_record("vault.code.conflict_record", input)?;
     let output = client.vault_code_conflict_record(&input)?;
@@ -3485,6 +3490,11 @@ export_facade! {
     let input: oneiron::memory::code_doors::CodeProposalResolveRequest = crate::codec::lower_record("vault.code.proposal_resolve", input)?;
     let output = client.vault_code_proposal_resolve(&input)?;
     crate::codec::lift_record("vault.code.proposal_resolve", &output)
+};
+"vault.code.proposal_resolve_rereview" => fn vault_code_proposal_resolve_rereview(&self, input: CodeProposalResolveRereviewRequest) -> CodeProposalSubmitted = |client| {
+    let input: oneiron::memory::code_doors::CodeProposalResolveRereviewRequest = crate::codec::lower_record("vault.code.proposal_resolve_rereview", input)?;
+    let output = client.vault_code_proposal_resolve_rereview(&input)?;
+    crate::codec::lift_record("vault.code.proposal_resolve_rereview", &output)
 };
 "vault.code.proposal_review" => fn vault_code_proposal_review(&self, input: CodeProposalReviewRequest) -> CodeProposalSettlementView = |client| {
     let input: oneiron::memory::code_doors::CodeProposalReviewRequest = crate::codec::lower_record("vault.code.proposal_review", input)?;
