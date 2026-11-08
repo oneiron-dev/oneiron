@@ -11,14 +11,16 @@
 //! summary; the host records who wrote it, what ran it and what it cost.
 //!
 //! When the row reads the live context (FIX 4465 C), the flight's calls fork
-//! the run's live request instead, captured at its breakpoint on the rung
-//! that admitted it, and the same receipt names that rung's model. A row on
-//! `auto` (FIX 6029, the shipped default) resolves per flight: the live fork
-//! while the live prefix is still warm in its provider's prompt cache, at
-//! the breakpoint and again right before the flight's first call, else the
-//! cheap writer. Every later call of the flight, its retries and folds,
-//! keeps the source its first call ran on, and each receipt names it.
+//! the run's latest completed call instead, captured at its breakpoint on
+//! the rung that answered it (FIX 4933), and the same receipt names that
+//! rung's model. A row on `auto` (FIX 6029, the shipped default) resolves
+//! per flight: the live fork while the live prefix is still warm in its
+//! provider's prompt cache, at the breakpoint and again right before the
+//! flight's first call, else the cheap writer. Every later call of the
+//! flight, its retries and folds, keeps the source its first call ran on,
+//! and each receipt names it.
 
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use oneiron::agent_def::AgentDefinition;
@@ -39,15 +41,51 @@ use oneiron::{EntityId, LlmRequest};
 
 use super::live_fork::{LiveBind, bind_live_compaction_fork};
 use super::serve::{Admit, Served, product_of};
-use super::{LiveAdmission, ServedCompactionBackend};
+use super::{AnsweringRungSlot, LiveAdmission, ServedCompactionBackend};
 
-/// The words that turn the house compaction call into the agent's own: the
-/// home the call wears follows them. The one hook a ruling on this text
-/// changes; the persona itself comes only from the agent's home.
-pub(super) const SELF_WRITER_FRAME: &str = "You are writing this summary as yourself, in your own voice: it \
-    is your own memory of your own work. What follows is your home, read under your own Grant \
-    (your voice, your lessons and your diary). Keep the reply's JSON shape and the span's facts \
-    exactly as the window gives them.";
+/// The words that turn the house compaction call into the agent's own (FIX
+/// 4575): the prompt package's `blocks/compaction-self-writer.md`, resolved
+/// once beside the compaction prompt. Every call, retained or live, renders
+/// and counts this same text. The home the call wears follows it. It is
+/// instruction, never evidence; the persona comes only from the agent's home.
+#[derive(Clone)]
+pub(super) struct SelfWriterFrame {
+    text: Arc<str>,
+    tokens: u64,
+}
+
+impl SelfWriterFrame {
+    /// The frame `prompt_package` holds, its ends trimmed. `None` when it
+    /// holds none: self-written summaries are then off (FIX 4575), and the
+    /// house's own compaction is not.
+    pub(super) fn resolve(prompt_package: &Path) -> Option<Self> {
+        match oneiron::prompt::resolve_compaction_self_writer_prompt(prompt_package) {
+            Ok(prompt) => {
+                let text: Arc<str> = Arc::from(prompt.text.trim());
+                Some(Self {
+                    tokens: oneiron::count_context_pack_tokens(&text) as u64,
+                    text,
+                })
+            }
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    prompt_package = %prompt_package.display(),
+                    "code mode's prompt package holds no self-writer frame; agents that write their own summaries keep their raw window"
+                );
+                None
+            }
+        }
+    }
+
+    pub(super) fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub(super) const fn tokens(&self) -> u64 {
+        self.tokens
+    }
+}
 
 /// The cheap writer a flight runs on: its model and where it is served, or
 /// why there is none.
@@ -114,12 +152,19 @@ pub(super) struct SelfCompactionBackend {
     key: String,
     /// The house compaction route the writer's calls take.
     route: ServedCompactionBackend,
+    /// The frame `route` resolved (FIX 4575), for every call of every
+    /// flight.
+    frame: SelfWriterFrame,
     /// The agent's definition, read when its seat was made.
     definition: AgentDefinition,
     /// The run's authenticated actor, its caller's place and its proof.
     host: CompactionHostBinding,
     /// How the run's live rung is read at a breakpoint (FIX 4465 C).
     admission: Arc<dyn LiveAdmission>,
+    /// The slot the run's answering rungs fill, held for the run's life
+    /// (FIX 4933); `None` until its first call, and for an answer that
+    /// holds its one answering rung itself.
+    answering: Mutex<Option<Arc<AnsweringRungSlot>>>,
     /// What the last breakpoint read for its flight (FIX 6029).
     staged: Mutex<Option<Staged>>,
     flight: Mutex<Option<Frozen>>,
@@ -129,6 +174,7 @@ impl SelfCompactionBackend {
     pub(super) fn new(
         key: String,
         route: ServedCompactionBackend,
+        frame: SelfWriterFrame,
         definition: AgentDefinition,
         host: CompactionHostBinding,
         admission: Arc<dyn LiveAdmission>,
@@ -136,9 +182,11 @@ impl SelfCompactionBackend {
         Self {
             key,
             route,
+            frame,
             definition,
             host,
             admission,
+            answering: Mutex::new(None),
             staged: Mutex::new(None),
             flight: Mutex::new(None),
         }
@@ -264,7 +312,7 @@ impl SelfCompactionBackend {
     }
 
     /// A retained-turn call: the house compaction call on the cheap writer's
-    /// own model, wearing the home in its system message.
+    /// own model, wearing the frame and the home in its system message.
     fn serve_retained(
         &self,
         frozen: &Frozen,
@@ -280,16 +328,15 @@ impl SelfCompactionBackend {
             .then_some(request.sources.clone());
         self.route
             .serve(request, retry, sources, &admit, |call, room| {
-                let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;
                 let home = frozen.home.render(compaction_home_budget(
                     room.context,
                     room.input,
                     room.output,
-                    frame,
+                    self.frame.tokens(),
                 ));
                 if let Some(system) = call.messages.first_mut() {
                     system.content.push(ContentPart::Text {
-                        text: format!("\n\n{SELF_WRITER_FRAME}\n\n{}", home.text),
+                        text: format!("\n\n{}\n\n{}", self.frame.text(), home.text),
                     });
                 }
                 let home_rows = compaction_home_worn_rows(&home.refs).collect();
@@ -319,10 +366,14 @@ impl SelfCompactionBackend {
             }
         };
         let while_warm = frozen.cold.is_some() && executed.is_none();
-        match self
-            .route
-            .serve_live_fork(fork, &frozen.home, request, retry, while_warm)
-        {
+        match self.route.serve_live_fork(
+            fork,
+            &self.frame,
+            &frozen.home,
+            request,
+            retry,
+            while_warm,
+        ) {
             Ok(None) => {
                 let _ = frozen.executed.set(SelfCompactionSource::RetainedTurns);
                 self.serve_retained(frozen, request, retry)
@@ -389,12 +440,13 @@ impl CompactionBackend for SelfCompactionBackend {
         self.prepare(None)
     }
 
-    /// Binds the live rung for a row that reads the live context: forced
-    /// under one that selects it, and under `auto` only while the prefix is
-    /// still warm (FIX 6029), and only for a request whose every source row
-    /// its host witnessed (FIX 9463). Stages the row and the cheap writer it
-    /// read for the flight, so the flight is sized and frozen on the same
-    /// ones; a row that cannot be read is named when the flight freezes.
+    /// Binds the rung that answered the run's latest completed call (FIX
+    /// 4933) for a row that reads the live context: forced under one that
+    /// selects it, and under `auto` only while the prefix is still warm
+    /// (FIX 6029), and only for a request whose every source row its host
+    /// witnessed (FIX 9463). Stages the row and the cheap writer it read for
+    /// the flight, so the flight is sized and frozen on the same ones; a row
+    /// that cannot be read is named when the flight freezes.
     fn capture_live_fork(
         &self,
         live: &LlmRequest,
@@ -418,6 +470,7 @@ impl CompactionBackend for SelfCompactionBackend {
         };
         bind_live_compaction_fork(
             &self.route,
+            &self.frame,
             self.admission.as_ref(),
             self.host.actor().entity_ref(),
             &row,
@@ -426,6 +479,17 @@ impl CompactionBackend for SelfCompactionBackend {
             summary_token_budget,
             how,
         )
+    }
+
+    /// Holds the slot the run's answering rungs fill, once (FIX 4933).
+    fn hold_answering_rungs(&self, live: &LlmRequest) {
+        let mut held = self
+            .answering
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if held.is_none() {
+            *held = self.admission.hold_answering_rungs(live);
+        }
     }
 
     fn prepare_live_flight(
