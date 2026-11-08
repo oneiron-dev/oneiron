@@ -100,7 +100,7 @@ pub use conversation::{
 };
 pub(crate) use conversation::{
     FoldedTurnSummary, chat_log_room, conversation_receipt_in, folded_turn_summary_in,
-    put_conversation_receipt_in_txn, summary_stands_in,
+    put_conversation_receipt_in_txn, select_action_turns, summary_stands_in,
 };
 pub use driver::{
     CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver,
