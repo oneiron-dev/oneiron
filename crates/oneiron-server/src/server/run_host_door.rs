@@ -449,6 +449,7 @@ impl AgentVerbDoor for RunHostDoor {
         }
         let Ok(answered) = answered else {
             return Ok(Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: MEMORY_CODE_INTERNAL.to_owned(),
             }));
         };
@@ -464,7 +465,10 @@ impl AgentVerbDoor for RunHostDoor {
                     (None, Some(retry_after)) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => {
                         Err(oneiron::Error::ProviderUnavailable { retry_after })
                     }
-                    (None, _) => Ok(Err(AgentVerbRefusal { code: error.code })),
+                    (None, _) => Ok(Err(AgentVerbRefusal {
+                        hook_notice: None,
+                        code: error.code,
+                    })),
                 },
             },
         )
@@ -491,7 +495,10 @@ impl AgentVerbDoor for RunHostDoor {
             });
         Ok(match answered {
             Ok(output) => Ok(AgentVerbAnswer::new(output, None)),
-            Err(error) => Err(AgentVerbRefusal { code: error.code }),
+            Err(error) => Err(AgentVerbRefusal {
+                hook_notice: None,
+                code: error.code,
+            }),
         })
     }
 
@@ -520,7 +527,10 @@ impl AgentVerbDoor for RunHostDoor {
         self.admitting_memory()
             .read_key()
             .map(Some)
-            .map_err(|error| AgentVerbRefusal { code: error.code })
+            .map_err(|error| AgentVerbRefusal {
+                hook_notice: None,
+                code: error.code,
+            })
     }
 
     /// The host turn's hooks read as the run's own agent does, on this
@@ -571,8 +581,12 @@ impl AgentVerbDoor for RunHostDoor {
             // An answer serves no vault rows: the connector's reply is
             // foreign data.
             Ok(Ok(output)) => Ok(AgentVerbAnswer::new(output, Some(Vec::new()))),
-            Ok(Err(error)) => Err(AgentVerbRefusal { code: error.code }),
+            Ok(Err(error)) => Err(AgentVerbRefusal {
+                hook_notice: None,
+                code: error.code,
+            }),
             Err(_) => Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: MEMORY_CODE_INTERNAL.to_owned(),
             }),
         })
