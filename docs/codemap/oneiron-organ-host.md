@@ -53,6 +53,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/seal/observe.rs` | src | s | 14 crate-vis | — | What one seal or verification call measured, against the engine's `[limits]` rows (OF-520, Rule 5) |
 | `src/seal/pdf_work.rs` | src | m | 3 fn · 1 re-export | — | The seal port's PDF-work adapter: `seal.inspect` + `seal.prepare` over the organ (FIX 7980/8157) |
 | `src/seal/pdf_work/inspect.rs` | src | s | 1 enum · 2 fn | PdfInspectionError | Inspection on the caller's original wall deadline and admitted region |
+| `src/seal/pdf_work/native.rs` | src | s | 1 crate-vis | — | Trusted native preparation when no first-party prepare organ is selected |
 | `src/seal/verify.rs` | src | s | 2 crate-vis | — | The seal's fresh verification and its suffix gate (OF-415, C032, Engine ruling D) |
 | `src/slot.rs` | src | m | 1 struct · 1 enum · 15 crate-vis | OrganState, OrganStatus | One installed organ: its process, its crash history, its condition |
 | `src/spec.rs` | src | s | 9 struct · 2 enum · 3 fn | AskGrant, CallClass, FetchGrant, FetchOrigin, HostConfig, LentInput, OrganCall, OrganInput +3 | What the engine installs and what a caller asks |

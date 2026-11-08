@@ -121,14 +121,26 @@ pub(crate) fn call_verb<'a>(
                         .at(call.auth().locality()),
                     call,
                 )?;
-                Ok::<_, FacadeApiError>(memory.ended_paced_verb_reply(verb))
+                Ok::<_, FacadeApiError>(memory.ended_paced_verb_reply_listed(verb))
             })?;
             match ended {
-                Some(Ok(value)) => {
-                    return Ok(FacadeCallOutput::listed(
+                // Released by the rows its saved answer was derived from, and
+                // judged again for this caller first: the drain read them,
+                // not this retry (FIX 22294, as FIX 21054).
+                Some(Ok((value, saved))) => {
+                    let producers = oneiron::memory::ProducerRows::saved(saved);
+                    let value = super::drained_still_admitted(
+                        &server.vault,
+                        call.auth(),
+                        &producers,
                         value,
-                        &oneiron::memory::ProducerRows::default(),
-                    ));
+                        super::export_transfer::owner_whole_vault_export_admitted(
+                            server,
+                            call.auth(),
+                            verb,
+                        ),
+                    );
+                    return Ok(FacadeCallOutput::listed(value, &producers));
                 }
                 Some(Err(error)) => return Err(error.into()),
                 None => {}
