@@ -455,9 +455,9 @@ pub fn custody_recipient_set(recipients: &[CustodyRecipientPermit]) -> [u8; 32] 
 /// The commitment bytes of `len` permits in `permits`' order: the one
 /// engine [`custody_recipient_set`] hashes for one run and
 /// [`CustodyPermitSet::recipient_set`] streams for all of them.
-fn hash_permit_sequence<'a>(
+fn hash_permit_sequence(
     len: usize,
-    permits: impl Iterator<Item = &'a CustodyRecipientPermit>,
+    permits: impl Iterator<Item = &'_ CustodyRecipientPermit>,
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key(CUSTODY_RECIPIENT_SET_DOMAIN);
     hasher.update(&(len as u64).to_be_bytes());
