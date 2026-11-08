@@ -381,6 +381,7 @@ impl EngineNativeExecutor<'_> {
             .into());
         }
         let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
+        record.birth_world = self.gated_write.birth_world();
         record_config_marker(&self.storage, &mut record, config, prompt_fingerprint, None)?;
         // The task its host declared the caller's own, kept as a body the
         // run owns, so its host can enter it again after a restart (FIX
