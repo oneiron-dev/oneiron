@@ -239,6 +239,7 @@ impl Vault {
             (actor, self.now_recorded_at()),
             (export.base_version, export.base_hash),
             hold,
+            None,
         )
     }
 
