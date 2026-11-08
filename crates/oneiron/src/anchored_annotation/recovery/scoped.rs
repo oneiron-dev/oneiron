@@ -19,7 +19,7 @@ use super::super::anchor_text::{UnitFormat, anchor_text, find_text};
 use super::super::code_units::{CodeFile, code_span_words_in_txn};
 use super::super::model::{AnnotationThread, Locator};
 use super::super::threads::{newest_thread_brief, threads_from_active_claims};
-use super::code::code_reattach_offers_in_txn;
+use super::code::{code_reattach_offers_in_txn, code_threads_shown_in_txn};
 use super::{ReattachOffer, UNATTACHED, UnattachedThread};
 use crate::Vault;
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
@@ -45,7 +45,8 @@ fn all_admitted(admits: Admits<'_>, rows: &[EntityId]) -> Result<bool> {
 impl Vault {
     /// [`Vault::unattached_annotation_threads`] for `lane`, whose words are
     /// read through `sight` (FIX 8063). An artifact the lane withholds lists
-    /// nothing, as a missing one does.
+    /// nothing, as a missing one does. A code thread's locator reads in
+    /// `sight`'s text, as its words do (FIX 22109).
     pub fn unattached_annotation_threads_scoped(
         &self,
         lane: &ScopedRead<'_>,
@@ -56,7 +57,9 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let policy = lane.live_policy_manifest_in(&rtxn)?;
         let admits = |id: &EntityId| lane.is_ref_readable_with_policy_in(&rtxn, &policy, id);
-        self.unattached_scoped_in_txn(&rtxn, &admits, artifact_id, sight)
+        let mut unattached = self.unattached_scoped_in_txn(&rtxn, &admits, artifact_id, sight)?;
+        code_threads_shown_in_txn(self, &rtxn, artifact_id, &mut unattached, sight)?;
+        Ok(unattached)
     }
 
     /// [`Vault::annotation_reattach_offers`] for `lane` (FIX 8063): offers
@@ -65,7 +68,9 @@ impl Vault {
     /// only once the lane admits the head's own CLAIM and ASSET. A withheld
     /// head offers nothing. On a code artifact each file of its current
     /// snapshot is read through `sight` only once the lane admits the ASSET
-    /// its hash names, and a withheld file offers nothing (FIX 7905).
+    /// its hash names, and a withheld file offers nothing (FIX 7905). A code
+    /// place reads in `sight`'s text, and a reattach takes it in `sight`
+    /// (FIX 22109).
     pub fn annotation_reattach_offers_scoped(
         &self,
         lane: &ScopedRead<'_>,
@@ -134,7 +139,8 @@ impl Vault {
         Ok(offers)
     }
 
-    /// The Unattached list as `admits` serves it, read in `rtxn`.
+    /// The Unattached list as `admits` serves it, read in `rtxn`, each
+    /// locator as stored, at the owner's offsets.
     fn unattached_scoped_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -211,9 +217,10 @@ impl Vault {
     /// 7905). A code artifact keeps no version rows: the artifact's row is
     /// admitted with the list, and the file the locator's hash names must
     /// have its ASSET row admitted. Its words are read again from that file
-    /// through `sight`, as the blob arm reads its version: the stored
-    /// snapshot holds the owner's words. `None` when the lane withholds the
-    /// file.
+    /// through `sight`, as the blob arm reads its version, at the stored
+    /// span's place in `sight`'s text (FIX 22109): the stored snapshot holds
+    /// the masked projection's words. The locator stays as stored; the list
+    /// puts it in `sight`'s text. `None` when the lane withholds the file.
     fn code_unattached_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
