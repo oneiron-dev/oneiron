@@ -400,9 +400,10 @@ impl Memory<'_> {
             (("proceed", "Proceed"), ("hold", "Hold"))
         };
         for (option, text) in [yes, no] {
-            question
-                .options
-                .insert(TaskAskOptionId::new(option)?, text.to_owned());
+            question.options.insert(
+                TaskAskOptionId::new(option)?,
+                TaskAskOption::new(text.to_owned()),
+            );
         }
         if done {
             question.outcome_binding = brief.brief.success.outcome_binding.clone();
