@@ -9,7 +9,9 @@
 //!
 //! Each access token is handed out only once the native slip the server holds for it has landed
 //! on its row (`access_slips`, FIX 4902 slice C); a refresh retires the family's previous access
-//! token and its slip, and a family's revocation revokes its slip.
+//! token and its slip, and a family's revocation revokes its slip. A new family whose first slip
+//! does not stand ends its sign-in: the code is spent, no token was handed out, and the writer
+//! that revokes the family takes the grant back (FIX 22193).
 
 use base64::Engine as _;
 use ed25519_dalek::SigningKey;
@@ -148,6 +150,9 @@ struct Issued {
     tokens: OAuthTokens,
     family: EntityId,
     grant: AuthorizedGrant,
+    /// The pair is the first of its family, which a code's exchange just opened: no token of it
+    /// was handed out before.
+    opens_family: bool,
 }
 
 impl Decided {
@@ -289,11 +294,13 @@ impl Vault {
     /// has landed. A code redeemed before revokes the family it minted; a lapsed code no
     /// exchange redeemed takes its grant back, and so does a code whose grant no longer stands,
     /// which goes too. A code refused for its client, redirect URI, verifier or resource stays:
-    /// a matching exchange may still redeem it, and its lapse takes its grant back.
+    /// a matching exchange may still redeem it, and its lapse takes its grant back. A redeemed
+    /// code whose new family's first slip does not stand is spent with no token handed out: the
+    /// family is revoked and its grant taken back (FIX 22193).
     ///
     /// # Errors
     /// A store failure, a fold failure taking a grant back, or a failure minting the access
-    /// token's slip, which revokes the new family.
+    /// token's slip, which revokes the new family and takes its grant back.
     pub fn exchange_oauth_code(
         &self,
         issuer: &HostSlipIssuer,
@@ -368,6 +375,7 @@ impl Vault {
                     tokens,
                     family,
                     grant: code.grant,
+                    opens_family: true,
                 }),
                 retired: None,
             })
@@ -475,6 +483,7 @@ impl Vault {
                     tokens,
                     family: token.family,
                     grant,
+                    opens_family: false,
                 }),
                 retired: retired.map(|slip| (token.family, slip)),
             })
@@ -485,7 +494,8 @@ impl Vault {
     /// The token endpoint's answer once `decided`'s writer committed: the slip it retired is
     /// revoked, and a pair it put is answered once its access token's slip, which the row
     /// `access_key` keeps, has landed ([`Self::hold_access_slip`]); `invalid_grant` when the
-    /// family was revoked while the slip was minted.
+    /// family was revoked while the slip was minted. A pair that opened its family and is not
+    /// answered ends the sign-in, its grant taken back with the family (FIX 22193).
     fn settle_token_request(
         &self,
         issuer: &HostSlipIssuer,
@@ -500,7 +510,13 @@ impl Vault {
             Err(refusal) => return Ok(Err(refusal)),
         };
         Ok(
-            if self.hold_access_slip(issuer, issued.family, access_key, &issued.grant)? {
+            if self.hold_access_slip(
+                issuer,
+                issued.family,
+                access_key,
+                &issued.grant,
+                issued.opens_family,
+            )? {
                 Ok(issued.tokens)
             } else {
                 Err(OAuthTokenRefusal::InvalidGrant)
@@ -603,7 +619,7 @@ impl Vault {
         };
         // The family goes with its slip, so a call that holds the slip stops too; the token
         // resolves nothing whether that lands or not.
-        if let Err(error) = self.revoke_oauth_family(issuer, lapsed_grant) {
+        if let Err(error) = self.revoke_oauth_family(issuer, lapsed_grant, None) {
             tracing::warn!(
                 %error,
                 family = %lapsed_grant.to_hex(),
