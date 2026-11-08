@@ -12,7 +12,7 @@ use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::window::UpdateVerdict;
 
 use super::super::SyncConnection;
-use super::super::session::WsSink;
+use super::super::session::{SessionFault, WsSink};
 
 impl SyncConnection {
     /// Sends queued rows the way Phase 3 replays them, importing each into the
@@ -24,7 +24,7 @@ impl SyncConnection {
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         queued: Vec<QueuedUpdate>,
-    ) -> Result<Vec<QueuedUpdate>, String> {
+    ) -> Result<Vec<QueuedUpdate>, SessionFault> {
         let mut sent = Vec::with_capacity(queued.len());
         let mut frames = Vec::new();
         let mut size = 1;
@@ -81,24 +81,24 @@ impl SyncConnection {
                     &update.encoded,
                     context.as_ref().map(|window| &window.doc),
                 )
-                .map_err(|e| format!("Queue replay encode failed: {e}"))?;
+                .map_err(|e| SessionFault::Local(format!("Queue replay encode failed: {e}")))?;
             for msg in msgs {
                 // A first frame past a member's room by its envelope header
                 // goes alone; its parts follow it in order.
                 let alone = !super::super::session::fits_alone(&msg);
                 if (alone
                     || !super::super::node_batch::fits(&frames, size, &msg)
-                        .map_err(|e| e.to_string())?)
+                        .map_err(SessionFault::local)?)
                     && !frames.is_empty()
                 {
                     tick.tick().await;
                     let batch = transport::encode_node_batch(&frames)
                         .into_result()
-                        .map_err(|e| e.to_string())?;
+                        .map_err(SessionFault::local)?;
                     write
                         .send(Message::Binary(batch.into()))
                         .await
-                        .map_err(|e| format!("Queue replay failed: {e}"))?;
+                        .map_err(|e| SessionFault::Remote(format!("Queue replay failed: {e}")))?;
                     frames.clear();
                     size = 1;
                 }
@@ -107,7 +107,7 @@ impl SyncConnection {
                     write
                         .send(Message::Binary(msg.into()))
                         .await
-                        .map_err(|e| format!("Queue replay failed: {e}"))?;
+                        .map_err(|e| SessionFault::Remote(format!("Queue replay failed: {e}")))?;
                     continue;
                 }
                 size += 4 + msg.len();
@@ -119,11 +119,11 @@ impl SyncConnection {
             tick.tick().await;
             let batch = transport::encode_node_batch(&frames)
                 .into_result()
-                .map_err(|e| e.to_string())?;
+                .map_err(SessionFault::local)?;
             write
                 .send(Message::Binary(batch.into()))
                 .await
-                .map_err(|e| format!("Queue replay failed: {e}"))?;
+                .map_err(|e| SessionFault::Remote(format!("Queue replay failed: {e}")))?;
         }
         Ok(sent)
     }

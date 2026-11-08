@@ -16,7 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/extraction_eval/types.rs` | src | m | 17 struct · 6 enum · 4 fn | Of360Ar3MetricTier, Of360CaseEvalReport, Of360CaseExtractionOutput, Of360ConversationTurn, Of360DatasetCompleteness, Of360DerivationEnvelope, Of360EvalError, Of360EvalReport +15 | Extraction-quality schemas and validation |
 | `src/lib.rs` | src | s | 4 mod | — | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… |
 | `src/llm/assembly.rs` | src | m | 1 struct · 9 fn | StreamAssembly | Shared typed stream assembly |
-| `src/llm/backend.rs` | src | m | 2 struct · 1 enum · 3 trait · 10 fn · 4 type · 1 crate-vis | BrokerIsolation, BudgetLease, LlmBackend, LlmStream, SingleRouteBackend, SingleSend | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
+| `src/llm/backend.rs` | src | m | 2 struct · 1 enum · 3 trait · 13 fn · 5 type · 1 crate-vis | BrokerIsolation, BudgetLease, LlmBackend, LlmStream, SingleRouteBackend, SingleSend | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
 | `src/llm/backend_identity.rs` | src | s | 1 struct · 2 fn | LlamaAlias | The answering house llama.cpp process's launch alias (FIX 7895, 6567 PR1b): which incarnation answered a… |
 | `src/llm/budget/checkpoint.rs` | src | s | 1 struct · 2 fn | BudgetCheckpoint | Settled state of one budget meter across a workflow hook wait |
 | `src/llm/budget/dispatch.rs` | src | s | 1 struct · 1 enum · 13 fn · 1 const | DispatchBinding, DispatchRefused | Bound admissions and the one-use dispatch check: a lease that records what it was granted for, and is… |
@@ -55,10 +55,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/media/request.rs` | src | s | 1 struct · 2 enum · 11 fn | MediaPart, MediaRequest, MediaVoice | Media call requests and voices |
 | `src/llm/media/response.rs` | src | s | 3 struct · 1 enum · 6 fn | MediaCallProgress, MediaJobState, MediaResponse, MediaUsage | Media call answers, usage and job states |
 | `src/llm/media/wav.rs` | src | s | 1 struct · 4 fn | WavClip | RIFF/WAVE clips: the container a voice call's PCM rides in both ways |
-| `src/llm/mod.rs` | src | s | 4 mod · 35 re-export | — | Engine-facing LLM invocation seam |
+| `src/llm/mod.rs` | src | s | 4 mod · 36 re-export | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 6 fn · 3 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
 | `src/llm/protocol.rs` | src | m | 8 struct · 8 enum · 7 fn · 1 const | ContentPart, FinishReason, ImageContent, IncompleteReason, LlmCallMetadata, LlmEndpointFlavor, LlmInputUsage, LlmMessage +8 | Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical… |
 | `src/llm/protocol/tests.rs` | test | s | — | — | — |
+| `src/llm/provider_usage.rs` | src | s | 1 struct · 3 fn | ProviderTokenMeasurement | Provider-reported token measurements, kept apart from budget charges and the normalized usage counters that… |
 | `src/llm/reply_assertions.rs` | src | s | 2 struct · 3 fn | ReplyAssertionRecord, ReplyAssertions | The typed records one reply cited or created (OF-063, FIX 3416), carried on its terminal |
 | `src/llm/safeguard.rs` | src | s | 2 enum · 5 fn · 2 const | SafeguardModelBinding, SafeguardModelBindingError | Safeguard-classifier binding selector with parsing, display, serde, and tier/model projections |
 | `src/llm/scheduling.rs` | src | m | 9 struct · 5 enum · 14 fn · 1 type · 3 const | AdmissionGrant, CallSchedule, ResourceClass, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate, SchedulingCapability +6 | The scheduling wire of a model worker (DESIGN-V2 R4, codec v1.3): the order a host asks a worker to run its… |
