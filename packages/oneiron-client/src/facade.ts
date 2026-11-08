@@ -3570,7 +3570,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.settings.web_connector.replace": { description: "Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.settings.model_pack": { description: "Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.settings.model_pack.replace": { description: "Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.model_pack.revert": { description: "Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.model_pack.revert": { description: "Reverts a model pack change, its notice's one tap: pins the pack before it, installed or kept by a same-name update, while the change is the vault's last and that pack is served at its bytes; else answers why and changes nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.connectors.web.usage": { description: "Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.oneironer.bind": { description: "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.models.routes.read": { description: "Reads one independent model slot route with its manifest pin and effective resident narrowing.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -6443,7 +6443,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         },
       },
       model_pack: {
-        /** Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing. */
+        /** Reverts a model pack change, its notice's one tap: pins the pack before it, installed or kept by a same-name update, while the change is the vault's last and that pack is served at its bytes; else answers why and changes nothing. */
         revert: (input: Facade.ModelPackRevertRequest, options?: O): FacadeReturns<"vault.model_pack.revert">[K] => invoke("vault.model_pack.revert", input, options, newInvocation()),
       },
       voices: {
