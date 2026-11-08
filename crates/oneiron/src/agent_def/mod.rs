@@ -108,7 +108,8 @@ pub(crate) use portable_knowledge::{KnowledgeFormat, decode_agent_knowledge};
 
 mod portable_source;
 pub(crate) use portable_source::{
-    birth_source_exportable, read_birth_source, validate_birth_source_put,
+    birth_source_exportable, is_birth_source_candidate, read_birth_source,
+    validate_birth_source_put,
 };
 
 mod birth_custody;

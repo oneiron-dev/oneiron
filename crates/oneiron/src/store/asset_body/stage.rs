@@ -313,6 +313,16 @@ fn judge_messagepack(file: &BodyFile, len: u64) -> Result<Judged> {
     })
 }
 
+/// Whether a staged text body is what an agent's birth source decoder reads
+/// as one, valid or not, read through as it does: its validator and
+/// readers read its row, so it stays there (FIX 22075).
+fn names_birth_source(file: &BodyFile, len: u64) -> bool {
+    crate::agent_def::is_birth_source_candidate(io::BufReader::with_capacity(
+        LINE_INDEX_BLOCK_BYTES as usize,
+        FileFromStart::new(file, len),
+    ))
+}
+
 /// A body file read from its start by range, whatever its descriptor's
 /// offset: a plain spill's stands at its end once written.
 pub(super) struct FileFromStart<'f> {
@@ -570,7 +580,11 @@ impl crate::Vault {
         };
         let kind = match shape {
             StreamShape::Opaque if ASSET_FILE_PLANE && mint.is_some() => AssetFileKind::Opaque,
-            StreamShape::Interpreted if ASSET_FILE_PLANE && mint.is_some() => {
+            StreamShape::Interpreted
+                if ASSET_FILE_PLANE
+                    && mint.is_some()
+                    && !(text && names_birth_source(&held, facts.len)) =>
+            {
                 AssetFileKind::Interpreted
             }
             StreamShape::MessagePack if ASSET_FILE_PLANE && mint.is_some() => {
