@@ -177,6 +177,7 @@ impl Vault {
                     body: staged.body.clone(),
                 },
                 result: None,
+                code_run_output: None,
             },
         )?;
         Ok(ArchiveFile {
