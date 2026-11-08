@@ -24,6 +24,8 @@
 //! bodies copies (FIX 18924). A read of a body whose folds' words are
 //! withdrawn reads none, and a fork writer meets such a request as erased.
 //! The withdrawal retires each such body in its own writer ([`fold_words`]).
+//! A hard erase of a source row retires each kept start it owns, in the
+//! erase's writer ([`source_erase`], FIX 20329).
 
 mod admit;
 mod context;
@@ -35,6 +37,7 @@ mod owner_pair;
 mod pieces;
 mod restore;
 mod route_prompt;
+mod source_erase;
 mod spawn_erase;
 mod start_landing;
 mod start_parts;
@@ -61,8 +64,8 @@ pub(crate) use self::context::{
     capsule_context_body, join_step_context_in_txn, stage_step_context,
 };
 pub(crate) use self::erase::erase_capsule_actor_in_txn;
-pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn};
-pub(super) use self::erase::{capsule_bodies_in_txn, names_no_actor};
+pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn, actor_hard_erased_in_store};
+pub(super) use self::erase::{capsule_bodies_in_txn, capsule_runs_in_txn, names_no_actor};
 pub(crate) use self::execution::{fork_execution_outputs, store_fork_execution};
 pub(super) use self::fold_words::retire_fold_word_capsules_in_txn;
 pub(crate) use self::fork_erase::ForkProvenance;
@@ -75,6 +78,7 @@ pub(crate) use self::owner_pair::{
 };
 pub(crate) use self::restore::retire_replay_bodies_in_rows;
 pub(crate) use self::route_prompt::{capsule_route_prompt, finalize_capsule, route_prompt_at};
+pub(super) use self::source_erase::retire_source_step_starts_in_txn;
 pub(super) use self::spawn_erase::erase_spawn_prefixes_in_txn;
 pub(crate) use self::start_landing::{StrippedPieces, republish_step_start_lengths_in_rows};
 pub(crate) use self::start_parts::{
