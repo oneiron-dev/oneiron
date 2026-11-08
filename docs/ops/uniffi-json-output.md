@@ -142,3 +142,211 @@ remain absent. A missing or null image release remains absent; null decision
 array elements remain JSON null. The wrapper, manifest and all other batch
 fields keep their existing serde shape. The browser records, client, hooks and
 input conversion do not change.
+
+The remaining browser-answer aliases also consume the optional manifest image
+release through the owned conversion. Their finite payloads keep the shared
+record codec, including all field names, flattened fields, optional values,
+empty-vector omission, booleans, widths and native checks. The library proposal
+answer also consumes decisions in its optional replay batch; the library-run
+answer consumes decisions in its required batch. All decisions and manifest
+JSON are consumed before a finite error can return. A missing replay stays
+missing, while a present replay with no decisions stays present. Desktop-answer
+outputs and unselected input conversions are unchanged.
+
+
+`self.identity.settle` consumes a `NeedsPerson` card directly into `WireJson`.
+Its required null card stays present. The same settled entity, unknown state,
+deciding ask and person-choice ask remain intact, with the same public record,
+input, native settlement and typed client call. JSON held inside card strings
+stays opaque text. No identity or action-admission rule changes.
+
+
+`feedback.preview` consumes its required bundle directly into `WireJson`, while
+keeping every finite preview field and disclosure state in the shared record
+codec. `self.off_record.results.read` also consumes a page's required JSON or a
+result card's optional shape before the finite facet or card metadata. Required
+page null stays present; a missing or null optional shape stays absent. The
+same native readers, release checks, preview approval and typed client calls
+remain unchanged.
+
+`vault.shape.plan.card` consumes its required generated UI and every manifest
+JSON value in the plan's seed, before/after items and undeclared rows before
+any finite conversion can fail. The shared record codec retains all other
+shape fields and custom serde behavior, including present empty body strings,
+default booleans, decimal vault identifiers and reach metadata. Missing or null
+optional manifest JSON stays absent. Hex-encoded manifest bodies remain opaque
+strings. The native plan, input, authority and typed client call do not change.
+
+
+The shared result-card shape also crosses by ownership in
+`self.off_record.results.list` and `vault.results.read`. A list consumes every
+card shape before returning a conversion error. The same finite card,
+occurrence manifest, refusal, count and cursor fields retain their existing
+record codec. Optional null shapes still read as absent.
+
+All other shape-manifest output paths use the same owned leaf conversion:
+`vault.shape.read`, `vault.shape.plan`, `vault.shape.apply`,
+`vault.shape.items.receipt`, `vault.shape.groups`,
+`vault.shape.groups.resolve`, `vault.inbox.groups` and
+`vault.inbox.groups.resolve`. Stored and live seed rows, every apply item,
+every group member, plan items and undeclared rows keep their original order
+and cardinality. Every manifest JSON value is consumed before a finite error
+can return, including across all groups in a page. An absent item receipt
+stays absent. Unified Dreamer groups and resolutions keep the original finite
+record codec, including omitted empty collections and checked count widths.
+Native reads, applies, owner proof, release checks, public records, typed client
+calls and input conversions remain unchanged. This completes these selected
+output families only, not the general input, depth, heap or runtime work.
+
+
+`self.inbox.list`, `self.inbox.mark` and `self.inbox.get` consume every
+notification action argument into the existing required `WireJson` field.
+A null argument remains present; action order, empty-action omission, seen and
+acknowledged state, counts and page cursors retain the original record codec.
+The opened inbox item also consumes every component property in its optional
+lens, using a child-stack walk before either subtree can return an error.
+Optional null properties remain absent. The original lens version pair is
+captured before consuming its root; it is not restamped or validated again.
+All other node and atom fields keep the original finite record codec, including
+text framing, bindings, present empty children and scalar widths. Native
+notification readers, action selection, meeting cards, owner/scope checks,
+client calls and inputs are unchanged. The finite lens tree still has arbitrary
+child depth; this does not claim end-to-end depth, heap or runtime closure.
+
+
+`vault.weave.lens` and `vault.lenses.default` consume component properties
+from both the flat render and the authored lens tree before converting finite
+card metadata. The default-lens result keeps its exact narrowing receipt.
+`vault.weave.digest` first consumes every claim value and optional scope across
+all sections, then both representations of its optional lens card, before any
+finite conversion can fail. Required claim null remains present; optional null
+scope and component properties remain absent. All sections, finite item
+variants, refusals and card metadata keep the shared record codec.
+
+`vault.lenses.list` drains every optional compiled lens across the entire page
+before converting finite row metadata. Missing compiled lenses stay missing;
+row order, cursor and all proposal fields stay intact. These paths reuse the
+opened-inbox tree walk and preserve the original lens version pair without
+restamping or revalidating. Empty native children and binding vectors still
+read as present empty vectors in the generated records. Native reads, owner
+and scope checks, input conversion, clients and hooks remain unchanged. This
+is selected output conversion only, not end-to-end depth, heap or runtime
+closure.
+
+
+`vault.weave.report` shares the saved digest's owned claim conversion. Every
+required claim value and optional scope across all report sections and items
+is consumed before a finite conversion can fail. The exact narrowing receipt,
+section order, scores and all non-claim item variants retain the whole record
+codec. Required null remains present; optional null scope remains absent.
+Correction replies stay on their existing finite codec. Native reads, policy,
+input conversion, typed client calls and hooks are unchanged.
+
+
+`vault.inspection.resolve` and `vault.lenses.resolve` consume the optional
+resolved entity body before converting finite inspection or selection metadata.
+A missing item stays missing. Missing or null body JSON still reads as absent;
+a present item with no body stays present. Provenance, state, handle, narrowing
+receipt, selection reach and cursor bytes retain the existing record codec.
+Native read checks, exact-frame resolution, inputs and typed client calls do
+not change. Exported `pack_json` remains opaque text; this conversion never
+parses or rewrites JSON carried inside a string.
+
+
+`ai.image`, `ai.speech`, `ai.transcribe` and `ai.embed` consume the provider
+usage JSON by ownership before converting finite answer fields. Provider
+receipts and nested usage metadata stay intact; null provider JSON remains
+absent. The same finite record codec keeps part order, base64 strings, optional
+video fields, count defaults and embedding-number conversion. It also keeps
+each verb's original finite conversion diagnostics. This does not change
+native calls, inputs, public records, clients, hooks or media admission, and
+does not claim depth, heap or runtime closure.
+
+`ai.video.poll` reuses the owned answer conversion for its completed video
+answer. Queued, running and failed jobs keep the original whole-record codec,
+including progress omission and every native error variant's custom serde
+fields. The existing job state, provider receipts, finite conversion errors,
+client call and native admission remain unchanged.
+
+
+`self.saved_query.create`, `self.saved_query.update`,
+`self.saved_query.archive` and `self.saved_query.read` consume the definition's
+filter and matcher JSON before converting finite record metadata. An explicit
+stack walks every filter term, including nested conjunctions, disjunctions,
+negations and claim values. Shallow native-node serde keeps the active JSON
+map order and finite fields; required claim null stays present. Hard matchers
+use the same walk, while a null judge rubric still reads as absent. The same
+finite codec keeps all scope axes, versions, lifecycle, clocks and optional
+read records without changing `found`.
+
+`self.saved_query.evaluate` consumes every generation's provider JSON across
+all outcomes before a conversion error can return. Provider null stays a
+present required `WireJson` value, unlike optional media-usage JSON. Outcome
+and generation order, optional judges and memos, counts, provider pins, costs,
+cursors and all finite usage counters retain the original record codec.
+`self.saved_query.members` has no opaque JSON or recursive output type and
+keeps its existing conversion. Native query reads, filters, evaluators,
+authority, public records, inputs, client calls and hooks are unchanged. These
+are selected output conversions, not end-to-end depth, heap or runtime proof.
+
+
+`ai.ask_image` consumes the provider JSON in its optional spend receipt before
+converting finite image-answer and decision metadata. Missing usage stays
+missing. Present usage keeps a required provider JSON value, including null;
+it does not use the optional media-usage omission rule. Image answers,
+confidence, presence, evidence, provider pins, finish reasons and all finite
+receipt fields retain the original whole-record codec.
+
+`vault.models.trials.nominate`, `get`, `approve`, `run`, `resend_arm` and
+`complete` consume both usage-bound JSON values in the echoed trial request.
+`vault.models.bindings.propose`, `get`, `accept` and `deny` do the same inside
+their trial view. Both bound values are consumed before either conversion
+error can return. These are owner-supplied cost bounds, not provider spend
+receipts. Required null values stay present. The original whole-record codec
+keeps all policy fields, backend pins, held-out and unknown-arm order,
+optional evidence and receipts, costs, counts, binding routes and settlement
+state. `vault.models.bindings.read` has no opaque usage JSON and is unchanged.
+Native calls, admission, inputs, public records, clients and hooks are
+unchanged. This is selected output conversion, not end-to-end depth, heap
+or runtime closure.
+
+
+`ai.streams.abort` and `ai.streams.terminal` consume every tool-call input,
+tool-result output, required provider JSON and optional token-score JSON in
+the terminal response before a conversion error can return. Required null
+values remain present. Missing or null token scores still read as absent;
+a missing response stays missing. The original whole-terminal record codec
+keeps every finite content variant, content order, finish reason, failure,
+empty-assertion omission, counter width and per-verb conversion diagnostic.
+Native streams, public records, inputs, typed clients, hooks and authority
+are unchanged. This is selected output conversion, not end-to-end depth,
+heap or runtime proof.
+
+
+`vault.runs.step` and `vault.runs.program_step` reuse the owned response
+conversion for a readable settled model step. Missing outer rows and missing
+nested model steps stay missing. Availability, issue variants, result refs,
+base64 bodies, recorded run identity, clocks and all other finite fields keep
+the original whole-record codec. This changes no native reads, admission,
+public records, inputs, typed clients or hooks and makes no depth, heap or
+runtime claim.
+
+
+`vault.models.roles.invoke` uses the same owned response conversion for its
+generated result. Embedded and tagged results retain the original finite
+codec, including numeric widths and optional execution metadata.
+`ai.steps.submit` and `ai.steps.receipt` also consume a finished step's
+optional parsed JSON or a failed step's required provider JSON inside its
+optional spent usage. Response leaves and parsed JSON are both consumed
+before either error can return. Missing or null parsed JSON remains absent;
+required provider null remains present. Retry, progression, failure and
+validation fields, memoization, fallback and claim refs stay on the original
+whole-receipt codec.
+
+`ai.streams.events` consumes every tool-call-end input, tool-result-end output
+and done-event message and usage leaf across the whole event list before
+returning a conversion error. Delta fragments stay strings, event order and
+all finite variants stay on the original whole-event-record codec, and done
+events gain no token-score field. These conversions do not change native
+execution, public records, inputs, typed clients, hooks or authority and are
+not end-to-end depth, heap or runtime proof.
