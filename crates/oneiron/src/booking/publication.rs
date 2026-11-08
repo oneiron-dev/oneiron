@@ -114,13 +114,6 @@ impl BookingPagePublication {
         if self.owner_display.trim().is_empty() || self.event_types.is_empty() {
             return Err("public booking requires owner display and event cards");
         }
-        crate::booking::public_lens::validate_presentation_fields(
-            &self.owner_display,
-            &self.event_types,
-            &self.constraint_field,
-            &self.theme,
-        )
-        .map_err(|_| "public booking presentation exceeds lens bounds")?;
         if let Some(front) = &self.constraint_front {
             front
                 .validate()
