@@ -87,7 +87,10 @@ pub(crate) async fn resolve_mcp_caller(
 /// headers again. A caller that forwards none (owner grade, or no
 /// holder-bound slip) still forwards none, and a request the door kept no
 /// caller for keeps its headers' proof.
-fn with_admitted_proof(mut context: McpCallContext, connection: &Extensions) -> McpCallContext {
+pub(super) fn with_admitted_proof(
+    mut context: McpCallContext,
+    connection: &Extensions,
+) -> McpCallContext {
     if context.forwarded.is_some()
         && let Some(admitted) = context
             .actor

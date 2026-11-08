@@ -334,6 +334,9 @@ pub struct InvocationOutcome {
     /// (FIX 7914, FIX 8212): `None` for a reply it keeps nothing beside, a
     /// refusal among them, which is sent again as it is.
     pub release: Option<InvocationRelease>,
+    /// A content-free hook notice beside a live refusal, never a success
+    /// release or a durable record. `None` means no source supplied it.
+    pub refusal_hook_notice: Option<bool>,
 }
 
 /// An answer as its door kept it beside the reply it sent (FIX 7914, FIX

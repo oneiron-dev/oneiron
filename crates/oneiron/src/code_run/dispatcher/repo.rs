@@ -402,6 +402,7 @@ fn refused(effect: SelfEffect, error: &MemoryError) -> SelfDispatchOutcome {
 
 fn denied(effect: SelfEffect, code: &str) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Denied(SelfDeniedResult {
+        hook_notice: None,
         effect,
         outcome: code.to_owned(),
         reason_codes: Vec::new(),
