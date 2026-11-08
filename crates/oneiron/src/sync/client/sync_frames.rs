@@ -455,6 +455,75 @@ impl SyncClient {
         Ok(frames)
     }
 
+    /// The version requests this connection owes the home for the windows a
+    /// policy wake readied here (fix list row 19634): up to `budget` windows
+    /// whose ready generation `progress` has not asked for, from the one after
+    /// where its last pass ended, each with the generation read and its
+    /// `VV_REQUEST`. Only a window this connection exchanged already goes, on
+    /// the gates the home's answers meet as they come in: this lane follows or
+    /// promoted it, may exchange its whole window, and the home may read its
+    /// world; and this vault still stores it. No federation lane asks. Nothing
+    /// is stamped here: the caller stamps a window once its request is on the
+    /// socket. A window whose vector cannot be read now stays owed.
+    pub(in crate::sync) fn ready_window_requests(
+        &self,
+        progress: &mut crate::sync::manager::ReadyProgress,
+        budget: usize,
+    ) -> std::result::Result<Vec<(WindowKey, u64, Vec<u8>)>, TransportError> {
+        if self.config.federation_peer.is_some() {
+            return Ok(Vec::new());
+        }
+        // Read once a window is owed; worlds that cannot be read keep every
+        // owed window for a later pass.
+        let mut worlds = None;
+        let due = progress
+            .due(&self.manager, budget, |key| {
+                worlds
+                    .get_or_insert_with(|| self.effective_worlds().ok())
+                    .as_ref()
+                    .is_some_and(|effective| self.ready_window_requestable(key, effective))
+            })
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        let mut requests = Vec::with_capacity(due.len());
+        for (key, generation) in due {
+            let vv = match self.window_vv_for_initial_sync(&key) {
+                Ok(vv) => vv,
+                Err(error) => {
+                    tracing::warn!(window = %key, %error, "ready window vector not read");
+                    continue;
+                }
+            };
+            let frame =
+                transport::encode_window_sync(key.as_str(), window_sub_tags::VV_REQUEST, &vv)
+                    .into_result()?;
+            requests.push((key, generation, frame));
+        }
+        Ok(requests)
+    }
+
+    /// Whether ready window `key` may be asked of the home on this
+    /// connection now ([`Self::ready_window_requests`]).
+    fn ready_window_requestable(
+        &self,
+        key: &WindowKey,
+        effective_worlds: &Option<std::collections::BTreeSet<crate::EntityId>>,
+    ) -> bool {
+        let exchanged = self
+            .requested_windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(key);
+        exchanged
+            && !self.setup_catch_up(key.as_str())
+            && (Self::follows_window(key, effective_worlds)
+                || self.opened_window_promoted(key).unwrap_or(false))
+            && self
+                .full_window_exchange_allowed(key.as_str())
+                .unwrap_or(false)
+            && self.home_may_request(key)
+            && self.manager.window_stored(key).unwrap_or(false)
+    }
+
     /// Resolves the wire VV (Loro binary `VersionVector::encode()` bytes)
     /// for one window during initial sync: live doc when loaded; persisted
     /// `sv:w:` when `svf:w:` is fresh (no doc load — the fast-reconnect
