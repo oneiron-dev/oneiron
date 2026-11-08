@@ -1151,7 +1151,8 @@
         "brief": "brief",
         "ttl": "ttl",
         "parent_ref": "parent_ref",
-        "due_at": "due_at"
+        "due_at": "due_at",
+        "watch": "watch"
       },
       "mcp_required_fields": [
         "spec"
@@ -1260,7 +1261,7 @@
     },
     {
       "name": "vault.budgets.lease.open",
-      "description": "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit.",
+      "description": "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit, optionally funded by his agent grant that names a wallet its whole tree draws on.",
       "input": "crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest",
       "output": "crate::agent_dispatch::budget_doors::SpendLeaseView",
       "call": "crate::agent_dispatch::budget_doors::open_spend_lease_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.lease.open\")?, &input).map_err(crate::memory::MemoryError::from)?",
@@ -11138,11 +11139,41 @@
       "openapi": true
     },
     {
+      "name": "vault.code.session_model_heal_count",
+      "description": "Read one model's healed-turn tally as one live off-record session the owner is in reads it: the canonical tally, that session's own delta and their sum. Owner only. A closed or unknown session is refused.",
+      "input": "crate::memory::code_run_doors::CodeRunSessionModelHealCountRequest",
+      "output": "crate::memory::code_run_doors::CodeRunSessionModelHealCountView",
+      "call": "memory.code_run_session_model_heal_count_as(&memory.embedded_owner(\"vault.code.session_model_heal_count\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.corrections",
       "description": "Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only.",
       "input": "crate::memory::code_run_doors::CodeRunCorrectionsRequest",
       "output": "crate::memory::code_run_doors::CodeRunCorrectionsView",
       "call": "memory.code_run_corrections_as(&memory.embedded_owner(\"vault.code.corrections\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.step_evidence",
+      "description": "Read one canonical code run's steps as the owner, paged by step: each step's normalized program, executed JavaScript, committed observation and finished console as stored, bounded or withheld, with its correction records.",
+      "input": "crate::memory::code_run_doors::CodeRunStepEvidenceRequest",
+      "output": "Option<crate::memory::code_run_doors::CodeRunStepEvidenceView>",
+      "call": "memory.code_run_step_evidence_as(&memory.embedded_owner(\"vault.code.step_evidence\")?, input)?",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -12381,7 +12412,7 @@
     },
     {
       "name": "vault.agents.grants.mint",
-      "description": "The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door.",
+      "description": "The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it.",
       "input": "crate::task_verb::sdk::AgentGrantMintRequest",
       "output": "crate::task_verb::sdk::AgentGrantMinted",
       "call": "crate::task_verb::sdk::mint_agent_grant_as(memory.vault(), &memory.embedded_owner(\"vault.agents.grants.mint\")?, crate::authority::ActSurface::ThisInstall, input)?",
@@ -12405,6 +12436,36 @@
       "host_door_lists": true,
       "host_door_surface": true,
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.agents.verb_classes.get",
+      "description": "The owner reads his verb-class rows, each a class name and the exact verbs an agent grant naming it admits, with the trusted manifest hash.",
+      "input": "EmptyRequest",
+      "output": "crate::policy_manifest_doors::AgentVerbClassesView",
+      "call": "crate::policy_manifest_doors::agent_verb_classes_as_owner(memory.vault(), &memory.embedded_owner(\"vault.agents.verb_classes.get\")?).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.agents.verb_classes.configure",
+      "description": "The owner replaces his whole verb-class table against the current manifest hash; each row names a class and its exact verbs, never git_push or another class, and grants naming the class admit them at once.",
+      "input": "crate::policy_manifest_doors::AgentVerbClassesConfigureRequest",
+      "output": "crate::policy_manifest_doors::AgentVerbClassesReceipt",
+      "call": "crate::policy_manifest_doors::configure_agent_verb_classes_as_owner(memory.vault(), &memory.embedded_owner(\"vault.agents.verb_classes.configure\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -14821,6 +14882,38 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.settings.models.responses_store.read",
+      "description": "Reads the owner's Responses store switch from the serving vault.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::ModelResponsesStoreSettings",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.settings.models.responses_store.read\", &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.settings.models.responses_store.set",
+      "description": "Sets the owner's Responses store switch, persisting it before updating this server's live providers.",
+      "input": "crate::task_verb::sdk::ModelResponsesStoreSettings",
+      "output": "crate::task_verb::sdk::ModelResponsesStoreSettings",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.settings.models.responses_store.set\", &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "openapi": true,
       "admission": {
         "unrestricted_record_scope": true
       },

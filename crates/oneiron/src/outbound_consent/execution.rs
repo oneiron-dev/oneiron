@@ -49,6 +49,8 @@ pub struct ScopedMcpDispatchResult {
     /// charge, never a second delivery lane; `None` when no key governed or
     /// a replay charged nothing.
     pub budget_charge: Option<EffectorBudgetCharge>,
+    /// Confirmed-settlement events, also present when a resume charged nothing.
+    pub budget_settlement_events: Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
     /// A full count-bound budget window paced the call until this engine
     /// instant, Unix seconds (FIX 8686): it was not sent, recorded or
     /// charged, and goes again once its windows open.
@@ -56,6 +58,25 @@ pub struct ScopedMcpDispatchResult {
 }
 
 impl ScopedMcpDispatchResult {
+    /// Admission and confirmed-settlement messages on the existing steering
+    /// channel. A resumed Done can emit without a new admission charge.
+    #[must_use]
+    pub fn steering_messages(&self) -> Vec<String> {
+        let mut messages = self
+            .budget_charge
+            .as_ref()
+            .map(EffectorBudgetCharge::steering_messages)
+            .unwrap_or_default();
+        for event in self
+            .budget_settlement_events
+            .iter()
+            .flat_map(|events| &events.ladder_events)
+        {
+            crate::connector_key::append_effector_steering_message(&mut messages, event);
+        }
+        messages
+    }
+
     /// When a full count-bound budget window paced this call, the instant
     /// (Unix seconds) its windows all open again (FIX 8686).
     #[must_use]
@@ -126,6 +147,7 @@ impl fmt::Debug for ScopedMcpDispatchResult {
             .field("held_ask", &self.held_ask)
             .field("delivery_unresolved", &self.delivery_unresolved)
             .field("budget_charge", &self.budget_charge)
+            .field("budget_settlement_events", &self.budget_settlement_events)
             .field("paced_until", &self.paced_until)
             .finish()
     }
@@ -336,6 +358,7 @@ fn dispatch_result<S>(
         held_ask: None,
         delivery_unresolved,
         budget_charge: effect.budget_charge,
+        budget_settlement_events: effect.budget_settlement_events,
         paced_until: effect.paced_until,
     }
 }
@@ -637,7 +660,9 @@ impl Vault {
         Ok(verdict)
     }
 
-    /// The verdict on an answer that carries content.
+    /// The verdict on an answer that carries content: the grant's half
+    /// ([`Self::elicitation_answer_grant_verdict_in_txn`]) in one snapshot,
+    /// then the key's elicitation setting.
     fn elicitation_answer_verdict(
         &self,
         binding: &ConnectorElicitationBinding,
@@ -645,65 +670,12 @@ impl Vault {
         answer: &ConnectorElicitationAnswer<'_>,
         read: &mut Vec<EntityId>,
     ) -> crate::Result<ElicitationAnswerVerdict> {
-        let escalate = |reason: &str| -> crate::Result<ElicitationAnswerVerdict> {
-            Ok(ElicitationAnswerVerdict::Escalate(reason.to_owned()))
-        };
-        let Some(grant) = self.get_standing_outbound_grant(&binding.grant_id)? else {
-            return escalate(escalation_code(ScopedMcpEscalationReason::InvalidGrant));
-        };
-        read.push(binding.grant_id);
-        if grant.principal_ref != binding.principal_ref {
-            return escalate(escalation_code(ScopedMcpEscalationReason::WrongPrincipal));
-        }
-        let floor = {
+        let held = {
             let txn = self.store.env.read_txn()?;
-            crate::gate::resolve_policy_manifest(&self.store, &txn)?.read_frontier_hash()?
+            self.elicitation_answer_grant_verdict_in_txn(&txn, binding, answers, read)?
         };
-        if !grant.is_active_under_policy(&floor) {
-            return escalate(escalation_code(ScopedMcpEscalationReason::InvalidGrant));
-        }
-        let Some(scope) = grant.scope.scoped_mcp_grant() else {
-            return escalate(escalation_code(ScopedMcpEscalationReason::InvalidGrant));
-        };
-        let Some(key) = self.get_connector_key(&binding.key_ref)? else {
-            return escalate(escalation_code(
-                ScopedMcpEscalationReason::ConnectorKeyUnregistered,
-            ));
-        };
-        read.push(binding.key_ref);
-        match key.status {
-            crate::connector_key::ConnectorKeyStatus::Active => {}
-            crate::connector_key::ConnectorKeyStatus::Revoked => {
-                return Ok(ElicitationAnswerVerdict::Refuse(
-                    escalation_code(ScopedMcpEscalationReason::ConnectorKeyRevoked).to_owned(),
-                ));
-            }
-            crate::connector_key::ConnectorKeyStatus::Suspended => {
-                return escalate(escalation_code(
-                    ScopedMcpEscalationReason::ConnectorKeySuspended,
-                ));
-            }
-            crate::connector_key::ConnectorKeyStatus::Pending => {
-                return escalate(escalation_code(
-                    ScopedMcpEscalationReason::ConnectorKeyPending,
-                ));
-            }
-        }
-        let (route, catalog_key) = self.route_connector_call_listing(&binding.name)?;
-        read.extend(catalog_key);
-        let Some(route) = route else {
-            return escalate("connector_not_routable");
-        };
-        let (slate_class, _, _) = self.connector_tool_class(&key, &route, &binding.tool, read)?;
-        // The answer's own content raises the class it goes under (FIX 8807).
-        let call = ScopedMcpCall {
-            server: &binding.server,
-            tool: &binding.tool,
-            payload_data_class: slate_class.max(super::tool_call::content_data_class(answers)),
-            resolved_endpoint: &binding.endpoint,
-        };
-        if let ScopedMcpConsentDecision::Escalate(reason) = evaluate_scoped_mcp_call(scope, call) {
-            return escalate(escalation_code(reason));
+        if let Some(verdict) = held {
+            return Ok(verdict);
         }
         Ok(
             match self.connector_elicitation_setting(&binding.key_ref)? {
@@ -722,5 +694,97 @@ impl Vault {
                 }
             },
         )
+    }
+
+    /// The grant's half of the verdict on an answer `answers` that carries
+    /// content, read in `txn` (a writer's included, so a check inside one
+    /// opens no read of its own): the original call's exact grant, still
+    /// there, still the principal's and active under the policy floor, on a
+    /// governing key that is there and active and a catalog that still
+    /// routes, admitting the original server, tool and endpoint and the data
+    /// class the tool's slate class and the answer's own content class (FIX
+    /// 8807) reach together, with the tool's arguments granted. `None` while
+    /// it admits the answer; otherwise its escalation, or the refusal a
+    /// revoked key meets. The key's elicitation setting is not read here.
+    /// Each grant, key and slate it reads lists in `read`. A remote task's
+    /// parked answer meets exactly this check at submit and at claim (FIX
+    /// 16029).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn elicitation_answer_grant_verdict_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: &ConnectorElicitationBinding,
+        answers: &serde_json::Value,
+        read: &mut Vec<EntityId>,
+    ) -> crate::Result<Option<ElicitationAnswerVerdict>> {
+        let escalate = |reason: &str| -> crate::Result<Option<ElicitationAnswerVerdict>> {
+            Ok(Some(ElicitationAnswerVerdict::Escalate(reason.to_owned())))
+        };
+        let Some(grant) = crate::outbound_grant::standing_outbound_grant_in_txn(
+            &self.store,
+            txn,
+            &binding.grant_id,
+        )?
+        else {
+            return escalate(escalation_code(ScopedMcpEscalationReason::InvalidGrant));
+        };
+        read.push(binding.grant_id);
+        if grant.principal_ref != binding.principal_ref {
+            return escalate(escalation_code(ScopedMcpEscalationReason::WrongPrincipal));
+        }
+        let floor = crate::gate::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?;
+        if !grant.is_active_under_policy(&floor) {
+            return escalate(escalation_code(ScopedMcpEscalationReason::InvalidGrant));
+        }
+        let Some(scope) = grant.scope.scoped_mcp_grant() else {
+            return escalate(escalation_code(ScopedMcpEscalationReason::InvalidGrant));
+        };
+        let Some(key) =
+            crate::connector_key::read_key_for_pack_in_txn(self, txn, &binding.key_ref)?
+        else {
+            return escalate(escalation_code(
+                ScopedMcpEscalationReason::ConnectorKeyUnregistered,
+            ));
+        };
+        read.push(binding.key_ref);
+        match key.status {
+            crate::connector_key::ConnectorKeyStatus::Active => {}
+            crate::connector_key::ConnectorKeyStatus::Revoked => {
+                return Ok(Some(ElicitationAnswerVerdict::Refuse(
+                    escalation_code(ScopedMcpEscalationReason::ConnectorKeyRevoked).to_owned(),
+                )));
+            }
+            crate::connector_key::ConnectorKeyStatus::Suspended => {
+                return escalate(escalation_code(
+                    ScopedMcpEscalationReason::ConnectorKeySuspended,
+                ));
+            }
+            crate::connector_key::ConnectorKeyStatus::Pending => {
+                return escalate(escalation_code(
+                    ScopedMcpEscalationReason::ConnectorKeyPending,
+                ));
+            }
+        }
+        let (route, catalog_key) = self.route_connector_call_listing_in_txn(txn, &binding.name)?;
+        read.extend(catalog_key);
+        let Some(route) = route else {
+            return escalate("connector_not_routable");
+        };
+        let (slate_class, _, _) =
+            self.connector_tool_class_in_txn(txn, &key, &route, &binding.tool, read)?;
+        // The answer's own content raises the class it goes under (FIX 8807).
+        let call = ScopedMcpCall {
+            server: &binding.server,
+            tool: &binding.tool,
+            payload_data_class: slate_class.max(super::tool_call::content_data_class(answers)),
+            resolved_endpoint: &binding.endpoint,
+        };
+        if let ScopedMcpConsentDecision::Escalate(reason) = evaluate_scoped_mcp_call(scope, call) {
+            return escalate(escalation_code(reason));
+        }
+        Ok(None)
     }
 }
