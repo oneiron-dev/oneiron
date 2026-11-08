@@ -221,18 +221,6 @@ fn reader_sight(auth: &CoreAuth) -> oneiron::secret_custody::SecretSight {
     }
 }
 
-/// The sight a reattach place reads in: the sight of this reader's own
-/// offers and Unattached list (FIX 22109). A credential with record caveats
-/// reads them through [`reader_sight`]; any other reads the unscoped list,
-/// whose words and places read masked.
-fn reattach_place_sight(auth: &CoreAuth) -> oneiron::secret_custody::SecretSight {
-    if auth.require_unrestricted_record_scope().is_ok() {
-        oneiron::secret_custody::SecretSight::Masked
-    } else {
-        reader_sight(auth)
-    }
-}
-
 /// The read a proposal's named made_by is admitted under as it waits (FIX
 /// 1229): the writing credential's own lane, built only when it names one.
 fn made_by_reader<'v>(
@@ -1145,6 +1133,9 @@ pub(super) async fn unattached(
     let threads = blocking_read(move || {
         let vault = server.vault();
         let threads = match caveat_lane(vault, &auth)? {
+            None if sight == oneiron::secret_custody::SecretSight::Masked => {
+                vault.unattached_annotation_threads_file_sighted(&id, sight)
+            }
             None => vault.unattached_annotation_threads(&id),
             // A credential with record caveats sees a thread only from rows
             // its lane admits, its words read through its sight (FIX 8063).
@@ -1199,6 +1190,9 @@ pub(super) async fn reattach_offers(
     let offers = blocking_read(move || {
         let vault = server.vault();
         let offers = match caveat_lane(vault, &auth)? {
+            None if sight == oneiron::secret_custody::SecretSight::Masked => {
+                vault.annotation_reattach_offers_file_sighted(&id, sight)
+            }
             None => vault.annotation_reattach_offers(&id),
             // Offers start from the threads the lane is served, and read the
             // head through its sight once its rows are admitted (FIX 8063).
@@ -1253,7 +1247,7 @@ pub(super) async fn reattach(
     let thread = parse_entity_id_param(&thread, "thread")?;
     let request = json_payload(payload)?;
     let locator = place_locator(request.place)?;
-    let sight = reattach_place_sight(&auth);
+    let sight = reader_sight(&auth);
     let reattached = blocking("reattach failed", move || {
         let (occurred, now) = moment(&server);
         server.vault().reattach_annotation_thread(

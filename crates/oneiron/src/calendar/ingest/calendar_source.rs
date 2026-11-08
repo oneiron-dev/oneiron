@@ -47,7 +47,7 @@ pub(crate) fn apply_calendar_source_change(
         }),
         RemoteCalendarChange::Delete { uid, .. } => {
             let record = format!("calendar-source:{system}:{uid}");
-            super::delete_connector_resource(vault, system, &record, uid, now)?;
+            super::delete_connector_resource(vault, system, record.as_str(), uid, now)?;
             Ok(CalendarSourceChange::Deleted)
         }
     }
@@ -118,7 +118,7 @@ pub(crate) fn apply_calendar_source_omissions(
         archive_source_resource(vault, system, LISTING_ARCHIVE_KEY, omitted.as_bytes(), now)?
             .record;
     let uids: std::collections::BTreeSet<&str> = uids.iter().map(String::as_str).collect();
-    super::sweep_connector_uids(vault, system, &record, &uids, now)
+    super::sweep_connector_uids(vault, system, record.as_str(), &uids, now)
 }
 
 /// The archive key of a whole feed, beside the per-UID resources.

@@ -6,9 +6,9 @@
 //! exactly. Each file reads from the ASSET its hash names, as a code locator
 //! reads it, and a path the snapshot's custody withholds is never read. The
 //! words are found with the plain-text search, so a span counts characters
-//! as every code locator does. A place is found and offered in the text of
-//! the sight the words were read through, and lands at the owner's offsets
-//! (FIX 22109).
+//! as every code locator does. A place is found in the projection the words
+//! were read through, offered in the caller's text, and lands at the owner's
+//! offsets (FIX 22109).
 
 use super::super::anchor_text::{MAX_OFFERS, UnitFormat, find_text, text_span};
 use super::super::code_units::{
@@ -24,7 +24,7 @@ use crate::secret_custody::SecretSight;
 
 /// Every exact place in `artifact`'s current snapshot where the words of
 /// each of `unattached` read again, with its files read in `txn` through
-/// `sight`, the projection the threads' words were read through. Offers
+/// `found_in`, the projection the threads' words were read through. Offers
 /// come in thread order, and each thread's places in path order, then file
 /// order, at most [`MAX_OFFERS`] a thread, as one blob search lists them. A
 /// path the snapshot's custody withholds, or one whose file `reads` refuses,
@@ -32,15 +32,17 @@ use crate::secret_custody::SecretSight;
 /// raw words the thread's pin held, compared in memory and never stored,
 /// and a thread whose pinned words no longer read is offered nothing.
 /// Each thread's locator is the stored one, at the owner's offsets; a place
-/// is found and offered in `sight`'s text and its raw words are read at the
-/// owner's offsets it translates to, so a span that does not translate is
-/// no place (FIX 22109). No snapshot offers nothing. A resource refusal is
-/// the engine's error (FIX 10587), never empty offers.
+/// is found in `found_in`'s text, its raw words are read at the owner's
+/// offsets it translates to, and it is offered in `sight`'s text, the
+/// caller's, so a span that does not translate is no place (FIX 22109). No
+/// snapshot offers nothing. A resource refusal is the engine's error (FIX
+/// 10587), never empty offers.
 pub(super) fn code_reattach_offers_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     artifact: &EntityId,
     unattached: &[UnattachedThread],
+    found_in: SecretSight,
     sight: SecretSight,
     reads: impl Fn(&FileHash) -> Result<bool>,
 ) -> Result<Vec<ReattachOffer>> {
@@ -78,13 +80,15 @@ pub(super) fn code_reattach_offers_in_txn(
         if withheld.contains(&entry.path) || !reads(&entry.content_hash)? {
             continue;
         }
-        let Some(bytes) = file_bytes_by_hash_in_txn(vault, txn, &entry.content_hash, sight)? else {
+        let Some(bytes) = file_bytes_by_hash_in_txn(vault, txn, &entry.content_hash, found_in)?
+        else {
             continue;
         };
         let hash = file_hash_hex(&entry.content_hash);
-        // The file's raw bytes, and how `sight`'s offsets translate to them,
-        // read once and only when a place is found.
-        let mut raw: Option<Option<(Vec<u8>, CodeSpace)>> = None;
+        // The file's raw bytes, how `found_in`'s offsets translate to them,
+        // and how they translate to `sight`'s, read once and only when a
+        // place is found.
+        let mut raw: Option<Option<(Vec<u8>, CodeSpace, Option<CodeSpace>)>> = None;
         for ((_, words, pinned), found) in wanted.iter().zip(places.iter_mut()) {
             if found.len() >= MAX_OFFERS {
                 continue;
@@ -98,38 +102,41 @@ pub(super) fn code_reattach_offers_in_txn(
                     continue;
                 };
                 if raw.is_none() {
-                    raw = Some(
-                        file_bytes_by_hash_in_txn(
-                            vault,
-                            txn,
-                            &entry.content_hash,
-                            SecretSight::Owner,
-                        )?
-                        .map(|stored| {
-                            let space = CodeSpace::between(&stored, &bytes);
-                            (stored, space)
-                        }),
-                    );
+                    raw = Some(file_spaces_in_txn(
+                        vault,
+                        txn,
+                        &entry.content_hash,
+                        &bytes,
+                        found_in,
+                        sight,
+                    )?);
                 }
-                let same = raw
-                    .as_ref()
-                    .and_then(Option::as_ref)
-                    .and_then(|(raw_bytes, space)| {
-                        let (start, end) = space.raw_span(char_start, char_end)?;
-                        text_span(raw_bytes, start, end)
-                    })
-                    .as_deref()
-                    == Some(pinned.as_str());
-                if !same {
+                let Some((raw_bytes, found_space, shown_space)) =
+                    raw.as_ref().and_then(Option::as_ref)
+                else {
+                    continue;
+                };
+                let Some((start, end)) = found_space.raw_span(char_start, char_end) else {
+                    continue;
+                };
+                if text_span(raw_bytes, start, end).as_deref() != Some(pinned.as_str()) {
                     continue;
                 }
+                // The place in the caller's text.
+                let place = match shown_space {
+                    None => Some((char_start, char_end)),
+                    Some(space) => space.shown_span(start, end),
+                };
+                let Some((place_start, place_end)) = place else {
+                    continue;
+                };
                 // A path past the locator bound has no code span.
                 if let Ok(locator) = Locator::code(
                     commit,
                     entry.path.as_str(),
                     hash.clone(),
-                    char_start,
-                    char_end,
+                    place_start,
+                    place_end,
                 ) {
                     found.push(locator);
                 }
@@ -150,6 +157,33 @@ pub(super) fn code_reattach_offers_in_txn(
             })
         })
         .collect())
+}
+
+/// The stored bytes of the file `hash` names, read in `txn`, with how the
+/// offsets of `found`, its bytes as `found_in` reads them, translate to
+/// them, and how they translate to `sight`'s text: `None` for that when
+/// `sight` is `found_in`. `None` when the stored bytes are gone.
+fn file_spaces_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    hash: &FileHash,
+    found: &[u8],
+    found_in: SecretSight,
+    sight: SecretSight,
+) -> Result<Option<(Vec<u8>, CodeSpace, Option<CodeSpace>)>> {
+    let Some(stored) = file_bytes_by_hash_in_txn(vault, txn, hash, SecretSight::Owner)? else {
+        return Ok(None);
+    };
+    let found_space = CodeSpace::between(&stored, found);
+    let shown_space = if sight == found_in {
+        None
+    } else {
+        Some(match file_bytes_by_hash_in_txn(vault, txn, hash, sight)? {
+            Some(shown) => CodeSpace::between(&stored, &shown),
+            None => CodeSpace::Unmappable,
+        })
+    };
+    Ok(Some((stored, found_space, shown_space)))
 }
 
 /// The words a one-click reattach at `locator` on the code artifact
@@ -241,12 +275,14 @@ impl Vault {
     /// [`Vault::annotation_reattach_offers`] on a code artifact (FIX 7905):
     /// the files read through the masked projection, the one the stored
     /// snapshot words were read through, so an offer is a place where those
-    /// words read again and its reattach takes it. Each place reads in the
-    /// masked text, as the reattach that takes it reads it (FIX 22109).
+    /// words read again and its reattach takes it. Each place reads in
+    /// `sight`'s text, the caller's, as the reattach that takes it reads it
+    /// (FIX 22109).
     pub(super) fn code_annotation_reattach_offers(
         &self,
         artifact_id: &EntityId,
         unattached: &[UnattachedThread],
+        sight: SecretSight,
     ) -> Result<Vec<ReattachOffer>> {
         // The files are found inside the read below: every body is pinned
         // before it opens (FIX 5399).
@@ -258,6 +294,7 @@ impl Vault {
             artifact_id,
             unattached,
             SecretSight::Masked,
+            sight,
             |_| Ok(true),
         )
     }
