@@ -1435,7 +1435,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/contribution/execution/callable.rs` | src | m | 1 struct · 1 fn · 3 crate-vis | CallableBranch | A callable's contribution (FIX 3608): a skill the run called as a callable, and never had in its task, is… |
 | `src/code_run/contribution/generation.rs` | src | s | 2 crate-vis | — | A pair's inputs, settled before either fork is paid for, and each fork generated once and kept before it is… |
 | `src/code_run/contribution/owner.rs` | src | m | 1 struct · 15 crate-vis | OwnerJudgment | An owner verdict's matched pair, judged by the owner (FIX 3609) |
-| `src/code_run/contribution/source_admission.rs` | src | m | 1 struct · 2 enum · 15 crate-vis | ContributionSourceConsumer, ContributionSourcePurpose, ContributionSourceReadRequest | A contribution check reads its captured source only under each reader's own admission (FIX 20607, L07-B's… |
+| `src/code_run/contribution/source_admission.rs` | src | m | 1 struct · 2 enum · 18 crate-vis | ContributionSourceConsumer, ContributionSourcePurpose, ContributionSourceReadRequest | A contribution check reads its captured source only under each reader's own admission (FIX 20607, L07-B's… |
 | `src/code_run/coordination_codec.rs` | src | m | 9 crate-vis | — | Replay encoding for the typed coordination calls |
 | `src/code_run/correction.rs` | src | s | 4 struct · 1 enum · 2 fn · 2 const · 9 crate-vis | CodeRunCorrection, CodeRunCorrectionCheckpoint, CodeRunCorrectionOutcome, CodeRunCorrectionPolicy, ExecutorWireRepairs | Durable code-run correction records (CODE-RUNTIME-02 slice 1: FIX 4411, 4412, 4413) |
 | `src/code_run/dispatcher/admission.rs` | src | s | 5 crate-vis | — | The admission of the run door and its answered dispatch bracket |
@@ -1579,7 +1579,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/replay_capsule/erase.rs` | src | s | 5 crate-vis | — | The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's own writer |
 | `src/code_run/storage/replay_capsule/execution.rs` | src | s | 2 crate-vis | — | What came of a contribution fork's program, kept (FIX 3607): its execution, or the shadow runner's reason it… |
 | `src/code_run/storage/replay_capsule/fork_erase.rs` | src | s | 7 crate-vis | — | Contribution-fork erase ownership (FIX 10754, 11358) |
-| `src/code_run/storage/replay_capsule/owner_pair.rs` | src | s | 7 crate-vis | — | An owner verdict's pending pair (FIX 3609), kept in its pair's fork rows under `owner_pair`, beside the two… |
+| `src/code_run/storage/replay_capsule/owner_pair.rs` | src | m | 7 crate-vis | — | An owner verdict's pending pair (FIX 3609), kept in its pair's fork rows under `owner_pair`, beside the two… |
 | `src/code_run/storage/replay_capsule/restore.rs` | src | s | 1 crate-vis | — | Marks restored capsule references only when their body custody retired |
 | `src/code_run/storage/replay_capsule/route_prompt.rs` | src | s | 3 crate-vis | — | A capsule's route prompt (FIX 6255): the prompt its answering rung put first, kept as a body the run owns… |
 | `src/code_run/storage/replay_capsule/spawn_erase.rs` | src | s | 4 crate-vis | — | An erase of a spawn's target over the step starts the capsules keep (FIX 9180, Engine C2) |
@@ -2374,8 +2374,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/resident_dream/request.rs` | src | s | 1 crate-vis | — | The one model request a resident dreaming sends: the host's instruction, its craft and its cut, admitted on… |
 | `src/dreamer_consolidation/resident_for_human.rs` | src | m | 1 fn | — | An agent's free time for its human (FIX 4453, `autonomy.for_human`) |
 | `src/dreamer_consolidation/resident_health.rs` | src | s | 3 crate-vis | — | A resident's own health cards as its dreaming's input (OF-490, FIX 1145/1146): the cards whose subject is… |
-| `src/dreamer_consolidation/resources.rs` | src | m | 1 re-export · 39 crate-vis | — | Exact resource bounds for a consolidation partition |
-| `src/dreamer_consolidation/resources/nightly_link_grant.rs` | src | s | 1 crate-vis | — | The owner's standing grant that lets the Dreamer apply the SameAs links its nightly continuations propose… |
+| `src/dreamer_consolidation/resources.rs` | src | m | 2 re-export · 39 crate-vis | — | Exact resource bounds for a consolidation partition |
+| `src/dreamer_consolidation/resources/nightly_link_grant.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | NightlyLinkGrantRequest | The owner's standing grant that lets the Dreamer apply the SameAs links its nightly continuations propose… |
 | `src/dreamer_consolidation/resources/parts.rs` | src | s | 4 crate-vis | — | A branch's declared sources (FIX 7524): every part's conversation and its queued TURNs, pinned at one revision |
 | `src/dreamer_consolidation/resources/pins.rs` | src | s | 14 crate-vis | — | What reading an extraction candidate needs from its branch: the pinned sources, the prior heads and the… |
 | `src/dreamer_consolidation/resources/prior.rs` | src | m | 10 crate-vis | — | Exact stored-head admission and question routing |
@@ -7265,7 +7265,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/free_time_policy.rs` | src | s | 1 fn | — | `vault.free_time.policy.set_as` (FIX 11424): an agent sets or clears one agent's free-time policy under its… |
 | `src/verbs/generated/catalog_fragment_revision.rs` | src | generated | 1 const | — | — |
 | `src/verbs/generated/run_verb_catalog.rs` | src | generated | 1 enum · 4 fn · 1 const | RunVerb | — |
-| `src/verbs/generated/sdk_generated.rs` | src | generated | 1335 fn · 4 const | — | — |
+| `src/verbs/generated/sdk_generated.rs` | src | generated | 1336 fn · 4 const | — | — |
 | `src/verbs/generated/verb_catalog.rs` | src | generated | 1 enum · 17 fn · 1 const | AgentVerb | — |
 | `src/verbs/git_push_grant.rs` | src | s | 7 struct · 3 fn | GitPushGrantMintInput, GitPushGrantMintOutput, GitPushGrantRevokeInput, GitPushGrantRevokeOutput, GitPushGrantView, RepoAnchorBindInput, RepoAnchorBindOutput | The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`… |
 | `src/verbs/goal_optimize.rs` | src | m | 16 struct · 1 enum · 16 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +9 | Full witnessed goal intake and explicit optimizer proposal/admission doors |

@@ -17166,7 +17166,7 @@
      "path": "src/code_run/contribution/source_admission.rs",
      "purpose": "A contribution check reads its captured source only under each reader's own admission (FIX 20607, L07-B's…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 18,
       "enum": 2,
       "struct": 1
      }
@@ -18898,7 +18898,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/replay_capsule/owner_pair.rs",
@@ -29051,17 +29051,21 @@
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
       "crate-vis": 39,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "NightlyLinkGrantRequest"
+     ],
      "path": "src/dreamer_consolidation/resources/nightly_link_grant.rs",
      "purpose": "The owner's standing grant that lets the Dreamer apply the SameAs links its nightly continuations propose…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -88703,7 +88707,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1335
+      "fn": 1336
      }
     },
     {
@@ -111174,7 +111178,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1303
+      "fn": 1304
      }
     },
     {
@@ -112967,7 +112971,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1304
+      "fn": 1305
      }
     },
     {
@@ -118147,7 +118151,7 @@
      "path": "src/api/facade/consent_doors.rs",
      "purpose": "Consent lifecycle host doors, on the same owner proof as Gate policy",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
