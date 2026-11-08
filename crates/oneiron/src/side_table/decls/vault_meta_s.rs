@@ -28,6 +28,10 @@ side_tables! {
     STORAGE_SCHEMA_VERSION: VaultMeta b"schema_version" Raw;
     /// The scope-stamp sweep over stored claims has run. Key: ().
     SCOPE_STAMP_SWEEP_DONE: VaultMeta b"scope:claim-codec:v2" Raw;
+    /// The facet a verified Connect origin position names for an imported ASSET or ASSET_TEXT. This
+    /// vault holds no edge to the sender's FACET, so the facet is kept here, written beside the
+    /// record-scope stamp and retired with it (FIX 22223). Key: id16 (record). Value: id16 (facet).
+    SCOPE_ORIGIN_FACET: VaultMeta b"scope:origin_facet:v1:" Named;
     /// The scope-stamp sweep over policy manifests has run. Key: ().
     SCOPE_POLICY_SWEEP_DONE: VaultMeta b"scope:policy-manifest:v1.2" Raw;
     /// Record-scope revision counter (u64 little-endian), bumped on every stamp change. Key: ().
