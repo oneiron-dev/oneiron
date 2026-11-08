@@ -321,7 +321,7 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
             if cached_result(vault, &txn, attempt, &pin, actor, &id)? {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: 0,
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             }
         }
@@ -433,7 +433,7 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
         )?;
         Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         })
     }
 }

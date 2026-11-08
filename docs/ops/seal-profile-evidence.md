@@ -89,6 +89,25 @@ No storage ABI, dependency, config, numerical default, migration, or backward
 compatibility path is added. This is reporting carriage, not a runtime seal,
 memory-closure, or cryptographic-correctness result.
 
+## Unsupported signature envelopes
+
+Verification includes reachable signature fields with
+`/SubFilter /adbe.pkcs7.detached`, including the typeless signature shape.
+Each envelope retains its byte-range, coverage and digest evidence. Its
+cryptographic and signer-path checks are `not_run` with the typed finding
+`unsupported_signature_handler`; the verifier does not parse its CMS or
+validate it as CAdES. No signer or timestamp chain, trusted time proof or
+PAdES profile is inferred from that envelope.
+
+A structurally valid unsupported envelope has indeterminate integrity and
+`not_run` trust. Invalid byte ranges still fail their structural checks.
+The existing report rollup remains unchanged: `not_run` is not `pass`, so
+an unsupported envelope cannot make the document pass self-verification.
+Supported CAdES and document-timestamp handlers retain their validation.
+The finding travels in the existing per-envelope `checks` array; the
+report's top-level `reasons` remains failure-only. Rebuild and hash-pin the
+native seal organ to publish this reporting change.
+
 ## Unresolved DSS evidence
 
 DSS verification distinguishes invalid evidence from an unresolved revocation
