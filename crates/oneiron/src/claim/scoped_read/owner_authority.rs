@@ -159,6 +159,7 @@ impl<'v> ScopedRead<'v> {
         owner_key.channel.clone_from(&key.channel);
         owner_key.owner_exemption = key.owner_exemption;
         owner_key.room_turn.clone_from(&key.room_turn);
+        owner_key.phone_lines.clone_from(&key.phone_lines);
         owner_key.worlds.clone_from(&key.worlds);
         let room_ceiling = self
             .room_ceiling
