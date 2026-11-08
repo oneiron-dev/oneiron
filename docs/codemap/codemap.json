@@ -27,6 +27,16 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "build.rs",
+     "purpose": "Assembles the side-table catalogue from every `side_tables!` row in `src` (core split slice 1; Fable's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -156,7 +166,7 @@
      "path": "src/access_grant/mod.rs",
      "purpose": "AccessGrant control-plane record substrate",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 6
      }
     },
@@ -205,6 +215,14 @@
       "fn": 8,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/access_grant/tables.rs",
+     "purpose": "The side tables `access_grant` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -348,7 +366,7 @@
      "path": "src/actor_claims/mod.rs",
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 8
      }
     },
@@ -383,6 +401,14 @@
       "fn": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/actor_claims/tables.rs",
+     "purpose": "The side tables `actor_claims` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -512,7 +538,7 @@
      "path": "src/affect/mod.rs",
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 3,
       "re-export": 4
      }
@@ -559,6 +585,14 @@
       "crate-vis": 2,
       "re-export": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/affect/tables.rs",
+     "purpose": "The side tables `affect` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -663,7 +697,7 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 1,
       "re-export": 6
      }
@@ -765,6 +799,14 @@
      "surface": {
       "crate-vis": 12
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_def/tables.rs",
+     "purpose": "The side tables `agent_def` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -1142,7 +1184,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 2,
       "re-export": 30
      }
@@ -1635,6 +1677,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/tables.rs",
+     "purpose": "The side tables `agent_dispatch` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -1999,7 +2049,7 @@
      "path": "src/agent_inbox_lens.rs",
      "purpose": "Renderer-neutral inbox query",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "re-export": 5,
       "struct": 3
@@ -2058,6 +2108,14 @@
       "fn": 7,
       "struct": 8
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_inbox_lens/tables.rs",
+     "purpose": "The side tables `agent_inbox_lens` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -2243,7 +2301,7 @@
      "path": "src/anchored_annotation/mod.rs",
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 5
      }
     },
@@ -2357,6 +2415,14 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/tables.rs",
+     "purpose": "The side tables `anchored_annotation` keeps (core split slice 1): each row declares one, and the crate's…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -2507,7 +2573,7 @@
      "path": "src/artifact_hosting/mod.rs",
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 10,
       "mod": 1,
       "re-export": 5
@@ -2588,6 +2654,14 @@
      "surface": {
       "crate-vis": 13
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/artifact_hosting/tables.rs",
+     "purpose": "The side tables `artifact_hosting` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -3065,7 +3139,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 9,
       "re-export": 11
      }
@@ -3288,6 +3362,14 @@
      "surface": {
       "fn": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/tables.rs",
+     "purpose": "The side tables `attempt_queue` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -5020,7 +5102,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 53,
+      "crate-vis": 54,
       "mod": 2,
       "re-export": 76
      }
@@ -5968,6 +6050,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/tables.rs",
+     "purpose": "The side tables `authority` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -6704,6 +6794,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection",
      "surface": {
       "const": 4,
+      "crate-vis": 1,
       "enum": 1,
       "mod": 7,
       "re-export": 4,
@@ -7108,6 +7199,14 @@
       "re-export": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/autoreason_campaign/tables.rs",
+     "purpose": "The side tables `autoreason_campaign` keeps (core split slice 1): each row declares one, and the crate's…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -8096,7 +8195,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 43,
+      "crate-vis": 44,
       "mod": 1,
       "re-export": 3
      }
@@ -8931,6 +9030,14 @@
      "surface": {
       "crate-vis": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/tables.rs",
+     "purpose": "The side tables `batch` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -10056,7 +10163,7 @@
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 2,
       "re-export": 19
      }
@@ -10103,6 +10210,14 @@
       "crate-vis": 4,
       "re-export": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/tables.rs",
+     "purpose": "The side tables `blob_artifact` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -11255,6 +11370,7 @@
      "path": "src/booking/mod.rs",
      "purpose": "Engine-generic booking module",
      "surface": {
+      "crate-vis": 1,
       "mod": 14,
       "re-export": 12
      }
@@ -11440,6 +11556,14 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/tables.rs",
+     "purpose": "The side tables `booking` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/booking/tests.rs",
@@ -11545,7 +11669,7 @@
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
       "const": 4,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 4,
       "fn": 6,
       "re-export": 7,
@@ -11661,6 +11785,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/browser_library/tables.rs",
+     "purpose": "The side tables `browser_library` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -11682,6 +11814,7 @@
      "purpose": "Explicit account-scoped immutable build results",
      "surface": {
       "const": 5,
+      "crate-vis": 1,
       "enum": 2,
       "fn": 26,
       "mod": 1,
@@ -11741,6 +11874,14 @@
       "fn": 6,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/build_cache/tables.rs",
+     "purpose": "The side tables `build_cache` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -12514,7 +12655,7 @@
      "path": "src/calendar/mod.rs",
      "purpose": "Calendar module home (CAL-00)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 1,
       "mod": 19,
       "re-export": 17
@@ -12864,6 +13005,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/tables.rs",
+     "purpose": "The side tables `calendar` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -12956,6 +13105,7 @@
      "path": "src/campaign.rs",
      "purpose": "CRM pack engine-side registration home",
      "surface": {
+      "crate-vis": 1,
       "fn": 2,
       "mod": 10,
       "re-export": 2,
@@ -13689,6 +13839,14 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/tables.rs",
+     "purpose": "The side tables `campaign` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/campaign/tests.rs",
@@ -13863,7 +14021,7 @@
      "path": "src/channel_identity/mod.rs",
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 15
      }
     },
@@ -13892,6 +14050,14 @@
       "fn": 1,
       "type": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity/tables.rs",
+     "purpose": "The side tables `channel_identity` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -14006,7 +14172,7 @@
      "path": "src/channel_identity_autonomy/mod.rs",
      "purpose": "Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 3
      }
     },
@@ -14041,6 +14207,14 @@
       "fn": 4,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_autonomy/tables.rs",
+     "purpose": "The side tables `channel_identity_autonomy` keeps (core split slice 1): each row declares one, and the…",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -14100,7 +14274,7 @@
      "path": "src/channel_identity_lifecycle.rs",
      "purpose": "ChannelIdentity lifecycle verbs through the ExternalEffect door (OF-347 CID-2)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 3,
       "fn": 9,
       "re-export": 1,
@@ -14128,6 +14302,14 @@
       "crate-vis": 1,
       "fn": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_lifecycle/tables.rs",
+     "purpose": "The side tables `channel_identity_lifecycle` keeps (core split slice 1): each row declares one, and the…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -14492,7 +14674,7 @@
      "path": "src/channel_identity_provider/mod.rs",
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 7,
       "re-export": 6
      }
@@ -14790,6 +14972,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/tables.rs",
+     "purpose": "The side tables `channel_identity_provider` keeps (core split slice 1): each row declares one, and the…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -14804,7 +14994,7 @@
      "path": "src/channel_identity_selection/mod.rs",
      "purpose": "Relationship-context channel-identity selection law (ONE-1826)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 4
      }
     },
@@ -14868,6 +15058,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_selection/tables.rs",
+     "purpose": "The side tables `channel_identity_selection` keeps (core split slice 1): each row declares one, and the…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -14894,6 +15092,7 @@
      "path": "src/checkout.rs",
      "purpose": "Checkout leases and optional repository environment plans",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "mod": 2,
       "re-export": 2
@@ -15039,6 +15238,14 @@
      "surface": {
       "re-export": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/checkout/tables.rs",
+     "purpose": "The side tables `checkout` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -15446,7 +15653,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 13,
       "re-export": 14
      }
@@ -16610,6 +16817,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/tables.rs",
+     "purpose": "The side tables `claim` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -16747,6 +16962,7 @@
      "path": "src/clipboard/mod.rs",
      "purpose": "A vault's Clipboard world and its masked text records",
      "surface": {
+      "crate-vis": 1,
       "re-export": 4
      }
     },
@@ -16775,6 +16991,14 @@
       "fn": 3,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/clipboard/tables.rs",
+     "purpose": "The side tables `clipboard` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -17219,7 +17443,7 @@
      "path": "src/code_revision/mod.rs",
      "purpose": "Code revisions, tested forks and reviewed import promotion",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "re-export": 8
      }
     },
@@ -17325,6 +17549,14 @@
      "surface": {
       "crate-vis": 6
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_revision/tables.rs",
+     "purpose": "The side tables `code_revision` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -18556,7 +18788,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 59,
+      "crate-vis": 60,
       "mod": 8,
       "re-export": 36
      }
@@ -20191,6 +20423,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/tables.rs",
+     "purpose": "The side tables `code_run` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/task_reporting.rs",
      "purpose": "Native terminal TASK reports captured by a code run",
      "surface": {
@@ -21441,7 +21681,7 @@
      "path": "src/code_symbol/mod.rs",
      "purpose": "Code-symbol manifests, semantic changes and producing-operation views",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 9
      }
     },
@@ -21504,6 +21744,14 @@
       "crate-vis": 6,
       "fn": 11
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_symbol/tables.rs",
+     "purpose": "The side tables `code_symbol` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -21597,7 +21845,7 @@
      "path": "src/code_view/mod.rs",
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 6,
       "re-export": 2,
       "struct": 3
@@ -21612,6 +21860,14 @@
      "surface": {
       "crate-vis": 4
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_view/tables.rs",
+     "purpose": "The side tables `code_view` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -21972,7 +22228,7 @@
      "path": "src/comm/mod.rs",
      "purpose": "Communication standing-state claims and the ARCH-0035 projector",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "re-export": 6
      }
     },
@@ -22057,6 +22313,14 @@
      "surface": {
       "crate-vis": 4
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/comm/tables.rs",
+     "purpose": "The side tables `comm` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -22305,7 +22569,7 @@
      "path": "src/commitment_wake/mod.rs",
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 6
      }
     },
@@ -22380,6 +22644,14 @@
       "fn": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commitment_wake/tables.rs",
+     "purpose": "The side tables `commitment_wake` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -22468,7 +22740,7 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 2,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 10,
       "mod": 2,
@@ -22955,6 +23227,14 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/tables.rs",
+     "purpose": "The side tables `compaction` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -23576,7 +23856,7 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "mod": 3,
       "re-export": 17
      }
@@ -23931,6 +24211,14 @@
       "crate-vis": 5,
       "fn": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/tables.rs",
+     "purpose": "The side tables `connector_key` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -24381,7 +24669,7 @@
      "path": "src/consent/mod.rs",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 8,
       "re-export": 15
      }
@@ -24461,6 +24749,14 @@
      "surface": {
       "crate-vis": 13
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/tables.rs",
+     "purpose": "The side tables `consent` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -24671,7 +24967,7 @@
      "path": "src/consent_graduation/mod.rs",
      "purpose": "DEC-0006 consent-graduation ramp (ARCH-0055 r7 / ONE-1748, MS-06): the per-scope outcome statistics that…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 1,
       "re-export": 3
      }
@@ -24727,6 +25023,14 @@
      "surface": {
       "crate-vis": 19
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent_graduation/tables.rs",
+     "purpose": "The side tables `consent_graduation` keeps (core split slice 1): each row declares one, and the crate's…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -25176,7 +25480,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "mod": 3,
       "re-export": 28
      }
@@ -25937,6 +26241,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/context_board/tables.rs",
+     "purpose": "The side tables `context_board` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "TaskKind"
      ],
@@ -26624,7 +26936,7 @@
      "path": "src/conversation/mod.rs",
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 1,
       "re-export": 10
      }
@@ -26706,6 +27018,14 @@
       "fn": 1,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/tables.rs",
+     "purpose": "The side tables `conversation` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -26932,7 +27252,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 1,
       "re-export": 4
      }
@@ -27096,6 +27416,14 @@
       "crate-vis": 1,
       "fn": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/tables.rs",
+     "purpose": "The side tables `conversation_dag` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -27282,7 +27610,7 @@
      "path": "src/counterparty_contact/mod.rs",
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 6
      }
     },
@@ -27297,6 +27625,14 @@
       "fn": 1,
       "re-export": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/counterparty_contact/tables.rs",
+     "purpose": "The side tables `counterparty_contact` keeps (core split slice 1): each row declares one, and the crate's…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -27510,7 +27846,7 @@
      "purpose": "Multi-critic review node primitives",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 11,
       "mod": 1,
@@ -27686,6 +28022,14 @@
      "surface": {
       "crate-vis": 5
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/critic/tables.rs",
+     "purpose": "The side tables `critic` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -28615,7 +28959,7 @@
      "path": "src/disclosure/mod.rs",
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 8
      }
@@ -28681,6 +29025,14 @@
       "fn": 6,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/disclosure/tables.rs",
+     "purpose": "The side tables `disclosure` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -28890,7 +29242,7 @@
      "path": "src/dispatch_byoa/mod.rs",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 1,
       "re-export": 17
      }
@@ -29120,6 +29472,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dispatch_byoa/tables.rs",
+     "purpose": "The side tables `dispatch_byoa` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -29321,7 +29681,7 @@
      "purpose": "FIX 12569: each vault's own small draft model (I5-DRAFTER = A), retrained at night on the vault's own…",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 11
      }
     },
@@ -29390,6 +29750,14 @@
       "struct": 5,
       "trait": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/drafter/tables.rs",
+     "purpose": "The side tables `drafter` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -29896,7 +30264,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "mod": 5,
       "re-export": 25
      }
@@ -30971,6 +31339,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/tables.rs",
+     "purpose": "The side tables `dreamer_consolidation` keeps (core split slice 1): each row declares one, and the crate's…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -31406,6 +31782,7 @@
      "path": "src/dreamer_prefilter/mod.rs",
      "purpose": "ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth…",
      "surface": {
+      "crate-vis": 1,
       "re-export": 1
      }
     },
@@ -31461,6 +31838,14 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_prefilter/tables.rs",
+     "purpose": "The side tables `dreamer_prefilter` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -33868,7 +34253,7 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "mod": 6,
       "re-export": 17
      }
@@ -34349,6 +34734,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/tables.rs",
+     "purpose": "The side tables `dreamer_runner` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -34464,6 +34857,7 @@
      "path": "src/dreamer_tournament/mod.rs",
      "purpose": "OF-366 tournament claim-authoring runner primitives",
      "surface": {
+      "crate-vis": 1,
       "re-export": 3
      }
     },
@@ -34476,6 +34870,14 @@
      "surface": {
       "fn": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_tournament/tables.rs",
+     "purpose": "The side tables `dreamer_tournament` keeps (core split slice 1): each row declares one, and the crate's…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -34781,7 +35183,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 1,
       "re-export": 15
      }
@@ -35340,6 +35742,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/tables.rs",
+     "purpose": "The side tables `dreamer_wake` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -35416,7 +35826,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…",
      "surface": {
       "const": 3,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 11,
       "mod": 11,
@@ -36426,6 +36836,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/tables.rs",
+     "purpose": "The side tables `edit_distance` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -36673,7 +37091,7 @@
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 6,
       "re-export": 16
      }
@@ -36954,6 +37372,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/tables.rs",
+     "purpose": "The side tables `edit_roundtrip` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -37062,7 +37488,7 @@
      "path": "src/edit_settle/mod.rs",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 8
      }
     },
@@ -37235,6 +37661,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_settle/tables.rs",
+     "purpose": "The side tables `edit_settle` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -37267,7 +37701,7 @@
      "path": "src/embed.rs",
      "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 9,
       "re-export": 14,
       "struct": 3
@@ -37678,6 +38112,14 @@
      "surface": {
       "crate-vis": 6
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/tables.rs",
+     "purpose": "The side tables `embed` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -38730,7 +39172,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 2,
       "re-export": 11
      }
@@ -39014,6 +39456,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/tables.rs",
+     "purpose": "The side tables `entity_doc` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -39212,7 +39662,7 @@
      "path": "src/failure_ladder/mod.rs",
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 3,
       "re-export": 8
      }
@@ -39243,6 +39693,14 @@
       "fn": 2,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/failure_ladder/tables.rs",
+     "purpose": "The side tables `failure_ladder` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -39325,7 +39783,7 @@
      "path": "src/failure_signals.rs",
      "purpose": "Content-free, versioned tier-1 agent failure counts",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 4,
       "fn": 8,
       "re-export": 7,
@@ -39497,6 +39955,14 @@
       "fn": 1,
       "struct": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/failure_signals/tables.rs",
+     "purpose": "The side tables `failure_signals` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -40014,7 +40480,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 44,
+      "crate-vis": 45,
       "mod": 2,
       "re-export": 20
      }
@@ -40599,6 +41065,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/tables.rs",
+     "purpose": "The side tables `federation` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -41013,7 +41487,7 @@
      "path": "src/feedback/mod.rs",
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 1,
       "re-export": 10
      }
@@ -41240,6 +41714,14 @@
       "crate-vis": 6,
       "fn": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/tables.rs",
+     "purpose": "The side tables `feedback` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -42460,7 +42942,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 86,
+      "crate-vis": 87,
       "mod": 2,
       "re-export": 8
      }
@@ -43146,6 +43628,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/gate/tables.rs",
+     "purpose": "The side tables `gate` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "TaskAssignee"
      ],
@@ -43724,7 +44214,7 @@
      "path": "src/genui/mod.rs",
      "purpose": "OF-336 generated-UI component contract",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 9
      }
     },
@@ -43812,6 +44302,14 @@
       "fn": 3,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/genui/tables.rs",
+     "purpose": "The side tables `genui` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -44019,7 +44517,7 @@
      "path": "src/git_wire/mod.rs",
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 19
      }
     },
@@ -44176,6 +44674,14 @@
      "surface": {
       "crate-vis": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/tables.rs",
+     "purpose": "The side tables `git_wire` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -44598,7 +45104,7 @@
      "path": "src/housekeeping/mod.rs",
      "purpose": "The engine's housekeeping pass: every sweep the engine relies on, run when due",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5,
       "re-export": 3
      }
@@ -44642,6 +45148,14 @@
      "surface": {
       "crate-vis": 8
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/housekeeping/tables.rs",
+     "purpose": "The side tables `housekeeping` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -44694,7 +45208,7 @@
      "path": "src/human_task/mod.rs",
      "purpose": "Human-assigned TASK follow-up and the identity-bound human response signal (ONE-1708)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "re-export": 4
      }
@@ -44735,6 +45249,14 @@
      "surface": {
       "crate-vis": 11
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/human_task/tables.rs",
+     "purpose": "The side tables `human_task` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -44909,7 +45431,7 @@
      "path": "src/identity_topology/mod.rs",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "re-export": 13
      }
     },
@@ -45139,6 +45661,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/identity_topology/tables.rs",
+     "purpose": "The side tables `identity_topology` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -45237,7 +45767,7 @@
      "path": "src/inbox/mod.rs",
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 1,
       "re-export": 7
      }
@@ -45324,6 +45854,14 @@
      "surface": {
       "crate-vis": 8
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/inbox/tables.rs",
+     "purpose": "The side tables `inbox` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -46314,7 +46852,7 @@
      "path": "src/ingest/mod.rs",
      "purpose": "Ingest source registry and source-local normalization",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 4,
       "re-export": 18
      }
@@ -46416,6 +46954,14 @@
       "fn": 5,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/tables.rs",
+     "purpose": "The side tables `ingest` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -46635,7 +47181,7 @@
      "path": "src/learning/mod.rs",
      "purpose": "The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 11,
       "re-export": 10
      }
@@ -46721,6 +47267,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/learning/tables.rs",
+     "purpose": "The side tables `learning` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -46732,7 +47286,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
       "const": 3,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 2,
       "fn": 9,
       "re-export": 2,
@@ -46807,6 +47361,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/learning_setting/tables.rs",
+     "purpose": "The side tables `learning_setting` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/learning_setting/witness.rs",
      "purpose": "Native records of the owner PUT acts behind numeric seed and pin rows",
      "surface": {
@@ -46826,11 +47388,19 @@
      "purpose": "The owner's spawn choices (ARCH-0003 #learning-settings, ARCH-0079 #seed-pin): a seed or pin over a spawn's…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 6,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/learning_setting_choice/tables.rs",
+     "purpose": "The side tables `learning_setting_choice` keeps (core split slice 1): each row declares one, and the crate's…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -47113,7 +47683,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 22
      }
     },
@@ -47254,6 +47824,14 @@
       "fn": 4,
       "struct": 8
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lens/tables.rs",
+     "purpose": "The side tables `lens` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -47516,7 +48094,7 @@
      "path": "src/linear_sync/mod.rs",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 12
      }
     },
@@ -47593,6 +48171,14 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linear_sync/tables.rs",
+     "purpose": "The side tables `linear_sync` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -47675,6 +48261,7 @@
      "purpose": "LinkedIn connector adapter surface (ONE-1563 / LNKD-1)",
      "surface": {
       "const": 6,
+      "crate-vis": 1,
       "fn": 11,
       "re-export": 15,
       "struct": 1
@@ -47752,6 +48339,14 @@
       "fn": 3,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linkedin_connector/tables.rs",
+     "purpose": "The side tables `linkedin_connector` keeps (core split slice 1): each row declares one, and the crate's…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -49161,7 +49756,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 12,
       "re-export": 32
      }
@@ -50292,6 +50887,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/llm/tables.rs",
+     "purpose": "The side tables `llm` keeps (core split slice 1): each row declares one, and the crate's build script places…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CoreferenceTag",
       "GatedRender",
@@ -50693,7 +51296,7 @@
      "path": "src/mail_pack/mod.rs",
      "purpose": "The Mail & Calendar pack, engine half (FIX 12559, 12560; owner MAIL-SHARE, MAIL-DELETE, MAIL-PROVIDERS and…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 4,
       "re-export": 24
      }
@@ -50867,6 +51470,14 @@
       "enum": 2,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mail_pack/tables.rs",
+     "purpose": "The side tables `mail_pack` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -53330,7 +53941,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "mod": 41,
       "re-export": 72
      }
@@ -55190,6 +55801,14 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/tables.rs",
+     "purpose": "The side tables `memory` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/asset_hydrate.rs",
@@ -56470,7 +57089,7 @@
      "path": "src/merge_queue/mod.rs",
      "purpose": "Durable batched speculation over real detached worktrees",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 1,
       "re-export": 10,
       "struct": 1
@@ -56631,6 +57250,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/tables.rs",
+     "purpose": "The side tables `merge_queue` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -56778,7 +57405,7 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 58,
+      "crate-vis": 59,
       "re-export": 21
      }
     },
@@ -57616,6 +58243,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/tables.rs",
+     "purpose": "The side tables `note` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -58091,7 +58726,7 @@
      "path": "src/off_record/mod.rs",
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 1,
       "re-export": 3
      }
@@ -58158,6 +58793,14 @@
       "fn": 7,
       "struct": 5
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/tables.rs",
+     "purpose": "The side tables `off_record` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -58400,7 +59043,7 @@
      "path": "src/office_body/mod.rs",
      "purpose": "Live office body records and Vault doors",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 16
      }
     },
@@ -58647,6 +59290,14 @@
      "surface": {
       "crate-vis": 23
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/tables.rs",
+     "purpose": "The side tables `office_body` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -59317,7 +59968,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 18,
       "re-export": 5
      }
@@ -60569,6 +61220,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/origin/tables.rs",
+     "purpose": "The side tables `origin` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "OriginTreeFile"
      ],
@@ -60976,7 +61635,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1,
       "mod": 1,
       "re-export": 18
@@ -61267,6 +61926,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/tables.rs",
+     "purpose": "The side tables `outbound` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -61519,7 +62186,7 @@
      "path": "src/outbound_chokepoint/mod.rs",
      "purpose": "Replay-first outbound effect execution",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 1
      }
     },
@@ -61543,6 +62210,14 @@
      "surface": {
       "crate-vis": 10
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_chokepoint/tables.rs",
+     "purpose": "The side tables `outbound_chokepoint` keeps (core split slice 1): each row declares one, and the crate's…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -61923,7 +62598,7 @@
      "path": "src/outbound_consent/mod.rs",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 15
      }
@@ -61998,6 +62673,14 @@
      "surface": {
       "crate-vis": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/tables.rs",
+     "purpose": "The side tables `outbound_consent` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -62122,7 +62805,7 @@
      "path": "src/outbound_grant/mod.rs",
      "purpose": "Standing outbound grants for OF-367 RS6.2/RS6.5",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 2
      }
     },
@@ -62135,6 +62818,14 @@
      "surface": {
       "crate-vis": 8
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_grant/tables.rs",
+     "purpose": "The side tables `outbound_grant` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -62224,7 +62915,7 @@
      "path": "src/outbound_intent_ledger/mod.rs",
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 8
      }
     },
@@ -62456,6 +63147,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_intent_ledger/tables.rs",
+     "purpose": "The side tables `outbound_intent_ledger` keeps (core split slice 1): each row declares one, and the crate's…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -62579,7 +63278,7 @@
      "path": "src/persona_snapshot/mod.rs",
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 1,
       "re-export": 3
      }
@@ -62601,6 +63300,14 @@
       "fn": 13,
       "struct": 4
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/persona_snapshot/tables.rs",
+     "purpose": "The side tables `persona_snapshot` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -62659,10 +63366,18 @@
      "path": "src/phone_line/mod.rs",
      "purpose": "Owner-enabled phone-line metadata and call-bound reads",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 4,
       "struct": 5
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/phone_line/tables.rs",
+     "purpose": "The side tables `phone_line` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -63519,7 +64234,7 @@
      "path": "src/policy_model/mod.rs",
      "purpose": "Policy classification over two planes",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 1,
       "re-export": 16
      }
@@ -63985,6 +64700,14 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/tables.rs",
+     "purpose": "The side tables `policy_model` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/policy_model/tests/anonymous_chat.rs",
@@ -64142,11 +64865,19 @@
      "path": "src/policy_setting_doors.rs",
      "purpose": "The app's policy actions as host verbs (OF-181)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 9,
       "re-export": 1,
       "struct": 4
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_setting_doors/tables.rs",
+     "purpose": "The side tables `policy_setting_doors` keeps (core split slice 1): each row declares one, and the crate's…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -64479,7 +65210,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "re-export": 9
      }
     },
@@ -64594,6 +65325,14 @@
       "crate-vis": 9,
       "fn": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/tables.rs",
+     "purpose": "The side tables `ports` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -65162,7 +65901,7 @@
      "path": "src/provenance/mod.rs",
      "purpose": "`edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 4,
       "re-export": 4
      }
@@ -65177,6 +65916,14 @@
       "crate-vis": 10,
       "fn": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/provenance/tables.rs",
+     "purpose": "The side tables `provenance` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -65217,7 +65964,7 @@
      "purpose": "Provider confidence priors and read-time confidence composition (ES-09)",
      "surface": {
       "const": 2,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 11,
       "re-export": 1
@@ -65243,6 +65990,14 @@
      "surface": {
       "crate-vis": 13
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/provider_confidence/tables.rs",
+     "purpose": "The side tables `provider_confidence` keeps (core split slice 1): each row declares one, and the crate's…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -66013,7 +66768,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "mod": 5,
       "re-export": 20
      }
@@ -66216,6 +66971,14 @@
       "fn": 1,
       "struct": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/tables.rs",
+     "purpose": "The side tables `receipt` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -68030,7 +68793,7 @@
      "path": "src/repo_mutation/mod.rs",
      "purpose": "Queued repository mutations, recovery snapshots and reviewed proposals",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 3,
       "re-export": 6
      }
@@ -68500,6 +69263,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/tables.rs",
+     "purpose": "The side tables `repo_mutation` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -68898,7 +69669,7 @@
      "path": "src/run_tree/mod.rs",
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 8
      }
     },
@@ -68934,6 +69705,14 @@
      "surface": {
       "crate-vis": 4
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/run_tree/tables.rs",
+     "purpose": "The side tables `run_tree` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -69109,7 +69888,7 @@
      "path": "src/runtime_hooks/mod.rs",
      "purpose": "Runtime hooks (ARCH-0080)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 3,
       "re-export": 12
      }
@@ -69485,6 +70264,14 @@
      "surface": {
       "crate-vis": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/tables.rs",
+     "purpose": "The side tables `runtime_hooks` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -70015,7 +70802,7 @@
      "path": "src/saved_query/mod.rs",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 12
      }
     },
@@ -70087,6 +70874,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/saved_query/tables.rs",
+     "purpose": "The side tables `saved_query` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -70111,7 +70906,7 @@
      "path": "src/scan_check.rs",
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
       "re-export": 3
      }
@@ -70142,6 +70937,14 @@
      "notable": [],
      "path": "src/scan_check/table_tests.rs",
      "purpose": "The code's own list of engine scans: none refuses for how many rows it reads (rule 5)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scan_check/tables.rs",
+     "purpose": "The side tables `scan_check` keeps (core split slice 1): each row declares one, and the crate's build script…",
      "surface": {}
     },
     {
@@ -70263,7 +71066,7 @@
      "path": "src/scope_summary/mod.rs",
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 7
      }
     },
@@ -70428,6 +71231,14 @@
      "surface": {
       "crate-vis": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/tables.rs",
+     "purpose": "The side tables `scope_summary` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -70965,7 +71776,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 17
      }
     },
@@ -71252,6 +72063,14 @@
      "surface": {
       "crate-vis": 19
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/tables.rs",
+     "purpose": "The side tables `secret_custody` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -71562,7 +72381,7 @@
      "path": "src/secret_lease/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-02 (ONE-1920): the T0/T1/T2 materialization rungs behind a single…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 6
      }
     },
@@ -71579,6 +72398,14 @@
       "crate-vis": 21,
       "enum": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_lease/tables.rs",
+     "purpose": "The side tables `secret_lease` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -71684,9 +72511,17 @@
      "path": "src/secret_record/mod.rs",
      "purpose": "Core half of `secret_record`: its store-layer items live in `oneiron_store::secret_record` and are…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_record/tables.rs",
+     "purpose": "The side tables `secret_record` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -71711,7 +72546,7 @@
      "purpose": "Core half of `secret_rotation`: its store-layer items live in `oneiron_store::secret_rotation` and are…",
      "surface": {
       "const": 3,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 8,
       "re-export": 1,
@@ -71738,6 +72573,14 @@
      "surface": {
       "crate-vis": 7
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_rotation/tables.rs",
+     "purpose": "The side tables `secret_rotation` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -72159,7 +73002,7 @@
      "path": "src/self_heal/mod.rs",
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 8,
       "re-export": 11
      }
@@ -72311,6 +73154,14 @@
       "fn": 2,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/tables.rs",
+     "purpose": "The side tables `self_heal` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -72711,7 +73562,7 @@
      "path": "src/session_lifecycle.rs",
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 3,
       "fn": 13,
       "re-export": 3,
@@ -72771,6 +73622,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_lifecycle/tables.rs",
+     "purpose": "The side tables `session_lifecycle` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -72796,7 +73655,7 @@
      "purpose": "Persisted customization settings and client-visible change events",
      "surface": {
       "const": 3,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 13,
       "mod": 1,
@@ -72899,6 +73758,14 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/settings/tables.rs",
+     "purpose": "The side tables `settings` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/settings/tests.rs",
@@ -72916,7 +73783,7 @@
      "path": "src/share.rs",
      "purpose": "Revocable brief read grants",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 5,
       "re-export": 2,
       "struct": 3
@@ -72971,6 +73838,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/share/tables.rs",
+     "purpose": "The side tables `share` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -73011,7 +73886,7 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 3,
       "mod": 1,
@@ -73129,6 +74004,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/share_travel/tables.rs",
+     "purpose": "The side tables `share_travel` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/side_table/classified.rs",
      "purpose": "One row's read that tells its own value's damage from the store's failure (FIX 6482)",
      "surface": {
@@ -73155,11 +74038,21 @@
      "path": "src/side_table/decls/mod.rs",
      "purpose": "The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`, one entry each",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 11
      }
     },
     {
-     "bucket": "m",
+     "bucket": "XL",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/decls/snapshot.rs",
+     "purpose": "The side-table catalogue as it stood before slice 1 moved each row into its owner module (core split, 9 Nov…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/side_table/decls/sync_state.rs",
@@ -73167,7 +74060,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/side_table/decls/vault_meta_a_b.rs",
@@ -73175,7 +74068,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/side_table/decls/vault_meta_c.rs",
@@ -73183,7 +74076,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/side_table/decls/vault_meta_d_e.rs",
@@ -73191,7 +74084,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/side_table/decls/vault_meta_f_l.rs",
@@ -73202,20 +74095,12 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/side_table/decls/vault_meta_m.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
      "path": "src/side_table/decls/vault_meta_n_r.rs",
      "purpose": "—",
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/side_table/decls/vault_meta_s.rs",
@@ -73223,7 +74108,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/side_table/decls/vault_meta_t_z.rs",
@@ -73515,7 +74400,7 @@
      "path": "src/skill/mod.rs",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 3,
       "re-export": 8
      }
@@ -73588,6 +74473,14 @@
      "surface": {
       "crate-vis": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill/tables.rs",
+     "purpose": "The side tables `skill` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -73869,7 +74762,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 22
      }
     },
@@ -73994,6 +74887,14 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_attribution/tables.rs",
+     "purpose": "The side tables `skill_attribution` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/skill_attribution/tests.rs",
@@ -74064,7 +74965,7 @@
      "path": "src/skill_convert/mod.rs",
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 4
      }
     },
@@ -74104,6 +75005,14 @@
       "fn": 3,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_convert/tables.rs",
+     "purpose": "The side tables `skill_convert` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -74532,7 +75441,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 2,
       "re-export": 24
      }
@@ -75426,6 +76335,14 @@
      "surface": {
       "crate-vis": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/tables.rs",
+     "purpose": "The side tables `skill_hub` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -76340,7 +77257,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 3,
       "re-export": 20
      }
@@ -76523,6 +77440,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/tables.rs",
+     "purpose": "The side tables `skill_optimize` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -76684,7 +77609,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 7
      }
     },
@@ -76784,6 +77709,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_reliability/tables.rs",
+     "purpose": "The side tables `skill_reliability` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -76809,10 +77742,18 @@
      "purpose": "Deterministic static skill scanning and the activation risk consult",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 5
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_scan/tables.rs",
+     "purpose": "The side tables `skill_scan` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -76955,7 +77896,7 @@
      "path": "src/source_audience/mod.rs",
      "purpose": "Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A…",
      "surface": {
-      "crate-vis": 40,
+      "crate-vis": 41,
       "enum": 1,
       "struct": 1
      }
@@ -76979,6 +77920,14 @@
      "surface": {
       "crate-vis": 17
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/source_audience/tables.rs",
+     "purpose": "The side tables `source_audience` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -79858,7 +80807,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 163,
+      "crate-vis": 164,
       "mod": 69,
       "re-export": 88
      }
@@ -81273,6 +82222,14 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/tables.rs",
+     "purpose": "The side tables `store` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -81928,7 +82885,7 @@
      "path": "src/sweep/mod.rs",
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -81950,6 +82907,14 @@
      "surface": {
       "crate-vis": 13
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sweep/tables.rs",
+     "purpose": "The side tables `sweep` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -86722,7 +87687,7 @@
      "path": "src/tagging/mod.rs",
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 10
      }
     },
@@ -86873,6 +87838,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/tables.rs",
+     "purpose": "The side tables `tagging` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -86990,12 +87963,20 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities",
      "surface": {
       "const": 2,
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 3,
       "re-export": 1,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_authority/tables.rs",
+     "purpose": "The side tables `task_authority` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -88287,7 +89268,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 66,
+      "crate-vis": 67,
       "enum": 1,
       "fn": 2,
       "mod": 5,
@@ -88745,6 +89726,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/tables.rs",
+     "purpose": "The side tables `task_verb` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "TaskActor"
      ],
@@ -89192,7 +90181,7 @@
      "path": "src/team/mod.rs",
      "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 15,
       "re-export": 12
      }
@@ -89400,6 +90389,14 @@
       "fn": 1,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/team/tables.rs",
+     "purpose": "The side tables `team` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -89914,7 +90911,7 @@
      "path": "src/training_pack/mod.rs",
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6,
       "re-export": 7
      }
@@ -89936,6 +90933,14 @@
       "fn": 8,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/training_pack/tables.rs",
+     "purpose": "The side tables `training_pack` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -90013,7 +91018,7 @@
      "path": "src/typed_body.rs",
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 11,
       "re-export": 2,
@@ -90130,6 +91135,14 @@
      "surface": {
       "crate-vis": 9
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/typed_body/tables.rs",
+     "purpose": "The side tables `typed_body` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -90495,7 +91508,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1,
       "re-export": 9,
       "struct": 1
@@ -90661,6 +91674,14 @@
       "crate-vis": 8,
       "fn": 29
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/tables.rs",
+     "purpose": "The side tables `vault` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -90858,7 +91879,7 @@
      "path": "src/vault_cleanup/mod.rs",
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 9
      }
@@ -91044,6 +92065,14 @@
       "fn": 2,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_cleanup/tables.rs",
+     "purpose": "The side tables `vault_cleanup` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -91292,7 +92321,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 5,
       "re-export": 13,
@@ -91412,6 +92441,14 @@
       "crate-vis": 3,
       "enum": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_shape/tables.rs",
+     "purpose": "The side tables `vault_shape` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -92704,6 +93741,7 @@
      "path": "src/verbs/mod.rs",
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
+      "crate-vis": 1,
       "fn": 8,
       "mod": 1,
       "re-export": 114,
@@ -93689,6 +94727,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/tables.rs",
+     "purpose": "The side tables `verbs` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -94568,7 +95614,7 @@
      "path": "src/voice_identity/mod.rs",
      "purpose": "VOX-02 voice identity substrate: consent log, enrollment, local matching",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 1,
       "re-export": 2
      }
@@ -94708,6 +95754,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_identity/tables.rs",
+     "purpose": "The side tables `voice_identity` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -94818,6 +95872,7 @@
      "purpose": "The built-in `web` connector (FIX 11598, CONN-1 A): `connector.web.search(query)` and…",
      "surface": {
       "const": 6,
+      "crate-vis": 1,
       "fn": 5,
       "re-export": 5,
       "struct": 5
@@ -94843,6 +95898,14 @@
       "fn": 3,
       "re-export": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/tables.rs",
+     "purpose": "The side tables `web_connector` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -95030,13 +96093,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 1,
       "re-export": 24
      }
@@ -96416,6 +97479,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/tables.rs",
+     "purpose": "The side tables `workspace_roster` keeps (core split slice 1): each row declares one, and the crate's build…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -96801,7 +97872,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 3,
       "re-export": 22,
       "struct": 2
@@ -97233,6 +98304,14 @@
       "enum": 2,
       "fn": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/tables.rs",
+     "purpose": "The side tables `world_keys` keeps (core split slice 1): each row declares one, and the crate's build script…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -98181,42 +99260,42 @@
    ],
    "modules": {
     "access_grant": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "AccessGrant control-plane record substrate"
     },
     "actor_claims": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…"
     },
     "affect": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes"
     },
     "agent_def": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 92,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate"
     },
     "agent_inbox_lens": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -98230,49 +99309,49 @@
      "purpose": "Agent run status is part of the context-board projection vocabulary"
     },
     "anchored_annotation": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…"
     },
     "artifact_hosting": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 79,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 277,
+     "files": 278,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 188,
+     "files": 189,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 87,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98293,7 +99372,7 @@
      "purpose": "—"
     },
     "booking": {
-     "files": 82,
+     "files": 83,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -98307,28 +99386,28 @@
      "purpose": "BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725)"
     },
     "browser_library": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…"
     },
     "build_cache": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 87,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -98342,49 +99421,49 @@
      "purpose": "The engine side of carry-forward claims (`write_envelope::carry_forward`): the confidence floor enforced at…"
     },
     "channel_identity": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)"
     },
     "channel_identity_autonomy": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation"
     },
     "channel_identity_lifecycle": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "ChannelIdentity lifecycle verbs through the ExternalEffect door (OF-347 CID-2)"
     },
     "channel_identity_provider": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)"
     },
     "channel_identity_selection": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Relationship-context channel-identity selection law (ONE-1826)"
     },
     "checkout": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 143,
+     "files": 144,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98398,7 +99477,7 @@
      "purpose": "Claim auto-check candidates and normalized verdict values"
     },
     "clipboard": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -98433,14 +99512,14 @@
      "purpose": "Symbol-anchored memory slots, transfers and scoped pulls"
     },
     "code_revision": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 266,
+     "files": 267,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98454,14 +99533,14 @@
      "purpose": "Sandbox boundary contract for code-mode execution"
     },
     "code_symbol": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Code-symbol manifests, semantic changes and producing-operation views"
     },
     "code_view": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -98475,7 +99554,7 @@
      "purpose": "Repository snapshot ingestion, storage and file access"
     },
     "comm": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98510,14 +99589,14 @@
      "purpose": "Commitment schedule evaluation and durable projection (CMT-2, ONE-1539)"
     },
     "commitment_wake": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -98538,21 +99617,21 @@
      "purpose": "Connect delivery and rejoin wire vocabulary"
     },
     "connector_key": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants"
     },
     "consent_graduation": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -98566,7 +99645,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 88,
+     "files": 89,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98594,14 +99673,14 @@
      "purpose": "Persisted, deterministic Rust/JavaScript API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98622,7 +99701,7 @@
      "purpose": "—"
     },
     "counterparty_contact": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -98636,7 +99715,7 @@
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning"
     },
     "critic": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -98657,28 +99736,28 @@
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
     "disclosure": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…"
     },
     "drafter": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "FIX 12569: each vault's own small draft model (I5-DRAFTER = A), retrained at night on the vault's own…"
     },
     "dreamer_consolidation": {
-     "files": 170,
+     "files": 171,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98692,7 +99771,7 @@
      "purpose": "Dreamer proactive-help × pack catalog (ONE-1707)"
     },
     "dreamer_prefilter": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -98706,21 +99785,21 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 214,
+     "files": 215,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Private Dreamer runner store plus atomic admission"
     },
     "dreamer_tournament": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 72,
+     "files": 73,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98734,28 +99813,28 @@
      "purpose": "The `regenerates` link proofs over stored rows (FIX 5972)"
     },
     "edit_distance": {
-     "files": 86,
+     "files": 87,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -98776,7 +99855,7 @@
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…"
     },
     "entity_doc": {
-     "files": 46,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98790,14 +99869,14 @@
      "purpose": "Entity ids, world ids and the presentation-id grammar"
     },
     "failure_ladder": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -98811,14 +99890,14 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 87,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98832,21 +99911,21 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 205,
+     "files": 206,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "DEC-0005 Gate policy manifest resolver"
     },
     "genui": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "OF-336 generated-UI component contract"
     },
     "git_wire": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -98888,14 +99967,14 @@
      "purpose": "The process-wide physical-memory admission line"
     },
     "housekeeping": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "The engine's housekeeping pass: every sweep the engine relies on, run when due"
     },
     "human_task": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -98923,14 +100002,14 @@
      "purpose": "ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4)"
     },
     "identity_topology": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…"
     },
     "inbox": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98951,7 +100030,7 @@
      "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…"
     },
     "ingest": {
-     "files": 73,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -98965,24 +100044,24 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "learning": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault…"
     },
     "learning_setting": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
     },
     "learning_setting_choice": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The owner's spawn choices (ARCH-0003 #learning-settings, ARCH-0079 #seed-pin): a seed or pin over a spawn's…"
     },
     "learning_setting_doors": {
@@ -98993,7 +100072,7 @@
      "purpose": "The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a…"
     },
     "lens": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -99007,14 +100086,14 @@
      "purpose": "The engine's `[limits]` rows and their question port, defined in `oneiron-contracts`"
     },
     "linear_sync": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
     },
     "linkedin_connector": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -99028,7 +100107,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 188,
+     "files": 189,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99049,7 +100128,7 @@
      "purpose": "Machine destinations and folded read-location values"
     },
     "mail_pack": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -99063,14 +100142,14 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 393,
+     "files": 394,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
     "merge_queue": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -99105,63 +100184,63 @@
      "purpose": "Durable model-step failure and reply-check contracts"
     },
     "note": {
-     "files": 78,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Live office body records and Vault doors"
     },
     "origin": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327"
     },
     "outbound_chokepoint": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools"
     },
     "outbound_grant": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Standing outbound grants for OF-367 RS6.2/RS6.5"
     },
     "outbound_intent_ledger": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99175,14 +100254,14 @@
      "purpose": "Node-local OF-520 own-rate windows"
     },
     "persona_snapshot": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "phone_line": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -99196,21 +100275,21 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Policy classification over two planes"
     },
     "policy_setting_doors": {
-     "files": 1,
+     "files": 2,
      "impl_vault": true,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
     "ports": {
-     "files": 53,
+     "files": 54,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -99238,14 +100317,14 @@
      "purpose": "—"
     },
     "provenance": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "`edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15)"
     },
     "provider_confidence": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -99273,7 +100352,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 46,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99294,7 +100373,7 @@
      "purpose": "—"
     },
     "repo_mutation": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99343,49 +100422,49 @@
      "purpose": "Room row part codecs without the sync feature (FIX 12405)"
     },
     "run_tree": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 71,
+     "files": 72,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Runtime hooks (ARCH-0080)"
     },
     "saved_query": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
     },
     "scan_check": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 84,
+     "files": 85,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…"
     },
     "secret_lease": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -99399,14 +100478,14 @@
      "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)"
     },
     "secret_record": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
      "purpose": "Core half of `secret_record`: its store-layer items live in `oneiron_store::secret_record` and are…"
     },
     "secret_rotation": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -99420,7 +100499,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -99434,28 +100513,28 @@
      "purpose": "Context-pack serialization"
     },
     "session_lifecycle": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
     "settings": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Persisted customization settings and client-visible change events"
     },
     "share": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Revocable brief read grants"
     },
     "share_travel": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -99464,54 +100543,54 @@
     "side_table": {
      "files": 16,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop"
     },
     "skill_convert": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 107,
+     "files": 108,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection"
     },
     "skill_scan": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -99525,7 +100604,7 @@
      "purpose": "SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder"
     },
     "source_audience": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99539,7 +100618,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 392,
+     "files": 393,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99560,7 +100639,7 @@
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)"
     },
     "sweep": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99574,14 +100653,14 @@
      "purpose": "CRDT sync layer for Oneiron"
     },
     "tagging": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…"
     },
     "task_authority": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99595,7 +100674,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 170,
+     "files": 171,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99609,7 +100688,7 @@
      "purpose": "The vault's task-work line: the inherent `Vault` methods that admit task work through the line in…"
     },
     "team": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -99665,28 +100744,28 @@
      "purpose": "Email thread passports and the sticky per-thread mask (ONE-1827, OF-347 INB-02)"
     },
     "training_pack": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap"
     },
     "typed_body": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…"
     },
     "vault_cleanup": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -99700,7 +100779,7 @@
      "purpose": "The vault's live rows: the inherent `Vault` methods that set and read the rows in [`crate::live_rows`]…"
     },
     "vault_shape": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99714,7 +100793,7 @@
      "purpose": "Verb catalog vocabulary used by core admission and action surfaces"
     },
     "verbs": {
-     "files": 129,
+     "files": 130,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -99728,7 +100807,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
     "voice_identity": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99749,7 +100828,7 @@
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)"
     },
     "web_connector": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -99763,23 +100842,23 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 129,
+     "files": 130,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 71,
+     "files": 72,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 238,
+   "over_bar": 239,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7117,
+   "source_files": 7250,
    "test_files": 895
   },
   "oneiron-android": {
