@@ -33,6 +33,7 @@ mod step_attempt;
 mod step_quota;
 // FIX 1743: a stream's probation slot, and its end to its offer's health.
 mod stream_health;
+mod streamed_generation;
 mod worker_lease;
 
 use futures_util::StreamExt;
