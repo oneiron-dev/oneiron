@@ -32,6 +32,11 @@ pub struct AskRequest<'a> {
     /// The verb of the call the ask came from.
     pub call_verb: &'a str,
     pub grant: &'a str,
+    /// The serving call's id and this ask's id within it: the ask's real
+    /// wire identity (`wire::Ask`), scoped to that one call, never global.
+    /// The mesh forward carries both to the asking node untouched.
+    pub(crate) call: u64,
+    pub(crate) id: u32,
     /// The call's deadline as the handler starts. A handler returns before
     /// it; an answer after it is dropped and the call cancelled. A wait for
     /// room while the handler runs moves it on (FIX 6196): the host's own
