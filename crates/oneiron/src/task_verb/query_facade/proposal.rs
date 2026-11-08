@@ -19,8 +19,8 @@ impl Memory<'_> {
     /// [`Self::persist_task_proposal`] for a create (OF-532): a creator a
     /// host bound is re-proved and witnessed under the proposal id in the
     /// proposal's own transaction, before the claim lands, so no settlement
-    /// can see the proposal without its origin. A root create keeps a
-    /// witness only for the conversation the host stamped (OF-221).
+    /// can see the proposal without its origin. A root create keeps its
+    /// caller provenance and any conversation the host stamped (OF-221).
     pub(in crate::task_verb) fn persist_task_proposal_with_origin(
         &self,
         predicate: &str,

@@ -39,8 +39,8 @@ use super::types::{
 use crate::code_run::{
     CapsuleRequest, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStepStart,
     ReplayRoutePin, SelfDispatchOutcome, StepReplayCapsule, StepStartBody, StoredRungBinding,
-    capsule_context_body, capsule_request, capsule_start_body, decode_code_run_replay_record,
-    resolve_result, route_prompt_at, step_replay_capsules_in_txn,
+    capsule_context_body, capsule_fold_words_withdrawn, capsule_request, capsule_start_body,
+    decode_code_run_replay_record, resolve_result, route_prompt_at, step_replay_capsules_in_txn,
 };
 use crate::engine_executor::{JsResultRef, is_result_output_path};
 use crate::limit_ask::EngineLimit;
@@ -230,6 +230,13 @@ fn prepare_step_source(
     if shadow_source_gone(vault, &source_actor) {
         return Ok(Err(unavailable(
             Reason::SourceWithheld,
+            crate::code_run::RESPONSE_ERASED,
+        )));
+    }
+    // FIX 18924: a source whose bodies copy withdrawn fold words is erased.
+    if capsule_fold_words_withdrawn(vault, capsule)? {
+        return Ok(Err(unavailable(
+            Reason::SourceErased,
             crate::code_run::RESPONSE_ERASED,
         )));
     }

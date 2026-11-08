@@ -182,6 +182,11 @@ impl SessionAskRecord {
         } else {
             TaskAskSettlementReason::FirstWord
         };
+        let picked = decision.picked_option(&self.evidence).cloned();
+        let was_rec = picked
+            .as_ref()
+            .zip(self.parts.effective.rec.as_ref())
+            .is_some_and(|(picked, rec)| picked == &rec.option);
         Box::new(TaskAskResult {
             effect_authorization: TaskAskEffectAuthorization::NotEvaluatedByAsk,
             coverage: TaskAskCoverage {
@@ -192,6 +197,8 @@ impl SessionAskRecord {
                 unknown,
             },
             decision,
+            picked,
+            was_rec,
             fallback: None,
             evidence: self.evidence.clone(),
             settlement: TaskAskSettlement {
