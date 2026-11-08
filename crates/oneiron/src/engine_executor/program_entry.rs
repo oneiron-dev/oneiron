@@ -48,7 +48,9 @@ use crate::{Error, Vault};
 mod injection;
 
 use self::injection::SettledCall;
-pub(super) use self::injection::{InjectedAnswer, ProgramCallableSpan, ProgramInjection};
+pub(super) use self::injection::{
+    InjectedAnswer, ProgramCallableSpan, ProgramInjection, ProgramLogEntry,
+};
 
 /// What the guest of a call reads once its entry holds.
 pub(super) const PROGRAM_RESUME_HELD: &str = "program_resume_held";
@@ -424,12 +426,7 @@ impl<'a> EngineNativeExecutor<'a> {
         self.gated_write
             .observe_bridge_history(&record.bridge_calls);
         let recoverable = self.observation_refs(&record)?;
-        let injection = ProgramInjection {
-            entered: false,
-            calls: settled,
-            answered: Vec::new(),
-            held: None,
-        };
+        let injection = ProgramInjection::new(settled);
         let mut host = RecordingJsHost::new(
             self.gated_write,
             config.run_id,
@@ -460,8 +457,8 @@ impl<'a> EngineNativeExecutor<'a> {
         let response = host.dispatch_self_nested_cancellable(pinned, &mut lent, cancel)?;
         let ran = lent.ran;
         let failure = host.hard_failure.take();
-        let answered = match host.injection.take().map(ProgramInjection::settle) {
-            Some(Ok(answered)) => answered,
+        let log = match host.injection.take().map(ProgramInjection::settle) {
+            Some(Ok(log)) => log,
             Some(Err(why)) => return Ok(PinnedProgramRun::Held(why)),
             None => {
                 return Err(Error::InvariantViolation("a pinned entry lost its injection").into());
@@ -485,37 +482,49 @@ impl<'a> EngineNativeExecutor<'a> {
             entry_start,
             &host.bridge_calls,
         )?;
-        // The settled calls in the source's order: those answered, then the
-        // entry's own, up to the call that parked. A callable whose body
-        // ended is listed whole, its own calls not; one whose body was still
-        // running is listed open, its own calls after it (FIX 5878).
-        let injected = u64::try_from(answered.len())
-            .map_err(|_| Error::ArithmeticOverflow("pinned entry calls"))?;
-        let mut calls = answered;
+        // The settled calls in the source's order, answered or issued, up to
+        // the call that parked (FIX 5878). A callable whose body ended is
+        // listed whole, its own calls not; one whose body unwound on the wait
+        // is listed open, its own calls after it; one that cannot resume is
+        // listed held. The calls answered before the entry issued any keep
+        // their place: an earlier head's pages hold them as written.
+        let rows: std::collections::HashMap<u64, &CodeRunBridgeCall> =
+            host.bridge_calls.iter().map(|row| (row.seq, row)).collect();
+        let mut calls = Vec::new();
+        let mut injected = 0u64;
+        let mut answered_first = true;
         let mut parked_row = None;
-        let mut inside_settled: Option<u64> = None;
-        for row in host
-            .bridge_calls
-            .iter()
-            .filter(|row| row.seq != entry_start)
-        {
-            if inside_settled.is_some_and(|end| row.seq < end) {
+        let mut inside_settled: Option<usize> = None;
+        for (index, entry) in log.iter().enumerate() {
+            if inside_settled.is_some_and(|end| index < end) {
                 continue;
             }
+            let seq = match *entry {
+                ProgramLogEntry::Answered(listed) => {
+                    calls.push(listed);
+                    if answered_first {
+                        injected += 1;
+                    }
+                    continue;
+                }
+                ProgramLogEntry::Issued(seq) if seq == entry_start => continue,
+                ProgramLogEntry::Issued(seq) => seq,
+            };
+            answered_first = false;
+            let Some(row) = rows.get(&seq) else {
+                return Err(
+                    Error::InvariantViolation("a pinned entry lost a row it issued").into(),
+                );
+            };
             if row.program_durable_wait()?.is_some() {
-                parked_row = Some(row.seq);
+                parked_row = Some(seq);
                 break;
             }
             let mut call = program_resume_call(row, None)?;
-            if let Some(span) = host
-                .program_callables
-                .iter()
-                .find(|span| span.seq == row.seq)
-            {
-                if span.open {
-                    call.kind = ProgramResumeKind::OpenCallable;
-                } else {
-                    inside_settled = Some(span.end);
+            if let Some(span) = host.program_callables.iter().find(|span| span.seq == seq) {
+                call.kind = span.kind;
+                if span.kind == ProgramResumeKind::Settled {
+                    inside_settled = Some(span.log_end);
                 }
             }
             calls.push(call);

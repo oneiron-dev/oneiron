@@ -29,6 +29,7 @@ use super::types::{
     JsCodeModeStream, JsResultCall, JsResultRef, JsResultTarget, SelfDispatchResponse,
     StoreReceiptInput,
 };
+use crate::code_run::ProgramResumeKind;
 use crate::code_run::{
     CapturedSkillDelivery, CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput,
     CodeRunReplayRecord, CodeRunResultBinding, DelegatedSource, ExecutorCallSite, ExecutorStorage,
