@@ -613,6 +613,13 @@ export class Oneiron {
         set: (input: Facade.CompanionSharingSetRequest): Facade.CompanionSharingView => this.#call(() => this.#client.vaultCompanionsSharingSet(input) as Facade.CompanionSharingView),
       },
     },
+    proactivity: {
+      /** Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator. */
+      digest: Object.assign((input: Facade.ProactivityDigestRequest): Facade.ProactivityDigestView | null => this.#call(() => this.#client.vaultProactivityDigest(input) as Facade.ProactivityDigestView | null), {
+        /** Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant. */
+        get: (input: Facade.DigestReadRequest): Facade.ProactivityDigestView | null => this.#call(() => this.#client.vaultProactivityDigestGet(input) as Facade.ProactivityDigestView | null),
+      }),
+    },
     personas: {
       /** Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp. */
       preview: (input: Facade.PersonaSnapshotPreviewRequest): Facade.PersonaSnapshotPreview => this.#call(() => this.#client.vaultPersonasPreview(input) as Facade.PersonaSnapshotPreview),
@@ -1089,10 +1096,6 @@ export class Oneiron {
         /** The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items. */
         resolve: (input: Facade.InboxGroupResolveRequest): Facade.InboxGroupResolution => this.#call(() => this.#client.vaultInboxGroupsResolve(input) as Facade.InboxGroupResolution),
       }),
-    },
-    proactivity: {
-      /** Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator. */
-      digest: (input: Facade.ProactivityDigestRequest): Facade.ProactivityDigestView | null => this.#call(() => this.#client.vaultProactivityDigest(input) as Facade.ProactivityDigestView | null),
     },
     skills: {
       /** Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills. */

@@ -136,6 +136,7 @@ pub(crate) use super::mail_pack_doors::*;
 // The owner's pack preview door (FIX 5493), likewise.
 pub(crate) use super::pack_preview_doors::*;
 pub(crate) use super::persona_doors::*;
+pub(crate) use super::proactivity_digest_doors::*;
 // The general access request answer (FIX 1379), likewise.
 pub(crate) use super::grants_doors::*;
 pub(crate) use super::residence_doors::*;
