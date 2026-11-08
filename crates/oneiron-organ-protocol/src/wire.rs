@@ -362,7 +362,11 @@ pub enum ErrorCode {
 }
 
 /// One ask, inside the call it names. At most one per call is in
-/// flight: the organ waits for its answer, or the call's cancel.
+/// flight: the organ waits for its answer, or the call's cancel. It asks
+/// again only once it has decoded that answer and freed its frames' bytes,
+/// so the engine reads each ask as the end of the organ's read of every
+/// message it sent for the call before, and gives back the room it held
+/// for those frames then (FIX 12437).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Ask {
     /// The id of the call this ask belongs to.
