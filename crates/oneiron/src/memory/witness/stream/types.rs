@@ -70,6 +70,13 @@ impl MessageStreamHandle {
     pub fn message_id(&self) -> EntityId {
         self.message
     }
+    /// The stream generation this handle writes (FIX 5028): its identity,
+    /// read only. A host keys what it keeps for this generation by it before
+    /// the stream's call is sent; no caller chooses it.
+    #[must_use]
+    pub fn generation(&self) -> EntityId {
+        self.generation
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
