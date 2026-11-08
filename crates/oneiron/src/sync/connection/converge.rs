@@ -302,8 +302,10 @@ impl SyncConnection {
                                     })?;
                             }
                         }
+                        // A fault of this machine's own store applying the frame
+                        // says nothing of the far end (FIX 22153).
                         Err(e) if strict => {
-                            return Err(SessionFault::Remote(format!("Protocol error: {e}")));
+                            return Err(SessionFault::of_frame(&e, format!("Protocol error: {e}")));
                         }
                         Err(e) => {
                             let _ = event_tx.send(SyncEvent::Error(format!("Protocol error: {e}")));
