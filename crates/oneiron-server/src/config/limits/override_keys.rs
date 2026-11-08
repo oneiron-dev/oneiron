@@ -14,6 +14,7 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) embedder_requests: Option<usize>,
     pub(in crate::config) embedder_answer_bytes: Option<u64>,
     pub(in crate::config) decision_reads: Option<usize>,
+    pub(in crate::config) context_reads: Option<usize>,
     pub(in crate::config) task_work: Option<usize>,
     pub(in crate::config) renderer_work: Option<usize>,
     pub(in crate::config) lfs_quota_bytes: Option<u64>,

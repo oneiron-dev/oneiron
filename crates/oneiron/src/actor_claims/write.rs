@@ -146,6 +146,11 @@ pub(super) fn write_born_actor_claim_in_txn(
     evidence: &ActorClaimEvidence,
     birth: Option<&RowBirth>,
 ) -> Result<EntityId> {
+    if let Some(id) =
+        super::imported_chat::write_imported_chat_in_txn(vault, wtxn, row, evidence, birth)?
+    {
+        return Ok(id);
+    }
     let predicate = row.predicate();
     let actor = row.actor();
     let (value, pair_scope) = row.value_and_scope()?;
