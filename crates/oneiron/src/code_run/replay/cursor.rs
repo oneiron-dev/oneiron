@@ -27,6 +27,18 @@ impl CodeRunBridgeCall {
         index: u64,
         call: SelfCall,
     ) -> Result<SelfDispatchOutcome> {
+        self.strict_replay_answer_held(index, call, None)
+    }
+
+    /// [`Self::strict_replay_answer`] for a call whose input `held` may
+    /// stand for (FIX 22096): an action's call it holds meets its row by the
+    /// request the action recorded for it, the whole input's digests.
+    pub(crate) fn strict_replay_answer_held(
+        &self,
+        index: u64,
+        call: SelfCall,
+        held: Option<&crate::code_run::actions::ActionBlobInput>,
+    ) -> Result<SelfDispatchOutcome> {
         if self.seq != index {
             return Err(invalid_code_run_replay("code-run replay bridge seq drift"));
         }
@@ -42,7 +54,12 @@ impl CodeRunBridgeCall {
         // unstamped re-dispatch cannot fail the comparison below for a
         // difference the guest was never allowed to control.
         let call = call.with_bridge_stamp(self.seq, self.started_at_ms);
-        let request = self_call_request_value(&call)?;
+        let request = match (held, &call) {
+            (Some(held), SelfCall::AgentVerb(verb)) if held.holds(verb.verb, &verb.input) => {
+                held.request_value()
+            }
+            _ => self_call_request_value(&call)?,
+        };
         // A spawn row's erased ask answers only from a coherent row (FIX 9180).
         self.validate_spawn_coherence()?;
         // A stored request keeps the handles the side-row wall placed where
@@ -50,7 +67,16 @@ impl CodeRunBridgeCall {
         // nothing, so a spawn's miss (FIX 7447) is a mismatch here.
         // A re-offered call meets its row by the guest's original request;
         // hooks never run on replay (FIX 1442 H4: match stays on original).
-        if !replay_request_match(self.effect, &self.request, &request)?.is_hit() {
+        // A call whose host held its input as a file meets the row of the
+        // same call sent whole, and the reverse, by the whole input's
+        // digests (FIX 22096).
+        let held_hit = || {
+            self.effect == SelfEffect::AgentVerb
+                && crate::code_run::actions::held_request_form(&self.request).is_some_and(
+                    |stored| Some(stored) == crate::code_run::actions::held_request_form(&request),
+                )
+        };
+        if !replay_request_match(self.effect, &self.request, &request)?.is_hit() && !held_hit() {
             return Err(invalid_code_run_replay("code-run replay request mismatch"));
         }
         // A row can come from an in-memory record that never passed the
@@ -95,6 +121,27 @@ impl<'a> CodeRunReplayCursor<'a> {
 
 impl SelfDispatcher for CodeRunReplayCursor<'_> {
     fn dispatch(&self, call: SelfCall) -> Result<SelfDispatchOutcome> {
+        self.dispatch_requested(call, None)
+    }
+}
+
+impl CodeRunReplayCursor<'_> {
+    /// [`SelfDispatcher::dispatch`] for an action's call whose input
+    /// `held` stands for (FIX 22096): its row meets the call by the request
+    /// the action recorded for it, the whole input's digests.
+    pub(crate) fn dispatch_held(
+        &self,
+        call: SelfCall,
+        held: &crate::code_run::actions::ActionBlobInput,
+    ) -> Result<SelfDispatchOutcome> {
+        self.dispatch_requested(call, Some(held))
+    }
+
+    fn dispatch_requested(
+        &self,
+        call: SelfCall,
+        held: Option<&crate::code_run::actions::ActionBlobInput>,
+    ) -> Result<SelfDispatchOutcome> {
         let index = self.next.get();
         let stored = self
             .record
@@ -103,7 +150,7 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
             .ok_or(invalid_code_run_replay(
                 "code-run replay bridge log exhausted",
             ))?;
-        let outcome = stored.strict_replay_answer(index as u64, call)?;
+        let outcome = stored.strict_replay_answer_held(index as u64, call, held)?;
         self.next.set(index + 1);
         match outcome {
             // A refused SDK verb reached the guest as a typed refusal it could

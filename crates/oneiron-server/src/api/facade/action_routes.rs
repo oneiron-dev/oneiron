@@ -605,6 +605,40 @@ pub(crate) async fn execute_facade_row<T: serde::Serialize>(
         idempotency_key,
     };
     let dispatch = execute(server, headers, extensions, bound, None, call).await?;
+    row_answer(row, dispatch)
+}
+
+/// [`execute_facade_row`] for an input whose content `held` holds as a
+/// file (FIX 22096): the action's one argument is the input with that
+/// member empty, and the action measures, seeds and records the whole
+/// input from the file, which its row reads. The caller has measured the
+/// whole input against one action argument.
+pub(crate) async fn execute_facade_row_held(
+    server: &Arc<SyncServer>,
+    headers: HeaderMap,
+    mut extensions: Extensions,
+    bound: ActionBound,
+    held: oneiron::code_run::actions::ActionBlobInput,
+    idempotency_key: String,
+) -> Result<serde_json::Value, FacadeApiError> {
+    let row = held.verb();
+    let call = AgentActionCall {
+        verb_id: SelfUiActionId::new(row.as_str()).map_err(engine)?,
+        args: vec![ActionArgument::Json(
+            ActionJson::new(held.head().clone()).map_err(engine)?,
+        )],
+        idempotency_key,
+    };
+    extensions.insert(super::blob_body::HeldActionInput(held));
+    let dispatch = execute(server, headers, extensions, bound, None, call).await?;
+    row_answer(row, dispatch)
+}
+
+/// The answer of verb-table row `row` its action dispatched.
+fn row_answer(
+    row: AgentVerb,
+    dispatch: ActionDispatch,
+) -> Result<serde_json::Value, FacadeApiError> {
     match dispatch.outcome {
         SelfDispatchOutcome::AgentVerb(answer) => Ok(answer.output),
         SelfDispatchOutcome::Denied(denied) => Err(match dispatch.refusal {
