@@ -44,13 +44,7 @@
 //! owner's own row.
 
 use super::RefStep::{Field, Json};
-use super::{
-    ActorScrub, CodecName, RefPath, RestoreClass, SideDb, SidePayload, SideTableDecl, StorageTier,
-};
-use crate::store::checkpoint_payload::rows::{Class, Client};
-
-// The catalogue before the rows moved (slice 1), pinned below until the move settles.
-mod snapshot;
+use super::{ActorScrub, RefPath, RestoreClass, SideDb, SidePayload, SideTableDecl, StorageTier};
 
 /// Declares side tables: each row becomes a `pub(crate) static` [`SideTableDecl`] in the module
 /// that invokes it. Only the crate's build script lists them, in [`CATALOGUE`], so a row lives in
@@ -381,11 +375,6 @@ const _: () = assert_disjoint(&CATALOGUE);
 // table with one, does not compile.
 const _: () = assert_restore_tiers(&CATALOGUE);
 
-// The written catalogue is the one before the rows moved into their owner modules, entry for entry,
-// with the restore class, payload family and tier each listing gave it: a lost, added, reordered
-// or changed row does not compile.
-const _: () = assert_snapshot(&snapshot::SNAPSHOT, &CATALOGUE);
-
 // The session overlay keeps these tables' rows outside a room's byte budget by
 // the prefixes in `oneiron_store::overlay_bookkeeping`. A lower prefix that
 // differs from its declaration does not compile.
@@ -458,101 +447,6 @@ const fn assert_restore_tiers(catalogue: &[&SideTableDecl]) {
         );
         index += 1;
     }
-}
-
-/// One snapshot entry: name, database, prefix, codec, payload, restore class, payload family,
-/// tier and key-range tiers.
-type SnapshotEntry = (
-    &'static str,
-    SideDb,
-    &'static [u8],
-    CodecName,
-    SidePayload,
-    RestoreClass,
-    Option<Class>,
-    StorageTier,
-    &'static [(&'static [u8], StorageTier)],
-);
-
-/// `catalogue` is `snapshot`, entry for entry: name, database, prefix, codec, payload, restore
-/// class, payload family, tier and key-range tiers.
-const fn assert_snapshot(snapshot: &[SnapshotEntry], catalogue: &[&SideTableDecl]) {
-    assert!(
-        snapshot.len() == catalogue.len(),
-        "the catalogue's table count differs from the snapshot's"
-    );
-    let mut index = 0;
-    while index < snapshot.len() {
-        let (name, db, prefix, codec, payload, restore, family, tier, key_tiers) = snapshot[index];
-        let decl = catalogue[index];
-        assert!(
-            same_bytes(name.as_bytes(), decl.name.as_bytes())
-                && db as u8 == decl.db as u8
-                && same_bytes(prefix, decl.prefix)
-                && codec as u8 == decl.codec as u8
-                && payload as u8 == decl.payload as u8,
-            "the catalogue differs from the snapshot taken before the rows moved"
-        );
-        assert!(
-            same_restore(restore, decl.restore)
-                && same_family(family, decl.family)
-                && tier as u8 == decl.tier as u8
-                && same_key_tiers(key_tiers, decl.key_tiers),
-            "a table's restore class, payload family or tier differs from the snapshot of the lists"
-        );
-        index += 1;
-    }
-}
-
-const fn same_restore(left: RestoreClass, right: RestoreClass) -> bool {
-    match (left, right) {
-        (RestoreClass::Content, RestoreClass::Content)
-        | (RestoreClass::Live, RestoreClass::Live)
-        | (RestoreClass::NotImaged, RestoreClass::NotImaged)
-        | (RestoreClass::None, RestoreClass::None) => true,
-        (RestoreClass::Refuse(left_what), RestoreClass::Refuse(right_what))
-        | (
-            RestoreClass::RefuseImageEntities(left_what),
-            RestoreClass::RefuseImageEntities(right_what),
-        ) => same_bytes(left_what.as_bytes(), right_what.as_bytes()),
-        _ => false,
-    }
-}
-
-const fn same_family(left: Option<Class>, right: Option<Class>) -> bool {
-    let (left_class, left_member) = family_code(left);
-    let (right_class, right_member) = family_code(right);
-    left_class == right_class && left_member == right_member
-}
-
-/// A payload family as two numbers: its class, and the getter, client, custody kind or carrier
-/// it names, by tag.
-const fn family_code(family: Option<Class>) -> (u8, u8) {
-    match family {
-        None => (0, 0),
-        Some(Class::Unclassified) => (1, 0),
-        Some(Class::NotImaged) => (2, 0),
-        Some(Class::Structure) => (3, 0),
-        Some(Class::Owner(getter)) => (4, getter.tag()),
-        Some(Class::Other(Client::Dispatch(client))) => (5, client as u8),
-        Some(Class::Other(Client::Sealed(kind))) => (6, kind.tag()),
-        Some(Class::Mixed(carrier)) => (7, carrier.tag()),
-    }
-}
-
-const fn same_key_tiers(left: &[(&[u8], StorageTier)], right: &[(&[u8], StorageTier)]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    let mut index = 0;
-    while index < left.len() {
-        if !same_bytes(left[index].0, right[index].0) || left[index].1 as u8 != right[index].1 as u8
-        {
-            return false;
-        }
-        index += 1;
-    }
-    true
 }
 
 const fn starts_with(bytes: &[u8], prefix: &[u8]) -> bool {
