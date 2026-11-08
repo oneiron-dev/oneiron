@@ -18,9 +18,9 @@
 //! chunk, and authenticates a chunk before it returns a byte of it: a body
 //! cut short, reordered, extended or opened under another manifest does not
 //! read. Malformed or unauthenticated bodies return [`Error::CorruptedIndex`],
-//! carrying no manifest bytes. Reserving a native record's measured plaintext
-//! length, associated-data buffers and sealed frame storage can also return
-//! an I/O allocation fault.
+//! carrying no manifest bytes. Reserving the parsed frame list, a native
+//! record's measured plaintext length, associated-data buffers and sealed frame
+//! storage can also return an I/O allocation fault.
 
 use std::borrow::Cow;
 
@@ -81,6 +81,7 @@ impl<'a> SealedSnapshot<'a> {
             let len = usize::try_from(u32::from_be_bytes(*len)).map_err(|_| corrupt())?;
             let frame = tail.get(..len).ok_or_else(corrupt)?;
             Envelope::parse(frame).map_err(|_| corrupt())?;
+            frames.try_reserve(1).map_err(std::io::Error::from)?;
             frames.push(Cow::Borrowed(frame));
             rest = &tail[len..];
         }

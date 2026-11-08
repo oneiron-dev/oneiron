@@ -512,3 +512,21 @@ pub(crate) fn completed_task_at_in_txn(
         .filter(|terminal| terminal.disposition == TaskTerminalDisposition::Completed)
         .map(|terminal| terminal.finished_at))
 }
+
+/// The due time of an open TASK (FIX 4749): `None` when the row is gone, is
+/// no typed TASK, has settled or carries no due time. A body no reader can
+/// decode reads as no due time, so one bad row never holds the tick feed.
+pub(crate) fn open_task_due_at_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<u64>> {
+    let body = match task_verb_body_in(vault, txn, task_ref) {
+        Ok(body) => body,
+        Err(Error::Record(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(body
+        .filter(|body| body.terminal().is_none())
+        .and_then(|body| body.due_at))
+}
