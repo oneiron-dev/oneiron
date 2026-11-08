@@ -311,7 +311,7 @@ fn optimize(
         } else {
             0
         },
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     })
 }
 

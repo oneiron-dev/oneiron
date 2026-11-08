@@ -71,6 +71,7 @@ pub(crate) use hook_hold::HoldAttemptForHook;
 pub use read_set::{AttemptReadSet, ReadSetProducer};
 pub(crate) use telemetry::AttemptQueueCleanupMetrics;
 pub use telemetry::AttemptQueueCleanupMetricsSnapshot;
+pub use types::AttemptLeaseExpiry;
 pub use types::AttemptTerminalExhaust;
 pub use types::{
     AbandonAttempt, AbandonOutcome, AttemptEvent, AttemptId, AttemptInterventionEffect,
