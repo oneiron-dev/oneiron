@@ -29,6 +29,30 @@ use crate::task_verb::sdk::{AgentVerb, RunVerb};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
+/// What a row-placing in-core write of a slip-woken program does when its
+/// slip narrows a position axis (FIX 10666; Engine 19:20, CALLS
+/// FIX-10666-narrowed-in-core-write): the in-core call carries no position
+/// to check, so it is refused, and the memory door that checks one takes
+/// the write. FIX 20094 tests the position in the write instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NarrowedSlipInCoreWrite {
+    Refuse,
+}
+
+const NARROWED_SLIP_IN_CORE_WRITE: NarrowedSlipInCoreWrite = NarrowedSlipInCoreWrite::Refuse;
+
+/// Whether `scope` narrows where a write may land: any of its worlds,
+/// facets, audience, bands or sensitivity short of the whole vault. Its
+/// verbs are the call's class, judged apart.
+fn narrows_position(scope: &oneiron_authority::federation::Scope) -> bool {
+    let whole = oneiron_authority::federation::Scope::top();
+    scope.worlds != whole.worlds
+        || scope.facets != whole.facets
+        || scope.audience != whole.audience
+        || scope.bands != whole.bands
+        || scope.sensitivity != whole.sensitivity
+}
+
 const PROGRAM_CALL_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-write-call:v1";
 
 /// The refusal a program's run gets for any callable but its pinned one.
@@ -113,6 +137,31 @@ impl<'a> HostSelfDispatcher<'a> {
             return Ok(None);
         }
         Ok(Some(MEMORY_CODE_FORBIDDEN.to_owned()))
+    }
+
+    /// Refuses an in-core write that places a row (a claim, a fixture
+    /// claim, a supersession or an edge) for a slip-woken program whose slip
+    /// narrows where its writes may land (FIX 10666): the in-core call
+    /// proves no position, so the program places its claims through
+    /// `vault.claims.upsert`, whose door checks the position against the
+    /// slip. A run no slip woke, and a slip whose position is the whole
+    /// vault, write as before.
+    ///
+    /// # Errors
+    /// The refusal, when the slip narrows a position axis.
+    pub(super) fn refuse_narrowed_program_write(&self) -> Result<()> {
+        let Some(proof) = self.program_proof() else {
+            return Ok(());
+        };
+        match NARROWED_SLIP_IN_CORE_WRITE {
+            NarrowedSlipInCoreWrite::Refuse if narrows_position(proof.scope()) => Err(
+                Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority {
+                    reason: "a position-narrowed credential places claims through \
+                             vault.claims.upsert, which checks the position",
+                }),
+            ),
+            NarrowedSlipInCoreWrite::Refuse => Ok(()),
+        }
     }
 
     /// `door`'s answer to `call`, unless a slip-woken program's slip does

@@ -229,6 +229,21 @@ pub(crate) fn finalize_repo_derived_index_copies_in_txn(
     Ok(())
 }
 
+/// The owner's discard of a world copy takes `id`'s own derived index copy,
+/// its safe text and provenance (FIX 14534, Engine 11-06 08:34 call 4 = A).
+/// The copies derived from it, which retained owners read, stay as they are,
+/// with no pending work queued for them.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn discard_repo_derived_index_copy_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    delete_in_txn(store, wtxn, RepoDerivedOwner::Text(*id))
+}
+
 /// An erase of `id`, a cache cleanup only: its own copy goes, and each
 /// ready copy derived from it is pending again, directly or through what
 /// derives from it (FIX 10889: a caption of an ASSET derived from `id`),

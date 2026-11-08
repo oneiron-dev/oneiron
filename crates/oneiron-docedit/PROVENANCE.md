@@ -179,8 +179,8 @@ both outer modes via a text-only settle that flips the fresh `Inserted` segment
 and drops the `Deleted` tombstone, leaving paragraph formatting/change metadata,
 `para_id`, author/date, threading/resolve sidecar, all other blocks, and body
 anchors verbatim; no `w:ins`/`w:del` is authored into comments.xml, and the
-edited comment's full content hash is recomputed. An empty replacement drops its
-markers with its tombstone, the same full-deletion law as the note path. Existing
+edited comment's full content hash is recomputed. An empty replacement retains
+its Normal structural markers while removing the old text. Existing
 create/reply/delete behavior, the shared builder, and the exact-marks helper are
 byte-unchanged. No contract schema bump, no new error, format, default, cap, or
 Loro change. No Word-runtime comparison is claimed.
@@ -234,6 +234,27 @@ is not an old-format reader, default or migration. A later change after they
 land requires fresh current versions. No numeric ceiling, default, dependency,
 error kind, test or runtime/Word proof is added by this extension.
 
+The exact move-deletion range change (2026-11-05, FIX 13300 partial) touches
+`src/tracked_model.rs`. Eligible destination clones reconstruct their original
+moved text using actual revision identities. When it equals the full paired
+source text, inner deletions retain their character ranges instead of searching
+for unique substrings. Repeated text maps to its own occurrence; empty material
+ranges leave the source unchanged. Hard breaks and opaque inlines retain their
+nodes and receive the deletion status when their one-character span is selected.
+Empty material deletions also leave nonaligned sources unchanged, matching the
+exact-range no-op; destination revision repair still runs. Nonempty nonaligned
+clones keep the existing unique-text mapping, including its non-text statuses.
+Move eligibility, pairing, marker repair and resolution order are unchanged;
+nonaligned ambiguity and suppressed destination pilcrows remain open.
+
+The table-cell fallback change (2026-11-06, FIX 17480) touches
+`src/native_patch/table.rs`. When retained text mapping and the field-aware cut
+cannot apply, the existing rebuild keeps the first paragraph's terminal run
+properties and the namespace bindings of copied paragraph and run properties.
+If no ordinary run exists, it carries the first field's explicit run properties.
+The outcome names the actual typed fields removed by that rebuild. Expected-text
+checks, grid/merge checks, first-match table selection and the retained/cut paths
+are unchanged. This is a source-level correction, not a PowerPoint fidelity proof.
 The scoped paragraph-question extension (2026-11-06, FIX 14487) carries an optional
 actual native story through `comment_create`'s strict wire schema, EditStep and
 paragraph lookup. Absent scope keeps the existing body path; present scope never
@@ -289,7 +310,38 @@ inferred from replacement prose. The same predicate now serves marker presence,
 stripping and this carrier. Native wire/schema versions and marker-free
 replacement semantics are unchanged; no Word-runtime comparison is claimed.
 
+The note/comment run marker correction (2026-11-07) repositions each retained
+Normal marker once between the old and replacement text readings, using the
+existing offset-placement helper only to plan the target positions. The planning
+copies are discarded, so accepted, rejected and unresolved output retain one
+marker identity rather than emitting both originals and replacement copies.
+The exact-marks pass still runs before any replacement text is split; the shared
+segment builder, marker offset law and note auto-number behavior are unchanged.
+The comment-cell text settle also retains structural markers from a deleted
+text segment as Normal markers, including when the replacement is empty. It
+adds no refusal and does not change any other paragraph or cell.
 
+## Native deck transaction graphic ceilings (FIX 10653)
+
+A deck transaction may carry `graphics` with the existing `svg_bytes`,
+`raster_bytes`, and `raster_pixels` ceilings. Every `set_picture` step uses that
+same setting through `Picture.limits`. An absent setting uses the unchanged
+`GraphicLimits::default()` values and is omitted from canonical serialization.
+An explicit setting stays in the canonical transaction and therefore the existing
+handoff hash and settlement replay. The asset identity/hash checks, factual-use
+and provenance rules, resource admission, capacity errors, candidate part-diff
+checks, and reports are unchanged. Native deck creation and live export retain
+their existing defaults; this is only the transaction slice of FIX 10653.
+
+
+### Native live deck export graphic settings (FIX 10653)
+
+The live deck export profile accepts optional `GraphicLimits`. The projector resolves
+those settings once and passes them to both new-picture creation and bound-picture
+replacement. Existing held-media paths do not re-admit their bytes. Omitting the
+settings keeps the existing numeric defaults and the old profile/key serialization.
+An explicit setting is part of `ExportKey`, so a memo for another setting cannot
+stand in for it. The projector signature and export gate remain unchanged.
 The nested-table identity change (2026-11-07, FIX 21302) touches `src/import.rs`.
 Rows, cells and content-control-wrapped cells pass the existing body/story
 `table_counter` into nested tables instead of resetting it in each cell.

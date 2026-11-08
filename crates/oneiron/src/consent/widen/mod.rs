@@ -18,7 +18,12 @@ use std::io::Cursor;
 
 mod contact_verdict_index;
 mod offers;
+mod predecessor;
+mod row_reuse;
 mod streamed;
+
+pub(super) use predecessor::forget_widen_predecessor_in_txn;
+use predecessor::predecessors_at_filing;
 
 /// Parked authority-widening request, keyed by its own hex64 reference.
 const WIDEN_PROPOSALS: SideTable<String, StoredProposal, LegacyJson> =
@@ -81,6 +86,11 @@ struct StoredProposal {
     /// lineage nor any fork of it may settle it (FIX 5064).
     #[serde(default)]
     opener_lineage: Vec<[u8; 32]>,
+    /// The owner's active grants the proposed bound strictly contained when
+    /// it was filed, less any minted again since: the accept that mints the
+    /// wider grant revokes those still standing so, in the same writer
+    /// (FIX 9740).
+    predecessors: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -202,6 +212,10 @@ fn widen_rejection_digest(proposal: &WidenProposal) -> EffectDigest {
     EffectDigest::from_bytes(*hasher.finalize().as_bytes())
 }
 fn validate_row(row: StoredProposal, reference: &str) -> Result<StoredProposal> {
+    validate_row_fields(&row, reference)?;
+    Ok(row)
+}
+fn validate_row_fields(row: &StoredProposal, reference: &str) -> Result<()> {
     let p = &row.proposal;
     decode_delta(&p.canonical_delta)?;
     if row.version != 1
@@ -220,7 +234,7 @@ fn validate_row(row: StoredProposal, reference: &str) -> Result<StoredProposal> 
     {
         return Err(invalid_row());
     }
-    Ok(row)
+    Ok(())
 }
 impl Vault {
     /// A verified agent may propose an action widening, but cannot grant it.
@@ -404,6 +418,11 @@ impl Vault {
             if let Some(row) = WIDEN_PROPOSALS.get(&self.store, &*txn, &reference)? {
                 return Ok(validate_row(row, &reference)?.proposal);
             }
+            // The grants this widening replaces, as they stand at filing.
+            let predecessors = match decode_delta(&canonical_delta)? {
+                WidenDelta::Bound(bound) => predecessors_at_filing(self, txn, &bound, &owner_ref)?,
+                WidenDelta::ContactDisclosure(_) => Vec::new(),
+            };
             let proposal = WidenProposal {
                 proposal_ref: reference,
                 canonical_delta,
@@ -439,6 +458,7 @@ impl Vault {
                 resolved: false,
                 settlement: None,
                 opener_lineage,
+                predecessors,
             };
             WIDEN_PROPOSALS.put(&self.store, txn, &row.proposal.proposal_ref, &row)?;
             Ok(proposal)
@@ -489,6 +509,23 @@ impl Vault {
         Ok(())
     }
 
+    fn widen_answer_principal_in_txn<'owner>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &'owner AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+    ) -> Result<&'owner str> {
+        let principal_ref = owner.principal_ref_in_txn(self, txn)?;
+        if let Some(credential) = credential
+            && !self.capability_slip_is_live_in_txn(txn, credential)?
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "holder credential is no longer live",
+            )));
+        }
+        Ok(principal_ref)
+    }
+
     /// The stored proposal `reference` names, opened for an answer in the
     /// answering txn: `credential`, when the route passed one, is still
     /// live, and the proposal is this owner's.
@@ -499,24 +536,8 @@ impl Vault {
         credential: Option<&VerifiedSlip>,
         reference: &str,
     ) -> Result<StoredProposal> {
-        let principal_ref = owner.principal_ref_in_txn(self, txn)?;
-        if let Some(credential) = credential
-            && !self.capability_slip_is_live_in_txn(txn, credential)?
-        {
-            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                "holder credential is no longer live",
-            )));
-        }
-        let row = WIDEN_PROPOSALS
-            .get(&self.store, txn, &reference.to_owned())?
-            .ok_or_else(invalid_row)?;
-        let row = validate_row(row, reference)?;
-        if row.proposal.owner_ref != principal_ref {
-            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                "widen proposal belongs to another holder",
-            )));
-        }
-        Ok(row)
+        let principal_ref = self.widen_answer_principal_in_txn(txn, owner, credential)?;
+        self.widen_row_for_principal_in_txn(txn, principal_ref, reference)
     }
 
     /// Declines one frozen proposal: it settles [`WIDEN_REJECTED`], so no
@@ -600,33 +621,38 @@ impl Vault {
         reference: &str,
         matches_delta: impl FnOnce(&[u8]) -> bool,
     ) -> Result<ConsentReceipt> {
-        validate_reference_shape(reference)?;
-        let key = reference.to_owned();
-        self.with_write_txn_grouped(|txn| {
-            let mut row = self.owned_widen_row_in_txn(&*txn, owner, credential, reference)?;
-            let proposal = &row.proposal;
-            if row.resolved
-                || proposal.expires_at <= self.store.clock.now_recorded_at()
-                || !matches_delta(&proposal.canonical_delta)
-            {
-                return Err(Error::Gate(GateError::InvalidConsentBound(
-                    "widen proposal is stale, changed, or resolved",
-                )));
+        self.accept_widen_matching_reusing(owner, credential, reference, None, matches_delta)
+    }
+
+    /// Refuses an accept answered from the lineage that opened `row`, or a
+    /// fork of it (DEC-0006, FIX 5064, 9741), as every proposal door does:
+    /// the proposer itself, the proof's carried credential chains, or the
+    /// holder credential the route passed. A proposal frozen with no
+    /// lineage shares none.
+    fn refuse_opener_answer_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+        row: &StoredProposal,
+    ) -> Result<()> {
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        let holder_meets = match credential {
+            Some(credential) => {
+                let lineage = self.slip_lineage_in_txn(txn, credential)?;
+                self.frozen_lineages_meet_in_txn(txn, &lineage, &row.opener_lineage)?
             }
-            let WidenDelta::Bound(bound) = decode_delta(&proposal.canonical_delta)? else {
-                return Err(Error::Gate(GateError::InvalidConsentBound(
-                    "a contact-disclosure offer settles through confirm_contact_disclosure",
-                )));
-            };
-            let receipt = self.create_standing_grant_in_txn(txn, owner, bound)?;
-            row.resolved = true;
-            row.settlement = Some(StoredSettlement {
-                verdict: "accepted".to_owned(),
-                decision_id: receipt.decision_id().as_bytes(),
-            });
-            WIDEN_PROPOSALS.put(&self.store, txn, &key, &row)?;
-            Ok(receipt)
-        })
+            None => false,
+        };
+        if row.proposal.proposer == actor.to_hex()
+            || holder_meets
+            || owner.answers_from_slip_lineage_in_txn(self, txn, &row.opener_lineage)?
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "the lineage that opened a proposal cannot settle it",
+            )));
+        }
+        Ok(())
     }
 
     /// The open contact-disclosure offer `reference` names, checked in the

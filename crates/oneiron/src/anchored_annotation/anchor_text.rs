@@ -20,8 +20,10 @@ use super::model::{ANNOTATION_LOCATOR_TEXT_MAX_BYTES, Locator};
 use crate::edit_roundtrip::{CellRef, OfficeFormat};
 
 pub(super) mod stories;
+mod text;
 mod xlsx;
 
+pub(super) use text::{TextReanchor, decoded, remap_text_span, text_span, text_units};
 use xlsx::{find_in_sheets, xlsx_range_text};
 
 /// Paragraphs joined in a shape's text.
@@ -36,13 +38,15 @@ pub(super) struct TextLimits {
     pub(super) docx: oneiron_docedit::ArchiveLimits,
 }
 
-/// Artifact text formats, with HTML beside the OOXML edit formats (FIX 7905).
+/// Artifact text formats, with HTML and plain text beside the OOXML edit
+/// formats (FIX 7905).
 #[derive(Clone, Copy)]
 pub(super) enum UnitFormat {
     Xlsx,
     Docx,
     Pptx,
     Html,
+    Text,
 }
 
 impl UnitFormat {
@@ -54,10 +58,11 @@ impl UnitFormat {
         {
             return Some(Self::Html);
         }
-        match OfficeFormat::from_media_type(media_type).ok()? {
-            OfficeFormat::Xlsx => Some(Self::Xlsx),
-            OfficeFormat::Docx => Some(Self::Docx),
-            OfficeFormat::Pptx => Some(Self::Pptx),
+        match OfficeFormat::from_media_type(media_type).ok() {
+            Some(OfficeFormat::Xlsx) => Some(Self::Xlsx),
+            Some(OfficeFormat::Docx) => Some(Self::Docx),
+            Some(OfficeFormat::Pptx) => Some(Self::Pptx),
+            None => text::is_text_media_type(media_type).then_some(Self::Text),
         }
     }
 }
@@ -87,7 +92,8 @@ const HTML_LEAF_CONTAINERS: &[&str] = &[
 const HTML_IGNORED_SUBTREES: &[&str] = &["script", "style", "template", "noscript"];
 
 /// The text under `locator` in `bytes`, or `Ok(None)` when the spot cannot
-/// be read. A resource refusal is the engine's error (FIX 10587).
+/// be read. A code locator's `bytes` are the file it names. A resource
+/// refusal is the engine's error (FIX 10587).
 pub(super) fn anchor_text(
     bytes: &[u8],
     locator: &Locator,
@@ -181,6 +187,15 @@ pub(super) fn anchor_text(
             }
             Ok(char_slice(&block.text, *char_start, *char_end))
         }
+        Locator::Text {
+            char_start,
+            char_end,
+        }
+        | Locator::Code {
+            char_start,
+            char_end,
+            ..
+        } => Ok(text::text_span(bytes, *char_start, *char_end)),
     }
 }
 
@@ -271,6 +286,7 @@ pub(super) fn find_text(
                     .collect()
             })
             .unwrap_or_default(),
+        UnitFormat::Text => text::find_in_text(bytes, text),
     };
     found.truncate(MAX_OFFERS);
     Ok(found)
@@ -693,5 +709,6 @@ pub(super) fn unit_texts(
                 })
                 .collect())
         }
+        UnitFormat::Text => Ok(text::text_units(bytes)),
     }
 }

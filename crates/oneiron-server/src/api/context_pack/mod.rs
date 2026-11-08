@@ -4,6 +4,7 @@
 mod audience;
 mod companion_assembly;
 mod controls;
+mod input_worker;
 mod instruction_files;
 mod interlocutor;
 mod media_query;
