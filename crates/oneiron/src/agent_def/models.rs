@@ -3,8 +3,9 @@
 //! its window. A wake's seat is picked among the agent's own list by those
 //! words; the engine only holds the run to a listed model. With no list the
 //! agent runs on its one house-routed model, and with no compaction model on
-//! the house's. The agent's home (self-model, voice, diary, lessons) is keyed
-//! to the agent, never to a model, so it carries across them.
+//! the active model pack's (FIX 20042), else the house's. The agent's home
+//! (self-model, voice, diary, lessons) is keyed to the agent, never to a
+//! model, so it carries across them.
 
 use super::types::AgentDefinition;
 use crate::edge::EdgeActorClass;
@@ -47,15 +48,18 @@ const NO_LISTED_MODEL_TEXT: &str = "no listed model is eligible";
 pub const UNBOUND_LIST_KEEPS_ROUTE: bool = false;
 
 /// The model that compacts `agent`'s window: its own when it names one, else
+/// `pack`, the active model pack's compaction model where its host serves it
+/// ([`crate::Vault::model_pack_compaction_choice`], FIX 20042), else
 /// `fallback`, the default its host supplies (for a `self` writer, the
 /// self-compaction row's cheap model, FIX 6029). It need not be on the
 /// agent's list.
 #[must_use]
 pub fn resolve_compaction_model<'a>(
     agent: &'a AgentDefinition,
+    pack: Option<&'a ModelId>,
     fallback: &'a ModelId,
 ) -> &'a ModelId {
-    agent.compaction_model.as_ref().unwrap_or(fallback)
+    agent.compaction_model.as_ref().or(pack).unwrap_or(fallback)
 }
 
 /// Holds a run to `agent`'s list: any model when the agent lists none (its

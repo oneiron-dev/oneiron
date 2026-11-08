@@ -79,19 +79,19 @@ pub struct CalendarEventView {
 }
 
 /// `calendar.read` request.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarReadRequest {
     /// Hex EVENT entity id.
     pub event_ref: String,
+    /// The caller's retrieval filter (FIX 3977): it narrows the EVENT and
+    /// what the read serves of it, beside the scope selectors.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 /// `calendar.search` request.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarSearchRequest {
     /// Calendar selectors; see [`CalendarSel`] for passport matching.
@@ -102,4 +102,8 @@ pub struct CalendarSearchRequest {
     pub text: Option<String>,
     /// Maximum rows returned, clamped to [`MAX_CALENDAR_SEARCH_LIMIT`].
     pub limit: u32,
+    /// The caller's retrieval filter (FIX 3977): it narrows every EVENT the
+    /// search reads, conjoined with the calendar, window and name selectors.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
