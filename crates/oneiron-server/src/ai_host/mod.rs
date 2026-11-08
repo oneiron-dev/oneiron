@@ -54,6 +54,7 @@ mod feedback_report_delivery;
 mod feedback_triage;
 mod harness;
 pub(crate) mod home_digests;
+pub(crate) mod hook_regen;
 pub(crate) mod identity;
 mod judge_swap;
 mod lens_callbacks;

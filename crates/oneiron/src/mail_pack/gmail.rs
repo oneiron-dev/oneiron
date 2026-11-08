@@ -22,8 +22,8 @@ use serde_json::Value;
 
 use super::credential::WireReads;
 use super::rest::{
-    self, RestAnswer, VerifiedCredentials, array, bearer_header, header_value, html_text, refused,
-    text_of,
+    self, FreshGoogleTokens, RestAnswer, VerifiedCredentials, array, header_value, html_text,
+    refused, text_of,
 };
 use super::source::MailProvider;
 use super::wire::{
@@ -63,6 +63,9 @@ pub struct HttpGmailMailWire<'v> {
     client: reqwest::blocking::Client,
     /// The credentials this wire has seen read their source's mailbox.
     verified: VerifiedCredentials,
+    /// The fresh access tokens its sources' stored grants were exchanged
+    /// for (fix list row 16311).
+    tokens: FreshGoogleTokens,
 }
 
 impl<'v> HttpGmailMailWire<'v> {
@@ -76,6 +79,7 @@ impl<'v> HttpGmailMailWire<'v> {
             vault,
             client: rest::https_client()?,
             verified: VerifiedCredentials::new(),
+            tokens: FreshGoogleTokens::new(),
         })
     }
 
@@ -120,7 +124,7 @@ impl<'v> HttpGmailMailWire<'v> {
             WireReads::Mailbox,
             GMAIL_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
-                let auth = bearer_header(token)?;
+                let auth = self.tokens.bearer(&self.client, source.source_ref, token)?;
                 // The credential presented here is the one checked.
                 let profile = if self.verified.holds(source.source_ref, token) {
                     None
@@ -155,6 +159,36 @@ impl<'v> HttpGmailMailWire<'v> {
     }
 }
 
+impl HttpGmailMailWire<'_> {
+    /// One page of the ids `search` (Gmail's `q`) finds, at most `limit`.
+    fn listed_ids(
+        &self,
+        source: &MailSyncSource,
+        search: String,
+        limit: u32,
+        page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        let mut params = vec![("maxResults", limit.to_string()), ("q", search)];
+        if let Some(page) = page {
+            params.push(("pageToken", page.to_owned()));
+        }
+        let listed = self
+            .get(source, &format!("{GMAIL_USER_URL}/messages"), &params)?
+            .ok_or_else(|| refused("gmail_mail_listing_not_found"))?;
+        let mut messages = Vec::new();
+        for entry in array(&listed, "messages") {
+            messages.push(MailMessageRef {
+                provider_id: plain_id(entry.get("id"))?,
+                thread_id: text_of(entry.get("threadId")),
+            });
+        }
+        Ok(MailIdPage {
+            messages,
+            next_page: text_of(listed.get("nextPageToken")),
+        })
+    }
+}
+
 impl MailProviderWire for HttpGmailMailWire<'_> {
     fn current_anchor(&self, source: &MailSyncSource) -> Result<String> {
         self.profile(source)?
@@ -174,27 +208,21 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
             Some(newer_than) => format!("-in:drafts after:{newer_than}"),
             None => "-in:drafts".to_owned(),
         };
-        let mut params = vec![
-            ("maxResults", GMAIL_LIST_PAGE_SIZE.to_string()),
-            ("q", search),
-        ];
-        if let Some(page) = page {
-            params.push(("pageToken", page.to_owned()));
-        }
-        let listed = self
-            .get(source, &format!("{GMAIL_USER_URL}/messages"), &params)?
-            .ok_or_else(|| refused("gmail_mail_listing_not_found"))?;
-        let mut messages = Vec::new();
-        for entry in array(&listed, "messages") {
-            messages.push(MailMessageRef {
-                provider_id: plain_id(entry.get("id"))?,
-                thread_id: text_of(entry.get("threadId")),
-            });
-        }
-        Ok(MailIdPage {
-            messages,
-            next_page: text_of(listed.get("nextPageToken")),
-        })
+        self.listed_ids(source, search, GMAIL_LIST_PAGE_SIZE, page)
+    }
+
+    fn search_page(
+        &self,
+        source: &MailSyncSource,
+        query: &str,
+        limit: u32,
+        page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        // The caller's own operators, grouped, beside the listing's: trash
+        // and spam are left out by Gmail's default, drafts by the query. The
+        // search door takes only a query whose parentheses balance, so no
+        // `)` of the caller's closes this group.
+        self.listed_ids(source, format!("-in:drafts ({query})"), limit, page)
     }
 
     fn headers(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailHeaders>> {
