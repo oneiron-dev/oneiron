@@ -2,6 +2,7 @@
 //! Entry: `self_call_request_value`.
 //! The request child owns request encoding; `code_run::types` owns call and outcome types.
 
+mod fold_words;
 mod observations;
 mod request;
 mod session_hooks;
@@ -31,6 +32,8 @@ use super::types::{
 use super::{SelfLeaderCall, SummarizeEffort, coordination_codec};
 use crate::error::GateError;
 
+pub(super) use self::fold_words::{answer_fold_words, keep_erased_fold_words};
+pub(crate) use self::fold_words::{push_fold_word, recorded_fold_words};
 pub(crate) use self::observations::agent_verb_observations_of;
 pub(super) use self::request::{agent_verb_call_identity, self_call_request_value};
 
@@ -133,10 +136,17 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
             ("kind", Value::from("inference_defaults")),
             ("json", Value::from(json.as_str())),
         ]),
-        SelfDispatchOutcome::Fold(json) => request_map(vec![
-            ("kind", Value::from("fold")),
-            ("json", Value::from(json.as_str())),
-        ]),
+        SelfDispatchOutcome::Fold(answer) => {
+            let mut entries = vec![
+                ("kind", Value::from("fold")),
+                ("json", Value::from(answer.json.as_str())),
+            ];
+            // The folds it copies the words of, text-free (FIX 18924).
+            if !answer.words.is_empty() {
+                entries.push(("words", fold_words::fold_words_value(&answer.words)));
+            }
+            request_map(entries)
+        }
         SelfDispatchOutcome::TaskRefusal(result) => request_map(vec![
             ("kind", Value::from("task_refusal")),
             ("task_ref", entity_id_value(result.task_ref)),
@@ -220,9 +230,10 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
         "inference_defaults" => Ok(SelfDispatchOutcome::InferenceDefaults(
             str_value(map_get(entries, "json")?)?.to_owned(),
         )),
-        "fold" => Ok(SelfDispatchOutcome::Fold(
+        "fold" => Ok(SelfDispatchOutcome::Fold(super::FoldAnswer::new(
             str_value(map_get(entries, "json")?)?.to_owned(),
-        )),
+            fold_words::decode_fold_words(entries)?,
+        ))),
         "leader" => Ok(SelfDispatchOutcome::Leader(
             str_value(map_get(entries, "json")?)?.to_owned(),
         )),
