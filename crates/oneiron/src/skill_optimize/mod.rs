@@ -248,6 +248,7 @@ pub use self::offer_switch::{
 pub(crate) use self::offer_switch::{
     erase_switch_actor_in_txn, settle_staged_switch_in_txn, undo_staged_switch_in_txn,
 };
+pub(crate) use self::offer_training::erase_offer_training_actor_in_txn;
 pub use self::offer_training::{
     OfferTrainingHandoff, TrainingChoice, authorize_offer_training, check_offer_training_plan,
     offer_training_handoff, settle_training_offer, suggested_training_plan,
