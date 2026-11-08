@@ -44,13 +44,13 @@ impl Vault {
                 // The vault's DOCX row as this writer's, not the shipped
                 // default (FIX 8763), read in the host's memory (FIX 8570).
                 let limits = self.office_docx_limits(Some(actor.entity_ref()))?;
-                let blocks = crate::office_body::document_resources()
-                    .docx(|| read_docx_blocks(&bytes, limits))
+                let read = crate::office_body::document_resources()
+                    .docx(|| read_docx_body(&bytes, limits))
                     .map_err(|error| docx_error(&error, "the DOCX package could not be read"))?;
                 self.with_write_txn_grouped(|wtxn| {
                     claim_source(&self.store, wtxn, artifact, &source)?;
                     birth_typed_body_in_txn(self, wtxn, artifact, writer, |doc| {
-                        docx::import(doc, &blocks)
+                        docx::import(doc, &read.blocks, &read.stories)
                     })
                     .map(drop)
                 })?;
@@ -575,6 +575,7 @@ impl Vault {
                 version: version.version,
                 frontier: head.frontier.clone(),
                 rebind_frontier: None,
+                held_ids: None,
                 source_version: head.source_version,
                 actor: BodyActor::Actor(request.actor.entity_ref()),
                 author: author.shown.clone(),

@@ -286,6 +286,7 @@ async fn all_eight_production_rpc_reads_return_the_engine_dtos() {
         predicate: None,
         lifecycle: None,
         limit: 100,
+        filter: None,
     };
     let opts = NeighborOpts {
         limit: 100,
