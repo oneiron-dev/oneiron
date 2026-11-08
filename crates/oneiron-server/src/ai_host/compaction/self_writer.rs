@@ -190,17 +190,21 @@ impl SelfCompactionBackend {
 
     /// The active model pack's compaction model (FIX 20042), with the route
     /// this host serves it on, by the rule a role's pick is served on
-    /// (`ModelRuntime::model_pack_served`), when that route is within the
-    /// row's bound. `None` with no router, no pick, or a pick not served
-    /// within the bound: the row's cheap model writes instead. A pack read
-    /// that fails refuses as an unreadable row does, as a role's pick
-    /// refuses its call.
+    /// (`ModelRuntime::model_pack_served`), when its call would be admitted
+    /// and fit: that route within the row's bound and within the compaction
+    /// role's configured route, which bounds every seat-bound call
+    /// (`admit_seat_bound`), and a window known for the model
+    /// (`input_allowances`). `None` with no
+    /// router, no seat, no pick, or a pick past any of these: the row's
+    /// cheap model writes instead, so a pack never stops a writer that works
+    /// (review #6722). A pack read that fails refuses as an unreadable row
+    /// does, as a role's pick refuses its call.
     fn pack_writer(
         &self,
         row: &SelfCompactionDefault,
     ) -> Result<Option<(ModelId, ModelLocality)>, SelfCompactionUnavailable> {
         let models = &self.route.models;
-        let Some(router) = models.router() else {
+        let (Some(router), Some(seat)) = (models.router(), models.seat(self.route.role)) else {
             return Ok(None);
         };
         let choice = self
@@ -208,9 +212,17 @@ impl SelfCompactionBackend {
             .vault
             .model_pack_compaction_choice(&router.access_snapshot())
             .map_err(|_| SelfCompactionUnavailable::PolicyUnreadable)?;
+        let ceiling = models
+            .configured_route_role(&self.route.vault, self.route.role, seat)
+            .ok()
+            .map(|route| route.locality);
         Ok(choice.and_then(|choice| {
             let (locality, _) = models.model_pack_served(&choice)?;
-            (locality <= row.locality).then_some((choice.variant.model, locality))
+            let model = choice.variant.model;
+            (locality <= row.locality
+                && ceiling.is_some_and(|ceiling| locality <= ceiling)
+                && self.route.allowances.contains_key(&model))
+            .then_some((model, locality))
         }))
     }
 
