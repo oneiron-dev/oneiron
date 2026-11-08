@@ -14,7 +14,9 @@ use crate::{Backend, OneironClient};
 impl OneironClient {
     /// Exports the whole vault into `sink` (a file, typically), owner only,
     /// as `vault.export` does: `format` is `archive` (the default) or `okf`.
-    /// The answer is the archive's format, length and BLAKE3. Over a server
+    /// The answer is the archive's format, length and BLAKE3, with a notice
+    /// for each world it carries that the owner's recipient choice would
+    /// keep from where it goes (owner ruling 1-EXPORT = B). Over a server
     /// the archive streams through a kept transfer, so no ceiling on a reply
     /// applies to it; the transfer is let go once the sink holds it whole.
     ///
@@ -59,6 +61,7 @@ impl OneironClient {
                         bytes: transfer.bytes,
                         digest: transfer.digest,
                         holder_requests: transfer.holder_requests,
+                        notices: transfer.notices,
                         act: None,
                     }),
                     (Err(error), Ok(())) => Err(error),
