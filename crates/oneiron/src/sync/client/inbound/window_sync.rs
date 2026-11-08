@@ -69,7 +69,7 @@ impl SyncClient {
                 .map_err(|e| TransportError::Storage(e.to_string()))?;
             return Ok(vec![
                 transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
-                    .into_result()?,
+                    .into_own_frame()?,
             ]);
         }
         // A device syncs what it opened (ARCH-0023b): a window this device
@@ -141,7 +141,7 @@ impl SyncClient {
                         window_sub_tags::VV_REQUEST,
                         &doc_version_vector(&window.doc),
                     )
-                    .into_result()?,
+                    .into_own_frame()?,
                 ])
             }
             window_sub_tags::RESIDENCE_ACK | window_sub_tags::RESIDENCE_HELD
@@ -197,7 +197,7 @@ impl SyncClient {
                             window_sub_tags::VV_RESPONSE,
                             &doc_version_vector(doc),
                         )
-                        .into_result()?,
+                        .into_own_frame()?,
                     ]);
                 }
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
@@ -216,7 +216,7 @@ impl SyncClient {
                         window_sub_tags::VV_RESPONSE,
                         &doc_version_vector(doc),
                     )
-                    .into_result()?,
+                    .into_own_frame()?,
                 );
                 // Record the server VV only after a fully valid exchange — it
                 // becomes the convergence witness for this window (ONE-1128).
@@ -316,7 +316,7 @@ impl SyncClient {
                 drop(window);
                 Ok(vec![
                     transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
-                        .into_result()?,
+                        .into_own_frame()?,
                 ])
             }
             window_sub_tags::VV_RESPONSE => {
@@ -894,7 +894,7 @@ impl SyncClient {
                 window_sub_tags::VV_REQUEST,
                 &doc_version_vector(&window.doc),
             )
-            .into_result()?,
+            .into_own_frame()?,
         );
         Ok(Some(answer))
     }
@@ -949,5 +949,5 @@ impl SyncClient {
 /// A device's request for the server's replacement of `window_key`.
 fn replacement_request(window_key: &str) -> std::result::Result<Vec<u8>, TransportError> {
     transport::encode_window_sync(window_key, window_sub_tags::REPLACEMENT_REQUEST, &[])
-        .into_result()
+        .into_own_frame()
 }

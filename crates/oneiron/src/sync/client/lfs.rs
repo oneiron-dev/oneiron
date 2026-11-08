@@ -99,7 +99,7 @@ impl SyncClient {
         }
         match transfer.accept_reply(&self.vault, reply, crate::unix_seconds_now()) {
             Ok(Some(next)) => {
-                let frame = transport::encode_lfs_chunk_sync(&next).into_result()?;
+                let frame = transport::encode_lfs_chunk_sync(&next).into_own_frame()?;
                 self.lfs_download = Some(transfer);
                 Ok(vec![frame])
             }
@@ -130,7 +130,7 @@ impl SyncClient {
     fn start_lfs_download(&mut self, id: u64, oid: LfsOid) -> Result<Vec<u8>, TransportError> {
         let transfer = ChunkDownload::new(oid).map_err(storage)?.numbered(id);
         let frame = transport::encode_lfs_chunk_sync(&transfer.initial_request().map_err(storage)?)
-            .into_result()?;
+            .into_own_frame()?;
         self.lfs_download = Some(transfer);
         Ok(frame)
     }
