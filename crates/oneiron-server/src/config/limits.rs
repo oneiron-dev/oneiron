@@ -467,6 +467,7 @@ impl LimitsConfig {
             codebase_manifest_files,
             recall_query_bytes,
             requested_result_rows,
+            tournament_lineage_rows,
             embedding_dimensions,
             shared_merge_evidence_rows,
             memory_reason_evidence_rows,
@@ -779,6 +780,7 @@ impl LimitsConfig {
             (EngineLimit::CodebaseManifestFiles, codebase_manifest_files),
             (EngineLimit::RecallQueryBytes, recall_query_bytes),
             (EngineLimit::RequestedResultRows, requested_result_rows),
+            (EngineLimit::TournamentLineageRows, tournament_lineage_rows),
             (EngineLimit::EmbeddingDimensions, embedding_dimensions),
             (
                 EngineLimit::SharedMergeEvidenceRows,
