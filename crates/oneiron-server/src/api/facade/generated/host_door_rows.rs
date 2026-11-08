@@ -35,6 +35,8 @@
 //! - `vault.weave.admin.item.wrong`
 //! - `vault.step_up.totp.reset`
 //! - `vault.inbox.groups.resolve`
+//! - `vault.skill_hubs.clawhub.search`
+//! - `vault.skill_hubs.clawhub.import`
 //! - `vault.skills.proposal.settle`
 //! - `vault.skills.optimize.tradeoff_asks.resolve`
 //! - `vault.packs.sections.propose`
@@ -47,11 +49,13 @@
 //! - `vault.shared.deletion`
 //! - `vault.org_admin.powers`
 //! - `vault.trusted_contacts.concern.deliver`
+//! - `vault.files.sources.exclude`
 //! - `vault.drafters.list_as`
 //! - `vault.drafters.revert_as`
 //! - `vault.roots.requests.cancel`
 //! - `vault.policy.outbound.decide`
 //! - `vault.policy.relay.decide`
+//! - `vault.connectors.replies.retry_failed`
 //! - `vault.secrets.lift_history`
 //! - `vault.settings.inference_defaults`
 //! - `vault.settings.inference_defaults.replace`
@@ -96,6 +100,9 @@
 //! - `vault.messages.react`
 //! - `vault.settings.web_connector`
 //! - `vault.settings.web_connector.replace`
+//! - `vault.settings.model_pack`
+//! - `vault.settings.model_pack.replace`
+//! - `vault.model_pack.revert`
 //! - `vault.connectors.web.usage`
 //! - `ai.streams.release`
 //! - `ai.anonymous_chat`
@@ -146,6 +153,7 @@
 //! - `self.history`
 //! - `vault.sync.repo_manifests.conflict.review`
 //! - `vault.sync.repo_manifests.conflict.discard`
+//! - `vault.dreamer.follower.keyframe`
 //! - `connector.answer`
 //! - `self.browser.open`
 //! - `self.browser.observe`
@@ -398,6 +406,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultMembersLeave,
     VaultMembersInvitations,
     VaultMembersAccept,
+    VaultMembersAcceptWithCredential,
     VaultMembersDecline,
     VaultMembersWithdrawInvitation,
     VaultSharedObject,
@@ -691,6 +700,9 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
+    VaultCodeSecretsPurgeRequest,
+    VaultCodeSecretsPurgeGet,
+    VaultCodeSecretsPurgeExecute,
     VaultCodeCheckoutHolderBind,
     VaultCodeCheckoutBind,
     VaultCodeViewsMaterialize,
@@ -1136,6 +1148,7 @@ impl HostDoorRow {
             "vault.members.leave" => Self::VaultMembersLeave,
             "vault.members.invitations" => Self::VaultMembersInvitations,
             "vault.members.accept" => Self::VaultMembersAccept,
+            "vault.members.accept_with_credential" => Self::VaultMembersAcceptWithCredential,
             "vault.members.decline" => Self::VaultMembersDecline,
             "vault.members.withdraw_invitation" => Self::VaultMembersWithdrawInvitation,
             "vault.shared.object" => Self::VaultSharedObject,
@@ -1449,6 +1462,9 @@ impl HostDoorRow {
             "vault.code.origin.authority.get" => Self::VaultCodeOriginAuthorityGet,
             "vault.code.origin.authority.set" => Self::VaultCodeOriginAuthoritySet,
             "vault.code.origin.publications" => Self::VaultCodeOriginPublications,
+            "vault.code.secrets.purge.request" => Self::VaultCodeSecretsPurgeRequest,
+            "vault.code.secrets.purge.get" => Self::VaultCodeSecretsPurgeGet,
+            "vault.code.secrets.purge.execute" => Self::VaultCodeSecretsPurgeExecute,
             "vault.code.checkout.holder.bind" => Self::VaultCodeCheckoutHolderBind,
             "vault.code.checkout.bind" => Self::VaultCodeCheckoutBind,
             "vault.code.views.materialize" => Self::VaultCodeViewsMaterialize,
@@ -1725,6 +1741,8 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.weave.admin.item.wrong"
                 | "vault.step_up.totp.reset"
                 | "vault.inbox.groups.resolve"
+                | "vault.skill_hubs.clawhub.search"
+                | "vault.skill_hubs.clawhub.import"
                 | "vault.skills.proposal.settle"
                 | "vault.skills.optimize.tradeoff_asks.resolve"
                 | "vault.packs.sections.propose"
@@ -1737,11 +1755,13 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.shared.deletion"
                 | "vault.org_admin.powers"
                 | "vault.trusted_contacts.concern.deliver"
+                | "vault.files.sources.exclude"
                 | "vault.drafters.list_as"
                 | "vault.drafters.revert_as"
                 | "vault.roots.requests.cancel"
                 | "vault.policy.outbound.decide"
                 | "vault.policy.relay.decide"
+                | "vault.connectors.replies.retry_failed"
                 | "vault.secrets.lift_history"
                 | "vault.settings.inference_defaults"
                 | "vault.settings.inference_defaults.replace"
@@ -1786,6 +1806,9 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.messages.react"
                 | "vault.settings.web_connector"
                 | "vault.settings.web_connector.replace"
+                | "vault.settings.model_pack"
+                | "vault.settings.model_pack.replace"
+                | "vault.model_pack.revert"
                 | "vault.connectors.web.usage"
                 | "ai.streams.release"
                 | "vault.models.trials.resend_arm"
@@ -1835,6 +1858,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "self.history"
                 | "vault.sync.repo_manifests.conflict.review"
                 | "vault.sync.repo_manifests.conflict.discard"
+                | "vault.dreamer.follower.keyframe"
                 | "connector.answer"
                 | "self.browser.open"
                 | "self.browser.observe"

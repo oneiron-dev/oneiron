@@ -10,7 +10,7 @@ use super::guard::{ffi_guard, with_optional_slice, with_required_slice, with_vau
 use super::parse::{
     convert_query_vector, created_at_to_i64, engine, id_array, memory_result, parse_edge_kind,
     parse_entity_id, parse_pack_format, parse_search_limit, parse_u8, refuse_unserved_media,
-    string_from_optional, string_from_required, validate_query_len,
+    string_from_optional, string_from_required,
 };
 use super::types::{
     DEFAULT_FFI_SEARCH_LIMIT, OneironBuffer, OneironEdgeInfo, OneironEdgeInfoArray,
@@ -184,8 +184,8 @@ pub unsafe extern "C" fn oneiron_vault_search_vector(
 
 /// Search for entities by BM25 text matching.
 ///
-/// `query_len` must be at most 8 KiB. `out_results` receives a Rust-owned
-/// array that must be released with `oneiron_scored_entity_array_free`.
+/// `out_results` receives a Rust-owned array that must be released with
+/// `oneiron_scored_entity_array_free`.
 ///
 /// # Safety
 ///
@@ -206,7 +206,6 @@ pub unsafe extern "C" fn oneiron_vault_search_text(
         }
         let result = with_vault(vault, |handle| {
             let query = string_from_required(query_ptr, query_len)?;
-            validate_query_len(&query)?;
             let limit = parse_search_limit(limit)?;
             let results = handle.text_hits(&query, limit)?;
             let out = results
@@ -296,9 +295,6 @@ pub unsafe extern "C" fn oneiron_vault_context_pack(
         }
         let result = with_vault(vault, |handle| {
             let query_text = string_from_optional(query_text_ptr, query_text_len)?;
-            if let Some(text) = query_text.as_deref() {
-                validate_query_len(text)?;
-            }
             let query_vector = with_optional_slice(query_vector_ptr, query_vector_len, |values| {
                 values
                     .map(|query| convert_query_vector(query, handle.dimensions))
