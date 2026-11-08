@@ -60,6 +60,7 @@ pub(crate) mod judge_calibration;
 pub(crate) mod mail_policy;
 mod message_address;
 pub(crate) use message_address::message_address_refusal;
+pub mod code_consent_settlement;
 mod operational_policy;
 mod owner_answer;
 mod owner_policy_mutation;
@@ -144,7 +145,8 @@ pub(crate) use self::constants::{
     POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY,
 };
 pub(crate) use self::constants::{
-    POLICY_SCHEMA_VERSION, POLICY_SHARED_ACT_POLICIES_KEY, SCOPED_READ_EFFECTOR_CORE_READ,
+    POLICY_OWNER_CHANGE_WAIT_SECS_KEY, POLICY_SCHEMA_VERSION, POLICY_SHARED_ACT_POLICIES_KEY,
+    SCOPED_READ_EFFECTOR_CORE_READ,
 };
 #[cfg(test)]
 pub(crate) use self::decision::gate_metric_emission_count_for_test;
@@ -163,6 +165,8 @@ pub(crate) use self::definition_ceiling::first_party_connector_actor_ref;
 pub(crate) use self::definition_ceiling::{
     agent_definition_ceiling_for_actor, definition_only_ceiling_for_actor,
 };
+// An off-record room's claim decision, captured for the room (FIX 9967).
+pub(crate) use self::doors::capture_claim_policy_for_write;
 #[cfg(feature = "sync")]
 pub(crate) use self::doors::check_federated_claim_admission;
 pub(crate) use self::doors::{
@@ -250,11 +254,14 @@ pub(crate) use self::skill_tradeoff_policy::{SkillTradeoffLimits, skill_tradeoff
 pub(crate) use self::voice_serving::VoiceServingPolicyReceipt;
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
+#[cfg(feature = "sync")]
+pub(crate) use self::witness_message::companion_author_pending;
 pub(crate) use self::witness_message::{
     WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER,
     WitnessMessageAuthorization, WitnessMessageBodyAuthor, WitnessMessageEnvelope,
-    check_witness_message_ceiling, check_witness_message_ceiling_with_permit,
-    validate_canonical_witness_message_body, validate_own_device_witness_message_body,
+    check_source_bound_witness_message_ceiling, check_witness_message_ceiling,
+    check_witness_message_ceiling_with_permit, validate_canonical_witness_message_body,
+    validate_own_device_witness_message_body,
 };
 
 // gate.rs was one flat module: its private `use` header and every item in it

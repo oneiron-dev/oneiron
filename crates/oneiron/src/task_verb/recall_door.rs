@@ -139,7 +139,6 @@ fn recall_with_whole_limit(
     )?;
     let scope = input.scope.clone().unwrap_or_default();
     let limit = input.limit.unwrap_or(VAULT_RECALL_LIMIT_DEFAULT);
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(limit)?;
     // Refused before the query embeds, as every free check is.
     let query_affect = input
@@ -212,7 +211,14 @@ fn recall_with_whole_limit(
     }
     let vectors = embed(&input.query)?;
     let embedding = vectors.text_index.as_deref();
+    let mut media_memory = crate::host_memory::MachineMemory::process().empty_lease();
     let media = vectors.media_seeds();
+    media_memory.materialized(
+        0,
+        (media.capacity() as u64).saturating_mul(std::mem::size_of::<
+            crate::retrieval_depth::RecallMediaSeed<'_>,
+        >() as u64),
+    );
     // Keep admitted evidence ready while the optional host expansion waits.
     if effort.requires_rerank()
         && door.hyde.is_some()

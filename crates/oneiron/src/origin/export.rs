@@ -8,7 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
     GitCommitRequest, GitOid, GitRefName, GitTreeEntry, GitWire, GitWirePlan, GitWireRepo,
-    lock_repository,
+    git_path_bytes, lock_repository,
 };
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::code_snapshot::entity_id_from_hash_material;
@@ -161,9 +161,9 @@ impl Vault {
     }
 
     /// [`Self::export_engine_commit_judged`], with `check` judged again as
-    /// the first act of each writer the export makes before its publication,
-    /// the projection's and the publication intent's (FIX 7179): a refusal
-    /// there records and publishes nothing.
+    /// the first act of the projection, intent, permit and publication staging
+    /// writers (FIX 7179). A refusal writes no rows in that writer and prevents
+    /// the new publication.
     pub(crate) fn export_engine_commit_checked<R>(
         &self,
         git: &GitWire<'_>,
@@ -318,9 +318,15 @@ impl Vault {
             return Ok(Err(refused));
         }
         let receipt = match authority {
-            Some(lease) => self.publish_origin_ref_authorized(git, publication, lease),
-            None => self.publish_origin_ref(git, publication),
+            Some(lease) => {
+                self.publish_origin_ref_authorized_checked(git, publication, lease, &check)
+            }
+            None => self.publish_origin_ref_checked(git, publication, &check),
         }?;
+        let receipt = match receipt {
+            Ok(receipt) => receipt,
+            Err(refused) => return Ok(Err(refused)),
+        };
         Ok(Ok(receipt))
     }
 }
@@ -340,10 +346,13 @@ impl Vault {
             ));
         }
         let mut files = BTreeMap::new();
-        let target_scope =
-            crate::git_wire::mutation_commands::canonical_mutation_scope(repo.repo_root())?;
+        // The target's code-document identity, as its writers key it (FIX
+        // 12761).
+        let target_scope = self.resolve_repo_identity(
+            &crate::git_wire::mutation_commands::canonical_mutation_repo_ref(repo.repo_root())?,
+        )?;
         for frontier in revision.file_frontiers.values() {
-            if frontier.repo != target_scope {
+            if frontier.repo != target_scope.as_str() {
                 return Err(Error::InvariantViolation(
                     "engine commit belongs to another repository",
                 ));
@@ -388,10 +397,12 @@ pub(in crate::origin) fn write_tree_files(
     for (path, file) in files {
         count.row();
         let parts: Vec<_> = path.split('/').collect();
-        if parts
-            .iter()
-            .any(|p| p.is_empty() || matches!(*p, "." | ".." | ".git") || p.as_bytes().contains(&0))
-        {
+        // Each part is a Git path's text: a name outside UTF-8 is written as
+        // its own bytes, and text that is no path's canonical text is refused
+        // (FIX 21326).
+        if parts.iter().any(|p| {
+            p.is_empty() || matches!(*p, "." | ".." | ".git") || git_path_bytes(p).is_err()
+        }) {
             return Err(Error::InvariantViolation("unsafe exported file path"));
         }
         total = total
@@ -412,7 +423,7 @@ pub(in crate::origin) fn write_tree_files(
             .ok_or(Error::InvariantViolation("export parent missing"))?
             .push(GitTreeEntry {
                 mode: file.mode,
-                name: parts[parts.len() - 1].as_bytes().to_vec(),
+                name: git_path_bytes(parts[parts.len() - 1])?.into_owned(),
                 oid,
             });
     }
@@ -445,7 +456,7 @@ pub(in crate::origin) fn write_tree_files(
             .ok_or(Error::InvariantViolation("export tree parent missing"))?
             .push(GitTreeEntry {
                 mode: 0o040000,
-                name: name.as_bytes().to_vec(),
+                name: git_path_bytes(name)?.into_owned(),
                 oid,
             });
     }

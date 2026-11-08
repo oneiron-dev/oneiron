@@ -238,6 +238,13 @@ pub(crate) struct DagPageResponse {
     /// `with=reactions`: grouped reaction pills per listed record.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub records: Option<Vec<DagReactionRecord>>,
+    /// `with=reactions`: the read receipt of the scoped read that grouped
+    /// `records`, for a credential or the dev mode (FIX 8669). Absent when
+    /// no scoped read grouped them: a managed vault's attested owner reads
+    /// every reaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<crate::api::read_receipt::ReadReceiptSchema>)]
+    pub reactions_narrowing: Option<oneiron::claim::ScopedReadReceipt>,
     /// `with=reactions`: `mirrored` or `first_party_only`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reactions_outbound: Option<&'static str>,

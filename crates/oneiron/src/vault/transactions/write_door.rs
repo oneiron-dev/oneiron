@@ -106,6 +106,7 @@ impl Vault {
             result,
             approved_vad_ids,
             proactivity_changed,
+            verb_hook_ask_changed,
             consent_answered,
             (
                 task_ids,
@@ -176,6 +177,7 @@ impl Vault {
                     result,
                     approved,
                     postcommit.proactivity_changed,
+                    postcommit.verb_hook_ask_changed,
                     postcommit.consent_answered,
                     (
                         postcommit.task_ids,
@@ -205,12 +207,18 @@ impl Vault {
         if proactivity_changed {
             self.store.notify_proactivity_changes();
         }
+        if verb_hook_ask_changed {
+            self.notify_verb_hook_ask_changes();
+        }
         self.store.notify_task_updates(task_ids);
         // A pad seal can leave its text frontier unchanged. Wake live NOTE
-        // subscribers only now that the seal is durable (FIX 12110).
+        // subscribers only now that the seal is durable (FIX 12110). A fork
+        // decision queues its NOTE here too, so its own devices take the
+        // pending forks again (FIX 12789).
         #[cfg(feature = "sync")]
         for id in note_document_ids {
             self.notify_note_document(id);
+            self.notify_note_forks(id);
         }
         // FIX 3084: a notification this write put or marked wakes the live
         // queries that follow notifications, now that it is durable.

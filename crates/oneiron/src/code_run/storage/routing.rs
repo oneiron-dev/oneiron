@@ -30,6 +30,7 @@ use crate::secret_rotation::ArtifactTaintState;
 use crate::store::{BODY_KEYS, BodySink, body_key_row_in_txn};
 
 mod bodies;
+mod output_progress;
 mod replay;
 mod type_feedback;
 
@@ -613,6 +614,16 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// Where `witness_executor_message` lands the run's speech: on
+    /// canonical storage the run's own derived conversation, on session
+    /// storage the session's room. Its door admits the speech by it.
+    pub(crate) const fn speech_destination(&self) -> crate::code_run::RunSpeechDestination {
+        match self {
+            Self::Canonical(_) => crate::code_run::RunSpeechDestination::OwnRunConversation,
+            Self::Session(_) => crate::code_run::RunSpeechDestination::SessionRoom,
+        }
+    }
+
     /// `request` is the model request the run's executor bound before the
     /// call, host-owned; the report keeps it for its code fix (FIX 2343), and
     /// its run's read worlds as `read_worlds` seals its ledger (FIX 6130).
@@ -880,13 +891,37 @@ impl<'a> ExecutorStorage<'a> {
         owner: EntityId,
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<CodeRunRawOutput> {
+        self.publish_code_run_output_produced(path, sink, complete, owner, input_rows, None)
+    }
+
+    /// Carries the producer's native step coordinate along the same route
+    /// as the occurrence's bytes and source rows.
+    pub(crate) fn publish_code_run_output_produced(
+        &self,
+        path: String,
+        sink: BodySink,
+        complete: bool,
+        owner: EntityId,
+        input_rows: Option<Vec<EntityId>>,
+        producing_step_start: Option<u64>,
+    ) -> Result<CodeRunRawOutput> {
         match self {
-            Self::Canonical(vault) => {
-                vault.publish_code_run_output_sourced(path, sink, complete, Some(owner), input_rows)
-            }
-            Self::Session(binding) => {
-                binding.publish_output_sourced(path, sink, complete, owner, input_rows)
-            }
+            Self::Canonical(vault) => vault.publish_code_run_output_produced(
+                path,
+                sink,
+                complete,
+                Some(owner),
+                input_rows,
+                producing_step_start,
+            ),
+            Self::Session(binding) => binding.publish_output_produced(
+                path,
+                sink,
+                complete,
+                owner,
+                input_rows,
+                producing_step_start,
+            ),
         }
     }
 

@@ -21,12 +21,10 @@ use serde::{Deserialize, Serialize};
 use crate::access_grant::AccessGrantStatus;
 use crate::claim::ScopedReadResult;
 use crate::error::{ErrorKind, GateError};
-use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_PACED_HOLD, Memory, MemoryError, MemoryResult,
-};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::receipt::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 use crate::runtime_hooks::verb::{
-    hold_paced_verb_call, land_paced_verb_call_in_txn, runs_paced_turn,
+    hold_paced_verb_call, land_paced_verb_call_in_txn, paced_turn_again, runs_paced_turn,
 };
 use crate::share::{Share, ShareViewerScope};
 use crate::share_travel::{TravelChoice, TravelKind};
@@ -164,16 +162,7 @@ pub fn create_share_as_caller(
         Ok(()) => Ok(created),
         // Its window paced it again on its turn: back in line.
         Err(Error::Gate(GateError::ShareCreatePaced { next_eligible_at })) if turn.is_some() => {
-            Err(MemoryError {
-                resets_at: vec![next_eligible_at],
-                ..MemoryError::new(
-                    MEMORY_CODE_PACED_HOLD,
-                    format!(
-                        "a budget window paced this call's turn; it runs at {next_eligible_at} or later"
-                    ),
-                    &["Send nothing again: the call runs on its next turn."],
-                )
-            })
+            Err(paced_turn_again(next_eligible_at))
         }
         Err(Error::Gate(GateError::ShareCreatePaced { next_eligible_at })) => {
             match hold_paced_verb_call(memory, SHARE_CREATE, &fixed()?, next_eligible_at)? {
