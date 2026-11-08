@@ -60,6 +60,11 @@ impl MeshConfig {
         Self { bind, relays }
     }
 
+    #[cfg(feature = "mesh")]
+    pub(crate) fn outbound_settings(&self) -> Option<(SocketAddr, &[String])> {
+        self.bind.map(|bind| (bind, self.relays.as_slice()))
+    }
+
     pub(crate) fn from_env() -> anyhow::Result<Self> {
         let bind = match std::env::var(BIND_ENV) {
             Ok(raw) if !raw.trim().is_empty() => Some(
