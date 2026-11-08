@@ -740,6 +740,7 @@ fn a_stale_claim_the_filter_admits_is_handed_to_no_reranker() -> Result<()> {
         min_confidence: 0.0,
         min_salience: 0.0,
         deny_all: false,
+        caller_excludes_stale: false,
         credential: None,
     };
     let reranker = ClaimKeepingReranker::default();
