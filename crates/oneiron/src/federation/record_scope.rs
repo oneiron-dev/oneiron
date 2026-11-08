@@ -629,6 +629,15 @@ pub(crate) fn scope_for_parts(
         return Ok(Some(body.record_scope("read")));
     }
     if carries_birth_stamp(kind) {
+        // FIX 8737: the stored stamp first, validated against the birth
+        // facet by `stored_scope`: a raise (a secret-bearing ASSET marked
+        // Restricted, OF-560) is settled there, and a read or selector check
+        // judges that position, as export does. Only a row with no valid
+        // stamp falls back to the default its birth facet implies.
+        if let Some(mut scope) = stored_scope(store, txn, id, kind)? {
+            scope.verbs = singleton("read".to_owned());
+            return Ok(Some(scope));
+        }
         return Ok(birth_facet(store, txn, id)?.map(|facet| {
             let birth = default_stamp(kind, facet);
             let mut scope = note_world::note_position(store, txn, id, kind, birth);

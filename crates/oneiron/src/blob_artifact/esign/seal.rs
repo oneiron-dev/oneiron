@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 mod auto_commit;
-pub(in crate::blob_artifact) use auto_commit::SealJobWrite;
+pub(in crate::blob_artifact) use auto_commit::{SealJobAutoPermit, SealJobWrite};
 use auto_commit::{VerifiedSealJob, VerifiedSealOutput};
 
 /// Sealed document manifest. Key: id16 (document).
