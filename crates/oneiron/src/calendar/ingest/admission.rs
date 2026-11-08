@@ -9,9 +9,9 @@ use super::ingest;
 use super::poll::IcsFeedPollConfig;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
-    CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
-    CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
-    PREDICATE_CALENDAR_STATUS, decode_status_value,
+    CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportSource,
+    CalendarPassportValue, CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_ORIGIN,
+    PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS, decode_status_value,
 };
 use crate::calendar::ics::ParsedVEvent;
 use crate::calendar::passport::{
@@ -52,6 +52,7 @@ pub(super) struct PollAdmission<'a> {
     pub(crate) preserve_direction: bool,
     pub(crate) now: u64,
     pub(crate) blob_ref: &'a str,
+    pub(crate) source: Option<CalendarPassportSource>,
     pub(crate) verdict_fold: VerdictFold,
     /// The events whose property admissions passed one pass's count, each
     /// queued a continuation once the feed is applied (FIX 11997, FIX
@@ -542,6 +543,7 @@ impl PollAdmission<'_> {
             uid: event.uid.clone(),
             last_sequence: event.sequence,
             content_hash: event.content_hash,
+            source: self.source,
             direction,
             last_seen_at: self.now,
             presence,
@@ -584,6 +586,7 @@ fn connector_admission<'a>(
         safeguard_enabled: false,
         now,
         blob_ref: source,
+        source: None,
         verdict_fold: VerdictFold::default(),
         continuations: None,
     }
@@ -607,6 +610,7 @@ pub(in crate::calendar) fn preflight_connector_feed(
 pub(in crate::calendar) struct ConnectorAdmissionSource<'a> {
     pub(in crate::calendar) record: &'a str,
     pub(in crate::calendar) source_version: Option<&'a str>,
+    pub(in crate::calendar) source: Option<CalendarPassportSource>,
 }
 
 impl<'a> From<&'a str> for ConnectorAdmissionSource<'a> {
@@ -616,6 +620,7 @@ impl<'a> From<&'a str> for ConnectorAdmissionSource<'a> {
         Self {
             record,
             source_version: None,
+            source: None,
         }
     }
 }
@@ -632,6 +637,7 @@ pub(in crate::calendar) fn admit_connector_event<'a>(
 ) -> Result<(), CalendarError> {
     let source = source.into();
     let mut admission = connector_admission(vault, system, source.record, now);
+    admission.source = source.source;
     let Some(source_version) = source.source_version else {
         return admission.apply_event(event);
     };
