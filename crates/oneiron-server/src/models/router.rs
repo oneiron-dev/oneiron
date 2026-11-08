@@ -196,7 +196,9 @@ impl ModelRouter {
     /// beside the workers it launches; and, with or without `config`, each
     /// model the vault's mesh discovery rows hold that no configured route
     /// serves, which `serve` routes to the owner's node that offers it from
-    /// its start, before its first mesh refresh. Read from `config` and the
+    /// its start, before its first mesh refresh. A `serve` with the mesh off
+    /// marks those rows stale at its start (FIX 22227), so after it none
+    /// counts. Read from `config` and the
     /// vault's rows alone: no backend is built, no worker is launched, no
     /// key is read and nothing is sent, so a provider that would not start
     /// (its key variable unset, say) still counts.
@@ -291,18 +293,16 @@ impl ModelRouter {
 
 /// The on-device offers of `provider`'s chat models a plain `serve` built
 /// from `config` binds (I2-LOCAL), read from `config` alone: each model a
-/// chat ladder names on `provider` that a managed EXL3 worker row with a
-/// launch serves, the rows whose supervisors hold a native launch slot, as
-/// `build_native_local` and `native_rung` bind it. No supervisor is made
-/// and nothing is launched.
+/// chat ladder names on `provider` that a row whose supervisor holds a
+/// native launch slot serves (`WorkerConfig::has_native_launch`, the
+/// worker host's own rule), as `build_native_local` and `native_rung` bind
+/// it. No supervisor is made and nothing is launched.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn configured_on_device_offers(
     name: &str,
     provider: &ProviderConfig,
     config: &ModelsConfig,
 ) -> Vec<OfferBinding> {
-    use oneiron::llm::{WorkerKind, WorkerMode};
-
     use super::catalog::catalog_entry;
     use super::offer::native_local_binding;
 
@@ -312,12 +312,7 @@ fn configured_on_device_offers(
     let workers: BTreeMap<&str, &str> = config
         .workers
         .iter()
-        .filter(|row| {
-            row.binding.provider == name
-                && row.mode == WorkerMode::Managed
-                && row.kind == WorkerKind::Exl3
-                && row.launch.is_some()
-        })
+        .filter(|row| row.binding.provider == name && row.has_native_launch())
         .map(|row| (row.binding.model.as_str(), row.id.as_str()))
         .collect();
     referenced_models(config, name)

@@ -103,7 +103,9 @@ fn read_upload(
 
 /// Owner-authorized import of one complete uploaded feed, including the
 /// existing complete-empty-feed absence law. No poll is scheduled by a file.
-/// The owner's safeguard dial selects the supplied host screener, just as for polls.
+/// The owner's CAL-09 dial decides whether `screener` (or its recorded
+/// absence) screens each imported admission, as an installed feed's poll
+/// screens; with the dial off the receipt reports `skipped`.
 pub fn import_ics_as_owner(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
