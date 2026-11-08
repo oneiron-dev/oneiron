@@ -389,6 +389,19 @@ impl RecordingJsHost<'_, '_> {
         );
         self.callable_rows.0.extend(loaded);
         self.callable_depth -= 1;
+        // A pinned entry's callable (FIX 5878): where its own calls end, and
+        // whether its body was still running when it returned, on the
+        // entry's wait or a halt of the bridge.
+        if self.injection.is_some() {
+            self.program_callables.push(ProgramCallableSpan {
+                seq,
+                end: self.next_seq,
+                open: self.durable_wait.is_some()
+                    || self.hard_failure.is_some()
+                    || self.left_a_gap
+                    || self.declined.is_some(),
+            });
+        }
         // The callable's type feedback stays beside the run, however the
         // call ended (FIX 10389).
         self.keep_callable_check(seq, ran.is_ok());
