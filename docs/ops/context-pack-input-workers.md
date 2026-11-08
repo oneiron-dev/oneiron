@@ -5,6 +5,11 @@ and interlocutor set on a dedicated `context-pack-inputs` thread. HTTP context-p
 and the Context Board use that same path. The remaining query validation, media
 embedding, audience narrowing, assembly and disclosure flow are unchanged.
 
+HTTP context-pack validates its whole request before its verb hooks run (FIX
+1435), so its worker runs then. A hook's rewritten request is validated on the
+hook chain's own blocking thread, with no worker turn, and the pack runs on the
+request the chain left, as it was validated.
+
 `[limits] context_reads` bounds outstanding input workers. Its default is 2,048,
 held in `CONTEXT_READS`; this is an operator-overridable lane choice recorded as
 open in the owner's calls ledger, not a canon-mandated number. The existing fair

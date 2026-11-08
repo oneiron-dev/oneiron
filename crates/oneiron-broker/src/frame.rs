@@ -14,7 +14,9 @@
 //! A call body past [`MAX_BODY`] (a long recording to transcribe, an image
 //! to edit) comes as chunks the same way (FIX 1895): in place of its
 //! segment, the length word [`CHUNKED_BODY`], then one segment per chunk,
-//! then an empty segment, then the key. It is at most [`MAX_STREAM`] bytes.
+//! then an empty segment, then the key. Ordinary chunked bodies have no
+//! cumulative byte limit; allocation failures and the call's deadline still
+//! end the read.
 //!
 //! A git exchange (OSH-3) opens with the length word [`GIT_CALL`] in place
 //! of the header's length, and runs its own steps (see `git_http`): its
@@ -41,19 +43,19 @@ use crate::{CallHeader, Failure, Refusal, ReplyHeader};
 /// The frame protocol's version.
 pub const PROTOCOL_VERSION: u32 = 4;
 
-/// The largest body one segment carries: a buffered reply's, and a call's
-/// sent whole. The server transport's own bound.
+/// The largest ordinary body sent as one segment, including buffered replies.
+/// Larger ordinary requests use chunks.
 pub const MAX_BODY: usize = 16 << 20;
 
-/// The largest body that comes in chunks: a streamed reply's
-/// ([`crate::Shape::streams`]), or a call's past [`MAX_BODY`].
+/// The existing bound for a Responses create and its admitted whole turn.
+/// Ordinary chunked requests and streamed replies have no cumulative bound.
 pub const MAX_STREAM: usize = 512 << 20;
 
 /// The largest chunk of a streamed reply or a chunked call body.
 pub(crate) const STREAM_CHUNK: usize = 1 << 20;
 
 /// The length word that stands in a call's body segment for a body sent in
-/// chunks. No segment is that long: [`MAX_BODY`] bounds one.
+/// chunks. Its ordinary non-chunked form is bounded by [`MAX_BODY`].
 const CHUNKED_BODY: u32 = u32::MAX;
 
 /// The largest key.
@@ -319,7 +321,7 @@ async fn read_release_mode<R: AsyncRead + Unpin>(reader: &mut R) -> Result<bool,
 }
 
 /// Reads a call's body: one segment of at most [`MAX_BODY`] bytes, or the
-/// chunks of a larger one, at most [`MAX_STREAM`] bytes in all (FIX 1895).
+/// chunks of a larger one, with no cumulative byte limit (FIX 1895).
 async fn read_body<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Zeroizing<Vec<u8>>> {
     let len = read_len(reader).await?;
     if len != CHUNKED_BODY {
@@ -327,9 +329,6 @@ async fn read_body<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Zeroizing
     }
     let mut body = Zeroizing::new(Vec::new());
     while let Some(chunk) = read_chunk(reader).await? {
-        if body.len() + chunk.len() > MAX_STREAM {
-            return Err(io::ErrorKind::InvalidData.into());
-        }
         push_wiped(&mut body, &chunk)?;
     }
     Ok(body)
@@ -342,15 +341,10 @@ async fn skip_body<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<()> {
     if len != CHUNKED_BODY {
         return skip_sized(reader, len, MAX_BODY).await;
     }
-    let mut skipped = 0_usize;
     loop {
         let len = read_len(reader).await?;
         if len == 0 {
             return Ok(());
-        }
-        skipped += bounded(len, STREAM_CHUNK)?;
-        if skipped > MAX_STREAM {
-            return Err(io::ErrorKind::InvalidData.into());
         }
         skip_sized(reader, len, STREAM_CHUNK).await?;
     }
