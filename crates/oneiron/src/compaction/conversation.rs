@@ -234,6 +234,8 @@ pub fn seal_conversation_flight<'a>(
     let hooks = vault.pre_compact_hooks(
         compact_invocation(log.conversation.as_bytes(), last),
         byline.entity_ref(),
+        // No caller key on the conversation path; the pass reads as its actor.
+        None,
         &window.messages,
         &mut pins,
         budget,
