@@ -1921,6 +1921,16 @@ export_facade! {
     let output = client.vault_sync_quarantine_held_edits(&input)?;
     crate::codec::lift_record("vault.sync.quarantine.held_edits", &output)
 };
+"vault.sync.documents.copy_edit.review" => fn vault_sync_documents_copy_edit_review(&self, input: RepoCopyEditReviewRequest) -> Option<RepoCopyEditReviewView> = |client| {
+    let input: oneiron::task_verb::sdk::RepoCopyEditReviewRequest = crate::codec::lower_record("vault.sync.documents.copy_edit.review", input)?;
+    let output = client.vault_sync_documents_copy_edit_review(&input)?;
+    crate::codec::lift_record("vault.sync.documents.copy_edit.review", &output)
+};
+"vault.sync.documents.copy_edit.settle" => fn vault_sync_documents_copy_edit_settle(&self, input: RepoCopyEditSettleRequest) -> RepoCopyEditSettleView = |client| {
+    let input: oneiron::task_verb::sdk::RepoCopyEditSettleRequest = crate::codec::lower_record("vault.sync.documents.copy_edit.settle", input)?;
+    let output = client.vault_sync_documents_copy_edit_settle(&input)?;
+    crate::codec::lift_record("vault.sync.documents.copy_edit.settle", &output)
+};
 "vault.sync.retained_work.wait.set" => fn vault_sync_retained_work_wait_set(&self, input: RetainedWorkWaitSetRequest) -> u64 = |client| {
     let input: oneiron::task_verb::sdk::RetainedWorkWaitSetRequest = crate::codec::lower_record("vault.sync.retained_work.wait.set", input)?;
     let output = client.vault_sync_retained_work_wait_set(&input)?;
@@ -2805,6 +2815,16 @@ export_facade! {
     let input: oneiron::consent::lifecycle::ApproveOnceRequest = crate::codec::lower_record("vault.consent.approve_once", input)?;
     let output = client.vault_consent_approve_once(&input)?;
     crate::codec::lift_record("vault.consent.approve_once", &output)
+};
+"vault.campaign.held" => fn vault_campaign_held(&self) -> Vec<CampaignEnrollmentHeldCall> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.campaign.held")?;
+    let output = client.vault_campaign_held(&input)?;
+    crate::codec::lift_record("vault.campaign.held", &output)
+};
+"vault.campaign.approve_once" => fn vault_campaign_approve_once(&self, input: CampaignEnrollmentApproveOnceRequest) -> ConsentActReceipt = |client| {
+    let input: oneiron::task_verb::sdk::CampaignEnrollmentApproveOnceRequest = crate::codec::lower_record("vault.campaign.approve_once", input)?;
+    let output = client.vault_campaign_approve_once(&input)?;
+    crate::codec::lift_record("vault.campaign.approve_once", &output)
 };
 "vault.connectors.calls.approve_once" => fn vault_connectors_calls_approve_once(&self, input: ConnectorCallApproveOnceRequest) -> ConsentActReceipt = |client| {
     let input: oneiron::task_verb::sdk::ConnectorCallApproveOnceRequest = crate::codec::lower_record("vault.connectors.calls.approve_once", input)?;
@@ -6055,6 +6075,11 @@ export_facade! {
     let input: oneiron::note::NoteReadRequest = crate::codec::lower_record("vault.notes.read", input)?;
     let output = client.vault_notes_read(&input)?;
     crate::codec::lift_record("vault.notes.read", &output)
+};
+"vault.notes.read_indexed" => fn vault_notes_read_indexed(&self, input: NoteIndexedReadRequest) -> ScopedReadResultOptionalNoteReadView = |client| {
+    let input: oneiron::note::NoteIndexedReadRequest = crate::codec::lower_record("vault.notes.read_indexed", input)?;
+    let output = client.vault_notes_read_indexed(&input)?;
+    crate::codec::lift_record("vault.notes.read_indexed", &output)
 };
 "vault.notes.history" => fn vault_notes_history(&self, input: NoteAccessRequest) -> ScopedReadResultOptionalNoteHistoryView = |client| {
     let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.history", input)?;

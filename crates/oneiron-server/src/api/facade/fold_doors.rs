@@ -96,7 +96,7 @@ async fn fold_action<T: DeserializeOwned>(
     .map_err(facade_error)?;
     match dispatch.outcome {
         SelfDispatchOutcome::Fold(answer) => {
-            serde_json::from_str(&answer).map_err(|_| internal(verb))
+            serde_json::from_str(&answer.json).map_err(|_| internal(verb))
         }
         SelfDispatchOutcome::Denied(denied) => Err(MemoryError::new(
             &denied.outcome,
