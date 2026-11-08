@@ -558,6 +558,9 @@ class Oneiron:
         def companions(self) -> "Oneiron._VaultCompanionsVerbs":
             return Oneiron._VaultCompanionsVerbs(self._client)
         @property
+        def proactivity(self) -> "Oneiron._VaultProactivityVerbs":
+            return Oneiron._VaultProactivityVerbs(self._client)
+        @property
         def personas(self) -> "Oneiron._VaultPersonasVerbs":
             return Oneiron._VaultPersonasVerbs(self._client)
         @property
@@ -684,9 +687,6 @@ class Oneiron:
         @property
         def inbox(self) -> "Oneiron._VaultInboxVerbs":
             return Oneiron._VaultInboxVerbs(self._client)
-        @property
-        def proactivity(self) -> "Oneiron._VaultProactivityVerbs":
-            return Oneiron._VaultProactivityVerbs(self._client)
         @property
         def skills(self) -> "Oneiron._VaultSkillsVerbs":
             return Oneiron._VaultSkillsVerbs(self._client)
@@ -1260,6 +1260,21 @@ class Oneiron:
         def set(self, spec):
             """The owner's standing yes to one frozen clearance offer for a companion's contact."""
             return json.loads(_translate(lambda: self._client.vault_companions_sharing_set(json.dumps(spec))))
+    class _VaultProactivityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def digest(self) -> "Oneiron._VaultProactivityDigestVerbs":
+            return Oneiron._VaultProactivityDigestVerbs(self._client)
+    class _VaultProactivityDigestVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator."""
+            return json.loads(_translate(lambda: self._client.vault_proactivity_digest(json.dumps(spec))))
+        def get(self, spec):
+            """Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant."""
+            return json.loads(_translate(lambda: self._client.vault_proactivity_digest_get(json.dumps(spec))))
     class _VaultPersonasVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2040,12 +2055,6 @@ class Oneiron:
         def resolve(self, spec):
             """The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items."""
             return json.loads(_translate(lambda: self._client.vault_inbox_groups_resolve(json.dumps(spec))))
-    class _VaultProactivityVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def digest(self, spec):
-            """Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator."""
-            return json.loads(_translate(lambda: self._client.vault_proactivity_digest(json.dumps(spec))))
     class _VaultSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2575,7 +2584,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def put(self, spec):
-            """The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."""
+            """The owner subscribes an agent to the messages a built-in channel (slack, line or threaded email) routes to it, so each one wakes the agent to answer."""
             return json.loads(_translate(lambda: self._client.vault_connectors_subscriptions_put(json.dumps(spec))))
         def list(self, spec):
             """An agent's connector event subscriptions, standing and revoked, for the owner."""
@@ -4092,9 +4101,21 @@ class Oneiron:
         def get(self, spec):
             """Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing."""
             return json.loads(_translate(lambda: self._client.vault_hooks_regen_get(json.dumps(spec))))
+        def history(self, spec):
+            """Read, as the authenticated owner, one hook binding's regen receipts newest first, across its rebinds: each decision with its golden manifest, and each adoption, cancel and revert. Changes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_hooks_regen_history(json.dumps(spec))))
+        def revert(self, spec):
+            """Revert, as the authenticated owner, the last regen adoption on one hook binding, named by the adopted body hash: the body it replaced installs again through the owner's pack put. Answers the put receipt."""
+            return json.loads(_translate(lambda: self._client.vault_hooks_regen_revert(json.dumps(spec))))
+        def run(self, spec):
+            """Run, as the authenticated owner, one hook binding's intent again against this engine's contract on the serving host's model seat; the golden replay decides and the decision waits on the record. Enacts nothing."""
+            return json.loads(_translate(lambda: self._client.vault_hooks_regen_run(json.dumps(spec))))
         def adopt(self, spec):
             """Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record."""
             return json.loads(_translate(lambda: self._client.vault_hooks_regen_adopt(json.dumps(spec))))
+        def cancel(self, spec):
+            """Set aside, as the authenticated owner, the regen decision waiting on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. The hook keeps its body; its contract is declined until it moves again."""
+            return json.loads(_translate(lambda: self._client.vault_hooks_regen_cancel(json.dumps(spec))))
     class _VaultArtifactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -6259,6 +6280,9 @@ class Oneiron:
         def sync(self, spec):
             """The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
             return json.loads(_translate(lambda: self._client.vault_mail_sources_sync(json.dumps(spec))))
+        def search(self, spec):
+            """The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience."""
+            return json.loads(_translate(lambda: self._client.vault_mail_sources_search(json.dumps(spec))))
     class _VaultMailSourcesSettingsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -6412,6 +6436,9 @@ class Oneiron:
         def history(self, spec):
             """Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."""
             return json.loads(_translate(lambda: self._client.self_history(json.dumps(spec))))
+        @property
+        def hooks(self) -> "Oneiron._SelfHooksVerbs":
+            return Oneiron._SelfHooksVerbs(self._client)
         @property
         def browser(self) -> "Oneiron._SelfBrowserVerbs":
             return Oneiron._SelfBrowserVerbs(self._client)
@@ -6735,6 +6762,21 @@ class Oneiron:
         def describe(self, spec):
             """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
             return json.loads(_translate(lambda: self._client.self_folds_describe(json.dumps(spec))))
+    class _SelfHooksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def regen(self) -> "Oneiron._SelfHooksRegenVerbs":
+            return Oneiron._SelfHooksRegenVerbs(self._client)
+    class _SelfHooksRegenVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def adopt(self, spec):
+            """Adopt the identical-fingerprint regen pending on a hook this agent authored, named by its candidate_hash, through the agent's own put of the local pack; the hook stays the agent's. A diff waits for the owner."""
+            return json.loads(_translate(lambda: self._client.self_hooks_regen_adopt(json.dumps(spec))))
+        def get(self, spec):
+            """Read the regen record of a hook this agent authored: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash its adopt names. Changes nothing."""
+            return json.loads(_translate(lambda: self._client.self_hooks_regen_get(json.dumps(spec))))
     class _SelfBrowserVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

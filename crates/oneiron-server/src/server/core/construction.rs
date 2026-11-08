@@ -301,6 +301,7 @@ impl SyncServer {
             artifact_previews: super::ArtifactPreviews::default(),
             live_voice: Default::default(),
             asr_sessions: Default::default(),
+            meeting_imports: Default::default(),
             model_streams: Default::default(),
             export_transfers: Default::default(),
             pairing_backoff: Default::default(),

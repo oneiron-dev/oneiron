@@ -9,7 +9,7 @@ use tokio::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::sync::client::{SyncClient, SyncEvent, SyncStatus, next_backoff};
-use crate::sync::types::parse_window_key_str;
+use crate::sync::types::{WindowKey, parse_window_key_str};
 use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
 use super::peer_session::HomeReach;
@@ -641,17 +641,37 @@ impl SyncConnection {
             return Ok(ws_stream);
         }
         let full_resync_markers = self.full_resync_markers()?;
+        // FIX 20202: an opened-item session re-bootstraps from the server
+        // each marked window this device promoted and the home may read, over
+        // its promoted exchange, once the queue is replayed. Any other marked
+        // window still needs sync-all.
+        let (full_resync_markers, promoted_markers) =
+            if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
+                for marker in &full_resync_markers {
+                    let recoverable = match WindowKey::try_new(marker.window_key.as_str()) {
+                        Some(key) => {
+                            client
+                                .opened_window_promoted(&key)
+                                .map_err(SessionFault::local)?
+                                && client.home_may_promote(&key)
+                                && client.home_may_request(&key)
+                        }
+                        None => false,
+                    };
+                    if !recoverable {
+                        return Err(SessionFault::local(
+                            "opened-item full-resync requires explicit sync-all recovery",
+                        ));
+                    }
+                }
+                (Vec::new(), full_resync_markers)
+            } else {
+                (full_resync_markers, Vec::new())
+            };
         let force_resync: BTreeSet<String> = full_resync_markers
             .iter()
             .map(|marker| marker.window_key.clone())
             .collect();
-        if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
-            && !full_resync_markers.is_empty()
-        {
-            return Err(SessionFault::local(
-                "opened-item full-resync requires explicit sync-all recovery",
-            ));
-        }
         if !full_resync_markers.is_empty() {
             tracing::info!(
                 marker_count = full_resync_markers.len(),
@@ -695,6 +715,14 @@ impl SyncConnection {
                     "Failed to clear stale queue updates: {e}"
                 )));
             }
+        }
+        if !promoted_markers.is_empty() {
+            tracing::info!(
+                marker_count = promoted_markers.len(),
+                "re-bootstrapping marked promoted windows from the server"
+            );
+            self.re_bootstrap_promoted(&mut write, &mut read, client, event_tx, &promoted_markers)
+                .await?;
         }
 
         // Reunite the stream
