@@ -35,6 +35,7 @@ mod raw_body;
 mod recovery;
 mod result_scrub;
 mod scope;
+mod scoped_prepared_effect;
 pub mod tool_call;
 mod tool_schema;
 mod zeroizing_wire;
