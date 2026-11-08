@@ -68,6 +68,7 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
     sealed: Option<SealedPayload<'_>>,
     plan: &mut CustodyPlan,
     image: &mut CheckpointImage,
+    live_rows_merged: bool,
 ) -> std::result::Result<Option<OpenedPayload>, Rejected> {
     let Some(mut sealed) = sealed else {
         // A split window's rows ride only in a payload's compartments.
@@ -111,7 +112,10 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
     let mut bundles = Vec::with_capacity(contents.len());
     let mut windows = Vec::new();
     for (role, plain) in contents {
-        let opened = opened_content(&plain, &actor_parts, unopened.clone())?;
+        let mut opened = opened_content(&plain, &actor_parts, unopened.clone())?;
+        if live_rows_merged && role == BundleRole::Content(Getter::EmbedMedia) {
+            crate::embed::checkpoint::preserve_current_refusals(&mut opened);
+        }
         if role == BundleRole::Window {
             windows.push(opened);
         } else {

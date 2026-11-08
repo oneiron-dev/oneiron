@@ -88,7 +88,10 @@ pub use conversation::{
     ConversationFlight, ConversationFlightOutcome, ConversationTurnSpan, capture_conversation_fork,
     read_action_pinned_log, read_chat_log, seal_conversation_flight,
 };
-pub(crate) use conversation::{conversation_receipt_in, put_conversation_receipt_in_txn};
+pub(crate) use conversation::{
+    FoldedTurnSummary, conversation_receipt_in, folded_turn_summary_in,
+    put_conversation_receipt_in_txn,
+};
 pub use driver::{
     CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver,
     CompactionProduct, CompactionRequest, CompactionSignal, CompactionTierClass,
@@ -99,11 +102,11 @@ pub use epoch::{
     decode_epoch_summary_body, encode_epoch_summary_body,
 };
 pub(crate) use epoch::{
-    EpochMint, EpochPlacement, PriorEpoch, epoch_disclosable_in, epoch_exportable_in,
+    EpochMint, EpochPlacement, EpochScope, PriorEpoch, epoch_disclosable_in, epoch_exportable_in,
     epoch_sources_admitted_in,
 };
 pub(crate) use epoch_floor::{
-    epoch_floors_in_txn, raise_epoch_floor_in_txn, raise_session_epoch_floor_in_txn,
+    epoch_floors_in_txn, raise_epoch_floor_in_txn, raise_epoch_scope_floor_in_txn,
 };
 pub use epoch_vector::{EpochEmbedder, TurnVector, room_turn_vector};
 pub(crate) use fold_words::{
@@ -123,6 +126,9 @@ pub(crate) use hooks::host_compact_as_owner;
 pub use hooks::{
     CompactHooks, HOST_COMPACT, check_host_compact_rewrite,
     check_host_compact_rewrite_unverified_window, compact_invocation,
+};
+pub(crate) use hooks::{
+    keep_compact_hooks_in_room, post_compact_hooks_in_room, pre_compact_hooks_in_room,
 };
 pub use packet_source::{CompactionHostLog, CompactionSource, admit_compaction_source};
 pub(crate) use self_writer::{

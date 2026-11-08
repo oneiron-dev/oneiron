@@ -1,4 +1,5 @@
 //! One public signing executor: turn, access, viewed, terminal, then action.
+use super::rate::{LimitCrossing, keep_limit_crossings};
 use super::{
     capability::{EsignCapability, binding},
     field_admission::{EventFields, InspectedPages, inspect_event_pages},
@@ -6,6 +7,7 @@ use super::{
     model::*,
     principals::automated_signing_allowed,
 };
+use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -26,6 +28,13 @@ pub struct SigningPage {
     pub presentations: Vec<super::render::FieldPresentation>,
     pub values: BTreeMap<String, SignatureRow>,
 }
+/// Receipt observations of the sealed bytes, in document item order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SigningSealedItem {
+    pub sha256: String,
+    pub active_content: super::sealer::SealActiveContentFacts,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", content = "data", rename_all = "snake_case")]
 pub enum SigningOutcome {
@@ -34,6 +43,8 @@ pub enum SigningOutcome {
     Terminal {
         status: DocumentStatus,
         item_count: usize,
+        /// None when no sealing receipt is available to read.
+        sealed_items: Option<Vec<SigningSealedItem>>,
     },
     AwaitingSeal,
     /// D6: the signing dial does not open this automated sign act, so the
@@ -424,9 +435,24 @@ impl Vault {
                     | DocumentStatus::Voided
                     | DocumentStatus::Expired
             ) {
+                let sealed_items = super::seal::CANONICAL
+                    .get(&self.store, txn, &document)
+                    .ok()
+                    .flatten()
+                    .map(|manifest| {
+                        manifest
+                            .items
+                            .into_iter()
+                            .map(|item| SigningSealedItem {
+                                sha256: crate::entity_id::bytes_to_hex_lower(&item.sha256),
+                                active_content: item.active_content,
+                            })
+                            .collect()
+                    });
                 return Ok(SigningOutcome::Terminal {
                     status: state.status,
                     item_count: state.document.items.len(),
+                    sealed_items,
                 });
             }
             if state.rejection.is_some()
@@ -464,6 +490,17 @@ impl Vault {
                     } else {
                         value.clone()
                     };
+                    let crossing = match (&definition.meta, &value) {
+                        (FieldMeta::Email, FieldValue::Text(text)) => text_crossing(
+                            self,
+                            EngineLimit::EsignEmailFieldBytes,
+                            text.len() as u64,
+                        ),
+                        (FieldMeta::Name | FieldMeta::Date, FieldValue::Text(text)) => {
+                            text_crossing(self, EngineLimit::EsignNameFieldBytes, text.len() as u64)
+                        }
+                        _ => None,
+                    };
                     state = append_inspected(
                         self,
                         txn,
@@ -480,6 +517,16 @@ impl Vault {
                         now,
                         &inspected,
                     )?;
+                    if let Some(crossing) = crossing {
+                        keep_limit_crossings(
+                            self,
+                            txn,
+                            &cap.document,
+                            &cap.recipient,
+                            &[crossing],
+                            now,
+                        )?;
+                    }
                 }
                 SigningAction::Complete { consent, next } => {
                     if !consent {
@@ -551,6 +598,20 @@ impl Vault {
                         actor,
                         now,
                     )?;
+                    if let Some(crossing) = text_crossing(
+                        self,
+                        EngineLimit::EsignRejectReasonBytes,
+                        reason.len() as u64,
+                    ) {
+                        keep_limit_crossings(
+                            self,
+                            txn,
+                            &cap.document,
+                            &cap.recipient,
+                            &[crossing],
+                            now,
+                        )?;
+                    }
                     enqueue_seal(self, txn, document, now)?;
                     return Ok(SigningOutcome::AwaitingSeal);
                 }
@@ -587,4 +648,9 @@ impl Vault {
             }))
         })
     }
+}
+
+fn text_crossing(vault: &Vault, row: EngineLimit, measured: u64) -> Option<LimitCrossing> {
+    let bound = vault.limit_watch().bound(row);
+    (measured > bound).then_some((row, bound, measured))
 }
