@@ -1,18 +1,19 @@
 //! `POST /oauth/register`: dynamic client registration (RFC 7591) for public clients, which
 //! prove each code with PKCE and hold no secret. DCR sits beside the client ID metadata
-//! document (ARCH-0028:90): a client that has one needs no registration.
+//! document (ARCH-0028:90): a client that has one needs no registration. Open to anyone, so
+//! its flood cap is asked before the body is read ([`super::OAuthFloodCaps`]).
 
 use std::sync::Arc;
 
-use axum::Json;
-use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
+use axum::extract::{FromRequest, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::{Extension, Json};
 use oneiron::authority::{OAuthClientRegistration, OAuthRegistrationRefusal};
 use serde::Deserialize;
 
-use super::{OAuthIdentity, not_found, now, oauth_error};
+use super::{OAuthFloodCaps, OAuthIdentity, not_found, now, oauth_error};
+use crate::auth::ClientAddress;
 use crate::server::SyncServer;
 
 /// The registration fields this vault reads (RFC 7591 §2); every other is ignored.
@@ -31,15 +32,21 @@ pub(super) struct RegistrationRequest {
 }
 
 /// Registers one public client: 201 with its fresh `client_id` and the metadata it holds, or
-/// RFC 7591 §3.2.2's error.
+/// RFC 7591 §3.2.2's error; past the flood cap, the cap's 429 before the body is read.
 pub(super) async fn register(
     State(server): State<Arc<SyncServer>>,
-    request: Result<Json<RegistrationRequest>, JsonRejection>,
+    Extension(caps): Extension<Arc<OAuthFloodCaps>>,
+    ClientAddress(source): ClientAddress,
+    request: Request,
 ) -> Response {
     if OAuthIdentity::of(&server).is_none() {
         return not_found();
     }
-    let Ok(Json(request)) = request else {
+    if let Some(shed) = caps.shed_registration(source) {
+        return shed;
+    }
+    let Ok(Json(request)) = Json::<RegistrationRequest>::from_request(request, &server).await
+    else {
         return oauth_error(StatusCode::BAD_REQUEST, "invalid_client_metadata");
     };
     let registration = OAuthClientRegistration {
