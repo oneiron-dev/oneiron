@@ -300,7 +300,7 @@ impl Vault {
         }
         let cap = {
             let rtxn = self.store.env.read_txn()?;
-            crate::gate::resolve_policy_manifest(&self.store, &rtxn)?.sheet_answer_limit(
+            crate::gate::resolve_policy_manifest(&self.store, &rtxn)?.sheet_answer_batch_size(
                 &artifact.to_hex(),
                 request.sheet,
                 request.max_count_override,
