@@ -1143,12 +1143,18 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
     serverConfig: "[recall]\nretrieval_telemetry_capture = true\n" });
   let primaryFailed: boolean = false;
   let primary: unknown;
+  type PriorRead = {
+    phase: string; effort: Facade.RecallEffort;
+    pack: FacadeResult<"vault.recall">; evidence: FacadeResult<"vault.retrieval.run"> | null;
+    rows: Record<string, Facade.RetrievalScoreBreakdown | null>;
+  };
+  const records = new Map<string, Awaited<ReturnType<typeof claim>>>();
+  const reads: PriorRead[] = [];
   try {
     const zero: Facade.RetrievalWeights = { affect: 0, arousal: 0, community: 0, vad: 0 };
     expect((await engine.client.call("vault.retrieval.weights.get", {})).weights).toEqual(zero);
     const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
     const at = utc("2026-08-01T00:00:00Z");
-    const records = new Map<string, Awaited<ReturnType<typeof claim>>>();
     const allowed = [engine.pairedActor.principalRef, scope.world_id, scope.scope_facet_id, scope.scope_project_id];
     for (const [index, row] of fixture.rows.entries()) {
       let evidence: string[] = [];
@@ -1195,34 +1201,35 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
     const privateRow = records.get("private-community")!;
     expect((await reader.call("vault.get", { entity_ref: privateRow.ref })).value).toBeNull();
     const before = await claimSet(engine);
-    const snapshots: {
-      pack: FacadeResult<"vault.recall">; evidence: FacadeResult<"vault.retrieval.run">;
-      intenseDelta: number; communityDelta: number;
-    }[] = [];
-    async function read() {
+    const scored = ["calm", "intense", "community-neighbor"] as const;
+    async function read(phase: string, effort: Facade.RecallEffort) {
       const pack = await reader.call("vault.recall", {
-        query: "retrievalpriors", effort: "medium", limit: 50,
+        query: "retrievalpriors", effort, limit: 50,
         query_affect: fixture.queryAffect, telemetry: { capture_trace: true },
       });
+      const evidence = pack.retrieval_run_id
+        ? await engine.client.call("vault.retrieval.run", { run_id: pack.retrieval_run_id })
+        : null;
+      const rows = Object.fromEntries(scored.map(label => [label, evidence?.run.score_breakdown
+        .find(hit => Buffer.from(hit.result_id).toString("hex") === records.get(label)!.id) ?? null]));
+      const saved: PriorRead = { phase, effort, pack, evidence, rows };
+      reads.push(saved);
       readReceipt(pack.narrowing);
-      for (const label of ["calm", "intense", "community-neighbor"]) {
+      for (const label of scored) {
         expect(pack.items.some(item => item.short_id === records.get(label)!.ref)).toBe(true);
       }
       expect(pack.items.some(item => item.short_id === privateRow.ref)).toBe(false);
       expect(JSON.stringify(pack.items)).not.toContain("private-community");
       expect(pack.retrieval_run_id).toBeTruthy();
-      const evidence = await engine.client.call("vault.retrieval.run", { run_id: pack.retrieval_run_id! });
       expect(evidence).not.toBeNull();
       expect(evidence!.run.trace).toBeTruthy();
-      const score = (label: string) => {
-        const hit = evidence!.run.score_breakdown.find(hit => Buffer.from(hit.result_id).toString("hex") === records.get(label)!.id);
-        expect(hit).toBeDefined();
+      const score = (label: typeof scored[number]) => {
+        const hit = rows[label];
+        expect(hit).not.toBeNull();
         return hit!.final_score;
       };
-      const snapshot = { pack, evidence, intenseDelta: score("intense") - score("calm"),
+      return { ...saved, intenseDelta: score("intense") - score("calm"),
         communityDelta: score("community-neighbor") - score("calm") };
-      snapshots.push(snapshot);
-      return snapshot;
     }
     async function configure(weights: Facade.RetrievalWeights) {
       const current = await engine.client.call("vault.retrieval.weights.get", {});
@@ -1238,21 +1245,26 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
         expect(configured[key]).toBeCloseTo(weights[key], 7);
       }
     }
-    const baseline = await read();
+    const baselines = new Map<Facade.RecallEffort, Awaited<ReturnType<typeof read>>>();
+    baselines.set("medium", await read("baseline-medium", "medium"));
     const rowOrder = (snapshot: Awaited<ReturnType<typeof read>>) => snapshot.pack.items
       .map(item => item.short_id).filter(ref => [...records.values()].some(row => row.ref === ref));
-    for (const [axis, value, favored] of [
-      ["affect", 0.4, "intense"], ["arousal", 4, "intense"], ["community", 0.25, "community-neighbor"],
+    for (const [axis, value, favored, effort] of [
+      ["affect", 0.4, "intense", "medium"], ["arousal", 4, "intense", "medium"],
+      // ARCH-0004 #effort: the community prior (expand_ppr) runs at high and above only.
+      ["community", 0.25, "community-neighbor", "high"],
     ] as const) {
+      if (!baselines.has(effort)) baselines.set(effort, await read(`baseline-${effort}`, effort));
+      const baseline = baselines.get(effort)!;
       await configure({ ...zero, [axis]: value });
-      const enabled = await read();
+      const enabled = await read(`${axis}-enabled`, effort);
       const refs = rowOrder(enabled);
       expect(refs.indexOf(records.get(favored)!.ref)).toBeLessThan(refs.indexOf(records.get("calm")!.ref));
       if (axis === "community") expect(enabled.communityDelta).toBeGreaterThan(baseline.communityDelta);
       else expect(enabled.intenseDelta).toBeGreaterThan(baseline.intenseDelta);
       expect(await claimSet(engine)).toEqual(before);
       await configure(zero);
-      const off = await read();
+      const off = await read(`${axis}-off`, effort);
       expect(rowOrder(off)).toEqual(rowOrder(baseline));
       expect(await claimSet(engine)).toEqual(before);
     }
@@ -1262,12 +1274,17 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
       expect(stored.confidence).toBe(row.confidence);
       expect(stored.approval).toBe(records.get(row.label)!.receipt.approval);
     }
-    await engine.artifacts.json("retrieval-optional-priors.json", snapshots);
   } catch (error) {
     primaryFailed = true;
     primary = error;
   } finally {
     const cleanups: string[] = [];
+    try {
+      await engine.artifacts.json("retrieval-optional-priors.json", {
+        labels: Object.fromEntries([...records].map(([label, row]) => [label, { ref: row.ref, id: row.id }])),
+        reads,
+      });
+    } catch (error) { cleanups.push(errorText(error)); }
     try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
     if (primaryFailed) {
       if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
