@@ -65,20 +65,23 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::sync::SyncPeerDialer;
 use crate::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
 use crate::sync::peer_route::{HOME_DOWN_AFTER_SECS, HOME_PROBE_SECS, HOME_PROBE_TIMEOUT_SECS};
-use crate::sync::transport::TAG_SYNC_UPDATE;
+use crate::sync::transport::{TAG_ROOT_PART, TAG_SYNC_UPDATE};
 use crate::{EntityId, Vault};
 
 use super::session::SessionFault;
 
 /// Whether the first frame the far end sent a session is its root
-/// (`TAG_SYNC_UPDATE`). A home sends its root first only once it has
-/// admitted this machine's upgrade and taken the session's hello, its root
-/// read from its own store; a refused upgrade, a refused hello, a fault or a
-/// close sends none. It proves no more: a probe that reads it gives the home
-/// a turn, and only a completed first round counts the home served
-/// ([`HomeReach`]).
+/// (`TAG_SYNC_UPDATE`, or a large root's first `TAG_ROOT_PART`). A home
+/// sends its root first only once it has admitted this machine's upgrade
+/// and taken the session's hello, its root read from its own store; a
+/// refused upgrade, a refused hello, a fault or a close sends none. It
+/// proves no more: a probe that reads it gives the home a turn, and only a
+/// completed first round counts the home served ([`HomeReach`]).
 const fn first_frame_is_root(first_frame: &[u8]) -> bool {
-    matches!(first_frame.first(), Some(&TAG_SYNC_UPDATE))
+    matches!(
+        first_frame.first(),
+        Some(&(TAG_SYNC_UPDATE | TAG_ROOT_PART))
+    )
 }
 
 /// Whether the home serves this machine's sync, as the reconnect loop has
