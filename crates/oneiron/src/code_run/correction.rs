@@ -7,9 +7,10 @@
 //! records with the checkpoint its step committed, in that commit's own
 //! transaction. A rejected response records before its error returns, in its
 //! own transaction on the run's route, and commits no checkpoint. A response
-//! whose program fails before its first bridge call commits no step and
-//! keeps no record; the reply the re-entry gets records as the step's next
-//! attempt.
+//! whose program fails before its first bridge call commits no step; its
+//! record is written alone, as a rejected one's is, with its accepted
+//! outcome and no checkpoint (FIX 14992). The reply the re-entry gets
+//! records as the step's next attempt.
 //!
 //! A record holds ids, counts, flags and the executor's own rejection text.
 //! It holds no response text, no program and no console the model wrote.
@@ -157,7 +158,9 @@ pub struct CodeRunCorrection {
     /// The attempt ended rejected with no retry left. The next response at
     /// this step comes only from a caller's re-entry.
     pub exhausted: bool,
-    /// The checkpoint the step committed; none for a rejected response.
+    /// The checkpoint the step committed; none for a step that committed
+    /// none: a rejected response, or one whose program failed before its
+    /// first bridge call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<CodeRunCorrectionCheckpoint>,
 }
