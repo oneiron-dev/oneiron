@@ -20,6 +20,7 @@ mod connector_call_input;
 mod connector_call_input_resume;
 mod connector_call_output;
 mod connector_call_pending;
+mod connector_call_preflight;
 mod connector_call_rebind;
 mod connector_call_resume;
 mod connector_call_sent;

@@ -40,12 +40,16 @@ pub(crate) struct ExternalEffectPreflight {
 /// How the door that would admit an effect meets its governing key's
 /// budgets, as [`crate::outbound_chokepoint`] charges them.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PreflightBudget {
+pub(crate) struct PreflightBudget<'a> {
     /// The effect debits its key's sends rows (`BudgetClass::is_send`).
     pub(crate) send_like: bool,
     /// The door waits for a full count-bound window rather than refusing
     /// (FIX 8686, 8788).
     pub(crate) paces: bool,
+    /// The tool whose declared price the door reserves on its key's
+    /// preauthorizing Spend rows before it charges (a scoped call, FIX
+    /// 8689); `None` for a door that reserves no price.
+    pub(crate) priced_tool: Option<&'a str>,
 }
 
 /// How a preflight reads one reason code.
@@ -157,16 +161,18 @@ fn preflight_answer(judgment: &ExternalEffectJudgment) -> ExternalEffectPrefligh
 }
 
 /// [`preflight_answer`] with the admission's budget stage read on `txn` at
-/// `at`, charging nothing: an Allow that goes now meets its governing key's
-/// budgets as the chokepoint's charge meets them. A door that paces and
-/// meets a full count-bound window waits for it; an exhausted row on the
-/// key or its catalog pool denies the effect
-/// ([`GateReasonCode::DenyEffectorBudgetExhausted`]), as the charge would.
+/// `at`, charging, reserving and suspending nothing: an Allow that goes now
+/// meets its governing key's budgets in the chokepoint's order. A door that
+/// paces and meets a full count-bound window waits for it. A priced tool
+/// whose price a preauthorizing Spend row has no room for, or an exhausted
+/// row on the key or its catalog pool, denies the effect
+/// ([`GateReasonCode::DenyEffectorBudgetExhausted`]), as the reservation or
+/// the charge would.
 pub(crate) fn preflight_answer_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     judgment: &ExternalEffectJudgment,
-    budget: PreflightBudget,
+    budget: PreflightBudget<'_>,
     at: u64,
 ) -> Result<ExternalEffectPreflight> {
     let mut answer = preflight_answer(judgment);
@@ -192,17 +198,33 @@ pub(crate) fn preflight_answer_in_txn(
         answer.rate_window_opens_at = Some(next_eligible_at);
         return Ok(answer);
     }
-    if connector_key::preflight_effector_budgets_pooled(
+    let price = match budget.priced_tool {
+        Some(tool) => connector_key::tool_spend_price_in_txn(store, txn, &target.key, tool)?,
+        None => None,
+    };
+    let no_room = connector_key::spend_overrun_in_txn(
         store,
         txn,
         &target.key_id,
         &target.key,
         &target.governing_connector,
-        budget.send_like,
+        price.as_ref(),
         at,
         true,
     )?
-    .is_some()
+    .is_some();
+    if no_room
+        || connector_key::preflight_effector_budgets_pooled(
+            store,
+            txn,
+            &target.key_id,
+            &target.key,
+            &target.governing_connector,
+            budget.send_like,
+            at,
+            true,
+        )?
+        .is_some()
     {
         answer.verdict = PreflightVerdict::Deny;
         answer

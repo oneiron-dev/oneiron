@@ -25,11 +25,12 @@ pub struct CanEffectRequest {
 }
 
 /// The one effect a `can({effect})` judges, named by the verb that would
-/// perform it. One family now, more later.
+/// perform it.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum CanEffect {
     OutboundSchedule(CanOutboundSchedule),
+    ConnectorCall(CanConnectorCall),
 }
 
 /// `{outbound_schedule: ...}`: the send `connector.outbound.schedule` with
@@ -39,4 +40,13 @@ pub enum CanEffect {
 #[serde(deny_unknown_fields)]
 pub struct CanOutboundSchedule {
     pub outbound_schedule: OutboundScheduleRequest,
+}
+
+/// `{connector_call: ...}`: the tool call `connector.call` with this same
+/// input would make, judged as its first chokepoint admission judges it (FIX
+/// 22102).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CanConnectorCall {
+    pub connector_call: crate::outbound_consent::ConnectorCallRequest,
 }

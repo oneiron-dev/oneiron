@@ -4,8 +4,8 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1350 facade rows, 4862 declarations.
-Inputs: 1279 of 1350 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1350 facade rows, 4863 declarations.
+Inputs: 1278 of 1350 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1179 of 1350 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
@@ -16782,7 +16782,17 @@ class OutboundScheduleRequest(TypedDict):
     counterparty_class: NotRequired[str | None]
 class CanOutboundSchedule(TypedDict):
     outbound_schedule: OutboundScheduleRequest
-CanEffect = CanOutboundSchedule
+ConnectorSource = Literal["catalog", "builtin"]
+MutationIntent = Literal["preview", "explicit_mutation"]
+class ConnectorCallRequest(TypedDict):
+    name: str
+    source: NotRequired[ConnectorSource | None]
+    tool: str
+    arguments: NotRequired[Any]
+    mutation: NotRequired[MutationIntent]
+class CanConnectorCall(TypedDict):
+    connector_call: ConnectorCallRequest
+CanEffect = CanOutboundSchedule | CanConnectorCall
 class CanEffectRequest(TypedDict):
     effect: CanEffect
 CanRequest = TaskCanAskRequest | CanEffectRequest
@@ -18524,14 +18534,6 @@ class LiveVoiceUsage(TypedDict):
     terminal: bool
     metering_enabled: bool
     settlements: list[RunRungSettlement]
-ConnectorSource = Literal["catalog", "builtin"]
-MutationIntent = Literal["preview", "explicit_mutation"]
-class ConnectorCallRequest(TypedDict):
-    name: str
-    source: NotRequired[ConnectorSource | None]
-    tool: str
-    arguments: NotRequired[Any]
-    mutation: NotRequired[MutationIntent]
 class LiveVoiceToolRequest(TypedDict):
     session_ref: str
     call: ConnectorCallRequest

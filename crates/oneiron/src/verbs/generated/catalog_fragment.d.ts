@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1404 code-mode rows (1361 host rows, 43 run rows), 4921 declarations.
+// Census: 1404 code-mode rows (1361 host rows, 43 run rows), 4922 declarations.
 // Replies: 1212 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
@@ -3301,7 +3301,11 @@ declare namespace Sdk {
   type ChannelSelectionRequest = { relationship: RelationshipContext; applicable_scopes?: SelectionRuleScope[]; candidates: ChannelSelectionCandidateInput[]; thread_ref?: string | null };
   type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null; selection?: ChannelSelectionRequest | null; counterparty_class?: string | null };
   type CanOutboundSchedule = { outbound_schedule: OutboundScheduleRequest };
-  type CanEffect = CanOutboundSchedule;
+  type ConnectorSource = "catalog" | "builtin";
+  type MutationIntent = "preview" | "explicit_mutation";
+  type ConnectorCallRequest = { name: string; source?: ConnectorSource | null; tool: string; arguments?: unknown; mutation?: MutationIntent };
+  type CanConnectorCall = { connector_call: ConnectorCallRequest };
+  type CanEffect = CanOutboundSchedule | CanConnectorCall;
   type CanEffectRequest = { effect: CanEffect };
   type CanRequest = TaskCanAskRequest | CanEffectRequest;
   type TaskAskPreflightRecipient = { who: EntityId; face?: string | null; channel?: string | null; word_required: boolean };
@@ -3640,9 +3644,6 @@ declare namespace Sdk {
   type LiveVoiceAckRequest = { session_ref: string; generation: number; event_sequence: number; kind: LiveVoiceAckKind; played_samples?: number | null };
   type LiveVoiceUsageRequest = { session_ref: string; generation: number };
   type LiveVoiceUsage = { session_ref: string; utterance_id: string; generation: number; run: string; terminal: boolean; metering_enabled: boolean; settlements: RunRungSettlement[] };
-  type ConnectorSource = "catalog" | "builtin";
-  type MutationIntent = "preview" | "explicit_mutation";
-  type ConnectorCallRequest = { name: string; source?: ConnectorSource | null; tool: string; arguments?: unknown; mutation?: MutationIntent };
   type LiveVoiceToolRequest = { session_ref: string; call: ConnectorCallRequest };
   type ConnectorToolResult = { source: string; foreign: boolean; content: unknown; structured_content?: unknown | null; is_error: boolean; rpc_error?: unknown | null };
   type ConnectorQuestion = { key: string; message: string; requested_schema: unknown };
@@ -5052,7 +5053,7 @@ declare const calendar: {
   /** Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe. */
   invite(input: Sdk.CalendarInviteSurfaceInput): Promise<Sdk.OutboundIntentReceipt | StoredResult>;
 };
-/** Read-only preflight: of an ask, its recipients, faces and channels, without minting a TASK; of one effect ({effect}), a dated allow, deny, would-ask or named hold, judged as the act would be and rechecked when it runs. */
+/** Read-only preflight: of an ask, its recipients, faces and channels, without minting a TASK; of a scheduled send or connector call ({effect}), a dated allow, deny, would-ask or named hold, judged as the act would be, rechecked when it runs. */
 declare function can(input: Sdk.CanRequest): Promise<Sdk.CanAnswer | StoredResult>;
 /** Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work. */
 declare function cancel(input: Sdk.TaskRequest): Promise<Sdk.TaskCancelReceipt | StoredResult>;

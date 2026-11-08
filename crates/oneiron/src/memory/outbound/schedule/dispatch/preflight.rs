@@ -113,6 +113,7 @@ impl Memory<'_> {
         let budget = crate::gate::PreflightBudget {
             send_like: crate::outbound_intent_ledger::BudgetClass::Send.is_send(),
             paces: true,
+            priced_tool: None,
         };
         let preflight =
             crate::gate::preflight_answer_in_txn(&self.vault.store, &txn, &judgment, budget, at)?;

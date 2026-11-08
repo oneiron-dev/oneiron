@@ -13842,7 +13842,7 @@
     },
     {
       "name": "can",
-      "description": "Read-only preflight: of an ask, its recipients, faces and channels, without minting a TASK; of one effect ({effect}), a dated allow, deny, would-ask or named hold, judged as the act would be and rechecked when it runs.",
+      "description": "Read-only preflight: of an ask, its recipients, faces and channels, without minting a TASK; of a scheduled send or connector call ({effect}), a dated allow, deny, would-ask or named hold, judged as the act would be, rechecked when it runs.",
       "input": "crate::verbs::CanRequest",
       "output": "crate::memory::CanAnswer",
       "call": "memory.can(&input)?",

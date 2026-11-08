@@ -14667,7 +14667,7 @@ impl AgentVerb {
             Self::VaultArtifactsDiscard => "Drops one waiting artifact proposal, once.",
             Self::VaultArtifactsUndo => "Undoes one Keep by appending a new version.",
             Self::Can => {
-                "Read-only preflight: of an ask, its recipients, faces and channels, without minting a TASK; of one effect ({effect}), a dated allow, deny, would-ask or named hold, judged as the act would be and rechecked when it runs."
+                "Read-only preflight: of an ask, its recipients, faces and channels, without minting a TASK; of a scheduled send or connector call ({effect}), a dated allow, deny, would-ask or named hold, judged as the act would be, rechecked when it runs."
             }
             Self::Peek => {
                 "An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask."
