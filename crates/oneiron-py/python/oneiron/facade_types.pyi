@@ -22212,6 +22212,7 @@ class WakeRecipePolicy(TypedDict):
     narrative_instruction: str
     arc_min_new_statements: int
     arc_child_calls_per_wake: int
+    arc_synopsis_enabled: bool
     audit_window_instruction: str
     follower_enabled: bool
     follower_instruction: str
