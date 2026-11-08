@@ -10,7 +10,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 /// The domain an archived source's id hashes its canonical bytes under.
-const ID_DOMAIN: &[u8] = b"oneiron.receipt-archive.asset.v1";
+pub(super) const ID_DOMAIN: &[u8] = b"oneiron.receipt-archive.asset.v1";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ReceiptArchive {
