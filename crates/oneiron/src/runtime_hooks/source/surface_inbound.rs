@@ -3,7 +3,10 @@
 //! admits the event to its attempt queue. The sequence is drawn there, so
 //! feed order is commit order, and a provider's re-delivery, which admits
 //! nothing new, appends nothing. A row keeps ids and tokens only, never
-//! provider text: a hook that wants more reads it under its own grant.
+//! provider text: a hook that wants more reads it under its own grant. The
+//! runner prunes the rows every hook binding has passed, and an erase
+//! leaves a row that names an erased entity at its sequence with no ids or
+//! tokens in it.
 
 use std::ops::Bound;
 
@@ -17,11 +20,23 @@ use crate::{EntityId, Error, Result, Vault};
 use super::{FactEntry, FactKind, FactOp, FactPosition, SourceBatch, SurfaceInboundPosition};
 
 /// The inbound feed: one row per admitted surface event, by its sequence.
-const SURFACE_INBOUND: SideTable<u64, SurfaceInboundRow, Named> =
+const SURFACE_INBOUND: SideTable<u64, InboundFeedRow, Named> =
     SideTable::new(&side_table::HOOKS_SURFACE_INBOUND);
 /// The last inbound sequence handed out.
 const SURFACE_INBOUND_NEXT: SideTable<(), u64, Named> =
     SideTable::new(&side_table::HOOKS_SURFACE_INBOUND_NEXT);
+
+/// One inbound feed row, at the sequence its admission committed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum InboundFeedRow {
+    /// An admitted event.
+    Admitted(SurfaceInboundRow),
+    /// An event whose identity or actor was erased: it keeps its position,
+    /// so a cursor past it neither breaks nor reads it again, and names no
+    /// entity, attempt, connector or channel. No reader takes it.
+    Erased,
+}
 
 /// One admitted inbound event, as the feed keeps it and its hook reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,7 +108,7 @@ pub(crate) fn record_surface_inbound_in_txn(
         received_at: event.received_at,
         recorded_at: vault.store.clock.now_recorded_at(),
     };
-    SURFACE_INBOUND.put(&vault.store, txn, &sequence, &row)?;
+    SURFACE_INBOUND.put(&vault.store, txn, &sequence, &InboundFeedRow::Admitted(row))?;
     SURFACE_INBOUND_NEXT.put(&vault.store, txn, &(), &sequence)
 }
 
@@ -111,9 +126,11 @@ fn action_token(action: &SurfaceEventAction) -> &'static str {
     }
 }
 
-/// Inbound events after `after`. The fact's entity is the identity the event
-/// addressed, so a hook sees only events whose identity its grant reads; its
-/// actor is the engine's own principal, as no writer made it.
+/// Inbound events after `after`, at most `max_entries` rows scanned. The
+/// fact's entity is the identity the event addressed, so a hook sees only
+/// events whose identity its grant reads; its actor is the engine's own
+/// principal, as no writer made it. An erased row is scanned past, so the
+/// cursor moves over it as over a skipped fact.
 pub(super) fn events_after(
     vault: &Vault,
     after: Option<SurfaceInboundPosition>,
@@ -125,14 +142,20 @@ pub(super) fn events_after(
         .map_or(Bound::Unbounded, |position| Bound::Excluded(&position.0));
     let actor = crate::ports::storage_service_principal()?;
     let mut batch = SourceBatch::default();
-    for row in SURFACE_INBOUND.iter_range(&vault.store, &rtxn, start, Bound::Unbounded)? {
-        if batch.entries.len() >= max_entries {
+    for (scanned, row) in SURFACE_INBOUND
+        .iter_range(&vault.store, &rtxn, start, Bound::Unbounded)?
+        .enumerate()
+    {
+        if scanned >= max_entries {
             batch.more = true;
             break;
         }
-        let (sequence, event) = row?;
+        let (sequence, row) = row?;
         let position = FactPosition::SurfaceInbound(SurfaceInboundPosition(sequence));
         batch.through = Some(position);
+        let InboundFeedRow::Admitted(event) = row else {
+            continue;
+        };
         batch.entries.push(FactEntry {
             position,
             kind: FactKind::SurfaceInbound,
@@ -159,4 +182,68 @@ pub(super) fn head_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option
         .next()
         .transpose()?
         .map(|(sequence, _)| FactPosition::SurfaceInbound(SurfaceInboundPosition(sequence))))
+}
+
+/// The inbound rows at or before `floor`, the lowest cursor of every
+/// enabled fact binding, at most `max_rows`, read in `txn` for a later
+/// write to delete ([`delete_events_in_txn`]). A binding new to the feed
+/// starts at its head, so no passed row is read again.
+pub(super) fn passed_events_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    floor: SurfaceInboundPosition,
+    max_rows: usize,
+) -> Result<Vec<u64>> {
+    let mut passed = Vec::new();
+    for row in SURFACE_INBOUND.iter_range(
+        &vault.store,
+        txn,
+        Bound::Unbounded,
+        Bound::Included(&floor.0),
+    )? {
+        if passed.len() >= max_rows {
+            break;
+        }
+        let (sequence, _) = row?;
+        passed.push(sequence);
+    }
+    Ok(passed)
+}
+
+/// Deletes the inbound feed rows `sequences` names, in the caller's write.
+pub(super) fn delete_events_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    sequences: &[u64],
+) -> Result<()> {
+    for sequence in sequences {
+        SURFACE_INBOUND.delete(&vault.store, txn, sequence)?;
+    }
+    Ok(())
+}
+
+/// Erases `id` from the inbound feed in the caller's erase write: each row
+/// whose receiving identity or actor is `id` becomes
+/// [`InboundFeedRow::Erased`] at its own sequence. A complete scan, as the
+/// other hook carriers' scrub; a row erased already stays as it is.
+pub(super) fn scrub_inbound_events_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let mut named = Vec::new();
+    for row in SURFACE_INBOUND.iter_from(&vault.store, txn, &[])? {
+        let (sequence, row) = row?;
+        if matches!(
+            &row,
+            InboundFeedRow::Admitted(event)
+                if event.receiving_identity == *id || event.actor == *id
+        ) {
+            named.push(sequence);
+        }
+    }
+    for sequence in &named {
+        SURFACE_INBOUND.put(&vault.store, txn, sequence, &InboundFeedRow::Erased)?;
+    }
+    Ok(())
 }
