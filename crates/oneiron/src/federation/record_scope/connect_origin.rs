@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use loro::{ExportMode, LoroDoc};
 use serde::{Deserialize, Serialize};
 
-use super::{SCOPE_RECORD, Stamp, birth_facet, bump_scope_revision, singleton, stored_scope};
+use super::{
+    ORIGIN_FACET, SCOPE_RECORD, Stamp, birth_facet, bump_scope_revision, singleton, stored_scope,
+};
 use crate::authority::FederationPactStatus;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
@@ -460,6 +462,11 @@ pub(crate) fn import_connect_positions(
                             scope,
                         },
                     )?;
+                    // With no edge to the sender's FACET here, the stamp's
+                    // facet is kept beside it, where `birth_facet` reads it.
+                    if related_in_store(vault, txn, *id, EdgeKind::FacetOf)?.is_empty() {
+                        ORIGIN_FACET.put(&vault.store, txn, id, &facet)?;
+                    }
                     changed = true;
                 }
                 if kind == ENTITY_TYPE_ASSET {

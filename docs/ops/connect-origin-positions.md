@@ -24,7 +24,12 @@ An ASSET takes its worlds from its live `InWorld` edges, and a caption takes
 the worlds all its sources share (FIX 22223). The witness holds each row at
 the worlds that both the grant and the window's world read. The text fence
 holds each source of a caption there too, so a caption whose source ASSET is
-in two worlds still leaves in the window's one. The position
+in two worlds still leaves in the window's one. The scoped-read text fence
+(`records_in_scope`) holds the sources at the door's worlds in the same way.
+
+The export carries a kept row's `InWorld` edge to the window's own world,
+although the WORLD row sits in base reality and does not leave. Guest
+admission rewrites that edge to the receiver's foreign copy of the world. The position
 carries the one world the row has there. A row that is only in base reality
 carries no position, because no Connect grant names base reality. A witness
 never infers a position from peer-provided edges, and never turns an
@@ -37,7 +42,10 @@ importer. In its writer, the importer checks these again: the current pact,
 the pinned source key, the epoch and the unchanged live local grant. It
 compares the signed carriers, birth incarnations and source set with the
 current rows. A `FacetOf` edge the receiver stores for the row must name the
-signed facet. A file ASSET also needs its exact bound reference, its
+signed facet. The receiver does not hold the sender's FACET, so it can hold no
+`FacetOf` edge to it. It keeps the signed facet beside the stamp instead
+(`scope:origin_facet:v1:`), where `birth_facet` reads it, and retires it with
+the stamp. A file ASSET also needs its exact bound reference, its
 complete current descriptor and a successful streaming check of the resident
 file.
 

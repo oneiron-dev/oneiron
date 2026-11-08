@@ -8,7 +8,7 @@ use super::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ClaimRecordScope;
 use crate::claim::{ClaimBody, ClaimSubject};
-use crate::side_table::{self, LegacyJson, Raw, SideTable};
+use crate::side_table::{self, LegacyJson, Named, Raw, SideTable};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
@@ -83,6 +83,10 @@ struct Stamp {
 /// One entity's birth-position stamp, keyed by entity id.
 const SCOPE_RECORD: SideTable<EntityId, Stamp, LegacyJson> =
     SideTable::new(&side_table::SCOPE_RECORD);
+/// The facet a verified Connect origin position names for an imported ASSET
+/// or caption, whose sender's FACET this vault does not hold (FIX 22223).
+const ORIGIN_FACET: SideTable<EntityId, EntityId, Named> =
+    SideTable::new(&side_table::SCOPE_ORIGIN_FACET);
 /// The vault's record-scope revision, bumped on every stamp change.
 const SCOPE_RECORD_REVISION: SideTable<(), Vec<u8>, Raw> =
     SideTable::new(&side_table::SCOPE_RECORD_REVISION);
@@ -136,6 +140,7 @@ pub(crate) fn backfill_task_base(
 /// nor a source-free text's birth record (FIX 8741).
 pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
     SCOPE_RECORD.delete(store, txn, &id)?;
+    ORIGIN_FACET.delete(store, txn, &id)?;
     asset_text::retire_source_free_birth(store, txn, id)?;
     bump_scope_revision(store, txn)
 }
@@ -182,8 +187,10 @@ fn carries_birth_stamp(kind: u8) -> bool {
     )
 }
 /// The facet a record was born under: the target of its one stored `FacetOf`
-/// edge. NOTE/ASSET read it through [`carries_birth_stamp`]; CLAIM (FIX 7757)
-/// and EVENT/TURN (FIX 7774, L02 17:11) read it from their own arms.
+/// edge, or, for an ASSET or caption a verified Connect import placed, the
+/// facet its origin position names (FIX 22223). NOTE/ASSET read it through
+/// [`carries_birth_stamp`]; CLAIM (FIX 7757) and EVENT/TURN (FIX 7774, L02
+/// 17:11) read it from their own arms.
 pub(crate) fn birth_facet(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -199,7 +206,8 @@ pub(crate) fn birth_facet(
         )?
         .next()
     else {
-        return Ok(None);
+        // An imported Connect row holds no edge to its sender's FACET.
+        return ORIGIN_FACET.get(store, txn, &id);
     };
     Ok(Some(row?.target))
 }
@@ -898,7 +906,19 @@ impl Vault {
                     row.entity_type,
                     &row.body,
                 )?
-                .is_some_and(|scope| admits(&scope, selector, slip, channel, verb))
+                .is_some_and(|scope| {
+                    // Each source held at the door's worlds, as the text is
+                    // (FIX 22223): an ASSET in two worlds backs a text in either.
+                    note_world::admits_at(
+                        &self.store,
+                        txn,
+                        *source,
+                        row.entity_type,
+                        &scope,
+                        [selector, slip, channel],
+                        verb,
+                    )
+                })
                 && crate::authority::row_causal_admitted(self, txn, source, &row.encode())?)
         })?;
         Ok(admitted.unwrap_or(true))
