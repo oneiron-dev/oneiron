@@ -204,6 +204,24 @@ pub(crate) fn sighted_bytes_in_txn(
     digest: Option<&[u8; 32]>,
     sight: SecretSight,
 ) -> Result<Vec<u8>> {
+    sighted_bytes_in_txn_with_reader(
+        store,
+        txn,
+        bytes,
+        digest,
+        sight,
+        &crate::batch::secret_scan::ContainerReader::default(),
+    )
+}
+
+pub(crate) fn sighted_bytes_in_txn_with_reader(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    bytes: Vec<u8>,
+    digest: Option<&[u8; 32]>,
+    sight: SecretSight,
+    reader: &crate::batch::secret_scan::ContainerReader,
+) -> Result<Vec<u8>> {
     use crate::batch::secret_scan;
     if sight != SecretSight::Masked {
         return Ok(bytes);
@@ -227,13 +245,13 @@ pub(crate) fn sighted_bytes_in_txn(
         }
         // A sealed file goes to the owner and a granted agent only: no mark
         // covers what it holds.
-        if secret_scan::is_sealed(&bytes, digest) {
+        if reader.is_sealed(&bytes, digest) {
             return Err(Error::Secret(SecretError::SealedFileWithheld));
         }
         // A container stored with the scan off, or one no mark covers, may
         // hold keys in its members or in bytes no reader shows (FIX 2470):
         // it is read whole before it is served.
-        let Some(reason) = secret_scan::write_tree_hit(&bytes, digest) else {
+        let Some(reason) = reader.write_tree_hit(&bytes, digest) else {
             return Ok(bytes);
         };
         // A key in what a reader shows is refused either way: the rebuild
@@ -241,24 +259,24 @@ pub(crate) fn sighted_bytes_in_txn(
         // refused here, before the rebuild pays for the same answer (FIX
         // 12280). Only the refusal's timing changes; a key no live member
         // holds reads no hit here and takes the rebuild below unchanged.
-        if secret_scan::live_content_hit(&bytes, digest).is_some() {
+        if reader.live_content_hit(&bytes, digest).is_some() {
             return Err(masked_copy_withheld(reason));
         }
         // A key only in the bytes no reader shows is gone from the copy
         // rebuilt through the whole tree, which leaves them out at every
         // level as a marked file's copy does: that copy is served once the
         // write door's scan reads it clean (FIX 11553, 12268, 12279).
-        let Some(copy) = secret_scan::tree_rebuilt_copy(&bytes, digest) else {
+        let Some(copy) = reader.tree_rebuilt_copy(&bytes, digest) else {
             return Err(masked_copy_withheld(reason));
         };
-        if let Some(reason) = secret_scan::write_tree_hit(&copy, None) {
+        if let Some(reason) = reader.write_tree_hit(&copy, None) {
             return Err(masked_copy_withheld(reason));
         }
         return Ok(copy);
     };
     let handles = file.place_handles(store, txn)?;
-    let copy = secret_scan::served_masked_copy(&bytes, &file.places(), &handles, digest)?;
-    if let Some(reason) = secret_scan::write_tree_hit(&copy, None) {
+    let copy = reader.served_masked_copy(&bytes, &file.places(), &handles, digest)?;
+    if let Some(reason) = reader.write_tree_hit(&copy, None) {
         return Err(masked_copy_withheld(reason));
     }
     Ok(copy)
