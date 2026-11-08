@@ -98,7 +98,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign/model.rs` | src | s | 8 struct · 10 enum · 2 fn · 2 const | AccessStatus, DeliveryStatus, DocumentKind, DocumentStatus, EsignAuditActor, EsignAuthenticationMethod, EsignField, EsignItem +10 | Typed document, recipient, field and event vocabulary for ARCH-0064 |
 | `src/blob_artifact/esign/render.rs` | src | s | 1 mod | — | Store-layer modules of core `blob_artifact::esign::render`; core re-exports each one at its old path |
 | `src/blob_artifact/esign/render/admitted.rs` | src | s | 1 struct · 1 trait · 1 fn | InspectionMemory, StageCount | A PDF inspection's memory, admitted by its host before the parse allocates it (FIX 8065) |
-| `src/blob_artifact/esign/sealer.rs` | src | s | 6 struct · 4 enum · 2 fn | EsignSealRequest, EsignSealed, EsignSealerError, EsignSignatureRevision, EsignVerdict, SealDegrade, SealDegradeReason, SealProfile +2 | The seal port: how the engine reaches a PAdES sealer it does not link |
+| `src/blob_artifact/esign/sealer.rs` | src | s | 7 struct · 4 enum · 2 fn | EsignSealRequest, EsignSealed, EsignSealerError, EsignSignatureRevision, EsignVerdict, SealActiveContentFacts, SealDegrade, SealDegradeReason +3 | The seal port: how the engine reaches a PAdES sealer it does not link |
 | `src/blob_artifact/esign/signature_revision.rs` | src | s | 1 struct · 10 fn · 4 const | BaseAdmission | The ordinary signature revision, written on the engine's side of the seal (ARCH-0075… |
 | `src/blob_artifact/esign/template.rs` | src | s | 3 struct · 1 enum | ContentSource, FieldGeographyPack, HtmlContentTemplate, TemplatePage | Regenerable repo HTML content plus an independent data-only field geography |
 | `src/blob_artifact/native_output.rs` | src | s | 1 struct · 2 fn | NativeOutput | Native organ export files offered as artifact versions |
@@ -244,11 +244,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/ids.rs` | src | s | 4 struct · 1 enum · 16 fn | GitOid, GitRefExpectation, GitRefName, GitRefPublication, ObservedGitRef | Validated git identity newtypes: ref names, object ids, observations, expectations, publications |
 | `src/git_wire/import_fetch.rs` | src | s | 1 mod | — | Store-layer modules of core `git_wire::import_fetch`; core re-exports each one at its old path |
 | `src/git_wire/import_fetch/profile.rs` | src | s | 1 struct · 5 fn · 1 const · 3 crate-vis | ImportProcessProfile | The fixed process profile of an outside import's Git legs (FIX 6871) |
-| `src/git_wire/mirror_push.rs` | src | s | 1 struct · 3 fn · 3 const | MirrorEgress | Fixed outbound push profile for an origin's mirror (ARCH-0068 RA8). https only, no redirects, no proxy, no… |
+| `src/git_wire/mirror_push.rs` | src | s | 1 struct · 2 fn · 3 const | MirrorEgress | Fixed outbound push profile for an origin's mirror (ARCH-0068 RA8). https only, no redirects, no proxy, no… |
 | `src/git_wire/mutation_commands.rs` | src | s | 6 fn | — | Repository scope identity and the existing redacted Git command bridge |
 | `src/git_wire/objects.rs` | src | s | 3 struct · 7 fn | GitCommitHeader, GitCommitRequest, GitTreeEntry | Commit and tree object model: tree entries, commit headers, commit-request bytes, tree parsers |
 | `src/git_wire/operation.rs` | src | s | 2 enum · 6 fn · 1 const | GitWireEffectClass, GitWireOperation | Operation enum, effect classes, and the stable wire-name mapping |
-| `src/git_wire/origin_relay.rs` | src | s | 1 struct · 4 fn | OriginRelayEgress | The fixed process profile of an exact publish's Git legs on a served host (ARCH-0069 OSH-3, FIX 19083) |
+| `src/git_wire/origin_relay.rs` | src | s | 1 struct · 4 fn | OriginRelayEgress | The fixed process profile of an origin mirror's Git legs on a served host: an exact publish's and an… |
 | `src/git_wire/path_text.rs` | src | s | 5 fn · 1 const | — | The text form of a Git path (FIX 21326) |
 | `src/git_wire/plan.rs` | src | s | 1 struct · 1 enum · 1 fn | GitWirePlannedOid, PlannedPublication | Two-phase plan assembly: object writes plus the ref publications they authorize |
 | `src/git_wire/process.rs` | src | s | 7 fn | — | The crate's single git child-process constructor plus its bounded IO and thread-pump helpers |

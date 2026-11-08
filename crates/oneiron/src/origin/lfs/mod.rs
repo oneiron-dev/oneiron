@@ -11,6 +11,7 @@
 
 mod batch_client;
 mod chunks;
+mod direct;
 mod lifecycle;
 mod lift;
 use oneiron_store::origin::lfs::oid;
@@ -19,9 +20,13 @@ use oneiron_store::origin::lfs::policy;
 mod read_room;
 mod scanner;
 mod store;
+mod transport;
 mod upload;
 pub(crate) use self::chunks::archive_lfs_tables;
 
+pub use self::batch_client::{
+    LFS_BATCH_ANSWER_MAX_BYTES, download_lfs_objects, upload_lfs_objects,
+};
 pub use self::chunks::{
     LFS_CHUNK_AVG, LFS_CHUNK_MAX, LFS_CHUNK_MIN, LfsChunkParameters, LfsChunkRef, LfsManifest,
 };
@@ -36,9 +41,13 @@ pub use self::store::{
     VAULT_LFS_REPO_ID_DOMAIN, VAULT_LFS_SCHEMA_VERSION, VaultLfsObject, check_lfs_expectation,
     lfs_repo_id,
 };
+pub use self::transport::{
+    LfsAction, LfsActionRequest, LfsBatchCredential, LfsBatchRequest, LfsOperation, LfsReply,
+    LfsRequest, LfsTransferReport, LfsTransport,
+};
 pub use self::upload::{LFS_DEFAULT_OBJECT_CAP, LFS_WHOLE_SCAN_MAX};
-pub(crate) use batch_client::LfsBatchRemote;
 pub(crate) use chunks::random_lfs_chunk_seed;
+pub(crate) use direct::DirectLfsRemote;
 pub(crate) use lifecycle::{
     delete_lfs_lifecycle_in_txn, guard_lfs_asset_put, lfs_chunk_owners_in_txn,
     reject_direct_lfs_chunk_delete, unpublished_lfs_chunk_in_txn,

@@ -1524,6 +1524,8 @@ export class Oneiron {
       invitations: (input: Facade.SharedVaultRequest): Facade.SharedInvitation[] => this.#call(() => this.#client.vaultMembersInvitations(input) as Facade.SharedInvitation[]),
       /** The invitee accepts their own invitation and joins the shared vault at its role. */
       accept: (input: Facade.SharedInvitationRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersAccept(input) as Facade.SharedActExecutionReceipt),
+      /** The invitee accepts their own invitation and receives a regular member credential from the same writer, with required caller-chosen expiry and the same verified device key; plain acceptance stays unchanged. */
+      accept_with_credential: (input: Facade.SharedInvitationAcceptWithCredentialRequest): Facade.SharedInvitationAcceptedWithCredential => this.#call(() => this.#client.vaultMembersAcceptWithCredential(input) as Facade.SharedInvitationAcceptedWithCredential),
       /** The invitee declines their own invitation; nothing is granted. */
       decline: (input: Facade.SharedInvitationRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersDecline(input) as Facade.SharedActExecutionReceipt),
       /** An Admin with the add_member power takes back a pending invitation. */
@@ -2368,6 +2370,14 @@ export class Oneiron {
         get: (input: Facade.CodeRepoRequest): Facade.CodeRepoSecretsView => this.#call(() => this.#client.vaultCodeSecretsGet(input) as Facade.CodeRepoSecretsView),
         /** Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes. */
         propose: (input: Facade.CodeRepoSecretProposeRequest): Facade.CodeRepoSecretRemediation => this.#call(() => this.#client.vaultCodeSecretsPropose(input) as Facade.CodeRepoSecretRemediation),
+        purge: {
+          /** Plan an owner purge of marked keys from one served repository's history: each ref's move to its masked copy, the purged blobs, dropped signatures, keep roots and what it never reaches. No ref moves. */
+          request: (input: Facade.RepoSecretPurgeRequest): Facade.RepoSecretPurgePlan => this.#call(() => this.#client.vaultCodeSecretsPurgeRequest(input) as Facade.RepoSecretPurgePlan),
+          /** Read one of the owner's secret purge plans and, once executed, its receipt. */
+          get: (input: Facade.RepoSecretPurgeIdRequest): Facade.RepoSecretPurgeView => this.#call(() => this.#client.vaultCodeSecretsPurgeGet(input) as Facade.RepoSecretPurgeView),
+          /** Confirm one secret purge plan: move each ref to its masked copy through origin publication, release listed change owners, collect unreachable objects and file the receipt. No remote is pushed. */
+          execute: (input: Facade.RepoSecretPurgeIdRequest): Facade.RepoSecretPurgeReceipt => this.#call(() => this.#client.vaultCodeSecretsPurgeExecute(input) as Facade.RepoSecretPurgeReceipt),
+        },
       },
       /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
       model_heal_count: (input: Facade.CodeRunModelHealCountRequest): Facade.CodeRunModelHealCountView => this.#call(() => this.#client.vaultCodeModelHealCount(input) as Facade.CodeRunModelHealCountView),
@@ -3052,6 +3062,10 @@ export class Oneiron {
     },
     /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
     neighbors: (input: Facade.NeighborsRequest): Facade.ScopedReadResult<Facade.NeighborHit[]> => this.#call(() => this.#client.vaultNeighbors(input) as Facade.ScopedReadResult<Facade.NeighborHit[]>),
+    edges: {
+      /** Audits one directed edge: each edge.provenance claim of it the caller may read, closed ones included, with its author, actor class, source revision, confidence and lifecycle. */
+      provenance: (input: Facade.EdgeProvenanceRequest): Facade.ScopedReadResult<Facade.EdgeProvenanceView[]> => this.#call(() => this.#client.vaultEdgesProvenance(input) as Facade.ScopedReadResult<Facade.EdgeProvenanceView[]>),
+    },
     structural: {
       /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */
       put: (input: Facade.StructuralPutInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultStructuralPut(input) as Facade.EntityRefReceipt),
@@ -3273,7 +3287,7 @@ export class Oneiron {
       follow_citation: (input: Facade.BriefCitationFollowRequest): Facade.ScopedReadResult<Facade.SharedBriefCitation | null> => this.#call(() => this.#client.vaultNotesFollowCitation(input) as Facade.ScopedReadResult<Facade.SharedBriefCitation | null>),
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */
       create: (input: Facade.CreateNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesCreate(input) as Facade.EntityRefReceipt),
-      /** Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target. */
+      /** Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target; each link gets an edge.provenance claim citing the optional source_ref. */
       author_take: (input: Facade.AuthorTakeRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesAuthorTake(input) as Facade.EntityRefReceipt),
       /** Creates a NOTE of a registered kind from an existing entity. */
       from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
@@ -3383,6 +3397,12 @@ export class Oneiron {
       },
       /** The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence. */
       inbox: (input: Facade.MailInboxRequest): Facade.MailInboxPage => this.#call(() => this.#client.vaultMailInbox(input) as Facade.MailInboxPage),
+    },
+    dreamer: {
+      follower: {
+        /** The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed. */
+        keyframe: (input: Facade.EmptyRequest): Facade.DreamerFollowerKeyframeResult => this.#call(() => this.#client.vaultDreamerFollowerKeyframe(input) as Facade.DreamerFollowerKeyframeResult),
+      },
     },
   }
   /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */

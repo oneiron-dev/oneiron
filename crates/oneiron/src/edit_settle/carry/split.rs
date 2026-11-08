@@ -250,6 +250,7 @@ impl Vault {
                 observed_live: self.observed_live(artifact, &files)?,
                 reask_refs: Vec::new(),
                 retry_at: None,
+                delta_receipt: None,
             },
         }))
     }
@@ -411,6 +412,7 @@ impl Vault {
                 observed_live: self.observed_live(artifact, &[])?,
                 reask_refs: Vec::new(),
                 retry_at: None,
+                delta_receipt: None,
             },
         }))
     }
@@ -572,6 +574,7 @@ impl Vault {
                 observed_live: self.observed_live(artifact, &[])?,
                 reask_refs: Vec::new(),
                 retry_at: None,
+                delta_receipt: None,
             },
         }))
     }
