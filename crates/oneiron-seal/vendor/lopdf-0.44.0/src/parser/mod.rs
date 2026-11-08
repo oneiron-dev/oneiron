@@ -133,21 +133,26 @@ fn oct_char(input: ParserInput) -> NomResult<u8> {
     .parse(input)
 }
 
-pub(crate) fn name(input: ParserInput) -> NomResult<Vec<u8>> {
-    preceded(
-        tag(&b"/"[..]),
-        many0(alt((
-            preceded(tag(&b"#"[..]), hex_char),
-            map_opt(take(1usize), |c: ParserInput| {
-                if c[0] != b'#' && is_regular(c[0]) {
-                    Some(c[0])
-                } else {
-                    None
-                }
-            }),
-        ))),
-    )
+fn name_byte(input: ParserInput) -> NomResult<u8> {
+    alt((
+        preceded(tag(&b"#"[..]), hex_char),
+        map_opt(take(1usize), |c: ParserInput| {
+            if c[0] != b'#' && is_regular(c[0]) {
+                Some(c[0])
+            } else {
+                None
+            }
+        }),
+    ))
     .parse(input)
+}
+
+pub(crate) fn name(input: ParserInput) -> NomResult<Vec<u8>> {
+    preceded(tag(&b"/"[..]), many0(name_byte)).parse(input)
+}
+
+pub(crate) fn name_skip(input: ParserInput) -> NomResult<()> {
+    map(preceded(tag(&b"/"[..]), many0_count(name_byte)), |_| ()).parse(input)
 }
 
 fn escape_sequence(input: ParserInput) -> NomResult<Option<u8>> {

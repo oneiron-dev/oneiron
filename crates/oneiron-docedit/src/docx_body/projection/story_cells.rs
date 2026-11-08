@@ -25,11 +25,17 @@ pub(super) fn story_cell_op(
     paragraph: Option<&str>,
     text: &str,
 ) -> Result<Value, DoceditError> {
-    let story_view = build_story_blocks_view(story_cell_blocks(canonical, scope)?);
+    let blocks = story_cell_blocks(canonical, scope)?;
+    let story_view = build_story_blocks_view(blocks);
     let target = story_view
         .blocks
-        .iter()
+        .into_iter()
         .find(|block_view| block_view.id.to_string() == block)
+        .or_else(|| {
+            super::super::cells::descendant_table(blocks, block).map(|table| {
+                stemma::view::build_story_block_view(table, &stemma::domain::TrackingStatus::Normal)
+            })
+        })
         .ok_or_else(|| DoceditError::InvalidTransaction(format!("unknown block {block}")))?;
     Ok(json!({
         "op": "edit_story_cell",
