@@ -6046,6 +6046,11 @@ export_facade! {
     let output = client.vault_notes_read(&input)?;
     crate::codec::lift_record("vault.notes.read", &output)
 };
+"vault.notes.read_indexed" => fn vault_notes_read_indexed(&self, input: NoteIndexedReadRequest) -> ScopedReadResultOptionalNoteReadView = |client| {
+    let input: oneiron::note::NoteIndexedReadRequest = crate::codec::lower_record("vault.notes.read_indexed", input)?;
+    let output = client.vault_notes_read_indexed(&input)?;
+    crate::codec::lift_record("vault.notes.read_indexed", &output)
+};
 "vault.notes.history" => fn vault_notes_history(&self, input: NoteAccessRequest) -> ScopedReadResultOptionalNoteHistoryView = |client| {
     let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.history", input)?;
     let output = client.vault_notes_history(&input)?;

@@ -1330,6 +1330,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.notes.author_take", post(facade_route))
         .route("/vault.notes.from_entity", post(facade_route))
         .route("/vault.notes.read", post(facade_route))
+        .route("/vault.notes.read_indexed", post(facade_route))
         .route("/vault.notes.history", post(facade_route))
         .route("/vault.notes.fork", post(facade_route))
         .route("/vault.notes.forks.read", post(facade_route))

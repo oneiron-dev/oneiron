@@ -37975,6 +37975,28 @@ async fn vault_notes_read(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_notes_read_indexed(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.read_indexed",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_notes_history(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -51171,6 +51193,14 @@ fn boxed_vault_notes_read<'a>(
     Box::pin(vault_notes_read(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_notes_read_indexed<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_read_indexed(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_notes_history<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -54215,6 +54245,7 @@ async fn call_verb_row(
         "vault.notes.author_take" => boxed_vault_notes_author_take(server, call, input).await,
         "vault.notes.from_entity" => boxed_vault_notes_from_entity(server, call, input).await,
         "vault.notes.read" => boxed_vault_notes_read(server, call, input).await,
+        "vault.notes.read_indexed" => boxed_vault_notes_read_indexed(server, call, input).await,
         "vault.notes.history" => boxed_vault_notes_history(server, call, input).await,
         "vault.notes.fork" => boxed_vault_notes_fork(server, call, input).await,
         "vault.notes.forks.read" => boxed_vault_notes_forks_read(server, call, input).await,

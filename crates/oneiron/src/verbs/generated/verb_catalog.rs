@@ -1235,6 +1235,7 @@ pub enum AgentVerb {
     VaultNotesAuthorTake,
     VaultNotesFromEntity,
     VaultNotesRead,
+    VaultNotesReadIndexed,
     VaultNotesHistory,
     VaultNotesFork,
     VaultNotesForksRead,
@@ -2569,6 +2570,7 @@ impl AgentVerb {
         Self::VaultNotesAuthorTake,
         Self::VaultNotesFromEntity,
         Self::VaultNotesRead,
+        Self::VaultNotesReadIndexed,
         Self::VaultNotesHistory,
         Self::VaultNotesFork,
         Self::VaultNotesForksRead,
@@ -3940,6 +3942,7 @@ impl AgentVerb {
             Self::VaultNotesAuthorTake => "vault.notes.author_take",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
             Self::VaultNotesRead => "vault.notes.read",
+            Self::VaultNotesReadIndexed => "vault.notes.read_indexed",
             Self::VaultNotesHistory => "vault.notes.history",
             Self::VaultNotesFork => "vault.notes.fork",
             Self::VaultNotesForksRead => "vault.notes.forks.read",
@@ -5258,6 +5261,7 @@ impl AgentVerb {
                 | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
+                | Self::VaultNotesReadIndexed
                 | Self::VaultNotesHistory
                 | Self::VaultNotesFork
                 | Self::VaultNotesForksRead
@@ -6621,6 +6625,7 @@ impl AgentVerb {
                 | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
+                | Self::VaultNotesReadIndexed
                 | Self::VaultNotesHistory
                 | Self::VaultNotesFork
                 | Self::VaultNotesForksRead
@@ -6942,6 +6947,7 @@ impl AgentVerb {
                 | Self::VaultSummariesRead
                 | Self::VaultSummariesProposalsRead
                 | Self::VaultNotesRead
+                | Self::VaultNotesReadIndexed
                 | Self::VaultNotesHistory
                 | Self::VaultNotesForksRead
                 | Self::VaultNotesProposalsRead
@@ -10255,6 +10261,7 @@ impl AgentVerb {
             Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
+            Self::VaultNotesReadIndexed => &["spec"],
             Self::VaultNotesHistory => &["spec"],
             Self::VaultNotesFork => &["spec"],
             Self::VaultNotesForksRead => &["spec"],
@@ -11590,6 +11597,7 @@ impl AgentVerb {
             Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
+            Self::VaultNotesReadIndexed => &["spec"],
             Self::VaultNotesHistory => &["spec"],
             Self::VaultNotesFork => &["spec"],
             Self::VaultNotesForksRead => &["spec"],
@@ -15299,6 +15307,9 @@ impl AgentVerb {
             }
             Self::VaultNotesRead => {
                 "Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."
+            }
+            Self::VaultNotesReadIndexed => {
+                "Reads the independently indexed NOTE text and stable edit anchors in the same scoped snapshot."
             }
             Self::VaultNotesHistory => {
                 "Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."
