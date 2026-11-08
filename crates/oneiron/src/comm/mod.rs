@@ -35,6 +35,7 @@ mod thread_membership;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use self::born_touch::DeferredBornTouches;
 pub use self::claims::{
     COMM_CLAIM_PREDICATES, COMM_SCHEMA_VERSION, ClaimClassDescriptorRow, CommClaim, CommClaimValue,
     CommClearOptOutOutcome, CommError, CommResult, PREDICATE_COMM_LAST_TOUCH,
@@ -73,8 +74,6 @@ pub(crate) use self::generic_put_routing::{
     RoutedBatchPuts, route_projector_only_batch_puts_in_txn, take_projector_only_batch_puts_in_txn,
     take_projector_only_batch_puts_preserving_births_in_txn,
 };
-pub(crate) use self::born_touch::DeferredBornTouches;
-pub(crate) use self::scoped_touch::ScopedTouchRecord;
 pub(crate) use self::head_admission::ProjectedHeadAdmission;
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
@@ -93,6 +92,7 @@ pub(crate) use self::receipt_import::erase_skipped_send_receipt_in_txn;
 pub(crate) use self::records::{
     validate_comm_record_body_bytes, validate_key_string as validate_comm_party_key,
 };
+pub(crate) use self::scoped_touch::ScopedTouchRecord;
 pub(crate) use self::stop_hold::{
     clear_pending_stop_for_delete, maintain_pending_stop_put, send_stop_reason_in_txn,
 };

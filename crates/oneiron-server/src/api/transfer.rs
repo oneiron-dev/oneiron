@@ -579,7 +579,7 @@ pub(super) type WorkerGone = tokio::sync::oneshot::error::RecvError;
 /// the rest of the server needs, and work behind them would wait in the
 /// pool's own line, with no deadline and no turns. Each worker holds its
 /// permit, so the rows bound these threads.
-pub(super) fn spawn_worker<T: Send + 'static>(
+pub(crate) fn spawn_worker<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
 ) -> tokio::sync::oneshot::Receiver<T> {
     let (answer, answered) = tokio::sync::oneshot::channel();
@@ -807,7 +807,7 @@ impl Read for BodyReader {
 /// Hands one item from the worker to the async side, waiting at most `idle`
 /// for room: a response the client stopped reading ends with `TimedOut`, and
 /// one whose client went away with `BrokenPipe`.
-pub(super) fn send_within<T>(
+pub(crate) fn send_within<T>(
     runtime: &Handle,
     sender: &mpsc::Sender<T>,
     item: T,
