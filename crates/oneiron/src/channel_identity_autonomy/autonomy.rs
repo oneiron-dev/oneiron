@@ -12,6 +12,7 @@ use crate::channel_identity_selection::RelationshipContext;
 use crate::consent::{AuthenticatedOwner, GrantBound};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::outbound_grant::verb_in_class;
 
 use super::codec::{
     AUTONOMY, action_bound, action_grant_from_row, action_value, address, key, mode_from, mode_key,
@@ -522,7 +523,7 @@ impl AutonomyReader<'_> {
                 let envelope = self.validate_autonomy_action(txn, &action, at)?;
                 if envelope.identity_ref != identity_ref
                     || envelope.relationship_context != mode.relationship_context
-                    || action.verb_class != verb
+                    || !verb_in_class(&action.verb_class, verb)
                 {
                     return Err(invalid_autonomy());
                 }

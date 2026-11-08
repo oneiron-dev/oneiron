@@ -1,5 +1,5 @@
 //! Core server state: the `SyncServer` struct, construction, and shared helpers.
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -43,15 +43,6 @@ pub(crate) enum BroadcastPayload {
     LocalDocs(Vec<oneiron::EntityId>),
     /// A producer lost notifications before they reached this channel.
     Resync { missed: u64 },
-}
-
-/// One host-resolved agent run and the prefix this session actually emitted.
-/// The host advances the epoch only after a real fold; an HTTP request cannot.
-pub(crate) struct HostSelfBriefSession {
-    pub(crate) state: oneiron::context_board::SelfBriefState,
-    pub(crate) render: oneiron::context_board::SelfBriefSession,
-    pub(crate) epoch: u64,
-    pub(crate) emitted_epoch: Option<u64>,
 }
 
 /// One piece of task work's turn on a vault ([`SyncServer::admit_task_work`]).
@@ -108,6 +99,8 @@ pub struct SyncServer {
     /// deck and slide render takes its turn here, round robin across the
     /// callers it is for, the host's own wakes behind them.
     pub(crate) renderer_turns: crate::admission::Admission<oneiron::EntityId>,
+    /// The context-pack input line, round robin across authenticated callers.
+    pub(crate) context_reads: crate::admission::Admission<String>,
     /// The operator's renderer scratch source, resolved once with shared disk claims.
     pub(crate) renderer_scratch: crate::slide_render::RendererScratch,
     /// OF-520 questions retrieval queries past `config.limits` raised.
@@ -207,6 +200,7 @@ pub struct SyncServer {
     /// The `[desktop]` guest each code run starts for its own desktop verbs.
     /// `None` answers every desktop call `browser_unbound`.
     pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
+    pub(crate) artifact_backend: Option<Arc<crate::runtime::ArtifactBackendHost>>,
     /// The run desktops bound now, for the owner's takeover (CUA-001).
     pub(crate) desktop_seats: Arc<super::DesktopSeats>,
     /// The run browsers bound now, for the owner's takeover (CUA-001).
@@ -215,9 +209,11 @@ pub struct SyncServer {
     pub(crate) web_fetcher: std::sync::OnceLock<Arc<oneiron::web_fetch::WebFetcher>>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Arc<Mutex<crate::api::MemoriesCursorStore>>,
-    /// Host-resolved run briefs, keyed by authenticated actor and session.
-    pub(crate) self_brief_sessions:
-        Mutex<BTreeMap<(oneiron::EntityId, String), HostSelfBriefSession>>,
+    /// Host-resolved run briefs, keyed by authenticated actor and session,
+    /// and their prefix custody: the one owner every host stages, delivers,
+    /// reads and closes them through. The host's live runs share it, to
+    /// close a pumped run's brief as the run retires (FIX 17594 D3).
+    pub(crate) self_brief_sessions: Arc<super::self_brief_custody::SelfBriefCustody>,
     /// ONE-207: the optional deep-retrieval host.
     ///
     /// `None` on every server [`SyncServer::new`] builds, and that is the
@@ -234,6 +230,8 @@ pub struct SyncServer {
     /// the same pair seat factories read, so runs created after attach see
     /// the serving embedder without a rebind.
     pub(crate) model_slots: Arc<SharedModelSlots>,
+    /// Custody-backed candidates, beside the incumbent's immutable slot.
+    pub(crate) trained_embedders: super::trained_embedding::TrainedEmbedders,
     /// The nonsecret file/vault facts an open-vault first-run setup must match.
     pub(crate) model_setup: Option<ModelSetupConfig>,
     /// Plain/embedded worker admission and late-worker handles, installed before
@@ -358,7 +356,8 @@ impl SyncServer {
 
     /// Install an already resolved run snapshot from the trusted host. The
     /// HTTP request never supplies scope, class verdicts, or budget. Advancing
-    /// `epoch` happens only when the host has completed a real fold.
+    /// `epoch` happens only when the host has completed a real fold. The
+    /// installation goes through the server's one self-brief custody owner.
     pub async fn install_self_brief_session(
         &self,
         actor: oneiron::EntityId,
@@ -366,25 +365,10 @@ impl SyncServer {
         epoch: u64,
         state: oneiron::context_board::SelfBriefState,
     ) -> oneiron::Result<()> {
-        if state.self_ref != actor || session_id.is_empty() {
-            return Err(oneiron::Error::InvariantViolation(
-                "self brief actor or session mismatch",
-            ));
-        }
-        let mut runs = self.self_brief_sessions.lock().await;
-        let entry = runs
-            .entry((actor, session_id))
-            .or_insert_with(|| HostSelfBriefSession {
-                state: state.clone(),
-                render: oneiron::context_board::SelfBriefSession::default(),
-                epoch,
-                emitted_epoch: None,
-            });
-        if epoch < entry.epoch {
-            return Err(oneiron::Error::InvariantViolation("stale self brief epoch"));
-        }
-        entry.state = state;
-        entry.epoch = epoch;
+        self.self_brief_sessions
+            .lock()
+            .await
+            .install(actor, session_id, epoch, state)?;
         Ok(())
     }
 
@@ -415,6 +399,19 @@ impl SyncServer {
     /// each browser guest start, and read as it stands.
     pub(crate) fn browser_readiness(&self) -> &crate::config::browser::BrowserReadinessCell {
         &self.browser_readiness
+    }
+
+    /// Installs the host-owned published backend execution profile.
+    #[must_use]
+    pub fn with_artifact_backend(
+        mut self,
+        profile: Option<crate::config::ArtifactBackendConfig>,
+    ) -> anyhow::Result<Self> {
+        self.artifact_backend = profile
+            .map(crate::runtime::ArtifactBackendHost::new)
+            .transpose()?
+            .map(Arc::new);
+        Ok(self)
     }
 
     /// Gives code runs a desktop guest, from the `[desktop]` section.
@@ -465,10 +462,11 @@ impl SyncServer {
         meter: oneiron::BudgetGuard,
     ) -> Self {
         self.decision_read = Some((door, meter));
-        self.decisions = self
-            .decisions
-            .clone()
-            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
+        self.decisions = self.decisions.clone().with_house_read(
+            self.decision_read.as_ref(),
+            self.house_read_admission(),
+            &self.vault,
+        );
         self
     }
 
@@ -521,10 +519,11 @@ impl SyncServer {
             self.decision_read = Some((door, raw.meter().clone()));
         }
         // The house read fills the ladder's escalation rung.
-        self.decisions = self
-            .decisions
-            .clone()
-            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
+        self.decisions = self.decisions.clone().with_house_read(
+            self.decision_read.as_ref(),
+            self.house_read_admission(),
+            &self.vault,
+        );
         // A planned team's pattern skill runs on its generative seat.
         self.pattern_launch_runner = pattern_workflow::bind(Arc::clone(&self.vault), ai.clone());
         self.ai = ai;

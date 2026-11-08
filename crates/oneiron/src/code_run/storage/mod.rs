@@ -2,6 +2,8 @@
 
 mod compaction;
 mod continuation;
+mod corrections;
+mod fold_answers;
 mod folds;
 mod lift;
 mod model_seat;
@@ -9,6 +11,7 @@ mod program_resume;
 mod read_worlds;
 mod reader_folds;
 mod reader_jobs;
+pub(crate) use reader_jobs::erase_reader_caller_actor_in_txn;
 mod records;
 mod replay_bodies;
 mod replay_capsule;
@@ -32,12 +35,18 @@ mod wait_holders;
 
 pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
 pub(crate) use self::continuation::{
-    StoredRunContinuation, continuation_seed_body_in_txn, publish_continuation_output_in_txn,
-    put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,
+    InheritedCompaction, StartCompaction, StoredRunContinuation, continuation_seed_body_in_txn,
+    publish_continuation_output_in_txn, put_run_continuation_row_in_txn, run_continuation_in_txn,
+    seed_continuation_run,
+};
+pub(crate) use self::fold_answers::{
+    WithdrawnFoldAnswer, fold_answer_withdrawn, redact_fold_answers, retire_fold_answers_in_txn,
 };
 pub use self::read_worlds::ReadWorldUnknown;
 pub(crate) use self::read_worlds::{
-    ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
+    ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn,
+    closed_read_world_capture_in_txn, invalidate_imported_read_world_capture_in_txn,
+    read_world_snapshot_in_txn,
 };
 pub(crate) use self::reader_folds::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -45,13 +54,14 @@ pub(crate) use self::reader_folds::{
 };
 pub(crate) use self::reader_jobs::{
     NewReaderJob, ReportOutcome, SpawnAdmission, SpendBook, WaitSetOutcome,
+    settle_evaporated_reader_spend,
 };
 pub use self::reader_jobs::{ReaderJobs, SummaryMember, SummaryRead};
 pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{
-    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
-    code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
-    retire_unlanded_inline_body_keys_in_txn,
+    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
+    code_run_body_in_file_in_txn, code_run_body_row_key, code_run_inline_body_of_row,
+    lift_code_run_file_hold_in_txn, retire_unlanded_inline_body_keys_in_txn,
 };
 pub(crate) use self::replay_bodies::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,
@@ -62,7 +72,7 @@ pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::undecodable_step_capsule_in_txn;
 pub(crate) use self::replay_capsule::{
     ForkProvenance, ForkRows, actor_gone_in_txn, bind_capsule_answer, capsule_context_body,
-    capsule_request, capsule_route_prompt, capsule_start_body,
+    capsule_fold_words_withdrawn, capsule_request, capsule_route_prompt, capsule_start_body,
     contribution_pair_erase_candidates_in_txn, erase_capsule_actor_in_txn,
     erase_contribution_forks_in_txn, finalize_capsule, fork_execution_outputs, fork_response,
     fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule, put_unavailable,
@@ -76,7 +86,8 @@ pub(crate) use self::replay_capsule::{
 pub(crate) use self::replay_capsule::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
-    settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
+    settle_start_bodies_in_rows, start_piece_held_apart_in_txn, step_capsule_row,
+    step_start_body_row, step_start_content_pieces, step_start_owners_in_txn,
 };
 pub(crate) use self::response_erase::{
     actor_gone, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,
@@ -112,7 +123,8 @@ pub(crate) use self::wait_delivery::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
 pub(crate) use self::wait_delivery::{
-    deliver_wait_in_txn, deliver_wait_listing_in_txn, settled_wait_reply_in_txn,
+    clear_parked_wait_in_txn, deliver_wait_in_txn, deliver_wait_listing_in_txn,
+    settled_wait_reply_in_txn,
 };
 // DOOR-141 PR3b: a turn program's resume checkpoint and its wait.
 pub(crate) use self::program_resume::{

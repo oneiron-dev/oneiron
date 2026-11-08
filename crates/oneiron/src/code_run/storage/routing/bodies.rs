@@ -4,12 +4,13 @@
 //! are ([`admitted_reply`], FIX 6647).
 
 use super::super::records::{
-    FinishedOutput, ReplyBody, code_run_body_held_in_txn, owned_body, raw_put_publishes_descriptor,
+    FinishedOutput, ReplyBody, code_run_body_held_in_txn, raw_put_descriptor_in_txn,
 };
 use super::*;
 use crate::code_run::result_read::unplaced_answer;
-use crate::provenance::body::{owned_body_in_txn, publish_body_in_txn};
+use crate::provenance::body::publish_body_in_txn;
 use crate::side_table::RoutedDbs;
+use crate::store::BodyDir;
 
 mod admitted_reply;
 
@@ -40,7 +41,11 @@ impl ExecutorStorage<'_> {
     /// Publishes the reply body `spool` took as run `owner`'s complete output
     /// at `path` (FIX 5718 part 3, Engine rulings 3 and 4; FIX 6647), admitted
     /// in the writer that publishes it, on the vault or along a session's
-    /// route. `Err` holds the typed unavailable content that stands in for
+    /// route. On the vault it is admitted as a dependent of each of
+    /// `sources`, the records whose words it copies (FIX 18924); a session's
+    /// published body on record then depends on `sources` in base as the
+    /// vault's does, and its run's replay reads withhold a withdrawn fold's
+    /// answer. `Err` holds the typed unavailable content that stands in for
     /// an answer with a secret the side-row wall cannot place, of which
     /// nothing is stored. Off record, a reply that holds a fresh key is
     /// withheld until room-local custody exists (FIX 5718 part 3).
@@ -49,12 +54,22 @@ impl ExecutorStorage<'_> {
         path: String,
         spool: BodySink,
         owner: EntityId,
+        sources: &[EntityId],
+        receipt: Option<(&mut CodeRunReplayRecord, &mut CodeRunReplayGeneration)>,
     ) -> Result<std::result::Result<CodeRunRawOutput, serde_json::Value>> {
         let published = match self {
-            Self::Canonical(vault) => {
-                vault.publish_admitted_code_run_output(path, spool, true, owner)?
+            Self::Canonical(vault) => vault
+                .publish_admitted_code_run_output(path, spool, true, owner, sources, receipt)?,
+            Self::Session(binding) => {
+                let published = binding.publish_admitted_reply(path, spool, owner)?;
+                if let ReplyBody::Published(output) = &published {
+                    binding.record_reply_sources(owner, output, sources)?;
+                    if let Some((receipt, _)) = receipt {
+                        receipt.outputs.push(output.clone());
+                    }
+                }
+                published
             }
-            Self::Session(binding) => binding.publish_admitted_reply(path, spool, owner)?,
         };
         Ok(match published {
             ReplyBody::Published(output) => Ok(output),
@@ -65,9 +80,76 @@ impl ExecutorStorage<'_> {
             } => Err(unplaced_answer(bytes, text, reason)),
         })
     }
+
+    /// Records run `owner`'s output occurrence `output`, which may copy the
+    /// words of records `sources`, as a dependent of each of them (FIX
+    /// 18924): a stored value or a step's observation, after its own
+    /// publication. A withdrawal of one walks to it, and a source already
+    /// withdrawn leaves it born withdrawn. Known dependency edges only: its
+    /// input rows stay as its publication wrote them.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn record_code_run_fold_sources(
+        &self,
+        owner: EntityId,
+        output: &CodeRunRawOutput,
+        sources: &[EntityId],
+    ) -> Result<()> {
+        if sources.is_empty() {
+            return Ok(());
+        }
+        match self {
+            Self::Canonical(vault) => {
+                let occurrence = ResultOccurrence::of(Some(owner), output)?.id();
+                vault.with_write_txn_grouped(|wtxn| {
+                    super::super::fold_answers::record_reply_sources_in_txn(
+                        &vault.store,
+                        wtxn,
+                        &occurrence,
+                        sources,
+                    )
+                })
+            }
+            Self::Session(binding) => binding.record_reply_sources(owner, output, sources),
+        }
+    }
 }
 
 impl SessionBinding<'_> {
+    /// Records run `owner`'s reply body occurrence `output`, which copies the
+    /// words of records `sources`, as a dependent of each of them (FIX
+    /// 18924): on record, in a base writer of the run's route, as the
+    /// vault's publication does in its own. An off-record room's body is
+    /// its own: base keeps no row of it, and its run's replay reads take the
+    /// fold-answer fence through the room's composed view.
+    fn record_reply_sources(
+        &self,
+        owner: EntityId,
+        output: &CodeRunRawOutput,
+        sources: &[EntityId],
+    ) -> Result<()> {
+        if sources.is_empty() || self.route.target() != RouteTarget::Base {
+            return Ok(());
+        }
+        let occurrence = ResultOccurrence::owned(owner, &output.path)?.id();
+        self.answered(|| {
+            self.session
+                .routed_side_txn(&self.route, |wtxn, _, write| match write {
+                    RoutedDbs::Base(vault) => {
+                        super::super::fold_answers::record_reply_sources_in_txn(
+                            &vault.store,
+                            wtxn,
+                            &occurrence,
+                            sources,
+                        )
+                    }
+                    RoutedDbs::Session(_) => Ok(()),
+                })
+        })
+    }
+
     /// A writer for one result body: into the session's own body directory
     /// while the room is off record, the vault's `bodies/` once on record.
     /// Each value custody knows is replaced by its handle as it streams
@@ -201,11 +283,11 @@ impl SessionBinding<'_> {
     /// custody binding in that transaction. A key row the route's scope
     /// holds for the digest already stays, its file serving the body, and
     /// the body's row is written all the same. On an on-record stretch the
-    /// same transaction publishes the body in base as run `owner`'s
-    /// occurrence, as a canonical raw put does: the row takes no hold of its
-    /// own and a hold it kept before stays (FIX 7363). Off record, and where
-    /// `raw_put_publishes_descriptor` keeps the put as it was, no descriptor
-    /// holds the body, so its row holds it on its own (FIX 5399b).
+    /// same transaction publishes the descriptor a canonical raw put does,
+    /// run `owner`'s occurrence or its raw hold of these bytes: the row
+    /// takes no hold of its own and a hold it kept before stays (FIX 7363,
+    /// FIX 7430). Off record no descriptor holds the body, so its row holds
+    /// it on its own (FIX 5399b).
     pub(super) fn put_output_row(
         &self,
         finished: &FinishedOutput,
@@ -231,6 +313,58 @@ impl SessionBinding<'_> {
             .transpose()
     }
 
+    /// The row of the body `finished` holds, as run `owner`'s `output`,
+    /// prepared for a writer on the run's route that its caller opens (FIX
+    /// 6592). The directory a sealed file's key is checked against is read
+    /// here, before that writer opens.
+    pub(in crate::code_run::storage) fn prepare_output_row<'f>(
+        &self,
+        finished: &'f FinishedOutput,
+        output: &'f CodeRunRawOutput,
+        owner: EntityId,
+    ) -> Result<PreparedOutputRow<'f>> {
+        Ok(PreparedOutputRow {
+            finished,
+            output,
+            owner,
+            dir: self.key_dir(finished)?,
+        })
+    }
+}
+
+/// One output row of a session-bound run, with the directory of its sealed
+/// file, prepared before the routed writer that publishes it opens (FIX
+/// 6592).
+pub(in crate::code_run::storage) struct PreparedOutputRow<'f> {
+    finished: &'f FinishedOutput,
+    output: &'f CodeRunRawOutput,
+    owner: EntityId,
+    dir: Option<BodyDir>,
+}
+
+impl PreparedOutputRow<'_> {
+    /// The secret scan's mark of the occurrence, then the row, in the
+    /// caller's routed writer (FIX 6592): what
+    /// [`SessionBinding::publish_output_sourced`] writes in two writers, in
+    /// one, its row as [`SessionBinding::put_output_row`] writes it. A
+    /// resumed reply's body is published so, in its resume commit, and a
+    /// refusal there leaves neither.
+    pub(in crate::code_run::storage) fn publish_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        read: RoutedDbs<'_>,
+        write: RoutedDbs<'_>,
+    ) -> Result<()> {
+        let (finished, output, owner, dir) = (self.finished, self.output, self.owner, &self.dir);
+        if let Some(reason) = finished.secret {
+            let key = ResultOccurrence::of(Some(owner), output)?.mark_key(&output.handle);
+            RAW_OUTPUT_SECRETS.put(&write, txn, &key, &reason.to_owned())?;
+        }
+        put_output_row_in_txn(txn, (read, write), dir.as_ref(), finished, output, owner)
+    }
+}
+
+impl SessionBinding<'_> {
     pub(super) fn get_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
         let _pin = self.session.pin_result_body(output.raw_blake3);
@@ -280,7 +414,7 @@ impl SessionBinding<'_> {
 /// [`SessionBinding::put_output_row`]'s rows, written in `txn`, the routed
 /// transaction the caller holds, `read` its composed view and `write` its
 /// route: the body's row and its key row, and on an on-record stretch its
-/// descriptor in base. `dir` is where a body with a key row has its file.
+/// descriptor or raw hold in base. `dir` is where a body with a key row has its file.
 fn put_output_row_in_txn(
     txn: &mut heed::RwTxn<'_>,
     (read, write): (RoutedDbs<'_>, RoutedDbs<'_>),
@@ -311,22 +445,22 @@ fn put_output_row_in_txn(
             BODY_KEYS.put(&write, txn, key.digest(), key.row())?;
         }
     }
-    // On an on-record stretch the run's descriptor is published
-    // in base beside the row, with no second body key, custody
-    // pin or secret mark (FIX 7363). An overlay row carries
-    // none: a room save takes no overlay descriptor to base.
+    // On an on-record stretch the run's descriptor or raw hold
+    // is published in base beside the row, with no second body
+    // key, custody pin or secret mark (FIX 7363, FIX 7430). An
+    // overlay row carries none: a room save takes no overlay
+    // descriptor to base.
     let published = match write {
-        RoutedDbs::Base(vault) => {
-            let body = owned_body(owner, output, &finished.body)?;
-            let prior = owned_body_in_txn(&vault.store, txn, &owner, &body.occurrence);
-            raw_put_publishes_descriptor(&prior, &body).then_some((vault, body))
-        }
+        RoutedDbs::Base(vault) => Some((
+            vault,
+            raw_put_descriptor_in_txn(&vault.store, txn, owner, output, &finished.body)?,
+        )),
         RoutedDbs::Session(_) => None,
     };
     let held = published.is_none() || code_run_body_held_in_txn(&write, txn, &output.raw_blake3)?;
     RAW_OUTPUTS.put(&write, txn, &output.handle, &finished.body.holding(held))?;
     match published {
-        Some((vault, body)) => publish_body_in_txn(&vault.store, txn, &body),
-        None => Ok(()),
+        Some((vault, Some(body))) => publish_body_in_txn(&vault.store, txn, &body),
+        Some((_, None)) | None => Ok(()),
     }
 }

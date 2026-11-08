@@ -215,11 +215,17 @@ impl PackHook {
             scalar("phase")?.ok_or_else(|| invalid("HOOK.md requires a phase"))?,
         ))
         .map_err(|_| invalid("hook phase is pre, post or fact"))?;
-        // An entry is a verb glob, or `<fact kind>:<predicate glob>`; the
-        // first ':' splits them.
+        // An entry is a verb glob, or `<fact kind>:<glob>`; the first ':'
+        // splits them. A watcher source (`schedule.tick`, `surface.inbound`)
+        // is a fact, never a verb: only a fact hook names one (FIX 4749).
         let verbs: Vec<String> = json_list(&fields, "verbs")?;
         if verbs.is_empty() || !verbs.iter().all(|verb| selector_entry(verb)) {
             return Err(invalid("a hook selects one or more verb globs"));
+        }
+        if phase != HookPhase::Fact && verbs.iter().any(|verb| names_watcher_source(verb)) {
+            return Err(invalid(
+                "schedule.tick and surface.inbound are facts: only a fact hook selects them",
+            ));
         }
         // Served rows are a post-hook's to filter on.
         let served: Vec<String> = json_list(&fields, "served")?;
@@ -313,6 +319,14 @@ fn selector_entry(entry: &str) -> bool {
                 || b.is_ascii_digit()
                 || matches!(b, b'.' | b'_' | b'-' | b'*' | b':')
         })
+}
+
+/// Whether a selector entry names a watcher source, bare or as its
+/// `<kind>:` part.
+fn names_watcher_source(entry: &str) -> bool {
+    let kind = entry.split_once(':').map_or(entry, |(kind, _)| kind);
+    crate::runtime_hooks::FactKind::from_token(kind)
+        .is_some_and(crate::runtime_hooks::FactKind::is_watcher_source)
 }
 
 /// A JSON string list without repeats.

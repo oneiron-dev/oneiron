@@ -29,6 +29,7 @@ pub(crate) use self::doors::{
     standing_outbound_grants_in_txn,
 };
 
+pub(crate) use self::verb_class::verb_in_class;
 #[cfg(test)]
 mod tests;
 

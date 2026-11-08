@@ -31,6 +31,7 @@ fn connector_admission<'a>(
         safeguard_enabled: source.screen.safeguard_enabled,
         now,
         blob_ref: source.record,
+        source: None,
         verdict_fold: VerdictFold::default(),
         continuations: None,
     }
@@ -68,6 +69,8 @@ pub(in crate::calendar) struct ConnectorAdmissionSource<'a> {
     pub(in crate::calendar) record: &'a str,
     pub(in crate::calendar) source_version: Option<&'a str>,
     pub(in crate::calendar) screen: ConnectorScreen<'a>,
+    /// The exact archived version the admitted passports keep, when the pull archived one.
+    pub(in crate::calendar) source: Option<CalendarPassportSource>,
 }
 
 impl<'a> From<&'a str> for ConnectorAdmissionSource<'a> {
@@ -78,6 +81,7 @@ impl<'a> From<&'a str> for ConnectorAdmissionSource<'a> {
             record,
             source_version: None,
             screen: ConnectorScreen::default(),
+            source: None,
         }
     }
 }
@@ -95,6 +99,7 @@ pub(in crate::calendar) fn admit_connector_event<'a>(
 ) -> Result<(), CalendarError> {
     let source = source.into();
     let mut admission = connector_admission(vault, system, source, now);
+    admission.source = source.source;
     let Some(source_version) = source.source_version else {
         return admission.apply_event(event);
     };
