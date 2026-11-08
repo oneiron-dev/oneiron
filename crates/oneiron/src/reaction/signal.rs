@@ -117,6 +117,41 @@ fn page_size(limit: usize) -> Result<usize> {
     Ok(limit.min(MAX_REACTION_SIGNAL_PAGE))
 }
 
+/// A checked request for one page of the signal feed: its page size and
+/// its exclusive cursor (FIX 1435). A caller checks them before it reads
+/// the feed, and pages what it read with them, with no second parse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReactionSignalPaging {
+    limit: usize,
+    after: Option<[u8; CURSOR_BYTES]>,
+}
+
+impl ReactionSignalPaging {
+    /// At most `limit` signals (up to [`MAX_REACTION_SIGNAL_PAGE`]),
+    /// strictly after the `after` cursor. A `limit` of 0 or an `after` that
+    /// is not a signal cursor is refused.
+    pub fn checked(after: Option<&str>, limit: usize) -> Result<Self> {
+        let limit = page_size(limit)?;
+        let after = after.map(parse_cursor).transpose()?;
+        Ok(Self { limit, after })
+    }
+
+    /// One page of `signals`, already in feed order. A caller that
+    /// withholds some signals pages what it keeps, so a cursor never names a
+    /// signal the reader was not shown.
+    #[must_use]
+    pub fn page(self, signals: Vec<ReactionSignal>) -> ReactionSignalPage {
+        let Self { limit, after } = self;
+        let mut signals: Vec<_> = signals
+            .into_iter()
+            .filter(|signal| after.is_none_or(|cursor| signal.key() > cursor))
+            .collect();
+        let next = (signals.len() > limit).then(|| cursor_hex(&signals[limit - 1].key()));
+        signals.truncate(limit);
+        ReactionSignalPage { signals, next }
+    }
+}
+
 /// Pages signals already in feed order: at most `limit` (up to
 /// [`MAX_REACTION_SIGNAL_PAGE`]), strictly after the `after` cursor. A caller
 /// that withholds some signals pages what it keeps, so a cursor never names a
@@ -126,15 +161,7 @@ pub fn page_reaction_signals(
     after: Option<&str>,
     limit: usize,
 ) -> Result<ReactionSignalPage> {
-    let limit = page_size(limit)?;
-    let after = after.map(parse_cursor).transpose()?;
-    let mut signals: Vec<_> = signals
-        .into_iter()
-        .filter(|signal| after.is_none_or(|cursor| signal.key() > cursor))
-        .collect();
-    let next = (signals.len() > limit).then(|| cursor_hex(&signals[limit - 1].key()));
-    signals.truncate(limit);
-    Ok(ReactionSignalPage { signals, next })
+    Ok(ReactionSignalPaging::checked(after, limit)?.page(signals))
 }
 
 impl Vault {

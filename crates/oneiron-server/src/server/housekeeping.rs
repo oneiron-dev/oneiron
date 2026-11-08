@@ -233,6 +233,27 @@ impl SyncServer {
             if let Err(error) = copies.reuse_pending_home_claim_vectors(budget).await {
                 tracing::warn!(kind = ?error.kind(), "home CLAIM vector catch-up failed");
             }
+            // FIX 4747 slice 4: a connector send whose machine closed or
+            // vanished is taken here, in the ruled order, when this machine
+            // can send it.
+            let reaper = Arc::clone(server.vault());
+            if let Err(error) = tokio::task::spawn_blocking(move || {
+                super::connector_sends::reap_connector_send_leases(&reaper);
+            })
+            .await
+            {
+                tracing::warn!(panicked = error.is_panic(), "send lease reaper task failed");
+            }
+            // FIX 4747 slice 6: an agent run whose machine closed or vanished
+            // is taken here, in the ruled order, when it can run here.
+            let runs = Arc::clone(&server);
+            if let Err(error) = tokio::task::spawn_blocking(move || {
+                super::resident_pump::reap_agent_run_leases(&runs);
+            })
+            .await
+            {
+                tracing::warn!(panicked = error.is_panic(), "agent run reaper task failed");
+            }
             server
                 .cleanup_residence_work(HOUSEKEEPING_PASS_BUDGET)
                 .await;
