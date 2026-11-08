@@ -83,6 +83,7 @@ impl Vault {
             &capture.blobs,
             timing,
             None,
+            Some(path.trim_end_matches('/')),
             &contents,
             Some(owner),
             |txn| {
