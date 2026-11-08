@@ -35,6 +35,7 @@ mod socket_stop;
 mod transport;
 mod window_copy;
 mod window_pads;
+mod window_ready;
 #[cfg(test)]
 pub(crate) mod window_row_tests;
 mod window_sync;

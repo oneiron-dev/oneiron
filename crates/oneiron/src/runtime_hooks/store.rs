@@ -17,7 +17,8 @@ use super::body::{HookBudgetOverrun, HookPreparation, HookSettledCallRef};
 use super::grant::HookGrant;
 use super::lineage::LineageLink;
 use super::source::{
-    self, ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SettlementPosition,
+    self, ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SchedulePosition,
+    SettlementPosition, SurfaceInboundPosition,
 };
 
 pub(crate) use erase::scrub_hook_source_in_txn;
@@ -121,6 +122,8 @@ pub(super) struct CursorRow {
 enum CursorPosition {
     ClaimChangelog([u8; 16]),
     Settlement(u64),
+    Schedule(u64),
+    SurfaceInbound(u64),
 }
 
 impl CursorRow {
@@ -131,6 +134,10 @@ impl CursorRow {
                     CursorPosition::ClaimChangelog(position.0)
                 }
                 FactPosition::Settlement(position) => CursorPosition::Settlement(position.0),
+                FactPosition::Schedule(position) => CursorPosition::Schedule(position.0),
+                FactPosition::SurfaceInbound(position) => {
+                    CursorPosition::SurfaceInbound(position.0)
+                }
             }),
             paused: false,
             updated_at: at,
@@ -152,6 +159,12 @@ impl CursorRow {
             }
             CursorPosition::Settlement(sequence) => {
                 FactPosition::Settlement(SettlementPosition(sequence))
+            }
+            CursorPosition::Schedule(sequence) => {
+                FactPosition::Schedule(SchedulePosition(sequence))
+            }
+            CursorPosition::SurfaceInbound(sequence) => {
+                FactPosition::SurfaceInbound(SurfaceInboundPosition(sequence))
             }
         })
     }
@@ -179,7 +192,9 @@ pub(super) fn put_cursor_in_txn(
 /// Commits a fact binding's cursor with its real enable, disable or
 /// replacement write. A selector-only update of an already-enabled binding
 /// keeps its cursor; a disabled-to-enabled transition starts at the enable
-/// write, including the settlement head (FIX 10078).
+/// write, including the settlement head (FIX 10078). A binding with no
+/// `previous` row is fresh, so a watcher's starts before the earliest tick of
+/// a TASK still open (FIX 4749).
 pub(crate) fn sync_binding_cursor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -214,7 +229,7 @@ pub(crate) fn sync_binding_cursor_in_txn(
         return Ok(());
     }
     for source in FactSource::ALL {
-        let start = source::enable_start_in_txn(vault, txn, &binding, source)?;
+        let start = source::enable_start_in_txn(vault, txn, &binding, source, previous.is_none())?;
         put_cursor_in_txn(vault, txn, binding, source, &CursorRow::new(start, at))?;
     }
     Ok(())
