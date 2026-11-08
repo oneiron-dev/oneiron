@@ -559,6 +559,18 @@ impl ModelRuntime {
         Arc::clone(&self.raw_router)
     }
 
+    /// The access this host's offers hold now (FIX 5366), as its raw router
+    /// reads it: the configured routes and their on-device views, and the
+    /// models the owner's other nodes offer, as the last mesh catalog
+    /// refresh left them (FIX 3229). Nothing is probed or sent. A role's
+    /// model pack pick, the compaction writer's pick and the pack's
+    /// retirement notices all read this one access (FIX 22227), so a notice
+    /// names the model a role's pick resolves to here.
+    #[must_use]
+    pub(crate) fn offer_access(&self) -> oneiron::llm::model_pack::AccessSnapshot {
+        self.raw_router.access_snapshot()
+    }
+
     /// Serves on this runtime's raw router, beside the configured models,
     /// the ones the owner's other nodes offer over `mesh` (FIX 3229), as the
     /// vault's discovery rows hold them now and after each refresh.

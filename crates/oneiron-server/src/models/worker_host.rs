@@ -65,8 +65,7 @@ use std::time::{Duration, Instant};
 
 use oneiron::llm::run_admission::{WorkContext, record_work_parent};
 use oneiron::llm::{
-    CacheDigest, CallSchedule, SchedulingCapability, VaultRef, WorkClass, WorkerKind, WorkerMode,
-    WorkerStatus,
+    CacheDigest, CallSchedule, SchedulingCapability, VaultRef, WorkClass, WorkerMode, WorkerStatus,
 };
 use oneiron_driver::{
     AdmissionStop, DeclaredEnvelope, DeviceAdmission, DeviceGrant, DeviceLedger,
@@ -142,7 +141,7 @@ impl Hosted {
     /// A managed EXL3 worker's launch slot: a launch whose record may name a
     /// native socket.
     fn native_slot(&self) -> Option<&Arc<LaunchSlot>> {
-        if self.row.mode == WorkerMode::Managed && self.row.kind == WorkerKind::Exl3 {
+        if self.row.has_native_launch() {
             self.slot.as_ref()
         } else {
             None
@@ -797,8 +796,8 @@ impl WorkerHost {
             mode: row.mode,
             expected: row.expected.clone(),
         };
-        match (&row.launch, row.mode) {
-            (Some(launch), WorkerMode::Managed) => {
+        match row.managed_launch() {
+            Some(launch) => {
                 let slot = Arc::new(LaunchSlot::default());
                 let probe: Arc<dyn WorkerProbe> = Arc::new(HouseProbe::new(
                     provider,
@@ -836,7 +835,7 @@ impl WorkerHost {
                 }
                 (worker, Some(slot))
             }
-            _ => {
+            None => {
                 let probe = Arc::new(HouseProbe::new(
                     provider,
                     row.endpoint.as_deref(),

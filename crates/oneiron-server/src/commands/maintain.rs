@@ -15,9 +15,11 @@
 //! retiring model's notices too (FIX 22059, 22189): the routes of the
 //! `[models]` config, the on-device views of the managed EXL3 workers plain
 //! `serve` launches, and the models the owner's other nodes offer, as the
-//! vault's mesh discovery rows hold them, with or without `[models]`. It is
-//! read from the config and those rows, with no backend built, no worker
-//! launched and nothing sent.
+//! vault's mesh discovery rows hold them, with or without `[models]`. A
+//! `serve` with the mesh off marks those rows stale at its start, so
+//! `maintain` counts them only after a `serve` with the mesh on (FIX
+//! 22227). It is read from the config and those rows, with no backend
+//! built, no worker launched and nothing sent.
 
 use oneiron::housekeeping::{HousekeepingBudget, HousekeepingReport};
 use oneiron::maintain::CorruptClaimRepair;

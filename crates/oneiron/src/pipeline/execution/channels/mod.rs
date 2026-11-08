@@ -720,6 +720,25 @@ impl PipelineBuilder<'_> {
 
             let before_limit = scores.len();
             fusion::sort_scored_entities_desc(&mut scores);
+            // The effort's default now anchor is no query evidence; a window
+            // the query's words or the host named is (FIX 22182).
+            let temporal_is_query = self.temporal_search.as_ref().is_some_and(|config| {
+                !config.effort_anchor || config.query_occurred_range.is_some()
+            });
+            // In the blend's order, before the rerank block is taken: the
+            // block then holds the rows the query matched before the rows it
+            // did not, so no match is left outside it and cut (FIX 22182).
+            entity_rank::rank_unmatched_below_matches(
+                &mut scores,
+                &acc.signal_components,
+                entity_rank::MatchReading {
+                    temporal_is_query,
+                    every_kind: true,
+                },
+                &self.read,
+                rtxn,
+                &mut metadata_cache,
+            )?;
 
             let RerankApplied {
                 merged_components: rerank_merged_components,
@@ -741,9 +760,15 @@ impl PipelineBuilder<'_> {
                 },
             )?;
 
-            entity_rank::rank_unmatched_entities_below_matches(
+            // A reranked order stands, but for the named entities PPR pools
+            // a principal's mass into.
+            entity_rank::rank_unmatched_below_matches(
                 &mut scores,
                 &acc.signal_components,
+                entity_rank::MatchReading {
+                    temporal_is_query,
+                    every_kind: false,
+                },
                 &self.read,
                 rtxn,
                 &mut metadata_cache,

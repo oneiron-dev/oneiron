@@ -23,7 +23,7 @@ use super::anchor_text::{
     TextLimits, UnitFormat, anchor_text, find_text, html_blocks, remap_span, text_quote_for_sight,
     text_raw_span_byte_range,
 };
-use super::code_units::code_span_words_in_txn;
+use super::code_units::{code_locator_shown_in_txn, code_span_words_in_txn};
 use super::codec::{ThreadHead, decode_locator, encode_locator};
 use super::model::{AnnotationThread, Locator, ReanchorOutcome, ReanchorSummary};
 use super::threads::thread_from_head;
@@ -93,7 +93,9 @@ pub(crate) fn discard_snapshot_payload_in_txn(
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct UnattachedThread {
-    /// The thread, pinned to the version its spot last existed in.
+    /// The thread, pinned to the version its spot last existed in. A code
+    /// thread's locator reads in the text of the sight the list was read
+    /// through (FIX 22109).
     pub thread: AnnotationThread,
     /// The words it was anchored on, read from the pinned version.
     pub snapshot: Option<String>,
@@ -111,6 +113,8 @@ pub struct ReattachOffer {
     /// The head version the place is in; `CODE_ANCHOR_VERSION` on a code
     /// artifact, whose locator names the commit and file (FIX 7905).
     pub version: u64,
+    /// A code place reads in the text of the sight the offers were read
+    /// through, and a reattach takes it in that sight (FIX 22109).
     pub locator: Locator,
 }
 
@@ -462,6 +466,9 @@ impl Vault {
             // the masked projection (FIX 7905): the stored snapshot reaches
             // every reader of the Unattached list, so it never holds a
             // repo-marked secret. An owner reads the exact bytes by the hash.
+            // The stored span counts the owner's text and is read at its
+            // place in the masked text; a masked text it does not translate
+            // to keeps no snapshot (FIX 22109).
             code_span_words_in_txn(
                 self,
                 wtxn,
@@ -513,7 +520,9 @@ impl Vault {
     }
 
     /// The comments on one artifact whose spot was deleted, with what they
-    /// were on and the task that waits for them.
+    /// were on and the task that waits for them. Each locator is the stored
+    /// one, in the owner's text (FIX 22109); a masked reader's list is
+    /// [`Self::unattached_annotation_threads_file_sighted`].
     pub fn unattached_annotation_threads(
         &self,
         artifact_id: &EntityId,
@@ -542,7 +551,9 @@ impl Vault {
     /// Every exact place in the artifact's head where an unattached comment's
     /// words read again. A code artifact's head is its current snapshot, the
     /// tree at its repo_ref commit, and each place names that commit, a
-    /// file's path and hash, and a span in it (FIX 7905). An offer is only an
+    /// file's path and hash, and a span in it (FIX 7905), in the owner's text
+    /// (FIX 22109); a masked reader's offers are
+    /// [`Self::annotation_reattach_offers_file_sighted`]. An offer is only an
     /// offer: nothing moves until a person picks one through
     /// [`Vault::reattach_annotation_thread`].
     pub fn annotation_reattach_offers(&self, artifact_id: &EntityId) -> Result<Vec<ReattachOffer>> {
@@ -551,7 +562,11 @@ impl Vault {
             return Ok(Vec::new());
         }
         if self.get_entity_type(artifact_id)? == Some(ENTITY_TYPE_CODE_ARTIFACT) {
-            return self.code_annotation_reattach_offers(artifact_id, &unattached);
+            return self.code_annotation_reattach_offers(
+                artifact_id,
+                &unattached,
+                SecretSight::Owner,
+            );
         }
         let head = self
             .blob_artifact_head(artifact_id)?
@@ -647,7 +662,10 @@ impl Vault {
     /// Refused unless the words there read exactly as the comment's snapshot.
     /// On a code artifact `version` is `CODE_ANCHOR_VERSION`, and `locator`
     /// names the artifact's current repo_ref commit and that commit's file
-    /// hash for its path (FIX 7905).
+    /// hash for its path (FIX 7905). Its span reads in `sight`'s text, the
+    /// sight of the offers it came from: the thread stores it at the owner's
+    /// offsets, and the returned thread's locator reads in `sight`'s text
+    /// (FIX 22109). Another artifact's locator reads alike in every sight.
     #[expect(clippy::too_many_arguments)]
     pub fn reattach_annotation_thread(
         &self,
@@ -655,7 +673,7 @@ impl Vault {
         thread_id: &EntityId,
         version: u64,
         locator: &Locator,
-        sight: crate::secret_custody::SecretSight,
+        sight: SecretSight,
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
@@ -675,13 +693,15 @@ impl Vault {
                     "only an unattached comment with a snapshot reattaches",
                 )));
             };
-            let words = if code_artifact {
+            // The words at the place, and the locator the thread lands at.
+            let landed = if code_artifact {
                 code::code_reattach_words_in_txn(
                     self,
                     wtxn,
                     artifact_id,
                     &thread.anchor.locator,
                     locator,
+                    sight,
                 )?
             } else {
                 let bytes = self
@@ -723,23 +743,33 @@ impl Vault {
                     }
                 }
                 // A resource refusal is the engine's error (FIX 10587), never a word mismatch.
-                anchor_text(&bytes, locator, &limits)?
+                anchor_text(&bytes, locator, &limits)?.map(|words| (words, locator.clone()))
             };
-            if words.as_deref() != Some(snapshot.as_str()) {
+            let Some((_, place)) = landed.filter(|(words, _)| *words == snapshot) else {
                 return Err(Error::Artifact(ArtifactError::InvalidAnchor(
                     "the words at that place are not the comment's words",
                 )));
-            }
-            self.reattach_in_txn(
+            };
+            let mut reattached = self.reattach_in_txn(
                 wtxn,
                 artifact_id,
                 &thread,
                 version,
-                locator.clone(),
+                place,
                 actor,
                 occurred,
                 learned_at,
-            )
+            )?;
+            if code_artifact {
+                reattached.anchor.locator = code_locator_shown_in_txn(
+                    self,
+                    wtxn,
+                    artifact_id,
+                    &reattached.anchor.locator,
+                    sight,
+                )?;
+            }
+            Ok(reattached)
         })
         .inspect(|_| self.store.notify_attempt_observers())
     }

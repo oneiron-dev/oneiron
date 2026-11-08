@@ -178,19 +178,19 @@ impl Renewal {
                 let dialer = self.dialer.clone();
                 self.in_flight = Some(tokio::spawn(async move {
                     match dialer {
-                        Some(dialer) => match renew_mesh(&origin, &path, &vault, dialer.as_ref())
-                            .await
-                        {
-                            // A mesh that fails falls back to the origin
-                            // itself (FIX 3374); when that does not land
-                            // either, the mesh failure stands.
-                            Err(Failure::Failed(reason)) if renew_url(&origin).is_ok() => {
-                                renew(&origin, &path, &vault)
-                                    .await
-                                    .map_err(|_| Failure::Failed(reason))
+                        Some(dialer) => {
+                            match renew_mesh(&origin, &path, &vault, dialer.as_ref()).await {
+                                // A mesh that fails falls back to the origin
+                                // itself (FIX 3374); when that does not land
+                                // either, the mesh failure stands.
+                                Err(Failure::Failed(reason)) if renew_url(&origin).is_ok() => {
+                                    renew(&origin, &path, &vault)
+                                        .await
+                                        .map_err(|_| Failure::Failed(reason))
+                                }
+                                renewed => renewed,
                             }
-                            renewed => renewed,
-                        },
+                        }
                         None => renew(&origin, &path, &vault).await,
                     }
                 }));

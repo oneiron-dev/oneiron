@@ -5,6 +5,11 @@
 //! hash names, so a thread whose commit the tree has moved past still reads
 //! them. When the tree moves to a new commit, a span moves with the line and
 //! character diff a plain-text span uses.
+//!
+//! A stored code span counts characters of the owner's text, the file's
+//! stored bytes (FIX 22109). A caller whose sight masks the file reads and
+//! sends spans in the text it reads; [`CodeSpace`] translates between the
+//! two at each door.
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -17,6 +22,7 @@ use crate::codebase::{
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::origin::secret_projection::REPO_OPAQUE_FILE_BYTES;
 use crate::secret_custody::SecretSight;
 
 /// A code file's content hash.
@@ -98,17 +104,204 @@ pub(super) fn file_bytes_by_hash_in_txn(
 
 /// [`file_bytes_by_hash_in_txn`] in a read of its own, for a reader that
 /// already holds the tree it found `hash` in, as a snapshot mount reads a
-/// file.
-pub(super) fn file_bytes_by_hash(
+/// file, with how the bytes' offsets translate to the owner's text, read in
+/// the same read (FIX 22109).
+pub(super) fn file_bytes_and_space_by_hash(
     vault: &Vault,
     hash: &FileHash,
     sight: SecretSight,
-) -> Result<Option<Vec<u8>>> {
+) -> Result<Option<(Vec<u8>, CodeSpace)>> {
     // A file holding these bytes is named by their hash: pinned before the
     // snapshot that finds its row opens (FIX 5399).
     let _body = vault.pin_result_body(*hash);
     let txn = vault.store.env.read_txn()?;
-    file_bytes_by_hash_in_txn(vault, &txn, hash, sight)
+    let Some(shown) = file_bytes_by_hash_in_txn(vault, &txn, hash, sight)? else {
+        return Ok(None);
+    };
+    let space = CodeSpace::read_in_txn(vault, &txn, hash, sight, &shown)?;
+    Ok(Some((shown, space)))
+}
+
+/// How one code file's offsets translate between the owner's text and a
+/// sight's (FIX 22109). A stored code locator counts characters of the
+/// owner's text, the file's stored bytes: the raw space. A caller reads and
+/// sends offsets in the text its sight reads: its shown space. A masked
+/// copy keeps the file's byte length and every byte outside a mark, and
+/// writes one ASCII filler byte for each marked byte, so one byte position
+/// names the same place in both texts. A multibyte character inside a mark
+/// reads as several filler characters, which moves every later character
+/// offset; an opaque copy holds no text a locator can name.
+pub(super) enum CodeSpace {
+    /// The sight reads the owner's bytes: an offset is the same in both.
+    Same,
+    /// Both texts decode, each without a leading byte-order mark as
+    /// [`decoded`] reads it, and hold the same number of bytes.
+    Bytewise { raw: String, shown: String },
+    /// An opaque copy, a length mismatch or bytes that do not decode: no
+    /// offset translates.
+    Unmappable,
+}
+
+impl CodeSpace {
+    /// The space between `raw`, a code file's stored bytes, and `shown`, the
+    /// bytes a sight reads of the same file.
+    pub(super) fn between(raw: &[u8], shown: &[u8]) -> Self {
+        if raw == shown {
+            return Self::Same;
+        }
+        if shown == REPO_OPAQUE_FILE_BYTES || raw.len() != shown.len() {
+            return Self::Unmappable;
+        }
+        match (decoded(raw), decoded(shown)) {
+            (Some(raw), Some(shown)) if raw.len() == shown.len() => Self::Bytewise {
+                raw: raw.to_owned(),
+                shown: shown.to_owned(),
+            },
+            _ => Self::Unmappable,
+        }
+    }
+
+    /// The space of the file `hash` names, whose bytes as `sight` reads them
+    /// are `shown`, with the owner's bytes read in the caller's `txn`, the
+    /// read `shown` came from. The owner's sight is the same space; a file
+    /// whose stored bytes are gone translates nothing.
+    pub(super) fn read_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        hash: &FileHash,
+        sight: SecretSight,
+        shown: &[u8],
+    ) -> Result<Self> {
+        if sight == SecretSight::Owner {
+            return Ok(Self::Same);
+        }
+        Ok(
+            match file_bytes_by_hash_in_txn(vault, txn, hash, SecretSight::Owner)? {
+                Some(raw) => Self::between(&raw, shown),
+                None => Self::Unmappable,
+            },
+        )
+    }
+
+    /// Whether no offset translates.
+    pub(super) fn is_unmappable(&self) -> bool {
+        matches!(self, Self::Unmappable)
+    }
+
+    /// Raw character `at` as a character of the shown text: the byte it
+    /// starts at, counted in the shown text. `None` past the text, or where
+    /// that byte falls inside a shown character.
+    pub(super) fn raw_to_shown(&self, at: u64) -> Option<u64> {
+        match self {
+            Self::Same => Some(at),
+            Self::Bytewise { raw, shown } => {
+                let byte = char_byte(raw, at)?;
+                shown
+                    .is_char_boundary(byte)
+                    .then(|| char_count(&shown[..byte]))
+            }
+            Self::Unmappable => None,
+        }
+    }
+
+    /// Shown character `at` as the raw character a span starts at. A byte
+    /// inside a multibyte raw character, which only a mark covers, rounds
+    /// down to that character's start. `None` past the text.
+    pub(super) fn shown_to_raw_start(&self, at: u64) -> Option<u64> {
+        self.shown_to_raw(at, false)
+    }
+
+    /// Shown character `at` as the raw character a span ends at. A byte
+    /// inside a multibyte raw character rounds up to that character's end.
+    /// `None` past the text.
+    pub(super) fn shown_to_raw_end(&self, at: u64) -> Option<u64> {
+        self.shown_to_raw(at, true)
+    }
+
+    fn shown_to_raw(&self, at: u64, round_up: bool) -> Option<u64> {
+        match self {
+            Self::Same => Some(at),
+            Self::Bytewise { raw, shown } => {
+                let byte = char_byte(shown, at)?;
+                let byte = if round_up {
+                    raw.ceil_char_boundary(byte)
+                } else {
+                    raw.floor_char_boundary(byte)
+                };
+                Some(char_count(&raw[..byte]))
+            }
+            Self::Unmappable => None,
+        }
+    }
+
+    /// A raw span `start..end` in the shown text.
+    pub(super) fn shown_span(&self, start: u64, end: u64) -> Option<(u64, u64)> {
+        Some((self.raw_to_shown(start)?, self.raw_to_shown(end)?))
+    }
+
+    /// A shown span `start..end` in the raw text: its start rounds down and
+    /// its end up, so a span that meets a multibyte character inside a mark
+    /// covers that whole character.
+    pub(super) fn raw_span(&self, start: u64, end: u64) -> Option<(u64, u64)> {
+        Some((self.shown_to_raw_start(start)?, self.shown_to_raw_end(end)?))
+    }
+
+    /// The stored code locator `raw` in the shown text; `None` for another
+    /// format's locator or a span that does not translate.
+    pub(super) fn shown_locator(&self, raw: &Locator) -> Option<Locator> {
+        let (start, end) = char_span(raw)?;
+        let (start, end) = self.shown_span(start, end)?;
+        with_char_span(raw, start, end)
+    }
+
+    /// The code locator `shown`, read in the shown text, in the raw text, as
+    /// [`Self::raw_span`] moves its span; `None` for another format's
+    /// locator or a span that does not translate.
+    pub(super) fn raw_locator(&self, shown: &Locator) -> Option<Locator> {
+        let (start, end) = char_span(shown)?;
+        let (start, end) = self.raw_span(start, end)?;
+        with_char_span(shown, start, end)
+    }
+}
+
+/// The byte character `at` starts at in `text`, or the text's length when
+/// `at` is its character count; `None` past the text.
+fn char_byte(text: &str, at: u64) -> Option<usize> {
+    let at = usize::try_from(at).ok()?;
+    text.char_indices()
+        .map(|(byte, _)| byte)
+        .chain(std::iter::once(text.len()))
+        .nth(at)
+}
+
+fn char_count(text: &str) -> u64 {
+    text.chars().count() as u64
+}
+
+/// A code locator's character span; `None` for another format's locator.
+fn char_span(locator: &Locator) -> Option<(u64, u64)> {
+    match locator {
+        Locator::Code {
+            char_start,
+            char_end,
+            ..
+        } => Some((*char_start, *char_end)),
+        _ => None,
+    }
+}
+
+/// The code locator `locator` with its span moved to `start..end`.
+fn with_char_span(locator: &Locator, start: u64, end: u64) -> Option<Locator> {
+    let Locator::Code {
+        commit,
+        path,
+        file_hash,
+        ..
+    } = locator
+    else {
+        return None;
+    };
+    Locator::code(commit.clone(), path.clone(), file_hash.clone(), start, end).ok()
 }
 
 /// The bytes of the code file `file` names on `artifact`, as `sight` reads
@@ -136,9 +329,68 @@ pub(super) fn code_file_bytes_in_txn(
     file_bytes_by_hash_in_txn(vault, txn, &file.hash, sight)
 }
 
-/// The words under a code locator on `artifact`, as `sight` reads them, in
-/// the caller's `txn`; `None` for another format's locator or a spot that
-/// does not read.
+/// The bytes of the code file `file` names on `artifact` as `sight` reads
+/// them, as [`code_file_bytes_in_txn`] reads them, with how their offsets
+/// translate to the owner's text, both read in the caller's `txn` (FIX
+/// 22109). `None` when the path is withheld or the ASSET is gone.
+fn code_file_space_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    artifact: &EntityId,
+    file: &CodeFile<'_>,
+    sight: SecretSight,
+) -> Result<Option<(Vec<u8>, CodeSpace)>> {
+    let Some(shown) = code_file_bytes_in_txn(vault, txn, artifact, file, sight)? else {
+        return Ok(None);
+    };
+    let space = CodeSpace::read_in_txn(vault, txn, &file.hash, sight, &shown)?;
+    Ok(Some((shown, space)))
+}
+
+/// A stored code locator on `artifact` as `sight` reads it, in the caller's
+/// `txn`: the locator translated from the owner's text to the sight's (FIX
+/// 22109), and the words under it there. `None` for another format's
+/// locator, a withheld path, a gone ASSET, or offsets that do not translate.
+pub(super) fn code_span_shown_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    artifact: &EntityId,
+    locator: &Locator,
+    sight: SecretSight,
+) -> Result<Option<(Locator, Option<String>)>> {
+    let Some(file) = CodeFile::of(locator) else {
+        return Ok(None);
+    };
+    let Some((bytes, space)) = code_file_space_in_txn(vault, txn, artifact, &file, sight)? else {
+        return Ok(None);
+    };
+    let Some(shown) = space.shown_locator(locator) else {
+        return Ok(None);
+    };
+    let words = char_span(&shown).and_then(|(start, end)| text_span(&bytes, start, end));
+    Ok(Some((shown, words)))
+}
+
+/// [`code_span_shown_in_txn`] in a read of its own.
+pub(super) fn code_span_shown(
+    vault: &Vault,
+    artifact: &EntityId,
+    locator: &Locator,
+    sight: SecretSight,
+) -> Result<Option<(Locator, Option<String>)>> {
+    let Some(file) = CodeFile::of(locator) else {
+        return Ok(None);
+    };
+    // Pinned before the read that finds the file's row opens (FIX 5399).
+    let _body = vault.pin_result_body(file.hash);
+    let txn = vault.store.env.read_txn()?;
+    code_span_shown_in_txn(vault, &txn, artifact, locator, sight)
+}
+
+/// The words under a stored code locator on `artifact`, as `sight` reads
+/// them, in the caller's `txn`: the span is translated to the sight's text
+/// before it is read (FIX 22109). `None` for another format's locator or a
+/// spot that does not read or translate.
 pub(super) fn code_span_words_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -146,35 +398,42 @@ pub(super) fn code_span_words_in_txn(
     locator: &Locator,
     sight: SecretSight,
 ) -> Result<Option<String>> {
-    let (
-        Some(file),
-        Locator::Code {
-            char_start,
-            char_end,
-            ..
-        },
-    ) = (CodeFile::of(locator), locator)
-    else {
-        return Ok(None);
-    };
-    Ok(code_file_bytes_in_txn(vault, txn, artifact, &file, sight)?
-        .and_then(|bytes| text_span(&bytes, *char_start, *char_end)))
+    Ok(code_span_shown_in_txn(vault, txn, artifact, locator, sight)?.and_then(|(_, words)| words))
 }
 
-/// [`code_span_words_in_txn`] in a read of its own.
-pub(super) fn code_span_words(
+/// A stored code locator on `artifact` in `sight`'s text, read in the
+/// caller's `txn` (FIX 22109). A spot that does not read there, or whose
+/// offsets do not translate, keeps the stored locator, as an anchor view
+/// emits it.
+pub(super) fn code_locator_shown_in_txn(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     artifact: &EntityId,
     locator: &Locator,
     sight: SecretSight,
-) -> Result<Option<String>> {
-    let Some(file) = CodeFile::of(locator) else {
+) -> Result<Locator> {
+    Ok(
+        code_span_shown_in_txn(vault, txn, artifact, locator, sight)?
+            .map_or_else(|| locator.clone(), |(shown, _)| shown),
+    )
+}
+
+/// A code locator on `artifact` read in `sight`'s text, in the owner's
+/// text, with the file read in the caller's `txn` (FIX 22109). `None` for
+/// another format's locator, a withheld path, a gone ASSET, or offsets that
+/// do not translate.
+pub(super) fn code_raw_locator_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    artifact: &EntityId,
+    shown: &Locator,
+    sight: SecretSight,
+) -> Result<Option<Locator>> {
+    let Some(file) = CodeFile::of(shown) else {
         return Ok(None);
     };
-    // Pinned before the read that finds the file's row opens (FIX 5399).
-    let _body = vault.pin_result_body(file.hash);
-    let txn = vault.store.env.read_txn()?;
-    code_span_words_in_txn(vault, &txn, artifact, locator, sight)
+    Ok(code_file_space_in_txn(vault, txn, artifact, &file, sight)?
+        .and_then(|(_, space)| space.raw_locator(shown)))
 }
 
 /// The whole-file unit of the code file `bytes` hold at `commit` and

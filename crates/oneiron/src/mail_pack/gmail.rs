@@ -548,6 +548,7 @@ fn full_from(headers: MailHeaders, parts: MessageParts) -> MailFull {
         headers,
         body_text: body_text.filter(|text| !text.trim().is_empty()),
         attachments: parts.attachments,
+        content_digest: None,
     }
 }
 

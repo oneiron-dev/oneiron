@@ -60,7 +60,10 @@ impl SyncClient {
                             logged(tag, &id, holder, executor, "answered");
                             return Ok(vec![frame]);
                         }
-                        Err(error) => LeafKeyFailureCause::HolderRefused(error.to_string()),
+                        // An own answer that does not encode is this holder's
+                        // fault, not a refusal: HolderFault keeps the ask
+                        // pending (FIX 22236).
+                        Err(_) => LeafKeyFailureCause::HolderFault,
                     },
                     // A fault, not a refusal: HolderFault keeps the ask pending (FIX 12131).
                     Err(error) => LeafKeyFailureCause::of_refusal(&error)
