@@ -4663,6 +4663,8 @@ class Oneiron:
             """An agent forks a stored skill under its own identity, keeping its import ancestry."""
         def callables(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.CallableCardView]:
             """Every loadable callable helper skill and its call contract: what it takes and returns."""
+        def graph(self, spec: Facade.GraphSkillRunRequest) -> Facade.GraphSkillRunOutcome:
+            """Runs a saved graph workflow from this resident-owned skill on the attached leased run; answers stay proposals and partial stages remain visible."""
         def call(self, spec: Facade.LiveRunRequest[Facade.SkillCallInput]) -> Any:
             """Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately."""
     class _SelfDecisionsVerbs:

@@ -8874,6 +8874,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_skills_graph(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.skills.graph", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_graph_admit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.graph.admit", js_json(input))

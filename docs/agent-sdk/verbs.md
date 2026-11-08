@@ -1008,6 +1008,7 @@ both bindings and their export-census tests in one change.
 - `ai.ask_image`
 - `ai.verdict`
 - `vault.graph.ask`
+- `self.skills.graph`
 - `vault.graph.admit`
 - `vault.questions.create`
 - `vault.questions.edit`
