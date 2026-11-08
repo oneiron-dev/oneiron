@@ -205,6 +205,10 @@ pub struct TaskPost {
     /// edge; the nesting matrix decides, so a Task nests under a Milestone.
     #[serde(default)]
     pub parent_ref: Option<EntityId>,
+    /// The TASK's due time, Unix seconds (FIX 4749): a briefed watcher ticks
+    /// on `schedule.tick` after it, as a brief-less one does.
+    #[serde(default)]
+    pub due_at: Option<u64>,
 }
 
 /// Accept one TASK addressed to the caller.

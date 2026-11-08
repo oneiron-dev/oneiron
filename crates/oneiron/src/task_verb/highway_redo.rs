@@ -53,8 +53,8 @@ impl Memory<'_> {
 
     /// The post a redo of `redo.task_ref` makes, from one snapshot of it:
     /// its current brief, assignee, spec, label and `ChildOf` parent, under
-    /// the redo's own intent key, and the copy it is. Its TTL is left
-    /// behind, and so is a parent that can no longer take a Task.
+    /// the redo's own intent key, and the copy it is. Its TTL and due time
+    /// are left behind, and so is a parent that can no longer take a Task.
     fn redo_post(&self, redo: &TaskRedo) -> MemoryResult<(TaskPost, PostCopy)> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let Some(body) = task_verb_body_in(self.vault(), &txn, redo.task_ref)? else {
@@ -102,6 +102,7 @@ impl Memory<'_> {
             ttl: None,
             label: body.label,
             parent_ref: parent_ref.filter(|_| dropped_parent.is_none()),
+            due_at: None,
         };
         let copy = PostCopy {
             of: redo.task_ref,

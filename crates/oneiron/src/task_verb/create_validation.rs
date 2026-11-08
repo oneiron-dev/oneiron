@@ -530,3 +530,25 @@ pub(crate) fn open_task_due_at_in_txn(
         .filter(|body| body.terminal().is_none())
         .and_then(|body| body.due_at))
 }
+
+/// The due time a stored TASK body ticks at (FIX 4749): an open, standard
+/// typed TASK's `due_at`. Any other body (another role, a consult, a settled
+/// TASK, one with no due time) ticks at none, and so does a body no reader
+/// can decode, as [`open_task_due_at_in_txn`] reads it.
+pub(crate) fn watcher_due_at(body: &[u8]) -> Result<Option<u64>> {
+    if task_role_from_body_bytes(body)? != TaskRole::Task
+        || !super::wire_decode::task_body_has_typed_subkind(body)?
+    {
+        return Ok(None);
+    }
+    let body = match super::wire_decode::decode_task_verb_body(body) {
+        Ok(body) => body,
+        Err(Error::Record(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let ticks = super::consts::TASK_VERB_BODY_SCHEMA_VERSIONS.contains(&body.schema_version)
+        && body.role == TaskRole::Task.role_byte()
+        && body.terminal().is_none()
+        && body.kind.is_none_or(|kind| kind == TaskKind::Standard);
+    Ok(body.due_at.filter(|_| ticks))
+}
