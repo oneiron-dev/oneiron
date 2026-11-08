@@ -83,11 +83,14 @@ pub use seal::{EsignSealError, SealedDocument, SealedItem};
 pub(in crate::blob_artifact) use seal::{SealJobAutoPermit, SealJobWrite};
 mod seal_run;
 pub use seal_run::EsignSealRun;
+mod input_producer;
+mod producer_input;
+pub use producer_input::EsignInputBudget;
 mod sealer;
 pub use sealer::{
-    EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError,
-    EsignSignatureRevision, EsignVerdict, SealActiveContentFacts, SealDegrade, SealDegradeReason,
-    SealProfile, SealProfileEvidence, SealVerdict,
+    EsignSealInput, EsignSealProducer, EsignSealRequest, EsignSealed, EsignSealer,
+    EsignSealerError, EsignSignatureRevision, EsignVerdict, SealActiveContentFacts, SealDegrade,
+    SealDegradeReason, SealProfile, SealProfileEvidence, SealVerdict,
 };
 mod page_inspector;
 pub use page_inspector::EsignPageInspector;

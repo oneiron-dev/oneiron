@@ -24,8 +24,9 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use oneiron::office_body::{DocumentMemory, RESERVE_STEP, ResourcePort, ResourceRefusal};
-use oneiron_docedit::resource::ResourceAllocation;
+use oneiron::office_body::{
+    DocumentMemory, RESERVE_STEP, ResourceAllocation, ResourcePort, ResourceRefusal,
+};
 
 use crate::machine::{MachineMemory, MemoryLease, MemoryRefusal};
 

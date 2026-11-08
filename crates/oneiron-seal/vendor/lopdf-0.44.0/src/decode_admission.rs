@@ -42,6 +42,21 @@ pub trait DecodeAdmission: Send + Sync {
     /// own working state is admitted before the codec is built.
     fn admit(&self, bytes: usize) -> Result<(), DecodeAdmissionError>;
 
+    /// Admit `bytes` of which only `measured` are an actual allocation
+    /// request. Codec state and map-node overhead are estimates. Existing
+    /// admissions keep their behavior; a producer pool preserves this
+    /// distinction when asking its machine's memory floor.
+    fn admit_estimate(&self, bytes: usize, _measured: usize) -> Result<(), DecodeAdmissionError> {
+        self.admit(bytes)
+    }
+
+    /// Settle a successful vector allocation's actual byte capacity before
+    /// releasing its old allocation. A pool may unwind this build when
+    /// allocator overcapacity outgrows its complete reservation.
+    fn allocated(&self, _reserved: usize, _actual: usize) -> Result<(), DecodeAdmissionError> {
+        Ok(())
+    }
+
     /// Move `bytes` admitted here to `to`: admit them there first, so the
     /// moment both owners hold them is admitted, then give them back here.
     /// When the destination refuses, nothing is given back.
@@ -106,6 +121,7 @@ pub(crate) fn reserve<T>(
     admission.admit(bytes)?;
     buf.try_reserve_exact(target - buf.len())
         .map_err(|_| allocator_refused(bytes))?;
+    admission.allocated(bytes, buf.capacity().saturating_mul(size_of::<T>()))?;
     release(admission, old);
     Ok(())
 }
@@ -155,7 +171,7 @@ pub(crate) fn admit_btree<K, V>(admission: &dyn DecodeAdmission, entries: usize)
         .checked_mul(entries)
         .and_then(|shares| shares.checked_add(btree_node_bytes::<K, V>()))
         .ok_or_else(unaddressable)?;
-    admission.admit(bytes)
+    admission.admit_estimate(bytes, 0)
 }
 
 /// Bytes `len` elements of `T` take, if one allocation can hold them.

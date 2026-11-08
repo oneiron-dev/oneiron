@@ -610,6 +610,7 @@ async fn read(
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
                 text: format!("{format}\n{schema}"),
+                signature: None,
             }],
         });
         Ok(request)

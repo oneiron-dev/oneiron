@@ -1142,9 +1142,9 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 2,
-      "re-export": 29
+      "re-export": 30
      }
     },
     {
@@ -1433,6 +1433,20 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "AgentRunEffectAnswerOutcome"
+     ],
+     "path": "src/agent_dispatch/run_effects.rs",
+     "purpose": "Effects of a handed-over run's replayed steps (FIX 4747 slice 7; canon ARCH-0023b \"pending outbound send\"…",
+     "surface": {
+      "crate-vis": 23,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -1466,6 +1480,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/run_placement.rs",
+     "purpose": "Cloud placement of an agent run at its dispatch (FIX 4747 slice 7; canon CROSS-ARCH-0019 \"Where work runs\"…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [
@@ -1477,7 +1501,7 @@
      "purpose": "The agent-run TASK (FIX 4747 slice 5; canon CROSS-ARCH-0019 \"Where work runs\", items 02-05): the synced…",
      "surface": {
       "const": 1,
-      "crate-vis": 40,
+      "crate-vis": 41,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -5002,13 +5026,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/oauth_server/access_slips.rs",
      "purpose": "The native capability slip the server holds for each access token (FIX 4902 slice C; ARCH-0028:91 \"The OAuth…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -5023,7 +5047,7 @@
      "path": "src/authority/oauth_server/authorization.rs",
      "purpose": "One sign-in's authorization request: recorded at `/oauth/authorize` with one inbox ask to the vault owner…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -5041,6 +5065,7 @@
      "path": "src/authority/oauth_server/clients.rs",
      "purpose": "The apps that may sign in, in one table: ones registered at `/oauth/register` (RFC 7591), and ones known by…",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 10,
       "struct": 2
@@ -5053,7 +5078,7 @@
      "path": "src/authority/oauth_server/mod.rs",
      "purpose": "The vault as the OAuth 2.1 authorization server for its own `/mcp` (FIX 4902 slice B; owner CLOUD AGENTS…",
      "surface": {
-      "const": 17,
+      "const": 21,
       "fn": 2,
       "re-export": 3
      }
@@ -5065,7 +5090,17 @@
      "path": "src/authority/oauth_server/rows.rs",
      "purpose": "The OAuth server's five side tables and the rows they hold",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/oauth_server/sweep.rs",
+     "purpose": "The engine's sweep of the OAuth server's lapsed rows, the housekeeping sweep `oauth_expiry` (FIX 4902)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -9409,6 +9444,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/blob_artifact/esign/input_producer.rs",
+     "purpose": "The immutable prepared PDF and the unissued phase of one seal item",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/blob_artifact/esign/lane_scope.rs",
      "purpose": "FIX 6403: the credential ceiling every e-sign door judges a narrowed caller by",
      "surface": {
@@ -9453,7 +9498,7 @@
      "surface": {
       "crate-vis": 8,
       "mod": 2,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -9584,6 +9629,20 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EsignInputBudget"
+     ],
+     "path": "src/blob_artifact/esign/producer_input.rs",
+     "purpose": "One whole pre-dispatch reservation, rebuilt only after its phase unwinds",
+     "surface": {
+      "crate-vis": 12,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -9810,6 +9869,7 @@
      "kind": "src",
      "notable": [
       "EsignSealInput",
+      "EsignSealProducer",
       "EsignSealer"
      ],
      "path": "src/blob_artifact/esign/sealer.rs",
@@ -9817,7 +9877,7 @@
      "surface": {
       "re-export": 1,
       "struct": 1,
-      "trait": 1
+      "trait": 2
      }
     },
     {
@@ -9851,7 +9911,7 @@
      "path": "src/blob_artifact/esign/signature_revision.rs",
      "purpose": "Core half of `blob_artifact::esign::signature_revision`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "re-export": 1
      }
@@ -12430,7 +12490,7 @@
      "path": "src/calendar/mod.rs",
      "purpose": "Calendar module home (CAL-00)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "mod": 19,
       "re-export": 17
@@ -12851,6 +12911,16 @@
       "crate-vis": 6,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/windows_zones.rs",
+     "purpose": "Windows time-zone names as IANA zones (fix list row 17868): the zone a Microsoft 365 event names…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -36482,10 +36552,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SheetAnswerBundle",
+      "SheetAnswerWork",
       "SheetCellAnswer",
       "SheetRowReads",
       "SheetRowsAsk"
@@ -36493,9 +36564,9 @@
      "path": "src/edit_roundtrip/judgment.rs",
      "purpose": "Typed sheet answers: one ask over a bounded range becomes one retained edit",
      "surface": {
-      "crate-vis": 2,
-      "fn": 3,
-      "struct": 4
+      "crate-vis": 3,
+      "fn": 4,
+      "struct": 5
      }
     },
     {
@@ -36630,6 +36701,7 @@
      "path": "src/edit_roundtrip/pipeline.rs",
      "purpose": "Round-trip pipeline entry",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 3,
       "struct": 1
@@ -36851,7 +36923,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ReaskShape",
@@ -37026,6 +37098,17 @@
      "purpose": "The ledger record a native output's Keep or Discard writes",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_settle/pending/sheet_answers.rs",
+     "purpose": "Paid sheet answers wait in the same pending record until byte staging succeeds",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
      }
     },
     {
@@ -39440,7 +39523,7 @@
      "path": "src/federation/agent_grant.rs",
      "purpose": "The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 16
      }
     },
     {
@@ -39451,6 +39534,16 @@
      "purpose": "The owner's explicitly selected funding Grant (FIX 7766, Engine 19:59 = A; L02 20:15 proof contract): the…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/agent_grant/withdrawal.rs",
+     "purpose": "A Grant an owner's signed mint made, an agent or a GitPush grant, withdrawn on the record (FIX 22188, 22193…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -61756,7 +61849,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ConnectorElicitationBinding",
@@ -61885,7 +61978,7 @@
      "path": "src/outbound_consent/tool_call.rs",
      "purpose": "Resolve header parameters once and freeze them with the consent-visible tool call",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 23,
       "enum": 2,
       "fn": 17,
       "re-export": 2,
@@ -65583,9 +65676,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/receipt/authority_audit/agent_grant_act.rs",
-     "purpose": "An owner's agent Grant act in the audit (FIX 5628): a mint is a grant and a revoke a revoke",
+     "purpose": "An owner's agent Grant act in the audit (FIX 5628), and the withdrawals its mint pairs with: a mint is a…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -91257,6 +91350,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AgentRunEffectAnswer",
+      "AgentRunEffectAnswered"
+     ],
+     "path": "src/verbs/agent_run_effect.rs",
+     "purpose": "The input and answer of `vault.agent.run_effect.answer` (FIX 4747 slice 7), a host door: the vault owner's…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AgentDefinitionCreateRequest",
       "AgentDefinitionLifecycle",
       "AgentDefinitionRequest",
@@ -91982,7 +92089,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1385
+      "fn": 1386
      }
     },
     {
@@ -92444,7 +92551,7 @@
      "surface": {
       "fn": 8,
       "mod": 1,
-      "re-export": 112,
+      "re-export": 113,
       "struct": 33
      }
     },
@@ -97947,7 +98054,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 90,
+     "files": 92,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -97989,7 +98096,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 276,
+     "files": 277,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98010,7 +98117,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 84,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98059,7 +98166,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 86,
+     "files": 87,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98481,12 +98588,12 @@
     "edit_roundtrip": {
      "files": 40,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98549,7 +98656,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 86,
+     "files": 87,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99452,7 +99559,7 @@
      "purpose": "Verb catalog vocabulary used by core admission and action surfaces"
     },
     "verbs": {
-     "files": 127,
+     "files": 128,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -99515,9 +99622,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 234,
+   "over_bar": 238,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7095,
+   "source_files": 7104,
    "test_files": 895
   },
   "oneiron-android": {
@@ -106309,7 +106416,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 98,
+      "const": 99,
       "crate-vis": 1
      }
     },
@@ -113700,7 +113807,7 @@
      "path": "src/llm/assembly.rs",
      "purpose": "Shared typed stream assembly",
      "surface": {
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -114734,7 +114841,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1352
+      "fn": 1353
      }
     },
     {
@@ -115139,7 +115246,7 @@
      "path": "src/budget.rs",
      "purpose": "One admission budget for every organ: threads, memory, in-flight calls",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 35,
       "fn": 1,
       "struct": 1
      }
@@ -115199,7 +115306,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "OrganHost"
@@ -115207,7 +115314,7 @@
      "path": "src/host.rs",
      "purpose": "The organ host: install, call, unload, revoke",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 17,
       "re-export": 2,
       "struct": 1
@@ -115221,6 +115328,16 @@
      "purpose": "A call's reply, checked: its outputs mapped, hashed and kept in the call's room, which grows to hold them…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/host/producer.rs",
+     "purpose": "The pre-dispatch producer and its one admitted call",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -115606,7 +115723,7 @@
      "path": "src/seal/observe.rs",
      "purpose": "What one seal or verification call measured, against the engine's `[limits]` rows (OF-520, Rule 5)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -115639,6 +115756,16 @@
      "notable": [],
      "path": "src/seal/pdf_work/native.rs",
      "purpose": "Trusted native preparation when no first-party prepare organ is selected",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/seal/producer.rs",
+     "purpose": "The seal's input is built inside its original admitted host call",
      "surface": {
       "crate-vis": 1
      }
@@ -115786,9 +115913,9 @@
      "purpose": "The handlers a caller supplies for an organ's asks (protocol 1.1)"
     },
     "host": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The organ host: install, call, unload, revoke"
     },
@@ -115877,7 +116004,7 @@
      "purpose": "What the host does to an organ process between fork and exec"
     },
     "seal": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -115905,9 +116032,9 @@
      "purpose": "Organ calls that wait for a node, held in the vault (OF-575, owner ruling MESH: \"one node is too weak, means…"
     }
    },
-   "over_bar": 1,
+   "over_bar": 2,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 47,
+   "source_files": 49,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
@@ -116538,7 +116665,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1353
+      "fn": 1354
      }
     },
     {
@@ -121493,6 +121620,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/agent_run_effect_doors.rs",
+     "purpose": "The host door of the owner's answer to a call a moved agent run replays (FIX 4747 slice 7)…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/agent_verb_class_doors.rs",
      "purpose": "The owner's verb-class rows for his agents' grants (FIX 8735): reads and edits under the caller's own owner…",
      "surface": {
@@ -122406,7 +122543,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 185
+      "crate-vis": 186
      }
     },
     {
@@ -123634,7 +123771,7 @@
      "path": "src/api/feedback_inbox/flood.rs",
      "purpose": "The open inbox's flood cap: the one refusal its keyless intake makes",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -125155,6 +125292,16 @@
      "notable": [],
      "path": "src/api/owner_routes/agent_grant_routes.rs",
      "purpose": "`/v1/owner/agent-grants`: the owner grants a named agent (the seeded Coach included) an explicit verb list…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/agent_run_effect_routes.rs",
+     "purpose": "`/v1/owner/agent/run-effects/answer`: the owner's answer to the inbox ask a moved agent run's replayed step…",
      "surface": {
       "crate-vis": 1
      }
@@ -139335,7 +139482,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 764,
+     "files": 766,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -139876,7 +140023,7 @@
    },
    "over_bar": 65,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1824,
+   "source_files": 1826,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -143555,7 +143702,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HardEraseWork",
@@ -149588,7 +149735,7 @@
     "housekeeping_report": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "What a housekeeping pass reports: one row per sweep, and the counts each sweep run reports"
     },
@@ -151011,6 +151158,9 @@
       "AgentPackExport",
       "AgentPackExportFile",
       "AgentPackExportRequest",
+      "AgentRunEffectAnswer",
+      "AgentRunEffectAnswerOutcome",
+      "AgentRunEffectAnswered",
       "AgentRunStatus",
       "AgentScopeInput",
       "AgentSkillInput",
@@ -155788,8 +155938,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1186,
-      "struct": 3676
+      "enum": 1187,
+      "struct": 3678
      }
     },
     {

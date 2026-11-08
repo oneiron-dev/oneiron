@@ -9,14 +9,19 @@
 //!
 //! Each access token is handed out only once the native slip the server holds for it has landed
 //! on its row (`access_slips`, FIX 4902 slice C); a refresh retires the family's previous access
-//! token and its slip, and a family's revocation revokes its slip.
+//! token and its slip, and a family's revocation revokes its slip. A new family whose first slip
+//! does not stand ends its sign-in: the code is spent, no token was handed out, and the writer
+//! that revokes the family takes the grant back (FIX 22193). When that writer fails, the
+//! `oauth_expiry` sweep's next pass ends the sign-in in the same one write (FIX 22226).
 
 use base64::Engine as _;
 use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
 
 use super::access_slips::take_live_access_in_txn;
-use super::rows::{AuthorizedGrant, CODES, FAMILIES, IssuedToken, TOKENS, TokenFamily, TokenKind};
+use super::rows::{
+    AuthorizedGrant, CODES, FAMILIES, FamilyOpening, IssuedToken, TOKENS, TokenFamily, TokenKind,
+};
 use super::{
     OAUTH_ACCESS_TOKEN_PREFIX, OAUTH_ACCESS_TTL_SECS, OAUTH_CODE_PREFIX,
     OAUTH_REFRESH_TOKEN_PREFIX, OAUTH_REFRESH_TTL_SECS, access_holder_key, mint_secret,
@@ -148,6 +153,9 @@ struct Issued {
     tokens: OAuthTokens,
     family: EntityId,
     grant: AuthorizedGrant,
+    /// The pair is the first of its family, which a code's exchange just opened: no token of it
+    /// was handed out before.
+    opens_family: bool,
 }
 
 impl Decided {
@@ -286,11 +294,17 @@ impl Vault {
     /// Redeems an authorization code once: its client, its redirect URI and the PKCE S256 of
     /// the verifier must match, a resource the client sends must be the code's, and its grant
     /// must still stand. Answers a new token family's first pair once its access token's slip
-    /// has landed. A code redeemed before revokes the family it minted.
+    /// has landed. A code redeemed before revokes the family it minted; a lapsed code no
+    /// exchange redeemed takes its grant back, and so does a code whose grant no longer stands,
+    /// which goes too. A code refused for its client, redirect URI, verifier or resource stays:
+    /// a matching exchange may still redeem it, and its lapse takes its grant back. A redeemed
+    /// code whose new family's first slip does not stand is spent with no token handed out: the
+    /// family is revoked and its grant taken back (FIX 22193), or, when that write fails, by the
+    /// expiry sweep's next pass (FIX 22226).
     ///
     /// # Errors
-    /// A store failure, or a failure minting the access token's slip, which revokes the new
-    /// family.
+    /// A store failure, a fold failure taking a grant back, or a failure minting the access
+    /// token's slip, which revokes the new family and takes its grant back.
     pub fn exchange_oauth_code(
         &self,
         issuer: &HostSlipIssuer,
@@ -308,6 +322,9 @@ impl Vault {
                 return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             };
             if now >= code.expires_at {
+                if let Some(grant) = code.unredeemed_grant() {
+                    self.withdraw_lapsed_oauth_grant_in_txn(txn, Some(issuer), &grant)?;
+                }
                 CODES.delete(&self.store, txn, &key)?;
                 return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             }
@@ -332,6 +349,9 @@ impl Vault {
                 return Ok(Decided::refused(OAuthTokenRefusal::InvalidTarget));
             }
             if !self.oauth_grant_stands_in_txn(txn, &code.grant, now)? {
+                // The code goes, so no token will ever stand on its grant: the grant is taken
+                // back as a lapse takes it (FIX 22188). One the owner revoked is already gone.
+                self.withdraw_lapsed_oauth_grant_in_txn(txn, Some(issuer), &code.grant)?;
                 CODES.delete(&self.store, txn, &key)?;
                 return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             }
@@ -348,6 +368,7 @@ impl Vault {
                     expires_at: refresh_expires_at,
                     revoked: false,
                     live_access: None,
+                    opening: FamilyOpening::Pending { opened_at: now },
                 },
             )?;
             code.redeemed_family = Some(family);
@@ -359,6 +380,7 @@ impl Vault {
                     tokens,
                     family,
                     grant: code.grant,
+                    opens_family: true,
                 }),
                 retired: None,
             })
@@ -466,6 +488,7 @@ impl Vault {
                     tokens,
                     family: token.family,
                     grant,
+                    opens_family: false,
                 }),
                 retired: retired.map(|slip| (token.family, slip)),
             })
@@ -476,7 +499,8 @@ impl Vault {
     /// The token endpoint's answer once `decided`'s writer committed: the slip it retired is
     /// revoked, and a pair it put is answered once its access token's slip, which the row
     /// `access_key` keeps, has landed ([`Self::hold_access_slip`]); `invalid_grant` when the
-    /// family was revoked while the slip was minted.
+    /// family was revoked while the slip was minted. A pair that opened its family and is not
+    /// answered ends the sign-in, its grant taken back with the family (FIX 22193).
     fn settle_token_request(
         &self,
         issuer: &HostSlipIssuer,
@@ -491,7 +515,13 @@ impl Vault {
             Err(refusal) => return Ok(Err(refusal)),
         };
         Ok(
-            if self.hold_access_slip(issuer, issued.family, access_key, &issued.grant)? {
+            if self.hold_access_slip(
+                issuer,
+                issued.family,
+                access_key,
+                &issued.grant,
+                issued.opens_family,
+            )? {
                 Ok(issued.tokens)
             } else {
                 Err(OAuthTokenRefusal::InvalidGrant)
@@ -594,7 +624,7 @@ impl Vault {
         };
         // The family goes with its slip, so a call that holds the slip stops too; the token
         // resolves nothing whether that lands or not.
-        if let Err(error) = self.revoke_oauth_family(issuer, lapsed_grant) {
+        if let Err(error) = self.revoke_oauth_family(issuer, lapsed_grant, None) {
             tracing::warn!(
                 %error,
                 family = %lapsed_grant.to_hex(),

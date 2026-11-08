@@ -82,12 +82,24 @@ impl Asking<'_> {
                 }
                 None => None,
             };
+            let deadline = run.sheet_answers.as_ref().map(|work| work.deadline);
+            let deferred_floor = run.deferred_floor;
             vault.with_write_txn_grouped(|wtxn| {
-                let proposed = match &run.proposal {
-                    Some(proposal) => Some(vault.retain_edit_proposal_in_txn(
+                let proposed = match (&run.sheet_answers, &run.proposal) {
+                    (Some(work), _) => Some(vault.retain_sheet_answer_work_with_reads_in_txn(
+                        wtxn,
+                        &artifact,
+                        &reference,
+                        work,
+                        None,
+                        None,
+                        (self.actor, self.now),
+                        &run.read_rows,
+                    )?),
+                    (_, Some(proposal)) => Some(vault.retain_edit_proposal_in_txn(
                         wtxn, &artifact, proposal, None, None, self.actor, self.now, None,
                     )?),
-                    None => None,
+                    _ => None,
                 };
                 let proposal_ref = proposed.as_ref().map(|_| reference.clone());
                 let stamp = ArtifactAsked {
@@ -106,12 +118,13 @@ impl Asking<'_> {
                 let principal = self.record.principal;
                 let asked = event(
                     proposal_ref,
-                    None,
+                    deferred_floor
+                        .map(|refusal| crate::office_body::machine_memory_refused(refusal).kind()),
                     artifact_unit_receipts(&run),
                     run.next_sheet_row,
                 );
                 append_artifact_ask_in_txn(vault, wtxn, self.question, principal, asked)?;
-                Ok(proposed)
+                Ok((proposed, deadline, deferred_floor))
             })
         });
         if let Err(error) = &committed {
@@ -127,7 +140,19 @@ impl Asking<'_> {
                 );
             }
         }
-        committed
+        // A later byte-staging failure never rolls back paid answers, logs
+        // a second failed ask, or resets its original traversal projection.
+        committed.and_then(|(proposed, deadline, deferred_floor)| {
+            if let Some(refusal) = deferred_floor {
+                return Err(crate::office_body::machine_memory_refused(refusal));
+            }
+            match (proposed, deadline) {
+                (Some(_), Some(deadline)) => vault
+                    .finish_pending_sheet_answers(&artifact, &reference, deadline)
+                    .map(Some),
+                (view, _) => Ok(view),
+            }
+        })
     }
 }
 

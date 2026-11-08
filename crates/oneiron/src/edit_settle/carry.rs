@@ -552,23 +552,47 @@ impl Vault {
         reasked: Reasked,
         reask_ref: &str,
         read: Option<&[(EntityId, u64)]>,
-    ) -> Result<Option<PendingProposalView>> {
-        let (asked, proposal, unit_receipts, read_rows, retire, next_sheet_row) = match reasked {
-            Reasked::Nothing => (false, None, Vec::new(), Vec::new(), true, None),
-            Reasked::Replay => (false, None, Vec::new(), Vec::new(), false, None),
+    ) -> Result<(
+        Option<PendingProposalView>,
+        Option<Instant>,
+        Option<oneiron_docedit::resource::ResourceRefusal>,
+    )> {
+        let (
+            asked,
+            proposal,
+            sheet_answers,
+            unit_receipts,
+            read_rows,
+            retire,
+            next_sheet_row,
+            deferred_floor,
+        ) = match reasked {
+            Reasked::Nothing => (false, None, None, Vec::new(), Vec::new(), true, None, None),
+            Reasked::Replay => (false, None, None, Vec::new(), Vec::new(), false, None, None),
             Reasked::Asked {
                 proposal,
+                sheet_answers,
                 units,
                 read_rows,
                 next_sheet_row,
-            } => (true, proposal, units, read_rows, false, next_sheet_row),
+                deferred_floor,
+            } => (
+                true,
+                proposal,
+                sheet_answers,
+                units,
+                read_rows,
+                false,
+                next_sheet_row,
+                deferred_floor,
+            ),
         };
         // The carried envelope is admitted through the principal's own read,
         // inside the asking version's saved lane, as the fresh proposal waits
         // (FIX 1229, FIX 11831), its grant clock settled before the commit
         // opens.
-        let lane = match (&proposal, &wake.made_by) {
-            (Some(_), Some(made_by)) => self.edit_retention_lane(
+        let lane = match (proposal.is_some() || sheet_answers.is_some(), &wake.made_by) {
+            (true, Some(made_by)) => self.edit_retention_lane(
                 &wake.artifact,
                 Some(made_by),
                 actor,
@@ -594,6 +618,7 @@ impl Vault {
             })
             .map(|answer| &answer.unit)
             .collect();
+        let deadline = sheet_answers.as_ref().map(|work| work.deadline);
         self.with_write_txn(|wtxn| {
             // The rework's stamp rides forward: the superseded row's when it
             // still waits, else the durable withdrawal's original PRIMARY in
@@ -604,8 +629,18 @@ impl Vault {
                 Some(row) => row.delta_receipt,
                 None => current.as_ref().and_then(|row| row.delta_receipt.clone()),
             };
-            let proposed = match &proposal {
-                Some(proposal) => Some(self.retain_edit_proposal_with_reads_in_txn(
+            let proposed = match (&sheet_answers, &proposal) {
+                (Some(work), _) => Some(self.retain_sheet_answer_work_with_reads_in_txn(
+                    wtxn,
+                    &wake.artifact,
+                    reask_ref,
+                    work,
+                    wake.made_by.as_ref(),
+                    lane.as_ref(),
+                    (actor, now),
+                    &read_rows,
+                )?),
+                (_, Some(proposal)) => Some(self.retain_edit_proposal_with_reads_in_txn(
                     wtxn,
                     &wake.artifact,
                     proposal,
@@ -615,7 +650,7 @@ impl Vault {
                     &read_rows,
                     forwarded.as_deref(),
                 )?),
-                None => None,
+                _ => None,
             };
             if asked && let Some(read) = read {
                 crate::llm::decision::questions::record_standing_reask_in_txn(
@@ -623,11 +658,12 @@ impl Vault {
                     wtxn,
                     &standing_reask(wake, read, &unit_receipts, now, next_sheet_row),
                     proposed.as_ref().map(|_| reask_ref),
-                    None,
+                    deferred_floor
+                        .map(|refusal| crate::office_body::machine_memory_refused(refusal).kind()),
                 )?;
             }
             let Some(mut row) = current else {
-                return Ok(proposed);
+                return Ok((proposed, deadline, deferred_floor));
             };
             // A replay marks nothing: its first ask already covered the
             // evaluation. A real ask retires only the selected units it
@@ -650,7 +686,7 @@ impl Vault {
             }
             row.retry_at = None;
             WITHDRAWALS.put(&self.store, wtxn, key, &row)?;
-            Ok(proposed)
+            Ok((proposed, deadline, deferred_floor))
         })
     }
 
@@ -722,9 +758,11 @@ enum Reasked {
     /// and the rows its reads picked, which the proposal keeps (FIX 9312).
     Asked {
         proposal: Option<EditProposal>,
+        sheet_answers: Option<crate::edit_roundtrip::SheetAnswerWork>,
         units: Vec<crate::llm::decision::questions::ArtifactUnitReceipt>,
         read_rows: Vec<EntityId>,
         next_sheet_row: Option<u32>,
+        deferred_floor: Option<oneiron_docedit::resource::ResourceRefusal>,
     },
 }
 

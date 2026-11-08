@@ -346,7 +346,7 @@ pub(crate) struct CallRoom {
     /// lock so the floor wait never holds the room's accounting lock.
     leases: Mutex<Leases>,
     /// Its waits for room: time the call's deadline does not count.
-    waits: WaitClock,
+    waits: Arc<WaitClock>,
     /// The kernel's limits on the process the call runs in, which grow
     /// with what the organ's own buffers are granted (FIX 6194).
     limits: OnceLock<Arc<dyn NativeLimits>>,
@@ -413,6 +413,14 @@ pub(crate) enum NativeRefusal {
 
 impl CallRoom {
     pub(crate) fn new(permit: Permit, floor: Option<SharedFloor>) -> Self {
+        Self::with_waits(permit, floor, Arc::new(WaitClock::default()))
+    }
+
+    pub(crate) fn with_waits(
+        permit: Permit,
+        floor: Option<SharedFloor>,
+        waits: Arc<WaitClock>,
+    ) -> Self {
         Self {
             state: Mutex::new(RoomState {
                 permit,
@@ -424,7 +432,7 @@ impl CallRoom {
             }),
             floor,
             leases: Mutex::new(Leases::default()),
-            waits: WaitClock::default(),
+            waits,
             limits: OnceLock::new(),
         }
     }
@@ -590,6 +598,27 @@ impl CallRoom {
     pub(crate) fn release(&self, bytes: u64) {
         let mut state = self.lock();
         state.held = state.held.saturating_sub(bytes);
+    }
+
+    /// Records the actual size of producer memory already allocated. Like
+    /// the physical lease's settlement, this never waits or refuses.
+    pub(crate) fn producer_materialized(&self, before: u64, after: u64) {
+        let mut state = self.lock();
+        state.held = state.held.saturating_sub(before).saturating_add(after);
+        let need = state.held.saturating_add(state.native);
+        if need > state.permit.memory {
+            let delta = need - state.permit.memory;
+            let shared = Arc::clone(&state.permit.shared);
+            let mut used = shared.lock();
+            used.memory = used.memory.saturating_add(delta);
+            state.permit.memory = need;
+            state.overcommit = state.overcommit.saturating_add(
+                used.memory
+                    .saturating_sub(shared.config.memory_bytes)
+                    .min(delta),
+            );
+            state.peak = state.peak.max(used.memory);
+        }
     }
 
     /// Moves `bytes` already held to an output that outlives the call.

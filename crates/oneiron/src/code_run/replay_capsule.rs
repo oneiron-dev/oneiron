@@ -628,7 +628,7 @@ fn slots(capture: &StepCapture<'_>) -> Vec<ExposureSlot> {
                 .iter()
                 .enumerate()
                 .find_map(|(part, content)| match content {
-                    ContentPart::Text { text } if text.ends_with(capture.task) => {
+                    ContentPart::Text { text, .. } if text.ends_with(capture.task) => {
                         Some((message, part, text.len() - capture.task.len()))
                     }
                     _ => None,

@@ -622,6 +622,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.records.erase_sweep" => a.spec.clone().ok_or_else(invalid),
         "vault.outbound_calls.request.erase" => a.spec.clone().ok_or_else(invalid),
         "vault.outbound.uncertain_send.answer" => a.spec.clone().ok_or_else(invalid),
+        "vault.agent.run_effect.answer" => a.spec.clone().ok_or_else(invalid),
         "vault.research.create_child" => a.spec.clone().ok_or_else(invalid),
         "vault.research.archive" => a.spec.clone().ok_or_else(invalid),
         "vault.research.archive.install" => a.spec.clone().ok_or_else(invalid),
@@ -3105,6 +3106,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.outbound.uncertain_send.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.agent.run_effect.answer" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.research.create_child" => {
@@ -6896,6 +6900,9 @@ async fn execute_agent_verb_row_on(
         }
         "vault.outbound.uncertain_send.answer" => {
             boxed_mcp_verb_row_vault_outbound_uncertain_send_answer(row).await
+        }
+        "vault.agent.run_effect.answer" => {
+            boxed_mcp_verb_row_vault_agent_run_effect_answer(row).await
         }
         "vault.research.create_child" => boxed_mcp_verb_row_vault_research_create_child(row).await,
         "vault.research.archive" => boxed_mcp_verb_row_vault_research_archive(row).await,
@@ -32204,6 +32211,59 @@ async fn mcp_verb_row_vault_outbound_uncertain_send_answer(
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
         crate::api::facade::host_doors::vault_outbound_uncertain_send_answer(server, auth, input),
+    )
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_agent_run_effect_answer<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_agent_run_effect_answer(row))
+}
+async fn mcp_verb_row_vault_agent_run_effect_answer(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.agent.run_effect.answer", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::task_verb::sdk::AgentRunEffectAnswer =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(
+        crate::api::facade::host_doors::vault_agent_run_effect_answer(server, auth, input),
     )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

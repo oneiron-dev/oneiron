@@ -390,6 +390,7 @@ impl SelfCompactionBackend {
                 if let Some(system) = call.messages.first_mut() {
                     system.content.push(ContentPart::Text {
                         text: format!("\n\n{}\n\n{}", self.frame.text(), home.text),
+                        signature: None,
                     });
                 }
                 let home_rows = compaction_home_worn_rows(&home.refs).collect();
