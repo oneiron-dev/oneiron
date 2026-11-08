@@ -41,6 +41,9 @@ pub(crate) use storage::{
     remove_entity_revisions, revision_for_body_hash_in_txn, revision_for_mode_in_txn,
     storage_manages_text, vectors_embed_body,
 };
+pub(crate) use storage::{
+    capture_native_note_in_txn, finish_native_note_publication_in_txn, indexed_native_note_in_txn,
+};
 pub use types::{
     EntityRevisionChange, IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder,
     IndexedRevisionInput, PinnedCitation, ReadMode, ResolvedCitation, RevisionRef,

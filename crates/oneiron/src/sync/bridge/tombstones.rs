@@ -279,9 +279,12 @@ impl<'work> TombstoneBatch<'work> {
         let mut cancelled = Vec::new();
         for work in staged {
             let (stage, err) = match apply_tombstone_in_savepoint(vault, parent, window_key, work) {
-                Ok((ids, item_cancelled, item_claims_changed)) => {
+                Ok((ids, item_effects, item_claims_changed)) => {
                     affected.extend(ids);
-                    cancelled.extend(item_cancelled);
+                    cancelled.extend(item_effects.cancelled);
+                    for seq in item_effects.decision_answers {
+                        crate::batch::queue_decision_answer(vault, parent, seq);
+                    }
                     *claims_changed |= item_claims_changed;
                     applied.push(work.id);
                     continue;
@@ -647,11 +650,7 @@ fn apply_tombstone_in_savepoint(
     window_key: &str,
     work: &TombstoneWork,
 ) -> std::result::Result<
-    (
-        Vec<EntityId>,
-        Vec<(crate::attempt_queue::AttemptId, u32)>,
-        bool,
-    ),
+    (Vec<EntityId>, crate::deletion::ErasureEffects, bool),
     (TombstoneFailureStage, Error),
 > {
     let mut child = vault
@@ -697,18 +696,18 @@ fn apply_tombstone_in_savepoint(
         affected.extend(changed_documents);
     }
     let item = match applied {
-        Ok((outcome, _, cancelled)) if work.hard => {
+        Ok((outcome, _, effects)) if work.hard => {
             let item_claims_changed = is_claim && outcome.changed_local_state();
             scrub_receiver_outbox_on_remote_hard_delete_in_txn(vault, &mut child, window_key)
-                .map(|_| (cancelled, item_claims_changed))
+                .map(|_| (effects, item_claims_changed))
                 .map_err(|e| (TombstoneFailureStage::ReceiverScrub, e))
         }
-        Ok((outcome, _, cancelled)) => Ok((cancelled, is_claim && outcome.changed_local_state())),
+        Ok((outcome, _, effects)) => Ok((effects, is_claim && outcome.changed_local_state())),
         Err(e) => Err((TombstoneFailureStage::Replay, e)),
     };
 
     match item {
-        Ok((cancelled, claims_changed)) => {
+        Ok((effects, claims_changed)) => {
             if crate::sync::WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some())
             {
                 vault
@@ -723,7 +722,7 @@ fn apply_tombstone_in_savepoint(
             }
             child
                 .commit()
-                .map(|()| (affected, cancelled, claims_changed))
+                .map(|()| (affected, effects, claims_changed))
                 .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e)))
         }
         Err(failure) => {

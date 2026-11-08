@@ -40,6 +40,7 @@ mod link;
 mod plan;
 mod render;
 mod text;
+mod view;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -50,6 +51,9 @@ pub(crate) use self::env::{
 pub(crate) use self::link::offer_secret_remediation_in_txn;
 use self::plan::Plan;
 pub use self::render::RepoSecretReferenceRenderer;
+pub use self::view::{
+    RepoSecretMarkEntry, RepoSecretMarkSeen, RepoSecretMarks, RepoSecretRemediationLinkEntry,
+};
 use super::git::{canonical_repo_ref_for_root, git_common_dir, resolve_mutable_repo_root};
 use super::proposal::{ProposalBase, RepoProposalReview, invalid};
 use super::snapshot::SnapshotCustody;
@@ -57,6 +61,7 @@ use super::types::{RepoBundleFile, RepoMutationOperation, RepoMutationRequest};
 use crate::Vault;
 use crate::code_document::CodeOpProvenance;
 use crate::codebase::RepoRef;
+use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -198,6 +203,30 @@ impl Vault {
         &self,
         request: RepoSecretRemediationRequest,
     ) -> Result<RepoSecretRemediation> {
+        self.propose_repo_secret_remediation_with(request, None)
+    }
+
+    /// [`Self::propose_repo_secret_remediation`] for an owner door (FIX 7608
+    /// slice 8): `owner`'s proof is checked again inside the bundle's own
+    /// writing transaction, so a credential revoked while the bundle was
+    /// built stages nothing, and its actor must be the request's.
+    ///
+    /// # Errors
+    /// As [`Self::propose_repo_secret_remediation`], and a proof no longer
+    /// live, or one naming another actor, at the write.
+    pub fn propose_repo_secret_remediation_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        request: RepoSecretRemediationRequest,
+    ) -> Result<RepoSecretRemediation> {
+        self.propose_repo_secret_remediation_with(request, Some(owner))
+    }
+
+    fn propose_repo_secret_remediation_with(
+        &self,
+        request: RepoSecretRemediationRequest,
+        owner: Option<&AuthenticatedOwner>,
+    ) -> Result<RepoSecretRemediation> {
         let root = resolve_mutable_repo_root(&request.repo_ref)?;
         let canonical = canonical_repo_ref_for_root(&request.repo_ref, &root)?;
         let RepoRef::LocalFolder { path: folder, .. } = &canonical else {
@@ -260,6 +289,7 @@ impl Vault {
             .iter()
             .map(|(path, staged)| RepoBundleFile::new(path.clone(), staged.content.clone(), None))
             .collect();
+        let request_actor = request.actor_id;
         let mutation = RepoMutationRequest {
             repo_ref: RepoRef::LocalFolder {
                 path: folder,
@@ -281,7 +311,16 @@ impl Vault {
             ProposalBase::Pinned(base),
             None,
             &proven,
-            |_| Ok(Ok(())),
+            |txn| {
+                if let Some(owner) = owner
+                    && owner.revalidate_in_txn(self, txn)? != request_actor
+                {
+                    return Err(invalid(
+                        "a secret remediation acts as the owner who asked for it",
+                    ));
+                }
+                Ok(Ok(()))
+            },
         );
         let row = match staged {
             Ok(Ok(row)) => row,
