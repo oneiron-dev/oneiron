@@ -60,7 +60,7 @@ impl AsrHypothesisRequest {
                 "ASR text must be nonempty",
             ));
         }
-        crate::memory::caps::check_query(&self.text)
+        Ok(())
     }
 }
 

@@ -26,6 +26,7 @@ use super::secret_hold::MirrorPlanSend;
 use crate::Vault;
 use crate::error::Result;
 use crate::git_wire::GitPlanRefOutcome;
+use crate::llm::BrokerIsolation;
 use crate::origin::mirror::TARGETS;
 
 impl Vault {
@@ -188,8 +189,10 @@ impl Vault {
 
     /// Records what one batch's send did for `members`: each ref the
     /// publication gate held is `held`, and each one its child pushed takes
-    /// what the child reported. A same-plan resend's refusal ends its ref.
-    /// Whether the plan goes on: every member landed, or the gate holds it.
+    /// what the child reported, its batch the isolation of the credential
+    /// broker that child's exchanges went through, if one did. A same-plan
+    /// resend's refusal ends its ref. Whether the plan goes on: every member
+    /// landed, or the gate holds it.
     pub(super) fn record_mirror_push(
         &self,
         plan: &MirrorPushPlan,
@@ -231,8 +234,34 @@ impl Vault {
         let detail = hold.map(bounded).or(detail);
         let mut txn = self.store.env.write_txn()?;
         self.write_mirror_outcomes_in_txn(&mut txn, plan, &changes, detail, !resend)?;
+        if let Some(isolation) = send.broker_isolation {
+            self.note_mirror_broker_in_txn(&mut txn, plan, &send.sent, isolation)?;
+        }
         txn.commit()?;
         Ok(goes_on)
+    }
+
+    /// Notes on each batch that holds one of `pushed` the isolation of the
+    /// credential broker their push's exchanges went through.
+    fn note_mirror_broker_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        plan: &MirrorPushPlan,
+        pushed: &[u32],
+        isolation: BrokerIsolation,
+    ) -> Result<()> {
+        let batches: BTreeSet<u32> = pushed
+            .iter()
+            .filter_map(|index| plan.refs.get(*index as usize).and_then(|r| r.batch))
+            .collect();
+        for batch in batches {
+            let mut progress = self.mirror_batch_in_txn(txn, plan, batch)?;
+            if progress.broker_isolation != Some(isolation) {
+                progress.broker_isolation = Some(isolation);
+                self.put_mirror_batch_in_txn(txn, plan, batch, &progress)?;
+            }
+        }
+        Ok(())
     }
 
     /// Writes ref outcomes into their batch rows; `sent` also marks each

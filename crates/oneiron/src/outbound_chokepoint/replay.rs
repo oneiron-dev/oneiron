@@ -1,9 +1,10 @@
 //! Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes.
 
 use super::admission::{enforce_step_failure_policy, verify_booking_effect};
+use super::authority_standing::{frozen_grant_stop, withdrawn_owner};
 use super::types::{
     OutboundEffectCommand, OutboundEffectResult, OutboundTransport, PreparedAuthorization,
-    PreparedEffect,
+    PreparedEffect, UncertainSendStep,
 };
 use crate::Vault;
 use crate::connector_key::{self, ConnectorKeyStatus, SlateDisposition};
@@ -17,7 +18,8 @@ use crate::outbound_intent_ledger::{
     IntentLedgerError, IntentState, OutboundCallClass, OutboundSendOutcome,
     RecordedOutboundOutcome, abandon_record, begin_definite_non_delivery_retry,
     complete_record_bridged, defer_record, keep_reported_cost, provider_wait_edge,
-    record_definite_non_delivery, record_possible_delivery, record_provider_refusal,
+    record_definite_non_delivery, record_looked_up_non_delivery, record_possible_delivery,
+    record_provider_refusal,
 };
 
 /// The receipt reason a send held by its provider's stated wait carries
@@ -92,6 +94,12 @@ pub(super) fn replay_record<T: OutboundTransport>(
                 let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
                 return replay_record(vault, authority, proven, prepared, now_ms, transport);
             }
+            // FIX 4747: a transport that looks such a call up at its provider
+            // settles it by that lookup, or by the owner's answer, before any
+            // resend, never by abandoning it unasked.
+            if transport.looks_up_uncertain_sends() {
+                return step_uncertain_send(vault, authority, record, prepared, now_ms, transport);
+            }
             // A previous node may have sent before crashing. The stop reason
             // does not carry this delivery fact; store it independently.
             record_possible_delivery(vault, record.id)?;
@@ -119,6 +127,16 @@ pub(super) fn replay_record<T: OutboundTransport>(
             if transport.known_non_delivery(&FrozenOutboundCall::from_record(&record)) {
                 let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
                 return replay_record(vault, authority, proven, prepared, now_ms, transport);
+            }
+            // FIX 4747: a provider that forgets its key after a window (LINE's
+            // retry key) deduplicates this resend only inside it, so the lookup
+            // decides, and the owner is asked once the window may have lapsed
+            // (review #6555).
+            if transport.looks_up_uncertain_sends()
+                && transport
+                    .idempotent_resend_is_time_bounded(&FrozenOutboundCall::from_record(&record))
+            {
+                return step_uncertain_send(vault, authority, record, prepared, now_ms, transport);
             }
             // This row was committed before a prior transport attempt. A crash
             // could have hidden a delivered response; persist that possibility
@@ -189,13 +207,13 @@ fn send_pending_with_gate<T: OutboundTransport>(
     // validation behavior; connector text never opts a row into this branch.
     let requires_frozen_call_validation =
         record.capability_provenance().is_some() || record.resolved_endpoint.is_some();
+    // A grant no longer active stops the send as a grant that no longer
+    // stands (FIX 11591); every other rejection stays the binding's own.
     if requires_frozen_call_validation
-        && !matches!(
-            authority.validate_frozen_call_grant(vault, &call)?,
-            FrozenCallValidation::Valid
-        )
+        && let FrozenCallValidation::Rejected(rejected) =
+            authority.validate_frozen_call_grant(vault, &call)?
     {
-        let reason = IntentEscalationReason::BindingInvalid;
+        let reason = frozen_grant_stop(rejected);
         let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
         return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
@@ -344,14 +362,19 @@ fn send_pending_with_gate<T: OutboundTransport>(
         enforce_step_failure_policy(vault, &txn, &policy, record.payload(), Some(actor))?;
     }
 
+    // FIX 11591: the owner whose word admitted this send is asked again at
+    // the last in-process boundary. One no longer a live owner stops it,
+    // keeping what it knew of its delivery; a read that fails keeps the path.
+    if let Some(reason) = withdrawn_owner(vault, &record) {
+        let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+        return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
+    }
     // F2 is checked again at the last in-process boundary before transport.
     if requires_frozen_call_validation
-        && !matches!(
-            authority.validate_frozen_call_grant(vault, &call)?,
-            FrozenCallValidation::Valid
-        )
+        && let FrozenCallValidation::Rejected(rejected) =
+            authority.validate_frozen_call_grant(vault, &call)?
     {
-        let reason = IntentEscalationReason::BindingInvalid;
+        let reason = frozen_grant_stop(rejected);
         let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
         return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
@@ -457,7 +480,12 @@ fn send_pending_with_gate<T: OutboundTransport>(
             result.budget_settlement_events = done.budget_events;
             Ok(result)
         }
-        OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
+        // A provider key makes its resend safe. FIX 4747: a call its
+        // transport looks up stays Pending and uncertain too, and its resend
+        // waits for that lookup or the owner's answer.
+        OutboundSendOutcome::Ambiguous
+            if record.idempotency_supported || transport.looks_up_uncertain_sends() =>
+        {
             let uncertain = record_possible_delivery(vault, record.id)?;
             Ok(effect_result(&uncertain, Some(outcome), replayed, None))
         }
@@ -524,6 +552,53 @@ fn send_pending_with_gate<T: OutboundTransport>(
                 ))
             }
         },
+    }
+}
+
+/// The step an outcome-free Pending call that may have gone out takes
+/// before its resend, from its transport's provider lookup or the owner's
+/// answer (FIX 4747): settled delivered with nothing sent, sent as a
+/// definite non-delivery, or held Pending and uncertain, nothing sent, for
+/// the owner's ask.
+fn step_uncertain_send<T: OutboundTransport>(
+    vault: &Vault,
+    authority: &OutboundBindingAuthority,
+    record: crate::outbound_intent_ledger::IntentLedgerRecord,
+    prepared: Option<&PreparedEffect>,
+    now_ms: u64,
+    transport: &mut T,
+) -> Result<OutboundEffectResult, IntentLedgerError> {
+    match transport.uncertain_send_step(&FrozenOutboundCall::from_record(&record)) {
+        UncertainSendStep::Delivered => {
+            let done = complete_record_bridged(vault, record.id, now_ms, |_, _| {})?;
+            Ok(effect_result(
+                &done,
+                Some(OutboundSendOutcome::Acked),
+                true,
+                None,
+            ))
+        }
+        UncertainSendStep::LookedUpUnsent => {
+            let proven = record_looked_up_non_delivery(vault, record.id, now_ms)?;
+            replay_record(vault, authority, proven, prepared, now_ms, transport)
+        }
+        UncertainSendStep::OwnerReleased => {
+            let released = record_definite_non_delivery(vault, record.id, now_ms)?;
+            replay_record(vault, authority, released, prepared, now_ms, transport)
+        }
+        // A provider's time-bounded dedupe proves nothing: the row is sent
+        // again still Pending and uncertain, never recorded as a non-delivery,
+        // so a resend resumed after the window looks up again (review #6555).
+        UncertainSendStep::ResendDeduplicated => {
+            let uncertain = record_possible_delivery(vault, record.id)?;
+            send_pending_with_gate(
+                vault, authority, uncertain, prepared, None, now_ms, true, transport,
+            )
+        }
+        UncertainSendStep::Hold => {
+            let uncertain = record_possible_delivery(vault, record.id)?;
+            Ok(effect_result(&uncertain, None, true, None))
+        }
     }
 }
 
