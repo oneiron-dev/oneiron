@@ -237,8 +237,11 @@ impl Served {
                         .await
                         .map_err(|_| "timeout")?
                         .map_err(|e| e.to_string())?;
-                    write_json(&dir.join("health.json"), &health)?;
-                    break;
+                    // A server still starting answers `"starting"` (FIX 22117).
+                    if health["status"] == "ok" {
+                        write_json(&dir.join("health.json"), &health)?;
+                        break;
+                    }
                 }
             }
             if Instant::now() >= deadline {

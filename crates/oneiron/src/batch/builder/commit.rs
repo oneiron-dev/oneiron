@@ -292,6 +292,8 @@ impl BatchBuilder<'_> {
         let replicated_puts = std::mem::take(&mut self.replicated_puts);
         let marked_carriers = std::mem::take(&mut self.marked_carriers);
         let caller_envelopes = std::mem::take(&mut self.caller_envelopes);
+        let prepared_person_substrate = self.prepared_person_substrate.take();
+        let prepared_agent_birth = self.prepared_agent_birth.take();
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
         #[cfg(feature = "sync")]
@@ -412,6 +414,8 @@ impl BatchBuilder<'_> {
                     .with_replicated_puts(replicated_puts)
                     .with_marked_carriers(marked_carriers)
                     .with_caller_envelopes(caller_envelopes)
+                    .with_prepared_person_substrate(prepared_person_substrate)
+                    .with_prepared_agent_birth(prepared_agent_birth)
                     .with_prepared(prepared),
                 origin,
             };
@@ -547,10 +551,12 @@ fn apply_admitted(
     wtxn: &mut RwTxn<'_>,
     mut batch: AdmittedBatch<'_>,
     after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
-    admission: Option<&mut dyn crate::comm::ProjectedHeadAdmission>,
+    mut admission: Option<&mut dyn crate::comm::ProjectedHeadAdmission>,
 ) -> Result<Applied> {
-    let routed_rows = match batch.routed {
-        Some(routed) => {
+    let mut born_touches = crate::comm::DeferredBornTouches::default();
+    let mut routed_rows = match batch.routed {
+        Some(mut routed) => {
+            born_touches = routed.take_born_touches();
             if batch.bound_inputs {
                 super::comm_input::admit_routed_inputs(
                     vault,
@@ -559,7 +565,13 @@ fn apply_admitted(
                     &mut batch.gate_mode,
                 )?;
             }
-            routed.record_with_admission_in_txn(vault, wtxn, admission)?
+            routed.record_with_admission_in_txn(
+                vault,
+                wtxn,
+                admission
+                    .as_mut()
+                    .map(|bound| &mut **bound as &mut dyn crate::comm::ProjectedHeadAdmission),
+            )?
         }
         None => BTreeSet::new(),
     };
@@ -603,6 +615,8 @@ fn apply_admitted(
     for (id, markdown) in &batch.note_births {
         crate::note::birth_document_in_txn(vault, wtxn, *id, markdown)?;
     }
+    routed_rows.extend(born_touches.record_with_admission_in_txn(vault, wtxn, admission)?);
+    let changes_claims = changes_claims || !routed_rows.is_empty();
     let pad_windows = pad_scope.finish().pad_windows;
     after_apply(wtxn)?;
     derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;

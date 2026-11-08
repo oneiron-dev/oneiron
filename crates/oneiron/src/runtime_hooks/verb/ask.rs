@@ -17,6 +17,7 @@ mod outcome;
 pub(super) mod session;
 mod wait;
 
+use outcome::completed;
 pub(super) use outcome::{SavedOutcome, saved_producers};
 pub use wait::VerbHookWaitStatus;
 pub(super) use wait::status as wait_status;
@@ -30,8 +31,9 @@ use crate::receipt::{ActionInputs, call_reads_world, json_entity_refs};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{HookActorClass, PackHookBinding};
 use crate::task_verb::{
-    ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskHandle, TaskAskOptionId,
-    TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSpec, TaskAskStatus,
+    ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskHandle, TaskAskOption,
+    TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSpec,
+    TaskAskStatus,
 };
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, MemoryError, Result, Vault};
@@ -255,6 +257,7 @@ pub(super) fn retry(
                           invocation"
                     .to_owned(),
                 receipt_ref: None,
+                hook_notice: None,
             }));
         }
         // A consumed-but-unfinished read can resume without repeating a write.
@@ -381,27 +384,6 @@ pub(super) fn is_used(stop: &VerbHookStop) -> bool {
     matches!(stop, VerbHookStop::Skipped { reason, .. } if reason == USED)
 }
 
-/// The stop a retry of a drained call gets: what the call returned.
-fn completed(invocation: InvocationId, outcome: &SavedOutcome) -> Result<VerbHookStop> {
-    Ok(match outcome {
-        SavedOutcome::Ok { result, .. } => VerbHookStop::Completed {
-            invocation: invocation.to_hex(),
-            result: serde_json::from_str(result)
-                .map_err(|_| Error::CorruptedIndex("verb hook ask outcome"))?,
-        },
-        SavedOutcome::Err {
-            code,
-            message,
-            receipt,
-        } => VerbHookStop::CompletedWithError {
-            invocation: invocation.to_hex(),
-            code: code.clone(),
-            message: message.clone(),
-            receipt_ref: receipt.clone(),
-        },
-    })
-}
-
 /// Opens the hook's ask as its author and saves the stopped call, with the
 /// chain's own rows (`write`), in the ask's write. `write` runs first, so a
 /// resumed chain uses up its old answer before the new ask's row takes the
@@ -435,7 +417,7 @@ pub(super) fn open(
     ] {
         let option = TaskAskOptionId::new(option)
             .map_err(|_| Error::InvariantViolation("verb hook ask option"))?;
-        what.options.insert(option, text);
+        what.options.insert(option, TaskAskOption::new(text));
     }
     let mut spec = TaskAskSpec::shorthand(None, what, None, TaskAskDefault::Hold);
     spec.intent_key = format!(
@@ -541,10 +523,14 @@ pub(super) fn settled_in_txn(
     if row.ask != group || row.binding != binding || row.state != VerbAskState::Open {
         return Ok(());
     }
+    let first_settlement = row.settled_at.is_none();
     row.settled_at = Some(now);
     row.proceeds = proceeds(result);
     row.ready = row.resume.is_some() && row.proceeds;
     ASKS.put(&vault.store, txn, &key, &row)?;
+    if first_settlement {
+        crate::batch::queue_verb_hook_ask_change(vault, txn);
+    }
     if row.ready {
         // The hook runner wakes on the commit, not only on its tick.
         crate::batch::queue_proactivity_change(vault, txn);

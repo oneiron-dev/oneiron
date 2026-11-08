@@ -1,6 +1,7 @@
 //! Standing-question outcome, refresh, and evidence values.
 
-use crate::model_decision::{DecisionAnswer, invalid};
+use super::{DecisionRoute, RoutingPolicy};
+use crate::model_decision::{DecisionAnswer, ProviderPin, invalid};
 use oneiron_contracts::{EntityId, Result};
 use serde::{Deserialize, Serialize};
 
@@ -197,8 +198,21 @@ pub struct OutcomeWindowClose {
 #[serde(deny_unknown_fields)]
 pub struct CalibrationPair {
     pub prediction: DecisionAnswer,
+    /// The probability the answer was returned with, as its receipt holds it.
     pub probability: f64,
     pub outcome: OutcomeLabel,
+    /// The question version the answer was read at.
+    pub question_version: u32,
+    /// How the answer was returned, read from its receipt.
+    pub route: DecisionRoute,
+    /// The routing policy revision its receipt pins; none for a person's changed answer,
+    /// whose record keeps no receipt.
+    pub policy: Option<RoutingPolicy>,
+    /// The pins whose measurement `probability` is, each once, in receipt order: on a routed
+    /// receipt its pins at the rung that answered, else every model pin it names; for a
+    /// person's changed answer, the pin that read the prior. A pin's model and version name
+    /// its backend; a receipt names no other.
+    pub providers: Vec<ProviderPin>,
     /// The rows the reader derived the pair from. A retained copy of it is
     /// released again only while each of them may leave.
     #[serde(skip)]

@@ -435,7 +435,6 @@ async fn serve_with_handles(
     // (FIX 11851): captured before `verified` spends the restore. `None`
     // without a restore, and the watch's first look is then unplanned as
     // today.
-    #[cfg(target_os = "linux")]
     let restore_fresh = restore
         .as_ref()
         .map(|restore| restore.fresh_recipients().to_vec());
@@ -506,6 +505,19 @@ async fn serve_with_handles(
         );
     }
 
+    #[cfg(not(target_os = "linux"))]
+    if managed.escrow_recipient.is_some() || managed.break_glass_recipient.is_some() {
+        // A non-Linux process host gets the same late seal as Linux: the VM
+        // companion and carrier stay Linux-only, the argv watch does not.
+        super::carrier_watch::spawn_argv_watch(
+            Arc::clone(&state),
+            Arc::clone(&vault),
+            managed.clone(),
+            shutdown.clone(),
+            restore_fresh,
+        );
+    }
+
     // Subscribed before the opening push reads the training setting, so a
     // change between the two still reaches the report task (FIX 5575).
     let training_changes = vault.subscribe_proactivity_changes();
@@ -536,6 +548,8 @@ async fn serve_with_handles(
     handles.connector_sends = Some(sync_server.spawn_connector_send_worker(admitted()));
     // Checked built-in channels, under the same admission (OF-519).
     handles.builtin_host = Some(crate::builtin_host::spawn(&sync_server, admitted()));
+    // The calendar safeguard's pattern head, unless the host installed its own (FIX 12099).
+    crate::calendar_host::install_calendar_label_head(crate::calendar_host::PatternLabelHead);
     // Failure signals reach our collector under the same admission (OF-380).
     // Managed mode reads no environment: the send's bearer is its vault secret (FIX 5013).
     handles.failure_signals = Some(crate::ai_host::failure_signals::spawn(
@@ -783,6 +797,11 @@ async fn serve_with_handles(
         mesh.end_streams().await;
     }
     upgrades.await;
+    // This machine's send executor and agent run leases go to another
+    // machine while the device-sync link can still carry the release
+    // (FIX 4747).
+    sync_server.release_send_executor_leases().await;
+    sync_server.release_agent_run_leases().await;
     // Its channel detaches before the mesh it rides closes.
     if let Some(device_sync) = device_sync {
         device_sync.stop().await;

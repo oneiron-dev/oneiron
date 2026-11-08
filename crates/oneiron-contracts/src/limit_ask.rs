@@ -306,6 +306,9 @@ pub enum EngineLimit {
     /// envelope's sender is asked whether everything is okay, and the image
     /// is decoded, stored and bound.
     EsignSignatureInputBytes,
+    /// Pixels on either axis of an uploaded signature image. Past it the
+    /// envelope's sender is asked, and the image is decoded whole.
+    EsignSignatureImageDimensionPx,
     /// Bytes of one signature image's canonical PNG re-encoding. Past it the
     /// envelope's sender is asked, and the image is stored and bound.
     EsignSignaturePngBytes,
@@ -316,6 +319,15 @@ pub enum EngineLimit {
     /// Signature images one recipient of a signing document holds. Past it
     /// the envelope's sender is asked, and the image is stored and bound.
     EsignSignatureRecipientImages,
+    /// UTF-8 bytes of a signing rejection reason. Past it the envelope's
+    /// sender is asked, and the whole reason is kept.
+    EsignRejectReasonBytes,
+    /// UTF-8 bytes of a signing email field. Past it the envelope's sender
+    /// is asked, and the whole field is kept.
+    EsignEmailFieldBytes,
+    /// UTF-8 bytes of a signing name or server-computed date field. Past it
+    /// the envelope's sender is asked, and the whole field is kept.
+    EsignNameFieldBytes,
     /// Bytes of one request body a public signing door spools once its
     /// capability is admitted: an act, a PDF or preview read, a signature
     /// image or its read-back. Past it the envelope's sender is asked whether
@@ -591,15 +603,35 @@ pub enum EngineLimit {
     /// (FIX 5218). Past it the row asks whether everything is okay and
     /// the merge scores over every receipt.
     SharedMergeEvidenceRows,
+    /// Third-party interlocutors one context-pack request names: the
+    /// submitted `interlocutors.third_parties` list whole, label-only
+    /// parties included, measured after its shape checks and before contact
+    /// resolution (physical65 ABC14). Past it the row asks whether
+    /// everything is okay and every party is resolved and served whole.
+    ContextThirdParties,
+    /// Explicit pinned refs one board or pack request names: the submitted
+    /// `pinned_refs` list, measured where it is read and before its
+    /// resolution (physical68 ABC17). Manifest, hook and voice pins are
+    /// separate policies and are not counted here. Past it the row asks
+    /// whether everything is okay and every ref is resolved and served
+    /// whole.
+    MemoryPinnedRefs,
     /// Files one legacy codebase snapshot manifest names (FIX 74). Past
     /// it the row asks whether everything is okay and the manifest is
     /// kept whole.
     CodebaseManifestFiles,
+    /// Original UTF-8 bytes of one recall or text-search query. Past it the
+    /// row asks and the query is served whole; model windows are separate.
+    RecallQueryBytes,
     /// Result rows one search, recall or context-pack door was asked for:
     /// the caller's requested count, measured where the door serves it.
     /// Past it the row asks whether everything is okay and the whole
     /// requested count is served.
     RequestedResultRows,
+    /// Ancestor rows one tournament-start check walks, resumed across calls
+    /// (FIX 9581). Past it the row asks whether everything is okay and the
+    /// check still completes, one hop budget at a time; depth never refuses.
+    TournamentLineageRows,
     /// Embedding vector dimensions one vault opened with, measured once
     /// where its host serves it. Past it the row asks whether everything
     /// is okay and the vault serves as opened.

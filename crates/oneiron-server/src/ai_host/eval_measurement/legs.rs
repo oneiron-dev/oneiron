@@ -20,7 +20,7 @@ use oneiron::memory::extraction::{
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill::{LoadedSkillPack, MeasuredSkillPack};
 use oneiron::skill_optimize::{
-    EvalArmPin, EvalMeasurement, EvalSeat, EvalTaskInput, HeldOutReplayNotes,
+    EvalArmPin, EvalMeasurement, EvalSeat, EvalServingOffer, EvalTaskInput, HeldOutReplayNotes,
     MeasurementUnavailable, seat_model_role,
 };
 use oneiron::{
@@ -74,6 +74,7 @@ pub(super) enum Generated {
         text: String,
         /// The provider that answered, as the ladder stamped it.
         served: Option<String>,
+        serving_offer: Option<EvalServingOffer>,
     },
     Unavailable(MeasurementUnavailable),
 }
@@ -288,6 +289,7 @@ impl Arms {
         arm: &ServedArm,
         task: &str,
         clock: &RetrievalDeadline,
+        principal: oneiron::EntityId,
     ) -> Generated {
         let runtime = server.ai.model_runtime();
         let Ok(call) = runtime.admit_seat_bound(vault, self.role, request(arm, task)) else {
@@ -296,23 +298,44 @@ impl Arms {
         if call.ladder.exact_prompt() != Some(self.prompt.as_deref()) {
             return Generated::Unavailable(MeasurementUnavailable::InstructionDiffers);
         }
+        let serving_offer = call
+            .ladder
+            .exact_offer_binding()
+            .map(EvalServingOffer::from_binding);
         let may_send = || !clock.decision_time_left().is_zero();
         if !may_send() {
             return Generated::Unavailable(MeasurementUnavailable::ClockExhausted);
         }
+        let record_request = call.request.clone();
+        let no_record_at_arrival = vault.model_call_keeps_no_record_for(None, Some(principal));
         let answered =
-            tokio::runtime::Handle::current().block_on(call.ladder.generate_exact_within(
+            tokio::runtime::Handle::current().block_on(call.ladder.generate_exact_recorded_by(
                 run,
                 call.request,
                 None,
                 &may_send,
-                clock.decision_time_left(),
+                crate::models::CallDeadline::waits_within(clock.decision_time_left()),
             ));
         match answered {
-            Ok(response) => Generated::Answer {
-                text: answer_text(&response),
-                served: response.usage.served_provider().map(str::to_owned),
-            },
+            Ok((response, binding)) => {
+                let no_record = no_record_at_arrival
+                    || vault.model_call_keeps_no_record_for(None, Some(principal));
+                let evidence_run = run.initiated_by(Some(principal));
+                crate::api::record_raw_response(
+                    vault,
+                    &call.ladder,
+                    &evidence_run,
+                    &record_request,
+                    &response,
+                    Some(&binding),
+                    no_record,
+                );
+                Generated::Answer {
+                    text: answer_text(&response),
+                    served: response.usage.served_provider().map(str::to_owned),
+                    serving_offer,
+                }
+            }
             Err(LlmError::BudgetDenied(_)) => {
                 Generated::Unavailable(MeasurementUnavailable::BudgetExhausted)
             }
@@ -639,16 +662,22 @@ impl NativeArms {
                         );
                     }
                 };
-                let decision = match ladder.ladder().run_with_run(
-                    &question,
+                let decision = match crate::decision_verdict::with_model_call_context(
                     decisions.principal,
-                    &[],
-                    &state,
-                    MODEL_DIAL,
-                    &decisions.bands,
-                    Reversibility::ReversibleRead,
-                    clock,
-                    run,
+                    None,
+                    || {
+                        ladder.ladder().run_with_run(
+                            &question,
+                            decisions.principal,
+                            &[],
+                            &state,
+                            MODEL_DIAL,
+                            &decisions.bands,
+                            Reversibility::ReversibleRead,
+                            clock,
+                            run,
+                        )
+                    },
                 ) {
                     Ok(decision) => decision,
                     Err(error) => {

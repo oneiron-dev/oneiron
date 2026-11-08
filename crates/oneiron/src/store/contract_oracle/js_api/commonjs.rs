@@ -16,6 +16,14 @@ enum Target {
     Property(Option<String>),
 }
 
+// Property receivers are captured from the original module value, before
+// evaluating the chain's single terminal value.
+enum ChainReference {
+    Whole,
+    Exports,
+    Property(String),
+}
+
 pub(super) fn collect(
     program: &Program<'_>,
     semantic: &Semantic<'_>,
@@ -45,9 +53,41 @@ pub(super) fn collect(
                     continue;
                 }
                 if binding.name == "exports" {
+                    if let Some(values) = current_final_sequence_values(
+                        value,
+                        semantic,
+                        alias,
+                        native_module,
+                        &mut accounted,
+                    ) {
+                        commonjs = true;
+                        for value in values {
+                            module.bindings.clear();
+                            value_bindings(value, module);
+                        }
+                        alias = true;
+                        continue;
+                    }
                     alias = (native_module && whole_value(value, semantic, &mut accounted))
                         || (alias && wrapper(value, "exports", semantic, &mut accounted));
                 } else if binding.name == "module" {
+                    if let Some(values) = module_final_sequence_values(
+                        value,
+                        semantic,
+                        alias,
+                        native_module,
+                        &mut accounted,
+                    ) {
+                        commonjs = true;
+                        if !values.is_empty() {
+                            alias = false;
+                        }
+                        for value in values {
+                            module.bindings.clear();
+                            value_bindings(value, module);
+                        }
+                        continue;
+                    }
                     native_module =
                         native_module && wrapper(value, "module", semantic, &mut accounted);
                 }
@@ -101,8 +141,70 @@ pub(super) fn collect(
                 }
                 continue;
             }
+            if let Some((value, assigns_exports)) =
+                replacement_chain(assignment, semantic, alias, native_module, &mut accounted)
+            {
+                commonjs = true;
+                if fresh_value(value) {
+                    alias = assigns_exports;
+                    module.bindings.clear();
+                    value_bindings(value, module);
+                } else if assigns_exports {
+                    alias = true;
+                }
+                continue;
+            }
+            if let Some((references, value)) =
+                property_reference_chain(assignment, semantic, alias, native_module, &mut accounted)
+            {
+                commonjs = true;
+                let fresh = fresh_value(value);
+                let mut module_replaced = false;
+                let mut exports_rebound = false;
+                for reference in references.into_iter().rev() {
+                    match reference {
+                        ChainReference::Whole => {
+                            if fresh && !module_replaced {
+                                module.bindings.clear();
+                                value_bindings(value, module);
+                                module_replaced = true;
+                            }
+                        }
+                        ChainReference::Exports => exports_rebound = true,
+                        ChainReference::Property(name) => {
+                            if !module_replaced {
+                                module.bindings.insert(name.clone(), Binding::Local(name));
+                            }
+                        }
+                    }
+                }
+                alias = if fresh {
+                    module_replaced && exports_rebound
+                } else {
+                    alias || exports_rebound
+                };
+                continue;
+            }
             if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
                 if identifier.name == "exports" && wrapper_reference(identifier, semantic) {
+                    if assignment.operator.is_assign()
+                        && let Some(values) = current_final_sequence_values(
+                            &assignment.right,
+                            semantic,
+                            alias,
+                            native_module,
+                            &mut accounted,
+                        )
+                    {
+                        commonjs = true;
+                        for value in values {
+                            module.bindings.clear();
+                            value_bindings(value, module);
+                        }
+                        alias = true;
+                        accounted.insert((identifier.span.start, identifier.span.end));
+                        continue;
+                    }
                     alias = assignment.operator.is_assign()
                         && ((native_module
                             && whole_value(&assignment.right, semantic, &mut accounted))
@@ -115,6 +217,26 @@ pub(super) fn collect(
                                 )));
                     accounted.insert((identifier.span.start, identifier.span.end));
                 } else if identifier.name == "module" && wrapper_reference(identifier, semantic) {
+                    if assignment.operator.is_assign()
+                        && let Some(values) = module_final_sequence_values(
+                            &assignment.right,
+                            semantic,
+                            alias,
+                            native_module,
+                            &mut accounted,
+                        )
+                    {
+                        commonjs = true;
+                        if !values.is_empty() {
+                            alias = false;
+                        }
+                        for value in values {
+                            module.bindings.clear();
+                            value_bindings(value, module);
+                        }
+                        accounted.insert((identifier.span.start, identifier.span.end));
+                        continue;
+                    }
                     native_module = assignment.operator.is_assign()
                         && native_module
                         && wrapper(&assignment.right, "module", semantic, &mut accounted);
@@ -152,6 +274,22 @@ pub(super) fn collect(
                             .insert("commonjs:compound-replacement".to_owned());
                         continue;
                     }
+                    if let Some(values) = whole_sequence_values(
+                        &assignment.right,
+                        semantic,
+                        alias,
+                        native_module,
+                        &mut accounted,
+                    ) {
+                        if !values.is_empty() {
+                            alias = false;
+                        }
+                        for value in values {
+                            module.bindings.clear();
+                            value_bindings(value, module);
+                        }
+                        continue;
+                    }
                     // A replacement changes the object; the wrapper's original
                     // `exports` alias no longer points at it.
                     let value = assignment.right.get_inner_expression();
@@ -162,38 +300,9 @@ pub(super) fn collect(
                     }
                     alias = false;
                     module.bindings.clear();
-                    if let Expression::ObjectExpression(object) = value {
-                        for property in &object.properties {
-                            let Some(property) = property.as_property() else {
-                                module
-                                    .unresolved
-                                    .insert("commonjs:object-spread".to_owned());
-                                continue;
-                            };
-                            if let Some(name) = property.key.static_name() {
-                                // A non-computed colon __proto__ sets the prototype,
-                                // rather than declaring an own exported property.
-                                if name == "__proto__"
-                                    && !property.computed
-                                    && !property.shorthand
-                                    && !property.method
-                                    && !property.kind.is_accessor()
-                                {
-                                    continue;
-                                }
-                                module
-                                    .bindings
-                                    .insert(name.to_string(), Binding::Local(name.into_owned()));
-                            } else {
-                                module.unresolved.insert("commonjs:computed-key".to_owned());
-                            }
-                        }
-                    } else if !matches!(
-                        value,
-                        Expression::FunctionExpression(_)
-                            | Expression::ArrowFunctionExpression(_)
-                            | Expression::ClassExpression(_)
-                    ) {
+                    if fresh_value(value) {
+                        value_bindings(value, module);
+                    } else {
                         module.unresolved.insert("commonjs:opaque-value".to_owned());
                     }
                 }
@@ -220,6 +329,155 @@ pub(super) fn collect(
             ));
         }
     }
+}
+
+fn current_final_sequence_values<'ast, 'src>(
+    value: &'ast Expression<'src>,
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<Vec<&'ast Expression<'src>>> {
+    if !native_module {
+        return None;
+    }
+    let Expression::SequenceExpression(sequence) = value.get_inner_expression() else {
+        return None;
+    };
+    let last = sequence.expressions.last()?;
+    let assigned_final = matches!(
+        last.get_inner_expression(),
+        Expression::AssignmentExpression(_)
+    );
+    if !assigned_final && !whole_value(last.get_inner_expression(), semantic, &mut BTreeSet::new())
+    {
+        return None;
+    }
+    whole_sequence_values(value, semantic, alias, native_module, accounted)
+}
+
+fn module_final_sequence_values<'ast, 'src>(
+    value: &'ast Expression<'src>,
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<Vec<&'ast Expression<'src>>> {
+    if !native_module {
+        return None;
+    }
+    let Expression::SequenceExpression(sequence) = value.get_inner_expression() else {
+        return None;
+    };
+    let (last, replacements) = sequence.expressions.split_last()?;
+    let mut sequence_accounted = BTreeSet::new();
+    if replacements.is_empty()
+        || !wrapper(
+            last.get_inner_expression(),
+            "module",
+            semantic,
+            &mut sequence_accounted,
+        )
+    {
+        return None;
+    }
+    let values = whole_prefix_values(
+        replacements,
+        semantic,
+        alias,
+        native_module,
+        &mut sequence_accounted,
+    )?;
+    accounted.extend(sequence_accounted);
+    Some(values)
+}
+
+fn whole_sequence_values<'ast, 'src>(
+    value: &'ast Expression<'src>,
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<Vec<&'ast Expression<'src>>> {
+    if !native_module {
+        return None;
+    }
+    let Expression::SequenceExpression(sequence) = value.get_inner_expression() else {
+        return None;
+    };
+    let (last, replacements) = sequence.expressions.split_last()?;
+    if replacements.is_empty() {
+        return None;
+    }
+    let assigned_final = matches!(
+        last.get_inner_expression(),
+        Expression::AssignmentExpression(_)
+    );
+    let replacements = if assigned_final {
+        &sequence.expressions[..]
+    } else {
+        replacements
+    };
+    let mut sequence_accounted = BTreeSet::new();
+    let mut values = whole_prefix_values(
+        replacements,
+        semantic,
+        alias,
+        native_module,
+        &mut sequence_accounted,
+    )?;
+    if !assigned_final {
+        let last = last.get_inner_expression();
+        if fresh_value(last) {
+            values.push(last);
+        } else if !whole_value(last, semantic, &mut sequence_accounted)
+            && !(values.is_empty()
+                && alias
+                && wrapper(last, "exports", semantic, &mut sequence_accounted))
+        {
+            return None;
+        }
+    }
+    accounted.extend(sequence_accounted);
+    Some(values)
+}
+
+fn whole_prefix_values<'ast, 'src>(
+    replacements: &'ast [Expression<'src>],
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<Vec<&'ast Expression<'src>>> {
+    let mut values = Vec::new();
+    for expression in replacements {
+        let Expression::AssignmentExpression(assignment) = expression.get_inner_expression() else {
+            return None;
+        };
+        if !assignment.operator.is_assign()
+            || !matches!(
+                target(
+                    assignment.left.as_member_expression()?,
+                    semantic,
+                    false,
+                    native_module,
+                    accounted,
+                ),
+                Some(Target::Whole)
+            )
+        {
+            return None;
+        }
+        let value = assignment.right.get_inner_expression();
+        if fresh_value(value) {
+            values.push(value);
+        } else if !whole_value(value, semantic, accounted)
+            && !(values.is_empty() && alias && wrapper(value, "exports", semantic, accounted))
+        {
+            return None;
+        }
+    }
+    Some(values)
 }
 
 fn property_chain(
@@ -260,6 +518,161 @@ fn property_chain(
     }
     accounted.extend(chain_accounted);
     Some(names)
+}
+
+fn replacement_chain<'ast, 'src>(
+    assignment: &'ast AssignmentExpression<'src>,
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<(&'ast Expression<'src>, bool)> {
+    if !matches!(
+        assignment.right.get_inner_expression(),
+        Expression::AssignmentExpression(_)
+    ) {
+        return None;
+    }
+    let mut assignment = assignment;
+    let mut chain_accounted = BTreeSet::new();
+    let mut assigns_exports = false;
+    let mut assigns_whole = false;
+    loop {
+        if !assignment.operator.is_assign() {
+            return None;
+        }
+        if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
+            if identifier.name != "exports" || !wrapper_reference(identifier, semantic) {
+                return None;
+            }
+            assigns_exports = true;
+            chain_accounted.insert((identifier.span.start, identifier.span.end));
+        } else {
+            let member = assignment.left.as_member_expression()?;
+            if !matches!(
+                target(member, semantic, alias, native_module, &mut chain_accounted),
+                Some(Target::Whole)
+            ) {
+                return None;
+            }
+            assigns_whole = true;
+        }
+        match assignment.right.get_inner_expression() {
+            Expression::AssignmentExpression(next) => assignment = next,
+            value
+                if assigns_whole
+                    && (fresh_value(value)
+                        || whole_value(value, semantic, &mut chain_accounted)
+                        || (alias
+                            && wrapper(value, "exports", semantic, &mut chain_accounted))) =>
+            {
+                // Every stable slot receives the same value. Only an actual
+                // `exports` assignment can reconnect that wrapper binding.
+                accounted.extend(chain_accounted);
+                return Some((value, assigns_exports));
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn fresh_value(value: &Expression<'_>) -> bool {
+    matches!(
+        value,
+        Expression::ObjectExpression(_)
+            | Expression::FunctionExpression(_)
+            | Expression::ArrowFunctionExpression(_)
+            | Expression::ClassExpression(_)
+    )
+}
+
+fn value_bindings(value: &Expression<'_>, module: &mut Module) {
+    let Expression::ObjectExpression(object) = value else {
+        return;
+    };
+    for property in &object.properties {
+        let Some(property) = property.as_property() else {
+            module
+                .unresolved
+                .insert("commonjs:object-spread".to_owned());
+            continue;
+        };
+        if let Some(name) = property.key.static_name() {
+            // A non-computed colon __proto__ sets the prototype,
+            // rather than declaring an own exported property.
+            if name == "__proto__"
+                && !property.computed
+                && !property.shorthand
+                && !property.method
+                && !property.kind.is_accessor()
+            {
+                continue;
+            }
+            module
+                .bindings
+                .insert(name.to_string(), Binding::Local(name.into_owned()));
+        } else {
+            module.unresolved.insert("commonjs:computed-key".to_owned());
+        }
+    }
+}
+
+fn property_reference_chain<'ast, 'src>(
+    assignment: &'ast AssignmentExpression<'src>,
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<(Vec<ChainReference>, &'ast Expression<'src>)> {
+    let mut assignment = assignment;
+    let mut references = Vec::new();
+    let mut chain_accounted = BTreeSet::new();
+    let mut has_property = false;
+    let mut has_slot = false;
+    loop {
+        if !assignment.operator.is_assign() {
+            return None;
+        }
+        let reference =
+            if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
+                if identifier.name != "exports" || !wrapper_reference(identifier, semantic) {
+                    return None;
+                }
+                chain_accounted.insert((identifier.span.start, identifier.span.end));
+                has_slot = true;
+                ChainReference::Exports
+            } else {
+                let member = assignment.left.as_member_expression()?;
+                match target(member, semantic, alias, native_module, &mut chain_accounted)? {
+                    Target::Whole => {
+                        has_slot = true;
+                        ChainReference::Whole
+                    }
+                    Target::Property(Some(name)) if name != "__proto__" => {
+                        has_property = true;
+                        ChainReference::Property(name)
+                    }
+                    _ => return None,
+                }
+            };
+        references.push(reference);
+        match assignment.right.get_inner_expression() {
+            Expression::AssignmentExpression(next) => assignment = next,
+            value
+                if has_property
+                    && has_slot
+                    && (fresh_value(value)
+                        || (native_module
+                            && whole_value(value, semantic, &mut chain_accounted))
+                        || (alias
+                            && wrapper(value, "exports", semantic, &mut chain_accounted))) =>
+            {
+                accounted.extend(chain_accounted);
+                return Some((references, value));
+            }
+            _ => return None,
+        }
+    }
 }
 
 fn target(

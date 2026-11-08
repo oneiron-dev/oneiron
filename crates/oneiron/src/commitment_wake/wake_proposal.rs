@@ -270,7 +270,7 @@ impl<E> CommitmentWakeExecutor<'_, E> {
             );
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         // Step 4: no planner is a typed COMPLETION, never a partition decode.
@@ -310,7 +310,7 @@ impl<E> CommitmentWakeExecutor<'_, E> {
         )?;
         Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         })
     }
 }
@@ -330,7 +330,7 @@ fn skip_completion(
     );
     DreamerAttemptExecution::Completed {
         completed_units: 0,
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     }
 }
 

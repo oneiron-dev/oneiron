@@ -147,34 +147,38 @@ impl Vault {
     /// and every saved query reading a predicate the update dropped or
     /// remapped runs the pack-drift repair ladder (ARCH-0059 §4).
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
-        self.with_write_txn_grouped(|txn| {
-            let source = self.check_pack_install_ask(txn, ask)?;
-            refuse_engine_namespace(&source)?;
-            refuse_local_name(&source)?;
-            if let Some(reason) = self.screen_pack_in_txn(
-                txn,
-                &source,
-                &ask.observed_tools,
-                ask.publisher.identity(),
-            )? {
-                return Ok(PackInstallDisposition::Blocked { reason });
-            }
-            self.commit_pack_install_in_txn(
-                txn,
-                &source,
-                &PackCommit {
-                    source_id: ask.source_id,
-                    hub: &ask.hub,
-                    publisher: ask.publisher.identity(),
-                    foreign: Some(&ask.publisher),
-                    verdict: ask.verdict,
-                    permissions: &ask.permissions,
-                    qualification: ask.qualification.as_ref(),
-                    world: None,
-                    owner_activated: &[],
-                },
-            )
-        })
+        self.with_write_txn_grouped(|txn| self.install_pack_in_txn(txn, ask))
+    }
+    /// [`Self::install_pack`] in the caller's writer, so what the caller
+    /// writes after it commits with the install or not at all.
+    pub(super) fn install_pack_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ask: &PackInstallAsk,
+    ) -> Result<PackInstallDisposition> {
+        let source = self.check_pack_install_ask(txn, ask)?;
+        refuse_engine_namespace(&source)?;
+        refuse_local_name(&source)?;
+        if let Some(reason) =
+            self.screen_pack_in_txn(txn, &source, &ask.observed_tools, ask.publisher.identity())?
+        {
+            return Ok(PackInstallDisposition::Blocked { reason });
+        }
+        self.commit_pack_install_in_txn(
+            txn,
+            &source,
+            &PackCommit {
+                source_id: ask.source_id,
+                hub: &ask.hub,
+                publisher: ask.publisher.identity(),
+                foreign: Some(&ask.publisher),
+                verdict: ask.verdict,
+                permissions: &ask.permissions,
+                qualification: ask.qualification.as_ref(),
+                world: None,
+                owner_activated: &[],
+            },
+        )
     }
     /// Imports each bundled skill and admits it through the one install
     /// transition, writing its import receipt. A hold keeps every skill
@@ -390,9 +394,7 @@ impl Vault {
         let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
         // The first-party model catalog activates its rows for inference
         // admission here; rows the prior pack shipped follow the update.
-        let model_catalog = receipt.pack_name == crate::skill_hub::MODEL_PACK_NAME
-            && receipt.hub_id == crate::skill_hub::default_skill_hub_id()?.to_hex()
-            && receipt.hub_ref == crate::skill_hub::MODEL_PACK_SUBTREE;
+        let model_catalog = super::model_pack::is_first_party_model_catalog(&receipt)?;
         let prior_catalog = if model_catalog && prior.is_some() {
             crate::llm::registry::CatalogSeed::from_installed_pack_in_txn(self, txn).ok()
         } else {
@@ -417,12 +419,35 @@ impl Vault {
             PACK_PREDICATE.put(&self.store, txn, predicate, &source.manifest.name)?;
         }
         PACK_CANDIDATE.delete(&self.store, txn, &candidate_key(&source))?;
+        // A model pack on either side of the install may change the pack the
+        // vault follows: a model pack installed, or one replaced by a pack
+        // of another kind under the same name (review #6390).
+        let model_pack_touched = receipt.kind == PackKind::Model
+            || prior
+                .as_ref()
+                .is_some_and(|old| old.kind == PackKind::Model);
+        let model_pack_before = if model_pack_touched {
+            self.model_pack_in_effect_in_txn(txn)?
+        } else {
+            None
+        };
         PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
         if model_catalog {
             self.activate_installed_model_catalog_in_txn(
                 txn,
                 prior_catalog.as_ref(),
                 prior_source,
+            )?;
+        }
+        // A model pack's install, or its replacement by another kind, may
+        // change the pack the vault follows; the version it replaced is kept
+        // for the revert the owner is told of (FIX 5367, 5369, 20192).
+        if model_pack_touched {
+            self.keep_replaced_model_pack_in_txn(txn, prior.as_ref(), &receipt)?;
+            self.note_active_model_pack_in_txn(
+                txn,
+                model_pack_before,
+                crate::llm::model_pack::ModelPackChangeCause::Install,
             )?;
         }
         if let Some(old) = prior

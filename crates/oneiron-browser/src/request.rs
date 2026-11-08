@@ -9,6 +9,14 @@
 //! refusal it answers comes back as a [`DestinationRefusal`], data the host
 //! filled. A session given no handler takes its relay as before.
 //!
+//! Before the handler performs a navigation (a document request: a page's
+//! load, each redirect hop of it, a script's or a meta refresh's move, a
+//! frame's load) or a request the browser did not classify, it admits its
+//! URL in the frame it would load ([`BrowserRequestHandler::admit_navigation`],
+//! [`NavigationFrame`]); one it refuses fails unsent. The session keeps the
+//! refusal of a main-frame navigation as any other; an in-page frame's
+//! fails only its request, and the page goes on without it.
+//!
 //! The session keeps the first refusal not yet delivered. A navigation or
 //! an act answers it in place of its own success, `open` stops waiting for
 //! its load on it, and the host can take it at any time. What the session
@@ -69,9 +77,32 @@ pub struct SpooledResponse {
     pub body: Box<dyn BrowserBody>,
 }
 
+/// The frame a navigation the host admits would load.
+#[cfg(feature = "driver")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavigationFrame {
+    /// The page's top-level document: its load, each redirect hop of it, a
+    /// script's or a meta refresh's move. A document request whose frame
+    /// the browser does not name, or whose page the session does not know,
+    /// counts here.
+    Main,
+    /// An in-page frame's document, an out-of-process frame's included, or
+    /// a request the browser did not classify.
+    Sub,
+}
+
 /// The host's custody of a session's requests: it performs each one.
 #[cfg(feature = "driver")]
 pub trait BrowserRequestHandler: Send + Sync {
+    /// Admit a navigation to `url` in `frame` before it is performed: a
+    /// document request, or a request the browser did not classify. Any
+    /// refusal fails the request unsent; a host with no rule for
+    /// navigations admits every one. A main-frame refusal by the host's
+    /// rule answers [`BrowserError::DestinationRefused`], which the session
+    /// keeps; the session keeps no refusal for a [`NavigationFrame::Sub`]
+    /// one, and the page goes on without that frame.
+    fn admit_navigation(&self, url: &str, frame: NavigationFrame) -> Result<(), BrowserError>;
+
     /// Check the destination and perform this ONE request; never follow
     /// redirects. A redirect's answer goes back to the browser, whose next
     /// hop is handed here as its own request. A refusal by the host's rule

@@ -14,8 +14,10 @@ mod check_tree;
 mod checks;
 mod composition;
 mod contract_review;
+mod diagnosis;
 mod driver;
 mod driver_materialize;
+mod driver_resolution;
 mod driver_store;
 mod driver_types;
 mod file_metadata;
@@ -24,6 +26,7 @@ mod landing;
 mod mirror_green;
 mod plan;
 mod receipt_index;
+mod receipts;
 mod received_enqueue;
 mod review_policy;
 mod reviewed;
@@ -33,6 +36,7 @@ mod source_materialize;
 mod source_types;
 mod staging;
 mod storage;
+mod survivors;
 mod tested;
 mod tested_export;
 mod tested_received;
@@ -72,6 +76,9 @@ pub use driver_types::{
     QueueSurvivorLink, QueueWork,
 };
 pub use plan::{FrozenCheckPlan, REPO_CHECK_PLAN_PATH, RepoCheckPlan};
+// A queue entry's admission and completion receipts (FIX 4338) and the
+// failure a repair names (FIX 4364).
+pub(crate) use receipts::{QueueBatchReceipts, proposal_queue_failure_in_txn};
 // Same-file line composition and the staged-tree file reader a reviewed
 // stack's application proof reads (FIX 4360).
 pub(crate) use check_tree::read_tree_file;

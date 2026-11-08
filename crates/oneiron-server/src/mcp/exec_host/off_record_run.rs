@@ -95,7 +95,10 @@ impl OffRecordRunDoor {
         )
         .at(self.caller.locality())
         .read_key()
-        .map_err(|refused| AgentVerbRefusal { code: refused.code })
+        .map_err(|refused| AgentVerbRefusal {
+            hook_notice: None,
+            code: refused.code,
+        })
     }
 }
 
@@ -121,6 +124,7 @@ impl SessionWriteCeiling for LiveCaller {
 /// An API refusal as the run's guest reads it: its stable code.
 fn api_refusal(refused: &ApiError) -> AgentVerbRefusal {
     AgentVerbRefusal {
+        hook_notice: None,
         code: refused.code().as_str().to_owned(),
     }
 }
@@ -133,6 +137,7 @@ impl AgentVerbDoor for OffRecordRunDoor {
         _: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         Ok(Err(AgentVerbRefusal {
+            hook_notice: None,
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
         }))
     }
@@ -308,12 +313,17 @@ fn run_in_off_record_session(
     // are held to it. A definition that does not read refuses the run.
     let listed = parent_model_list(vault, actor).map_err(binding)?;
     if let Some(seats) = reader_seats {
-        let mut seat = seats.seat(
-            run_id,
-            None,
-            target.caller.destination(),
-            provider.reader_window_tokens(),
-        );
+        let mut seat = seats
+            .seat(
+                &oneiron::code_run::ReaderJobs::for_session(&session, actor.entity_ref())
+                    .map_err(binding)?,
+                oneiron::code_run::ReaderActor::of(actor),
+                run_id,
+                None,
+                target.caller.destination(),
+                provider.reader_window_tokens(),
+            )
+            .map_err(binding)?;
         seat.listed = listed.clone();
         gated_write = gated_write.with_reader_spawn(seat);
     }

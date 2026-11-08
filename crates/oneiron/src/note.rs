@@ -16,7 +16,8 @@ mod reads;
 pub(crate) use reads::PreparedNoteRead;
 pub use reads::{
     NoteAccessRequest, NoteAnchoredSpan, NoteEditorBinding, NoteEditorCloseRequest,
-    NoteEditorClosed, NoteHistoryView, NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView,
+    NoteEditorClosed, NoteHistoryView, NoteIndexedReadRequest, NoteReadRequest, NoteReadSource,
+    NoteReadSpan, NoteReadView,
 };
 mod archive_import;
 #[cfg(feature = "sync")]
@@ -31,6 +32,7 @@ pub(crate) mod erase;
 mod kinds;
 mod lifecycle;
 pub(crate) mod recovery;
+pub(crate) mod revision;
 pub(crate) mod storage;
 pub(crate) use kinds::validate_registered_kind;
 mod proposal_doors;

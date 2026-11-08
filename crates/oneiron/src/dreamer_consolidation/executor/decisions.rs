@@ -295,14 +295,27 @@ impl ConsolidationExecutor<'_> {
             .await;
         // Every generation that finished is spent, whatever the pack's outcome: a later
         // step that traps or fails leaves the prefix on the tally.
-        for (index, (hash, usage, _)) in spent.iter().enumerate() {
-            if let Err(error) = charges.record_terminal(vault, step_ctx.attempt_id, *hash, usage) {
-                for (_, usage, memoized) in &spent[index..] {
-                    if !*memoized {
+        for (index, (_, usage, binding, _)) in spent.iter().enumerate() {
+            if let Some(binding) = binding {
+                if let Err(error) =
+                    charges.record_terminal(vault, binding.attempt_id, binding.step_hash, usage)
+                {
+                    for (_, usage, _, memoized) in &spent[index..] {
+                        if !*memoized {
+                            charges.record_usage(usage);
+                        }
+                    }
+                    if let Some(usage) = decided
+                        .as_ref()
+                        .err()
+                        .and_then(DurableStepError::spent_usage)
+                    {
                         charges.record_usage(usage);
                     }
+                    return Err(error.into());
                 }
-                return Err(error.into());
+            } else {
+                charges.record_usage(usage);
             }
         }
         decided

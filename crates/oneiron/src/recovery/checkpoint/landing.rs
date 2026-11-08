@@ -61,6 +61,9 @@ impl Vault {
         // A bare restore has no live source to name what was erased since
         // the cut (FIX 4753).
         let bare = matches!(custody, Custody::Keep | Custody::Landed | Custody::NewHost);
+        // Only restore_with_current_authority produces these routes, after its
+        // LIVE-row merge. A beside copy's Fork(Some(..)) did not merge them.
+        let live_rows_merged = matches!(custody, Custody::Fork(None) | Custody::Replace(..));
         // Authenticate every ORCB row against LIVE exterior custody before
         // creating a destination. A checkpoint never carries a key copy, and
         // a row whose key an erase destroyed since is dropped, not restored.
@@ -87,7 +90,8 @@ impl Vault {
         // holds is refused as the image's are, and the image's rows naming
         // an owner that did not open go (KS7-5, FIX 6376).
         let plan = gate_custody.plan_mut();
-        let mut opened = super::payload::open_image_payload(sealed_payload, plan, &mut image)?;
+        let mut opened =
+            super::payload::open_image_payload(sealed_payload, plan, &mut image, live_rows_merged)?;
         let opened_entities = opened
             .as_ref()
             .map(super::payload::OpenedPayload::entity_rows)
@@ -153,7 +157,7 @@ impl Vault {
         Self::check_open_config(&config)?;
         let claim_row_floor = super::claim_order::plan_floor(&mut image, &opened_entities)?;
         // Each row is counted at the length it lands at (FIX 6025, 6232).
-        let lengths = super::landing_lengths::LandingRowLengths::of(&image, &retired);
+        let lengths = super::landing_lengths::LandingRowLengths::of(&image, &retired)?;
         // The opened payload rows land beside them, counted the same way.
         let payload_rows = opened
             .as_ref()
@@ -331,6 +335,10 @@ impl Vault {
                 txn,
                 &BTreeSet::new(),
                 &BTreeSet::new(),
+            )?;
+            crate::channel_identity_provider::prune_line_chat_archive_pins_in_txn(
+                &vault.store,
+                txn,
             )?;
             // A NOTE that cites a record this restore did not open, or one
             // the source erased since the cut, loses that citation and its

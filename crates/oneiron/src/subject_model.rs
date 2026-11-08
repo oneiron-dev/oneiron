@@ -39,6 +39,8 @@
 use rmpv::Value;
 
 mod archive;
+mod prepared;
+pub(crate) use prepared::{PreparedAgentSubjects, PreparedSubjectAgent};
 pub(crate) mod seeded;
 mod validation;
 pub use archive::SubjectRestoreReview;
@@ -224,6 +226,16 @@ pub(crate) fn actor_subject_anchor_in_txn(
     actor_ref: &EntityId,
     at: u64,
 ) -> Result<Option<ActorSubjectAnchor>> {
+    actor_subject_anchor_with_planned_in_txn(vault, txn, actor_ref, at, None)
+}
+
+fn actor_subject_anchor_with_planned_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor_ref: &EntityId,
+    at: u64,
+    planned: Option<&prepared::PlannedSubjectEntities<'_>>,
+) -> Result<Option<ActorSubjectAnchor>> {
     // An anchor awaiting its owner's answer names no subject yet; the eligible
     // heads must still agree.
     let mut value: Option<Value> = None;
@@ -253,18 +265,23 @@ pub(crate) fn actor_subject_anchor_in_txn(
         .ok_or(Error::InvalidClaimBody(
             "actor.subject_ref must be an entity reference",
         ))?;
-    validate_anchor_entities_in_txn(vault, txn, *actor_ref, stored)?;
-    let subject_kind = SubjectKind::from_entity_type(vault.get_entity_type_in_txn(txn, &stored)?)?;
+    prepared::validate_anchor_with_planned_in_txn(vault, txn, *actor_ref, stored, planned)?;
+    let subject_kind = SubjectKind::from_entity_type(prepared::subject_entity_type_in_txn(
+        vault, txn, &stored, planned,
+    )?)?;
     let heads = vault.resolve_entity_in_txn(txn, &stored)?;
     let [head] = heads.as_slice() else {
         return Ok(None);
     };
-    if SubjectKind::from_entity_type(vault.get_entity_type_in_txn(txn, head)?)? != subject_kind {
+    if SubjectKind::from_entity_type(prepared::subject_entity_type_in_txn(
+        vault, txn, head, planned,
+    )?)? != subject_kind
+    {
         return Err(Error::InvalidClaimBody(
             "actor.subject_ref redirect kind mismatch",
         ));
     }
-    validate_anchor_entities_in_txn(vault, txn, *actor_ref, *head)?;
+    prepared::validate_anchor_with_planned_in_txn(vault, txn, *actor_ref, *head, planned)?;
     Ok(Some(ActorSubjectAnchor {
         actor_ref: *actor_ref,
         subject_ref: *head,
@@ -337,11 +354,29 @@ fn write_head_in_txn(
     } else {
         replacement_heads_in_txn(vault, wtxn, &subject, &body.predicate, at)?
     };
-    vault.put_reserved_claim_in_txn(wtxn, claim_id, body, occurred, at)?;
-    for (head_id, _) in superseded {
-        vault.supersede_reserved_claim_in_txn(wtxn, claim_id, &head_id, at)?;
-    }
-    Ok(())
+    write_captured_head_in_txn(
+        vault,
+        wtxn,
+        claim_id,
+        body,
+        occurred,
+        at,
+        superseded.into_iter().map(|(id, _)| id),
+    )
+}
+
+fn write_captured_head_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim_id: &EntityId,
+    body: &ClaimBody,
+    occurred: TimeRange,
+    at: u64,
+    superseded: impl IntoIterator<Item = EntityId>,
+) -> Result<()> {
+    prepared::write_captured_head_with_setup_owner_in_txn(
+        vault, wtxn, claim_id, body, occurred, at, superseded, None,
+    )
 }
 
 /// Onboarding may fill an absent anchor, never replace an existing someone.
@@ -399,36 +434,10 @@ fn ensure_fact_in_txn(
     body: ClaimBody,
     at: u64,
 ) -> Result<()> {
-    let ClaimSubject::Entity(subject) = body.subject else {
-        return Err(Error::InvariantViolation(
-            "subject model fact must name an entity",
-        ));
+    let Some(prepared) = prepared::prepare_subject_fact_in_txn(vault, txn, body, at)? else {
+        return Ok(());
     };
-    let prior = if body.predicate == PREDICATE_PERSON_SUBSTRATE {
-        person_substrate_bodies_in_txn(vault, txn, &subject, at, false)?
-            .pop()
-            .map(|(_, body)| body.value)
-    } else {
-        let prior = single_subject_value(vault, txn, &subject, &body.predicate, at)?;
-        if prior.is_some() && actor_subject_anchor_in_txn(vault, txn, &subject, at)?.is_none() {
-            return Err(Error::InvalidClaimBody(
-                "actor.subject_ref requires one canonical subject",
-            ));
-        }
-        prior
-    };
-    if let Some(prior) = prior {
-        // Compare the stored assertion, not the redirected anchor: a retry
-        // must never rewrite the subject the original writer actually named.
-        return if prior == body.value {
-            Ok(())
-        } else {
-            Err(Error::InvalidClaimBody(
-                "subject model fact is already bound differently",
-            ))
-        };
-    }
-    write_head_in_txn(vault, txn, &vault.store.clock.entity_id()?, &body, at)
+    write_head_in_txn(vault, txn, &prepared.id, &prepared.body, at)
 }
 
 // Only PERSON puts create the constructor's subject-derived substrate FACET.
@@ -438,12 +447,23 @@ fn actor_subject_facet_in_txn(
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
 ) -> Result<EntityId> {
-    if vault.get_entity_type_in_txn(txn, &actor)? == Some(ENTITY_TYPE_PERSON) {
+    actor_subject_facet_with_planned_in_txn(vault, txn, actor, None)
+}
+
+fn actor_subject_facet_with_planned_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    planned: Option<&prepared::PlannedSubjectEntities<'_>>,
+) -> Result<EntityId> {
+    if prepared::subject_entity_type_in_txn(vault, txn, &actor, planned)?
+        == Some(ENTITY_TYPE_PERSON)
+    {
         return crate::claim::substrate_facet_id(actor);
     }
     match crate::federation::record_scope::birth_facet(&vault.store, txn, actor)? {
         Some(facet)
-            if vault.get_entity_type_in_txn(txn, &facet)?
+            if prepared::subject_entity_type_in_txn(vault, txn, &facet, planned)?
                 == Some(crate::registry::ENTITY_TYPE_FACET) =>
         {
             Ok(facet)
@@ -535,7 +555,20 @@ fn person_substrate_bodies_in_txn(
     at: u64,
     replacing: bool,
 ) -> Result<Vec<(EntityId, ClaimBody)>> {
-    if vault.get_entity_type_in_txn(txn, person_ref)? != Some(ENTITY_TYPE_PERSON) {
+    person_substrate_bodies_with_planned_in_txn(vault, txn, person_ref, at, replacing, None)
+}
+
+fn person_substrate_bodies_with_planned_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person_ref: &EntityId,
+    at: u64,
+    replacing: bool,
+    planned: Option<&prepared::PlannedSubjectEntities<'_>>,
+) -> Result<Vec<(EntityId, ClaimBody)>> {
+    if prepared::subject_entity_type_in_txn(vault, txn, person_ref, planned)?
+        != Some(ENTITY_TYPE_PERSON)
+    {
         if active_bodies_in_txn(vault, txn, person_ref, PREDICATE_PERSON_SUBSTRATE, at)?.is_empty()
         {
             return Ok(Vec::new());
@@ -550,7 +583,9 @@ fn person_substrate_bodies_in_txn(
             "person.substrate requires one canonical PERSON",
         ));
     };
-    if vault.get_entity_type_in_txn(txn, canonical)? != Some(ENTITY_TYPE_PERSON) {
+    if prepared::subject_entity_type_in_txn(vault, txn, canonical, planned)?
+        != Some(ENTITY_TYPE_PERSON)
+    {
         return Err(Error::InvalidClaimBody(
             "person.substrate redirect must name a PERSON",
         ));
@@ -585,7 +620,9 @@ fn person_substrate_bodies_in_txn(
                 "person.substrate requires one canonical PERSON",
             ));
         }
-        if vault.get_entity_type_in_txn(txn, &subject)? != Some(ENTITY_TYPE_PERSON) {
+        if prepared::subject_entity_type_in_txn(vault, txn, &subject, planned)?
+            != Some(ENTITY_TYPE_PERSON)
+        {
             return Err(Error::InvalidClaimBody(
                 "person.substrate subject must be a PERSON",
             ));

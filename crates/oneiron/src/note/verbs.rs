@@ -25,6 +25,25 @@ impl Vault {
         markdown: &str,
         actor: WriteActor,
     ) -> MemoryResult<EntityId> {
+        self.create_note_born(
+            kind,
+            markdown,
+            actor,
+            crate::federation::record_scope::BirthPosition::default(),
+        )
+    }
+
+    /// [`Self::create_note`] for a writer whose host bound it to be born at
+    /// `birth`: a narrowed writer's NOTE starts in its writer's world, with an
+    /// `InWorld` edge in its birth write, so the writer reads it back where
+    /// its credential reads (FIX 22223). Base reality takes no edge.
+    pub(crate) fn create_note_born(
+        &self,
+        kind: &str,
+        markdown: &str,
+        actor: WriteActor,
+        birth: crate::federation::record_scope::BirthPosition,
+    ) -> MemoryResult<EntityId> {
         let kind = self.note_kind(kind)?;
         let id = self.store.clock.entity_id()?;
         let at = self.store.clock.now_recorded_at();
@@ -35,29 +54,33 @@ impl Vault {
         })?;
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
-                content.apply_batch(
-                    self.batch_in()
-                        .put_authored_note(
-                            &id,
-                            &actor.entity_ref(),
-                            TimeRange { start: at, end: at },
+                let mut batch = self
+                    .batch_in()
+                    .put_authored_note(
+                        &id,
+                        &actor.entity_ref(),
+                        TimeRange { start: at, end: at },
+                        at,
+                        &body,
+                        markdown,
+                    )
+                    .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
+                    .made_by(
+                        &id,
+                        RowBirth::written(
+                            actor,
+                            MadeByClass::of_writer(actor.actor_class()),
+                            "note.create",
+                            &[],
+                            &[],
                             at,
-                            &body,
-                            markdown,
-                        )
-                        .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
-                        .made_by(
-                            &id,
-                            RowBirth::written(
-                                actor,
-                                MadeByClass::of_writer(actor.actor_class()),
-                                "note.create",
-                                &[],
-                                &[],
-                                at,
-                            ),
                         ),
-                )?;
+                    );
+                if let Some(world) = birth.claim_world() {
+                    let weight = EdgeKind::InWorld.default_weight().unwrap_or(1.0);
+                    batch = batch.edge(&id, EdgeKind::InWorld, &world, weight);
+                }
+                content.apply_batch(batch)?;
                 content.update_note(id, |txn, _lane| {
                     let doc = super::document_store::load(self, txn, id)?;
                     super::document_store::persist_authoritative(self, txn, &doc)?;

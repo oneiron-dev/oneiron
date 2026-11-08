@@ -221,6 +221,7 @@ fn trust_row_narrows(before: &SourceTrustRow, after: &SourceTrustRow) -> bool {
         && after.max_auto_sensitivity <= before.max_auto_sensitivity
         && (before.receipted || !after.receipted)
         && (before.warned || !after.warned)
+        && (after.auto_checker.is_none() || after.auto_checker == before.auto_checker)
 }
 
 /// Source trust on its folded slots: each slot stays and narrows, and a new
@@ -378,8 +379,11 @@ pub(crate) fn manifest_resolution_narrows(
         return false;
     }
     let mut probe = after.clone();
-    // Past fail-closed, the count of manifests is bookkeeping.
+    // Past fail-closed, the count of manifests and body provenance are bookkeeping.
     probe.diagnostics = before.diagnostics;
+    probe
+        .manifest_body_rows
+        .clone_from(&before.manifest_body_rows);
     macro_rules! axis {
         ($field:ident, $narrower:expr) => {
             settle(&mut probe.$field, &before.$field, &after.$field, $narrower)

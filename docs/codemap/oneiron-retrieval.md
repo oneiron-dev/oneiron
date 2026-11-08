@@ -11,6 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `examples/recall_kernels.rs` | src | m | — | — | Bench-only micro-bench (never part of production paths): public recall kernels in `oneiron-retrieval` over… |
 | `src/analyzer/chinese.rs` | src | s | 2 struct · 1 enum · 10 fn · 2 const | CharByteTable, ChineseAnalyzer, DictLoadError | Chinese analyzer |
 | `src/analyzer/cjk_ngram.rs` | src | s | 1 fn · 1 crate-vis | — | Script-safe CJK n-gram generator |
 | `src/analyzer/detect.rs` | src | s | 3 fn · 1 const | — | Language detection + `LanguageHint` resolution |

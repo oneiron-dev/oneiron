@@ -8,8 +8,8 @@ use crate::claim::ScopedRead;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::PolicyManifestResolution;
+use crate::ports::ReadRow;
 use crate::ports::ScopedReadResult;
-use crate::ports::{PointRead, ReadRow};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::sandbox_import::SandboxLinkedImport;
 use oneiron_contracts::claim::ScopedReadReceipt;
@@ -25,6 +25,13 @@ use super::paging::{
     DayPosition, EdgeCursor, PageBuilder, TemporalCursor, WorldPosition, format_day_shard,
     parse_day_shard,
 };
+
+mod paths;
+
+pub(super) use self::paths::{
+    empty_page, normalize_path, parse_entity_id, path_components, sealed_is_absent,
+};
+use self::paths::{lane_reads_some_row, lane_walks_world, parse_world_scope};
 
 /// File lookup and the receipt of the scoped read, if a stored row was read.
 /// Fixed files and unmatched paths have no scoped-read receipt.
@@ -249,32 +256,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 
     pub fn read_link(&self, path: &str) -> Result<Option<String>> {
-        let normalized = normalize_path(path)?;
-        let components = path_components(&normalized)?;
-        if self.snapshot.is_some() {
-            return Ok(None);
-        }
-        let [component] = components.as_slice() else {
-            return Ok(None);
-        };
-        let Some(claim_hex) = component
-            .strip_prefix("[[claim:")
-            .and_then(|rest| rest.strip_suffix("]]"))
-        else {
-            return Ok(None);
-        };
-        let claim_id = parse_entity_id(claim_hex)?;
-        if self
-            .scoped_read
-            .read(&[PointRead::id(claim_id)], None)?
-            .single()
-            .value
-            .is_some()
-        {
-            Ok(Some(format!("/claims/{}", claim_id.to_hex())))
-        } else {
-            Ok(None)
-        }
+        Ok(self.read_link_with_receipt(path)?.value)
     }
 
     pub(super) fn entity_type_in(
@@ -752,126 +734,5 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             builder.set_last_temporal_cursor(temporal);
         }
         Ok(builder.finish(next_cursor))
-    }
-}
-
-/// Whether `lane` may walk into `world` (`None` is base reality) in `rtxn`,
-/// judged as claim admission judges a claim's world: the lane must read
-/// some row ([`lane_reads_some_row`]), its credential must be live, and the
-/// worlds the read asked for and its Scope must admit `world`; the owner then
-/// reads every world of their vault (ARCH-0057). Any other reader reads where
-/// a read grant for it reads the world
-/// ([`crate::gate::scoped_read_grant_reads_world`]), anywhere while the
-/// manifest holds no read grant, and, with a credential no grant names,
-/// wherever that credential reads.
-fn lane_walks_world(
-    lane: &ScopedRead<'_>,
-    rtxn: &heed::RoTxn<'_>,
-    policy: &PolicyManifestResolution,
-    world: Option<EntityId>,
-) -> Result<bool> {
-    let key = lane.actor_key();
-    if !lane_reads_some_row(lane, policy) || !lane.world_readable_in(rtxn, world)? {
-        return Ok(false);
-    }
-    if key.vault_owner_ref().is_some() {
-        return Ok(true);
-    }
-    if !policy.has_scoped_read_grants() {
-        return Ok(true);
-    }
-    let mut matched = false;
-    for grant in policy.scoped_grants() {
-        if !read_grant_matches_actor(grant, key) {
-            continue;
-        }
-        matched = true;
-        if lane.vault().store.gate_hooks.scoped_read_grant_reads_world(
-            grant,
-            world,
-            key.authority_scope(),
-        ) {
-            return Ok(true);
-        }
-    }
-    Ok(key.authority_scope().is_some() && !matched)
-}
-
-/// Whether `lane`'s ordinary reads could admit any row under `policy`: the
-/// retrieval floor every read applies leaves some row
-/// ([`crate::gate::RetrievalPolicyFloor::reads_some_row`]). A credential
-/// without the read verb, or with its bands, audience, sensitivity or worlds
-/// at bottom, a fail-closed manifest, grants that read nothing, and a
-/// credential whose bands share no type with its grants' each leave it none,
-/// so it walks no world either (Sol R7-003, R11-001).
-fn lane_reads_some_row(lane: &ScopedRead<'_>, policy: &PolicyManifestResolution) -> bool {
-    policy
-        .retrieval_floor_for_actor(Some(lane.actor_key()))
-        .reads_some_row()
-}
-
-pub(super) fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {
-    GraphFsPage {
-        path: path.to_owned(),
-        mount,
-        entries: Vec::new(),
-        next_cursor: None,
-        byte_count: 0,
-        read_receipt: None,
-        entry_cursors: Vec::new(),
-    }
-}
-
-pub(super) fn normalize_path(path: &str) -> Result<String> {
-    if !path.starts_with('/') {
-        return Err(Error::InvalidConfig(
-            "graph-fs path must be absolute".to_owned(),
-        ));
-    }
-    let normalized = path.trim_end_matches('/');
-    if normalized.is_empty() {
-        Ok("/".to_owned())
-    } else {
-        path_components(normalized)?;
-        Ok(normalized.to_owned())
-    }
-}
-
-pub(super) fn path_components(path: &str) -> Result<Vec<&str>> {
-    if path == "/" {
-        return Ok(Vec::new());
-    }
-    let mut components = Vec::new();
-    for component in path.trim_start_matches('/').split('/') {
-        if component.is_empty() || component == "." || component == ".." {
-            return Err(Error::InvalidConfig(
-                "graph-fs path component is invalid".to_owned(),
-            ));
-        }
-        components.push(component);
-    }
-    Ok(components)
-}
-
-pub(super) fn parse_entity_id(value: &str) -> Result<EntityId> {
-    EntityId::from_hex(value)
-}
-
-fn parse_world_scope(value: &str) -> Result<Option<EntityId>> {
-    if value == "base" {
-        Ok(None)
-    } else {
-        parse_entity_id(value).map(Some)
-    }
-}
-
-/// A walk passes over sealed secret custody as absent rather than failing:
-/// it is never part of the tree, and a raw read of it still refuses.
-pub(super) fn sealed_is_absent(readable: Result<bool>) -> Result<bool> {
-    match readable {
-        Err(error) if error.kind() == crate::error::ErrorKind::InvalidSecretCustodyBody => {
-            Ok(false)
-        }
-        readable => readable,
     }
 }

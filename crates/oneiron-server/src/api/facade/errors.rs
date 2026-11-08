@@ -13,6 +13,7 @@ impl FacadeApiError {
     ) -> Self {
         Self {
             status,
+            hook_notice: false,
             body: FacadeErrorEnvelope {
                 error: FacadeErrorBody {
                     code: code.to_owned(),
@@ -26,11 +27,19 @@ impl FacadeApiError {
                     resets_at: Vec::new(),
                     reason_codes: Vec::new(),
                     legal_hold: None,
+                    room_join_hold: None,
                     program_steps: Vec::new(),
                 },
                 narrowing: None,
             },
         }
+    }
+
+    /// Adds only a positive, content-free notice from the actual hook chain.
+    /// No positive notice does not certify that the arguments were unchanged.
+    pub(super) fn with_hook_notice(mut self, hook_notice: bool) -> Self {
+        self.hook_notice |= hook_notice;
+        self
     }
 
     pub(super) fn forbidden(
@@ -196,6 +205,18 @@ impl From<MemoryError> for FacadeApiError {
         }
         Self {
             status,
+            hook_notice: matches!(
+                error.hook.as_deref(),
+                Some(
+                    VerbHookStop::Completed {
+                        hook_notice: Some(true),
+                        ..
+                    } | VerbHookStop::CompletedWithError {
+                        hook_notice: Some(true),
+                        ..
+                    }
+                )
+            ),
             body: FacadeErrorEnvelope {
                 error: FacadeErrorBody {
                     code: error.code,
@@ -209,6 +230,7 @@ impl From<MemoryError> for FacadeApiError {
                     resets_at: error.resets_at,
                     reason_codes: error.reason_codes,
                     legal_hold: error.legal_hold,
+                    room_join_hold: error.room_join_hold,
                     program_steps: Vec::new(),
                 },
                 narrowing: error.read_receipt,
@@ -224,6 +246,7 @@ impl From<MemoryError> for FacadeApiError {
 impl From<ApiError> for FacadeApiError {
     fn from(error: ApiError) -> Self {
         let legal_hold = error.legal_hold().cloned().map(Box::new);
+        let room_join_hold = error.room_join_hold().cloned().map(Box::new);
         let mut refusal = Self::new(
             error.status(),
             error.code().as_str(),
@@ -231,6 +254,7 @@ impl From<ApiError> for FacadeApiError {
             error.suggestions().to_vec(),
         );
         refusal.body.error.legal_hold = legal_hold;
+        refusal.body.error.room_join_hold = room_join_hold;
         refusal
     }
 }
@@ -307,6 +331,7 @@ impl FacadeApiError {
         replayed.resets_at = replayed_field(error, "resetsAt").unwrap_or_default();
         replayed.reason_codes = replayed_field(error, "reasonCodes").unwrap_or_default();
         replayed.legal_hold = replayed_field(error, "legal_hold").map(Box::new);
+        replayed.room_join_hold = replayed_field(error, "room_join_hold").map(Box::new);
         replayed.program_steps = replayed_field(error, "programSteps").unwrap_or_default();
         refusal.body.narrowing = replayed_field(body, "narrowing").map(Box::new);
         Some(refusal)
@@ -321,13 +346,19 @@ impl FacadeApiError {
                 .headers_mut()
                 .insert(axum::http::header::RETRY_AFTER, HeaderValue::from(seconds));
         }
-        response
+        super::release::with_hook_notice(response, self.hook_notice)
     }
 
     /// The refusal as the engine's typed error, for a door outside the
     /// facade (MCP's row door admission, the held socket's `rpc.err`): its
     /// open code, message and suggestions, its read receipt, wrong-root
     /// correction and hook stop. Only the HTTP status stays behind.
+    pub(crate) fn into_memory_error_with_notice(self) -> (MemoryError, Option<bool>) {
+        let hook_notice = self.hook_notice.then_some(true);
+        (self.into_memory_error(), hook_notice)
+    }
+
+    /// The same refusal without its caller-only notice metadata.
     pub(crate) fn into_memory_error(self) -> MemoryError {
         let FacadeErrorEnvelope { error, narrowing } = self.body;
         let mut refusal = MemoryError::new(&error.code, error.message, &[]);
@@ -339,7 +370,22 @@ impl FacadeApiError {
         refusal.resets_at = error.resets_at;
         refusal.reason_codes = error.reason_codes;
         refusal.legal_hold = error.legal_hold;
+        refusal.room_join_hold = error.room_join_hold;
         refusal
+    }
+
+    /// The result a verb hook's `Completed` stop carries, beside the
+    /// invocation it ran under, for a door that releases a drained call's
+    /// saved result before it answers (FIX 1435). `None` for any other
+    /// refusal.
+    pub(crate) fn completed_hook_result(&mut self) -> Option<(&str, &mut serde_json::Value)> {
+        let oneiron::runtime_hooks::VerbHookStop::Completed {
+            invocation, result, ..
+        } = self.body.error.hook.as_deref_mut()?
+        else {
+            return None;
+        };
+        Some((invocation.as_str(), result))
     }
 }
 
@@ -356,7 +402,7 @@ impl IntoResponse for FacadeApiError {
 
 /// Every member a facade refusal's `error` states on the wire
 /// ([`FacadeErrorBody`], its wrong-root correction flattened in).
-const REPLAYED_ERROR_FIELDS: [&str; 14] = [
+const REPLAYED_ERROR_FIELDS: [&str; 15] = [
     "code",
     "message",
     "requestId",
@@ -370,6 +416,7 @@ const REPLAYED_ERROR_FIELDS: [&str; 14] = [
     "resetsAt",
     "reasonCodes",
     "legal_hold",
+    "room_join_hold",
     "programSteps",
 ];
 

@@ -148,7 +148,10 @@ pub fn skill_reliability_posterior_for_executor(
     resolved_reliability_posterior_in_txn(vault, &txn, skill, Some(executor))
 }
 
-pub(crate) fn validate_executor(executor: &str) -> Result<()> {
+/// Checks an executor id as the skill-reliability reads and the context-pack
+/// builder take it: `id@revision`, at most 256 bytes, no control characters.
+/// A host checks it before any pack work starts (FIX 1435).
+pub fn validate_executor(executor: &str) -> Result<()> {
     if executor.len() > 256
         || executor.chars().any(char::is_control)
         || !executor
@@ -249,11 +252,23 @@ pub(super) fn active_claims_in_txn(
     skill: &EntityId,
     predicate: &str,
 ) -> Result<Vec<(EntityId, ClaimBody, u64)>> {
+    active_claims_sourced_in_txn(vault, rtxn, skill, predicate).map(|(claims, _)| claims)
+}
+
+/// Active claims beside every claim body the predicate/lifecycle filter read.
+pub(super) fn active_claims_sourced_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    predicate: &str,
+) -> Result<(Vec<(EntityId, ClaimBody, u64)>, Vec<EntityId>)> {
     let mut rows = Vec::new();
+    let mut sources = Vec::new();
     for id in vault.claims_for_subject_in_txn(rtxn, skill)? {
         let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
             continue;
         };
+        sources.push(id);
         if body.predicate != predicate || body.lifecycle != ClaimLifecycleStatus::Active {
             continue;
         }
@@ -266,7 +281,7 @@ pub(super) fn active_claims_in_txn(
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         rows.push((id, body, header.occurred_start));
     }
-    Ok(rows)
+    Ok((rows, sources))
 }
 
 pub(super) fn active_reliability_heads_in_txn(

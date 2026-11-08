@@ -2,8 +2,10 @@
 //! scoped retrieval through the shared pipeline, and projects the wire response.
 
 mod audience;
+mod builder_controls;
 mod companion_assembly;
 mod controls;
+mod input_worker;
 mod instruction_files;
 mod interlocutor;
 mod media_query;
@@ -11,6 +13,7 @@ mod reader;
 mod resolve;
 mod response;
 mod response_limits;
+mod validate;
 
 pub(crate) use self::audience::*;
 pub(crate) use self::companion_assembly::*;

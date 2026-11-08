@@ -4,9 +4,8 @@
 //! hook depth 0, so the row boundary runs the pre chain, finds the settled
 //! proceed and resumes after the asking hook. The saved args are checked
 //! again and the verb's own gate runs as on any call. What the call returned
-//! waits in the saved row for the caller's retry, up to 64 KiB of JSON; past
-//! it the row keeps only that the call completed. A result keeps beside it
-//! the rows its door listed it derived from (FIX 1435).
+//! waits in the saved row in full for the caller's retry. A result keeps
+//! beside it the rows its door listed it derived from (FIX 1435).
 //!
 //! Only a call the drain can make as its caller made it has a target: a
 //! credential caller's row its host can run again through the door it came
@@ -186,10 +185,11 @@ impl Vault {
         }
         let mut receipt = None;
         // A credential call's door may list the rows its answer was derived
-        // from: they are saved with it (FIX 1435).
-        let (ran, producers) = match resume {
-            VerbResume::Row(plain) => (
-                plain_resume::run(
+        // from: they are saved with it (FIX 1435), beside the chain's notice
+        // metadata (FIX 12517).
+        let (ran, producers, hook_notice) = match resume {
+            VerbResume::Row(plain) => {
+                let (ran, hook_notice) = plain_resume::run(
                     self,
                     invocation,
                     &verb,
@@ -197,9 +197,9 @@ impl Vault {
                     filter::edge_class(class),
                     args,
                     plain,
-                )?,
-                None,
-            ),
+                )?;
+                (ran, None, hook_notice)
+            }
             VerbResume::Credential { reference } => {
                 let class = filter::edge_class(class);
                 receipt = Some(RefusalReceipt::new(
@@ -211,8 +211,11 @@ impl Vault {
         };
         let failed = ran.is_err();
         let (outcome, transient) = match ran {
-            // A result over the cap saves that it completed, not the result.
-            Ok(value) => (ask::SavedOutcome::result(&value, producers)?, false),
+            // Save the full returned value for the caller's retry.
+            Ok(value) => (
+                ask::SavedOutcome::result(&value, producers, hook_notice)?,
+                false,
+            ),
             Err(error) => match error.hook.as_deref() {
                 // A later hook asked: its own ask now stands under the key,
                 // or this one no longer reads as settled.
@@ -228,7 +231,7 @@ impl Vault {
                 hook => {
                     let transient = run_failed_transient(&error);
                     (
-                        ask::SavedOutcome::error(error.code, &error.message),
+                        ask::SavedOutcome::error(error.code, &error.message, hook_notice),
                         transient,
                     )
                 }

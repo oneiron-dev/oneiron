@@ -36,9 +36,9 @@ pub enum Shape {
     /// JSON, top-level body `model`, Bearer. The reply, images inline, is
     /// streamed.
     OpenAiImages,
-    /// OpenAI-compatible image edits: `POST …/v1/images/edits`, a multipart
-    /// form with one `model` field, Bearer. The reply, images inline, is
-    /// streamed.
+    /// OpenAI-compatible image edits: `POST …/v1/images/edits`, JSON or a
+    /// multipart form with one `model` field, Bearer. The reply, images
+    /// inline, is streamed.
     OpenAiImageEdits,
     /// OpenAI-compatible speech: `POST …/v1/audio/speech`, JSON, top-level
     /// body `model`, Bearer. The reply is audio bytes, streamed.
@@ -317,7 +317,7 @@ const OPENAI_IMAGES: Row = openai(
 const OPENAI_IMAGE_EDITS: Row = openai(
     "POST",
     &["v1", "images", "edits"],
-    Body::Form,
+    Body::JsonOrForm,
     Selector::Body,
     true,
 );
@@ -615,8 +615,9 @@ impl Shape {
         self.row().auth_prefix
     }
 
-    /// Whether the reply streams back in chunks, up to [`crate::MAX_STREAM`]
-    /// bytes, instead of one buffered body up to [`crate::MAX_BODY`]. A
+    /// Whether the reply streams back in chunks instead of one buffered body
+    /// up to [`crate::MAX_BODY`]. Ordinary HTTP streams have no cumulative byte
+    /// cap. A
     /// streamed body is a binary one, or a media JSON one (FIX 1896): each
     /// form of the key in it is redacted at its bytes as the chunks pass, and
     /// it is never cut for one (FIX 6103).

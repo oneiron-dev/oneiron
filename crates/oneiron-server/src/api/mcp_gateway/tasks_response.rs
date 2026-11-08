@@ -203,7 +203,19 @@ pub(crate) async fn execute_mcp_generated_verb(
                     }) => {
                         let stop = *stop;
                         let rows = stop_release_rows(server, actor, &stop, &mut served);
-                        if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows) {
+                        let owner_whole_vault_export =
+                            super::device_release::owner_whole_vault_export_call(
+                                server,
+                                actor,
+                                args.tool.name,
+                            );
+                        if super::served_rows::drained_rows_lapsed(
+                            server,
+                            actor,
+                            &stop,
+                            rows,
+                            owner_whole_vault_export,
+                        ) {
                             return Ok(super::claimed_release::details_on_device_result());
                         }
                         return mcp_hook_stop_result(server, &args, actor, stop, rows, hook_notice);
@@ -286,7 +298,19 @@ pub(crate) async fn execute_mcp_generated_verb(
     )
     .await;
     let rows = snapshot.rows.as_deref();
-    let result = mcp_release_listed(server, actor, rows, continued, result).map(|result| {
+    // The owner's own whole-vault export, as this call's route and his fresh
+    // proof name it, is released as his will (owner ruling 1-EXPORT = B).
+    let owner_whole_vault_export =
+        super::device_release::owner_whole_vault_export_call(server, actor, args.tool.name);
+    let result = mcp_release_listed(
+        server,
+        actor,
+        rows,
+        continued,
+        result,
+        owner_whole_vault_export,
+    )
+    .map(|result| {
         super::type_feedback_release::attach_verb_feedback(server, actor, rows, feedback, result)
     });
     if result.is_ok()
@@ -418,6 +442,7 @@ pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
         _ => -32000,
     };
     let mut gateway = McpGatewayError::new(code, error.code().as_str(), error.message());
+    gateway.room_join_hold = error.room_join_hold().cloned().map(Box::new);
     if let ApiErrorDetails::BadRequest { field } = error.details()
         && let Some(field) = field
     {
@@ -474,7 +499,14 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
             McpGatewayError::new(-32020, MCP_HOST_ACTION_REFUSED, error.to_string())
         }
         ErrorKind::LegalHold => mcp_facade_error(oneiron::MemoryError::from(error)),
-        _ => McpGatewayError::new(-32603, "engine_error", format!("{context}: {error}")),
+        _ => {
+            let mut refusal =
+                McpGatewayError::new(-32603, "engine_error", format!("{context}: {error}"));
+            if let oneiron::Error::Record(oneiron::error::RecordError::RoomJoinHeld(hold)) = error {
+                refusal.room_join_hold = Some(hold);
+            }
+            refusal
+        }
     }
 }
 
@@ -491,6 +523,17 @@ pub(crate) fn mcp_hook_stop(stop: oneiron::runtime_hooks::VerbHookStop) -> McpGa
         VerbHookStop::CompletedWithError { .. } => "verb_hook_completed_with_error",
     };
     let mut error = McpGatewayError::new(-32020, kind, stop.to_string());
+    error.hook_notice = matches!(
+        &stop,
+        VerbHookStop::Completed {
+            hook_notice: Some(true),
+            ..
+        } | VerbHookStop::CompletedWithError {
+            hook_notice: Some(true),
+            ..
+        }
+    )
+    .then(|| oneiron::task_verb::revoke_lands::CALLER_NOTICE_SUMMARY.to_owned());
     error.hook = Some(Box::new(stop));
     error
 }
@@ -498,7 +541,7 @@ pub(crate) fn mcp_hook_stop(stop: oneiron::runtime_hooks::VerbHookStop) -> McpGa
 /// Resolves the short refs embedded in a notice before releasing its detail.
 /// Allowed detail keeps those rows in the reply's replay provenance, after an
 /// act's own detail narrowing; unknown or held detail stays content-free.
-fn mcp_hook_notice(
+pub(super) fn mcp_hook_notice(
     server: &SyncServer,
     actor: &McpCallContext,
     notice: Option<String>,
@@ -560,7 +603,7 @@ fn mcp_hook_stop_result(
         "structuredContent": structured,
         "isError": true,
     });
-    mcp_release_listed(server, actor, served.as_deref(), false, result)
+    mcp_release_listed(server, actor, served.as_deref(), false, result, false)
 }
 
 /// Every structured refusal states the same four things: the machine code, the
@@ -639,6 +682,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         object.insert("legal_hold".to_owned(), json!(*legal_hold));
+    }
+    if let Some(room_join_hold) = error.room_join_hold
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("room_join_hold".to_owned(), json!(*room_join_hold));
     }
     if let Some(retry_after) = error.retry_after
         && let Some(object) = data.as_object_mut()
@@ -792,7 +840,8 @@ async fn mcp_task_row<T: Send + 'static>(
 
 /// Runs blocking row `tool` by `row` on a blocking thread, on the caller's
 /// surface rebuilt there (FIX 9609): an organ call may wait out its whole
-/// deadline, which must never hold an async runtime worker. The row's hooks
+/// deadline, and a provider read over blocking HTTP panics on a debug
+/// runtime worker (fix list row 20520); neither may hold one. The row's hooks
 /// stay with its caller. The rows its reads listed come back beside its
 /// result, a refusal's too. The rebuilt surface keeps the row's credential
 /// and write context. Rows needing direct authorship must not take this

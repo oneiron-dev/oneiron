@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 use super::ConsultPayloadRef;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
-    TaskAskAnswer, TaskAskDefault, TaskAskOptionId, TaskAskQuestion, TaskAskSource, TaskAskSpec,
-    TaskAskTarget, TaskAskWord,
+    TaskAskAnswer, TaskAskDefault, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskSource,
+    TaskAskSpec, TaskAskTarget, TaskAskWord,
 };
 use crate::code_run::{
     CodeConsentChoice, CodeConsentWaitRow, attach_code_consent_ask_in_txn, offered_choices,
@@ -56,6 +56,15 @@ pub(super) fn is_code_consent_ask_intent(intent_key: &str) -> bool {
 /// tool.
 fn choice_label(choice: CodeConsentChoice, row: &CodeConsentWaitRow) -> String {
     let Some(action) = row.binding.pending.browser_action() else {
+        if choice == CodeConsentChoice::ApproveAndStopAsking
+            && row.binding.remember_offer.is_none()
+            && let Some(offer) = &row.binding.standing_offer
+        {
+            return format!(
+                "Approve and stop asking: this call and {}",
+                offer.scope_description()
+            );
+        }
         return match choice {
             CodeConsentChoice::ApproveOnce => "Approve once: this call only",
             CodeConsentChoice::ApproveAndStopAsking => {
@@ -84,8 +93,8 @@ fn choice_label(choice: CodeConsentChoice, row: &CodeConsentWaitRow) -> String {
     }
 }
 
-/// The ask a wait's question carries: to its frozen owners, offering the wait's
-/// choices, holding with no deadline of its own. A held connector call's
+/// The ask a wait's question carries: to its frozen owners and holders,
+/// offering the wait's choices, holding with no deadline of its own. A held connector call's
 /// own expiry ends its wait; a held browser act waits for its answer.
 /// Silence never approves.
 fn ask_spec(row: &CodeConsentWaitRow) -> MemoryResult<TaskAskSpec> {
@@ -96,12 +105,16 @@ fn ask_spec(row: &CodeConsentWaitRow) -> MemoryResult<TaskAskSpec> {
         .map(|choice| {
             Ok((
                 TaskAskOptionId::new(choice.as_str())?,
-                choice_label(choice, row),
+                TaskAskOption::new(choice_label(choice, row)),
             ))
         })
         .collect::<MemoryResult<BTreeMap<_, _>>>()?;
+    let mut people = question.owners.clone();
+    if let Some(settlement) = &row.binding.holder_settlement {
+        people.extend(&settlement.holders);
+    }
     let mut spec = TaskAskSpec::shorthand(
-        Some(TaskAskTarget::People(question.owners.clone())),
+        Some(TaskAskTarget::People(people)),
         what,
         None,
         TaskAskDefault::Hold,
@@ -132,8 +145,8 @@ pub(super) fn reserved_ask_in(
 }
 
 /// Refuses a word on a code consent ask unless it is an asked, still-live
-/// owner's own Human word naming one of the wait's choices, on the node that admitted
-/// the ask; any other ask passes untouched. Runs in shared word admission,
+/// owner's or frozen holder's own Human word naming one of the wait's choices,
+/// on the node that admitted the ask; any other ask passes untouched. Runs in shared word admission,
 /// before the word is recorded.
 pub(super) fn guard_word(
     vault: &Vault,
@@ -153,8 +166,14 @@ pub(super) fn guard_word(
     let offered = offered_choices(&row.binding);
     if row.ask != Some(id)
         || source != TaskAskSource::Human
-        || !row.binding.question.owners.contains(&actor)
-        || !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?
+        || !((row.binding.question.owners.contains(&actor)
+            && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?)
+            || (row
+                .binding
+                .holder_settlement
+                .as_ref()
+                .is_some_and(|settlement| settlement.holders.contains(&actor))
+                && crate::consent::person_is_live_in_txn(vault, txn, &actor)?))
         || word.companion_for.is_some()
         || word.inform_for.is_some()
         || word.confirmation.is_some()
@@ -209,6 +228,20 @@ impl Memory<'_> {
     /// already landed, then admits the ask with its group bound to the wait
     /// in the admission's commit. Returns the ask's group.
     pub(crate) fn ask_code_consent(&self, wait_id: EntityId, text: &str) -> MemoryResult<EntityId> {
+        self.open_code_consent_ask(wait_id, text, &|_| Ok(()))
+    }
+
+    /// The native question and ask of code consent wait `wait_id`, on this
+    /// caller surface (FIX 4520). `admit_caller` is the check of the caller
+    /// route the surface stands on. It runs before the question lands and
+    /// in each commit that attaches the ask. The held call's own surface
+    /// passes no check; a kept session binding passes its own.
+    pub(crate) fn open_code_consent_ask(
+        &self,
+        wait_id: EntityId,
+        text: &str,
+        admit_caller: &dyn Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<EntityId> {
         let vault = self.vault();
         let row = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -221,6 +254,7 @@ impl Memory<'_> {
         let question = &row.binding.question;
         let landed = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            admit_caller(&txn)?;
             vault
                 .get_entity_type_in_txn(&txn, &question.message)?
                 .is_some()
@@ -249,10 +283,12 @@ impl Memory<'_> {
         }
         let spec = ask_spec(&row)?;
         let receipt = self.tasks_ask_with_txn_effect(&spec, |txn, group| {
+            admit_caller(txn)?;
             Ok(attach_code_consent_ask_in_txn(vault, txn, wait_id, group)?)
         })?;
         if receipt.idempotent_replay {
             self.with_verified_actor_write_txn(|txn| {
+                admit_caller(txn)?;
                 Ok(attach_code_consent_ask_in_txn(
                     vault,
                     txn,

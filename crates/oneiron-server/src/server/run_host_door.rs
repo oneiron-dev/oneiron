@@ -85,6 +85,7 @@ use crate::decision_verdict::{HELD_IMAGE, HeldImage, on_caller_payer, run_verdic
 use crate::slide_render::{AdmittedRenderer, RenderRefusal};
 
 mod board_carrier;
+mod graph_skill;
 mod host_rows;
 mod media_step;
 mod resident_rows;
@@ -416,7 +417,7 @@ impl AgentVerbDoor for RunHostDoor {
                         media_step.as_ref(),
                     )
                 }
-                None => answer_as_agent_in_step(
+                None => answer_as_agent_with_run(
                     &server,
                     actor,
                     &origin,
@@ -426,6 +427,7 @@ impl AgentVerbDoor for RunHostDoor {
                     held,
                     line.as_ref(),
                     attempt.as_deref(),
+                    Some(run_id),
                     media_step.as_ref(),
                 ),
             })
@@ -447,6 +449,7 @@ impl AgentVerbDoor for RunHostDoor {
         }
         let Ok(answered) = answered else {
             return Ok(Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: MEMORY_CODE_INTERNAL.to_owned(),
             }));
         };
@@ -462,7 +465,10 @@ impl AgentVerbDoor for RunHostDoor {
                     (None, Some(retry_after)) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => {
                         Err(oneiron::Error::ProviderUnavailable { retry_after })
                     }
-                    (None, _) => Ok(Err(AgentVerbRefusal { code: error.code })),
+                    (None, _) => Ok(Err(AgentVerbRefusal {
+                        hook_notice: None,
+                        code: error.code,
+                    })),
                 },
             },
         )
@@ -489,7 +495,10 @@ impl AgentVerbDoor for RunHostDoor {
             });
         Ok(match answered {
             Ok(output) => Ok(AgentVerbAnswer::new(output, None)),
-            Err(error) => Err(AgentVerbRefusal { code: error.code }),
+            Err(error) => Err(AgentVerbRefusal {
+                hook_notice: None,
+                code: error.code,
+            }),
         })
     }
 
@@ -502,6 +511,10 @@ impl AgentVerbDoor for RunHostDoor {
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        // Reading the reason is capture-only; a missing key must not refuse the decline.
+        if matches!(call, RunCall::Bridge(SelfEffect::TasksRefuse)) {
+            return Ok(self.host_turn_read_key());
+        }
         let repo = matches!(call, RunCall::Bridge(effect) if effect.is_repo());
         if !repo
             && !matches!(
@@ -518,7 +531,10 @@ impl AgentVerbDoor for RunHostDoor {
         self.admitting_memory()
             .read_key()
             .map(Some)
-            .map_err(|error| AgentVerbRefusal { code: error.code })
+            .map_err(|error| AgentVerbRefusal {
+                hook_notice: None,
+                code: error.code,
+            })
     }
 
     /// The host turn's hooks read as the run's own agent does, on this
@@ -569,8 +585,12 @@ impl AgentVerbDoor for RunHostDoor {
             // An answer serves no vault rows: the connector's reply is
             // foreign data.
             Ok(Ok(output)) => Ok(AgentVerbAnswer::new(output, Some(Vec::new()))),
-            Ok(Err(error)) => Err(AgentVerbRefusal { code: error.code }),
+            Ok(Err(error)) => Err(AgentVerbRefusal {
+                hook_notice: None,
+                code: error.code,
+            }),
             Err(_) => Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: MEMORY_CODE_INTERNAL.to_owned(),
             }),
         })
@@ -733,6 +753,24 @@ pub(super) fn answer_as_agent_in_step(
     attempt: Option<&str>,
     media_step: Option<&RunMediaStep>,
 ) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
+    answer_as_agent_with_run(
+        server, actor, origin, invocation, verb, input, held, line, attempt, None, media_step,
+    )
+}
+
+fn answer_as_agent_with_run(
+    server: &SyncServer,
+    actor: WriteActor,
+    origin: &HostWriteOrigin,
+    invocation: InvocationId,
+    verb: AgentVerb,
+    input: Value,
+    held: Option<HeldImage>,
+    line: Option<&RunAdmission>,
+    attempt: Option<&str>,
+    run_id: Option<EntityId>,
+    media_step: Option<&RunMediaStep>,
+) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
     // The agent's task work waits its turn in the vault's line (Rule 5), as
     // a served caller's does, and runs on it.
     let turn = verb.is_task_work().then(|| {
@@ -765,6 +803,8 @@ pub(super) fn answer_as_agent_in_step(
                     input,
                     line,
                     attempt,
+                    origin,
+                    run_id,
                     media_step,
                     &mut evidence,
                 )
@@ -821,6 +861,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::AiVideoCancel
             | AgentVerb::AiVerdict
             | AgentVerb::VaultGraphAsk
+            | AgentVerb::SelfSkillsGraph
             | AgentVerb::VaultQuestionsCreate
             | AgentVerb::VaultQuestionsEdit
             | AgentVerb::VaultQuestionsPause
