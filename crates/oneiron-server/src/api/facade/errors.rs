@@ -347,6 +347,19 @@ impl FacadeApiError {
         refusal.room_join_hold = error.room_join_hold;
         refusal
     }
+
+    /// The result a verb hook's `Completed` stop carries, beside the
+    /// invocation it ran under, for a door that releases a drained call's
+    /// saved result before it answers (FIX 1435). `None` for any other
+    /// refusal.
+    pub(crate) fn completed_hook_result(&mut self) -> Option<(&str, &mut serde_json::Value)> {
+        let oneiron::runtime_hooks::VerbHookStop::Completed { invocation, result } =
+            self.body.error.hook.as_deref_mut()?
+        else {
+            return None;
+        };
+        Some((invocation.as_str(), result))
+    }
 }
 
 /// The reply, with the refusal itself riding along in the response's
