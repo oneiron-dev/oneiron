@@ -1,4 +1,4 @@
-//! `vault.mail.pack.install` and `vault.mail.sources.sync` on a served vault
+//! `vault.mail.pack.install`, `vault.mail.sources.sync` and `vault.mail.reply.approve` on a served vault
 //! (FIX 12559): the owner installs the engine's own Mail & Calendar pack, and
 //! runs one import step of a source, under the proof `/v1/owner` takes from
 //! the request. The generated HTTP and MCP dispatchers both enter here; an
@@ -6,7 +6,9 @@
 
 use std::sync::Arc;
 
-use oneiron::mail_pack::{MailSourceSyncRequest, MailSyncReport};
+use oneiron::mail_pack::{
+    MailReplyApproveRequest, MailReplyDraftView, MailSourceSyncRequest, MailSyncReport,
+};
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{EmptyRequest, PackPutReceipt};
 
@@ -46,4 +48,22 @@ pub(crate) async fn vault_mail_sources_sync(
     })
     .await
     .map_err(|_| internal("vault.mail.sources.sync"))?
+}
+
+/// `vault.mail.reply.approve` (FIX 15420): the owner approves one reviewed
+/// revision of a drafted reply from their own mailbox, under the proof
+/// `/v1/owner` takes from the request; its send runs on the blocking pool,
+/// as the Gmail send wire is blocking HTTP.
+pub(crate) async fn vault_mail_reply_approve(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: MailReplyApproveRequest,
+) -> MemoryResult<MailReplyDraftView> {
+    let owner = owner_proof(auth, server, "vault.mail.reply.approve")?;
+    let server = Arc::clone(server);
+    super::clock_ingress::run_blocking(move || -> MemoryResult<MailReplyDraftView> {
+        server.vault().approve_mail_reply(&owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.mail.reply.approve"))?
 }

@@ -11613,6 +11613,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_mail_reply_draft(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.reply.draft", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_reply_drafts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.reply.drafts", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_reply_discard(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.reply.discard", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mail_reply_approve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.reply.approve", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_mail_compliance_setting(
         &self,
         input: serde_json::Value,

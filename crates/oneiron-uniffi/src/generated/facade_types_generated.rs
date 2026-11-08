@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1329 facade rows, 4788 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1281.
+// UniFFI census: 1333 facade rows, 4795 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1285.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -74186,6 +74186,115 @@ pub struct MailThreadShareReceipt {
     pub changed: bool,
     #[serde(rename = "shared_with")]
     pub shared_with: Vec<String>,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyDraftRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyDraftRequest {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+    #[serde(
+        rename = "parent_turn_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_turn_ref: Option<String>,
+    #[serde(rename = "body")]
+    pub body: String,
+    #[serde(rename = "request_key")]
+    pub request_key: String,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyDraftState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MailReplyDraftState {
+    #[serde(rename = "proposed")]
+    Proposed,
+    #[serde(rename = "approved")]
+    Approved,
+    #[serde(rename = "sent")]
+    Sent,
+    #[serde(rename = "unsettled")]
+    Unsettled,
+    #[serde(rename = "discarded")]
+    Discarded,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyDraftView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyDraftView {
+    #[serde(rename = "draft_ref")]
+    pub draft_ref: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+    #[serde(rename = "parent_turn_ref")]
+    pub parent_turn_ref: String,
+    #[serde(rename = "to")]
+    pub to: String,
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "body")]
+    pub body: String,
+    #[serde(rename = "plan_ref")]
+    pub plan_ref: String,
+    #[serde(rename = "state")]
+    pub state: MailReplyDraftState,
+    #[serde(rename = "outcome", default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+    #[serde(rename = "drafted_at")]
+    pub drafted_at: u64,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyDraftsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyDraftsRequest {
+    #[serde(
+        rename = "thread_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub thread_ref: Option<String>,
+    #[serde(
+        rename = "include_settled",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub include_settled: Option<bool>,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyDraftPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyDraftPage {
+    #[serde(rename = "drafts")]
+    pub drafts: Vec<MailReplyDraftView>,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyDraftRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyDraftRef {
+    #[serde(rename = "draft_ref")]
+    pub draft_ref: String,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyApproveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyApproveRequest {
+    #[serde(rename = "draft_ref")]
+    pub draft_ref: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
 }
 
 /// `oneiron::mail_pack::compliance::MailComplianceSettingView`.

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1329 facade rows, 4794 declarations.
-Inputs: 1258 of 1329 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1158 of 1329 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1333 facade rows, 4801 declarations.
+Inputs: 1262 of 1333 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1162 of 1333 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
@@ -23903,6 +23903,36 @@ class MailThreadShareReceipt(TypedDict):
     shared: bool
     changed: bool
     shared_with: list[str]
+class MailReplyDraftRequest(TypedDict):
+    thread_ref: str
+    parent_turn_ref: NotRequired[str | None]
+    body: str
+    request_key: str
+MailReplyDraftState = Literal["proposed", "approved", "sent", "unsettled", "discarded"]
+class MailReplyDraftView(TypedDict):
+    draft_ref: str
+    revision: int
+    source_ref: str
+    thread_ref: str
+    parent_turn_ref: str
+    to: str
+    subject: str
+    body: str
+    plan_ref: str
+    state: MailReplyDraftState
+    outcome: NotRequired[str | None]
+    drafted_at: int
+    updated_at: int
+class MailReplyDraftsRequest(TypedDict):
+    thread_ref: NotRequired[str | None]
+    include_settled: NotRequired[bool]
+class MailReplyDraftPage(TypedDict):
+    drafts: list[MailReplyDraftView]
+class MailReplyDraftRef(TypedDict):
+    draft_ref: str
+class MailReplyApproveRequest(TypedDict):
+    draft_ref: str
+    revision: int
 class MailComplianceSettingView(TypedDict):
     enabled: bool
     set_by_ref: NotRequired[str | None]

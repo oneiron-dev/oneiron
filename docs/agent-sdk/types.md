@@ -4440,6 +4440,8 @@ class Oneiron:
         @property
         def threads(self) -> "Oneiron._VaultMailThreadsVerbs": ...
         @property
+        def reply(self) -> "Oneiron._VaultMailReplyVerbs": ...
+        @property
         def compliance(self) -> "Oneiron._VaultMailComplianceVerbs": ...
         def inbox(self, spec: Facade.MailInboxRequest) -> Facade.MailInboxPage:
             """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
@@ -4478,6 +4480,15 @@ class Oneiron:
             """Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving."""
         def read(self, spec: Facade.MailThreadRequest) -> Facade.MailThreadView:
             """One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."""
+    class _VaultMailReplyVerbs:
+        def draft(self, spec: Facade.MailReplyDraftRequest) -> Facade.MailReplyDraftView:
+            """Drafts a plain-text reply to a mail thread the caller reads, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first."""
+        def drafts(self, spec: Facade.MailReplyDraftsRequest) -> Facade.MailReplyDraftPage:
+            """The drafted replies on the mail threads the caller reads, newest first, each with its words, recipient, frozen plan and state."""
+        def discard(self, spec: Facade.MailReplyDraftRef) -> Facade.MailReplyDraftView:
+            """Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends."""
+        def approve(self, spec: Facade.MailReplyApproveRequest) -> Facade.MailReplyDraftView:
+            """The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice."""
     class _VaultMailComplianceVerbs:
         def setting(self, spec: Facade.EmptyRequest | None = None) -> Facade.MailComplianceSettingView:
             """Whether org compliance search across mailboxes is on; off by default."""
