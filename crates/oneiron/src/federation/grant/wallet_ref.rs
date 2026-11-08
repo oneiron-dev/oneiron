@@ -10,12 +10,12 @@
 use oneiron_authority::federation::{WalletRef, decode_wallet_ref_value, wallet_ref_value};
 use rmpv::Value;
 
-use super::{FEDERATION_GRANT_BODY_KEYS, FederationGrant};
+use super::FederationGrant;
 use crate::error::Result;
 use crate::federation::FederationGrantKind;
 use crate::federation::codec::{invalid_grant, optional_value};
 
-const KEY_WALLET_REF: &str = FEDERATION_GRANT_BODY_KEYS[14];
+pub(super) const KEY_WALLET_REF: &str = "wallet_ref";
 
 /// The body entry of `grant`'s wallet, when it names one.
 pub(super) fn body_entry(grant: &FederationGrant) -> Option<(Value, Value)> {

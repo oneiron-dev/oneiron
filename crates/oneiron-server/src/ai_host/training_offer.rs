@@ -246,7 +246,7 @@ pub(super) fn draft(
         };
         // An exact Final paired measurement of this pair supplies its own
         // card (FIX 574); without one the grounded evidence stands.
-        super::eval_measurement::attach_measured_card(vault, &mut draft, now)?;
+        super::eval_measurement::attach_measured_card(server, &mut draft, now)?;
         // The offer also reads the pilots its options were grounded on, each
         // its own option's exact pilot from the brief (FIX 7021, 9469): its
         // set, `None` when any such pilot's measurement set is unknown.

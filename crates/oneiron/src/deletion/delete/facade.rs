@@ -170,6 +170,8 @@ impl Vault {
         // A working view of an erased source goes with its unshared blobs
         // (FIX 9722); a failure is logged and the next pass retries.
         crate::code_view::collect_after_delete(self);
+        // An erased mail message's opened attachments go with it (FIX 12559).
+        crate::mail_pack::collect_after_delete(self);
         #[cfg(unix)]
         self.collect_released_result_bodies(256)?;
         self.finish_gate_decision_retirements_after_commit();
