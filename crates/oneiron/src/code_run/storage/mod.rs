@@ -7,6 +7,7 @@ mod fold_answers;
 mod folds;
 mod lift;
 mod model_seat;
+mod overlay_erase;
 mod program_resume;
 mod read_worlds;
 mod reader_folds;
@@ -43,6 +44,7 @@ pub(crate) use self::continuation::{
 pub(crate) use self::fold_answers::{
     WithdrawnFoldAnswer, fold_answer_withdrawn, redact_fold_answers, retire_fold_answers_in_txn,
 };
+pub(crate) use self::overlay_erase::erase_gone_actors_in_live_overlays;
 pub use self::read_worlds::ReadWorldUnknown;
 pub(crate) use self::read_worlds::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn,
