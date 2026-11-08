@@ -224,8 +224,10 @@ pub(super) fn send_released_outcome<'t>(
             Ok(frames) => frames,
             Err(held) => return held,
         };
+        // A root update past one decoded payload leaves as its parts; a
+        // failed part fails the release.
         for frame in frames {
-            if !transport.send_binary(frame).await {
+            if !super::root_updates::send_root_frame(transport, frame).await {
                 return Released::Failed;
             }
         }

@@ -4652,6 +4652,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.repo.model.generate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::RepoModelGenerateInput>,
+                >(),
+            ),
+            (
                 "vault.repo.proposal_submit",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<
@@ -4947,9 +4953,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "can",
-                crate::code_run::vault_read::request_schema::<
-                    crate::task_verb::sdk::TaskCanAskRequest,
-                >(),
+                crate::code_run::vault_read::request_schema::<crate::verbs::CanRequest>(),
             ),
             (
                 "peek",
@@ -8401,6 +8405,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.repo.symbols.declare",
     "vault.repo.symbols.renew",
     "vault.repo.symbols.release",
+    "vault.repo.model.generate",
     "vault.repo.proposal_submit",
     "vault.repo.merge_queue.enqueue",
     "vault.repo.checkout.bind",
@@ -10606,6 +10611,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.repo.symbols.release" => crate::code_run::vault_read::request_schema::<
             crate::memory::repo_doors::RepoSymbolsReleaseOutput,
         >(),
+        "vault.repo.model.generate" => {
+            crate::code_run::vault_read::request_schema::<crate::LlmResponse>()
+        }
         "vault.repo.proposal_submit" => crate::code_run::vault_read::request_schema::<
             crate::memory::repo_doors::RepoProposalSubmitOutput,
         >(),
@@ -17448,6 +17456,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.repo.model.generate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.repo.proposal_submit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22243,6 +22258,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.repo.symbols.declare" => validate_input_vault_repo_symbols_declare(value)?,
         "vault.repo.symbols.renew" => validate_input_vault_repo_symbols_renew(value)?,
         "vault.repo.symbols.release" => validate_input_vault_repo_symbols_release(value)?,
+        "vault.repo.model.generate" => validate_input_vault_repo_model_generate(value)?,
         "vault.repo.proposal_submit" => validate_input_vault_repo_proposal_submit(value)?,
         "vault.repo.merge_queue.enqueue" => validate_input_vault_repo_merge_queue_enqueue(value)?,
         "vault.repo.checkout.bind" => validate_input_vault_repo_checkout_bind(value)?,
@@ -27448,6 +27464,12 @@ fn validate_input_vault_repo_symbols_release(value: &serde_json::Value) -> Memor
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_repo_model_generate(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::RepoModelGenerateInput> =
+        decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_repo_proposal_submit(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::LiveRunRequest<
         crate::memory::repo_doors::RepoProposalSubmitInput,
@@ -27704,7 +27726,7 @@ fn validate_input_vault_artifacts_undo(value: &serde_json::Value) -> MemoryResul
 }
 #[inline(never)]
 fn validate_input_can(value: &serde_json::Value) -> MemoryResult<()> {
-    let _input: crate::task_verb::sdk::TaskCanAskRequest = decode(value.clone())?;
+    let _input: crate::verbs::CanRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -31613,6 +31635,7 @@ pub fn invoke_with_notice(
         "vault.repo.symbols.declare" => invoke_vault_repo_symbols_declare(memory, value),
         "vault.repo.symbols.renew" => invoke_vault_repo_symbols_renew(memory, value),
         "vault.repo.symbols.release" => invoke_vault_repo_symbols_release(memory, value),
+        "vault.repo.model.generate" => invoke_vault_repo_model_generate(memory, value),
         "vault.repo.proposal_submit" => invoke_vault_repo_proposal_submit(memory, value),
         "vault.repo.merge_queue.enqueue" => invoke_vault_repo_merge_queue_enqueue(memory, value),
         "vault.repo.checkout.bind" => invoke_vault_repo_checkout_bind(memory, value),
@@ -38264,6 +38287,13 @@ fn invoke_vault_repo_symbols_release(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_repo_symbols_release(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_repo_model_generate(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_repo_model_generate(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_repo_proposal_submit(
@@ -49125,6 +49155,12 @@ pub fn vault_repo_symbols_release(
 ) -> MemoryResult<crate::memory::repo_doors::RepoSymbolsReleaseOutput> {
     crate::task_verb::sdk::host_only(memory, "vault.repo.symbols.release", &input)
 }
+pub fn vault_repo_model_generate(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::RepoModelGenerateInput>,
+) -> MemoryResult<crate::LlmResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.model.generate", &input)
+}
 pub fn vault_repo_proposal_submit(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::LiveRunRequest<
@@ -49582,9 +49618,9 @@ pub fn vault_artifacts_undo(
 }
 pub fn can(
     memory: &Memory<'_>,
-    input: crate::task_verb::sdk::TaskCanAskRequest,
-) -> MemoryResult<crate::task_verb::TaskAskPreflight> {
-    memory.tasks_can_ask(&input.ask)
+    input: crate::verbs::CanRequest,
+) -> MemoryResult<crate::memory::CanAnswer> {
+    memory.can(&input)
 }
 pub fn peek(
     memory: &Memory<'_>,

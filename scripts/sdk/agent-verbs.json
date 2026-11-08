@@ -12954,6 +12954,25 @@
       "openapi": true
     },
     {
+      "name": "vault.repo.model.generate",
+      "description": "Serves the supplied request content on the attached live run's registered model seat and spend line. The host retains only the actual served request's provenance on this exact credential attachment for repo proposals; a rebind inherits none.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::RepoModelGenerateInput>",
+      "output": "crate::LlmResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.model.generate\", &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "openapi": true
+    },
+    {
       "name": "vault.repo.proposal_submit",
       "description": "Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance; without that witness it holds typed, work kept.",
       "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoProposalSubmitInput>",
@@ -13842,10 +13861,10 @@
     },
     {
       "name": "can",
-      "description": "Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything.",
-      "input": "crate::task_verb::sdk::TaskCanAskRequest",
-      "output": "crate::task_verb::TaskAskPreflight",
-      "call": "memory.tasks_can_ask(&input.ask)?",
+      "description": "Read-only preflight: of an ask, its recipients, faces and channels, without minting a TASK; of a scheduled send or connector call ({effect}), a dated allow, deny, would-ask or named hold, judged as the act would be, rechecked when it runs.",
+      "input": "crate::verbs::CanRequest",
+      "output": "crate::memory::CanAnswer",
+      "call": "memory.can(&input)?",
       "scope": "Read",
       "task_work": true,
       "admission": {
@@ -13861,9 +13880,9 @@
           }
         ],
         "docs": {
-          "remote": "    /// Read-only ask preflight or partial answer evidence.\n",
-          "ts": "/** Read-only ask routing or attributed partial answers. */",
-          "py": "Read-only ask routing or attributed partial answers."
+          "remote": "    /// Read-only ask preflight, or one effect's dated preflight.\n",
+          "ts": "/** Read-only ask routing, or one effect's dated allow, deny, would-ask or named hold. */",
+          "py": "Read-only ask routing, or one effect's dated allow, deny, would-ask or named hold."
         }
       }
     },
