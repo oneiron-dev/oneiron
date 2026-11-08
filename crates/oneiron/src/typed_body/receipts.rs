@@ -21,6 +21,8 @@ use crate::store::Store;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::provenance::made_by::MadeBy;
 use crate::write_envelope::provenance::text_commit::TextCommitReceipt;
+#[cfg(feature = "sync")]
+pub(crate) mod carried;
 pub(super) mod checkpoint;
 
 /// The stamp every commit message starts with; the verb follows it and no
@@ -89,7 +91,16 @@ pub(super) fn record_in_txn(
             .to_owned(),
         made_by: made_by.clone(),
     };
-    RECEIPTS.put(store, txn, &key, &receipt)
+    RECEIPTS.put(store, txn, &key, &receipt)?;
+    // FIX 12470: the row rides beside its body, into each live window that
+    // carries the body once this write commits.
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows_in_txn(
+        store,
+        txn,
+        std::collections::BTreeSet::from([entity]),
+    );
+    Ok(())
 }
 
 /// The actor `peer`'s commit on `entity` names, while that actor is not
@@ -209,8 +220,15 @@ pub(crate) fn erase_receipt_actor_in_txn(
             erased.push((key, StoredReceipt::Erased { at: made_by.at }));
         }
     }
+    // FIX 12470: each body whose receipt changed takes the erased form into
+    // each live window that carries it once the erase commits.
+    #[cfg(feature = "sync")]
+    let bodies: std::collections::BTreeSet<EntityId> =
+        erased.iter().map(|((entity, _), _)| *entity).collect();
     for (key, receipt) in erased {
         RECEIPTS.put(&vault.store, wtxn, &key, &receipt)?;
     }
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows(vault, wtxn, bodies);
     Ok(())
 }

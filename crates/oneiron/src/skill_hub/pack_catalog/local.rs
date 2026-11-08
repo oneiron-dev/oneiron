@@ -231,6 +231,11 @@ impl Vault {
     }
 }
 
+/// The local pack's seed source: its one embedded PACK.md.
+pub(super) fn local_seed_source() -> Result<PackSource> {
+    PackSource::from_files(vec![HubFile::new("PACK.md", LOCAL_PACK_MD.as_bytes())])
+}
+
 /// Vault open creates the `local` pack once, like the bootstrap skills. A
 /// later put replaces it; this never does.
 pub(super) fn seed_local_pack(vault: &Vault) -> Result<()> {
@@ -238,7 +243,7 @@ pub(super) fn seed_local_pack(vault: &Vault) -> Result<()> {
     if PACK_INSTALL.contains(&vault.store, &vault.store.env.read_txn()?, &name)? {
         return Ok(());
     }
-    let source = PackSource::from_files(vec![HubFile::new("PACK.md", LOCAL_PACK_MD.as_bytes())])?;
+    let source = local_seed_source()?;
     let hub = put_ref(&source)?;
     vault.with_write_txn_grouped(|txn| {
         if PACK_INSTALL.contains(&vault.store, txn, &name)? {
