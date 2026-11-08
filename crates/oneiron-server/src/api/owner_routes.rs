@@ -64,6 +64,7 @@ pub(super) mod craft_candidate_routes;
 mod curator_rubric_routes;
 pub(super) mod decision_ask_routes;
 pub(super) mod desktop_takeover_routes;
+mod device_succession_routes;
 pub(super) mod diary_routes;
 mod disclosure_routes;
 pub(super) mod dreamer_maintenance_routes;
@@ -216,6 +217,7 @@ fn owner_tables() -> OwnerTable {
         root_routes::owner_table(),
         recovery_kit_target_routes::owner_table(),
         removal_archive_routes::owner_table(),
+        device_succession_routes::owner_table(),
         super::owner_origin::owner_table(),
         super::packs::owner_table(),
         super::phone_line::owner_table(),

@@ -313,8 +313,8 @@ pub(crate) use home_candidacy::{
 pub(crate) use home_pick::{
     HomePickHead, HomePickState, election_home_pick_in_txn, home_pick_in_txn,
 };
-pub use host_action::{HostActionAuthority, HostActionIdentity};
 pub(crate) use host_action::StoredHostAction;
+pub use host_action::{HostActionAuthority, HostActionIdentity};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
