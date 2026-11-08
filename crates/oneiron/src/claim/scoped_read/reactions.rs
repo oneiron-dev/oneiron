@@ -1,10 +1,24 @@
 //! Reactions riding along with the conversation records a scoped read admits.
+use super::access_gate::HeldAuthority;
 use super::*;
 use crate::context_pack::ContextPack;
 use crate::disclosure::DisclosureContext;
 use crate::reaction::{REACTIONS_FIELD, ReactionPill, ReactionSignal};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use std::collections::{BTreeMap, HashMap};
+
+/// What one read admits a conversation record's reactions under, in one
+/// snapshot: the lane's own resolved request (its bound caller filter met
+/// with the floor), the held authority its rows share, and the disclosure
+/// clamp the read runs under, if any (FIX 3977), and the receipt of the
+/// walk (FIX 8669).
+struct ReactionAdmission<'d> {
+    policy: PolicyManifestResolution,
+    filter: ResolvedRetrievalFilter,
+    authority: HeldAuthority,
+    disclosure: Option<&'d DisclosureContext>,
+    receipt: ScopedReadReceipt,
+}
 
 impl ScopedRead<'_> {
     /// The current reactions on one conversation record this read may see,
@@ -22,40 +36,68 @@ impl ScopedRead<'_> {
         counted: &mut Vec<EntityId>,
     ) -> Result<ScopedReadResult<Vec<String>>> {
         let rtxn = self.grant_read_txn()?;
-        let (policy, receipt) = self.reaction_walk_in(&rtxn)?;
-        let value = self.reaction_lines_in(&rtxn, &policy, None, record, counted)?;
-        Ok(ScopedReadResult { value, receipt })
+        let admission = self.reaction_admission_in(&rtxn, None)?;
+        let value = self.reaction_lines_in(&rtxn, &admission, record, counted)?;
+        Ok(ScopedReadResult {
+            value,
+            receipt: admission.receipt,
+        })
     }
 
-    /// The policy a reaction walk judges its rows under in `rtxn`, and the
-    /// receipt of that walk (FIX 8669). The walk asks for no narrowing and
-    /// judges each row under the key's own ceiling, the scope the receipt
-    /// names as applied, so every row it withholds is the key's own denial
+    /// The admission this lane's reactions take in `rtxn`: the lane's own
+    /// request, resolved as a door that names none resolves it (its bound
+    /// caller filter met with the floor), so a reaction CLAIM meets the check
+    /// a claim this lane reads directly meets (FIX 3977), and the receipt of
+    /// that walk (FIX 8669). The walk asks for no narrowing of its own and
+    /// judges each row under the scope the receipt names as applied, so every
+    /// row it withholds is the key's own denial or the caller's own filter
     /// and stays opaque (FIX 8670): the receipt counts none. A disclosure
     /// clamp narrows the audience, not the read, so a row it keeps out adds
     /// no count either. A key whose credential is no longer live refuses
     /// here, as every receipted read does, rather than answer under a scope
     /// it cannot read.
-    fn reaction_walk_in(
+    fn reaction_admission_in<'d>(
         &self,
         rtxn: &heed::RoTxn<'_>,
-    ) -> Result<(PolicyManifestResolution, ScopedReadReceipt)> {
-        let (applied, policy) = self.resolve_retrieval_filter_in(rtxn, None)?;
-        let receipt = self.receipt_for(None, &policy, &applied, 0);
-        Ok((policy, receipt))
+        disclosure: Option<&'d DisclosureContext>,
+    ) -> Result<ReactionAdmission<'d>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(rtxn, None)?;
+        let receipt = self.receipt_for(None, &policy, &filter, 0);
+        Ok(ReactionAdmission {
+            policy,
+            filter,
+            authority: self.held_for(None),
+            disclosure,
+            receipt,
+        })
+    }
+
+    /// Whether this lane reads the row `id` under `admission`: the row
+    /// admission under the lane's resolved request, then the clamp.
+    fn row_admitted_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        admission: &ReactionAdmission<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(self.is_entity_readable_held_in(
+            rtxn,
+            &admission.policy,
+            id,
+            &admission.filter,
+            &admission.authority,
+        )? && self.disclosed_in(rtxn, admission.disclosure, id)?)
     }
 
     fn reaction_lines_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        disclosure: Option<&DisclosureContext>,
+        admission: &ReactionAdmission<'_>,
         record: &EntityId,
         counted: &mut Vec<EntityId>,
     ) -> Result<Vec<String>> {
         crate::reaction::grouped_lines_in(self.vault, rtxn, *record, |row| {
-            let admitted = self.is_entity_readable_with_policy_in(rtxn, policy, &row.id)?
-                && self.disclosed_in(rtxn, disclosure, &row.id)?;
+            let admitted = self.row_admitted_in(rtxn, admission, &row.id)?;
             if admitted {
                 counted.push(row.id);
             }
@@ -119,27 +161,24 @@ impl ScopedRead<'_> {
         counted: &mut Vec<EntityId>,
     ) -> Result<ScopedReadReceipt> {
         let rtxn = self.grant_read_txn()?;
-        let (policy, receipt) = self.reaction_walk_in(&rtxn)?;
+        // One snapshot, one resolved request and one held authority for
+        // every record's reactions (FIX 3977), under one receipt (FIX 8669).
+        let admission = self.reaction_admission_in(&rtxn, disclosure)?;
         for entity in &mut pack.results {
             if !matches!(entity.entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
                 continue;
             }
-            let mut lines =
-                self.reaction_lines_in(&rtxn, &policy, disclosure, &entity.id, counted)?;
+            let mut lines = self.reaction_lines_in(&rtxn, &admission, &entity.id, counted)?;
             for message in quoted.get(&entity.id).into_iter().flatten() {
-                if self.is_entity_readable_with_policy_in(&rtxn, &policy, message)?
-                    && self.disclosed_in(&rtxn, disclosure, message)?
-                {
-                    lines.extend(
-                        self.reaction_lines_in(&rtxn, &policy, disclosure, message, counted)?,
-                    );
+                if self.row_admitted_in(&rtxn, &admission, message)? {
+                    lines.extend(self.reaction_lines_in(&rtxn, &admission, message, counted)?);
                 }
             }
             if let (Some(fields), false) = (entity.fields.as_mut(), lines.is_empty()) {
                 fields.insert(REACTIONS_FIELD.to_owned(), serde_json::json!(lines));
             }
         }
-        Ok(receipt)
+        Ok(admission.receipt)
     }
 
     /// [`crate::Vault::reaction_pills`] under this read, in one snapshot: only
@@ -153,19 +192,24 @@ impl ScopedRead<'_> {
         viewer: EntityId,
     ) -> Result<ScopedReadResult<BTreeMap<EntityId, Vec<ReactionPill>>>> {
         let rtxn = self.grant_read_txn()?;
-        let (policy, receipt) = self.reaction_walk_in(&rtxn)?;
+        // The lane's own resolved request, as its recall reactions take it
+        // (FIX 3977).
+        let admission = self.reaction_admission_in(&rtxn, None)?;
         let mut readable = Vec::with_capacity(messages.len());
         for message in messages {
-            if self.is_entity_readable_with_policy_in(&rtxn, &policy, message)? {
+            if self.row_admitted_in(&rtxn, &admission, message)? {
                 readable.push(*message);
             }
         }
         let value = self
             .vault
             .reaction_pills_in(&rtxn, &readable, viewer, |row| {
-                self.is_entity_readable_with_policy_in(&rtxn, &policy, &row.id)
+                self.row_admitted_in(&rtxn, &admission, &row.id)
             })?;
-        Ok(ScopedReadResult { value, receipt })
+        Ok(ScopedReadResult {
+            value,
+            receipt: admission.receipt,
+        })
     }
 
     /// Whether this read may see a reaction signal: the reacted record and
@@ -185,15 +229,14 @@ impl ScopedRead<'_> {
         disclosure: Option<&DisclosureContext>,
     ) -> Result<bool> {
         let rtxn = self.grant_read_txn()?;
-        let policy = self.live_policy_manifest_in(&rtxn)?;
-        Ok(
-            self.is_entity_readable_with_policy_in(&rtxn, &policy, &signal.message)?
-                && self
-                    .at_every_claim_status()?
-                    .is_entity_readable_with_policy_in(&rtxn, &policy, &signal.reaction)?
-                && self.disclosed_in(&rtxn, disclosure, &signal.message)?
-                && self.disclosed_in(&rtxn, disclosure, &signal.reaction)?,
-        )
+        // Each side under its lane's own resolved request (FIX 3977): the
+        // record on this lane, the reaction on its every-status twin, which
+        // keeps the same bound caller filter.
+        let every_status = self.at_every_claim_status()?;
+        let record = self.reaction_admission_in(&rtxn, disclosure)?;
+        let reaction = every_status.reaction_admission_in(&rtxn, disclosure)?;
+        Ok(self.row_admitted_in(&rtxn, &record, &signal.message)?
+            && every_status.row_admitted_in(&rtxn, &reaction, &signal.reaction)?)
     }
 }
 
@@ -221,6 +264,7 @@ impl<'a> ScopedRead<'a> {
             own_owner_authority: self.own_owner_authority,
             records_cover: self.records_cover.clone(),
             judged_at: self.judged_at,
+            read_filter: self.read_filter.clone(),
         })
     }
 }
