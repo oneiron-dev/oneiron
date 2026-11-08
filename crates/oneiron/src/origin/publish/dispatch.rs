@@ -203,10 +203,11 @@ impl Vault {
 
     /// Whether the mirror of the repository `repo_id` is still
     /// `destination`, read now: its URL, user, custody record and generation
-    /// as an exact publish request recorded them, the fields the dispatch
-    /// judged before its claim. A served host's mirror relay asks it again
-    /// before each push exchange it sends through the credential broker
-    /// (FIX 19083).
+    /// as an exact publish request or an automatic plan recorded them, the
+    /// fields the dispatch judged before its claim (for a plan, the
+    /// destination half of its fence, `mirror_fence_in_txn`). A served
+    /// host's mirror relay asks it again before each push exchange it sends
+    /// through the credential broker (FIX 19083).
     ///
     /// # Errors
     /// `destination_changed`, naming the fields that changed, or a store

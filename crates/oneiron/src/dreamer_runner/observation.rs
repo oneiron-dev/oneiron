@@ -75,13 +75,16 @@ pub struct WakeOutcomeView {
     pub conclusions: Vec<EntityId>,
 }
 
-/// `running` while any job still waits; then `failed` for any failure no
-/// retry recovered; then `partial` for any parked, paused, stopped or
-/// deferred job; else `succeeded`.
+/// `awaiting_host` when every waiting job is queued or scheduled for a
+/// host Coach consumer; otherwise `running` while any job still waits.
+/// Then `failed` for any failure no retry recovered; then `partial` for
+/// any parked, paused, stopped or deferred job; else `succeeded`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WakeOutcomeState {
     Running,
+    /// Queued for a host consumer, not a claim the host is absent or the work ended.
+    AwaitingHost,
     Succeeded,
     Partial,
     Failed,
@@ -168,13 +171,24 @@ fn remainder_due(record: &AttemptRecord) -> Option<Option<u64>> {
     Some(record.scheduled_at.or_else(|| payload.input.as_u64()))
 }
 
+/// A queued Coach job waits for its host consumer; a leased or landing
+/// job is running. This classifies work and never changes its admission.
+fn awaits_host_consumer(job: &WakeRecipeJobView) -> bool {
+    matches!(job.state, AttemptState::Queued | AttemptState::Scheduled)
+        && matches!(
+            job.kind.as_str(),
+            COACH_HOST_QUEUE_KIND | COACH_HEAL_ATTEMPT_KIND
+        )
+}
+
 /// The one outcome policy of a root's jobs (CALLS row: night-step outcome,
 /// FIX 6903). A try another job's `retry_of` names is superseded and
 /// counted nowhere. A pending nightly remainder (`remainder`, with its due)
 /// that is not leased or landing is deferred: one night step is one
 /// budget-bounded snapshot, so the remainder is reported, never waited for.
 /// Any other unfinished job is parked when it is paused or holds a park
-/// row, else it is waited on. Then: anything waited on is `running`; else
+/// row, else it is waited on. Only queued or scheduled host Coach jobs
+/// means `awaiting_host`; any other waiting job means `running`. Then:
 /// any failure is `failed`; else anything parked, cancelled, abandoned or
 /// deferred is `partial`; else `succeeded`. The completed jobs' outputs are
 /// kept once each, in job order.
@@ -193,6 +207,7 @@ fn reduce_outcome(
         result_refs: Vec::new(),
         conclusions: Vec::new(),
     };
+    let mut only_host_waits = true;
     for job in jobs.iter().filter(|job| !superseded.contains(&job.attempt)) {
         match job.state {
             AttemptState::Completed => {
@@ -220,12 +235,19 @@ fn reduce_outcome(
                         cause: job.park_cause,
                     });
                 }
-                _ => outcome.waiting_on.push(job.attempt),
+                _ => {
+                    only_host_waits &= awaits_host_consumer(job);
+                    outcome.waiting_on.push(job.attempt);
+                }
             },
         }
     }
     outcome.state = if !outcome.waiting_on.is_empty() {
-        WakeOutcomeState::Running
+        if only_host_waits {
+            WakeOutcomeState::AwaitingHost
+        } else {
+            WakeOutcomeState::Running
+        }
     } else if !outcome.failed.is_empty() {
         WakeOutcomeState::Failed
     } else if outcome.parked.is_empty() && outcome.stopped.is_empty() && outcome.deferred.is_empty()
