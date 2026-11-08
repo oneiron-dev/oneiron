@@ -15,6 +15,7 @@ use crate::llm::decision::{
     DecisionRung, EvidenceVersion, HostRuleRef, MAX_DECISION_AUDIO_BYTES, MAX_DECISION_IMAGE_BYTES,
     PairedAnswer, PairedReading, ProviderPin, TypedDecision,
 };
+use crate::ports::PointRead;
 use crate::receipt::{PixelPull, ServedForm};
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
@@ -247,7 +248,8 @@ impl GraphAskFailure {
 /// read lane `lane`. The type index only nominates IDs: no raw row or count
 /// from that index reaches the answerer or the result without a scoped point
 /// read. The scan pages 256 index rows at a time, invisible ones included,
-/// until `limit` units are selected or the index ends.
+/// until `limit` units are selected or the index ends. Every page and its
+/// scoped admission share one read snapshot.
 pub fn select_graph_units_by_type(
     lane: &ScopedRead<'_>,
     entity_type: u8,
@@ -255,16 +257,24 @@ pub fn select_graph_units_by_type(
 ) -> Result<Vec<EntityId>> {
     let vault = lane.vault();
     let mut selected = Vec::new();
+    if limit == 0 {
+        return Ok(selected);
+    }
+    let _bodies = crate::store::ASSET_FILE_PLANE.then(|| vault.pin_all_result_bodies());
+    lane.persist_grant_clock()?;
+    let txn = vault.store.env.read_txn()?;
     let mut after = None;
     while selected.len() < limit {
-        let page = vault.entities_by_type_page(entity_type, after.as_ref(), 256)?;
+        let page = vault.entities_by_type_page_in_txn(&txn, entity_type, after.as_ref(), 256)?;
         if page.is_empty() {
             break;
         }
         after = page.last().copied();
-        let values = lane.get_entities_parts_with_receipt(&page, None)?;
+        let reads: Vec<_> = page.iter().copied().map(PointRead::id).collect();
+        let values =
+            lane.read_projected_in_txn(&txn, &reads, None, |_, rows| Ok::<_, Error>(rows))?;
         for (id, value) in page.into_iter().zip(values.value) {
-            if matches!(value, Some((kind, _, _)) if kind == entity_type)
+            if matches!(value, Some(row) if row.body.is_some() && row.entity_type == entity_type)
                 && kind_is_graph_evidence(entity_type)
             {
                 selected.push(id);
