@@ -1,10 +1,11 @@
 //! ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18).
 //!
-//! An ASSET body longer than [`ASSET_INLINE_BODY_BYTES`] whose bytes no
-//! reader interprets ([`asset_file_kind`]: no UTF-8 text, no owning
-//! adapter's envelope, no container the secret mask reads into, no file the
-//! mask marked), or a MessagePack record whose readers read it whole (FIX
-//! 12150), lives in the vault's `bodies/` directory as one file named by its
+//! An ASSET body longer than [`ASSET_INLINE_BODY_BYTES`] that the file plane
+//! holds ([`asset_file_kind`]: bytes no reader interprets, a MessagePack
+//! record whose readers read it whole (FIX 12150), text or a container the
+//! batch door reads whole (FIX 22075), or an owning adapter's carrier its
+//! adapter reads whole (FIX 22091); never a file the mask marked) lives in
+//! the vault's `bodies/` directory as one file named by its
 //! BLAKE3, beside the result bodies and under their lifetime. It is written
 //! to a `.tmp-` file, synced, renamed into place and the directory synced
 //! before any row names it. Its ASSET row keeps a small
@@ -60,8 +61,9 @@ use crate::store::body_descriptor::{BodyLocation, BodyRef, BodyState, OwnedBody}
 use crate::store::owned_body::owned_body_in_txn;
 
 /// FIX 3677 (CALLS "ASSET inline body bound"): an ASSET body longer than
-/// this lives in a body file when it is staged with an instance; a body
-/// this long or shorter, and an owning adapter's carrier, stays in its row.
+/// this lives in a body file when it is staged with an instance, an owning
+/// adapter's carrier too (FIX 22091); a body this long or shorter stays in
+/// its row.
 /// It picks where a body lives and never refuses one (Rule 5). The sync
 /// transport's frame holds as much.
 pub(crate) const ASSET_INLINE_BODY_BYTES: u64 = 8 * 1024 * 1024;
@@ -90,11 +92,13 @@ pub(crate) enum AssetFileKind {
     /// in its row, and mark it by its digest; its readers read it whole
     /// through the file plane.
     Interpreted,
-    /// An owning adapter's carrier (a hub source, a pack source, a receipt
-    /// archive source, a refinement receipt, an agent's birth source), kept
+    /// An owning adapter's carrier, valid or not ([`owning_adapter_reads`]:
+    /// a hub source or package, a pack source, a receipt archive source, a
+    /// refinement receipt, an agent's birth source, a vault shape seed), kept
     /// exactly as written (FIX 22091). Its adapter's readers and put checks
     /// read it whole through [`asset_carrier_body_in_txn`]; no other file
-    /// kind holds a carrier, so they never read one.
+    /// kind holds a carrier, so they never read one. The batch door's secret
+    /// scan and mask read its bytes as they read an interpreted file's.
     Carrier,
 }
 
@@ -248,35 +252,54 @@ fn held_occurrence(id: &EntityId, body: &BodyRef) -> Result<EntityId> {
 pub(crate) const ASSET_FILE_PLANE: bool = true;
 
 /// What the file plane may hold `body` as, judged whole; `None` keeps it in
-/// its row. Neither kind is UTF-8 text, a body an owning adapter reads (the
-/// serializer would attach it as a file), a container the secret mask reads
-/// into, a refinement carrier, or a shape seed, whose reader reads its row.
+/// its row.
 ///
+/// - [`AssetFileKind::Carrier`] (FIX 22091): an owning adapter reads it
+///   ([`owning_adapter_reads`]), whose readers and put checks read it whole
+///   through [`asset_carrier_body_in_txn`].
+/// - [`AssetFileKind::Interpreted`] (FIX 22075): UTF-8 text or a container
+///   the secret scan opens, which the batch door reads whole.
 /// - [`AssetFileKind::Opaque`]: no MessagePack map with a string key leads
 ///   it, so no reader of ASSET bodies interprets it.
 /// - [`AssetFileKind::Record`] (FIX 12150): it is one such map, ending where
 ///   the body ends, which the readers that decode it (a docs page's, an
-///   export's) read whole through the file plane, and from which the
-///   readers of a stored row ([`row_readers_read_nothing`]) read nothing.
+///   export's) read whole through the file plane.
 ///
-/// A body led by a keyed map that runs on past it, or one a stored-row
-/// reader reads, keeps the readers that read it whole in its row.
+/// The readers of a stored row read nothing from any file
+/// ([`row_readers_read_nothing`]), so a body they read keeps its row, as
+/// does one led by a keyed map that runs on past it.
 fn asset_file_kind(body: &[u8]) -> Option<AssetFileKind> {
-    if !crate::serialize::attaches_as_file(ENTITY_TYPE_ASSET, body)
-        || crate::batch::secret_scan::is_container(body)
+    let kind = if owning_adapter_reads(body) {
+        AssetFileKind::Carrier
+    } else if std::str::from_utf8(body).is_ok() || crate::batch::secret_scan::is_container(body) {
+        AssetFileKind::Interpreted
+    } else {
+        return match keyed_map_len(body) {
+            None => Some(AssetFileKind::Opaque),
+            Some(len) if len == body.len() as u64 && row_readers_read_nothing(body) => {
+                Some(AssetFileKind::Record)
+            }
+            Some(_) => None,
+        };
+    };
+    row_readers_read_nothing(body).then_some(kind)
+}
+
+/// Whether an owning adapter reads `body` as its carrier, valid or not, as
+/// its decoder names one (FIX 22091): a hub source or a hub package
+/// envelope, a pack source, a receipt archive source, a refinement receipt,
+/// an agent's birth source or a vault shape seed. Its put checks refuse an
+/// invalid one; the file plane holds either as a carrier, so the readers
+/// that would refuse it read it.
+fn owning_adapter_reads(body: &[u8]) -> bool {
+    !matches!(
+        crate::store::skill_source_carrier::decode_source_carrier(body),
+        Ok(None)
+    ) || crate::skill_hub::pack_catalog::names_pack_source(body)
+        || crate::store::receipt_identity::is_receipt_archive_source(body)
         || crate::store::refinement_carrier::refinement_carrier_payload(body).is_some()
-        // A shape seed's reader reads its row (FIX 22091).
+        || crate::agent_def::is_birth_source_candidate(body)
         || crate::vault_shape::names_shape_seed(body)
-    {
-        return None;
-    }
-    match keyed_map_len(body) {
-        None => Some(AssetFileKind::Opaque),
-        Some(len) if len == body.len() as u64 && row_readers_read_nothing(body) => {
-            Some(AssetFileKind::Record)
-        }
-        Some(_) => None,
-    }
 }
 
 /// The length of `body`'s first MessagePack value when it is a map with a
@@ -410,7 +433,9 @@ pub(crate) fn short_content_hash_in_txn(
 /// before this write took the writer (FIX 22091); the file is published
 /// and its key row bound here, and the put binds its descriptor. A dry pool
 /// keeps the body in its row, which a checkpoint seals under an instance of
-/// its own. `None` keeps the body in its row.
+/// its own. `None` keeps the body in its row. Text, a container and an
+/// owning adapter's carrier are filed too: the door read their bytes in the
+/// op, and the put's checks read the bytes it filed (FIX 22091).
 ///
 /// # Errors
 ///
