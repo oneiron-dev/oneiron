@@ -32,6 +32,24 @@ pub(crate) struct ExternalEffectPreflight {
     /// An allowed send would take its place in a full envelope window
     /// rather than go now (FIX 7948).
     pub(crate) waits_for_envelope_window: bool,
+    /// An allowed effect whose governing key's count-bound window is full
+    /// would wait until this recording time, charged nothing (FIX 8686).
+    pub(crate) rate_window_opens_at: Option<u64>,
+}
+
+/// How the door that would admit an effect meets its governing key's
+/// budgets, as [`crate::outbound_chokepoint`] charges them.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PreflightBudget<'a> {
+    /// The effect debits its key's sends rows (`BudgetClass::is_send`).
+    pub(crate) send_like: bool,
+    /// The door waits for a full count-bound window rather than refusing
+    /// (FIX 8686, 8788).
+    pub(crate) paces: bool,
+    /// The tool whose declared price the door reserves on its key's
+    /// preauthorizing Spend rows before it charges (a scoped call, FIX
+    /// 8689); `None` for a door that reserves no price.
+    pub(crate) priced_tool: Option<&'a str>,
 }
 
 /// How a preflight reads one reason code.
@@ -104,7 +122,7 @@ const fn preflight_reason(code: GateReasonCode) -> PreflightReason {
 /// The preflight answer `judgment` carries: Deny and Allow as the Gate
 /// decided them, and a Pending outcome `Held` when any of its reasons is an
 /// administrative hold, else `WouldAsk`. Its holds are named either way.
-pub(crate) fn preflight_answer(judgment: &ExternalEffectJudgment) -> ExternalEffectPreflight {
+fn preflight_answer(judgment: &ExternalEffectJudgment) -> ExternalEffectPreflight {
     let mut reasons = Vec::new();
     let mut holds = Vec::new();
     for &code in judgment.decision().reason_codes() {
@@ -138,5 +156,80 @@ pub(crate) fn preflight_answer(judgment: &ExternalEffectJudgment) -> ExternalEff
         reasons,
         holds,
         waits_for_envelope_window: judgment.waits_for_envelope_window(),
+        rate_window_opens_at: None,
     }
+}
+
+/// [`preflight_answer`] with the admission's budget stage read on `txn` at
+/// `at`, charging, reserving and suspending nothing: an Allow that goes now
+/// meets its governing key's budgets in the chokepoint's order. A door that
+/// paces and meets a full count-bound window waits for it. A priced tool
+/// whose price a preauthorizing Spend row has no room for, or an exhausted
+/// row on the key or its catalog pool, denies the effect
+/// ([`GateReasonCode::DenyEffectorBudgetExhausted`]), as the reservation or
+/// the charge would.
+pub(crate) fn preflight_answer_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    judgment: &ExternalEffectJudgment,
+    budget: PreflightBudget<'_>,
+    at: u64,
+) -> Result<ExternalEffectPreflight> {
+    let mut answer = preflight_answer(judgment);
+    if answer.verdict != PreflightVerdict::Allow || answer.waits_for_envelope_window {
+        return Ok(answer);
+    }
+    let Some(target) = judgment.budget_target() else {
+        return Ok(answer);
+    };
+    if budget.paces
+        && let connector_key::BudgetBlock::Paced { next_eligible_at } =
+            connector_key::budget_block_pooled(
+                store,
+                txn,
+                &target.key_id,
+                &target.key,
+                &target.governing_connector,
+                budget.send_like,
+                at,
+                true,
+            )?
+    {
+        answer.rate_window_opens_at = Some(next_eligible_at);
+        return Ok(answer);
+    }
+    let price = match budget.priced_tool {
+        Some(tool) => connector_key::tool_spend_price_in_txn(store, txn, &target.key, tool)?,
+        None => None,
+    };
+    let no_room = connector_key::spend_overrun_in_txn(
+        store,
+        txn,
+        &target.key_id,
+        &target.key,
+        &target.governing_connector,
+        price.as_ref(),
+        at,
+        true,
+    )?
+    .is_some();
+    if no_room
+        || connector_key::preflight_effector_budgets_pooled(
+            store,
+            txn,
+            &target.key_id,
+            &target.key,
+            &target.governing_connector,
+            budget.send_like,
+            at,
+            true,
+        )?
+        .is_some()
+    {
+        answer.verdict = PreflightVerdict::Deny;
+        answer
+            .reasons
+            .push(GateReasonCode::DenyEffectorBudgetExhausted.as_str());
+    }
+    Ok(answer)
 }

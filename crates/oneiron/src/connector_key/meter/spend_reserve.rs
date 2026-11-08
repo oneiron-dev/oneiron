@@ -105,7 +105,7 @@ pub(crate) fn reserve_connector_spend_in_txn(
                 continue;
             };
             priced = true;
-            if state.usage.used().saturating_add(price.minor_units) > state.budget.limit {
+            if overruns(state, price) {
                 let location = EffectorBudgetLocation {
                     key_ref: *owner,
                     row: state.row,
@@ -263,6 +263,92 @@ fn budget_at(record: &ConnectorKeyRecord, row: EffectorBudgetRowId) -> Option<&E
 }
 
 /// `price` where it is in `budget`'s own unit; no unit is converted.
+/// The price `tool` declares on `key`'s governing slate, the one a
+/// reservation takes (FIX 8689); `None` for a tool that declares none.
+///
+/// # Errors
+/// Storage and slate-codec faults.
+pub(crate) fn tool_spend_price_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &ConnectorKeyRecord,
+    tool: &str,
+) -> Result<Option<ConnectorSpendEstimate>> {
+    Ok(
+        crate::connector_key::governing_slate_in_txn(store, txn, key)?
+            .and_then(|(_, slate)| slate.tool(tool).and_then(|row| row.price.clone())),
+    )
+}
+
+/// Whether `price` overruns `state`'s remaining limit: the one rule a
+/// reservation denies on.
+fn overruns(state: &BudgetRowState<'_>, price: &ConnectorSpendEstimate) -> bool {
+    state.usage.used().saturating_add(price.minor_units) > state.budget.limit
+}
+
+/// The first matched preauthorizing Spend row of `key_id`, and when `pool`
+/// of its catalog's shared pool, that `price` overruns at `now`, in the order
+/// [`reserve_connector_spend_in_txn`] meets them, read on `txn`: the row that
+/// reservation denies on, found without suspending or debiting anything
+/// (FIX 22102). `None` when every row has room or none is priced.
+///
+/// # Errors
+/// Storage and row-codec faults.
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn spend_overrun_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key_id: &EntityId,
+    key: &ConnectorKeyRecord,
+    effect_channel: &str,
+    price: Option<&ConnectorSpendEstimate>,
+    now: u64,
+    pool: bool,
+) -> Result<Option<(EffectorBudgetLocation, EffectorBudgetOnExhaust)>> {
+    let catalog = if pool {
+        catalog_budget_pool_in_txn(store, txn, key)?
+    } else {
+        None
+    };
+    let mut sets = vec![(
+        *key_id,
+        load_budget_row_states(store, txn, key_id, key, Some(effect_channel), false, now)?,
+    )];
+    if let Some((catalog_id, catalog, channel)) = catalog.as_ref() {
+        sets.push((
+            *catalog_id,
+            load_budget_row_states(
+                store,
+                txn,
+                catalog_id,
+                catalog,
+                Some(channel.as_str()),
+                false,
+                now,
+            )?,
+        ));
+    }
+    for (owner, states) in &sets {
+        for state in states
+            .iter()
+            .filter(|state| state.matched && preauthorizes(state.budget))
+        {
+            if let Some(price) = row_price(state.budget, price)
+                && overruns(state, price)
+            {
+                return Ok(Some((
+                    EffectorBudgetLocation {
+                        key_ref: *owner,
+                        row: state.row,
+                    },
+                    state.budget.on_exhaust,
+                )));
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn row_price<'a>(
     budget: &EffectorBudget,
     price: Option<&'a ConnectorSpendEstimate>,

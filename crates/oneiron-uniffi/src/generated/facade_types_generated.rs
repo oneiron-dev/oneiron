@@ -51675,6 +51675,12 @@ pub struct CanEffectAnswer {
     pub holds: Vec<String>,
     #[serde(rename = "waits_for_envelope_window")]
     pub waits_for_envelope_window: bool,
+    #[serde(
+        rename = "rate_window_opens_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rate_window_opens_at: Option<u64>,
     #[serde(rename = "checked_at")]
     pub checked_at: u64,
 }

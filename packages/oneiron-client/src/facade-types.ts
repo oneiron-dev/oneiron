@@ -6441,7 +6441,7 @@ export type TaskAskPreflight = { recipients: TaskAskPreflightRecipient[] }
 /** `oneiron::memory::can::CanEffectVerdict` */
 export type CanEffectVerdict = "allow" | "deny" | "would_ask" | "held"
 /** `oneiron::memory::can::CanEffectAnswer` */
-export type CanEffectAnswer = { verdict: CanEffectVerdict; reasons: string[]; holds: string[]; waits_for_envelope_window: boolean; checked_at: number }
+export type CanEffectAnswer = { verdict: CanEffectVerdict; reasons: string[]; holds: string[]; waits_for_envelope_window: boolean; rate_window_opens_at?: number | null; checked_at: number }
 /** `oneiron::memory::can::CanAnswer` */
 export type CanAnswer = TaskAskPreflight | CanEffectAnswer
 /** `oneiron::task_verb::ask_types::TaskAskPersonKind` */

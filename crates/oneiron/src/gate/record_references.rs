@@ -56,17 +56,42 @@ pub(crate) fn validate_record_references(
     read: &Memory<'_>,
     refs: &[NamedRecordRef],
 ) -> Result<(), ReferenceRefusal> {
-    let unresolved =
-        validate_record_references_with(refs, |reference| match read.get_entity(reference) {
-            Ok(result) => Ok(result.value.is_some()),
-            Err(error)
-                if error.code == MEMORY_CODE_NOT_FOUND || error.code == MEMORY_CODE_BAD_REQUEST =>
-            {
-                Ok(false)
-            }
-            Err(error) => Err(error),
-        })
-        .map_err(ReferenceRefusal::Read)?;
+    check_record_references(refs, |reference| {
+        read.get_entity(reference)
+            .map(|result| result.value.is_some())
+    })
+}
+
+/// [`validate_record_references`] read as [`Memory::peek_entity`] reads: the
+/// same scoped read with no grant time persisted, so the check writes nothing
+/// (FIX 22102). A preflight checks its refs this way.
+pub(crate) fn peek_record_references(
+    read: &Memory<'_>,
+    refs: &[NamedRecordRef],
+) -> Result<(), ReferenceRefusal> {
+    check_record_references(refs, |reference| {
+        read.peek_entity(reference)
+            .map(|result| result.value.is_some())
+    })
+}
+
+/// The first ref in `refs` that `resolves` does not find is the refusal; a
+/// ref named twice is read once. A ref the read refuses as not found or
+/// malformed does not resolve.
+fn check_record_references(
+    refs: &[NamedRecordRef],
+    resolves: impl Fn(&str) -> MemoryResult<bool>,
+) -> Result<(), ReferenceRefusal> {
+    let unresolved = validate_record_references_with(refs, |reference| match resolves(reference) {
+        Ok(found) => Ok(found),
+        Err(error)
+            if error.code == MEMORY_CODE_NOT_FOUND || error.code == MEMORY_CODE_BAD_REQUEST =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    })
+    .map_err(ReferenceRefusal::Read)?;
     match unresolved {
         None => Ok(()),
         Some(pointer) => Err(ReferenceRefusal::Unresolved {

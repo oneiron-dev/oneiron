@@ -17,6 +17,16 @@ use crate::context_pack::source_ranking::{SourceRankingPolicy, clamp_order, sour
 fn served_value_json(value: &rmpv::Value) -> serde_json::Value {
     crate::batch::export::served_messagepack_json(value.clone())
 }
+
+/// The reference and read mode `entity_ref` names: a pinned revision after
+/// `@`, else the live row.
+fn entity_read_mode(entity_ref: &str) -> MemoryResult<(&str, crate::vault::ReadMode)> {
+    if let Some((reference, revision)) = entity_ref.rsplit_once('@') {
+        let revision = crate::vault::RevisionRef::from_hex(revision)?;
+        return Ok((reference, crate::vault::ReadMode::Pinned(revision)));
+    }
+    Ok((entity_ref, crate::vault::ReadMode::Live))
+}
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -151,11 +161,31 @@ impl Memory<'_> {
         &self,
         entity_ref: &str,
     ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
-        if let Some((reference, revision)) = entity_ref.rsplit_once('@') {
-            let revision = crate::vault::RevisionRef::from_hex(revision)?;
-            return self.get_entity_with_mode(reference, crate::vault::ReadMode::Pinned(revision));
-        }
-        self.get_entity_with_mode(entity_ref, crate::vault::ReadMode::Live)
+        let (reference, mode) = entity_read_mode(entity_ref)?;
+        self.get_entity_with_mode(reference, mode)
+    }
+
+    /// [`Self::get_entity`] without persisting the lane's grant time first:
+    /// the same lane, scope and admission, its grants judged at the vault's
+    /// authority instant as the snapshot reads it, so the read writes
+    /// nothing (FIX 22102). A preflight reads this way; a door that serves
+    /// the row reads by [`Self::get_entity`].
+    pub(crate) fn peek_entity(
+        &self,
+        entity_ref: &str,
+    ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
+        let (reference, mode) = entity_read_mode(entity_ref)?;
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let target = self.read_target(reference, mode)?;
+        // Opened after the lane and target, whose own snapshots have closed:
+        // LMDB allows one read snapshot per thread.
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        self.read_named_view_in_txn(&lane, &txn, target)
     }
 
     /// Reads LIVE, the last indexed revision, or an exact retained pin.

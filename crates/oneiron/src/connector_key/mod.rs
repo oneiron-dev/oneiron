@@ -93,6 +93,7 @@ pub(crate) use self::meter::{
     budget_exhausted_reason, charge_effector_budgets, charge_effector_budgets_pooled,
     preflight_effector_budgets_pooled, reconcile_connector_spend_in_txn,
     release_effector_debits_in_txn, reserve_connector_spend_in_txn, shares_budget_pool,
+    spend_overrun_in_txn, tool_spend_price_in_txn,
 };
 pub(crate) use self::record::{
     ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
