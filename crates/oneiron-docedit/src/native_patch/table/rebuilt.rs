@@ -80,6 +80,9 @@ fn rebuilt_pass(
 ) -> Result<(Vec<u8>, Vec<std::ops::Range<usize>>), NativeRefusal> {
     let mut emitted_sources = Vec::new();
     let mut copied_sources = Vec::new();
+    // Retained inter-paragraph gaps, emitted raw (review #6779 R2); they
+    // join `emitted_sources` once `styled` no longer borrows it.
+    let mut gap_sources = Vec::new();
     let (first, first_node) = paragraphs[0];
     let last_node = paragraphs[paragraphs.len() - 1].1;
     let piece = |node: Option<(usize, &Node)>| {
@@ -582,7 +585,7 @@ fn rebuilt_pass(
             if !gap_has_field {
                 out.extend_from_slice(&bytes[gap_start..gap_end]);
                 // Emitted raw: an identity source for the second pass (review #6779 R2).
-                emitted_sources.push(gap_start..gap_end);
+                gap_sources.push(gap_start..gap_end);
             }
         }
         let rendered = if same_count && index == 0 {
@@ -652,6 +655,7 @@ fn rebuilt_pass(
         out.extend_from_slice(rendered.as_bytes());
     }
     out.extend_from_slice(&bytes[last_node.span.end..]);
+    emitted_sources.extend(gap_sources);
     Ok((out, emitted_sources))
 }
 
