@@ -148,6 +148,15 @@ pub use oneiron_xlsx_formula::RecalcClock;
 pub(crate) fn read_office_package(bytes: &[u8]) -> crate::error::Result<()> {
     opc::read(bytes).map(|_| ())
 }
+
+/// [`read_office_package`] over a package a seekable reader holds, read at
+/// the offsets its ZIP records name, never as one buffer (FIX 22074).
+pub(crate) fn read_office_package_from(
+    reader: &mut (impl std::io::Read + std::io::Seek),
+) -> crate::error::Result<()> {
+    opc::read_from(reader).map(|_| ())
+}
+
 #[cfg(test)]
 mod docx_tests;
 #[cfg(test)]

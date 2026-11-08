@@ -32,8 +32,10 @@
 //! ECMA-376 OPC part-naming conventions (facts, not expression); it copies no
 //! source from any packaging library.
 
+use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 
 use oneiron_contracts::error::{ArtifactError, Error, Result};
 
@@ -51,6 +53,157 @@ const DATA_DESCRIPTOR_SIGNATURE: u32 = 0x0807_4b50;
 const DEFLATE_OPTION_FLAGS: u16 = 0x0006;
 /// General-purpose bit 3: CRC and sizes follow the payload in a descriptor.
 const DATA_DESCRIPTOR_FLAG: u16 = 0x0008;
+
+/// What an OPC package is read from: its bytes in memory, or a seekable
+/// reader read at the offsets its ZIP records name (FIX 22074), so a package
+/// on disk is checked without its whole body in memory.
+trait Source {
+    /// The package's length in bytes.
+    fn total_len(&self) -> usize;
+    /// The `len` bytes at `offset`; `None` when they run past the end.
+    fn range(&self, offset: usize, len: usize) -> Result<Option<Cow<'_, [u8]>>>;
+    /// `read` over the `len` bytes at `offset` as they stream, never held
+    /// whole by the source; `None` when they run past the end.
+    fn with_range<T>(
+        &self,
+        offset: usize,
+        len: usize,
+        read: impl FnOnce(&mut dyn Read) -> Result<T>,
+    ) -> Result<Option<T>>;
+}
+
+impl Source for [u8] {
+    fn total_len(&self) -> usize {
+        self.len()
+    }
+
+    fn range(&self, offset: usize, len: usize) -> Result<Option<Cow<'_, [u8]>>> {
+        Ok(offset
+            .checked_add(len)
+            .and_then(|end| self.get(offset..end))
+            .map(Cow::Borrowed))
+    }
+
+    fn with_range<T>(
+        &self,
+        offset: usize,
+        len: usize,
+        read: impl FnOnce(&mut dyn Read) -> Result<T>,
+    ) -> Result<Option<T>> {
+        match offset
+            .checked_add(len)
+            .and_then(|end| self.get(offset..end))
+        {
+            Some(mut bytes) => read(&mut bytes).map(Some),
+            None => Ok(None),
+        }
+    }
+}
+
+/// A package a seekable reader holds, `len` bytes long.
+struct ReaderSource<'r, R> {
+    reader: RefCell<&'r mut R>,
+    len: usize,
+}
+
+impl<R: Read + Seek> Source for ReaderSource<'_, R> {
+    fn total_len(&self) -> usize {
+        self.len
+    }
+
+    fn range(&self, offset: usize, len: usize) -> Result<Option<Cow<'_, [u8]>>> {
+        if offset.checked_add(len).is_none_or(|end| end > self.len) {
+            return Ok(None);
+        }
+        let mut reader = self.reader.borrow_mut();
+        reader
+            .seek(SeekFrom::Start(offset as u64))
+            .map_err(Error::Io)?;
+        let mut out = vec![0; len];
+        reader.read_exact(&mut out).map_err(Error::Io)?;
+        Ok(Some(Cow::Owned(out)))
+    }
+
+    fn with_range<T>(
+        &self,
+        offset: usize,
+        len: usize,
+        read: impl FnOnce(&mut dyn Read) -> Result<T>,
+    ) -> Result<Option<T>> {
+        if offset.checked_add(len).is_none_or(|end| end > self.len) {
+            return Ok(None);
+        }
+        let mut reader = self.reader.borrow_mut();
+        reader
+            .seek(SeekFrom::Start(offset as u64))
+            .map_err(Error::Io)?;
+        let mut range = RangeRead {
+            inner: (&mut **reader).take(len as u64),
+            failed: None,
+        };
+        let verdict = read(&mut range);
+        // The whole range is read, as the slice source holds it whole: a
+        // source that fails or ends early anywhere in it fails the package
+        // with its own error, before the payload's verdict.
+        range.drain();
+        if let Some(error) = range.failed {
+            return Err(Error::Io(error));
+        }
+        verdict.map(Some)
+    }
+}
+
+/// A payload range as it streams from a reader source, keeping the
+/// source's own read error apart from what a decoder makes of it.
+struct RangeRead<R> {
+    inner: std::io::Take<R>,
+    failed: Option<std::io::Error>,
+}
+
+impl<R: Read> Read for RangeRead<R> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            match self.inner.read(out) {
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    let reported =
+                        std::io::Error::new(error.kind(), "opc package source read failed");
+                    self.failed.get_or_insert(error);
+                    return Err(reported);
+                }
+                Ok(read) => return Ok(read),
+            }
+        }
+    }
+}
+
+impl<R: Read> RangeRead<R> {
+    /// Reads what the payload's reader left of the range, holding none of
+    /// it, and notes a source that fails or ends before the range does.
+    fn drain(&mut self) {
+        if self.failed.is_some() {
+            return;
+        }
+        let mut scratch = [0u8; 8192];
+        loop {
+            match self.inner.read(&mut scratch) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    self.failed = Some(error);
+                    return;
+                }
+            }
+        }
+        if self.inner.limit() > 0 {
+            self.failed = Some(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "opc package source ended inside an entry",
+            ));
+        }
+    }
+}
 
 /// Per-entry ceiling on a central-directory *declared* uncompressed size. An
 /// OPC part advertising more than this is rejected before inflation, bounding a
@@ -142,6 +295,32 @@ pub fn read(bytes: &[u8]) -> Result<OpcPackage> {
     )
 }
 
+/// [`read`] over a package `reader` holds from its start to its end, read at
+/// the offsets its ZIP records name, so a package on disk is checked without
+/// its whole body in memory (FIX 22074): the same checks and caps as
+/// [`read`].
+///
+/// # Errors
+///
+/// [`read`]'s errors, and the reader's.
+pub fn read_from<R: Read + Seek>(reader: &mut R) -> Result<OpcPackage> {
+    let len = reader.seek(SeekFrom::End(0)).map_err(Error::Io)?;
+    let len = usize::try_from(len).map_err(|_| {
+        Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc package past this machine's address space",
+        ))
+    })?;
+    read_bounded(
+        &ReaderSource {
+            reader: RefCell::new(reader),
+            len,
+        },
+        MAX_ENTRY_UNCOMPRESSED,
+        MAX_PACKAGE_UNCOMPRESSED,
+        usize::from(u16::MAX),
+    )
+}
+
 /// The DOCX door resolves these limits from trusted policy rather than using
 /// the spreadsheet reader's independent, fixed legacy ceiling.
 pub fn read_with_limits(bytes: &[u8], limits: crate::ArchiveLimits) -> Result<OpcPackage> {
@@ -160,8 +339,8 @@ pub fn read_with_limits(bytes: &[u8], limits: crate::ArchiveLimits) -> Result<Op
     )
 }
 
-fn read_bounded(
-    bytes: &[u8],
+fn read_bounded<S: Source + ?Sized>(
+    bytes: &S,
     max_entry: u64,
     max_package: u64,
     max_entries: usize,
@@ -442,17 +621,23 @@ fn is_supported_xl(name: &str) -> bool {
             .any(|prefix| name.starts_with(prefix))
 }
 
-fn locate_eocd(bytes: &[u8]) -> Result<usize> {
-    if bytes.len() < EOCD_MIN_LEN {
+fn locate_eocd<S: Source + ?Sized>(bytes: &S) -> Result<usize> {
+    if bytes.total_len() < EOCD_MIN_LEN {
         return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
             "opc bytes too short for an EOCD record",
         )));
     }
-    let max_back = bytes.len() - EOCD_MIN_LEN;
-    // The EOCD comment can be up to 0xFFFF bytes; scan that far back at most.
+    let max_back = bytes.total_len() - EOCD_MIN_LEN;
+    // The EOCD comment can be up to 0xFFFF bytes; scan that far back at most,
+    // over the tail read once.
     let scan_floor = max_back.saturating_sub(u16::MAX as usize);
+    let tail = bytes
+        .range(scan_floor, bytes.total_len() - scan_floor)?
+        .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc read past end of buffer",
+        )))?;
     for candidate in (scan_floor..=max_back).rev() {
-        if read_u32(bytes, candidate)? == EOCD_SIGNATURE {
+        if read_u32(&tail[..], candidate - scan_floor)? == EOCD_SIGNATURE {
             return Ok(candidate);
         }
     }
@@ -473,8 +658,8 @@ struct CentralEntry<'a> {
     local_offset: usize,
 }
 
-fn read_local_entry(
-    bytes: &[u8],
+fn read_local_entry<S: Source + ?Sized>(
+    bytes: &S,
     entry: &CentralEntry<'_>,
     cd_offset: usize,
     local_ranges: &mut BTreeMap<usize, usize>,
@@ -508,7 +693,7 @@ fn read_local_entry(
     let local_name_len = read_u16(bytes, local_offset + 26)? as usize;
     let local_extra_len = read_u16(bytes, local_offset + 28)? as usize;
     let name_start = local_offset + LOCAL_FILE_MIN_LEN;
-    if bytes.get(name_start..name_start + local_name_len) != Some(entry.name) {
+    if bytes.range(name_start, local_name_len)?.as_deref() != Some(entry.name) {
         return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
             "opc local header name does not match its central entry",
         )));
@@ -524,7 +709,7 @@ fn read_local_entry(
             "opc local data length overflow",
         )))?;
     let record_end = if descriptor {
-        descriptor_end(bytes, data_end, entry)
+        descriptor_end(bytes, data_end, entry)?
     } else {
         data_end
     };
@@ -534,21 +719,23 @@ fn read_local_entry(
         )));
     }
     claim_local_range(local_ranges, local_offset, record_end)?;
-    let raw = bytes.get(data_start..data_end).ok_or(Error::Artifact(
-        ArtifactError::EditRoundtripFailed("opc entry data truncated"),
-    ))?;
     let declared_size = entry.declared_size;
     let expected_crc = entry.crc;
-
-    let data = match entry.method {
-        ZIP_STORED => raw.to_vec(),
-        ZIP_DEFLATE => inflate(raw, declared_size)?,
-        _ => {
-            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
-                "opc entry uses an unsupported compression method",
-            )));
-        }
-    };
+    // The payload streams from the source into its part, bounded by the
+    // declared size: a file source never holds the compressed bytes whole.
+    let data = bytes
+        .with_range(data_start, data_end - data_start, |raw| {
+            match entry.method {
+                ZIP_STORED => read_stored(raw, declared_size),
+                ZIP_DEFLATE => inflate(raw, declared_size),
+                _ => Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                    "opc entry uses an unsupported compression method",
+                ))),
+            }
+        })?
+        .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc entry data truncated",
+        )))?;
 
     // Verify the produced bytes against the central-directory declaration. The
     // gate never trusts a length or checksum it did not recompute from the
@@ -572,24 +759,39 @@ fn read_local_entry(
 /// signature word can match both layouts; the shorter is taken. Anything else
 /// claims no descriptor bytes: the payload is still checked against the
 /// central CRC and size after it is read.
-fn descriptor_end(bytes: &[u8], data_end: usize, entry: &CentralEntry<'_>) -> usize {
-    let word = |at: usize| {
-        data_end
-            .checked_add(at)
-            .and_then(|offset| read_u32(bytes, offset).ok())
+///
+/// # Errors
+///
+/// The source's read errors: a word past the end is no descriptor, a read
+/// that fails is no answer.
+fn descriptor_end<S: Source + ?Sized>(
+    bytes: &S,
+    data_end: usize,
+    entry: &CentralEntry<'_>,
+) -> Result<usize> {
+    let word = |at: usize| -> Result<Option<u32>> {
+        let Some(offset) = data_end.checked_add(at) else {
+            return Ok(None);
+        };
+        Ok(bytes
+            .range(offset, 4)?
+            .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]])))
     };
     let declared = u32::try_from(entry.declared_size).ok();
-    if word(0) == Some(entry.crc) && word(4) == Some(entry.comp_size) && word(8) == declared {
-        data_end + 12
-    } else if word(0) == Some(DATA_DESCRIPTOR_SIGNATURE)
-        && word(4) == Some(entry.crc)
-        && word(8) == Some(entry.comp_size)
-        && word(12) == declared
-    {
-        data_end + 16
-    } else {
-        data_end
-    }
+    Ok(
+        if word(0)? == Some(entry.crc) && word(4)? == Some(entry.comp_size) && word(8)? == declared
+        {
+            data_end + 12
+        } else if word(0)? == Some(DATA_DESCRIPTOR_SIGNATURE)
+            && word(4)? == Some(entry.crc)
+            && word(8)? == Some(entry.comp_size)
+            && word(12)? == declared
+        {
+            data_end + 16
+        } else {
+            data_end
+        },
+    )
 }
 
 /// Claims one local record's `[start, end)` bytes for this decode. A record
@@ -613,7 +815,17 @@ fn claim_local_range(ranges: &mut BTreeMap<usize, usize>, start: usize, end: usi
     Ok(())
 }
 
-fn inflate(raw: &[u8], declared_size: u64) -> Result<Vec<u8>> {
+/// A STORED entry's bytes as they stream, at most one past its declared
+/// size, so a longer one is refused by its size check, never held whole.
+fn read_stored(raw: &mut dyn Read, declared_size: u64) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    raw.take(declared_size.saturating_add(1))
+        .read_to_end(&mut out)
+        .map_err(Error::Io)?;
+    Ok(out)
+}
+
+fn inflate(raw: &mut dyn Read, declared_size: u64) -> Result<Vec<u8>> {
     // Bound the decompressor at declared+1 bytes: a well-formed entry inflates
     // to exactly `declared_size`, so reading one extra byte is enough for the
     // caller's length check to catch a stream that expands past its declaration
@@ -636,24 +848,33 @@ fn crc32(data: &[u8]) -> u32 {
     crc.sum()
 }
 
-fn read_u16(bytes: &[u8], offset: usize) -> Result<u16> {
-    let slice = bytes.get(offset..offset + 2).ok_or(Error::Artifact(
-        ArtifactError::EditRoundtripFailed("opc read past end of buffer"),
-    ))?;
+fn read_u16<S: Source + ?Sized>(bytes: &S, offset: usize) -> Result<u16> {
+    let slice =
+        bytes
+            .range(offset, 2)?
+            .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc read past end of buffer",
+            )))?;
     Ok(u16::from_le_bytes([slice[0], slice[1]]))
 }
 
-fn read_u32(bytes: &[u8], offset: usize) -> Result<u32> {
-    let slice = bytes.get(offset..offset + 4).ok_or(Error::Artifact(
-        ArtifactError::EditRoundtripFailed("opc read past end of buffer"),
-    ))?;
+fn read_u32<S: Source + ?Sized>(bytes: &S, offset: usize) -> Result<u32> {
+    let slice =
+        bytes
+            .range(offset, 4)?
+            .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc read past end of buffer",
+            )))?;
     Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
-fn read_name(bytes: &[u8], offset: usize, len: usize) -> Result<String> {
-    let raw = bytes.get(offset..offset + len).ok_or(Error::Artifact(
-        ArtifactError::EditRoundtripFailed("opc part name truncated"),
-    ))?;
+fn read_name<S: Source + ?Sized>(bytes: &S, offset: usize, len: usize) -> Result<String> {
+    let raw =
+        bytes
+            .range(offset, len)?
+            .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "opc part name truncated",
+            )))?;
     String::from_utf8(raw.to_vec()).map_err(|_| {
         Error::Artifact(ArtifactError::EditRoundtripFailed(
             "opc part name is not valid UTF-8",
