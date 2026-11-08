@@ -199,6 +199,7 @@ pub(crate) fn reuse_chat_breakpoint(
             source: Some(seed),
             recalled: false,
             craft: Vec::new(),
+            user_turn: None,
         },
         craft,
         sources: sources.rows(),

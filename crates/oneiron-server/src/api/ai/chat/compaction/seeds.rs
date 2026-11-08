@@ -10,8 +10,10 @@
 //! first, durably, and sends no fallback while it still stands, so no
 //! restart reads a prefix that did not answer. A fresh turn's seed needs the
 //! rung that answered, so it is kept once the answer ends, on its own
-//! generation's receipt; a reply cut before then keeps none. A reply that
-//! never starts, or saves no receipt, keeps none. A native session stream
+//! generation's receipt; a reply cut before then keeps none. Either way the
+//! older generations of the reply's MESSAGE that no read addresses go (FIX
+//! 5033). A reply that never starts, or saves no receipt, keeps none. A
+//! native session stream
 //! (#5514) names no MESSAGE before its terminal: its seed is kept then, on
 //! the receipt that terminal retains.
 
@@ -22,7 +24,8 @@ use futures_util::StreamExt;
 use oneiron::attempt_queue::ManifestEntry;
 use oneiron::compaction::{ChatLog, ConversationCompactionUnavailable};
 use oneiron::conversation::{
-    ChatBreakpoint, ChatBreakpointRung, forget_chat_breakpoint, keep_chat_breakpoint,
+    ChatBreakpoint, ChatBreakpointRung, ChatBreakpointUserTurn, forget_chat_breakpoint,
+    forget_superseded_chat_breakpoints, keep_chat_breakpoint,
 };
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MessageStreamHandle, MessageStreamReceipt};
@@ -170,6 +173,24 @@ impl SeedSlot {
             }
         }
     }
+
+    /// Forgets the older generations of the reply's MESSAGE that no read
+    /// addresses once its terminal confirms its early seed (FIX 5033). A
+    /// forget that fails leaves them for the MESSAGE's next keep.
+    fn forget_superseded(&self) {
+        let (Some(seed), Some(handle)) = (&self.early, self.handle) else {
+            return;
+        };
+        let forgotten = crate::server::blocking(|| {
+            forget_superseded_chat_breakpoints(&self.vault, seed.conversation, handle.message_id())
+        });
+        if let Err(error) = forgotten {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a chat reply's superseded breakpoints were not forgotten"
+            );
+        }
+    }
 }
 
 /// The captured rung gave way: its seed goes, durably, before today's call
@@ -188,16 +209,19 @@ fn give_way(slot: Option<&SeedSlot>) -> bool {
 
 /// The seed a chat turn's reply keeps: its call exactly as `answering`, the
 /// rung that answered it, sent it (FIX 4933), that rung by ref, the log's
-/// sources, and the craft rows the host's snapshot read for it (FIX 9439).
-/// None for a log whose turns were not all pinned. A log read through a
-/// room's held projection keeps its seed too: a reuse checks it through
-/// that same lane (FIX 5031).
+/// sources, the craft rows the host's snapshot read for it (FIX 9439), and
+/// `user_turn`, the user turn the request answers, by the rows the admission
+/// that put its words in witnessed (FIX 5033). The keep stores no seed that
+/// binds none. None for a log whose turns were not all pinned. A log read
+/// through a room's held projection keeps its seed too: a reuse checks it
+/// through that same lane (FIX 5031).
 pub(super) fn capture_seed(
     agent: EntityId,
     reader: WriteActor,
     log: &ChatLog,
     instructions_digest: Option<String>,
     craft: Vec<ManifestEntry>,
+    user_turn: Option<ChatBreakpointUserTurn>,
     answering: &AnsweringRung,
 ) -> Option<ChatBreakpoint> {
     if !log.pinned {
@@ -223,6 +247,7 @@ pub(super) fn capture_seed(
         instructions_digest,
         sources: log.sources.clone(),
         summaries: log.summaries.clone(),
+        user_turn,
         craft_entries: craft,
     })
 }
@@ -381,7 +406,8 @@ fn first_or_today(
 /// conversation's words since; one whose early keep failed is kept now); a
 /// chat turn's is captured now from the call the answering rung sent. A
 /// reply its call did not answer, or that saved no receipt, keeps none, and
-/// a reuse's early seed is withdrawn. A breakpoint that is not kept leaves
+/// a reuse's early seed is withdrawn. A keep forgets the generations the
+/// seed superseded (FIX 5033). A breakpoint that is not kept leaves
 /// the reply's actions to run as they always did. A turn past its threshold,
 /// or a reuse that compacts its own action log (FIX 5027), then queues its
 /// flight off the answer's path, on that rung; with none that answered, a
@@ -413,6 +439,7 @@ pub(in crate::api::ai::chat) fn keep(
         source,
         recalled,
         craft,
+        user_turn,
     } = breakpoint;
     let own = saved.filter(|receipt| {
         slot.handle.is_none_or(|handle| {
@@ -434,6 +461,7 @@ pub(in crate::api::ai::chat) fn keep(
                         log.log(),
                         instructions_digest,
                         craft,
+                        user_turn,
                         answering.as_ref()?,
                     )
                 }),
@@ -447,7 +475,9 @@ pub(in crate::api::ai::chat) fn keep(
                 }
             }
         }
-        Some(_) => {}
+        // A reuse's seed kept before its call stands confirmed; the
+        // generations it superseded go (FIX 5033).
+        Some(_) => slot.forget_superseded(),
     }
     if let (Some(BreakpointLog::Compact(log)), Some(admitted)) = (log, admitted) {
         let call = ChatBreakpointCall {
