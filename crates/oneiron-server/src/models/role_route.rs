@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use oneiron::llm::HostInferenceContext;
 use oneiron::llm::manifest::ModelRole;
+use oneiron::llm::model_pack::ModelPackRoleChoice;
 use oneiron::settings::model_pack::ModelPackAccess;
 use oneiron::{LlmRequest, ModelId, ModelLocality, ModelTierRef, Vault};
 
@@ -59,6 +60,17 @@ impl std::fmt::Display for RoleRefusal {
             ),
             Self::Refused(error) => write!(f, "{error}"),
         }
+    }
+}
+
+/// The widest route a model pack pick on `access` may run at (FIX 5366): a
+/// local-GPU pick runs on this device or the owner's own model server, never
+/// at a third party; any other access, wherever its offers serve it.
+fn model_pack_ceiling(access: &ModelPackAccess) -> ModelLocality {
+    if *access == ModelPackAccess::LocalGpu {
+        ModelLocality::OwnServer
+    } else {
+        ModelLocality::ThirdParty
     }
 }
 
@@ -268,26 +280,11 @@ impl ModelRuntime {
         else {
             return Ok(None);
         };
+        let Some((served, ladder)) = self.model_pack_served(&choice) else {
+            return Ok(None);
+        };
         let model = choice.model().clone();
-        let route = if choice.variant.access == ModelPackAccess::LocalGpu {
-            ModelLocality::OnDevice
-        } else {
-            ModelLocality::ThirdParty
-        };
-        let Some((served, ladder)) = router.served_at(&model, route) else {
-            return Ok(None);
-        };
-        // A local-GPU pick runs on this device or the owner's own model
-        // server, never at a third party: with no on-device view, `served_at`
-        // falls back to the model's default route, which may be remote.
-        let widest = if choice.variant.access == ModelPackAccess::LocalGpu {
-            ModelLocality::OwnServer
-        } else {
-            ModelLocality::ThirdParty
-        };
-        if served > widest {
-            return Ok(None);
-        }
+        let widest = model_pack_ceiling(&choice.variant.access);
         if self.stays_on_device.contains(&role) && served == ModelLocality::ThirdParty {
             return Ok(None);
         }
@@ -314,6 +311,29 @@ impl ModelRuntime {
             locality: served,
             seat_bound: true,
         }))
+    }
+
+    /// Where this server serves `choice`, a model pack's pick (FIX 5366),
+    /// and the ladder that serves it there: at its access's route, never
+    /// wider than that access allows (`model_pack_ceiling`). With no
+    /// on-device view, `served_at` falls back to the model's default route,
+    /// which may be remote, so a local-GPU pick served there is no pick.
+    /// `None` when no route here serves it so. A role's pick and the
+    /// compaction model's (FIX 20042) are served by this one rule.
+    pub(crate) fn model_pack_served(
+        &self,
+        choice: &ModelPackRoleChoice,
+    ) -> Option<(ModelLocality, Arc<OfferLadder>)> {
+        let route = if choice.variant.access == ModelPackAccess::LocalGpu {
+            ModelLocality::OnDevice
+        } else {
+            ModelLocality::ThirdParty
+        };
+        let widest = model_pack_ceiling(&choice.variant.access);
+        self.router
+            .as_ref()?
+            .served_at(choice.model(), route)
+            .filter(|(served, _)| *served <= widest)
     }
 
     /// Admits `request` as a call of `role` against the vault's live policy.

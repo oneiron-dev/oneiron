@@ -14,7 +14,7 @@ pub(super) fn raw_json(body: String) -> Response {
     ([(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
 
-/// The core run-tree response for `tree`: `{"nodes":[...],"roots":[...],"repairs":[...]}`.
+/// The flat core run-tree response, including this run's explicit deletion lines.
 pub(super) fn run_tree_json(tree: oneiron::RunTree) -> serde_json::Result<String> {
     serde_json::to_string(&core_run_tree(tree))
 }
