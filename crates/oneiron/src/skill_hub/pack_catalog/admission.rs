@@ -390,9 +390,7 @@ impl Vault {
         let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
         // The first-party model catalog activates its rows for inference
         // admission here; rows the prior pack shipped follow the update.
-        let model_catalog = receipt.pack_name == crate::skill_hub::MODEL_PACK_NAME
-            && receipt.hub_id == crate::skill_hub::default_skill_hub_id()?.to_hex()
-            && receipt.hub_ref == crate::skill_hub::MODEL_PACK_SUBTREE;
+        let model_catalog = super::model_pack::is_first_party_model_catalog(&receipt)?;
         let prior_catalog = if model_catalog && prior.is_some() {
             crate::llm::registry::CatalogSeed::from_installed_pack_in_txn(self, txn).ok()
         } else {
