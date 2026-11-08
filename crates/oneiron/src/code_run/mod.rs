@@ -51,6 +51,7 @@ pub mod shadow_runner;
 mod spawn_replay;
 pub(crate) use self::spawn_replay::barrier_spawn_call;
 mod storage;
+pub(crate) use storage::erase_reader_caller_actor_in_txn;
 mod support;
 mod task_reporting;
 mod task_settlement;
@@ -220,6 +221,9 @@ pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{bind_owner_pair_ask_in_txn, owner_pair_in_txn};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
+};
+pub(crate) use self::storage::{
+    closed_read_world_capture_in_txn, invalidate_imported_read_world_capture_in_txn,
 };
 pub(crate) use self::storage::{
     drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
