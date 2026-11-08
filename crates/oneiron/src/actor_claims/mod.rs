@@ -92,6 +92,7 @@ mod candidate;
 mod craft_read;
 mod distill;
 mod evidence;
+mod imported_chat;
 mod rows;
 mod validate;
 mod write;

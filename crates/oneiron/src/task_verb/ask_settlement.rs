@@ -225,10 +225,17 @@ fn settle_with_cutoff_in(
     );
     let reference = settlement_id(id)?;
     let cutoff_order = evidence.iter().map(|entry| entry.order).max().unwrap_or(0);
+    let picked = decision.picked_option(&evidence).cloned();
+    let was_rec = picked
+        .as_ref()
+        .zip(group.effective.rec.as_ref())
+        .is_some_and(|(picked, rec)| picked == &rec.option);
     let mut result = TaskAskResult {
         effect_authorization: TaskAskEffectAuthorization::NotEvaluatedByAsk,
         coverage,
         decision,
+        picked,
+        was_rec,
         fallback,
         evidence,
         settlement: TaskAskSettlement {
@@ -555,10 +562,17 @@ pub(super) fn validate_result(id: EntityId, result: &TaskAskResult) -> Result<()
             entry.ladder_changed = None;
         }
     }
+    let expected_picked = decision.picked_option(&evidence).cloned();
+    let expected_was_rec = expected_picked
+        .as_ref()
+        .zip(settlement.effective.rec.as_ref())
+        .is_some_and(|(picked, rec)| picked == &rec.option);
     if coverage != result.coverage
         || decision != result.decision
         || evidence != result.evidence
         || unmet_sources != settlement.unmet_sources
+        || expected_picked != result.picked
+        || expected_was_rec != result.was_rec
         || fallback(
             &settlement.effective,
             &coverage,

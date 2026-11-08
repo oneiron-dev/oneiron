@@ -2,9 +2,6 @@
 
 use oneiron_contracts::memory::MemoryError;
 
-/// Maximum query string, in bytes: 8 KiB.
-pub const MAX_QUERY_BYTES: usize = 8 * 1024;
-
 /// The 1,000-row candidate floor a narrowed read fetches.
 pub const MAX_SEARCH_LIMIT: usize = 1_000;
 
@@ -41,17 +38,6 @@ pub const MAX_REMOTE_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 /// (ABC transport row T19). A device's own sync reads (renewal, removal
 /// delivery) and the residence row read still take it as their bound.
 pub const MAX_REMOTE_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
-
-/// Rejects an over-long query before it reaches retrieval.
-pub fn check_query(query: &str) -> Result<(), MemoryError> {
-    if query.len() > MAX_QUERY_BYTES {
-        return Err(MemoryError::bad_request_with(
-            format!("query exceeds the {MAX_QUERY_BYTES}-byte ceiling"),
-            &["Shorten the query; retrieval scores intent, not transcript length."],
-        ));
-    }
-    Ok(())
-}
 
 /// Longest recall deadline a request or a vault may name, in milliseconds:
 /// one minute. Past it a deadline stops being a cut and becomes a wait.

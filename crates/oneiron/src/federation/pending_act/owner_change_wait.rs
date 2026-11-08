@@ -22,12 +22,12 @@
 //! common; an explicit host selection (Host(Some(..)) or Host(None))
 //! ignores the common.
 
+use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::federation::FederationGrantRole as Role;
-use crate::ports::{recorded_at_in_txn, EntityStoreRead};
-use crate::Vault;
+use crate::ports::{EntityStoreRead, recorded_at_in_txn};
 
 use super::{check_vault, invalid};
 
