@@ -16619,7 +16619,11 @@
       "output": "crate::task_verb::sdk::ConnectorCallStatus",
       "call": "crate::task_verb::sdk::connector_call_status_read(memory, input)?",
       "scope": "Read",
-      "section": false
+      "section": false,
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "host_door_caller": true
     },
     {
       "name": "connector.answer",
