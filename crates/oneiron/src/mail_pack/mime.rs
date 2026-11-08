@@ -413,7 +413,11 @@ struct Parameterized {
 impl Parameterized {
     fn parse(raw: &str) -> Self {
         let mut pieces = split_params(raw).into_iter();
-        let value = pieces.next().unwrap_or_default().trim().to_ascii_lowercase();
+        let value = pieces
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
         let mut params: Vec<(String, String)> = Vec::new();
         let mut extended: Vec<(String, u32, bool, String)> = Vec::new();
         for piece in pieces {
@@ -754,8 +758,8 @@ fn collect(
         });
         return;
     }
-    let text = decode_charset(&part.decoded(), part.content_type.param("charset"))
-        .replace("\r\n", "\n");
+    let text =
+        decode_charset(&part.decoded(), part.content_type.param("charset")).replace("\r\n", "\n");
     match media_type {
         "text/plain" => plain.push(text),
         "text/html" => html.push(text),

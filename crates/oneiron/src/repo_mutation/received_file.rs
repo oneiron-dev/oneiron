@@ -139,6 +139,7 @@ impl Vault {
             run: None,
             actor_class: Some(EdgeActorClass::System as u8),
             opener_lineage: Vec::new(),
+            repair_of: None,
         };
         PreparedRepoProposal::new(row, base.encoded).map(Ok)
     }
