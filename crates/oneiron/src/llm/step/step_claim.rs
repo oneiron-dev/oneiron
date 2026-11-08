@@ -7,8 +7,10 @@ use super::codec::{
     expect_string, expect_u64, invalid_step, pinned_key_index,
 };
 use super::response_pins::{StepResponseRef, register_step_response_pin_in_txn};
+use super::source::StepSource;
 use super::step_state::{
-    StepStateDisposition, StepStateOwners, StepStateRow, step_state_put_in_txn, step_state_read,
+    StepStateDisposition, StepStateOwners, StepStateRow, owner_gone_in_txn, step_state_put_in_txn,
+    step_state_read,
 };
 use super::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_VALUE_KEYS,
@@ -55,19 +57,22 @@ pub(crate) use super::step_index::{
 /// was filed, keeps the row's erased skeleton, and files nothing.
 pub(super) fn log_terminal_step(
     ctx: &DurableStepContext<'_>,
-    step_hash: &[u8; 32],
+    binding: crate::model_step_effect::StepEffectBinding,
+    owners: StepStateOwners,
+    source: &StepSource,
     request: &LlmRequest,
     response: &LlmResponse,
     payload: &[u8],
     terminal: StepTerminal,
 ) -> DurableStepResult<Option<EntityId>> {
+    let step_hash = &binding.step_hash;
     let params_hash = request_params_hash(request)?;
     let claim_id = ctx.vault.store.clock.entity_id()?;
     let occurred = TimeRange {
-        start: ctx.now_ms,
-        end: ctx.now_ms,
+        start: source.at,
+        end: source.at,
     };
-    let envelope = dreamer_runtime_envelope(ctx)?;
+    let envelope = runtime_envelope(binding.attempt_id, source.actor, source.run_id.as_deref())?;
     let inline = payload.len() <= DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES;
     let inline_response = if inline {
         Some(String::from_utf8(payload.to_vec()).map_err(|_| {
@@ -76,7 +81,7 @@ pub(super) fn log_terminal_step(
     } else {
         None
     };
-    let existing_started_at = step_state_read(ctx.vault, ctx.attempt_id, step_hash)?
+    let existing_started_at = step_state_read(ctx.vault, binding.attempt_id, step_hash)?
         .map_or(ctx.now_ms, |row| row.started_at);
 
     ctx.vault
@@ -86,21 +91,23 @@ pub(super) fn log_terminal_step(
             // answer came keeps the row's skeleton, and no response, artifact
             // or claim is filed. The batch put hook below indexes the claim
             // in the SAME wtxn, so a death here recovers from either side.
+            let source_gone = owner_gone_in_txn(ctx.vault, &*wtxn, &owners.ids())?;
             let logged = step_state_put_in_txn(
                 ctx.vault,
                 wtxn,
-                ctx.attempt_id,
+                binding.attempt_id,
                 step_hash,
                 &StepStateRow {
                     progression: StepProgression::Logged,
                     started_at: existing_started_at,
                     updated_at: ctx.now_ms,
                     response_payload: Some(payload.to_vec()),
+                    source: Some(source.clone()),
                     owners: StepStateOwners {
                         claim: Some(claim_id),
-                        ..StepStateOwners::of(ctx)
+                        ..owners
                     },
-                    erased: false,
+                    erased: source_gone,
                 },
             )?;
             if logged == StepStateDisposition::Erased {
@@ -112,7 +119,7 @@ pub(super) fn log_terminal_step(
             crate::self_heal::blocked_reports::bind_step_claim_in_txn(
                 ctx.vault,
                 wtxn,
-                ctx.attempt_id,
+                binding.attempt_id,
                 step_hash,
                 claim_id,
             )?;
@@ -134,14 +141,14 @@ pub(super) fn log_terminal_step(
                     .apply(wtxn)?;
                 let run_ref = format!(
                     "dreamer-step:{}",
-                    bytes_to_hex_lower(ctx.attempt_id.as_bytes())
+                    bytes_to_hex_lower(binding.attempt_id.as_bytes())
                 );
                 let appended = ctx.vault.append_blob_artifact_version_in_txn(
                     wtxn,
                     &artifact_id,
                     payload,
                     &BlobVersionProvenance::AgentRun { run_ref },
-                    ctx.envelope_actor,
+                    source.actor,
                     occurred,
                     ctx.now_ms,
                 )?;
@@ -153,7 +160,7 @@ pub(super) fn log_terminal_step(
             };
 
             let value = encode_step_claim_value(&EncodedStepClaim {
-                attempt_id: ctx.attempt_id,
+                attempt_id: binding.attempt_id,
                 step_hash: *step_hash,
                 progression: StepProgression::Finished,
                 model_id: request.model.as_str().to_owned(),
@@ -163,11 +170,11 @@ pub(super) fn log_terminal_step(
                 usage_out: response.usage.output.total,
                 response: inline_response.clone(),
                 response_ref,
-                at: ctx.now_ms,
+                at: source.at,
             });
             let candidate = ClaimCandidate::new(
                 DREAMER_STEP_PREDICATE,
-                ClaimSubject::Entity(ctx.subject),
+                ClaimSubject::Entity(source.subject),
                 value,
                 1.0,
             );
@@ -188,7 +195,7 @@ pub(super) fn log_terminal_step(
                 register_step_response_pin_in_txn(&ctx.vault.store, wtxn, &claim_id, pin)?;
             }
             let claimed = StepClaimed {
-                attempt_id: ctx.attempt_id,
+                attempt_id: binding.attempt_id,
                 step_hash: *step_hash,
                 claim: claim_id,
                 used_units: response
@@ -294,22 +301,30 @@ pub(super) fn call_purpose_str(purpose: &CallPurpose) -> String {
 }
 
 pub(super) fn dreamer_runtime_envelope(ctx: &DurableStepContext<'_>) -> Result<WriteEnvelope> {
+    runtime_envelope(ctx.attempt_id, ctx.envelope_actor, ctx.run_id.as_deref())
+}
+
+fn runtime_envelope(
+    attempt_id: AttemptId,
+    actor: crate::write_envelope::WriteActor,
+    run_id: Option<&str>,
+) -> Result<WriteEnvelope> {
     let mut entries = vec![(
         Value::from(ENVELOPE_PROVENANCE_SURFACE_KEY),
         Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
     )];
-    if let Some(run_id) = &ctx.run_id {
+    if let Some(run_id) = run_id {
         entries.push((
             Value::from(ENVELOPE_PROVENANCE_RUN_KEY),
-            Value::from(run_id.as_str()),
+            Value::from(run_id),
         ));
     }
     entries.push((
         Value::from(ENVELOPE_PROVENANCE_ATTEMPT_KEY),
-        Value::from(bytes_to_hex_lower(ctx.attempt_id.as_bytes())),
+        Value::from(bytes_to_hex_lower(attempt_id.as_bytes())),
     ));
     Ok(WriteEnvelope::new(
-        ctx.envelope_actor,
+        actor,
         ClaimSource::Generated,
         WriteProvenance::new(Value::Map(entries))?,
         ClaimApprovalStatus::Proposed,

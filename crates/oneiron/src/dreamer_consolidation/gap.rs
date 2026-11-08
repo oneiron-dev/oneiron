@@ -351,7 +351,7 @@ pub(super) fn run_gap_scan(
             intent::land_answered_intents(vault);
             Ok(crate::dreamer_wake::DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             })
         }
         Err(error) if super::residency::waits_on_residency(&error) => {
