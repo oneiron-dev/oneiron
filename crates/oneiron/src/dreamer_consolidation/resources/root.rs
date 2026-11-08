@@ -188,7 +188,7 @@ impl<'a> BranchResources<'a> {
         let mut scope = Scope {
             world: key.world,
             facet: key.facet,
-            relationship: key.rel.as_ref().map(|rel| rel.iter().copied().collect()),
+            relationship: key.rel.clone(),
             project: Some(key.project),
             readable,
             writable: claim_versions,
@@ -201,7 +201,7 @@ impl<'a> BranchResources<'a> {
                 || bound.relationship.as_ref().is_some_and(|relationships| {
                     !key.rel
                         .as_ref()
-                        .is_some_and(|rel| rel.iter().all(|id| relationships.contains(id)))
+                        .is_some_and(|rel| rel.is_subset(relationships))
                 })
             {
                 return Err(invalid_consolidation("root crossed the caller scope"));

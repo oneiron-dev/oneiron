@@ -6,7 +6,7 @@ use rmpv::Value;
 
 use crate::write_envelope::claim_body::ClaimBody;
 use crate::write_envelope::claim_body::ClaimSubject;
-use crate::write_envelope::claim_body::{RelationshipScope, RelationshipSet};
+use crate::write_envelope::claim_body::RelationshipScope;
 use oneiron_contracts::claim::ClaimApprovalStatus;
 use oneiron_contracts::claim::ClaimLifecycleStatus;
 use oneiron_contracts::claim::ClaimSource;
@@ -457,7 +457,7 @@ impl ClaimCandidate {
     /// Limits the claim to one RELATIONSHIP. Validated at the write door.
     #[must_use]
     pub fn with_relationship(mut self, relationship: EntityId) -> Self {
-        self.relationship = Some(RelationshipSet::from([relationship]));
+        self.relationship = Some(BTreeSet::from([relationship]));
         self
     }
 
@@ -470,7 +470,7 @@ impl ClaimCandidate {
         self
     }
 
-    pub const fn relationship(&self) -> Option<&RelationshipSet> {
+    pub const fn relationship(&self) -> Option<&BTreeSet<EntityId>> {
         self.relationship.as_ref()
     }
 

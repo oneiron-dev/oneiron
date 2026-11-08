@@ -492,10 +492,7 @@ impl<'a> BranchResources<'a> {
             if facts.world != scope.world
                 || facts.facet != scope.facet
                 || scope.relationship.as_ref().is_some_and(|bound| {
-                    !facts
-                        .rel
-                        .as_ref()
-                        .is_some_and(|rel| rel.iter().all(|id| bound.contains(id)))
+                    !facts.rel.as_ref().is_some_and(|rel| rel.is_subset(bound))
                 })
                 || candidate.supersedes.is_some()
                 || !candidate.provenance_chain.is_empty()

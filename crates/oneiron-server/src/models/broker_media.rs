@@ -7,10 +7,9 @@
 //! for the OpenAI-compatible paths, `x-goog-api-key` for the Gemini API's.
 //!
 //! A JSON or form body over 16 MiB travels in the broker's chunked call
-//! form in 1 MiB chunks (FIX 1895). Media replies stream back in 1 MiB
-//! frames, checked for the key and never rewritten (FIX 1896). Neither
-//! ordinary path has a cumulative byte cap; actual allocation failures and
-//! the provider's `timeout_secs` still end the exchange.
+//! form, up to `MAX_STREAM` (512 MiB) (FIX 1895). Media replies stream
+//! back in 1 MiB frames, checked for the key and never rewritten, up to
+//! 512 MiB, within the provider's `timeout_secs` (FIX 1896).
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;

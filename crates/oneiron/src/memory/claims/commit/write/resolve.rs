@@ -171,7 +171,7 @@ impl Memory<'_> {
             .map(|refs| {
                 refs.iter()
                     .map(|r| self.resolve_ref(r))
-                    .collect::<MemoryResult<crate::claim::RelationshipSet>>()
+                    .collect::<MemoryResult<std::collections::BTreeSet<EntityId>>>()
             })
             .transpose()?;
         let scope_rmpv = input.scope.as_ref().map(json_to_rmpv);

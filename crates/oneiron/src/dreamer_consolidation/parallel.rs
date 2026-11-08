@@ -187,11 +187,7 @@ impl ConsolidationExecutor<'_> {
             parent,
             axes.world_ref,
             axes.facet_ref,
-            resources
-                .scope()
-                .relationship
-                .as_ref()
-                .map(|ids| ids.iter().copied().collect()),
+            resources.scope().relationship.clone(),
         );
         // Each child's reply check reads the citations its candidates would
         // carry into verification against the branch's own pinned text: a
