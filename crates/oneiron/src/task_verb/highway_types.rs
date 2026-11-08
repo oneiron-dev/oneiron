@@ -302,6 +302,9 @@ pub enum TaskReportBody {
         /// Rides the attempt receipt (ARCH-0079).
         #[serde(default)]
         confession: Option<String>,
+        /// Explicit objective answers, bound to the host's try at completion.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        confession_structured: Option<Vec<crate::self_heal::audit::ObjectiveConfession>>,
     },
     Failed {
         error: String,
