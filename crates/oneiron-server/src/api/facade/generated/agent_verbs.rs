@@ -804,7 +804,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.secrets.propose", post(facade_route))
         .route("/execute_code", post(facade_route))
         .route("/vault.code.model_heal_count", post(facade_route))
+        .route("/vault.code.session_model_heal_count", post(facade_route))
         .route("/vault.code.corrections", post(facade_route))
+        .route("/vault.code.step_evidence", post(facade_route))
         .route("/vault.code.type_diagnostics", post(facade_route))
         .route("/vault.code.waits.resolve", post(facade_route))
         .route("/vault.code.waits.receipt", post(facade_route))
@@ -896,6 +898,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.agents.dreaming.set", post(facade_route))
         .route("/vault.agents.grants.mint", post(facade_route))
         .route("/vault.agents.grants.revoke", post(facade_route))
+        .route("/vault.agents.verb_classes.get", post(facade_route))
+        .route("/vault.agents.verb_classes.configure", post(facade_route))
         .route("/vault.repo.git_push.mint", post(facade_route))
         .route("/vault.repo.git_push.revoke", post(facade_route))
         .route("/vault.connectors.read_grants.grant", post(facade_route))
@@ -1032,6 +1036,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.skills.pack_receipt", post(facade_route))
         .route("/vault.skills.outcomes.project", post(facade_route))
         .route("/vault.skills.outcomes.get", post(facade_route))
+        .route(
+            "/vault.settings.models.responses_store.read",
+            post(facade_route),
+        )
+        .route(
+            "/vault.settings.models.responses_store.set",
+            post(facade_route),
+        )
         .route("/vault.models.manifest.read", post(facade_route))
         .route("/vault.models.manifest.replace", post(facade_route))
         .route("/vault.settings.web_connector", post(facade_route))

@@ -304,6 +304,7 @@ fn capture_entity_deindex(
     had_graph_mutation |= room_graph;
     neighbors.extend(room_neighbors);
     crate::task_verb::index_owner_fact(store, wtxn, id, None)?;
+    crate::runtime_hooks::index_task_due_in_txn(store, wtxn, *id, None)?;
     crate::task_verb::forget_task_mirror(store, wtxn, *id)?;
     crate::task_verb::forget_symbols(store, wtxn, *id)?;
     crate::store::text_index::deindex_text(store, wtxn, id)?;

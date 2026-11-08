@@ -646,14 +646,9 @@ pub(super) fn settlement_fact_in_txn(
     })
 }
 
-/// The newest position in `source`, or `None` while it is empty.
-pub(super) fn head(vault: &Vault, source: FactSource) -> Result<Option<FactPosition>> {
-    let rtxn = vault.store.env.read_txn()?;
-    head_in_txn(vault, &rtxn, source)
-}
-
-/// [`head`] in the caller's snapshot, including a binding lifecycle write's
-/// own settlement head.
+/// The newest position in `source`, or `None` while it is empty, in the
+/// caller's snapshot, including a binding lifecycle write's own settlement
+/// head.
 pub(super) fn head_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -675,17 +670,9 @@ pub(super) fn head_in_txn(
     Ok(head)
 }
 
-/// The changelog position of a binding claim's latest write: where a new or
-/// re-enabled binding starts following the claim changelog.
-pub(super) fn binding_written_at(
-    vault: &Vault,
-    binding: &EntityId,
-) -> Result<Option<FactPosition>> {
-    let rtxn = vault.store.env.read_txn()?;
-    binding_written_at_in_txn(vault, &rtxn, binding)
-}
-
-/// [`binding_written_at`] in the caller's snapshot.
+/// The changelog position of a binding claim's latest write, in the
+/// caller's snapshot: where a new or re-enabled binding starts following the
+/// claim changelog.
 pub(super) fn binding_written_at_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -704,18 +691,22 @@ pub(super) fn binding_written_at_in_txn(
 /// Where an enabled binding starts in each source at its real lifecycle
 /// write: its own claim write where one exists, otherwise the source head.
 /// The settlement, tick and inbound feeds hold no binding's write, so a
-/// binding starts at their heads.
+/// binding starts at their heads, but for one `fresh` to the tick feed,
+/// never bound before: it starts before the earliest tick of a TASK still
+/// open (FIX 4749), so a watcher bound after its TASK ticked sees that tick.
 pub(super) fn enable_start_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     binding: &EntityId,
     source: FactSource,
+    fresh: bool,
 ) -> Result<Option<FactPosition>> {
     match source {
         FactSource::ClaimChangelog => match binding_written_at_in_txn(vault, txn, binding)? {
             Some(position) => Ok(Some(position)),
             None => head_in_txn(vault, txn, source),
         },
+        FactSource::Schedule if fresh => schedule::open_tick_start_in_txn(vault, txn),
         FactSource::Settlement | FactSource::Schedule | FactSource::SurfaceInbound => {
             head_in_txn(vault, txn, source)
         }

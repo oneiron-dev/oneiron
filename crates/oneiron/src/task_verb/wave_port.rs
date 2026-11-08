@@ -488,16 +488,12 @@ impl VaultWaveTaskPort<'_> {
                     .map_err(|_| Error::InvariantViolation("wave spec encoding"))?;
                 let spec = rmpv::decode::read_value(&mut encoded.as_slice())
                     .map_err(|_| Error::InvariantViolation("wave spec decoding"))?;
-                let validated = ValidatedTaskCreate {
-                    kind: TaskKind::Standard,
+                let validated = ValidatedTaskCreate::engine_internal(
+                    TaskKind::Standard,
                     assignee,
-                    consult: None,
-                    ttl: None,
-                    // FIX685: engine-internal minters carry no due annotation.
-                    due_at: None,
                     spec,
-                    type_ref: crate::task_type::TaskTypeRef::seeded_root(),
-                };
+                    crate::task_type::TaskTypeRef::seeded_root(),
+                );
                 super::rate_limit::record_task_create(
                     self.vault,
                     txn,

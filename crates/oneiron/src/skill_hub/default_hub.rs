@@ -20,9 +20,18 @@ use crate::{EntityId, Vault, consent::AuthenticatedOwner, error::Result, tempora
 /// pin until the owner sets that ref's own policy, and the commit a caller
 /// pins to install a first-party pack folder. A floating branch or network
 /// lookup never changes an opened vault's skill source.
-const HUB_COMMIT: &str = "5407656fbe1e94241bf3e4b15defbfb9ff259166";
+const HUB_COMMIT: &str = "cb5c8bed81981161e70db3668776dc8d34abcce9";
 /// Library data, deliberately not a fifth build-embedded bootstrap skill.
 pub const REVIEW_BUNDLE_EXPLAINER_SUBTREE: &str = "skills/review-bundle-explainer";
+/// The library skill that teaches an agent to write a watcher (FIX 19855,
+/// ARCH-0053): a TASK with a due time, and a hook on its `schedule.tick` or
+/// on a connector's `surface.inbound` events that skips or enqueues a run.
+/// It creates watch TASKs (`TaskCreateSpec.watch`, FIX 22121), which queue
+/// no work and settle at their tick.
+/// Library data like the review explainer: it imports through
+/// [`Vault::import_default_hub_skill`] at the released commit; nothing
+/// imports it on open.
+pub const WRITE_A_WATCHER_SUBTREE: &str = "skills/write-a-watcher";
 /// The model catalog has no authority of its own. Its rows count once the
 /// fetched bytes carry scan evidence and the pack installs; which bytes are
 /// fetched is the ref's sync policy, vault data rather than an engine constant.

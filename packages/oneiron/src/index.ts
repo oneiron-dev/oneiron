@@ -638,7 +638,7 @@ export class Oneiron {
     budgets: {
       /** The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it. */
       lease: Object.assign((input: Facade.SpendScopeRequest): Facade.SpendLeaseView => this.#call(() => this.#client.vaultBudgetsLease(input) as Facade.SpendLeaseView), {
-        /** The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit. */
+        /** The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit, optionally funded by his agent grant that names a wallet its whole tree draws on. */
         open: (input: Facade.OpenSpendLeaseRequest): Facade.SpendLeaseView => this.#call(() => this.#client.vaultBudgetsLeaseOpen(input) as Facade.SpendLeaseView),
         /** The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap. */
         top_up: (input: Facade.TopUpSpendLeaseRequest): Facade.SpendLeaseView => this.#call(() => this.#client.vaultBudgetsLeaseTopUp(input) as Facade.SpendLeaseView),
@@ -2118,6 +2118,14 @@ export class Oneiron {
         /** Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling. */
         replace: (input: Facade.InferenceDefaultsReplaceRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaultsReplace(input) as Facade.PolicyActionOutcome),
       }),
+      models: {
+        responses_store: {
+          /** Reads the owner's Responses store switch from the serving vault. */
+          read: (input: Facade.EmptyRequest): Facade.ModelResponsesStoreSettings => this.#call(() => this.#client.vaultSettingsModelsResponsesStoreRead(input) as Facade.ModelResponsesStoreSettings),
+          /** Sets the owner's Responses store switch, persisting it before updating this server's live providers. */
+          set: (input: Facade.ModelResponsesStoreSettings): Facade.ModelResponsesStoreSettings => this.#call(() => this.#client.vaultSettingsModelsResponsesStoreSet(input) as Facade.ModelResponsesStoreSettings),
+        },
+      },
       /** Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key. */
       web_connector: Object.assign((input: Facade.EmptyRequest): Facade.WebConnectorSetting => this.#call(() => this.#client.vaultSettingsWebConnector(input) as Facade.WebConnectorSetting), {
         /** Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector. */
@@ -2427,8 +2435,12 @@ export class Oneiron {
       },
       /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
       model_heal_count: (input: Facade.CodeRunModelHealCountRequest): Facade.CodeRunModelHealCountView => this.#call(() => this.#client.vaultCodeModelHealCount(input) as Facade.CodeRunModelHealCountView),
+      /** Read one model's healed-turn tally as one live off-record session the owner is in reads it: the canonical tally, that session's own delta and their sum. Owner only. A closed or unknown session is refused. */
+      session_model_heal_count: (input: Facade.CodeRunSessionModelHealCountRequest): Facade.CodeRunSessionModelHealCountView => this.#call(() => this.#client.vaultCodeSessionModelHealCount(input) as Facade.CodeRunSessionModelHealCountView),
       /** Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only. */
       corrections: (input: Facade.CodeRunCorrectionsRequest): Facade.CodeRunCorrectionsView => this.#call(() => this.#client.vaultCodeCorrections(input) as Facade.CodeRunCorrectionsView),
+      /** Read one canonical code run's steps as the owner, paged by step: each step's normalized program, executed JavaScript, committed observation and finished console as stored, bounded or withheld, with its correction records. */
+      step_evidence: (input: Facade.CodeRunStepEvidenceRequest): Facade.CodeRunStepEvidenceView | null => this.#call(() => this.#client.vaultCodeStepEvidence(input) as Facade.CodeRunStepEvidenceView | null),
       /** Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref. */
       type_diagnostics: (input: Facade.CodeRunTypeDiagnosticsRequest): Facade.ProgramStepFeedbackRelease | null => this.#call(() => this.#client.vaultCodeTypeDiagnostics(input) as Facade.ProgramStepFeedbackRelease | null),
       waits: {
@@ -2550,7 +2562,7 @@ export class Oneiron {
         reuse: (input: Facade.CodeViewBuildRequest): Facade.CodeCacheOutcome => this.#call(() => this.#client.vaultCodeCacheReuse(input) as Facade.CodeCacheOutcome),
       },
       snapshots: {
-        /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt. */
+        /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership. */
         ingest: (input: Facade.CodeSnapshotIngestRequest): Facade.CodeSnapshotView => this.#call(() => this.#client.vaultCodeSnapshotsIngest(input) as Facade.CodeSnapshotView),
         /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
         get: (input: Facade.CodeSnapshotRequest): Facade.CodeSnapshotView | null => this.#call(() => this.#client.vaultCodeSnapshotsGet(input) as Facade.CodeSnapshotView | null),
@@ -2624,10 +2636,16 @@ export class Oneiron {
         set: (input: Facade.AgentDreamingSetRequest): Facade.AgentDreamingView => this.#call(() => this.#client.vaultAgentsDreamingSet(input) as Facade.AgentDreamingView),
       },
       grants: {
-        /** The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door. */
+        /** The owner grants one named agent verbs and verb classes in his scope, with optional repo bounds and wallet, until revoked or expiry; each mint adds one. An ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video verb grants it. */
         mint: (input: Facade.AgentGrantMintRequest): Facade.AgentGrantMinted => this.#call(() => this.#client.vaultAgentsGrantsMint(input) as Facade.AgentGrantMinted),
         /** The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing. */
         revoke: (input: Facade.AgentGrantRevokeRequest): Facade.AgentGrantRevoked => this.#call(() => this.#client.vaultAgentsGrantsRevoke(input) as Facade.AgentGrantRevoked),
+      },
+      verb_classes: {
+        /** The owner reads his verb-class rows, each a class name and the exact verbs an agent grant naming it admits, with the trusted manifest hash. */
+        get: (input: Facade.EmptyRequest = {}): Facade.AgentVerbClassesView => this.#call(() => this.#client.vaultAgentsVerbClassesGet(input) as Facade.AgentVerbClassesView),
+        /** The owner replaces his whole verb-class table against the current manifest hash; each row names a class and its exact verbs, never git_push or another class, and grants naming the class admit them at once. */
+        configure: (input: Facade.AgentVerbClassesConfigureRequest): Facade.AgentVerbClassesReceipt => this.#call(() => this.#client.vaultAgentsVerbClassesConfigure(input) as Facade.AgentVerbClassesReceipt),
       },
       /** The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent. */
       base: (input: Facade.EmptyRequest = {}): Facade.BaseAgentList => this.#call(() => this.#client.vaultAgentsBase(input) as Facade.BaseAgentList),
@@ -2647,7 +2665,7 @@ export class Oneiron {
         revoke: (input: Facade.GitPushGrantRevokeInput): Facade.GitPushGrantRevokeOutput => this.#call(() => this.#client.vaultRepoGitPushRevoke(input) as Facade.GitPushGrantRevokeOutput),
       },
       anchor: {
-        /** The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing. */
+        /** The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership. */
         bind: (input: Facade.RepoAnchorBindInput): Facade.RepoAnchorBindOutput => this.#call(() => this.#client.vaultRepoAnchorBind(input) as Facade.RepoAnchorBindOutput),
       },
       snapshots: {

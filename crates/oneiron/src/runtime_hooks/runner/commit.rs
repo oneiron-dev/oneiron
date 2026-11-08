@@ -117,8 +117,9 @@ impl<'run, 'binding> PreparedRunCommit<'run, 'binding> {
                 store::INTENTS.put(vault, txn, &key, &intent)?;
             }
         }
-        let parent = lineage::chain_of(vault, txn, &run.entry.entity)?;
-        let (chain, check) = lineage::extend(&parent, link);
+        let due_at = run.entry.tick.as_ref().map(|tick| tick.due_at);
+        let (chain, check) =
+            lineage::run_chain_in_txn(vault, txn, &run.entry.entity, link, due_at)?;
         if let Some(reason) = check {
             let raised = HookCheck {
                 binding: run.binding_id,
