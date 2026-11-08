@@ -500,8 +500,7 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
         SelfDispatchOutcome::ReportBlocked { receipt } => json!({"receipt": receipt.to_hex()}),
         SelfDispatchOutcome::InferenceDefaults(text) => json!({"json": text}),
         SelfDispatchOutcome::StoredReply(value) => json!({"output": value.output}),
-        SelfDispatchOutcome::Fold(text) => json!({"output": serde_json::from_str::<Value>(text)
-            .unwrap_or_else(|_| Value::String(text.clone()))}),
+        SelfDispatchOutcome::Fold(answer) => json!({"output": answer.guest_output()}),
         SelfDispatchOutcome::Context(value) => json!({"spec": value.spec}),
         SelfDispatchOutcome::WakePolicyWritten(policy) => json!({"policy": policy}),
         SelfDispatchOutcome::ReaderSpawn(receipt) => json!({"output": receipt}),

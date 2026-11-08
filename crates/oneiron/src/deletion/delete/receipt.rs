@@ -45,6 +45,7 @@ impl Vault {
         let receipt_id = self.store.clock.entity_id()?;
         let mut scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
+        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
         // The purge txn: the one that actually tears. It re-checks authority
         // ONLY if nothing has settled this delete yet — i.e. no publish commit
@@ -82,7 +83,7 @@ impl Vault {
         // machines under the act the delete carries out (FIX 11883).
         let owner_act = gate.as_ref().and_then(GatedDeletion::owner_act);
         let pending_cloud_revokes = self.cloud_registration_revokes_before_local_erase(&wtxn, id);
-        let mut cancelled = Vec::new();
+        let mut effects = crate::deletion::ErasureEffects::default();
         reserve_topology_delete_in_txn(
             &self.store,
             &mut wtxn,
@@ -117,6 +118,10 @@ impl Vault {
             // actor sweep runs here too, marker or not (FIX 5737). Its code
             // runs' replies retire first, as the provenance door's erase
             // retires them, read before the sweep releases them (FIX 5718).
+            // Before them, the code-run outputs it sourced and the kept step
+            // starts it owns retire, as that door retires them (FIX 20329).
+            #[cfg(unix)]
+            crate::code_run::retire_sourced_code_outputs_in_txn(&self.store, &mut wtxn, id)?;
             #[cfg(unix)]
             crate::code_run::retire_actor_responses_in_txn(&self.store, &mut wtxn, id)?;
             // So do the responses its stamps named, as the provenance
@@ -127,7 +132,7 @@ impl Vault {
                 crate::store::erase_sync_response_owner_in_txn(&self.store, &mut wtxn, id)?;
                 crate::store::erase_response_owner_in_txn(&self.store, &mut wtxn, id)?;
             }
-            cancelled.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
+            effects.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
                 crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id),
                 owner_act,
             )?);
@@ -154,9 +159,9 @@ impl Vault {
                 false,
             )?;
             self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
+            rekeys.finish(&self.store, &mut wtxn)?;
             wtxn.commit()?;
-            crate::attempt_queue::AttemptQueue::new(self)
-                .erased_payload_cancellations_committed(&cancelled);
+            effects.committed(self);
             pending_cloud_revokes.publish();
             self.notify_local_delete_materialized(&[*id]);
             return Ok(DeleteEntityOutcome {
@@ -189,7 +194,7 @@ impl Vault {
         let (cascaded_shells, changed_documents, shell_cancelled) =
             self.cascade_hard_erase_to_redirect_shells_in_txn(&mut wtxn, id, owner_act)?;
         affected.extend(changed_documents);
-        cancelled.extend(shell_cancelled);
+        effects.extend(shell_cancelled);
         // The shells' historical carriers ride THIS erasure's sweep row:
         // clearing the active store while history keeps the bytes would
         // erase nothing.
@@ -218,7 +223,7 @@ impl Vault {
             owner_act,
         )?;
         affected.extend(citing);
-        cancelled.extend(purged_cancelled);
+        effects.extend(purged_cancelled);
 
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
@@ -287,9 +292,9 @@ impl Vault {
         claim_in_txn(gate.as_ref(), &mut wtxn, &tombstone, Some(&receipt_id))?;
         self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
 
+        rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
-        crate::attempt_queue::AttemptQueue::new(self)
-            .erased_payload_cancellations_committed(&cancelled);
+        effects.committed(self);
         pending_cloud_revokes.publish();
         self.notify_local_delete_materialized(&affected);
         // The CRDT record (tombstone-first, above) is durable — the crash

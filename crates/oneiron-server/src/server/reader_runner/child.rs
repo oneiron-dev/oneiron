@@ -86,31 +86,38 @@ impl Child {
     /// Runs the child and settles it as its run ended.
     pub(super) fn run_and_settle(&self, shared: &Shared, vault: &Arc<Vault>) {
         let job = &self.job;
-        let caller = shared.seats.caller(job.binding.parent_run);
         // A scoped child's door is its loan, Grant-checked at each call
         // (FIX 7507); the read child's door never stands in for it.
-        let door: Arc<dyn AgentVerbDoor> = match &job.kind {
-            ReaderJobKind::ScopedAgent { .. } => {
-                Arc::new(ScopedChildDoor::new(Arc::clone(vault), job.clone()))
-            }
-            ReaderJobKind::Read | ReaderJobKind::Summarize { .. } => {
-                let door = crate::api::ReaderChildDoor::new(Arc::clone(vault), caller.clone());
-                Arc::new(if job.kind == ReaderJobKind::Read {
-                    door.with_nested_readers()
-                } else {
-                    door
+        let door = |jobs: Option<&ReaderJobs<'_>>| -> (Arc<dyn AgentVerbDoor>, CallerLocality) {
+            let caller = jobs
+                .map(|jobs| {
+                    shared
+                        .seats
+                        .caller(jobs, job.binding.parent_run, job.binding.actor)
                 })
-            }
+                .unwrap_or_else(|| CallerLocality::OffDevice.into());
+            let locality = caller.locality();
+            let door: Arc<dyn AgentVerbDoor> = match &job.kind {
+                ReaderJobKind::ScopedAgent { .. } => {
+                    Arc::new(ScopedChildDoor::new(Arc::clone(vault), job.clone()))
+                }
+                ReaderJobKind::Read | ReaderJobKind::Summarize { .. } => {
+                    let door = crate::api::ReaderChildDoor::new(Arc::clone(vault), caller);
+                    Arc::new(if job.kind == ReaderJobKind::Read {
+                        door.with_nested_readers()
+                    } else {
+                        door
+                    })
+                }
+            };
+            (door, locality)
         };
         let settled = match &self.session {
             None => {
-                let end = self.metered(vault, None, door, caller.locality());
-                ReaderJobs::canonical(vault).complete(
-                    job.task,
-                    job.generation,
-                    end,
-                    unix_millis_now(),
-                )
+                let jobs = ReaderJobs::canonical(vault);
+                let (door, caller) = door(Some(&jobs));
+                let end = self.metered(vault, None, door, caller);
+                jobs.complete(job.task, job.generation, end, unix_millis_now())
             }
             Some((session_ref, participant)) => {
                 // A session that is gone took the child's rows with its
@@ -118,8 +125,10 @@ impl Child {
                 let Ok(session) = vault.off_record_session_vault().bind(session_ref) else {
                     return;
                 };
-                let end = self.metered(vault, Some(&session), door, caller.locality());
-                ReaderJobs::for_session(&session, *participant).and_then(|jobs| {
+                let jobs = ReaderJobs::for_session(&session, *participant);
+                let (door, caller) = door(jobs.as_ref().ok());
+                let end = self.metered(vault, Some(&session), door, caller);
+                jobs.and_then(|jobs| {
                     jobs.complete(job.task, job.generation, end, unix_millis_now())
                 })
             }
@@ -304,7 +313,7 @@ impl Child {
                 None => HostSelfDispatcher::new(vault, actor, job.run.to_hex()),
             })
             .and_then(|dispatcher| dispatcher.with_reader_child(job.task, job.generation))
-            .map(|dispatcher| match self.nested_spawn_seat() {
+            .map(|dispatcher| match self.nested_spawn_seat(vault, session) {
                 Some(seat) => dispatcher.with_reader_spawn(seat),
                 None => dispatcher,
             })

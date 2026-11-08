@@ -19,7 +19,51 @@ pub(super) fn handle_document(
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
-    match handle_document_inner(server, conn_id, entity, kind, payload, direct, state) {
+    let joined = if kind == document_sub_tags::PART {
+        if payload.len() > server.config.max_update_payload {
+            return Err(ProtocolError::FrameTooLarge {
+                size: payload.len(),
+                max: server.config.max_update_payload,
+            });
+        }
+        if payload.first() != Some(&document_sub_tags::NOTE_OPS) {
+            return Err(ProtocolError::InvalidPayload(
+                "upload parts require NOTE operations",
+            ));
+        }
+        require_note_upload(server, state, entity)?;
+        let joined = state
+            .document_parts
+            .accept(transport::DocumentFrame {
+                entity,
+                kind,
+                payload,
+            })
+            .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE operation part"))?;
+        let Some(joined) = joined else {
+            return Ok(());
+        };
+        Some(joined)
+    } else {
+        None
+    };
+    let (kind, payload) = match &joined {
+        Some(joined) => {
+            let frame = joined.frame();
+            (frame.kind, frame.payload)
+        }
+        None => (kind, payload),
+    };
+    match handle_document_inner(
+        server,
+        conn_id,
+        entity,
+        kind,
+        payload,
+        direct,
+        state,
+        joined.is_some(),
+    ) {
         Err(ProtocolError::WaitedOut) => {
             let waited = transport::DocumentWaitedOut::try_from(kind)
                 .map_err(|_| ProtocolError::WaitedOut)?;
@@ -33,6 +77,27 @@ pub(super) fn handle_document(
     }
 }
 
+fn require_note_upload(
+    server: &SyncServer,
+    state: &ConnState,
+    entity: EntityId,
+) -> Result<(), ProtocolError> {
+    let principal = document_principal(server, state)?;
+    if state.owner_documents.contains_key(&entity) {
+        owner_auth(server, state, true)?;
+    } else {
+        let request = state
+            .documents
+            .get(&entity)
+            .ok_or(ProtocolError::InvalidPayload("document not admitted"))?;
+        if request.selector.member_ref != principal {
+            return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
+        }
+        require_note_auth(server, state, &request.selector, true)?;
+    }
+    Ok(())
+}
+
 fn handle_document_inner(
     server: &SyncServer,
     conn_id: u32,
@@ -41,6 +106,7 @@ fn handle_document_inner(
     payload: &[u8],
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     state: &mut ConnState,
+    logical_command: bool,
 ) -> Result<(), ProtocolError> {
     if state.protocol_version != transport::PROTOCOL_VERSION
         && !transport::is_owner_window_version(state.protocol_version)
@@ -50,7 +116,7 @@ fn handle_document_inner(
             "document sync requires a document-capable protocol",
         ));
     }
-    if payload.len() > server.config.max_update_payload {
+    if !logical_command && payload.len() > server.config.max_update_payload {
         return Err(ProtocolError::FrameTooLarge {
             size: payload.len(),
             max: server.config.max_update_payload,
