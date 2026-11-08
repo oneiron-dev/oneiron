@@ -376,7 +376,7 @@ impl Vault {
     /// its replaced version, under a hub ref frozen to other bytes (FIX
     /// 22058): the frozen ref's drift check refuses that version, as a
     /// freeze on the version a same-name update installed refuses the one
-    /// it replaced, until the owner lifts the freeze or moves it.
+    /// it replaced, until the owner lifts the freeze.
     pub(crate) fn model_pack_frozen_out_in_txn(
         &self,
         txn: &RoTxn<'_>,
