@@ -56,6 +56,43 @@ impl ProducedMeetingTranscript {
         &self.recording_id
     }
 
+    /// Return a separate artifact with the supplied cluster labels. These are
+    /// source labels, not authenticated PERSON identities or voice enrollment.
+    /// Unmentioned clusters and existing labels stay unchanged. Import consent
+    /// still binds the exact returned artifact bytes, not the original artifact.
+    pub fn with_speaker_labels(
+        &self,
+        labels: &std::collections::BTreeMap<String, String>,
+    ) -> AudioResult<Self> {
+        let mut document: serde_json::Value =
+            serde_json::from_str(&self.json).map_err(|_| AudioError::Serialization)?;
+        let turns = document["turns"]
+            .as_array_mut()
+            .ok_or(AudioError::Serialization)?;
+        let mut changed = false;
+        for turn in turns {
+            let label = turn["speaker_cluster"]
+                .as_str()
+                .and_then(|cluster| labels.get(cluster));
+            if let Some(label) = label
+                && turn["speaker_ref"].as_str() != Some(label.as_str())
+            {
+                turn.as_object_mut()
+                    .ok_or(AudioError::Serialization)?
+                    .insert(
+                        "speaker_ref".to_owned(),
+                        serde_json::Value::String(label.clone()),
+                    );
+                changed = true;
+            }
+        }
+        if !changed {
+            return Ok(self.clone());
+        }
+        let json = serde_json::to_string(&document).map_err(|_| AudioError::Serialization)?;
+        Self::new(json, self.recording_id.clone())
+    }
+
     /// Approve the complete immutable artifact once, then hand it to the
     /// existing normalizer. No per-turn prompts or transcript-supplied grant.
     /// A host authorizer must authenticate the owner, resolve pending consent,

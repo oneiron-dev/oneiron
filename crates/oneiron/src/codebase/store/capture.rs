@@ -84,6 +84,7 @@ impl Vault {
             timing.0,
             timing.1,
             &contents,
+            Some(owner),
             |txn| {
                 if owner.revalidate_in_txn(self, txn)? != actor {
                     return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(

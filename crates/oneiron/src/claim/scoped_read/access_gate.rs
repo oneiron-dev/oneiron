@@ -47,13 +47,16 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
 /// same serving txn, each reader's own live Grants once a row's own
 /// admission refuses it, and what the read asked of its rows (FIX 7462).
 /// The fourth holds, for the same serving txn, each reader's verdict on each
-/// CLAIM access class it judged (FIX 11915).
+/// CLAIM access class it judged (FIX 11915). The fifth is set on the row
+/// checks of a record an `edge.provenance` Claim names beside its edge
+/// ([`Self::judge_cited`], FIX 3959): they do not re-enter that rule.
 #[derive(Default)]
 pub(super) struct HeldAuthority(
     RefCell<Option<AccessContextSnapshot>>,
     Option<EntityId>,
     HeldGrants,
     ClassVerdicts,
+    bool,
 );
 
 impl HeldAuthority {
@@ -65,6 +68,7 @@ impl HeldAuthority {
             None,
             HeldGrants::fresh(AskedFilter::Known(requested.cloned())),
             ClassVerdicts::default(),
+            false,
         )
     }
 
@@ -77,6 +81,7 @@ impl HeldAuthority {
             None,
             HeldGrants::fresh(self.2.asked().clone()),
             ClassVerdicts::default(),
+            self.4,
         )
     }
 
@@ -86,7 +91,13 @@ impl HeldAuthority {
     /// was written from included, keeps that conjunct. It shares this read's
     /// Grants and class verdicts.
     pub(super) fn asking_use_of(&self, id: EntityId) -> Self {
-        Self(RefCell::default(), Some(id), self.2.clone(), self.3.clone())
+        Self(
+            RefCell::default(),
+            Some(id),
+            self.2.clone(),
+            self.3.clone(),
+            self.4,
+        )
     }
 
     /// A peer's row checks in this read's serving txn: its own relationship
@@ -99,7 +110,34 @@ impl HeldAuthority {
             None,
             self.2.shared_asking(AskedFilter::Known(None)),
             self.3.clone(),
+            self.4,
         )
+    }
+
+    /// `judge` over the row checks of a record an `edge.provenance` Claim
+    /// names beside its edge (FIX 3959), in this serving txn: this read's
+    /// relationship authority, Grants and class verdicts, under the key's own
+    /// floor alone, with no row's legal non-use conjunct asked, and with that
+    /// Claim's rule not re-entered, so a Claim citing another such Claim is
+    /// judged one level deep. The relationship authority is lent to `judge`
+    /// and taken back after it, whatever it answers.
+    pub(super) fn judge_cited<T>(&self, judge: impl FnOnce(&Self) -> Result<T>) -> Result<T> {
+        let cited = Self(
+            RefCell::new(self.0.take()),
+            None,
+            self.2.shared_asking(AskedFilter::Known(None)),
+            self.3.clone(),
+            true,
+        );
+        let judged = judge(&cited);
+        *self.0.borrow_mut() = cited.0.into_inner();
+        judged
+    }
+
+    /// Whether these row checks judge a record an `edge.provenance` Claim
+    /// names ([`Self::judge_cited`]).
+    pub(super) fn judges_cited(&self) -> bool {
+        self.4
     }
 
     /// Whether the read leaves `id`'s legal non-use conjunct to the named

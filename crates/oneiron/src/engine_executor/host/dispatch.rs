@@ -36,8 +36,21 @@ impl RecordingJsHost<'_, '_> {
             SelfDispatchOutcome::AgentVerb(answer) => &mut answer.output,
             SelfDispatchOutcome::SkillCall(result) => &mut result.output,
             // Kept as its JSON text, framed under `output` as the others are
-            // (FIX 1190): the row keeps the card's text in its place.
-            SelfDispatchOutcome::Fold(json) | SelfDispatchOutcome::Leader(json) => {
+            // (FIX 1190): the row keeps the card's text in its place. A fold
+            // answer's card keeps the folds whose words it copies, and its
+            // body depends on their sources (FIX 18924).
+            SelfDispatchOutcome::Fold(answer) => {
+                if answer.json.len() <= RESULT_REPLY_INLINE_BYTES {
+                    return Ok(outcome);
+                }
+                let sources = answer.word_sources();
+                let card = self.store_sourced_answer(seq, &sources, |sink| {
+                    sink.write(answer.json.as_bytes())
+                })?;
+                answer.json = card.to_string();
+                return Ok(outcome);
+            }
+            SelfDispatchOutcome::Leader(json) => {
                 if json.len() <= RESULT_REPLY_INLINE_BYTES {
                     return Ok(outcome);
                 }
@@ -173,13 +186,28 @@ impl RecordingJsHost<'_, '_> {
         seq: u64,
         write: impl FnOnce(&mut BodySink) -> Result<()>,
     ) -> Result<serde_json::Value> {
+        self.store_sourced_answer(seq, &[], write)
+    }
+
+    /// [`Self::store_answer`] for an answer that copies the words of records
+    /// `sources`: its body is published as a dependent of each of them, so
+    /// a withdrawal of one reaches it (FIX 18924).
+    fn store_sourced_answer(
+        &mut self,
+        seq: u64,
+        sources: &[EntityId],
+        write: impl FnOnce(&mut BodySink) -> Result<()>,
+    ) -> Result<serde_json::Value> {
+        // The card stands for the answer: no skill body it holds reaches the
+        // guest (FIX 3608).
+        self.held_delivery.clear();
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
         let mut sink = storage.code_run_reply_spool()?;
         write(&mut sink)?;
         let path = bridge_result_output_path(seq);
-        let output = match storage.publish_code_run_reply(path, sink, self.run_id, None)? {
+        let output = match storage.publish_code_run_reply(path, sink, self.run_id, sources, None)? {
             Ok(output) => output,
             Err(unavailable) => return Ok(unavailable),
         };
@@ -236,9 +264,38 @@ impl RecordingJsHost<'_, '_> {
     /// (FIX 600). A cancelled skill answers `code_step_cancelled`, and the
     /// caller's step goes on. A callable's own call nests inside it: past
     /// the `[limits] callable_nest_depth` row it asks, and the call runs.
+    /// Near the stack floor, a supported target lends the call another stack
+    /// segment on this thread. Other targets retain the stack-floor refusal.
     /// A call that would start below the thread's stack floor answers
-    /// `skills_call_stack_floor` instead.
+    /// `skills_call_stack_floor` instead. A call the step's own program made
+    /// that answered is kept for the step's replay context (FIX 3608): what
+    /// its load selected, its arguments and where its own calls end.
     pub(super) fn call_skill(
+        &mut self,
+        seq: u64,
+        started_at_ms: u64,
+        call: &SelfCall,
+        skill: SelfSkillCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+        parent: &StepCancellation,
+    ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
+        on_callable_stack(|| {
+            self.call_skill_on_stack(seq, started_at_ms, call, skill, runtime, parent)
+        })
+        .unwrap_or_else(|| {
+            Ok((
+                SelfDispatchOutcome::Failed(SelfFailedResult {
+                    effect: SelfEffect::SkillsCall,
+                    error: "skills_call_stack_floor".to_owned(),
+                    code: None,
+                    disk_floor: None,
+                }),
+                None,
+            ))
+        })
+    }
+
+    fn call_skill_on_stack(
         &mut self,
         seq: u64,
         started_at_ms: u64,
@@ -258,10 +315,6 @@ impl RecordingJsHost<'_, '_> {
                 None,
             )
         };
-        // Each nested level keeps its host loop's frames on this thread.
-        if below_stack_floor() {
-            return Ok(failed("skills_call_stack_floor".to_owned()));
-        }
         let site = ExecutorCallSite {
             run_id: self.run_id,
             seq,
@@ -298,6 +351,7 @@ impl RecordingJsHost<'_, '_> {
             return Ok(failed("skills_call_no_executor".to_owned()));
         };
         let (run_id, determinism) = (self.run_id, self.determinism);
+        let from_program = self.callable_depth == 0;
         self.callable_depth += 1;
         lease.vault.measure_limit(
             crate::limit_ask::EngineLimit::CallableNestDepth,
@@ -306,7 +360,7 @@ impl RecordingJsHost<'_, '_> {
         // The skill's stored body and its own calls reach the run (FIX 6130).
         let cause = crate::code_run::ReadWorldUnknown::CallableSkill;
         self.gated_write.read_worlds_unknown(run_id, cause);
-        let mut loaded = Vec::new();
+        let (mut loaded, mut selected) = (Vec::new(), None);
         // The answer check holds its buffers on the run's own share (FIX
         // 10149); a host lent none checks unheld, as before.
         let memory = self.result_share.zip(self.storage).map(|(share, storage)| {
@@ -329,6 +383,7 @@ impl RecordingJsHost<'_, '_> {
             started_at_ms / 1000,
             parent,
             &mut loaded,
+            &mut selected,
             memory,
         );
         self.callable_rows.0.extend(loaded);
@@ -372,6 +427,19 @@ impl RecordingJsHost<'_, '_> {
             }),
             Err(error) => failed(error.to_string()).0,
         };
+        if from_program
+            && matches!(outcome, SelfDispatchOutcome::SkillCall(_))
+            && let Some(selected) = selected
+        {
+            let callable = crate::code_run::CapturedCallable {
+                seq,
+                nested_end: self.next_seq,
+                skill: skill.skill,
+                selected,
+                args: skill.args,
+            };
+            self.context_capture.callables.push(callable);
+        }
         // The post chain reads the answer as the guest gets it: a large one
         // by its handle.
         let outcome = self.store_large_answer(seq, outcome)?;
@@ -394,6 +462,9 @@ impl RecordingJsHost<'_, '_> {
         call: SelfCall,
         runtime: Option<(&mut dyn JsCodeModeRuntime, &StepCancellation)>,
     ) -> Result<SelfDispatchResponse> {
+        // No skill body an earlier call's answer held reaches this call's
+        // reply (FIX 3608).
+        self.held_delivery.clear();
         // A resumed turn program's settled calls answer from the rows that
         // settled them, before a position is taken or anything dispatched
         // (DOOR-141 PR3b). Only a pinned entry binds an injection.
@@ -553,6 +624,10 @@ impl RecordingJsHost<'_, '_> {
         // the call: the guest reads it, the row keeps the outcome and whether
         // a view was served (the view's own read rows stay unwitnessed).
         let view = self.gated_write.take_hook_view();
+        // The skill bodies its producer witnessed, held while the guest's
+        // reply may still carry them whole (FIX 3608).
+        let given = dispatched.as_ref().ok().map(|(outcome, _)| outcome);
+        self.hold_delivery(seq, view.is_some(), given);
         // The seats this call's spawn resolved, taken whatever came of it:
         // its row keeps them, a failure's included (FIX 9180).
         let seats = self.gated_write.take_spawn_seats();
@@ -562,6 +637,7 @@ impl RecordingJsHost<'_, '_> {
         }) {
             Ok(answered) => answered,
             Err(err) => {
+                self.held_delivery.clear();
                 let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
                     // Infrastructure failure: no guest-visible response
                     // exists for this call at all.

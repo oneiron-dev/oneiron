@@ -604,8 +604,13 @@ fn question_answer_rows(answer: &QuestionAnswer) -> Vec<EntityId> {
 /// Whom `verb` is asked for, by `ai.verdict`'s rule: the slip's principal
 /// with its actor class, or the vault's own owner (class human) for an
 /// owner-grade credential that names none. The writer is made here, never
-/// read from the request.
-fn asker(auth: &CoreAuth, server: &SyncServer, verb: &str) -> MemoryResult<WriteActor> {
+/// read from the request. The facade runs it before these doors' pre chain
+/// too (FIX 1817).
+pub(in crate::api::facade) fn asker(
+    auth: &CoreAuth,
+    server: &SyncServer,
+    verb: &str,
+) -> MemoryResult<WriteActor> {
     let refused = || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
