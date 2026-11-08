@@ -287,11 +287,13 @@ impl Vault {
     /// the verifier must match, a resource the client sends must be the code's, and its grant
     /// must still stand. Answers a new token family's first pair once its access token's slip
     /// has landed. A code redeemed before revokes the family it minted; a lapsed code no
-    /// exchange redeemed takes its grant back.
+    /// exchange redeemed takes its grant back, and so does a code whose grant no longer stands,
+    /// which goes too. A code refused for its client, redirect URI, verifier or resource stays:
+    /// a matching exchange may still redeem it, and its lapse takes its grant back.
     ///
     /// # Errors
-    /// A store failure, or a failure minting the access token's slip, which revokes the new
-    /// family.
+    /// A store failure, a fold failure taking a grant back, or a failure minting the access
+    /// token's slip, which revokes the new family.
     pub fn exchange_oauth_code(
         &self,
         issuer: &HostSlipIssuer,
@@ -336,6 +338,9 @@ impl Vault {
                 return Ok(Decided::refused(OAuthTokenRefusal::InvalidTarget));
             }
             if !self.oauth_grant_stands_in_txn(txn, &code.grant, now)? {
+                // The code goes, so no token will ever stand on its grant: the grant is taken
+                // back as a lapse takes it (FIX 22188). One the owner revoked is already gone.
+                self.withdraw_lapsed_oauth_grant_in_txn(txn, Some(issuer), &code.grant)?;
                 CODES.delete(&self.store, txn, &key)?;
                 return Ok(Decided::refused(OAuthTokenRefusal::InvalidGrant));
             }
