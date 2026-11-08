@@ -37537,7 +37537,7 @@ pub struct LensProposeRequest {
     #[serde(rename = "pack_content_hash")]
     pub pack_content_hash: String,
     #[serde(rename = "compiled")]
-    pub compiled: crate::WireJson,
+    pub compiled: GeneratedLens,
     #[serde(rename = "intent_prompt")]
     pub intent_prompt: String,
     #[serde(rename = "trigger", default, skip_serializing_if = "Option::is_none")]

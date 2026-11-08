@@ -3,7 +3,7 @@
 // Census: 1303 facade rows, 4725 declarations.
 // Inputs: 1232 of 1303 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 // Results: 1132 of 1303 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-// Opaque serde_json::Value leaves: 121; unread shapes: 0.
+// Opaque serde_json::Value leaves: 120; unread shapes: 0.
 /** `oneiron::memory::commitment_doors::types::CommitmentObligorKind` */
 export type CommitmentObligorKind = "owner" | "agent" | "third_party"
 /** `oneiron::memory::commitment_doors::types::CommitmentObligor` */
@@ -4761,7 +4761,7 @@ export type LensSlot = { pack_name: string; skill_id: string }
 /** `oneiron::lens::scope::LensScope` */
 export type LensScope = { world?: string | null; facet?: string | null }
 /** `oneiron::lens::proposal::LensProposeRequest` */
-export type LensProposeRequest = { slot: LensSlot; pack_content_hash: string; compiled: unknown; intent_prompt: string; trigger?: MadeByTrigger | null; scope?: LensScope | null }
+export type LensProposeRequest = { slot: LensSlot; pack_content_hash: string; compiled: GeneratedLens; intent_prompt: string; trigger?: MadeByTrigger | null; scope?: LensScope | null }
 /** `oneiron::receipt::lens::LensApproval` */
 export type LensApproval = "proposed"
 /** `oneiron::receipt::lens::LensProposalReceipt` */
