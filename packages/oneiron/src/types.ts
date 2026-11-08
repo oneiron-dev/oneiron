@@ -12,7 +12,7 @@
  * call boundary.
  */
 
-import type { WorldRecipientNotice } from "./facade-types.js"
+import type { ReadFilterInput, WorldRecipientNotice } from "./facade-types.js"
 
 /** Options for an embedded {@link Oneiron.open}. */
 export type OpenOptions = {
@@ -359,6 +359,8 @@ export type RecallOptions = {
   tokenBudget?: number
   /** An agent definition whose memory profile sizes the rendering when `tokenBudget` is omitted; it grants no read. */
   readerAgentRef?: string
+  /** The caller's retrieval filter: it only narrows the vault's floor; an unset field leaves the floor in force. */
+  filter?: ReadFilterInput
 }
 
 /** Where one recalled item came from. */
