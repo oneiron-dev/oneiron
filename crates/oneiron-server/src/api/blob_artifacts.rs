@@ -27,7 +27,7 @@ use base64::Engine as _;
 use oneiron::EntityId;
 use oneiron::blob_artifact::{
     ArtifactCreateRequest, ArtifactVersionView, BlobArtifactAppendOutcome, BlobArtifactVersion,
-    BlobVersionProvenance, BornFromSource, DeckProposeRejection, DeckTransaction,
+    BlobBodyFile, BlobVersionProvenance, BornFromSource, DeckProposeRejection, DeckTransaction,
 };
 use oneiron::edge::EdgeActorClass;
 use oneiron::edit_roundtrip::{DeckEditContext, DeckEditOutcome};
@@ -46,12 +46,17 @@ use crate::server::SyncServer;
 
 mod place;
 mod read_admission;
+mod streamed;
 
 use place::{PlaceInput, place_json, place_locator};
 use read_admission::{admitted_born_from, caveat_lane};
 
 /// The largest JSON body these routes take: a file travels base64 inside it.
 const ARTIFACT_BODY_LIMIT: usize = 96 * 1024 * 1024;
+
+/// The decoded content whose base64 can fit one structured action argument
+/// (64 MiB of JSON, FIX 22074 E4): a longer one never runs as an action.
+const ACTION_CONTENT_BYTES: u64 = oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES as u64 / 4 * 3;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -101,22 +106,23 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .layer(DefaultBodyLimit::max(ARTIFACT_BODY_LIMIT))
 }
 
+/// `POST /v1/core/artifacts`'s body but its `content_base64`, which streams
+/// to a file of its own (FIX 22074).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CreateArtifact {
     name: String,
     media_type: String,
-    content_base64: String,
     #[serde(default)]
     run_ref: Option<String>,
     #[serde(default)]
     made_by: Option<MadeBy>,
 }
 
+/// A version append's body but its `content_base64` (FIX 22074).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct AppendVersion {
-    content_base64: String,
     /// Any earlier version to fork from; absent appends on the head.
     #[serde(default)]
     fork_parent: Option<u64>,
@@ -144,13 +150,13 @@ pub(super) struct ProposeDeck {
     delta_receipt: Option<String>,
 }
 
+/// A native output proposal's body but its `content_base64` (FIX 22074).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ProposeOutput {
     run_ref: String,
     name: String,
     media_type: String,
-    content_base64: String,
     #[serde(default)]
     report: Value,
     #[serde(default)]
@@ -233,10 +239,21 @@ fn made_by_reader<'v>(
         .transpose()
 }
 
-fn decode_content(content: &str) -> Result<Vec<u8>, ApiError> {
-    base64::engine::general_purpose::STANDARD
-        .decode(content)
-        .map_err(|_| ApiError::bad_request("content must be base64", Some("content_base64")))
+/// The streamed content's base64 again, for an input that runs as one
+/// action argument (FIX 22074 E4 = C; FIX 22096 streams it instead).
+fn encode_content(content: &streamed::StreamedBody<CreateArtifact>) -> Result<String, ApiError> {
+    use std::io::Read as _;
+    let (mut file, len) = content.content.file();
+    let mut bytes = Vec::with_capacity(usize::try_from(len).unwrap_or_default());
+    file.read_to_end(&mut bytes)
+        .map_err(|_| ApiError::internal_server_error("artifact content read failed"))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// The streamed content's file, measured for the engine's file doors.
+fn body_file(content: &crate::api::body_spool::SpooledField) -> Result<BlobBodyFile<'_>, ApiError> {
+    BlobBodyFile::measure(content.file().0)
+        .map_err(|_| ApiError::internal_server_error("artifact content read failed"))
 }
 
 /// A person's upload is theirs; an agent's version names the run that made it.
@@ -311,40 +328,82 @@ pub(super) async fn create(
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
     extensions: axum::http::Extensions,
-    payload: Result<Json<CreateArtifact>, JsonRejection>,
+    body: Body,
 ) -> Result<(StatusCode, Json<Value>), super::facade::FacadeApiError> {
     auth.require(CoreScope::Write)?;
     let actor = proposal_writer(&server, &auth)?;
-    let request = json_payload(payload)?;
-    let made_by = request
+    let streamed =
+        streamed::read::<CreateArtifact>(&server, &headers, body, ARTIFACT_BODY_LIMIT as u64)
+            .await?;
+    let made_by = streamed
+        .head
         .made_by
+        .as_ref()
         .map(serde_json::to_value)
         .transpose()
         .map_err(|_| ApiError::bad_request("made_by is not encodable", Some("made_by")))?;
+    // The content is in its file; the input names the artifact (FIX 22074).
     let input = ArtifactCreateRequest {
-        name: request.name,
-        media_type: request.media_type,
-        content_base64: request.content_base64,
-        run_ref: request.run_ref,
+        name: streamed.head.name.clone(),
+        media_type: streamed.head.media_type.clone(),
+        content_base64: String::new(),
+        run_ref: streamed.head.run_ref.clone(),
         made_by,
     };
-    if let Some(bound) = super::facade::action_routes::rest_action_bound(
+    // A credential bound to an action as this actor runs the row as that
+    // action when the whole input fits one action argument, as before: its
+    // content is base64 again for it (E4 = C). Any other create takes the
+    // row's door with the content's file.
+    let bound = super::facade::action_routes::rest_action_bound(
         &server,
         &auth,
         &headers,
         &extensions,
         &input,
-    )? && bound.writes_as() == actor
-    {
-        let row = AgentVerb::VaultArtifactsCreate;
-        let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
-        let view = super::facade::action_routes::execute_facade_row(
-            &server, headers, extensions, bound, row, &input, key,
-        )
+    )?
+    .filter(|bound| bound.writes_as() == actor);
+    if bound.is_some() && streamed.content.file().1 <= ACTION_CONTENT_BYTES {
+        let (streamed, content_base64) = blocking_read(move || {
+            let text = encode_content(&streamed)?;
+            Ok((streamed, text))
+        })
         .await?;
-        return Ok((StatusCode::CREATED, Json(view)));
+        let whole = ArtifactCreateRequest {
+            content_base64,
+            ..input.clone()
+        };
+        if let Some(bound) = super::facade::action_routes::rest_action_bound(
+            &server,
+            &auth,
+            &headers,
+            &extensions,
+            &whole,
+        )? && bound.writes_as() == actor
+        {
+            let row = AgentVerb::VaultArtifactsCreate;
+            let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
+            let view = super::facade::action_routes::execute_facade_row(
+                &server, headers, extensions, bound, row, &whole, key,
+            )
+            .await?;
+            return Ok((StatusCode::CREATED, Json(view)));
+        }
+        return create_through_door(server, auth, actor, input, streamed).await;
     }
+    create_through_door(server, auth, actor, input, streamed).await
+}
+
+/// `vault.artifacts.create`'s own door as the credential's actor, its first
+/// version read from the content's file (FIX 22074).
+async fn create_through_door(
+    server: Arc<SyncServer>,
+    auth: CoreAuth,
+    actor: WriteActor,
+    input: ArtifactCreateRequest,
+    streamed: streamed::StreamedBody<CreateArtifact>,
+) -> Result<(StatusCode, Json<Value>), super::facade::FacadeApiError> {
     let view = tokio::task::spawn_blocking(move || {
+        let body = body_file(&streamed.content)?;
         crate::api::credential_memory(
             &server.vault,
             Some(&auth),
@@ -352,7 +411,8 @@ pub(super) async fn create(
             actor.actor_class(),
         )
         .at(auth.locality())
-        .artifacts_create(&input)
+        .artifacts_create_file(&input, &body)
+        .map_err(super::facade::FacadeApiError::from)
     })
     .await
     .map_err(|_| ApiError::internal_server_error("artifact task failed"))??;
@@ -448,22 +508,27 @@ pub(super) async fn append(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(artifact): Path<String>,
-    payload: Result<Json<AppendVersion>, JsonRejection>,
+    headers: HeaderMap,
+    body: Body,
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
     let actor = proposal_writer(&server, &auth)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
-    let request = json_payload(payload)?;
-    let bytes = decode_content(&request.content_base64)?;
+    let streamed::StreamedBody {
+        head: request,
+        content,
+    } = streamed::read::<AppendVersion>(&server, &headers, body, ARTIFACT_BODY_LIMIT as u64)
+        .await?;
     let provenance = provenance(actor, request.run_ref)?;
     let outcome = blocking_read(move || {
         let vault = server.vault();
         let (occurred, now) = moment(&server);
+        let body = body_file(&content)?;
         vault
-            .append_blob_artifact_version_checked(
+            .append_blob_artifact_version_checked_file(
                 &id,
                 request.fork_parent,
-                &bytes,
+                &body,
                 &provenance,
                 request.made_by.as_ref(),
                 || made_by_reader(vault, &auth, request.made_by.as_ref()).map_err(AppendError),
@@ -891,14 +956,20 @@ pub(super) async fn propose_output(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(artifact): Path<String>,
-    payload: Result<Json<ProposeOutput>, JsonRejection>,
+    headers: HeaderMap,
+    body: Body,
 ) -> Result<(StatusCode, Json<Value>), EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
     let actor = proposal_writer(&server, &auth)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
-    let request = json_payload(payload)?;
+    let streamed::StreamedBody {
+        head: request,
+        content,
+    } = streamed::read::<ProposeOutput>(&server, &headers, body, ARTIFACT_BODY_LIMIT as u64)
+        .await?;
+    // The bytes are in the content's file (FIX 22074).
     let output = NativeOutput {
-        bytes: decode_content(&request.content_base64)?,
+        bytes: Vec::new(),
         run_ref: request.run_ref,
         name: request.name,
         media_type: request.media_type,
@@ -909,13 +980,15 @@ pub(super) async fn propose_output(
     let pending = blocking_read(move || {
         let vault = server.vault();
         let reader = made_by_reader(vault, &auth, output.made_by.as_ref())?;
+        let body = body_file(&content)?;
         vault
-            .propose_native_output(
+            .propose_native_output_file(
                 &id,
                 &output,
+                &body,
                 reader,
-                actor,
-                vault.now_recorded_at(),
+                (actor, vault.now_recorded_at()),
+                &[],
                 delta_receipt.as_deref(),
             )
             .map_err(|error| core_engine_error("native output proposal failed", error))
