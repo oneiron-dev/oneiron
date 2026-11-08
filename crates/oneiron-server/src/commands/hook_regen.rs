@@ -77,7 +77,7 @@ impl HookRegenWorker {
                     .vault()
                     .regenerate_hook(runtime.as_ref(), &regenerator, binding)
                 {
-                    Ok(HookRegenOutcome::RolledBack { failure }) => {
+                    Ok(HookRegenOutcome::RolledBack { failure, .. }) => {
                         tracing::warn!(?binding, phase = ?failure.phase, "hook regeneration kept its last good body");
                     }
                     Ok(_) => {
