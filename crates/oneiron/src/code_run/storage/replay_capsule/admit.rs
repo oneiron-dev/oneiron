@@ -13,11 +13,14 @@
 //! continuation still finds its checkpoint (FIX 6254). An admitted request
 //! is published as its pieces: each one its run does not hold yet for the
 //! actor, then the manifest as the capsule's own body (FIX 4192). The
-//! step's start is published as its pieces the same way.
+//! step's start is published as its pieces the same way. FIX 19821: its
+//! manifest and nodes are held inline whatever the bound.
 
 mod refresh;
+mod start_publication;
 
 pub(crate) use refresh::refresh_staged_request;
+use start_publication::{publish_start_in_txn, start_estimate, start_lens_in_txn};
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -127,7 +130,35 @@ impl Spill {
         path: &str,
         bytes: &[u8],
     ) -> Result<OutputRef> {
-        let mut sink = BodySink::new(vault.store.body_dir()?, self.bound, Some(self.mint.clone()));
+        self.publish_bounded_in_txn(vault, wtxn, owner, path, bytes, self.bound)
+    }
+
+    /// FIX 19821: [`Self::publish_in_txn`], with the body held inline
+    /// whatever the inline bound. A step start's manifest and nodes go
+    /// here. A restore reads them among its rows to find every piece that
+    /// holds the start's content. Such a body takes no instance.
+    pub(super) fn publish_inline_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        owner: EntityId,
+        path: &str,
+        bytes: &[u8],
+    ) -> Result<OutputRef> {
+        self.publish_bounded_in_txn(vault, wtxn, owner, path, bytes, u64::MAX)
+    }
+
+    /// [`Self::publish_in_txn`], with the body inline up to `bound` bytes.
+    fn publish_bounded_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        owner: EntityId,
+        path: &str,
+        bytes: &[u8],
+        bound: u64,
+    ) -> Result<OutputRef> {
+        let mut sink = BodySink::new(vault.store.body_dir()?, bound, Some(self.mint.clone()));
         sink.write(bytes)?;
         let finished = finish_output(path.to_owned(), sink, true, vault.limit_watch(), |digest| {
             vault.pin_result_body(digest)
@@ -191,21 +222,6 @@ pub(crate) fn put_staged_capsule(
     with_spill(vault, reserved, |wtxn, spill| {
         write_capsule_in_txn(vault, wtxn, spill, draft)
     })
-}
-
-/// About how large the step's start body is, read before the writer opens:
-/// at most twice the run's row as stored (its bytes ride as MessagePack
-/// integers), and the task.
-fn start_estimate(vault: &Vault, capture: &StepCapture<'_>) -> Result<usize> {
-    if capture.start.is_none() {
-        return Ok(0);
-    }
-    let rtxn = vault.store.env.read_txn()?;
-    let row = REPLAY_RECORDS
-        .get_borrowed(&vault.store, &rtxn, &capture.run)?
-        .as_deref()
-        .map_or(0, <[u8]>::len);
-    Ok(row.saturating_mul(2).saturating_add(capture.task.len()))
 }
 
 /// The capsule's bodies admitted and published, and its row put, in `wtxn`.
@@ -358,53 +374,6 @@ fn request_seed(capture: &StepCapture<'_>) -> Option<u64> {
         .params
         .get("seed")
         .and_then(serde_json::Value::as_u64)
-}
-
-/// The length of each body [`publish_start_in_txn`] publishes for `start`
-/// in `txn`: each of its pieces the run does not hold yet for the actor,
-/// then its manifest (FIX 4192). None without a start.
-fn start_lens_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    scope: PieceScope,
-    start: Option<&AdmittedStart>,
-) -> Result<Vec<usize>> {
-    start.map_or_else(
-        || Ok(Vec::new()),
-        |start| start.pieces.lens_in_txn(&vault.store, txn, scope),
-    )
-}
-
-/// The step's start, admitted before, published as pieces the run owns for
-/// the actor, its manifest the capsule's own body (FIX 4192). The capsule
-/// names the digest of the whole start.
-fn publish_start_in_txn(
-    vault: &Vault,
-    wtxn: &mut RwTxn<'_>,
-    spill: &Spill,
-    draft: &CapsuleDraft<'_>,
-    start: Option<AdmittedStart>,
-) -> Result<Option<ExecutorStepStart>> {
-    let Some(AdmittedStart {
-        bytes,
-        bridge_start,
-        pieces,
-        ..
-    }) = start
-    else {
-        return Ok(None);
-    };
-    let scope = PieceScope {
-        run: draft.capture.run,
-        actor: draft.actor,
-    };
-    Ok(Some(ExecutorStepStart {
-        body: pieces.publish_in_txn(vault, wtxn, spill, scope, &draft.start_path)?,
-        path: draft.start_path.clone(),
-        digest: *blake3::hash(&bytes).as_bytes(),
-        bridge_start,
-        erased: false,
-    }))
 }
 
 /// A step's start as the wall admitted it: its body, the bridge log's

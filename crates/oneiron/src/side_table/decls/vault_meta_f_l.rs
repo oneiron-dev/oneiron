@@ -24,6 +24,11 @@ side_tables! {
     FAILURE_SIGNALS_TIER1_COUNTS: VaultMeta b"failure_signals:tier1_counts:v1:" Raw;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
+    /// A Connect guest's proposal in its pact's review inbox (FIX 3684): the proposer, the world
+    /// and record it names, the text update as sent until the owner decides, then the decision.
+    /// Never a vault write. Key: id16(grant) + id16(proposal).
+    FEDERATION_CONNECT_PROPOSAL: VaultMeta b"federation:connect_proposal:v1:" Named
+        => crate::federation::erase_connect_proposer_in_txn;
     /// An ask guest's FEDERATION_GRANT the owner withdrew: the guest it conferred on and when, so
     /// a repeat revoke reports the first (OF-232). Key: id16 (grant).
     FEDERATION_GUEST_REVOKE: VaultMeta b"federation:guest_revoke:v1:" Named;
@@ -282,6 +287,10 @@ side_tables! {
     /// A hook's regen record: the contract its last good body passed under, its intent, and a
     /// regen decision waiting to be enacted. Key: id16 (binding).
     HOOKS_REGEN: VaultMeta b"hooks:regen:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_regen_accepts_masked];
+    /// One step in a hook's regen history (FIX 4691): a regen decision with its golden manifest,
+    /// or an adoption, cancel or revert of one; body hashes only, never a body. Key: hash32
+    /// (blake3 of the hook's pack, a zero byte and its name) + u64be (sequence within the hook).
+    HOOKS_REGEN_RECEIPT: VaultMeta b"hooks:regen_receipt:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_regen_receipt_accepts_masked];
     /// Each hook binding's runs in commit order, each naming its saved row: a fact run's memo or
     /// a verb run's saved copy. Key: id16 (binding) + u64be (commit time, Unix ms) + hash32 (run
     /// key).
