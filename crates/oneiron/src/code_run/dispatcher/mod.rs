@@ -21,6 +21,7 @@ mod program_step;
 mod read_worlds;
 mod reader_spawn;
 mod record_refs;
+mod refusal_output;
 mod repo;
 mod repo_sources;
 mod routed_entry;
@@ -124,6 +125,8 @@ pub struct HostSelfDispatcher<'a> {
     /// it (ARCH-0080 §3): a Redact, or a blocking hook that hid it. The
     /// executor's host takes it for its reply; the run records the result.
     pub(super) hook_view: RefCell<Option<serde_json::Value>>,
+    /// This call's released reason, taken once by its executor recorder.
+    pub(super) task_refusal_output: RefCell<Option<Vec<u8>>>,
     /// Where the last call's native producer witnessed the skill bodies its
     /// answer carries (FIX 3608): the executor's host takes them with the
     /// call's answer. Host-internal: no guest call reaches it.

@@ -100,6 +100,7 @@ impl<'a> HostSelfDispatcher<'a> {
             external_effect_seen: Cell::new(false),
             agent_verbs: None,
             hook_view: RefCell::new(None),
+            task_refusal_output: RefCell::new(None),
             skill_bodies: RefCell::new(None),
             pre_hooked_fold: None,
             parked_hooks: RefCell::new(Vec::new()),
