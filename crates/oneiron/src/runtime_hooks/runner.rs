@@ -10,6 +10,7 @@
 mod body;
 mod commit;
 mod evaluation;
+mod hook_feeds;
 mod retained;
 
 use std::collections::{HashMap, HashSet};
@@ -146,8 +147,9 @@ impl FactHookRunner {
     }
 
     /// One pass over every source for every enabled fact binding, in
-    /// priority order (higher first, ties by body hash). With no binding it
-    /// reads nothing; it releases the due watcher ticks all the same.
+    /// priority order (higher first, ties by body hash). With hooks off or no
+    /// binding it runs no hook, and still releases the due watcher ticks (FIX
+    /// 22180) and prunes the hook feeds (FIX 22178).
     pub fn run_pass(
         &self,
         vault: &Vault,
@@ -175,7 +177,7 @@ impl FactHookRunner {
         vault: &Vault,
         runtime: &dyn HookBodyRuntime,
         max_entries: usize,
-        retained: Option<RetainedPass<'_>>,
+        mut retained: Option<RetainedPass<'_>>,
     ) -> Result<HookPassReport> {
         let mut report = HookPassReport::default();
         // Due watcher TASKs tick first, hooks on or off and with or without a
@@ -190,7 +192,7 @@ impl FactHookRunner {
         }
         if !vault.hooks_enabled()? {
             report.disabled = true;
-            return Ok(report);
+            return hook_feeds::prune_hook_feeds(vault, max_entries).map(|()| report);
         }
         // Calls a settled verb hook ask made ready run here, the first pass
         // at start included: outside any write, at hook depth 0. A failed
@@ -209,9 +211,8 @@ impl FactHookRunner {
         pause_disabled(vault, &all)?;
         let bindings = fact_bindings(&all);
         if bindings.is_empty() {
-            return Ok(report);
+            return hook_feeds::prune_hook_feeds(vault, max_entries).map(|()| report);
         }
-        let mut retained = retained;
         if let Some(pass) = &mut retained {
             pass.runs.keep_source_order_for(&bindings);
         }
@@ -246,6 +247,7 @@ impl FactHookRunner {
                 pass.run_source(source, max_entries, &bindings)?;
             }
         }
+        hook_feeds::prune_hook_feeds(vault, max_entries)?;
         Ok(pass.report)
     }
 
