@@ -4,6 +4,7 @@
 //! gold claim through the gated claim writer.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::claim::{CallerLocality, ScopedRead};
@@ -35,7 +36,9 @@ const GOLD_CONFIDENCE: f32 = 1.0;
 
 /// The run's fresh vault and its embedded owner.
 pub(super) struct BenchVault {
-    vault: Vault,
+    /// Shared with the Big rung, which routes and admits each of its calls
+    /// against the vault's live model policy.
+    vault: Arc<Vault>,
     owner: EntityId,
     path: PathBuf,
 }
@@ -52,7 +55,7 @@ impl BenchVault {
     /// directory, and binds its embedded owner.
     pub(super) fn create(path: &Path) -> EvalResult<Self> {
         refuse_occupied(path)?;
-        let vault = Vault::open_owned(path, VaultConfig::device())?;
+        let vault = Arc::new(Vault::open_owned(path, VaultConfig::device())?);
         let owner = vault.ensure_embedded_owner_actor().map_err(failure_from)?;
         Ok(Self {
             vault,
@@ -61,7 +64,7 @@ impl BenchVault {
         })
     }
 
-    pub(super) fn vault(&self) -> &Vault {
+    pub(super) fn vault(&self) -> &Arc<Vault> {
         &self.vault
     }
 
