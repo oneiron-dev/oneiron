@@ -394,6 +394,37 @@ impl Vault {
         self.born_with_text_kept_off(entity, made_by, &kept)
     }
 
+    /// The owner's artifact export: the same plain born-with read and
+    /// chosen projection, with recipient notices for the rows actually sent.
+    pub(crate) fn artifact_export_text_with_notices(
+        &self,
+        entity: &EntityId,
+        made_by: &MadeBy,
+        choice: &TravelChoice,
+        onward: &crate::settings::ReadDestination,
+    ) -> Result<(BornWith, Vec<WorldRecipientNotice>)> {
+        let mut sources = Vec::new();
+        let text = self.born_with_text_and_sources(
+            entity,
+            Some(made_by),
+            &BTreeSet::new(),
+            Some(&mut sources),
+        )?;
+        let born_with = choice.project(text);
+        let mut rows = BTreeSet::from([*entity]);
+        rows.extend(
+            sources
+                .into_iter()
+                .filter_map(|(field, row)| born_with.contains_key(&field).then_some(row)),
+        );
+        let notices =
+            pack_notice::artifact_export_notices(self, &rows, onward).unwrap_or_else(|error| {
+                tracing::warn!(%error, "owner artifact export recipient notices unavailable");
+                Vec::new()
+            });
+        Ok((born_with, notices))
+    }
+
     /// [`Self::born_with_text`] for a party the worlds in `kept` are kept off
     /// (DEC-0005): a row one of them holds, the body or a prompt row, gives
     /// that party no text.
@@ -402,6 +433,16 @@ impl Vault {
         entity: &EntityId,
         made_by: Option<&MadeBy>,
         kept: &BTreeSet<EntityId>,
+    ) -> Result<BornWith> {
+        self.born_with_text_and_sources(entity, made_by, kept, None)
+    }
+
+    fn born_with_text_and_sources(
+        &self,
+        entity: &EntityId,
+        made_by: Option<&MadeBy>,
+        kept: &BTreeSet<EntityId>,
+        mut sources: Option<&mut Vec<(BornWithField, EntityId)>>,
     ) -> Result<BornWith> {
         let mut text = BornWith::new();
         let birth = match made_by {
@@ -436,8 +477,16 @@ impl Vault {
         }
         let prompt = prompts
             .iter()
-            .filter_map(|row| self.entity_text(row).ok())
-            .filter(|prompt| !prompt.trim().is_empty())
+            .filter_map(|row| {
+                let prompt = self.entity_text(row).ok()?;
+                if prompt.trim().is_empty() {
+                    return None;
+                }
+                if let Some(sources) = sources.as_deref_mut() {
+                    sources.push((BornWithField::Prompt, *row));
+                }
+                Some(prompt)
+            })
             .collect::<Vec<_>>()
             .join("\n\n");
         if !prompt.is_empty() {
@@ -454,19 +503,31 @@ impl Vault {
                     .filter(|value| !value.trim().is_empty())
                 {
                     text.insert(field, value.to_owned());
+                    if let Some(sources) = sources.as_deref_mut() {
+                        sources.push((field, *entity));
+                    }
                 }
             }
         }
         if let Some(intent) = self.get_lens_intent(entity)? {
             if !intent.prompt().trim().is_empty() {
                 text.insert(BornWithField::IntentPrompt, intent.prompt().to_owned());
+                if let Some(sources) = sources.as_deref_mut() {
+                    sources.push((BornWithField::IntentPrompt, *entity));
+                }
             }
         }
         // A copy from another vault reads the text its sharer let travel with
         // it, where nothing here holds that field.
         #[cfg(feature = "sync")]
         for (field, value) in crate::sync::selector::carried_born_with(self, entity)? {
-            text.entry(field).or_insert(value);
+            if let std::collections::btree_map::Entry::Vacant(entry) = text.entry(field) {
+                let contributes = !value.trim().is_empty();
+                entry.insert(value);
+                if contributes && let Some(sources) = sources.as_deref_mut() {
+                    sources.push((field, *entity));
+                }
+            }
         }
         Ok(text)
     }
@@ -486,6 +547,7 @@ impl Vault {
         content_hash: String,
         by: &EntityId,
         born_with: &BornWith,
+        notices: Vec<WorldRecipientNotice>,
     ) -> Result<()> {
         self.record_travel(
             ExportTarget::Artifact {
@@ -495,7 +557,7 @@ impl Vault {
             content_hash,
             by,
             born_with,
-            Vec::new(),
+            notices,
             false,
         )
     }
