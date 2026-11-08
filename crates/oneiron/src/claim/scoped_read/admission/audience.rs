@@ -282,7 +282,7 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
