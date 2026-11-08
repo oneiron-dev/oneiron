@@ -505,14 +505,20 @@ fn completed_answer(
     let rows = super::served_rows::stop_release_rows(server, actor, &stop, served)
         .map(<[oneiron::EntityId]>::to_vec);
     // The drain read that answer, not this guest call (FIX 21614).
-    if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows.as_deref()) {
+    if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows.as_deref(), false) {
         let ran = oneiron::task_verb::sdk::ActAnswer::<()>::details_on_device();
         return Ok((serde_json::json!(ran), Some(Vec::new())));
     }
     match stop {
         VerbHookStop::Completed { result, .. } => {
-            let released =
-                super::super::mcp_release_listed(server, actor, rows.as_deref(), false, result)?;
+            let released = super::super::mcp_release_listed(
+                server,
+                actor,
+                rows.as_deref(),
+                false,
+                result,
+                false,
+            )?;
             Ok((released, rows))
         }
         stop => Err(super::tasks_response::mcp_hook_stop(stop)),
