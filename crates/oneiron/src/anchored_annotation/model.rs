@@ -171,6 +171,9 @@ pub enum Locator {
     /// span counts characters of the file's whole decoded text, as a
     /// [`Locator::Text`] span does. The file hash names the bytes the words
     /// read from, so they still read after the tree moves to another commit.
+    /// A stored span counts the owner's text, the file's stored bytes; a
+    /// reader whose sight masks the file reads and sends it in that sight's
+    /// text (FIX 22109).
     Code {
         /// The code artifact's repo_ref commit, 40 lowercase hex.
         commit: String,

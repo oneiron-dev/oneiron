@@ -3,7 +3,18 @@
 
 /// Hot actor-class flag cached on a 26-byte semantic-provenanced edge.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum EdgeActorClass {
     Human = 0,
     Agent = 1,
