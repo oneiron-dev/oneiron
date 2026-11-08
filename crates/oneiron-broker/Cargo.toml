@@ -56,6 +56,10 @@ oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
 # descriptor (SCM_RIGHTS), and the daemon polls it for the child's hang-up.
 # `fs`: the disk room a git exchange's body spool needs.
 rustix = { version = "1", features = ["event", "fs", "net", "std"] }
+# An LFS action's host is admitted only when every address it resolves to
+# is a global one: the same address rule the engine's LFS client applies.
+# A leaf crate with no dependencies, so the broker still links no engine.
+oneiron-sandbox-contract = { version = "0.1.0", path = "../oneiron-sandbox-contract" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
