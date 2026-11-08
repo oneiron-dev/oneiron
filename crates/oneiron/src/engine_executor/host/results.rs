@@ -739,6 +739,7 @@ impl RecordingJsHost<'_, '_> {
             seq: self.next_seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,
+            reply_publisher: None,
         };
         if let Some(refusal) = self.gated_write.refusal_past_an_unmet_write(site, None)? {
             return Err(refused(&refusal.outcome));
