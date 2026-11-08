@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{Memory, MemoryError, MemoryResult};
-use oneiron::outbound_consent::ConnectorCallRequest;
+use oneiron::outbound_consent::{ConnectorCallRequest, ConnectorSource};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::settings::ReadDestination;
 use oneiron::task_verb::sdk::{
@@ -200,10 +200,13 @@ pub(crate) fn connector_call_listing_on(
     input: ConnectorCallRequest,
     line: Option<&RunAdmission>,
 ) -> MemoryResult<(ConnectorCallReply, Option<Vec<EntityId>>)> {
-    if input.name == oneiron::web_connector::WEB_CONNECTOR_NAME {
+    if ConnectorSource::resolve(input.source, &input.name) == ConnectorSource::Builtin {
+        if input.name != oneiron::web_connector::WEB_CONNECTOR_NAME {
+            return Err(MemoryError::bad_request("unknown builtin connector"));
+        }
         return crate::web_connector::call_listing(server, memory, input, line);
     }
-    connector_call_listing_as(server, memory, input)
+    connector_catalog_call_listing_as(server, memory, input)
 }
 
 /// One connector call for the caller `memory` is bound to, with the
@@ -215,14 +218,28 @@ pub(crate) fn connector_call_listing_as(
     memory: &Memory<'_>,
     input: ConnectorCallRequest,
 ) -> MemoryResult<(ConnectorCallReply, Option<Vec<EntityId>>)> {
-    if input.name == oneiron::web_connector::WEB_CONNECTOR_NAME {
-        return crate::web_connector::call_listing(server, memory, input, None);
-    }
+    connector_call_listing_on(server, memory, input, None)
+}
+
+fn connector_catalog_call_listing_as(
+    server: &SyncServer,
+    memory: &Memory<'_>,
+    input: ConnectorCallRequest,
+) -> MemoryResult<(ConnectorCallReply, Option<Vec<EntityId>>)> {
     let invocation = memory
         .invocation()
         .map(|invocation| sdk::connector_call_invocation(memory.actor(), invocation))
         .transpose()
         .map_err(MemoryError::from)?;
+    // The built-in Google Sheets connector (FIX 4862) answers before the MCP
+    // driver, over this server's credential broker leg, under the same call
+    // identity: a replayed write is answered from its claim, never sent again.
+    if input.name == oneiron::channel_identity_provider::sheets::SHEETS_CATALOG_NAME {
+        return oneiron::channel_identity_provider::sheets::call_google_sheets(
+            memory, &input, invocation,
+        )
+        .map(|reply| (reply, None));
+    }
     let mut host = ServedConnectorCallHost::new(server).map_err(MemoryError::from)?;
     let (name, tool) = (input.name.clone(), input.tool.clone());
     let (outcome, rows) = server

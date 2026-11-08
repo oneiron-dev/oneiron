@@ -41,6 +41,7 @@ pub fn api_error_schema() -> Value {
                 "items": { "type": "string" },
             },
             "legal_hold": { "$ref": "#/components/schemas/LegalHoldNoticeSchema" },
+            "room_join_hold": { "$ref": "#/components/schemas/RoomJoinHoldSchema" },
         },
     })
 }
@@ -74,6 +75,7 @@ pub fn api_error_envelope_schema() -> Value {
                         "items": { "type": "string" },
                     },
                     "legal_hold": { "$ref": "#/components/schemas/LegalHoldNoticeSchema" },
+                    "room_join_hold": { "$ref": "#/components/schemas/RoomJoinHoldSchema" },
                 },
             },
         },
@@ -87,6 +89,7 @@ pub fn openapi_error_components() -> Value {
         "ApiError": api_error_schema(),
         "ApiErrorEnvelope": api_error_envelope_schema(),
         "LegalHoldNoticeSchema": crate::api::legal_hold_schema::legal_hold_notice_schema(),
+        "RoomJoinHoldSchema": super::room_join_hold_schema::room_join_hold_schema(),
     })
 }
 
@@ -95,7 +98,7 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
     let mut properties = Map::from_iter([("code".to_owned(), json!({ "const": code.as_str() }))]);
 
     match code {
-        ErrorCode::BadRequest => {
+        ErrorCode::BadRequest | ErrorCode::DeadlineExceeded => {
             optional_string(&mut properties, "field");
         }
         ErrorCode::Forbidden
@@ -129,6 +132,10 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
             optional_integer(&mut properties, "limit");
             optional_integer(&mut properties, "used");
             optional_string(&mut properties, "resetAt");
+        }
+        ErrorCode::TooManyAttempts => {
+            required.push("retryAfterSecs");
+            properties.insert("retryAfterSecs".to_owned(), json!({ "type": "integer" }));
         }
         ErrorCode::MirrorNotReady => {
             optional_string(&mut properties, "mirror");

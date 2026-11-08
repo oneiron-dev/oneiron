@@ -49,7 +49,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use super::buffer::{InputRegion, Outbound};
 use super::wire::{self, Incoming, Outgoing};
-use super::worker_host;
+use super::worker_host::{self, NativeLaunch};
 
 /// A send to a worker that has gone fails with EPIPE rather than raising
 /// SIGPIPE; macOS has no such flag, and this process ignores the signal.
@@ -89,6 +89,8 @@ pub(super) struct Channel {
     /// next `next` resumes it instead of rereading its header, so dropping
     /// a read future never misaligns the stream.
     pending: Option<PartialFrame>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    peer_pid: Option<u32>,
 }
 
 /// A frame partly read when its read future was dropped: the header bytes
@@ -113,12 +115,40 @@ impl Channel {
                 "the worker's socket answers as another user",
             ));
         }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let peer_pid = peer.pid().and_then(|pid| u32::try_from(pid).ok());
         let (reader, writer) = stream.into_split();
         Ok(Self {
             reader: BufReader::new(reader),
             writer: Arc::new(AsyncMutex::new(writer)),
             pending: None,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            peer_pid,
         })
+    }
+
+    /// Checks the connected peer, then reads this launch's hello on the
+    /// same connection before any request body or descriptor can leave it.
+    pub(super) async fn connect_launch(
+        launch: &NativeLaunch,
+        epoch: Option<&str>,
+    ) -> io::Result<(Self, JsonValue)> {
+        let mut channel = Self::connect(launch.socket()).await?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if !launch.peer_matches(channel.peer_pid) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the native peer is not this launch's supervised child",
+            ));
+        }
+        let hello = channel.ask("hello", json!({})).await?;
+        if !launch.hello_agrees(&hello, epoch) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the native hello names another launch, model or epoch",
+            ));
+        }
+        Ok((channel, hello))
     }
 
     fn frame(
@@ -536,23 +566,21 @@ fn keep_until_revoked(lease: Option<WorkerLease>, grant: Option<DeviceGrant>) {
         });
     } else {
         // A failed spawn drops the closure, and the lease and grant with it.
-        let _ = std::thread::Builder::new()
-            .name("exl3-keep-lease".to_owned())
-            .spawn(move || {
-                let wait = async move {
-                    if let Some(lease) = &lease {
-                        lease.revocation().await;
-                    }
-                    drop((lease, grant));
-                };
-                match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime.block_on(wait),
-                    Err(_) => drop(wait),
+        let _ = crate::engine_thread("exl3-keep-lease".to_owned()).spawn(move || {
+            let wait = async move {
+                if let Some(lease) = &lease {
+                    lease.revocation().await;
                 }
-            });
+                drop((lease, grant));
+            };
+            match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime.block_on(wait),
+                Err(_) => drop(wait),
+            }
+        });
     }
 }
 
@@ -707,7 +735,7 @@ pub(super) struct Call {
 }
 
 impl Call {
-    /// Connects to `path`, sends the call with `conversation` as its input
+    /// Connects to `launch`, sends the call with `conversation` as its input
     /// region and `schedule`'s fields at its body's top level, and waits
     /// for the worker to accept or refuse it. A call that names a `session`
     /// working branch goes as `session.generate`, its body otherwise a
@@ -717,7 +745,7 @@ impl Call {
         reason = "each argument is one fact of the call being started"
     )]
     pub(super) async fn start(
-        path: &Path,
+        launch: &NativeLaunch,
         epoch: &str,
         conversation: &JsonValue,
         params: JsonValue,
@@ -729,7 +757,7 @@ impl Call {
     ) -> Result<Self, Start> {
         let bytes = serde_json::to_vec(conversation).map_err(|e| not_sent("encode input", e))?;
         let input = InputRegion::new(&bytes).map_err(|e| not_sent("input region", e))?;
-        let mut channel = Channel::connect(path)
+        let (mut channel, _) = Channel::connect_launch(launch, Some(epoch))
             .await
             .map_err(|e| not_sent("connect", e))?;
         let request_id = next_request_id();

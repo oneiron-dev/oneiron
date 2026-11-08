@@ -70,6 +70,7 @@ mod adapters;
 mod attach;
 mod claim_merge;
 mod doors;
+mod native_capture;
 mod notes;
 mod refresh;
 
@@ -181,6 +182,7 @@ pub struct DecisionHost {
     /// row's), so an older read never lands last.
     person_refresh: Arc<std::sync::Mutex<()>>,
     auto_checker: Option<BoundedAutoChecker>,
+    auto_check: Option<(String, EntityId)>,
     image_pick: Option<ImagePickSettings>,
     booking_parse: Option<BookingParseSettings>,
     connector_slate: Option<ConnectorSlateSettings>,
@@ -233,6 +235,7 @@ impl DecisionHost {
             think_start: None,
             person_refresh: Arc::default(),
             auto_checker: None,
+            auto_check: None,
             image_pick: None,
             booking_parse: None,
             connector_slate: None,
@@ -260,6 +263,7 @@ impl DecisionHost {
         mut self,
         read: Option<&(DecisionReadDoor, BudgetGuard)>,
         admission: ReadAdmission,
+        vault: &Arc<Vault>,
     ) -> Self {
         self.ladder.escalation = None;
         self.ladder.paired = None;
@@ -272,14 +276,14 @@ impl DecisionHost {
             // No house read: the ladder's paired is none, and the bound
             // big model tracks it (FIX 11466).
             self.update_big_paired(None);
-            return self;
+            return self.rebuild_auto_check();
         };
         let Some(probe) = door.probe() else {
             tracing::warn!(
                 "the decision read's recipe names no paired question; the escalation rung stays empty"
             );
             self.update_big_paired(None);
-            return self;
+            return self.rebuild_auto_check();
         };
         // Q2: the house read asks it jointly; a generated read asks the
         // ladder's beside each of its questions.
@@ -330,7 +334,7 @@ impl DecisionHost {
         // (FIX 1557); a rebuild binds it to the new one, or none (FIX 11466).
         self.update_big_paired(paired.clone());
         let Some(paired) = paired else {
-            return self;
+            return self.rebuild_auto_check();
         };
         // The read takes the ladder's person question, which it reads apart.
         let gate = HouseGate {
@@ -344,13 +348,14 @@ impl DecisionHost {
             paired,
             self.ladder.person.clone(),
             door.connector().locality == ModelLocality::ThirdParty,
+            vault,
         ) {
             Ok(read) => self.ladder.escalation = Some(Arc::new(read)),
             Err(error) => {
                 tracing::warn!(%error, "the house model's decision read cannot fill the escalation rung");
             }
         }
-        self
+        self.rebuild_auto_check()
     }
 
     /// The bound big model reads `paired` jointly from now on: a house-read
@@ -397,9 +402,11 @@ impl DecisionHost {
     fn with_system_one(
         mut self,
         settings: Option<&SystemOneSettings>,
+        models: &Arc<crate::models::ModelRuntime>,
         default_units: u64,
         posture: HostingPrivacyPosture,
         runtime: tokio::runtime::Handle,
+        vault: &Arc<Vault>,
     ) -> Self {
         self.ladder.system_one = None;
         self.remote_opt_in = settings.is_some_and(|settings| settings.remote_opt_in);
@@ -408,10 +415,12 @@ impl DecisionHost {
         };
         match SystemOneRung::bind(
             settings,
+            Arc::clone(models),
             default_units,
             posture,
             runtime,
             self.broker.as_ref(),
+            vault,
         ) {
             Ok(rung) => self.ladder.system_one = Some(Arc::new(rung)),
             Err(error) => tracing::warn!(%error, "the System One seat cannot fill its rung"),
@@ -533,13 +542,20 @@ impl DecisionHost {
     /// The write gate's auto check through this ladder, worded `wording`,
     /// for `principal`.
     fn with_auto_check(mut self, wording: Option<&str>, principal: Option<EntityId>) -> Self {
-        self.auto_checker = wording.zip(principal).map(|(wording, principal)| {
+        self.auto_check = wording
+            .zip(principal)
+            .map(|(wording, principal)| (wording.to_owned(), principal));
+        self.rebuild_auto_check()
+    }
+
+    fn rebuild_auto_check(mut self) -> Self {
+        self.auto_checker = self.auto_check.as_ref().map(|(wording, principal)| {
             BoundedAutoChecker::new(AutoCheckDecisions {
                 ladder: self.ladder.clone(),
-                principal,
+                principal: *principal,
                 dial: self.dial(DecisionRung::Big),
                 bands: self.bands.clone(),
-                wording: wording.to_owned(),
+                wording: wording.clone(),
                 notes: Arc::new(self.notes.clone()),
                 calibrated: None,
             })
@@ -637,6 +653,7 @@ struct HouseGate {
 /// engine's [`DecisionReadProvider`], which admits and settles each read
 /// through its [`HouseGate`]. The reader blocks on the server's runtime.
 struct HouseRead {
+    vault: Arc<Vault>,
     pin: ProviderPin,
     reader: Arc<dyn LabelReadModel>,
     gate: HouseGate,
@@ -653,8 +670,10 @@ impl HouseRead {
         paired: DecisionQuestion,
         person: Option<DecisionQuestion>,
         leaves: bool,
+        vault: &Arc<Vault>,
     ) -> oneiron::Result<Self> {
         let read = Self {
+            vault: Arc::clone(vault),
             pin: pin(DecisionRung::Escalation, reader.model(), reader.revision()),
             paired,
             person,
@@ -678,19 +697,22 @@ impl HouseRead {
 }
 
 /// The remote System One seat as a ladder rung: each question is one
-/// measurement admitted and settled on the seat's own meter, sent on the
-/// server's runtime (so a call blocks its thread, inside the pass or run of
-/// the ladder call that asks it). It takes noul and choice questions; a
+/// measurement admitted and settled on a run, sent on the server's runtime
+/// (so a call blocks its thread, inside the pass or run of the ladder call
+/// that asks it). Without a caller's run, it opens one on the verdict's
+/// caller meter and payer, or its own meter outside a verdict. It takes noul and choice questions; a
 /// score question's level labels are the caller's, and a ladder call does
 /// not carry them. A `key_env` seat holds its bearer from bind; a
 /// `key_secret` seat reads its key at the vault's custody door for each
 /// call, through the credential broker.
 struct SystemOneRung {
+    vault: Arc<Vault>,
     seat: Arc<oneiron_llm_systemone::SystemOneSeat>,
     guard: BudgetGuard,
-    /// A call that carries its caller's run admits its measurement on that run as this
-    /// paid connector (FIX 10443): the seat's key is the customer's own, and its usage
-    /// reports tokens, one unit each.
+    /// The host account and receipt sink for calls without a caller's run (FIX 3795).
+    models: Arc<crate::models::ModelRuntime>,
+    /// Every measurement uses this paid connector: the seat's key is the customer's
+    /// own, and its usage reports tokens, one unit each.
     connector: PaidConnector,
     posture: HostingPrivacyPosture,
     remote_opt_in: bool,
@@ -700,10 +722,12 @@ struct SystemOneRung {
 impl SystemOneRung {
     fn bind(
         settings: &SystemOneSettings,
+        models: Arc<crate::models::ModelRuntime>,
         default_units: u64,
         posture: HostingPrivacyPosture,
         runtime: tokio::runtime::Handle,
         broker: Option<&crate::models::BrokerContext>,
+        vault: &Arc<Vault>,
     ) -> anyhow::Result<Self> {
         let endpoint = settings.endpoint.clone();
         let (model, version) = (settings.model.clone(), settings.version.clone());
@@ -748,12 +772,14 @@ impl SystemOneRung {
             rates: Vec::new(),
         };
         Ok(Self {
+            vault: Arc::clone(vault),
             seat: Arc::new(seat),
             guard: BudgetGuard::new(
                 "system-one",
                 settings.budget_units.unwrap_or(default_units),
                 BudgetExhaustionPolicy::Suspend,
             ),
+            models,
             connector,
             posture,
             remote_opt_in: settings.remote_opt_in,

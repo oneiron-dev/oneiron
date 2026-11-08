@@ -177,6 +177,15 @@ the named executor, pending work, or relay behavior. Full failure details stay i
 the existing operator logs; this reply carries only closed reasons, not paths,
 URLs or credentials.
 
+On the executor, a publication's reply also carries `unmerged_upload`, pending or
+answered, when the last upload this install assembled for that home carries a
+world section it may read unchanged because the section did not open, decode or
+merge here: the generation, and per section the world, the window whose merge
+failed, the stage and the error's kind. It is the same record the upkeep's
+`unmerged_uploads` shows (`GET /v1/owner/recovery-kit/upkeep`), so the request's
+result does not hide it. The upload keeps the section and still publishes; the
+section is yours to repair. The field is left out when no such section rides.
+
 ## What the log shows
 
 - `device sync started` with this machine's id, the home's, and `over` (`mesh` or `url`).
@@ -227,6 +236,44 @@ deleted when a node stops offering a model.
 
 The rows feed the own-server backend. The configured model router is built from `[models]` at
 start, so serve does not route a discovered model by itself yet.
+
+## Shared environments
+
+A host can retain dedicated shared-vault environments beside its personal vault. Declare each
+one explicitly; serve does not scan directories or discover them through `HOME` or XDG paths:
+
+```toml
+[[shared_env]]
+path = "/absolute/path/to/the/shared-env"
+vault_id = 1234567890123456789
+member = "<the membership's 32-hex person id>"
+home_url = "wss://home.example/ws"
+credential_file = "/absolute/path/to/the/membership.cred"
+```
+
+`path` is the environment's own existing vault directory; serve does not create a new vault there.
+`vault_id` and `member` name the membership the leave check verifies, and `home_url` plus
+`credential_file` give its own sync lane the same inputs as a personal `[device_sync]` connection.
+As with direct sync, `ws://` is allowed only to a loopback host; any other network home uses
+`wss://`. On plain serve the section is file-only. On managed
+serve it arrives in the supervisor-selected settings file, and both paths must pass the same
+vault/configuration-root containment check as other owner paths. No environment variable or flag
+sets it.
+
+At start, serve opens every entry and keeps its handle. Each active membership gets its own
+window manager and sync connection; one bad environment is logged and skipped without stopping
+the others. Once an hour, the lifecycle tick asks the engine's verified leave door for each
+active membership. A refusal or failed check is not a leave. Only a verified notice detaches the
+lane. The environment's own durable leave receipt is the record; there is no second registry in
+the vault and no new side table.
+
+The handle stays open after a confirmed leave. The person can still read retained removal
+archives, and the deferred orphan-body collection written by the leave purge can finish. The
+ordinary housekeeping tick and the owner's "run now" cover every retained environment, active or
+left, sequentially with an independent budget per handle. A managed wake takes the earliest wake
+of the personal vault and all retained environments, so a left environment's collection does not
+sleep past its deadline. At stop, lanes drop before handles; in-flight checks and passes finish
+first.
 
 ## How it fits
 

@@ -479,11 +479,20 @@ pub(super) fn prepare_call(
         auth.require(scope).map_err(|_| refused(Refusal::Scope))?;
     }
     let owner = crate::api::owner(auth, server).map_err(|_| refused(Refusal::Owner))?;
-    let actor = auth
-        .principal_ref()
-        .and_then(|principal| EntityId::from_hex(principal).ok())
-        .ok_or_else(|| refused(Refusal::Principal))?;
-    let payer = WriteActor::new(actor, EdgeActorClass::Human);
+    let host_action = crate::api::host_action::host_action_of(vault, auth)
+        .transpose()
+        .map_err(|_| refused(Refusal::Owner))?;
+    let payer = match &host_action {
+        Some(action) => action.actor(),
+        None => {
+            let actor = auth
+                .principal_ref()
+                .and_then(|principal| EntityId::from_hex(principal).ok())
+                .ok_or_else(|| refused(Refusal::Principal))?;
+            WriteActor::new(actor, EdgeActorClass::Human)
+        }
+    };
+    let actor = payer.entity_ref();
     let (agent, instructions) = instructions(auth, vault)?;
     if roster.as_deref().is_some_and(|roster| {
         roster.is_empty() || roster.trim() != roster || roster.len() > MAX_ROSTER_REF_BYTES
@@ -511,7 +520,11 @@ pub(super) fn prepare_call(
         .map_err(|fault| {
             tracing::info!(%fault, "voice: the room's funding refused the call");
             refused(match fault {
-                PayerFault::Missing { .. } => Refusal::PayerMissing,
+                // A room scope funded by an agent Grant's wallet has no
+                // payer this call path can bill (FIX 7766).
+                PayerFault::Missing { .. } | PayerFault::GrantWalletUnbound { .. } => {
+                    Refusal::PayerMissing
+                }
                 PayerFault::Needed { .. } => Refusal::PayerNeeded,
             })
         })?,
@@ -534,6 +547,7 @@ pub(super) fn prepare_call(
     );
     session.policy_caller_ref = auth.principal_ref().map(str::to_owned);
     session.policy_person = Some(owner);
+    session.host_action = host_action;
     let brain_room = container.as_ref().map(|bound| bound.container);
     session.container = container;
 

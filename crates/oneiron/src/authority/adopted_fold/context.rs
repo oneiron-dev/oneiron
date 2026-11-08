@@ -12,9 +12,11 @@
 //! covered state is the one this install's fold reaches, and the image
 //! stands here; the projection is read under this install's pin anyway. A
 //! row the image's settlement pruned lands alike too (FIX 11263): no fence
-//! reads either input. Otherwise, or where the image keeps no state to
-//! judge on, the whole history decides, as before. The posture still has to
-//! match: it decides which consent arm judges every row.
+//! reads either input. A refolded row may reconstruct a crossed main-log
+//! parent's state from its already-carried signed body. Otherwise, or where
+//! the image keeps no state to judge on, the whole history decides, as
+//! before. The posture still has to match: it decides which consent arm
+//! judges every row.
 
 use super::super::fold_engine::{CausalPast, FoldContext, ImagePast};
 use super::*;
@@ -72,7 +74,7 @@ pub(super) fn image_stands_here(image: &AuthorityCheckpointV2, log: AdoptedTail<
 }
 
 /// Whether `op`'s transition reads the install's pin: every owner act, a
-/// machine's revision or answer, a frontier join, a world key record, a home
+/// membership execution record (FIX 12335), a machine's revision or answer, a frontier join, a world key record, a home
 /// candidacy and an owner key enrollment judge their carrier or signer
 /// through this install's trusted admitter, and a kit request through the
 /// pinned root itself.
@@ -85,9 +87,11 @@ pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
             | AuthorityOp::CheckpointPolicySet(_)
             | AuthorityOp::HomeNodePick(_)
             | AuthorityOp::OriginCut(_)
+            | AuthorityOp::DeviceSuccession(_)
             | AuthorityOp::ConversationTrainingSet(_)
             | AuthorityOp::ConversationTrainingVaultSet(_)
             | AuthorityOp::AgentGrantAct(_)
+            | AuthorityOp::MembershipExecution(_)
             | AuthorityOp::PolicySettingSet(_)
             | AuthorityOp::ExportAct(_)
             | AuthorityOp::MachineProfile(_)
@@ -104,8 +108,9 @@ pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
 
 /// Whether covered row `entry`, signed as `hash`, lands on its parents' kept
 /// states as its own kept state says, under the image's pin and peers and
-/// under this install's alike. False where the image keeps no state at the
-/// row or at a parent of it.
+/// under this install's alike. A refolded row may also use a crossed
+/// main-log parent's state rebuilt from its already-carried signed body;
+/// otherwise missing state still needs the whole history.
 ///
 /// A row the image's fold holds no state at, though its own transition
 /// admits it there under the image's inputs, fell to the fold's settlement
@@ -124,13 +129,26 @@ fn judged_alike(
     let Some(kept) = image.state_at(&hash) else {
         return false;
     };
-    let mut parents = BTreeMap::new();
-    for parent in &entry.parent_hashes {
-        let Some(Some(state)) = image.state_at(parent) else {
+    let kept_parents = entry
+        .parent_hashes
+        .iter()
+        .map(|parent| {
+            image
+                .state_at(parent)
+                .flatten()
+                .map(|state| (*parent, state))
+        })
+        .collect::<Option<BTreeMap<_, _>>>();
+    let parents = if let Some(parents) = kept_parents {
+        parents
+    } else if refolded_kind(image, &hash) == Some(true) {
+        let Some(parents) = refold_parent_states(image, entry) else {
             return false;
         };
-        parents.insert(*parent, state);
-    }
+        parents
+    } else {
+        return false;
+    };
     let judged = BTreeMap::new();
     let summaries = ImagePast {
         image,
@@ -178,6 +196,56 @@ fn judged_alike(
         && refolded_kind(image, &hash) == Some(false)
 }
 
+/// Rebuilds only the crossed main-log parent states whose canonical signed
+/// bodies the image already carries. No body or replay state means history
+/// still decides; a side row is never crossed.
+fn refold_parent_states(
+    image: &AuthorityCheckpointV2,
+    entry: &AuthorityLogEntry,
+) -> Option<BTreeMap<AuthorityEntryHash, FoldState>> {
+    let mut states = BTreeMap::new();
+    let mut visiting = BTreeSet::new();
+    let mut pending = entry
+        .parent_hashes
+        .iter()
+        .map(|hash| (*hash, None::<AuthorityLogEntry>))
+        .collect::<Vec<_>>();
+    while let Some((hash, crossed)) = pending.pop() {
+        if states.contains_key(&hash) {
+            continue;
+        }
+        if let Some(crossed) = crossed {
+            let state = super::super::world_refold::crossed_state(
+                &crossed,
+                crossed
+                    .parent_hashes
+                    .iter()
+                    .map(|parent| states.get(parent)),
+            )?;
+            visiting.remove(&hash);
+            states.insert(hash, state);
+            continue;
+        }
+        if let Some(state) = image.state_at(&hash)? {
+            states.insert(hash, state);
+            continue;
+        }
+        let row = image.rows.get(&hash)?;
+        if row.world.is_some() || !visiting.insert(hash) {
+            return None;
+        }
+        let crossed = decode_authority_log_entry_body(row.body.as_deref()?).ok()?;
+        let parents = crossed.parent_hashes.clone();
+        pending.push((hash, Some(crossed)));
+        pending.extend(parents.into_iter().map(|parent| (parent, None)));
+    }
+    entry
+        .parent_hashes
+        .iter()
+        .map(|hash| states.get(hash).cloned().map(|state| (*hash, state)))
+        .collect()
+}
+
 /// Whether the fold folds covered row `hash` again over a main-log row it
 /// did not keep (`world_refold`): a world's side row, or a row of a kind the
 /// refold takes. None for a row the image does not cover or whose carried
@@ -217,7 +285,7 @@ pub(super) fn seeds_late_fork(image: &AuthorityCheckpointV2, hash: &AuthorityEnt
         let Some(ancestor) = image.rows.get(&at) else {
             return false;
         };
-        if ancestor.world.is_none() && image.holds_rejected(&at) {
+        if ancestor.world.is_none() && (!image.keeps_state(&at) || image.holds_rejected(&at)) {
             return false;
         }
         stack.extend(ancestor.parents.iter().copied());

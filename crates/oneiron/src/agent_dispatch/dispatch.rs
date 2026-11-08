@@ -4,6 +4,7 @@ use crate::Vault;
 use crate::agent_def::AgentDefinition;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::consent::AuthenticatedOwner;
 use crate::context_projection::normalize_context_spec;
 use crate::dreamer_runner::{
     DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
@@ -27,7 +28,11 @@ pub(super) use self::depth::stored_depth;
 /// `RunTreeAdapter::new`, `DreamerRunnerStore::new`). The OF-334 verb home is
 /// [`AgentDispatcher::dispatch`]; there is deliberately no `Vault` alias.
 /// Identity of the caller's normalized request, not of the mutable project row.
-fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Result<String> {
+fn spawn_intent_digest(
+    input: &DispatchAgent,
+    spawn: &AgentSpawnContext,
+    funding: Option<EntityId>,
+) -> Result<String> {
     let target = input.target.agent_definition_ref()?.to_hex();
     let bytes = serde_json::to_vec(&(
         target,
@@ -39,6 +44,7 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
         &spawn.scope,
         &spawn.type_ref,
         &spawn.budget,
+        &spawn.token_ceiling,
         &spawn.spend,
         &spawn.room,
         &spawn.team,
@@ -51,7 +57,30 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
             "spawn context cannot be encoded",
         ))
     })?;
-    Ok(blake3::hash(&bytes).to_hex().to_string())
+    let digest = blake3::hash(&bytes);
+    // FIX 7766: a root's selected funding Grant joins its intent only when
+    // it has one, so every spawn without one keeps its digest.
+    Ok(match funding {
+        Some(grant) => blake3::Hasher::new()
+            .update(FUNDING_INTENT_DOMAIN)
+            .update(digest.as_bytes())
+            .update(grant.as_bytes())
+            .finalize()
+            .to_hex()
+            .to_string(),
+        None => digest.to_hex().to_string(),
+    })
+}
+
+/// Domain of a funded spawn's intent digest (FIX 7766).
+const FUNDING_INTENT_DOMAIN: &[u8] = b"oneiron.agent_dispatch.funding_intent.v1";
+
+/// The owner's selection of a root launch's funding Grant (FIX 7766): who
+/// selected it, proved in the dispatch writer, and the Grant.
+#[derive(Clone, Copy)]
+struct FundingSelection<'a> {
+    owner: &'a AuthenticatedOwner,
+    grant: EntityId,
 }
 
 pub struct AgentDispatcher<'a> {
@@ -60,6 +89,9 @@ pub struct AgentDispatcher<'a> {
     /// The host's observer of each AGENT_DEF a dispatch resolves (FIX 9180),
     /// when a code run's spawn binds one: told, never asked.
     seats: Option<&'a (dyn Fn(EntityId) + Sync)>,
+    /// The owner's selected funding Grant for a root launch (FIX 7766),
+    /// proved in the dispatch writer: [`Self::funded_by`].
+    funding: Option<FundingSelection<'a>>,
 }
 
 impl<'a> AgentDispatcher<'a> {
@@ -70,6 +102,70 @@ impl<'a> AgentDispatcher<'a> {
             vault,
             runner: DreamerRunnerStore::new(vault),
             seats: None,
+            funding: None,
+        }
+    }
+
+    /// This dispatcher, for ROOT agent launches the owner's agent Grant
+    /// `grant` funds (FIX 7766, Engine 19:59 W-B), as the authenticated
+    /// `owner` selected it at the launch's door. In each launch's own
+    /// writer, before anything is enqueued, the selection proves itself
+    /// (`federation::SelectedOwnerAgentFundingGrant`), must grant
+    /// the launched agent, and freezes its binding on the durable dispatch
+    /// input; a pinned `budget` scope keeps it as its root's. A metered
+    /// root's funding is its spend root's, named when the owner opens it, so
+    /// a launch naming a spend scope refuses; so does a child, which
+    /// inherits its parent's, and a workflow. A retry compares the Grant it
+    /// was first launched with.
+    #[must_use]
+    pub fn funded_by(mut self, owner: &'a AuthenticatedOwner, grant: EntityId) -> Self {
+        self.funding = Some(FundingSelection { owner, grant });
+        self
+    }
+
+    /// The Grant a root launch through this dispatcher was selected under.
+    pub(super) fn selected_funding_grant(&self) -> Option<EntityId> {
+        self.funding.map(|selection| selection.grant)
+    }
+
+    /// The owner's agent Grant a dispatch is funded by (FIX 7766, Engine
+    /// 19:59 W-B), resolved in the dispatch writer `txn`, the one that then
+    /// writes the dispatch input: a root's the owner selected
+    /// ([`Self::funded_by`]), proved here and granting the launched agent
+    /// `target`, its proof used only for the binding it yields; else the one
+    /// its parent's input carries, inherited. Neither a child nor a metered
+    /// root takes a selection.
+    fn dispatch_funding_in_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        spawn: &AgentSpawnContext,
+        parent: Option<AttemptId>,
+        target: EntityId,
+    ) -> Result<Option<super::GrantSpendBinding>> {
+        match (self.funding, parent) {
+            (Some(_), Some(_)) => Err(super::widen_record::invalid(
+                "a child is funded by its root's grant and never names one",
+            )),
+            (Some(_), None) if spawn.spend.is_some() => Err(super::widen_record::invalid(
+                "a metered root is funded by its spend root's grant, named when that root opens",
+            )),
+            (Some(selection), None) => {
+                let proof = self.vault.selected_owner_agent_funding_grant_in_txn(
+                    txn,
+                    selection.owner,
+                    selection.grant,
+                )?;
+                if proof.principal() != target {
+                    return Err(super::widen_record::invalid(
+                        "the selected funding grant cannot fund this launch: it grants another agent",
+                    ));
+                }
+                Ok(Some(super::GrantSpendBinding::from_proof(&proof)))
+            }
+            (None, Some(parent)) => Ok(self
+                .parent_dispatch_input_in_txn(txn, parent)?
+                .and_then(|input| input.funding)),
+            (None, None) => Ok(None),
         }
     }
 
@@ -226,7 +322,8 @@ impl<'a> AgentDispatcher<'a> {
                 "existing dedupe row belongs to a different parent",
             )));
         }
-        if status.input.spawn_intent.as_deref() != Some(spawn_intent_digest(input, spawn)?.as_str())
+        let intent = spawn_intent_digest(input, spawn, self.selected_funding_grant())?;
+        if status.input.spawn_intent.as_deref() != Some(intent.as_str())
             || status.attempt.run_id != input.run_id
         {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -264,9 +361,22 @@ impl<'a> AgentDispatcher<'a> {
         let requested_ref = input.target.agent_definition_ref()?;
         let spend = spawn.spend.clone();
         let budget = spawn.budget;
+        let token_ceiling = spawn.token_ceiling;
+        let planned = spawn.plan.is_some();
         let origin =
             self.origin_conversation_in_txn(wtxn, requested_parent, spawn.origin_conversation)?;
         let mut dispatch_input = self.prepare_dispatch_in_txn(wtxn, input.clone(), spawn)?;
+        let budget = if budget.is_none() && !planned {
+            crate::learning_setting_choice::owner_spawn_budget_in_txn(
+                self.vault,
+                wtxn,
+                dispatch_input.project_ref,
+                &dispatch_input.type_ref,
+            )?
+        } else {
+            budget
+        };
+        dispatch_input.budget = budget;
         // OF-532: state the launch (count, expected spend, cap) in this
         // transaction and freeze it into the payload; the scope is reserved
         // below, once the attempt id exists, in the same transaction.
@@ -275,6 +385,7 @@ impl<'a> AgentDispatcher<'a> {
             requested_parent,
             spend.as_ref(),
             budget,
+            token_ceiling,
             &input.target,
             dispatch_input.plan.as_ref().map(|plan| &plan.plan.model),
             input.now,
@@ -316,6 +427,7 @@ impl<'a> AgentDispatcher<'a> {
                     wtxn,
                     status.attempt.id,
                     Some(requested_ref),
+                    dispatch_input.funding.clone(),
                     input.now,
                 )?;
                 if let Some(case) = &dispatch_input.healer_case {
@@ -398,12 +510,16 @@ impl<'a> AgentDispatcher<'a> {
         spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchInput> {
         let requested_parent = input.parent_attempt;
-        let spawn_intent = spawn_intent_digest(&input, &spawn)?;
+        let spawn_intent = spawn_intent_digest(&input, &spawn, self.selected_funding_grant())?;
         // FIX 11592: the requester the host's door named, or the parent's.
         let requester =
             self.inherited_requester_in_txn(wtxn, spawn.requester.clone(), requested_parent)?;
+        let caller_origin =
+            self.inherited_caller_origin_in_txn(wtxn, requested_parent, spawn.caller_origin)?;
         let requested_target = input.target.agent_definition_ref()?;
         self.observe_seat(requested_target);
+        let funding =
+            self.dispatch_funding_in_txn(wtxn, &spawn, requested_parent, requested_target)?;
 
         // 1. STRUCTURAL BOUND FIRST. Zero rejects here, before any fork
         //    registration, context resolution, or enqueue — so an exhausted
@@ -476,58 +592,8 @@ impl<'a> AgentDispatcher<'a> {
         // planned spawn takes the stamp its plan read and is never placed
         // again; a supplied stamp the current tree accepts is kept; anything
         // else is placed, and unsure is the root — never an untyped spawn.
-        let tree =
-            super::task_type_tree::load_team_type_tree_in_txn(self.vault, wtxn, Some(project_ref))?;
-        if spawn
-            .type_ref
-            .as_ref()
-            .is_some_and(|type_ref| type_ref.node_id.is_empty())
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                "task_type_ref node_id must not be empty",
-            )));
-        }
-        let type_ref = match &spawn.plan {
-            Some(plan) => {
-                plan.validate()?;
-                if spawn
-                    .type_ref
-                    .as_ref()
-                    .is_some_and(|type_ref| *type_ref != plan.asked.type_ref)
-                {
-                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                        "spawn type stamp differs from the one its plan read",
-                    )));
-                }
-                if requested_target != plan.plan.agent_def {
-                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                        "dispatch target is not the seat its plan resolved",
-                    )));
-                }
-                tree.validate_current_ref(&plan.asked.type_ref)
-                    .map_err(|_| {
-                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                            "the plan's type stamp is not in the tree in force; plan again",
-                        ))
-                    })?;
-                plan.asked.type_ref.clone()
-            }
-            // Inside the write transaction no model call may run: the
-            // placement skill's rule rung reads alone, on a direct spawn's
-            // need text (FIX 2107). A host that wants its rungs to place
-            // does so before dispatch (`place_spawn_type`).
-            None => super::task_type_tree::place_in_tree(
-                &tree,
-                spawn.type_ref.as_ref(),
-                None,
-                spawn
-                    .direct_spawn
-                    .as_ref()
-                    .map(|receipt| receipt.ask.need.clone()),
-                Some(project_ref),
-                None,
-            ),
-        };
+        let (type_ref, type_parents) =
+            self.spawn_type_in_txn(wtxn, project_ref, requested_target, &spawn)?;
 
         // OF-540: the team run, frozen once here. An explicit stamp wins (a
         // nested team names its own); otherwise a child keeps its parent's
@@ -578,6 +644,7 @@ impl<'a> AgentDispatcher<'a> {
             spawn_intent: Some(spawn_intent),
             scope,
             type_ref,
+            type_parents: Some(type_parents),
             budget: spawn.budget,
             launch: None,
             room: spawn.room,
@@ -589,7 +656,74 @@ impl<'a> AgentDispatcher<'a> {
             // OF-541: carried as asked; `spawn_intent` above never reads it.
             direct_spawn,
             requester,
+            caller_origin,
+            funding,
         })
+    }
+
+    /// The task-type stamp shared by preparation and a direct launch preview.
+    pub(super) fn spawn_type_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        project_ref: EntityId,
+        requested_target: EntityId,
+        spawn: &AgentSpawnContext,
+    ) -> Result<(crate::task_type::TaskTypeRef, Vec<crate::learning::TypeRef>)> {
+        let tree =
+            super::task_type_tree::load_team_type_tree_in_txn(self.vault, txn, Some(project_ref))?;
+        if spawn
+            .type_ref
+            .as_ref()
+            .is_some_and(|type_ref| type_ref.node_id.is_empty())
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "task_type_ref node_id must not be empty",
+            )));
+        }
+        let type_ref = match &spawn.plan {
+            Some(plan) => {
+                plan.validate()?;
+                if spawn
+                    .type_ref
+                    .as_ref()
+                    .is_some_and(|type_ref| *type_ref != plan.asked.type_ref)
+                {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "spawn type stamp differs from the one its plan read",
+                    )));
+                }
+                if requested_target != plan.plan.agent_def {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "dispatch target is not the seat its plan resolved",
+                    )));
+                }
+                tree.validate_current_ref(&plan.asked.type_ref)
+                    .map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "the plan's type stamp is not in the tree in force; plan again",
+                        ))
+                    })?;
+                plan.asked.type_ref.clone()
+            }
+            // Inside the write transaction no model call may run: the
+            // placement skill's rule rung reads alone, on a direct spawn's
+            // need text (FIX 2107). A host that wants its rungs to place
+            // does so before dispatch (`place_spawn_type`).
+            None => super::task_type_tree::place_in_tree(
+                &tree,
+                spawn.type_ref.as_ref(),
+                None,
+                spawn
+                    .direct_spawn
+                    .as_ref()
+                    .map(|receipt| receipt.ask.need.clone()),
+                Some(project_ref),
+                None,
+            ),
+        };
+        let type_parents = crate::task_type::TypeTree::from(tree)
+            .ancestors(&crate::learning::TypeRef::from(&type_ref));
+        Ok((type_ref, type_parents))
     }
 
     /// Loads a dispatch target's LIVE stored row and applies the dispatchability

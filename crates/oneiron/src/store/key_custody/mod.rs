@@ -86,7 +86,7 @@ pub(crate) use self::publish::{CUSTODY_COMPLETION_NEEDS_ANCHOR, Publication, Pub
 pub(crate) use self::recipients::RecipientRetirement;
 pub(crate) use self::recovery::{
     CustodyRequirement, CustodyRoute, CustodySourceAt, PreparedTakeover, ROLLBACK_NOT_PROVEN,
-    TakeoverRefusal, refuse_foreign_binding, route_custody,
+    TakeoverRefusal, admit_published_host_issuer_seeds, refuse_foreign_binding, route_custody,
 };
 #[cfg(test)]
 pub(crate) use self::retirement::arm_before_retire_lock;
@@ -325,6 +325,14 @@ pub(crate) fn binding_in_txn(
 pub(crate) struct GuardedSnapshot<'a> {
     txn: RoTxn<'a>,
     _guard: RwLockReadGuard<'a, ()>,
+}
+
+impl<'a> GuardedSnapshot<'a> {
+    /// The guard and the snapshot apart, for a pass that closes the
+    /// snapshot and keeps the guard (FIX 8966). Drop the snapshot first.
+    pub(crate) fn into_parts(self) -> (RwLockReadGuard<'a, ()>, RoTxn<'a>) {
+        (self._guard, self.txn)
+    }
 }
 
 impl<'a> std::ops::Deref for GuardedSnapshot<'a> {

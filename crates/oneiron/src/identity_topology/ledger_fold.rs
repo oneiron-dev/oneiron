@@ -340,26 +340,28 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
                 {
                     false
                 } else {
+                    // The proposal read whole (FIX 10188): a parked manifest
+                    // still waiting on a part retires nothing yet.
                     let proposed =
-                        super::store_entity_helpers::identity_topology_event_for_store_in_txn(
+                        super::operation_parts::identity_topology_decision_for_store_in_txn(
                             store, rtxn, proposal,
-                        )?
-                        .ok_or(crate::error::Error::CorruptedIndex(
-                            "identity topology event index",
-                        ))?;
-                    match (proposed.action.to_fold_action(), &record.action) {
+                        )?;
+                    match (
+                        proposed
+                            .as_ref()
+                            .map(|proposed| proposed.action.to_fold_action()),
+                        &record.action,
+                    ) {
                         (
-                            IdentityTopologyAction::Apply(op),
+                            Some(IdentityTopologyAction::Apply(op)),
                             super::stored_event::StoredIdentityOpAction::ProposalCancellation {
                                 participant,
                                 ..
                             },
                         ) => {
-                            proposed.approval == ClaimApprovalStatus::Proposed
-                                && matches!(
-                                    op,
-                                    IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
-                                )
+                            proposed.as_ref().is_some_and(|proposed| {
+                                proposed.approval == ClaimApprovalStatus::Proposed
+                            }) && op.is_resolvable_when_parked()
                                 && op.participants().contains(participant)
                                 && (store.port_deletion_marked(
                                     rtxn,

@@ -2,7 +2,9 @@
 //!
 //! The engine owns no timer (ARCH-0026). A host calls [`Vault::housekeeping`] on
 //! its own tick, off the request path, and the owner runs
-//! [`Vault::housekeeping_all`] through `oneiron maintain`. Each sweep has a
+//! [`Vault::housekeeping_all`] through `oneiron maintain`. A host that binds
+//! model offers calls the `_with_access` form of each, lending the access its
+//! offers hold to the model pack retirement sweep (FIX 20193). Each sweep has a
 //! cadence and its own bound. Its schedule lives in the LIVE
 //! `HOUSEKEEPING_SCHEDULE` side table and is written when a run ends, so a
 //! restart in the middle of a pass resumes the sweeps that had not finished,
@@ -37,6 +39,7 @@ pub(crate) use self::wake::note_wake_in_txn;
 
 use crate::Vault;
 use crate::error::Result;
+use crate::llm::model_pack::AccessSnapshot;
 
 use self::schedule::SweepState;
 
@@ -72,20 +75,45 @@ impl Vault {
     /// error means the schedule could not be read; a sweep's own failure is a
     /// row of the report. Unless the host has asked it to stop, the pass
     /// first runs one capped communication projector pass, whose failure is
-    /// logged and never fails a sweep.
+    /// logged and never fails a sweep. The model pack retirement sweep runs
+    /// against no model access: a host that binds model offers calls
+    /// [`Self::housekeeping_with_access`].
     pub fn housekeeping(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
+        self.housekeeping_with_access(budget, &AccessSnapshot::new())
+    }
+
+    /// [`Self::housekeeping`] on a host whose offers hold `access` (FIX
+    /// 5366): the model pack retirement sweep resolves the active pack's
+    /// roles against it, for the notices of the retiring models they use
+    /// (FIX 20193).
+    pub fn housekeeping_with_access(
+        &self,
+        budget: HousekeepingBudget,
+        access: &AccessSnapshot,
+    ) -> Result<HousekeepingReport> {
         if !budget.deadline().stopped() {
             self.store
                 .record_hooks
                 .run_comm_projector_housekeeping_step(self);
         }
-        self.housekeeping_pass(Selection::Due, budget)
+        self.housekeeping_pass(Selection::Due, budget, access)
     }
 
     /// Runs every engine sweep now, due or not, and reschedules each from
-    /// now: the owner's "run housekeeping now".
+    /// now: the owner's "run housekeeping now". The model pack retirement
+    /// sweep runs against no model access, as on a stopped vault.
     pub fn housekeeping_all(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
-        self.housekeeping_pass(Selection::All, budget)
+        self.housekeeping_all_with_access(budget, &AccessSnapshot::new())
+    }
+
+    /// [`Self::housekeeping_all`] on a host whose offers hold `access`, as
+    /// [`Self::housekeeping_with_access`] lends it.
+    pub fn housekeeping_all_with_access(
+        &self,
+        budget: HousekeepingBudget,
+        access: &AccessSnapshot,
+    ) -> Result<HousekeepingReport> {
+        self.housekeeping_pass(Selection::All, budget, access)
     }
 
     /// Runs the engine sweep `sweep` alone now and reschedules it from now: a
@@ -95,7 +123,7 @@ impl Vault {
         sweep: HousekeepingSweep,
         budget: HousekeepingBudget,
     ) -> Result<HousekeepingReport> {
-        self.housekeeping_pass(Selection::One(sweep), budget)
+        self.housekeeping_pass(Selection::One(sweep), budget, &AccessSnapshot::new())
     }
 
     /// When a vault that is not running must next run a pass, or `None` when
@@ -104,7 +132,8 @@ impl Vault {
     /// before that sweep is next due (a failing sweep waits out its backoff),
     /// and the erasure sweep's due time while an obligation waits, and a left
     /// env's owed body collection (FIX 2413), and the earliest deadline of
-    /// the retained peer work (FIX 11183). Cache and retention hygiene never
+    /// the retained peer work (FIX 11183), and a paced verb call's window or
+    /// deadline (FIX 8753). Cache and retention hygiene never
     /// wake a vault. Reads one row per sweep, the schedule and the retained
     /// work queues, so a host can ask every time it stops the vault.
     pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
@@ -127,6 +156,11 @@ impl Vault {
             owed.push((HousekeepingSweep::GateDecisionRetention, at));
         }
         sync_work::push_retained_work_due_at(self, &mut owed)?;
+        // A paced verb call's window opening or deadline (FIX 8753): the
+        // host's settler runs its turn once the vault is up again.
+        if let Some(at) = self.paced_verb_wake_at()? {
+            owed.push((HousekeepingSweep::GateDecisionRetention, at));
+        }
         let mut earliest: Option<u64> = None;
         for (sweep, at) in owed {
             let Runner::Engine { every, .. } = sweep.runner() else {
@@ -143,6 +177,7 @@ impl Vault {
         &self,
         selection: Selection,
         budget: HousekeepingBudget,
+        access: &AccessSnapshot,
     ) -> Result<HousekeepingReport> {
         let mut handle = self
             .housekeeping
@@ -205,7 +240,7 @@ impl Vault {
             ran_any = true;
             let owner_asked = selection == Selection::All;
             rows[index] =
-                Some(self.run_scheduled_sweep(sweep, state, every, &deadline, owner_asked));
+                Some(self.run_scheduled_sweep(sweep, state, every, &deadline, owner_asked, access));
         }
         if !matches!(selection, Selection::One(_)) {
             handle.first_pass_done = true;
@@ -243,7 +278,8 @@ impl Vault {
     /// Runs one sweep between its start marker and its finish row. The marker
     /// is what tells the next pass that a run was interrupted. The run is the
     /// owner's when this pass is, or when it answers an owner's request an
-    /// earlier pass left for later, failed or was cut short on.
+    /// earlier pass left for later, failed or was cut short on. `access` is
+    /// what the host's offers hold, lent to the model pack retirement sweep.
     fn run_scheduled_sweep(
         &self,
         sweep: HousekeepingSweep,
@@ -251,6 +287,7 @@ impl Vault {
         every: u64,
         deadline: &Deadline,
         owner_asked: bool,
+        access: &AccessSnapshot,
     ) -> SweepOutcome {
         let start = self.now_recorded_at();
         let running = state.started(start, owner_asked);
@@ -284,6 +321,7 @@ impl Vault {
                 deadline,
                 running.cursor.as_deref(),
                 running.owners(),
+                access,
             )
         }));
         let end = self.now_recorded_at();

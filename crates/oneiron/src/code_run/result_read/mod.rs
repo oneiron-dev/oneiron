@@ -9,32 +9,37 @@
 //! the result in its run, check the reader's grant and the rows it was
 //! served from, and read it through [`ResultRead`], which checks the taint
 //! of the run's occurrence of it (Docs Q08). `can({read: r})` asks the same
-//! checks for their verdict and reads no byte.
+//! checks for their verdict and reads no byte. A scoped child's read also
+//! stops at its live cutoff (FIX 8233; see `run_body`).
 
 mod arm;
 mod chunks;
+mod facets;
 mod outside;
 mod query;
+mod run_body;
 mod search;
 mod shape;
 mod slice;
 mod unplaced;
 
+pub(crate) use self::facets::DeliveredRanges;
 pub(crate) use self::outside::{read_result_in, result_cards_in};
+use self::run_body::{LiveCutoff, RunBody};
 pub(crate) use self::unplaced::unplaced_answer;
 
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunOutputKind,
     CodeRunRawOutput, CodeRunReplayRecord, CodeRunResultBinding, ExecutorStorage, RESPONSE_ERASED,
+    ScopedCallControl,
 };
 use crate::engine_executor::{
-    JsResultRef, JsResultTarget, RESULT_REPLY_INLINE_BYTES, is_result_output_path,
-    result_handle_json,
+    JsResultRef, JsResultTarget, is_result_output_path, result_handle_json,
 };
 use crate::entity_id::EntityId;
 use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::secret_rotation::ArtifactTaintState;
-use crate::store::{BodySink, LINE_INDEX_BLOCK_BYTES};
+use crate::store::LINE_INDEX_BLOCK_BYTES;
 use crate::{Error, Result, Vault};
 use serde_json::{Value, json};
 
@@ -42,7 +47,7 @@ use serde_json::{Value, json};
 const UNKNOWN_HANDLE_LIVE_NAMES: usize = 64;
 
 /// Bytes one read of a body takes at most.
-const READ_PIECE_BYTES: usize = 1 << 20;
+pub(super) const READ_PIECE_BYTES: usize = 1 << 20;
 
 /// Bytes of a body's head its card's shape is sniffed from.
 const SHAPE_HEAD_BYTES: usize = 64 * 1024;
@@ -96,63 +101,11 @@ pub(crate) trait ResultBody {
     fn valid_search_credit(&self, _offset: u64, _line: u64, _credit: u64) -> bool {
         false
     }
-}
 
-/// One result body of a run, read by range through the run's storage.
-pub(crate) struct RunBody<'s, 'a> {
-    storage: &'s ExecutorStorage<'a>,
-    output: &'s CodeRunRawOutput,
-    base: u64,
-    len: u64,
-}
-
-impl ResultBody for RunBody<'_, '_> {
-    fn len(&self) -> u64 {
-        self.len
-    }
-
-    fn kind(&self) -> CodeRunOutputKind {
-        self.output.kind
-    }
-
-    fn read(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
-        let take = usize::try_from(self.len.saturating_sub(offset).min(len as u64))
-            .map_err(|_| Error::ArithmeticOverflow("code-run result read"))?;
-        let mut bytes = Vec::with_capacity(take);
-        while bytes.len() < take {
-            let at = self.base + offset + bytes.len() as u64;
-            let piece = self
-                .storage
-                .read_code_run_raw_output_range(
-                    self.output,
-                    at,
-                    (take - bytes.len()).min(READ_PIECE_BYTES),
-                )?
-                .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
-            if piece.is_empty() {
-                break;
-            }
-            bytes.extend_from_slice(&piece);
-        }
-        Ok(bytes)
-    }
-
-    fn line_index(&self) -> Option<Vec<u64>> {
-        self.storage.code_run_line_index(self.output).ok().flatten()
-    }
-
-    fn base(&self) -> u64 {
-        self.base
-    }
-
-    fn note_search_credit(&self, offset: u64, line: u64, credit: u64) {
-        self.storage
-            .note_search_credit(self.output, self.base, self.len, offset, line, credit);
-    }
-
-    fn valid_search_credit(&self, offset: u64, line: u64, credit: u64) -> bool {
-        self.storage
-            .valid_search_credit(self.output, self.base, self.len, offset, line, credit)
+    /// The live cutoff the read stops at (FIX 8233): a run's body read for
+    /// a scoped child has one; any other body keeps the default, none.
+    fn live_cutoff(&self) -> LiveCutoff<'_> {
+        LiveCutoff::default()
     }
 }
 
@@ -186,6 +139,8 @@ pub(crate) struct ResultRead {
     /// source keeps its caller's name, while an unnamed child finding uses
     /// its exact occurrence.
     foreign: bool,
+    /// The live cutoff of the scoped child the read is made for (FIX 8233).
+    live_cutoff: Option<ScopedCallControl>,
 }
 
 impl ResultRead {
@@ -218,7 +173,18 @@ impl ResultRead {
             state,
             secret,
             foreign,
+            live_cutoff: None,
         }))
+    }
+
+    /// This read, stopped at `control`, the live cutoff of the scoped child
+    /// it is made for (FIX 8233). Each piece of the body it reads, and each
+    /// long loop of its facets, checks it first. A read it cuts stops with
+    /// an error, and its caller answers `reader_task_settled` in its place.
+    /// A read for any other reader holds none and reads no clock.
+    pub(crate) fn with_live_cutoff(mut self, control: Option<&ScopedCallControl>) -> Self {
+        self.live_cutoff = control.cloned();
+        self
     }
 
     /// The result read.
@@ -274,23 +240,13 @@ impl ResultRead {
         }
     }
 
-    fn body<'s, 'a>(&'s self, storage: &'s ExecutorStorage<'a>) -> RunBody<'s, 'a> {
-        let (base, end) = self.range.unwrap_or((0, self.output.raw_len));
-        RunBody {
-            storage,
-            output: &self.output,
-            base,
-            len: end - base,
-        }
-    }
-
     /// The result's card, from its manifest and taint sidecars and, while
     /// it is clean, its head: the handle facets, its name, its taint, the
     /// facets that read it and the shape its head shows. A range's card is
     /// its parent's, with the range's `ref`, bytes and preview. A body that
     /// is not clean shows no preview and no shape.
     pub(crate) fn card(&self, storage: &ExecutorStorage<'_>) -> Result<Value> {
-        self.card_of(&self.body(storage))
+        self.card_of(&RunBody::of(self, storage))
     }
 
     /// [`Self::card`] over `body`, the result's bytes where they are held: a
@@ -383,70 +339,6 @@ impl ResultRead {
             "kind": kind_word(self.output.kind),
             "taint": {"state": taint_word(state), "secret": secret},
             "reason": withheld_reason(secret),
-        })
-    }
-
-    /// One facet of the result, read from `input`. A selection past one
-    /// reply streams into `spill` when there is one; without one it pages.
-    pub(crate) fn read(
-        &self,
-        storage: &ExecutorStorage<'_>,
-        facet: ResultFacet,
-        input: Value,
-        spill: Option<&mut BodySink>,
-    ) -> Result<Reply> {
-        let body = self.body(storage);
-        self.read_of(&body, storage.limit_watch(), facet, input, spill)
-    }
-
-    /// [`Self::read`] over `body`, under the `[limits]` rows of `watch`.
-    fn read_of(
-        &self,
-        body: &dyn ResultBody,
-        watch: &LimitWatch,
-        facet: ResultFacet,
-        input: Value,
-        spill: Option<&mut BodySink>,
-    ) -> Result<Reply> {
-        if self.state.is_tainted() {
-            return Ok(Reply::Output(self.withheld()));
-        }
-        let bounds = ReadBounds {
-            reply_bytes: RESULT_REPLY_INLINE_BYTES,
-            watch,
-        };
-        let reference = self.reference();
-        // Chunk and page refs name the same parent the ref above names: the
-        // owner's immutable occurrence, so a page of a renamed result still
-        // reparses to its occurrence, not to the first result with its
-        // bytes. Only a named delegated source keeps the caller's name,
-        // as its ref does.
-        let parent = if self.caller_named() {
-            self.name
-                .clone()
-                .unwrap_or_else(|| self.output.handle.clone())
-        } else {
-            occurrence_ref(self.owner, &self.output.path).unwrap_or_else(|| {
-                self.name
-                    .clone()
-                    .unwrap_or_else(|| self.output.handle.clone())
-            })
-        };
-        let reply = match facet {
-            ResultFacet::Slice => slice::slice(body, &reference, input, &bounds),
-            ResultFacet::Search => search::search(body, &reference, input, &bounds),
-            ResultFacet::Query => query::query(body, &reference, &parent, input, &bounds, spill),
-            ResultFacet::Chunks => chunks::chunks(body, &reference, &parent, input, &bounds),
-        }?;
-        // A spilled selection is a new body, which its own sink's scan marks.
-        Ok(match reply {
-            Reply::Output(answer) => match unmarked_secret(&answer) {
-                None => Reply::Output(answer),
-                Some(reason) => {
-                    Reply::Output(self.withheld_as(ArtifactTaintState::TaintedLive, Some(reason)))
-                }
-            },
-            other => other,
         })
     }
 
@@ -1056,7 +948,8 @@ fn jump_to_block(blocks: &[LinePos], at: &mut LinePos, lfs: u64) {
 /// pending index builds once at the prefix boundary from the seek's own
 /// scan: targets and limits inside the prefix return before any build
 /// with old-exact charging, and a failed build freezes empty blocks and
-/// continues the pure scan from the boundary.
+/// continues the pure scan from the boundary. Each step checks the read's
+/// live cutoff first (FIX 8233).
 fn seek_line(
     body: &dyn ResultBody,
     mut index: Option<&mut WindowIndex>,
@@ -1075,6 +968,7 @@ fn seek_line(
     }
     let len = body.len();
     while at.offset < len {
+        body.live_cutoff().check()?;
         let mut want = READ_PIECE_BYTES;
         if let Some(idx) = index.as_deref_mut()
             && let Some(prefix_len) = idx.pending.as_ref().map(|meta| meta.prefix_len)
@@ -1126,6 +1020,7 @@ fn seek_line(
 /// The newlines before `offset`, from the line index's block when there is
 /// one, else counted from the start. `None` past the scan bound. An
 /// unbuilt pending index holds no blocks, so it pure-scans as `None` does.
+/// Each step checks the read's live cutoff first (FIX 8233).
 fn lfs_before(
     body: &dyn ResultBody,
     index: Option<&WindowIndex>,
@@ -1140,6 +1035,7 @@ fn lfs_before(
         }
     }
     while at.offset < offset {
+        body.live_cutoff().check()?;
         let want = usize::try_from(offset - at.offset)
             .unwrap_or(READ_PIECE_BYTES)
             .min(READ_PIECE_BYTES);

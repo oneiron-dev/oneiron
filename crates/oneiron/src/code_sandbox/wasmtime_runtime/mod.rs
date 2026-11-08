@@ -16,7 +16,8 @@ pub mod bindings {
     wasmtime::component::bindgen!({ path: "wit", world: "guest" });
 }
 
-use super::source::{PreparedSource, prepare_source, split_guest_error};
+use super::guest_error::guest_failure;
+use super::source::{PreparedSource, prepare_source};
 use super::{SandboxBoundaryAdapter, SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
     CANCEL_POLL_SLICE, JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep,
@@ -503,7 +504,7 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
             ..step
         };
         let outcome = match super::microvm::select_backend_for_tier(step.boundary.tier())? {
-            Some(backend) => isolated::run(self, step, backend, cancel),
+            Some(backend) => isolated::run(self, step, prepared, backend, cancel, host),
             None => self.execute_cancellable(step, prepared, host, cancel),
         };
         cancel.check()?;
@@ -592,6 +593,7 @@ impl HeldOutput {
         Ok(JsCodeModeStepOutcome {
             done: false,
             observation,
+            console: String::new(),
             outputs: self
                 .files
                 .into_iter()
@@ -601,16 +603,22 @@ impl HeldOutput {
     }
 
     /// The step's outcome with what was held: the answer of a finished
-    /// step, else its console lines, and its files.
+    /// step, else its console lines, and its files. A finished step's
+    /// console lines ride beside its answer (FIX 6885), as the engine
+    /// executor keeps them.
     fn into_outcome(self, mut outcome: JsCodeModeStepOutcome) -> Result<JsCodeModeStepOutcome> {
-        let text = if outcome.done {
-            self.finish
+        let (text, console) = if outcome.done {
+            (self.finish, self.console)
         } else {
-            self.console
+            (self.console, Vec::new())
         };
         if outcome.observation.is_empty() {
             outcome.observation = String::from_utf8(text)
                 .map_err(|_| failure("streamed observation is not UTF-8"))?;
+        }
+        if outcome.console.is_empty() && !console.is_empty() {
+            outcome.console =
+                String::from_utf8(console).map_err(|_| failure("streamed console is not UTF-8"))?;
         }
         outcome.outputs.extend(
             self.files
@@ -641,26 +649,6 @@ enum HostEvent {
         reply: mpsc::SyncSender<Result<u64>>,
     },
     Finished(Result<Stepped>),
-}
-
-/// Characters of a guest's error text a failed step keeps. A program can
-/// throw text of any size; its head says why.
-const GUEST_ERROR_CHARS: usize = 2048;
-
-/// The guest's own error text for a failed step, so the model learns why its
-/// program stopped. The guest's position header never reaches it; a
-/// TypeScript program's error ends with where it threw in the TypeScript
-/// source, past the text's cut, and a JavaScript program's is as it was.
-fn guest_failure(message: &str, prepared: &PreparedSource<'_>) -> Error {
-    let (message, at) = split_guest_error(message);
-    let mut text: String = message.chars().take(GUEST_ERROR_CHARS).collect();
-    if text.len() < message.len() {
-        text.push_str(&format!(" … ({} bytes in all)", message.len()));
-    }
-    if let Some(position) = prepared.failure_position(at) {
-        text.push_str(&position);
-    }
-    Error::InvalidConfig(format!("guest reported step failure: {text}"))
 }
 
 fn failure(detail: &'static str) -> Error {

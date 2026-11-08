@@ -135,18 +135,22 @@ fn window_actors(
 /// Whether `error` failing this group's apply matches a cross-group shape
 /// the sequential path cannot project (FIX 595 review P1-2/P1-3): formatting
 /// over an earlier group's pending revision (the remark pass swallows the
-/// native conflict into an invalid transaction), or a delete over earlier
-/// groups' tracked segments or a moved copy (the native delete verb
-/// refuses). The caller falls back to the single-revision projection for
-/// the whole window instead of failing the export.
+/// native conflict into an invalid transaction), a story runs edit over an
+/// earlier group's tracked segments, or a delete over earlier groups' tracked
+/// segments or a moved copy (the native verbs refuse). Story and delete
+/// failures surface as document errors. The caller falls back to the
+/// single-revision projection for the whole window instead of failing the export.
 fn needs_default_author_fallback(built: &[DocxChange], error: &DoceditError) -> bool {
     match error {
         DoceditError::InvalidTransaction(_) => built
             .iter()
             .any(|change| matches!(change, DocxChange::SetRuns { .. })),
-        DoceditError::Document(_) => built
-            .iter()
-            .any(|change| matches!(change, DocxChange::Delete { .. })),
+        DoceditError::Document(_) => built.iter().any(|change| {
+            matches!(
+                change,
+                DocxChange::Delete { .. } | DocxChange::SetStoryRuns { .. }
+            )
+        }),
     }
 }
 
@@ -461,6 +465,37 @@ impl Vault {
                         // emits Deletes for every prior new) or never inserted
                         // (a ghost): nothing to delete.
                     }
+                    DocxChange::SetStoryText { scope, block, text } => {
+                        main.push(DocxChange::SetStoryText {
+                            scope: scope.clone(),
+                            block: block.clone(),
+                            text: text.clone(),
+                        });
+                    }
+                    DocxChange::SetStoryRuns { scope, block, runs } => {
+                        main.push(DocxChange::SetStoryRuns {
+                            scope: scope.clone(),
+                            block: block.clone(),
+                            runs: runs.clone(),
+                        });
+                    }
+                    DocxChange::SetStoryCell {
+                        scope,
+                        block,
+                        row,
+                        col,
+                        paragraph,
+                        text,
+                    } => {
+                        main.push(DocxChange::SetStoryCell {
+                            scope: scope.clone(),
+                            block: block.clone(),
+                            row: *row,
+                            col: *col,
+                            paragraph: paragraph.clone(),
+                            text: text.clone(),
+                        });
+                    }
                 }
             }
             let imported: HashSet<&str> = state
@@ -582,9 +617,13 @@ impl Vault {
                         {
                             continue;
                         }
-                        expected.push(native_id(&native, id)?);
+                        expected.push((native_id(&native, id)?, block.text.as_str()));
                     }
-                    if session.accepted_id_order() != expected {
+                    let actual = session.accepted_id_order();
+                    if !actual.iter().eq(expected.iter().map(|(id, _)| id))
+                        && !(end == window.len()
+                            && session.terminal_final_delete_matches(&built, &actual, &expected))
+                    {
                         // A normalized final-mark carrier survives physically,
                         // but has no logical id to compare or safely re-address.
                         if session.deleted_final_mark_survives(&built) {
@@ -681,6 +720,7 @@ impl Vault {
                 artifact: *artifact,
                 version: version.version,
                 frontier: head.frontier.clone(),
+                held_ids: None,
                 rebind_frontier: None,
                 source_version: head.source_version,
                 actor: BodyActor::Actor(request.actor.entity_ref()),

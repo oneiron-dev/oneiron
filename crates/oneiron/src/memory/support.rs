@@ -19,7 +19,10 @@ mod builders;
 mod constructors;
 mod refs;
 mod transactions;
+mod transcript_caller;
 mod wire;
+
+pub(crate) use transcript_caller::TranscriptRetainedCaller;
 
 pub(crate) use self::actors::*;
 pub use self::refs::*;
@@ -79,6 +82,13 @@ pub struct Memory<'v> {
     /// The logical verb's id a host carried in (`with_invocation`): verb
     /// hooks run once per id, across wrappers (ARCH-0080 §3).
     pub(super) invocation: Option<crate::store::verb_invocation::InvocationId>,
+    /// The verb-ask drain's permit for this surface's invocation, set only
+    /// on the handle the drain itself rebuilds for one settled call (FIX
+    /// 2183): a nested call of that invocation made from another thread
+    /// enters it at the row boundary and so runs as the drain's own, as a
+    /// credential door's thread does. It grants nothing without the
+    /// drain's hold and is never saved with the call.
+    pub(super) drain_permit: Option<crate::runtime_hooks::verb::VerbAskDrainPermit>,
     /// The hook pause a transport's call names as the one it resumes, by
     /// its ask handle (`with_hook_ask`, L13 PR-D): a session-only call's
     /// pause the keep no longer holds then refuses, never running as a new
@@ -92,8 +102,8 @@ pub struct Memory<'v> {
     /// (`with_transport_invocation`). Only the host sets it, and nothing
     /// clears it: a surface without it is the in-process host's own.
     pub(super) transport_invocation: bool,
-    /// The current request's actual peer and user agent, for signing audit
-    /// records only; never identity or authority.
+    /// Actual request or same-connection upgrade observations, for signing
+    /// audit records only; never identity or authority.
     pub(super) signing_request_transport: Option<SigningRequestTransport>,
     /// The ask guest's grant a host admitted for this surface's actor
     /// (`with_task_grant`, OF-220): its task verbs prove the actor by it.
@@ -107,6 +117,9 @@ pub struct Memory<'v> {
     /// host bound one (`with_origin_conversation`, OF-221): context, not
     /// authority.
     pub(super) origin_conversation: Option<EntityId>,
+    /// Host-stamped caller provenance, kept apart from read locality and
+    /// destination so recording it never changes what this handle reads.
+    pub(super) caller_origin: Option<crate::agent_dispatch::CallerOrigin>,
     /// The running agent attempt a host bound as this surface's TASK creator
     /// (`with_task_host`, OF-532).
     pub(super) task_host: Option<crate::task_verb::HostBinding>,
@@ -146,12 +159,17 @@ pub struct Memory<'v> {
     /// credential rides it, with the actual recipient when the host proved
     /// one (FIX 7608 2b-ii). Off on every other handle.
     pub(super) repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient,
+    /// The caller's own retrieval filter this handle's reads are bound to
+    /// (FIX 3977, [`Memory::with_read_filter`]): a request, never
+    /// authority. Every read lane the handle opens meets it.
+    pub(super) read_filter: Option<crate::gate::RetrievalFilter>,
 }
 
-/// The actual transport metadata a host observed on one signing request.
+/// Actual transport metadata from a host's request or socket upgrade.
 /// This is audit context, never signer identity or authority. It is not
-/// serialized or saved for a later request; an absent peer stays absent.
-#[derive(Clone)]
+/// serialized; a socket uses only its own upgrade observations and an
+/// absent peer stays absent.
+#[derive(Clone, Debug)]
 pub struct SigningRequestTransport {
     peer_ip: Option<std::net::IpAddr>,
     user_agent: Option<String>,
@@ -216,9 +234,37 @@ pub struct HostWriteOrigin {
     /// across replays of the run, never from the guest. A `reveal.wait` a
     /// live re-attempt of that step makes reads its value again under it.
     step: Option<crate::store::verb_invocation::InvocationId>,
+    /// Evidence collected only while this native call serves its reads.
+    read_capture: Option<super::read_capture::ReadCapture>,
+    /// Where the call's producer witnesses the skill bodies its answer
+    /// carries (FIX 3608): set by the code-run dispatcher for a skill-library
+    /// call at its run's bridge position, never from the guest.
+    skill_bodies: Option<crate::skill::SkillBodyCapture>,
 }
 
 impl HostWriteOrigin {
+    pub(crate) fn with_read_capture(mut self, capture: super::read_capture::ReadCapture) -> Self {
+        self.read_capture = Some(capture);
+        self
+    }
+
+    pub(in crate::memory) fn read_capture(&self) -> Option<super::read_capture::ReadCapture> {
+        self.read_capture.clone()
+    }
+
+    /// This origin with where its call's producer witnesses the skill bodies
+    /// its answer carries (FIX 3608).
+    pub(crate) fn with_skill_bodies(mut self, capture: crate::skill::SkillBodyCapture) -> Self {
+        self.skill_bodies = Some(capture);
+        self
+    }
+
+    /// Where the call's producer witnesses the skill bodies its answer
+    /// carries, when the dispatcher asked for them (FIX 3608).
+    pub(in crate::memory) const fn skill_bodies(&self) -> Option<&crate::skill::SkillBodyCapture> {
+        self.skill_bodies.as_ref()
+    }
+
     pub(crate) const fn new(envelope: crate::WriteEnvelope) -> Self {
         Self {
             envelope,
@@ -229,6 +275,8 @@ impl HostWriteOrigin {
             read_proof: None,
             bound_run: None,
             step: None,
+            read_capture: None,
+            skill_bodies: None,
         }
     }
 

@@ -14,7 +14,17 @@
 //! in one PROJECT, full refs, and separate read and edit globs, stored on
 //! the grant and signed in the act; the repo admission seams
 //! (`federation::repo_access`) read them. A mint without them is a general
-//! grant exactly as before.
+//! grant exactly as before. A mint may also name verb classes beside its
+//! exact verbs (FIX 8735), stored on the grant and signed in the act; each
+//! owner-agent door admits a verb a named class admits
+//! (`federation::AgentVerbClasses`). A mint names a nonempty exact verb set,
+//! a nonempty class set, or both; one without classes is a grant exactly as
+//! before. A mint may also name the host wallet the work the grant funds
+//! draws on (FIX 7766), stored on the grant and signed in the act; a launch
+//! that names the grant as its funding freezes that signed wallet on its
+//! spend root, once the selection proves itself in that writer
+//! ([`SelectedOwnerAgentFundingGrant`]). A mint without one is a grant
+//! exactly as before.
 //!
 //! Mint and revoke land the owner's signed act ([`AgentGrantAct`]) and the
 //! grant row's Put or Delete in one write transaction. The vault's existing
@@ -32,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::authority::{
     ActSurface, AgentGrantAct, AgentGrantActRecord, AgentGrantActRef, AgentGrantChange,
-    AuthorityOp, authority_entry_hash, decode_authority_log_entry_body,
+    AuthorityEntryHash, AuthorityOp, authority_entry_hash, decode_authority_log_entry_body,
 };
 use crate::batch::{BatchOp, apply_ops};
 use crate::consent::AuthenticatedOwner;
@@ -52,15 +62,21 @@ use super::{
     encode_federation_grant_body, own_device_residence_scope,
 };
 
+mod funding;
+pub(crate) use funding::SelectedOwnerAgentFundingGrant;
+
 /// The one-tap revoke command every agent grant carries.
 pub(crate) const AGENT_GRANT_REVOKE_COMMAND: &str = "vault.agents.grants.revoke";
 
-const NO_VERB_LIST: &str =
-    "an agent grant names its verbs: authority_scope.verbs must be a nonempty explicit set";
+const NO_VERB_LIST: &str = "an agent grant names its verbs: authority_scope.verbs must be a \
+                            nonempty explicit set, or empty beside a nonempty verb_classes";
+const BAD_VERB_CLASS: &str =
+    "an agent grant's verb_classes are nonempty, unpadded class names, never git_push";
 const NOT_AN_AGENT: &str = "an agent grant names a live agent principal of this vault: an agent definition or a base agent";
 const ALREADY_EXPIRED: &str = "an agent grant's expires_at must be later than now";
 const RESERVED_GIT_PUSH: &str =
     "an agent grant never lists git_push: only vault.repo.git_push.mint grants raw git push";
+const BAD_WALLET: &str = "an agent grant's wallet_ref names a nonempty issuer and id";
 
 /// One owner's agent grant as its live row holds it.
 #[derive(Debug, Clone)]
@@ -87,6 +103,9 @@ impl AgentGrantStanding {
 pub(crate) struct AgentGrantMintOutcome {
     pub(crate) standing: AgentGrantStanding,
     pub(crate) act: AgentGrantActRef,
+    /// Whether the grant confers at its mint, its classes resolved in the
+    /// minting writer (FIX 8735).
+    pub(crate) confers: bool,
 }
 
 /// What a revoke did. A repeat changed nothing and signed no act.
@@ -96,6 +115,16 @@ pub(crate) struct AgentGrantRevokeOutcome {
     pub(crate) agent: Option<EntityId>,
     /// The signed record of this revoke; `None` for a repeat.
     pub(crate) act: Option<AgentGrantActRef>,
+}
+
+/// One retained authority-log entry the authority fold counted, of an agent
+/// Grant act or a membership withdrawal.
+pub(super) struct CountedGrantAct {
+    /// The BLAKE3 hash of the entry's canonical signed body.
+    pub(super) hash: AuthorityEntryHash,
+    pub(super) op: AuthorityOp,
+    /// The log row's recording time (Unix seconds).
+    pub(super) recorded_at: u64,
 }
 
 /// Signed mint fields and withdrawals retained for the registry's audit view.
@@ -135,14 +164,24 @@ impl Vault {
     /// act (`surface` says where he said so, for its audit only) before it
     /// puts the grant. On a shared vault the grant is under the vault's
     /// recorded scope; on a personal vault under the home's residence scope.
-    /// `repo_bounds`, when he gives them, ride the grant and his signed act.
+    /// `repo_bounds`, when he gives them, ride the grant and his signed act;
+    /// so do `verb_classes`, the verb classes he names beside the exact
+    /// verbs (FIX 8735), resolved when a door judges a verb, and
+    /// `wallet_ref`, the host wallet the grant's funded work draws on (FIX
+    /// 7766).
     ///
     /// # Errors
-    /// An owner refusal; `InvalidConfig` for an empty or unlisted verb set,
-    /// a member that is no live agent principal, an expiry already passed or
-    /// repo bounds that break their grammar or name no repo of their PROJECT;
+    /// An owner refusal; `InvalidConfig` for a verb set and class set both
+    /// empty, a verb set over every verb, an invalid class name, a wallet
+    /// with an empty part, a member
+    /// that is no live agent principal, an expiry already passed or repo
+    /// bounds that break their grammar or name no repo of their PROJECT;
     /// [`crate::error::RecordError::AuthorityRefused`] when this install
     /// cannot carry the owner's act.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the owner's one mint: his proof, surface, agent, scope, expiry, repo bounds, classes and wallet"
+    )]
     pub(crate) fn mint_agent_grant(
         &self,
         owner: &AuthenticatedOwner,
@@ -151,11 +190,27 @@ impl Vault {
         authority_scope: Scope,
         expires_at: Option<u64>,
         repo_bounds: Option<RepoAccessBounds>,
+        verb_classes: BTreeSet<String>,
+        wallet_ref: Option<super::WalletRef>,
     ) -> Result<AgentGrantMintOutcome> {
         self.with_write_txn_grouped(|txn| {
             let delegated_by = owner.revalidate_in_txn(self, txn)?;
-            if !matches!(&authority_scope.verbs, ScopeAxis::Some(verbs) if !verbs.is_empty()) {
+            let names_verbs = match &authority_scope.verbs {
+                ScopeAxis::Some(verbs) => !verbs.is_empty(),
+                ScopeAxis::Bottom => false,
+                ScopeAxis::All => return Err(Error::InvalidConfig(NO_VERB_LIST.into())),
+            };
+            if !names_verbs && verb_classes.is_empty() {
                 return Err(Error::InvalidConfig(NO_VERB_LIST.into()));
+            }
+            if !verb_classes
+                .iter()
+                .all(|class| oneiron_authority::federation::verb_class_name_is_valid(class))
+            {
+                return Err(Error::InvalidConfig(BAD_VERB_CLASS.into()));
+            }
+            if wallet_ref.as_ref().is_some_and(|wallet| !wallet.is_valid()) {
+                return Err(Error::InvalidConfig(BAD_WALLET.into()));
             }
             if authority_scope
                 .verbs
@@ -169,9 +224,6 @@ impl Vault {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             if expires_at.is_some_and(|expires_at| expires_at <= now) {
                 return Err(Error::InvalidConfig(ALREADY_EXPIRED.into()));
-            }
-            if let Some(bounds) = &repo_bounds {
-                self.check_repo_bounds_mint_in_txn(txn, &authority_scope, bounds)?;
             }
             let scope = self
                 .shared_vault_creation_in_txn(txn)?
@@ -191,7 +243,20 @@ impl Vault {
                 repo_bounds,
                 kind: super::FederationGrantKind::Access,
                 git_push_bounds: None,
+                verb_classes,
+                wallet_ref,
             };
+            // The owner's class rows, read once in this writer when the grant
+            // names a class: repo bounds take `read` from a class as from its
+            // exact verbs, as every repo seam judging the grant does.
+            let classes = super::AgentVerbClasses::for_grants_in_txn(&self.store, txn, [&grant])?;
+            if let Some(bounds) = &grant.repo_bounds {
+                self.check_repo_bounds_mint_in_txn(
+                    txn,
+                    &grant.scope_for_verb(super::REPO_READ_VERB, &classes),
+                    bounds,
+                )?;
+            }
             // Encoding validates: nothing is signed for a grant that cannot stand.
             let data = encode_federation_grant_body(&grant)?;
             let id = EntityId::now();
@@ -207,6 +272,8 @@ impl Vault {
                     repo_bounds: grant.repo_bounds.clone(),
                     grant_kind: super::FederationGrantKind::Access,
                     git_push_bounds: None,
+                    verb_classes: grant.verb_classes.clone(),
+                    wallet_ref: grant.wallet_ref.clone(),
                 },
             )?;
             self.apply_agent_grant_op_in_txn(
@@ -226,6 +293,7 @@ impl Vault {
                     hub_sync_imported: false,
                 },
             )?;
+            let confers = grant.confers_with_classes_at(now, &classes);
             Ok(AgentGrantMintOutcome {
                 standing: AgentGrantStanding {
                     id,
@@ -234,6 +302,7 @@ impl Vault {
                     created_at: now,
                 },
                 act,
+                confers,
             })
         })
     }
@@ -365,8 +434,41 @@ impl Vault {
     }
 
     fn logged_owner_grants_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<LoggedOwnerGrants> {
-        let fold = self.authority_view_readonly_in_txn(txn)?;
         let mut grants = LoggedOwnerGrants::default();
+        for act in self.counted_grant_acts_in_txn(txn)? {
+            match act.op {
+                AuthorityOp::AgentGrantAct(record) => match &record.change {
+                    AgentGrantChange::Mint { .. } => {
+                        grants.mints.insert(record.grant, (record, act.recorded_at));
+                    }
+                    AgentGrantChange::Revoke { .. } => {
+                        grants.owner_revoked.insert(record.grant);
+                    }
+                },
+                AuthorityOp::SlipGrantRevoke { grant_ref, .. } => {
+                    grants.membership_revoked.insert(grant_ref);
+                }
+                // A membership change no host issuer signed, signed later
+                // by its carrier (FIX 12335), withdraws each Grant it names.
+                AuthorityOp::MembershipExecution(record) => {
+                    grants.membership_revoked.extend(record.withdrawn_grants);
+                }
+                _ => {}
+            }
+        }
+        Ok(grants)
+    }
+
+    /// Each retained authority-log entry the authority fold counted whose op
+    /// is an agent Grant act or a membership withdrawal, in log-row id
+    /// order. An entry whose body this vault no longer holds (an adopted
+    /// checkpoint covers it) is not among them.
+    pub(super) fn counted_grant_acts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<CountedGrantAct>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let mut acts = Vec::new();
         for id in self
             .store
             .port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)?
@@ -383,27 +485,23 @@ impl Vault {
             };
             if !matches!(
                 &entry.op,
-                AuthorityOp::AgentGrantAct(_) | AuthorityOp::SlipGrantRevoke { .. }
-            ) || !fold.valid_entries.contains(&authority_entry_hash(&entry)?)
-            {
+                AuthorityOp::AgentGrantAct(_)
+                    | AuthorityOp::SlipGrantRevoke { .. }
+                    | AuthorityOp::MembershipExecution(_)
+            ) {
                 continue;
             }
-            match entry.op {
-                AuthorityOp::AgentGrantAct(record) => match &record.change {
-                    AgentGrantChange::Mint { .. } => {
-                        grants.mints.insert(record.grant, (record, row.learned_at));
-                    }
-                    AgentGrantChange::Revoke { .. } => {
-                        grants.owner_revoked.insert(record.grant);
-                    }
-                },
-                AuthorityOp::SlipGrantRevoke { grant_ref } => {
-                    grants.membership_revoked.insert(grant_ref);
-                }
-                _ => {}
+            let hash = authority_entry_hash(&entry)?;
+            if !fold.valid_entries.contains(&hash) {
+                continue;
             }
+            acts.push(CountedGrantAct {
+                hash,
+                op: entry.op,
+                recorded_at: row.learned_at,
+            });
         }
-        Ok(grants)
+        Ok(acts)
     }
 
     /// Every live agent grant of this vault, in id order. A row that does
@@ -438,13 +536,20 @@ impl Vault {
         let now = self.instant_in_txn(txn)?.secs();
         let mut rows = Vec::new();
         let mut shown = BTreeSet::new();
-        for standing in agent_grants_reporting_for_store_in_txn(&self.store, txn, true)?.0 {
+        let grants = agent_grants_reporting_for_store_in_txn(&self.store, txn, true)?.0;
+        let classes = super::AgentVerbClasses::for_grants_in_txn(
+            &self.store,
+            txn,
+            grants.iter().map(|standing| &standing.grant),
+        )?;
+        for standing in grants {
             let withdrawn =
                 crate::authority::grant_known_withdrawn_in_txn(&self.store, txn, standing.id);
             if !include_revoked && (withdrawn || !standing.stands_at(now)) {
                 continue;
             }
-            let mut row = crate::consent::ConsentRegistryRow::from_agent_grant(&standing, now);
+            let mut row =
+                crate::consent::ConsentRegistryRow::from_agent_grant(&standing, now, &classes);
             if withdrawn {
                 row.status = crate::consent::ConsentGrantStatus::Revoked;
                 if let Some(agent_grant) = &mut row.agent_grant {
@@ -469,6 +574,8 @@ impl Vault {
                     expires_at,
                     repo_bounds,
                     grant_kind: FederationGrantKind::Access,
+                    verb_classes,
+                    wallet_ref,
                     ..
                 } = &record.change
                 else {
@@ -482,6 +589,8 @@ impl Vault {
                         delegated_by: record.act.owner,
                         expires_at: *expires_at,
                         repo_bounds: repo_bounds.clone(),
+                        verb_classes: verb_classes.clone(),
+                        wallet_ref: wallet_ref.clone(),
                         confers: false,
                     },
                     crate::consent::ConsentGrantStatus::Revoked,

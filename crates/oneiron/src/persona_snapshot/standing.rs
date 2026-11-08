@@ -161,6 +161,11 @@ impl Vault {
             .ok_or_else(invalid)?
             .entity_type;
         crate::provenance::validate_actor_class(actor_kind, EdgeActorClass::Agent)?;
+        // Base reality is the reserved world id, with no WORLD row of its own
+        // (FIX 10018).
+        if world == crate::claim::base_world_id() {
+            return Ok(());
+        }
         let world_row = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &world)?
             .ok_or(Error::EntityNotFound)?;
         if crate::batch::EntityMetadataHeader::parse(&world_row)
@@ -367,8 +372,9 @@ impl Vault {
             };
             let body = decode_claim_body(bytes, true)?;
             let id = row.id;
+            // A base-reality claim decodes with no world (FIX 10018).
             if body.subject != ClaimSubject::Entity(handle.agent)
-                || body.world != Some(handle.world)
+                || body.world.unwrap_or_else(crate::claim::base_world_id) != handle.world
                 || !body.predicate.starts_with(PERSONA_PREFIX)
                 || !matches!(
                     body.approval,

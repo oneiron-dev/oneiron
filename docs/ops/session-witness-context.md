@@ -48,10 +48,13 @@ current membership and author admission are still checked in the owning witness
 transaction. A failed instrument never falls back to native-host authority.
 The binding holds no Vault reference, so keeping it beside a producer or runtime
 entry cannot create a Vault ownership cycle. It is not serializable or recoverable.
+Clones retain the same actual caller proof and exact captured route; a clone
+neither creates a new session generation nor grants another author rights.
 
 This is the native lifetime bridge used by the private assistant stream below.
 The ordinary message-stream opener, ACTIVE rows, custody and partial publication
-remain unchanged. HTTP delivery still does not consume this binding.
+remain unchanged for ordinary recorded calls. Private HTTP chat uses this binding
+for its user witness and fresh assistant producer, as described below.
 
 ## Native caller-private assistant streams
 
@@ -76,13 +79,21 @@ cannot access a caller-private entry, even if they name the same agent.
 `finalize`, `finalize_model` and `cancel` keep their actual finality and model
 finish reason. The existing policy idle interval ends a quiet stream as Partial.
 The native token's `completion` exposes that state after an explicit or idle end.
+`finished(vault)` returns the actual retained outcome and native TURN, or an
+honest unretained outcome with no TURN. Its complete text is projected again for
+the original caller on each read. Closed text no longer withholds a merely
+possible growing secret suffix, but still masks complete known custody values
+and applies the caller's current lifted-key sight. Original signed content parts
+are not rewritten to manufacture display text. Failed projection never returns
+raw text.
 Anonymous returns `SessionStreamOutcome::Unretained` with no MESSAGE id or
 receipt reference. No row, checkpoint, custody or receipt is written.
 
 A retained terminal uses the existing witness program. Its native plan supplies
 the actual newly staged MESSAGE id. That same transaction writes the existing
 stream receipt and per-generation reference into the selected base or session
-sink, after MESSAGE staging and before its effect. Canonical text bytes and
+sink, after MESSAGE staging and before its effect. The native TURN and canonical
+text are captured with that exact receipt and generation. Canonical text bytes and
 reply-assertion types are read from that same staged view. No latest-row guess,
 caller-chosen MESSAGE id, second writer or base sidecar for an overlay is used.
 A post-commit hook error is recognized only by the exact immutable generation
@@ -111,13 +122,64 @@ accounting. A later witness publication cannot substitute a newer receipt view.
 Existing base MESSAGEs keep their own receipt history; a promotion retry remains
 answered by its original durable save receipt.
 
-## Integration boundary
+## Session-owned invocation claims
 
-This API does not route the HTTP chat user witness or assistant producer yet.
-Those paths still need a cohesive integration before any chat privacy fix can be
-claimed. Select the route before opening any durable seed, custody, invocation,
-receipt or broadcast state. Carry it through append, flush, cancellation, idle and
-terminal transitions, and add truthful completed-but-unretained delivery. Keep
-ordinary OnRecord, Continue and Retry behavior. A terminal-only reroute is not a
-privacy fix. The one-shot context does not grant stable TURN ids, continuation,
-regeneration or CodeRun authority.
+`SessionWitnessContext::claim_invocation(id, body)` and
+`SessionWitnessBinding::claim_invocation(vault, id, body)` claim a request under
+that exact caller and session. The native hash binds the actual caller actor and
+class as well as the door's canonical body hash. Successful outcomes stay in the
+session's existing RAM keep; no durable invocation intent or reply is opened.
+Ordinary vault claims retain their existing concurrent-only lifetime.
+
+All active claims still occupy the original vault-wide in-flight index, so a
+hook cannot mistake a concurrent request for nested work. The session index and
+the volatile index share one outcome slot. Finish removes the volatile entry and
+keeps a successful session outcome for a later duplicate. `finish_unkept` shares
+a failure with current waiters but releases its session entry. A drop without a
+reply releases both entries. Removal requires the same slot instance.
+
+Session close force-clears completed outcomes as well as pending ones, wakes
+waiters without a reply and fences a late finish on the old slot. A new captured
+mode generation replaces the old RAM owner only after a typed stale-route check.
+The original caller binding must be revalidated after a wait and after replay's
+current destination release; neither an invocation id nor a kept reply is authority.
+
+The named-invocation path of `POST /v1/ai/chat` selects this keep for a positively
+bound Anonymous or retained OffRecord caller before opening the ordinary durable claim. Managed owner
+proof is attached only to the actual Human requester's caller Memory, never the
+assistant author. Unmatched session headers and ordinary OnRecord calls keep
+their existing durable path. The chat call hash includes the request's session
+context. Duplicate private chat replies re-project their cached text through the
+original caller binding before the existing current destination release checks;
+revalidation alone is not text projection.
+
+## Private HTTP chat
+
+A positive native session lookup selects an Anonymous or retained OffRecord route
+before opening a durable invocation or assistant stream. Unmatched headers and
+ordinary OnRecord calls keep their existing recorded behavior. User speech uses
+the actual credential-bound caller context inside the existing witness hook
+boundary. The independently selected assistant agent supplies its own native
+authorship. Hook pauses, resumes and accepted jobs keep their original boundary.
+
+A fresh private assistant uses a cloneable native stream capability through
+append, keepalive, idle, cancel and terminal handling. Its correlation `stream_id`
+is never presented as a saved MESSAGE or TURN. A streamed request emits
+`replace` with the full currently projected prefix; clients replace the previously
+shown prefix, rather than appending it. `done` carries complete projected text,
+not the raw terminal event. Complete unretained replies end with `unretained`,
+not `saved` or a `not_saved` error. Whole replies use nullable `message_id` and
+`turn_id`; a retained reply names its actual native MESSAGE and TURN.
+
+`WitnessReceipt.turn_id` is the actual native TURN from the witness plan, also
+for retained OffRecord speech. It is not a vault RecordRef or a read grant. The
+user witness keeps that typed fact before hook redaction; a settled hook resume
+carries the same receipt fact. Threaded replies therefore name the actual user
+TURN, not a preallocated id the overlay never used.
+
+The terminal's actual identity feeds context-board history, hooks and session
+successors. No consumer invents an Overlay TURN through base-only graph reads.
+Compaction keeps its original live-flight and receipt behavior. Ordinary recorded
+chat, Continue and Retry keep their existing streams and delta events. This fresh
+private path does not add private continuation, regeneration or CodeRun authority,
+and does not claim whole-HTTP or cross-mode privacy closure.

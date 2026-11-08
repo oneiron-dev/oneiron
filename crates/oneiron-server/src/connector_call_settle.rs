@@ -37,7 +37,9 @@
 //! resume state on their calls' rows (FIX 9157), before it lists the pending
 //! calls, which leave out every call waiting on its connector's questions.
 //! Each pass then drives the approved, unsettled browser waits, which have
-//! no connector row and no other driver (FIX 11498).
+//! no connector row and no other driver (FIX 11498). Last, it enters again
+//! each served MCP `execute_code` run whose parked wait now has its reply:
+//! an MCP caller holds no parked attempt for a trap to wake (FIX 4606).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -59,6 +61,10 @@ pub(crate) const CONNECTOR_SETTLE_INTERVAL: Duration = Duration::from_secs(30);
 /// admitted is driven by the settler (FIX 11498): one pass interval, so the
 /// answer's own drive is never raced.
 const BROWSER_WAIT_DRIVE_AFTER: Duration = CONNECTOR_SETTLE_INTERVAL;
+
+/// Paced verb calls' turns one settle pass runs (FIX 8753): one per
+/// principal per round, so one pass serves many principals' heads.
+const PACED_VERB_TURNS_PER_PASS: usize = 64;
 
 /// The longest a call that stays held or undelivered waits between two of
 /// its resumes.
@@ -106,6 +112,21 @@ impl SyncServer {
         self: &Arc<Self>,
         admit: HousekeepingAdmission,
     ) -> tokio::task::JoinHandle<()> {
+        // A parked MCP run's re-entry writes under the same gate (FIX 4606).
+        self.mcp_code_run_continuations.admit_with(&admit);
+        // Verb calls a budget window paced take their turns on this settler
+        // (FIX 8753), back through the door they came in by, whatever the
+        // hook sandbox or `--no-hooks`: the host's check runs them, under
+        // the host's wait.
+        self.vault()
+            .set_paced_verb_wait_secs(self.config.limits.paced_verb_wait_secs);
+        #[cfg(feature = "code-sandbox-wasmtime")]
+        self.vault().install_verb_ask_credential_check(Arc::new(
+            crate::credential_resume::ServerVerbAskCredentialCheck::new(
+                self,
+                tokio::runtime::Handle::current(),
+            ),
+        ));
         tokio::spawn(settle_forever(Arc::clone(self), admit))
     }
 }
@@ -125,6 +146,9 @@ async fn settle_forever(server: Arc<SyncServer>, admit: HousekeepingAdmission) {
                 let _admission = admission;
                 let settled = settle_connector_calls(&pass, &mut held, recheck)
                     .map_err(|error| error.to_string());
+                // A delivery this pass or an answer's own drive committed
+                // readies its run (FIX 4606).
+                crate::api::reenter_ready_mcp_code_runs(&pass);
                 (held, settled)
             })
             .await;
@@ -176,7 +200,15 @@ fn settle_connector_calls(
     if let Err(error) = vault.continue_paced_connector_wakes() {
         tracing::warn!(%error, "paced connector wakes not admitted");
     }
+    // Verb calls a budget window paced take their fair turns, each through
+    // its own door and Gate again, or end unrun past their deadline (FIX
+    // 8753). Before the connector listing: none of them is a connector call.
+    if let Err(error) = vault.drain_paced_verb_calls(PACED_VERB_TURNS_PER_PASS) {
+        tracing::warn!(%error, "paced verb calls wait for the next pass");
+    }
     crate::connector_call_host::resume_exchanges(server, &mut backoffs.1);
+    // FIX 11023: the remote tasks providers accepted sends as, polled.
+    crate::connector_call_host::poll_remote_tasks(server);
     let pending = vault.pending_connector_calls()?;
     backoffs
         .0
@@ -201,7 +233,7 @@ fn settle_connector_calls(
         })
         .collect();
     if due.is_empty() {
-        return Ok(0);
+        return Ok(settle_approved_browser_waits(server));
     }
     let mut host = ServedConnectorCallHost::new(server)?;
     let deliveries = WaitDeliveries::canonical(vault);
@@ -258,6 +290,12 @@ fn settle_connector_calls(
         backoffs.0.remove(&call.call_ref);
         settled += 1;
     }
+    Ok(settled + settle_approved_browser_waits(server))
+}
+
+fn settle_approved_browser_waits(server: &SyncServer) -> usize {
+    let vault = server.vault();
+    let mut settled = 0;
     // A held browser act has no connector row, so the pass above never
     // visits it: an answered pass that failed before its admission (the
     // server stopping, a storage error) leaves it settling, and a second
@@ -288,13 +326,7 @@ fn settle_connector_calls(
         }
         Err(error) => tracing::warn!(%error, "browser code consent waits not listed"),
     }
-    Ok(settled)
+    settled
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
+use crate::runtime::wall_clock_ms as now_ms;

@@ -1,7 +1,11 @@
 //! Board state, setup grammar, and page preflight.
 
 pub(super) use self::assembly::*;
+// The connector's self brief reads its pins as its keyframe does (FIX 17594).
+pub(crate) use self::assembly::mcp_brief_pins;
 pub(super) use self::carrier::*;
+// A connection's self brief, as its setup page one carries it (FIX 17594 D4).
+use self::connection_brief::{acknowledge_connection_brief, stage_connection_brief};
 pub(crate) use self::run::*;
 pub(crate) use self::setup::*;
 #[cfg(test)]
@@ -11,7 +15,7 @@ use super::stream_reads::{mcp_live_task_lines, mcp_own_task_lines};
 use super::{
     McpCallContext, McpGatewayError, board_observations, mcp_actor_result, mcp_api_error,
     mcp_credential_reads, mcp_engine_error, mcp_facade_error, mcp_scope_covers_entity,
-    mcp_scoped_read, mcp_scoped_tasks_section, mcp_text_content,
+    mcp_scoped_read, mcp_scoped_task_rows, mcp_text_content,
 };
 use crate::mcp::McpPageBudget;
 use crate::mcp::McpPageCursorState;
@@ -26,6 +30,7 @@ use std::sync::Arc;
 mod assembly;
 mod carrier;
 mod children;
+mod connection_brief;
 mod run;
 mod setup;
 
@@ -57,7 +62,14 @@ pub(super) enum McpCarrierPolicy {
 /// One connector's CURRENT board: the sections, the state-derived snapshot
 /// epoch, and the scope label the header states.
 pub(super) struct McpBoardState {
+    /// The sections as their producers built them: what `describe` opens.
     pub(super) sections: Vec<oneiron::context_board::BoardSection>,
+    /// The same sections under the actor's own board layout (BOARD-LAYOUT):
+    /// what the keyframe renders and the epoch hashes.
+    pub(super) laid_out: Vec<oneiron::context_board::BoardSection>,
+    /// The layout batch this board projected; the render that shows it
+    /// activates it.
+    pub(super) layout_candidate: Option<oneiron::context_board::BoardLayoutCandidate>,
     pub(super) scope_label: String,
     /// The monotonic snapshot epoch this exact state owns (ONE-1704 M5).
     pub(super) epoch: u64,

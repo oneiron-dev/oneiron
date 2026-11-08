@@ -94,10 +94,10 @@ pub enum SieveRungOutcome {
 }
 
 /// A rung read's outcome, and each generation that finished (its request
-/// hash and usage) whatever the outcome.
+/// hash, usage and memoized flag) whatever the outcome.
 pub struct SieveRungRead {
     pub outcome: DurableStepResult<SieveRungOutcome>,
-    pub steps: Vec<([u8; 32], LlmUsage)>,
+    pub steps: Vec<([u8; 32], LlmUsage, bool)>,
 }
 
 /// One child's extraction, as the child hands it to its port.
@@ -326,6 +326,7 @@ async fn read_rung(rung: SieveRungCall<'_>) -> SieveRungRead {
         };
     };
     let keyless = rung.call.inference.selected_keyless();
+    let paid = rung.call.inference.selected_paid();
     let vault = rung.step.vault;
     let refused = AtomicBool::new(false);
     let seal = |request: LlmRequest| -> Result<LlmRequest> {
@@ -355,6 +356,7 @@ async fn read_rung(rung: SieveRungCall<'_>) -> SieveRungRead {
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: vec![LlmMessage {

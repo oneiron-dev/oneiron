@@ -263,6 +263,21 @@ def launch_identity(manifest_path):
     return cache_usage.sha256_hex(data), runtime
 
 
+def launch_draft_identity(manifest_path):
+    """The identity of the draft the supervisor's launch manifest names
+    (`draft_weights_digest`, FIX 14976): what every answer's identity echoes
+    while a draft is loaded. None without a manifest or without the field;
+    a manifest that cannot be read is already warned of by
+    `launch_identity`."""
+    if not manifest_path:
+        return None
+    try:
+        value = json.loads(Path(manifest_path).read_bytes()).get("draft_weights_digest")
+    except Exception:  # identity never stops the server
+        return None
+    return value if isinstance(value, str) and value else None
+
+
 def load(args):
     if args.context % PAGE:
         raise ValueError(f"--context must be a multiple of the cache page, {PAGE}")
@@ -354,7 +369,8 @@ def load(args):
                         "recurrent_cache_size": args.recurrent_cache_gib * 1024**3},
         server_settings={"context": args.context, "draft": draft is not None, "draft_tokens": depth,
                          "max_in_flight": batch},
-        model_digest=model_digest, launch=launch)
+        model_digest=model_digest, launch=launch,
+        draft_digest=launch_draft_identity(args.launch_manifest) if draft is not None else None)
     stop_ids = set()
     eos = getattr(target_config, "eos_token_id", None)
     for token in eos if isinstance(eos, list) else [eos]:
@@ -364,6 +380,11 @@ def load(args):
         ids = tokenizer.encode(spelling, encode_special_tokens=True).flatten().tolist()
         if len(ids) == 1:
             stop_ids.add(int(ids[0]))
+    # The LLGuidance tokenizer every schema filter reuses is built here, at
+    # load, never on the scheduler thread at the first schema call, where its
+    # build (about a second for a 150k vocabulary) stalls every job in flight
+    # once (INF 1).
+    warm_schema_tokenizer(tokenizer)
     # The allocator's peaks start again here: from now on they are serving
     # peaks, and the load's are kept apart (exl3_stats.py).
     memory = exl3_stats.Memory(target, target_cache, generator, cuda_devices(target, draft))
@@ -371,6 +392,26 @@ def load(args):
     print(f"SERVER_READY model={args.model_id} context={args.context} cache_tokens={cache_tokens} "
           f"in_flight={batch} depth={depth} stop_ids={sorted(stop_ids)}", flush=True)
     return Server(args, tokenizer, template, generator, sorted(stop_ids), identity, memory, executor)
+
+
+def warm_schema_tokenizer(tokenizer):
+    """Builds and caches the LLGuidance tokenizer that every LLGuidanceFilter
+    of `tokenizer` reuses (exllamav3's `create_ll_tokenizer` cache). Where
+    llguidance is missing or the build fails, the server starts as before
+    and the first schema call builds or fails it as it always has."""
+    try:
+        from exllamav3.generator.filter.llguidance import create_ll_tokenizer, llguidance_available
+    except ImportError:
+        return
+    if not llguidance_available:
+        return
+    started = time.monotonic()
+    try:
+        create_ll_tokenizer(tokenizer)
+    except Exception as e:
+        print(f"SCHEMA_TOKENIZER_UNBUILT error={type(e).__name__}", flush=True)
+        return
+    print(f"SCHEMA_TOKENIZER_READY seconds={time.monotonic() - started:.2f}", flush=True)
 
 
 def make_sampler(body):
@@ -1235,15 +1276,22 @@ class Scheduler:
                 work=req.work,
                 execution=req.execution,
             )
+            # An evaluator's call (exl3_evaluator.py, FIX 14975) records what
+            # its Jobs take; every other call runs as before.
+            evaluation = getattr(req, "evaluation", None)
             if req.branch is not None and self.sessions is not None:
                 # A working branch's Job, attached where its session's state
                 # matches these ids; a thinking call's reasoning pass leaves
                 # its answer pass a carry.
                 plan = self.sessions.plan(req.branch, ids, carry=phase == "reason")
                 job = FrontierJob(plan=plan, **fields)
+            elif evaluation is not None:
+                job = evaluation.job(PlainJob, fields, phase)
             else:
                 job = PlainJob(**fields)
             serial = self.generator.enqueue(job)
+            if evaluation is not None:
+                evaluation.enqueued(job, phase)
         except Exception as e:
             self._fail(req, e)
             return

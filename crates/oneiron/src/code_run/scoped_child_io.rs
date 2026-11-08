@@ -50,6 +50,8 @@ pub struct HostInput {
 /// writer; separate inputs may commit separately. Each input's source rows
 /// are frozen with its first stored occurrence;
 /// a reused path lends that occurrence's sources, never a new label for it.
+/// An input's origins are unknown (FIX 7084): the host wrote its bytes, and
+/// no run's read-world ledger proves the worlds they came from.
 ///
 /// # Errors
 ///
@@ -80,6 +82,7 @@ pub fn commit_host_inputs(
                 handle: output.handle,
                 range: (0, output.raw_len),
                 rows: output.input_rows,
+                origins: None,
             },
         );
     }
@@ -123,7 +126,7 @@ pub fn read_host_output(
     else {
         return Ok(None);
     };
-    read_whole(vault, &output)
+    read_whole(vault, parent_run, &output)
 }
 
 /// Whether run `run` has a replay record on `vault`.
@@ -201,11 +204,18 @@ pub fn read_scoped_finding(vault: &Vault, job: &ReaderJob) -> Result<Option<Vec<
     else {
         return Ok(None);
     };
-    read_whole(vault, &output)
+    read_whole(vault, found.owner, &output)
 }
 
 /// `output`'s whole body.
-fn read_whole(vault: &Vault, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
+fn read_whole(
+    vault: &Vault,
+    owner: EntityId,
+    output: &CodeRunRawOutput,
+) -> Result<Option<Vec<u8>>> {
+    if vault.code_run_output_withdrawn(owner, output)? {
+        return Ok(None);
+    }
     let len = usize::try_from(output.raw_len)
         .map_err(|_| Error::ArithmeticOverflow("host scoped output length"))?;
     vault.read_code_run_raw_output_range(output, 0, len)
@@ -240,6 +250,9 @@ pub struct ScopedChildProfile {
     pub locality: ModelLocality,
     pub ports: Arc<dyn ScopedChildPorts>,
     pub stop: ScopedChildStop,
+    /// The host's original generation admission and settlement. Without it
+    /// the standard compaction factory cannot represent this profile's calls.
+    pub generation: Option<Arc<dyn super::ScopedChildGeneration>>,
 }
 
 impl ScopedChildProfile {

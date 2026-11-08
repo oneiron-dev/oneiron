@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::super::agent_health::{COACH_AGENT_HEALTH_FACET, ConcernCardSummary};
 use super::private_sources::digest_item_readable_by_in;
@@ -28,7 +28,7 @@ use crate::{EntityId, Result, Vault};
 /// words were written, with its text rebuilt from what is left. A
 /// projection: neither its text nor its lines are checked against the
 /// stored digest's content hash, which it does not carry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProactivityDigestView {
     /// The stored digest's locator (FIX 2332): what its notifications name.
     pub id: [u8; 32],
@@ -48,7 +48,7 @@ pub struct ProactivityDigestView {
     /// The recipient's eval label asks.
     pub eval_label_asks: Vec<crate::skill_optimize::EvalLabelAsk>,
     /// Pending training offers not carried by an earlier digest.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub offers: Vec<DigestOffer>,
     /// The cleanup line.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -59,8 +59,11 @@ pub struct ProactivityDigestView {
     /// The applied-maintenance after-notice.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub applied: Option<DigestApplied>,
+    /// The drafter line (FIX 14977).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drafter: Option<crate::drafter::DigestDrafter>,
     /// The Coach's agent-health cards.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub health_cards: Vec<ConcernCardSummary>,
     /// The digest's text as this viewer reads it: the stored text when the
     /// view keeps every proposal, else rebuilt from what it keeps.
@@ -79,6 +82,7 @@ impl ProactivityDigestView {
             && self.cleanup.is_none()
             && self.note_tombstones.is_none()
             && self.applied.is_none()
+            && self.drafter.is_none()
             && self.health_cards.is_empty()
     }
 }
@@ -172,6 +176,7 @@ fn shown(digest: &ProactivityDigest) -> impl Serialize + '_ {
         &digest.cleanup,
         &digest.note_tombstones,
         &digest.applied,
+        &digest.drafter,
         &digest.health_cards,
         &digest.rendered,
         &digest.voice_style,
@@ -229,6 +234,7 @@ pub(super) fn digest_view_for_in(
         cleanup: digest.cleanup.clone(),
         note_tombstones: digest.note_tombstones.clone(),
         applied: digest.applied.clone(),
+        drafter: digest.drafter.clone(),
         health_cards: digest.health_cards.clone(),
         rendered,
         voice_style: digest.voice_style.clone(),
@@ -238,8 +244,8 @@ pub(super) fn digest_view_for_in(
 /// The text of `groups` and `digest`'s lines under the presentation the
 /// digest was assembled under: each display group and its items, then the
 /// recipient's judge asks, the eval label asks, the training offers, the
-/// cleanup line, the NOTE tombstone line, the applied after-notice and the
-/// health cards. Assembly writes the stored text so, from every group; a
+/// cleanup line, the NOTE tombstone line, the applied after-notice, the
+/// drafter line and the health cards. Assembly writes the stored text so, from every group; a
 /// view rebuilds it from the groups it keeps.
 pub(super) fn render(
     digest: &ProactivityDigest,
@@ -300,6 +306,14 @@ pub(super) fn render(
     }
     if let Some(line) = &digest.applied {
         line.render(presentation, &mut rendered);
+    }
+    if let Some(line) = &digest.drafter {
+        line.render(
+            &presentation.group_template,
+            &presentation.item_template,
+            alias(presentation, crate::drafter::DRAFTER_GROUP),
+            &mut rendered,
+        );
     }
     if !digest.health_cards.is_empty() {
         let facet = COACH_AGENT_HEALTH_FACET;

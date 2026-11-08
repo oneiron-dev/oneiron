@@ -8,6 +8,8 @@
 //! the check and nothing is refused for it.
 use serde::{Deserialize, Serialize};
 
+mod outputs;
+
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::code_run::{ProgramStepFeedback, ProgramStepFeedbackRelease};
 use crate::code_sandbox::foreign::{ForeignCodeArtifact, execute_foreign_code};
@@ -76,7 +78,8 @@ pub enum ForeignCodeEffect {
     FileEdit {
         path: String,
         base_content_hash: String,
-        edit: crate::code_document::CodeFileEdit,
+        #[schemars(with = "crate::code_document::CodeFileEdit")]
+        edit: crate::code_sandbox::SandboxFileEdit,
     },
     FileDelete {
         path: String,
@@ -270,9 +273,24 @@ impl Memory<'_> {
             workspace.path(),
             workspace.path(),
         );
-        let outcome = execute_foreign_code(prepared, mounts, artifact, budget, spool)?;
-        let output: StepOutput = serde_json::from_str(&outcome.result_json)
+        let floor = self.vault.host_net_floor();
+        let mut streamed =
+            crate::code_sandbox::microvm::MicroVmOutputSpool::new(std::sync::Arc::clone(&spool));
+        // A failed program's own error is masked with this vault's custody
+        // values before it is answered (FIX 9209).
+        let outcome = execute_foreign_code(
+            prepared,
+            mounts,
+            artifact,
+            budget,
+            spool,
+            floor,
+            &mut streamed,
+            self.vault,
+        )?;
+        let mut output: StepOutput = serde_json::from_str(&outcome.result_json)
             .map_err(|_| MemoryError::bad_request("foreign step returned invalid typed output"))?;
+        outputs::merge(streamed, &mut output)?;
         for file in &output.outputs {
             let path = crate::store::sandbox_path::SandboxVirtualPath::try_new(&file.path)?;
             if path.mount() != crate::store::sandbox_path::SandboxMount::Outputs {

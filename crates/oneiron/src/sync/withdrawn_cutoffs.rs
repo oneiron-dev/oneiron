@@ -19,14 +19,17 @@
 //! - Federation copies no such map in or out: erasure across vaults is a
 //!   notice only.
 //!
-//! The same map carries each session's epoch floor (FIX 2867): the place a
+//! The same map carries each lineage's epoch floor (FIX 2867): the place a
 //! removed epoch summary held, its epoch and the turn it ended at, no words.
-//! It rides the windows that carry the session, under `epoch_floor/` and the
-//! session's id, so a machine that never held the removed summary numbers
-//! past it too. Egress raises a carried floor that is lower, admission
-//! refuses a malformed one, and a carried floor only raises this vault's.
-//! Every export, and the erase sweep, drops the floor of a session this
-//! vault removed (Engine ruling 10-18).
+//! A lineage is a session's own log, or one conversation's turns within a
+//! session (FIX 5029). It rides the windows that carry the session or the
+//! conversation, under `epoch_floor/` and the session's id, then `/` and the
+//! conversation's id for a conversation's lineage, so a machine that never
+//! held the removed summary numbers past it too. Egress raises a carried
+//! floor that is lower, admission refuses a malformed one, and a carried
+//! floor only raises this vault's. Every export, and the erase sweep, drops
+//! the floor of a session or conversation this vault removed (Engine ruling
+//! 10-18).
 
 use std::collections::BTreeMap;
 
@@ -37,6 +40,7 @@ use super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 use super::types::WindowKey;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::compaction::EpochScope;
 use crate::deletion::{WithdrawnCutoff, WithdrawnReplacement};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -47,7 +51,7 @@ use crate::store::Store;
 /// The window root map that carries withdrawn-generation cutoffs.
 pub(crate) const WITHDRAWN_CUTOFFS_MAP: &str = "withdrawn_cutoffs";
 
-/// The key prefix of a session's epoch floor in the cutoff map.
+/// The key prefix of a lineage's epoch floor in the cutoff map.
 pub(in crate::sync) const EPOCH_FLOOR: &str = "epoch_floor/";
 
 /// One row of a window's cutoff map.
@@ -56,8 +60,8 @@ pub(crate) enum CarriedCutoff {
     /// The newest withdrawn generation of an artifact and what stands in for
     /// it.
     Withdrawn(EntityId, WithdrawnCutoff),
-    /// A session's epoch floor: the removed epoch and the turn it ended at.
-    EpochFloor(EntityId, u64, u64),
+    /// A lineage's epoch floor: the removed epoch and the turn it ended at.
+    EpochFloor(EpochScope, u64, u64),
 }
 
 fn refused(reason: &'static str) -> Error {
@@ -96,28 +100,54 @@ fn filed_under(key: &str, unnamed: &'static str) -> Result<EntityId> {
     Ok(id)
 }
 
+/// The cutoff map key `scope`'s epoch floor is filed under: `epoch_floor/`
+/// and the session's id, then `/` and the conversation's id for a
+/// conversation's lineage (FIX 5029).
+pub(crate) fn epoch_floor_key(scope: &EpochScope) -> String {
+    match scope.conversation {
+        Some(conversation) => format!(
+            "{EPOCH_FLOOR}{}/{}",
+            scope.session.to_hex(),
+            conversation.to_hex()
+        ),
+        None => format!("{EPOCH_FLOOR}{}", scope.session.to_hex()),
+    }
+}
+
+/// The lineage a floor key names after `epoch_floor/`, each id its
+/// canonical hex.
+pub(in crate::sync) fn epoch_floor_scope(filed: &str) -> Result<EpochScope> {
+    let (session, conversation) = match filed.split_once('/') {
+        Some((session, conversation)) => (session, Some(conversation)),
+        None => (filed, None),
+    };
+    Ok(EpochScope {
+        session: filed_under(session, "names no session")?,
+        conversation: conversation
+            .map(|conversation| filed_under(conversation, "names no conversation"))
+            .transpose()?,
+    })
+}
+
 /// Admits one insert into a window's cutoff map: the newest withdrawn
 /// generation of the artifact it is filed under and its replacement, as one
-/// encoded [`WithdrawnCutoff`], or a session's epoch floor filed under
-/// `epoch_floor/` and the session's id, its epoch and the turn it ended at,
-/// eight bytes big-endian each.
+/// encoded [`WithdrawnCutoff`], or a lineage's epoch floor filed under
+/// [`epoch_floor_key`], its epoch and the turn it ended at, eight bytes
+/// big-endian each.
 pub(crate) fn admit_withdrawn_cutoff_carrier(
     map_key: &str,
     value: &LoroValue,
 ) -> Result<CarriedCutoff> {
-    let floor = map_key.strip_prefix(EPOCH_FLOOR);
-    let id = match floor {
-        Some(session) => filed_under(session, "names no session")?,
-        None => filed_under(map_key, "names no artifact")?,
-    };
     let LoroValue::Binary(bytes) = value else {
         return Err(refused("not bytes"));
     };
-    if floor.is_some() {
+    if let Some(filed) = map_key.strip_prefix(EPOCH_FLOOR) {
+        let scope = epoch_floor_scope(filed)?;
         let (epoch, turn_end) =
             decode_floor(bytes.as_slice()).ok_or_else(|| refused("not an epoch floor"))?;
-        return Ok(CarriedCutoff::EpochFloor(id, epoch, turn_end));
+        return Ok(CarriedCutoff::EpochFloor(scope, epoch, turn_end));
     }
+    let id = filed_under(map_key, "names no artifact")?;
     let cutoff =
         WithdrawnCutoff::decode(bytes.as_slice()).ok_or_else(|| refused("not a cutoff"))?;
     Ok(CarriedCutoff::Withdrawn(id, cutoff))
@@ -167,22 +197,28 @@ pub(crate) fn mirror_withdrawn_cutoffs(
     Ok(wrote)
 }
 
-/// Writes into `doc` this vault's epoch floor of each session whose carrier
-/// the window's `entities` map holds, where the window carries none or a
-/// lower one. Returns whether it wrote; the caller commits.
-pub(crate) fn mirror_epoch_floors(doc: &LoroDoc, floors: &[(EntityId, u64, u64)]) -> Result<bool> {
+/// Writes into `doc` this vault's epoch floor of each lineage whose session
+/// or conversation carrier the window's `entities` map holds, where the
+/// window carries none or a lower one. Returns whether it wrote; the caller
+/// commits.
+pub(crate) fn mirror_epoch_floors(
+    doc: &LoroDoc,
+    floors: &[(EpochScope, u64, u64)],
+) -> Result<bool> {
     if floors.is_empty() {
         return Ok(false);
     }
     let entities = doc.get_map("entities");
     let mut wrote = false;
-    for (session, epoch, turn_end) in floors {
-        let hex = session.to_hex();
-        if entities.get(&hex).is_none() {
+    for (scope, epoch, turn_end) in floors {
+        let carried_here = std::iter::once(scope.session)
+            .chain(scope.conversation)
+            .any(|id| entities.get(&id.to_hex()).is_some());
+        if !carried_here {
             continue;
         }
         let map = doc.get_map(WITHDRAWN_CUTOFFS_MAP);
-        let key = format!("{EPOCH_FLOOR}{hex}");
+        let key = epoch_floor_key(scope);
         let carried = map_get_bytes(&map, &key).and_then(|bytes| decode_floor(&bytes));
         if carried.is_some_and(|carried| carried >= (*epoch, *turn_end)) {
             continue;
@@ -193,8 +229,9 @@ pub(crate) fn mirror_epoch_floors(doc: &LoroDoc, floors: &[(EntityId, u64, u64)]
     Ok(wrote)
 }
 
-/// Drops from `doc` the epoch floor of each session this vault removed: an
-/// erase takes the session's floor off every window that carried it. A live
+/// Drops from `doc` the epoch floor of each lineage whose session or
+/// conversation this vault removed: an erase takes the floor off every
+/// window that carried it. A live
 /// doc keeps the old entry in its history, so `pin` names the window pinned
 /// history-free before any floor goes, as
 /// `room_facts::scrub_room_facts` does; the sweep, whose shallow cut drops
@@ -210,18 +247,18 @@ pub(crate) fn scrub_removed_epoch_floors(
     let map = doc.get_map(WITHDRAWN_CUTOFFS_MAP);
     let mut floors = Vec::new();
     map.for_each(|map_key, _| {
-        if let Some(session) = map_key
+        if let Some(scope) = map_key
             .strip_prefix(EPOCH_FLOOR)
-            .and_then(|hex| EntityId::from_hex(hex).ok())
+            .and_then(|filed| epoch_floor_scope(filed).ok())
         {
-            floors.push((map_key.to_owned(), session));
+            floors.push((map_key.to_owned(), scope));
         }
     });
     let gone = {
         let rtxn = vault.store.env.read_txn()?;
         let mut gone = Vec::new();
-        for (map_key, session) in floors {
-            if crate::ports::removed_in_txn(&vault.store, &rtxn, &session)? {
+        for (map_key, scope) in floors {
+            if epoch_floor_removed_in(vault, &rtxn, &scope)? {
                 gone.push(map_key);
             }
         }
@@ -240,33 +277,48 @@ pub(crate) fn scrub_removed_epoch_floors(
     Ok(true)
 }
 
-/// Raises this vault's floor of each session a carried floor is above, in
+/// Whether this vault removed the session or the conversation `scope`
+/// names: the floor of such a lineage leaves the windows that carried it.
+pub(crate) fn epoch_floor_removed_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    scope: &EpochScope,
+) -> Result<bool> {
+    for id in std::iter::once(scope.session).chain(scope.conversation) {
+        if crate::ports::removed_in_txn(&vault.store, rtxn, &id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Raises this vault's floor of each lineage a carried floor is above, in
 /// one write. A floor only rises, so a repeat writes nothing.
-fn raise_epoch_floors(vault: &Vault, carried: &BTreeMap<EntityId, (u64, u64)>) -> Result<()> {
+fn raise_epoch_floors(vault: &Vault, carried: &BTreeMap<EpochScope, (u64, u64)>) -> Result<()> {
     if carried.is_empty() {
         return Ok(());
     }
-    let held: BTreeMap<EntityId, (u64, u64)> = {
+    let held: BTreeMap<EpochScope, (u64, u64)> = {
         let rtxn = vault.store.env.read_txn()?;
         crate::compaction::epoch_floors_in_txn(&vault.store, &rtxn)?
             .into_iter()
-            .map(|(session, epoch, turn_end)| (session, (epoch, turn_end)))
+            .map(|(scope, epoch, turn_end)| (scope, (epoch, turn_end)))
             .collect()
     };
-    let raised: Vec<(EntityId, (u64, u64))> = carried
+    let raised: Vec<(EpochScope, (u64, u64))> = carried
         .iter()
-        .filter(|&(session, floor)| held.get(session).is_none_or(|held| held < floor))
-        .map(|(session, floor)| (*session, *floor))
+        .filter(|&(scope, floor)| held.get(scope).is_none_or(|held| held < floor))
+        .map(|(scope, floor)| (*scope, *floor))
         .collect();
     if raised.is_empty() {
         return Ok(());
     }
     vault.with_write_txn_grouped(|wtxn| {
-        for (session, (epoch, turn_end)) in &raised {
-            crate::compaction::raise_session_epoch_floor_in_txn(
+        for (scope, (epoch, turn_end)) in &raised {
+            crate::compaction::raise_epoch_scope_floor_in_txn(
                 &vault.store,
                 wtxn,
-                session,
+                scope,
                 *epoch,
                 *turn_end,
             )?;
@@ -296,19 +348,7 @@ pub(crate) fn apply_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) 
 /// The staging [`apply_withdrawn_cutoffs`] runs, with the store's fault as it
 /// is: forward rematerialization runs it outside any admission.
 fn stage_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) -> Result<()> {
-    let mut newest: BTreeMap<EntityId, WithdrawnCutoff> = BTreeMap::new();
-    let mut floors = BTreeMap::new();
-    for row in carried {
-        match *row {
-            CarriedCutoff::Withdrawn(id, cutoff) => {
-                newest.entry(id).or_insert(cutoff).raise(cutoff);
-            }
-            CarriedCutoff::EpochFloor(session, epoch, turn_end) => {
-                let held = floors.entry(session).or_insert((epoch, turn_end));
-                *held = (*held).max((epoch, turn_end));
-            }
-        }
-    }
+    let (newest, floors) = fold_cutoff_rows(carried);
     raise_epoch_floors(vault, &floors)?;
     let (pending, resident) = {
         let rtxn = vault.store.env.read_txn()?;
@@ -326,37 +366,7 @@ fn stage_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) -> Result<(
         return Ok(());
     }
     vault.with_write_txn_grouped(|wtxn| {
-        let at = crate::ports::job_recorded_at_in_txn(&vault.store, wtxn)?;
-        for (id, cutoff) in &pending {
-            // Another door may have staged it since the read.
-            if !unseen(vault, wtxn, id, cutoff.generation)? {
-                continue;
-            }
-            crate::deletion::enqueue_withdrawn_generation_in_txn(
-                &vault.store,
-                wtxn,
-                id,
-                cutoff.generation,
-                cutoff.replacement,
-                at,
-            )?;
-            tracing::info!(
-                entity = %id.to_hex(),
-                "withdrawn generation cutoff from another machine; its sweep is staged"
-            );
-        }
-        // A row of a withdrawn generation already materialized here loses its
-        // words whichever carrier won its key, on every delivery of the
-        // cutoff: a repeat finds the keyframe or the Shell and writes nothing.
-        for (id, cutoff) in &newest {
-            if withdraw_resident_words_in_txn(&crate::secret_custody::CustodyWrite::of(&vault), wtxn, id, *cutoff)? {
-                tracing::info!(
-                    entity = %id.to_hex(),
-                    "withdrawn generation cutoff from another machine; its resident words are scrubbed"
-                );
-            }
-        }
-        Ok(())
+        stage_prepared_withdrawn_in_txn(vault, wtxn, &pending, &newest)
     })
 }
 
@@ -465,6 +475,36 @@ pub(crate) fn apply_withdrawn_cutoff_map(vault: &Vault, doc: &LoroDoc, window: &
     if !holds_withdrawn_cutoff_map(doc) {
         return Ok(());
     }
+    let carried = carried_cutoff_rows(doc, window);
+    stage_withdrawn_cutoffs(vault, &carried)
+}
+
+fn fold_cutoff_rows(
+    carried: &[CarriedCutoff],
+) -> (
+    BTreeMap<EntityId, WithdrawnCutoff>,
+    BTreeMap<EpochScope, (u64, u64)>,
+) {
+    let mut newest: BTreeMap<EntityId, WithdrawnCutoff> = BTreeMap::new();
+    let mut floors = BTreeMap::new();
+    for row in carried {
+        match *row {
+            CarriedCutoff::Withdrawn(id, cutoff) => {
+                newest.entry(id).or_insert(cutoff).raise(cutoff);
+            }
+            CarriedCutoff::EpochFloor(scope, epoch, turn_end) => {
+                let held = floors.entry(scope).or_insert((epoch, turn_end));
+                *held = (*held).max((epoch, turn_end));
+            }
+        }
+    }
+    (newest, floors)
+}
+
+fn carried_cutoff_rows(doc: &LoroDoc, window: &str) -> Vec<CarriedCutoff> {
+    if !holds_withdrawn_cutoff_map(doc) {
+        return Vec::new();
+    }
     let mut rows = Vec::new();
     doc.get_map(WITHDRAWN_CUTOFFS_MAP)
         .for_each(|map_key, value| rows.push((map_key.to_owned(), value)));
@@ -481,7 +521,83 @@ pub(crate) fn apply_withdrawn_cutoff_map(vault: &Vault, doc: &LoroDoc, window: &
             }
         }
     }
-    stage_withdrawn_cutoffs(vault, &carried)
+    carried
+}
+
+fn stage_prepared_withdrawn_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    pending: &[(EntityId, WithdrawnCutoff)],
+    newest: &BTreeMap<EntityId, WithdrawnCutoff>,
+) -> Result<()> {
+    let at = crate::ports::job_recorded_at_in_txn(&vault.store, wtxn)?;
+    for (id, cutoff) in pending {
+        // Another door may have staged it since the read.
+        if !unseen(vault, wtxn, id, cutoff.generation)? {
+            continue;
+        }
+        crate::deletion::enqueue_withdrawn_generation_in_txn(
+            &vault.store,
+            wtxn,
+            id,
+            cutoff.generation,
+            cutoff.replacement,
+            at,
+        )?;
+        tracing::info!(
+            entity = %id.to_hex(),
+            "withdrawn generation cutoff from another machine; its sweep is staged"
+        );
+    }
+    // A row of a withdrawn generation already materialized here loses its
+    // words whichever carrier won its key, on every delivery of the
+    // cutoff: a repeat finds the keyframe or the Shell and writes nothing.
+    for (id, cutoff) in newest {
+        if withdraw_resident_words_in_txn(
+            &crate::secret_custody::CustodyWrite::of(&vault),
+            wtxn,
+            id,
+            *cutoff,
+        )? {
+            tracing::info!(
+                entity = %id.to_hex(),
+                "withdrawn generation cutoff from another machine; its resident words are scrubbed"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Applies a bare candidate's cutoffs before its content in the same root writer.
+pub(super) fn stage_withdrawn_cutoff_map_in_txn(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window: &str,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    let carried = carried_cutoff_rows(doc, window);
+    let (newest, floors) = fold_cutoff_rows(&carried);
+    for (scope, (epoch, turn_end)) in &floors {
+        crate::compaction::raise_epoch_scope_floor_in_txn(
+            &vault.store,
+            wtxn,
+            scope,
+            *epoch,
+            *turn_end,
+        )?;
+    }
+    let mut pending = Vec::new();
+    let mut resident = false;
+    for (id, cutoff) in &newest {
+        if unseen(vault, wtxn, id, cutoff.generation)? {
+            pending.push((*id, *cutoff));
+        }
+        resident |= holds_withdrawn_words_in(&vault.store, wtxn, id, *cutoff)?;
+    }
+    if pending.is_empty() && !resident {
+        return Ok(());
+    }
+    stage_prepared_withdrawn_in_txn(vault, wtxn, &pending, &newest)
 }
 
 /// Whether `doc` holds a cutoff map. Looking a root up by name creates it:

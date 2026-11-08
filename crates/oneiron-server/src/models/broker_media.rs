@@ -15,7 +15,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::llm::BrokerIsolation;
-use oneiron::llm::media::MediaBackend;
+use oneiron::llm::media::{
+    InterruptedMediaCall, MediaBackend, MediaFuture, MediaProgressFuture, MediaRequest,
+    MediaResponse,
+};
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId, RetryableLlmError};
 use oneiron_broker::{BrokerClient, CallHeader, FormData, Isolation, Shape};
 use oneiron_llm_gemini::{
@@ -28,9 +31,10 @@ use oneiron_llm_openai::{
 };
 
 use super::broker::{
-    BrokerSite, KeyDoor, REPLY_MARGIN, answered, call_with_key, call_with_key_released, join,
+    BrokerSite, KeyDoor, REPLY_MARGIN, answered, call_with_key, join, open_with_key_released,
 };
-use super::http::{charge_read, is_cloud_node};
+use super::hosted_speech::{self, HostedWire};
+use super::http::{charge_read, is_cloud_node, read_broker_booked};
 use crate::config::models::{ProviderConfig, ProviderKind};
 
 const JSON: &str = "application/json";
@@ -57,6 +61,7 @@ struct Exchange {
     shape: Shape,
     path: String,
     content_type: Option<String>,
+    headers: BTreeMap<String, String>,
     body: Vec<u8>,
 }
 
@@ -93,6 +98,23 @@ pub(super) fn broker_media_backend(
             )
             .with_embed_shape(provider.embed_shape),
         )),
+        ProviderKind::Cartesia | ProviderKind::Elevenlabs => {
+            let wire = if matches!(provider.kind, ProviderKind::Cartesia) {
+                HostedWire::Cartesia
+            } else {
+                HostedWire::ElevenLabs
+            };
+            let provider = if wire == HostedWire::Cartesia {
+                super::media::cartesia(provider)
+            } else {
+                provider.clone()
+            };
+            Ok(Arc::new(BrokeredSpeech {
+                broker: BrokerMedia::new(name, &provider, &provider.base_url, site, keys)?,
+                wire,
+                models: wire_models,
+            }))
+        }
         kind => anyhow::bail!(
             "a {kind:?} provider's media calls do not go through the credential broker"
         ),
@@ -178,9 +200,11 @@ impl BrokerMedia {
             shape,
             path,
             content_type,
+            headers: request_headers,
             body,
         } = exchange;
         let mut headers = self.headers.clone();
+        headers.extend(request_headers);
         if let Some(kind) = content_type {
             headers.insert("content-type".to_owned(), kind);
         }
@@ -200,7 +224,7 @@ impl BrokerMedia {
             &body,
         );
         header.check(&body).map_err(|_| invalid())?;
-        let mut reply = call_with_key_released(
+        let stream = open_with_key_released(
             &self.client,
             &self.keys,
             &self.secret,
@@ -210,11 +234,9 @@ impl BrokerMedia {
             Some(lease),
         )
         .await?;
+        let (mut reply, _held) = read_broker_booked(stream).await?;
         let (status, headers) = answered(reply.outcome)?;
         let body = std::mem::take(&mut *reply.body);
-        // The broker hands the reply over whole: its bytes are charged on the
-        // media-reply line and held with the call it was read for (FIX 8615).
-        let _held = charge_read(body.len());
         Ok((
             status,
             headers
@@ -225,9 +247,33 @@ impl BrokerMedia {
         ))
     }
 
+    /// A shared hosted-speech request, checked against its exact broker shape.
+    fn hosted(
+        &self,
+        wire: HostedWire,
+        path: String,
+        body: serde_json::Value,
+    ) -> LlmResult<Exchange> {
+        Ok(Exchange {
+            shape: match wire {
+                HostedWire::Cartesia => Shape::CartesiaSpeech,
+                HostedWire::ElevenLabs => Shape::ElevenLabsSpeech,
+            },
+            path: join(&self.prefix, &path),
+            content_type: Some(JSON.to_owned()),
+            headers: BTreeMap::new(),
+            body: json_bytes(&body)?,
+        })
+    }
+
     /// An OpenAI-compatible media request as its broker shape takes it.
     fn openai(&self, request: OpenAiMediaHttpRequest) -> LlmResult<Exchange> {
-        let OpenAiMediaHttpRequest { method, path, body } = request;
+        let OpenAiMediaHttpRequest {
+            method,
+            path,
+            headers,
+            body,
+        } = request;
         // Cohere's v2 embed route has its own broker shape (FIX 11467 H7):
         // exactly `POST /v2/embed` as JSON takes it, before the existing
         // `/v1/` classification below, which is otherwise unchanged.
@@ -253,7 +299,7 @@ impl BrokerMedia {
                 (
                     OpenAiMediaMethod::Post,
                     ["images", "edits"],
-                    OpenAiMediaBody::Multipart { .. },
+                    OpenAiMediaBody::Json(_) | OpenAiMediaBody::Multipart { .. },
                 ) => Shape::OpenAiImageEdits,
                 (OpenAiMediaMethod::Post, ["audio", "speech"], OpenAiMediaBody::Json(_)) => {
                     Shape::OpenAiSpeech
@@ -307,6 +353,7 @@ impl BrokerMedia {
             shape,
             path: join(&self.prefix, &path),
             content_type,
+            headers,
             body,
         })
     }
@@ -325,12 +372,14 @@ impl BrokerMedia {
                 },
                 path: format!("{}{path}", self.prefix),
                 content_type: Some(JSON.to_owned()),
+                headers: BTreeMap::new(),
                 body: json_bytes(&body)?,
             },
             GeminiMediaHttpRequest::Get { path } => Exchange {
                 shape: Shape::GeminiOperation,
                 path: format!("{}{path}", self.prefix),
                 content_type: None,
+                headers: BTreeMap::new(),
                 body: Vec::new(),
             },
             GeminiMediaHttpRequest::Fetch { uri } => {
@@ -345,10 +394,63 @@ impl BrokerMedia {
                         None => target.path().to_owned(),
                     },
                     content_type: None,
+                    headers: BTreeMap::new(),
                     body: Vec::new(),
                 }
             }
         })
+    }
+}
+
+/// Hosted speech over the same credential-broker path as other media calls.
+struct BrokeredSpeech {
+    broker: BrokerMedia,
+    wire: HostedWire,
+    models: BTreeMap<ModelId, String>,
+}
+
+impl BrokeredSpeech {
+    async fn speak(
+        &self,
+        mut request: MediaRequest,
+        lease: &BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'_>>,
+    ) -> LlmResult<MediaResponse> {
+        let (text, path, body) = hosted_speech::build(self.wire, &self.models, &mut request)?;
+        let exchange = self.broker.hosted(self.wire, path, body)?;
+        let (status, headers, body) = self.broker.send_released(exchange, lease, release).await?;
+        hosted_speech::parse(status, &headers, &body, request.model, &text)
+    }
+}
+
+impl MediaBackend for BrokeredSpeech {
+    fn run<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+    ) -> MediaFuture<'a, MediaResponse> {
+        Box::pin(self.speak(request, lease, None))
+    }
+
+    fn run_progress_released<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'a>>,
+    ) -> MediaProgressFuture<'a> {
+        Box::pin(async move {
+            self.speak(request, lease, release)
+                .await
+                .map_err(InterruptedMediaCall::nothing)
+        })
+    }
+
+    fn preflight(&self, _request: &MediaRequest) -> LlmResult<()> {
+        self.broker.ready()
+    }
+
+    fn broker_isolation(&self) -> Option<BrokerIsolation> {
+        Some(self.broker.isolation())
     }
 }
 

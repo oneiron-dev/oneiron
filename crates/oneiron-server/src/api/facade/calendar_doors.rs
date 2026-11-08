@@ -30,7 +30,14 @@ pub(crate) async fn vault_calendar_ics_import(
         auth,
         (actor, EdgeActorClass::Human),
         VERB,
-        move |_, _, memory| import_ics_as_owner(&memory, &owner, &input),
+        move |_, _, memory| {
+            import_ics_as_owner(
+                &memory,
+                &owner,
+                &input,
+                crate::calendar_host::calendar_body_screener(),
+            )
+        },
     )
     .await
 }
@@ -54,7 +61,14 @@ pub(crate) async fn vault_calendar_instances_move(
         auth,
         (actor, EdgeActorClass::Human),
         VERB,
-        move |_, _, memory| move_instance_as_owner(&memory, &owner, &input),
+        move |_, _, memory| {
+            move_instance_as_owner(
+                &memory,
+                &owner,
+                &input,
+                crate::calendar_host::calendar_body_screener(),
+            )
+        },
     )
     .await
 }
@@ -182,6 +196,7 @@ pub(crate) async fn calendar_connector_write(
         move |server, memory, owner| {
             let view = memory.calendar_read(&oneiron::calendar::CalendarReadRequest {
                 event_ref: input.event_ref.clone(),
+                filter: None,
             })?;
             if view.value.is_none() {
                 return Err(

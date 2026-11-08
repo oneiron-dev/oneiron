@@ -55,6 +55,7 @@ use crate::llm::call_as_step;
 use crate::llm::seat::ModelSeat;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepError;
+use crate::outbound_intent_ledger::IntentEscalationReason;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use crate::{Vault, WriteActor};
 use oneiron_model::llm::{
@@ -64,6 +65,8 @@ use oneiron_model::llm::{
 
 use super::deadline::WakePassDeadline;
 use super::types::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
+
+mod lapsed_sends;
 
 /// The provider-option namespace a program's model step carries its logical
 /// occurrence in. No adapter reads it; the step's identity does.
@@ -164,6 +167,17 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for TurnProgramExecutor<'
         }
     }
 
+    /// A window holds plain Micro partitions only, never a turn program, so
+    /// it goes to the inner executor whole: the trait's serial default here
+    /// ran every window of the host's wrapped executor one partition after
+    /// another (FIX 12487 windows, Dreamer proof run 4).
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        self.inner.execute_partition_window(window).await
+    }
+
     async fn judge_done(&self, question: RunnerDoneQuestion) -> Option<RunnerDoneAnswer> {
         self.inner.judge_done(question).await
     }
@@ -174,6 +188,13 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for TurnProgramExecutor<'
 
     fn runs_turn_programs(&self) -> bool {
         self.runtime.is_some()
+    }
+
+    /// The wrapped executor's bound (FIX 12735): a turn program reads under
+    /// its own code run, never the sources this wake lists, so the listing's
+    /// legs are the wrapped executor's alone.
+    fn destination_bound(&self) -> Option<crate::settings::ReadDestination> {
+        self.inner.destination_bound()
     }
 }
 
@@ -194,8 +215,15 @@ fn hold(
 }
 
 /// The try of an attested owner who is no longer the vault's live owner,
-/// ended Failed with what it spent (FIX 11090).
-fn owner_not_live(completed_units: u64) -> DreamerAttemptExecution {
+/// ended Failed with what it spent (FIX 11090). The sends it left Pending
+/// stop on the same reason (FIX 11130).
+fn owner_not_live(
+    vault: &Vault,
+    attempt: AttemptId,
+    now_ms: u64,
+    completed_units: u64,
+) -> DreamerAttemptExecution {
+    lapsed_sends::stop_lapsed_sends(vault, attempt, IntentEscalationReason::OwnerNotLive, now_ms);
     DreamerAttemptExecution::Failed {
         reason: crate::authority::OWNER_NOT_LIVE.to_owned(),
         completed_units,
@@ -203,8 +231,21 @@ fn owner_not_live(completed_units: u64) -> DreamerAttemptExecution {
 }
 
 /// The try whose original authorization was positively withdrawn, ended
-/// Failed with what it spent (FIX 11593).
-fn withdrawn(completed_units: u64, reason: &str) -> DreamerAttemptExecution {
+/// Failed with what it spent (FIX 11593). The sends it left Pending stop as
+/// sends whose grant no longer stands (FIX 11130).
+fn withdrawn(
+    vault: &Vault,
+    attempt: AttemptId,
+    now_ms: u64,
+    completed_units: u64,
+    reason: &str,
+) -> DreamerAttemptExecution {
+    lapsed_sends::stop_lapsed_sends(
+        vault,
+        attempt,
+        IntentEscalationReason::GrantNotStanding,
+        now_ms,
+    );
     DreamerAttemptExecution::Failed {
         reason: reason.to_owned(),
         completed_units,
@@ -239,8 +280,12 @@ async fn run_program(
     let binding = match vault.bind_turn_program_execution(attempt.id)? {
         TurnProgramBound::Bound(binding) => binding,
         TurnProgramBound::Lapsed(held) => return hold(ctx, attempt, held),
-        TurnProgramBound::OwnerNotLive => return Ok(owner_not_live(0)),
-        TurnProgramBound::Withdrawn { reason } => return Ok(withdrawn(0, reason)),
+        TurnProgramBound::OwnerNotLive => {
+            return Ok(owner_not_live(vault, attempt.id, ctx.now_ms, 0));
+        }
+        TurnProgramBound::Withdrawn { reason } => {
+            return Ok(withdrawn(vault, attempt.id, ctx.now_ms, 0, reason));
+        }
     };
     let task = program_task(&binding.pin);
     let request = TurnProgramRequest {
@@ -458,12 +503,12 @@ fn settle(
     if let Err(error) = &ran
         && let Some(reason) = is_withdrawal_refusal(error)
     {
-        return Ok(withdrawn(used, reason));
+        return Ok(withdrawn(vault, attempt.id, ctx.now_ms, used, reason));
     }
     let ran = match ran {
         Ok(ran) => ran,
         Err(error) if ManagedOwnerCheckError::is_owner_refusal(&error) => {
-            return Ok(owner_not_live(used));
+            return Ok(owner_not_live(vault, attempt.id, ctx.now_ms, used));
         }
         Err(error) => {
             return Ok(DreamerAttemptExecution::ParkWithSpend {
@@ -501,7 +546,7 @@ fn settle(
             if let EngineExecutorError::Engine(engine) = &error
                 && let Some(reason) = is_withdrawal_refusal(engine)
             {
-                return Ok(withdrawn(used, reason));
+                return Ok(withdrawn(vault, attempt.id, ctx.now_ms, used, reason));
             }
             return Ok(match ran.stop {
                 // The step layer parked the try in its trap's own commit.
@@ -515,7 +560,7 @@ fn settle(
                     EngineExecutorError::Engine(error) if ManagedOwnerCheckError::is_owner_refusal(error)
                 ) =>
                 {
-                    owner_not_live(used)
+                    owner_not_live(vault, attempt.id, ctx.now_ms, used)
                 }
                 Some(SeamStop::Deadline) => stopped(format!(
                     "the pass's deadline cut the turn program; {RESUMES}"

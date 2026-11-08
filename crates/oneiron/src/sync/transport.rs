@@ -42,15 +42,21 @@ mod unsplit_frame;
 pub use unsplit_frame::{MAX_WINDOW_PAD_PAYLOAD_BYTES, encode_unsplit_window_sync};
 mod window_pads;
 pub use window_pads::{
-    WINDOW_PAD_HEADER_BYTES, WindowPadArrival, WindowPadAssembly, WindowPadBinding,
-    WindowPadEnvelope, WindowPadForm, WindowPadKind, WindowPadReadiness, WindowPadReceipt,
-    WindowPadSidecar, decode_window_pad_envelope, validate_window_pad_member, window_pad_frame_id,
-    window_pad_frame_payload, window_pad_part_id, window_pad_refs_digest,
+    ReceivedWindowPadEnvelope, WINDOW_PAD_HEADER_BYTES, WindowPadArrival, WindowPadAssembly,
+    WindowPadBinding, WindowPadEnvelope, WindowPadForm, WindowPadKind, WindowPadPayload,
+    WindowPadReadiness, WindowPadReceipt, WindowPadSidecar, decode_window_pad_envelope,
+    validate_window_pad_member, window_pad_frame_id, window_pad_frame_payload, window_pad_part_id,
+    window_pad_refs_digest,
 };
 mod sealed_updates;
 pub use sealed_updates::{
     SEALED_UPDATE_EPOCH_LEN, SEALED_UPDATE_FRAME_ID_LEN, SealedUpdateFrame, TAG_SEALED_UPDATE,
     decode_sealed_update_frame, encode_sealed_update_frame, sealed_update_sub_tags,
+};
+mod document_parts;
+pub use document_parts::{
+    DocumentAssembly, DocumentPartFrames, JoinedDocument, decode_unsplit_document,
+    encode_unsplit_document,
 };
 mod documents;
 pub use documents::{
