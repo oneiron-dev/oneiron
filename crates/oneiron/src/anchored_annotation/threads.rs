@@ -9,7 +9,7 @@ use super::codec::{
 use super::comment_parts::comment_parts;
 use super::model::{
     ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_THREAD_PREDICATE, Anchor,
-    AnnotationComment, AnnotationThread, TaskBrief, ThreadState,
+    AnnotationComment, AnnotationThread, CODE_ANCHOR_VERSION, TaskBrief, ThreadState,
 };
 use crate::Vault;
 use crate::agent_dispatch::{
@@ -539,22 +539,32 @@ impl Vault {
     /// Transaction-composable [`Vault::require_anchor_version`]: validates the
     /// exact target version record read through the caller's txn,
     /// so settle sees the version it just appended in the same write txn.
+    /// A code artifact's anchor version is [`CODE_ANCHOR_VERSION`] alone.
     pub(super) fn require_anchor_version_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         artifact_id: &EntityId,
         version: u64,
     ) -> Result<()> {
+        // The family identifies eligible entities; each body's version adapter
+        // remains kind-specific. Code revisions do not use blob's u64 chain:
+        // a code locator's commit and file hash pin its bytes (FIX 7905).
+        let kind = self
+            .get_entity_type_in_txn(rtxn, artifact_id)?
+            .and_then(artifact_family_kind_of);
+        if matches!(kind, Some(ArtifactFamilyKindId::Code)) {
+            if version != CODE_ANCHOR_VERSION {
+                return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                    "a code anchor's version must be CODE_ANCHOR_VERSION",
+                )));
+            }
+            return Ok(());
+        }
         if version == 0 {
             return Err(Error::Artifact(ArtifactError::InvalidAnchor(
                 "anchor version must be at least 1",
             )));
         }
-        // The family identifies eligible entities; each body's version adapter
-        // remains kind-specific. Code revisions do not use blob's u64 chain.
-        let kind = self
-            .get_entity_type_in_txn(rtxn, artifact_id)?
-            .and_then(artifact_family_kind_of);
         let exists = match kind {
             Some(ArtifactFamilyKindId::Blob) => self
                 .blob_artifact_version_metadata_in_txn(rtxn, artifact_id, version)?

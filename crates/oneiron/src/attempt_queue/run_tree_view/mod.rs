@@ -14,6 +14,16 @@ pub use wire::RunTreeWireError;
 pub struct RunTree {
     pub roots: Vec<RunTreeNode>,
     pub repairs: Vec<RunTreeRepair>,
+    pub deletions: Vec<RunTreeDeletion>,
+}
+
+/// One real archived-attempt deletion, not a synthetic attempt node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunTreeDeletion {
+    pub attempt_id: String,
+    /// Absent only after this actor's erase scrub.
+    pub deleted_by: Option<String>,
+    pub deleted_at: u64,
 }
 
 /// One renderable attempt node.
@@ -55,6 +65,7 @@ pub struct RunTreeWire {
     /// The roots, as indexes into `nodes`, in order.
     pub roots: Vec<u64>,
     pub repairs: Vec<RunTreeRepair>,
+    pub deletions: Vec<RunTreeDeletion>,
 }
 
 /// One [`RunTreeNode`]'s own fields in its tree's [`RunTreeWire`] table.
