@@ -1,5 +1,5 @@
-//! An outside import's bound source fetch through the credential broker
-//! (ARCH-0069 OSH-3, FIX 15702).
+//! An outside import's bound source fetch, and its Git-LFS objects, through
+//! the credential broker (ARCH-0069 OSH-3, FIX 15702, FIX 19876).
 //!
 //! A source bound to a custody credential is read only through the broker,
 //! which alone installs the credential and sends each git exchange:
@@ -23,6 +23,20 @@
 //!   once more, copied once and handed to the broker. The reply streams back to Git exactly as
 //!   the repository sent it; a reply the broker cut ends Git's read broken,
 //!   never clean.
+//! - **Git-LFS.** The import's Git-LFS objects come through the same broker
+//!   with no relay (FIX 19876), bound or not: the engine's LFS orchestration
+//!   runs here over the broker's LFS transport (`super::lfs_broker`), each
+//!   batch call and object action judged again first as each git exchange
+//!   is (the call's credential not revoked, and for a bound source the
+//!   binding still admitting this importer for this host). A bound batch
+//!   call's credential is read at the same custody door in the same one
+//!   snapshot, only after the broker acknowledged the call's body, and
+//!   handed to the broker, which installs it again only on an action at the
+//!   source's own origin that the batch reply handed it back for; an
+//!   unbound import's exchanges all go with none. Object actions carry the
+//!   headers the batch reply named, as given. Each object streams into the
+//!   vault's LFS upload door, whose read ends clean only when the broker's
+//!   does.
 //!
 //! No pack size or call time is bounded here: each step waits at most the
 //! host's transfer idle limit without progress, and Git's exit or the
@@ -45,11 +59,12 @@ use axum::http::header::{CONTENT_TYPE, HeaderValue};
 use axum::http::request::Parts;
 use axum::response::Response;
 use axum::routing::{get, post};
-use oneiron::EntityId;
 use oneiron::git_wire::{
     GitImportFetchOutcome, GitOid, GitRefName, GitWire, SOURCE_RELAY_TICKET_HEADER,
 };
+use oneiron::origin::lfs::{LfsBatchCredential, LfsOid, LfsTransferReport, download_lfs_objects};
 use oneiron::repo_mutation::external_import::{ExternalImportSource, REDIRECT_REFUSED};
+use oneiron::{EntityId, Vault};
 use oneiron_broker::{
     GitCallHeader, GitExchange, GitReply, GitRepository, GitTarget, MAX_SECRET, Outcome,
 };
@@ -63,6 +78,7 @@ use super::broker_relay::{
 };
 use super::gate::{advertised_service, header_value, text_response};
 use super::import_relay::{authority, redirected_repository, revoked};
+use super::lfs_broker::{BrokeredLfsTransport, LfsCustody};
 use super::routes::GitService;
 use crate::auth::CoreAuth;
 use crate::models::BrokerContext;
@@ -76,6 +92,12 @@ const UPLOAD_PACK_REQUEST: &str = "application/x-git-upload-pack-request";
 
 /// The prefix of every refusal code a source relay notes.
 const SOURCE_CODE_PREFIX: &str = "source";
+
+/// The prefix of every refusal code an import's Git-LFS fetch meets.
+const SOURCE_LFS_CODE_PREFIX: &str = "source_lfs";
+
+/// The code of an exchange judged after the call's credential was revoked.
+const CREDENTIAL_REVOKED_CODE: &str = "external_import_credential_revoked";
 
 /// One bound fetch's call: its server, its verified credential and that
 /// credential's principal, the runtime its relay serves on, and the
@@ -181,58 +203,24 @@ impl SourceLeg {
     /// this importer for this host, judged again now.
     fn admitted(&self) -> Result<(), String> {
         if revoked(&self.server, &self.auth) {
-            return Err("external_import_credential_revoked".to_owned());
+            return Err(CREDENTIAL_REVOKED_CODE.to_owned());
         }
-        self.server
-            .vault()
-            .check_external_import_source_binding(&self.binding, &self.origin, self.importer)
-            .map_err(|error| match error {
-                oneiron::Error::Refused(reason) => reason
-                    .split(':')
-                    .next()
-                    .unwrap_or("binding_refused")
-                    .to_owned(),
-                _ => "binding_unreadable".to_owned(),
-            })
+        binding_admitted(
+            self.server.vault(),
+            &self.binding,
+            &self.origin,
+            self.importer,
+        )
     }
 
-    /// The binding's credential, read at the custody door in the one
-    /// snapshot that judges the binding again (its scopes still this host,
-    /// its actor still this importer or behind its Grant), and copied once
-    /// into a buffer wiped on drop. A binding rebound since it was judged
-    /// never reaches the broker.
+    /// The binding's credential ([`binding_credential`]).
     fn credential(&self) -> Result<Zeroizing<Vec<u8>>, String> {
-        let mut secret = Zeroizing::new(Vec::new());
-        let mut oversized = false;
-        self.server
-            .vault()
-            .inject_external_import_source_credential(
-                &self.binding,
-                &self.origin,
-                self.importer,
-                &mut |value: &[u8]| {
-                    if value.len() > MAX_SECRET {
-                        oversized = true;
-                        return Ok(());
-                    }
-                    // Sized once, so no reallocation leaves a copy behind.
-                    secret.reserve_exact(value.len());
-                    secret.extend_from_slice(value);
-                    Ok(())
-                },
-            )
-            .map_err(|error| match error {
-                oneiron::Error::Refused(reason) => reason
-                    .split(':')
-                    .next()
-                    .unwrap_or("binding_refused")
-                    .to_owned(),
-                _ => "binding_refused_at_door".to_owned(),
-            })?;
-        if oversized || secret.is_empty() {
-            return Err("binding_not_a_header".to_owned());
-        }
-        Ok(secret)
+        binding_credential(
+            self.server.vault(),
+            &self.binding,
+            &self.origin,
+            self.importer,
+        )
     }
 
     /// Sends one upload-pack exchange with `repository` through the broker:
@@ -347,6 +335,157 @@ impl SourceLeg {
             url = redirected;
         }
         Err(refused("source_redirect_loop"))
+    }
+}
+
+/// Whether the custody secret `binding` still admits `importer`'s fetch
+/// from the https `origin` in `vault`, judged again now; otherwise the
+/// refusal's code.
+fn binding_admitted(
+    vault: &Vault,
+    binding: &str,
+    origin: &str,
+    importer: EntityId,
+) -> Result<(), String> {
+    vault
+        .check_external_import_source_binding(binding, origin, importer)
+        .map_err(|error| match error {
+            oneiron::Error::Refused(reason) => reason
+                .split(':')
+                .next()
+                .unwrap_or("binding_refused")
+                .to_owned(),
+            _ => "binding_unreadable".to_owned(),
+        })
+}
+
+/// The custody secret `binding`'s credential for `importer`'s fetch from the
+/// https `origin`, read at the custody door in the one snapshot of `vault`
+/// that judges the binding again (its scopes still this host, its actor
+/// still this importer or behind its Grant), and copied once into a buffer
+/// wiped on drop. A binding rebound since it was judged never reaches the
+/// broker.
+fn binding_credential(
+    vault: &Vault,
+    binding: &str,
+    origin: &str,
+    importer: EntityId,
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    let mut secret = Zeroizing::new(Vec::new());
+    let mut oversized = false;
+    vault
+        .inject_external_import_source_credential(
+            binding,
+            origin,
+            importer,
+            &mut |value: &[u8]| {
+                if value.len() > MAX_SECRET {
+                    oversized = true;
+                    return Ok(());
+                }
+                // Sized once, so no reallocation leaves a copy behind.
+                secret.reserve_exact(value.len());
+                secret.extend_from_slice(value);
+                Ok(())
+            },
+        )
+        .map_err(|error| match error {
+            oneiron::Error::Refused(reason) => reason
+                .split(':')
+                .next()
+                .unwrap_or("binding_refused")
+                .to_owned(),
+            _ => "binding_refused_at_door".to_owned(),
+        })?;
+    if oversized || secret.is_empty() {
+        return Err("binding_not_a_header".to_owned());
+    }
+    Ok(secret)
+}
+
+/// One import's Git-LFS fetch: its server, its verified credential and that
+/// credential's principal, and the custody secret its source is bound to,
+/// if any.
+pub(super) struct SourceLfsCall<'a> {
+    pub(super) server: &'a SyncServer,
+    pub(super) auth: &'a CoreAuth,
+    pub(super) importer: EntityId,
+    pub(super) binding: Option<&'a str>,
+}
+
+/// Fetches each of `objects` from the normalized `source`'s Git-LFS batch
+/// API through the broker and installs it through `vault`'s LFS upload
+/// door at `now` (`download_lfs_objects`): each batch call under the
+/// binding's credential when the call names one, else none. Answers the
+/// objects that did not arrive, the broker's isolation and its rewrite
+/// count. Nothing is sent when the host has no broker or the source's
+/// repository is not one the broker takes; there is never a fallback.
+pub(super) fn fetch_lfs_through_broker(
+    call: &SourceLfsCall<'_>,
+    vault: &Vault,
+    source: &ExternalImportSource,
+    objects: &[(LfsOid, u64)],
+    now: u64,
+) -> LfsTransferReport {
+    let unsent = |code: String| LfsTransferReport {
+        missing: Err(oneiron::Error::Refused(format!(
+            "{code}: the import's Git-LFS objects were not fetched through the credential broker"
+        ))),
+        broker_isolation: None,
+        credential_rewrites: 0,
+    };
+    let Some(broker) = call.server.broker_context() else {
+        return unsent(format!("{SOURCE_LFS_CODE_PREFIX}_broker_unavailable"));
+    };
+    let Ok(repository) = GitRepository::parse(&source.repository) else {
+        return unsent(format!("{SOURCE_LFS_CODE_PREFIX}_url_malformed"));
+    };
+    let custody = SourceLfsCustody {
+        call,
+        vault,
+        origin: &source.host,
+    };
+    let transport = BrokeredLfsTransport::new(
+        broker,
+        &custody,
+        repository,
+        call.server.transfers.idle,
+        &call.server.transfers.disk,
+        SOURCE_LFS_CODE_PREFIX,
+    );
+    let credential = match call.binding {
+        Some(_) => LfsBatchCredential::Remote,
+        None => LfsBatchCredential::Anonymous,
+    };
+    let missing = download_lfs_objects(vault, &transport, credential, objects, now);
+    transport.report(missing)
+}
+
+/// An import's custody for its Git-LFS fetch: the call's credential and, for
+/// a bound source, the binding, judged again before each exchange as the
+/// source leg's are, and the binding's credential.
+struct SourceLfsCustody<'a> {
+    call: &'a SourceLfsCall<'a>,
+    vault: &'a Vault,
+    /// The source's own `https://host[:port]`.
+    origin: &'a str,
+}
+
+impl LfsCustody for SourceLfsCustody<'_> {
+    fn admitted(&self) -> Result<(), String> {
+        if revoked(self.call.server, self.call.auth) {
+            return Err(CREDENTIAL_REVOKED_CODE.to_owned());
+        }
+        self.call.binding.map_or(Ok(()), |binding| {
+            binding_admitted(self.vault, binding, self.origin, self.call.importer)
+        })
+    }
+
+    fn credential(&self) -> Result<Zeroizing<Vec<u8>>, String> {
+        let Some(binding) = self.call.binding else {
+            return Err(format!("{SOURCE_LFS_CODE_PREFIX}_binding_absent"));
+        };
+        binding_credential(self.vault, binding, self.origin, self.call.importer)
     }
 }
 
