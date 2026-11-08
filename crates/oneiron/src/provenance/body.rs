@@ -128,7 +128,14 @@ fn release_if_unheld(store: &impl ManifestDbs, txn: &mut RwTxn<'_>, held: &BodyR
     if crate::code_run::code_run_body_held_in_txn(store, txn, &held.blake3)? {
         return Ok(());
     }
-    if held.location == BodyLocation::File {
+    // FIX 7364: a file the row stores queues even when the descriptor that
+    // went last named the bytes inline, as one published before the same
+    // bytes were put again as a file.
+    #[cfg(unix)]
+    let stored_in_file = crate::code_run::code_run_body_in_file_in_txn(store, txn, &held.blake3)?;
+    #[cfg(not(unix))]
+    let stored_in_file = false;
+    if held.location == BodyLocation::File || stored_in_file {
         let at = crate::ports::recorded_at_in_txn(store, txn)?;
         BODY_RELEASED.put(store, txn, &held.blake3, &at)?;
     }

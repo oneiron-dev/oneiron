@@ -1,5 +1,6 @@
 //! The host doors of the Files world's source rows (FIX 6942):
-//! `vault.files.sources.attach`, `.convert`, `.rescan`, `.detach`, `.list` and `.files`.
+//! `vault.files.sources.attach`, `.convert`, `.rescan`, `.detach`, `.list`, `.files`
+//! and `.exclude`.
 //! `host_doors` re-exports them, so the generated HTTP facade handler and the
 //! MCP dispatcher call them by the name every host door has. Each runs under
 //! the vault owner's proof, as `/v1/owner` takes it, off the async runtime:
@@ -9,7 +10,7 @@
 //! this install's Files world.
 //!
 //! Each lists its rows (`host_door_lists`): the Files world its answer names,
-//! and the notes and forks a ledger read names. The sources and their ledger
+//! and the notes, forks and kept-original artifacts a ledger read names. The sources and their ledger
 //! are side tables, which hold no row.
 
 use std::path::Path;
@@ -20,8 +21,9 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     self, FilesRescanAnswer, FilesSourceAttachAnswer, FilesSourceAttachRequest,
-    FilesSourceConvertRequest, FilesSourceDetachAnswer, FilesSourceDetachRequest, FilesSourceFiles,
-    FilesSourceFilesRequest, FilesSourceList, FilesSourceListRequest, FilesSourceRescanRequest,
+    FilesSourceConvertRequest, FilesSourceDetachAnswer, FilesSourceDetachRequest,
+    FilesSourceExcludeAnswer, FilesSourceExcludeRequest, FilesSourceFiles, FilesSourceFilesRequest,
+    FilesSourceList, FilesSourceListRequest, FilesSourceRescanRequest,
 };
 
 use super::host_doors::support::{Listed, internal, owner_proof};
@@ -199,7 +201,33 @@ pub(crate) async fn vault_files_sources_list(
     .await
 }
 
-/// `vault.files.sources.files`: every file one Files source's ledger holds.
+/// `vault.files.sources.exclude`: a Files source's filters change without
+/// detach and attach; its next rescan reads with them.
+pub(crate) async fn vault_files_sources_exclude(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: FilesSourceExcludeRequest,
+) -> Listed<FilesSourceExcludeAnswer> {
+    as_owner_listing(
+        server,
+        auth,
+        "vault.files.sources.exclude",
+        move |server, owner| {
+            let vault = server.vault();
+            let answer = sdk::exclude_files_source_as(vault, owner, input)?;
+            let rows = vault
+                .files_source(answer.source)?
+                .and_then(|source| source.files)
+                .map(|files| vec![files.world])
+                .unwrap_or_default();
+            Ok((answer, rows))
+        },
+    )
+    .await
+}
+
+/// `vault.files.sources.files`: one page of the files one Files source's
+/// ledger holds.
 pub(crate) async fn vault_files_sources_files(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -218,12 +246,12 @@ pub(crate) async fn vault_files_sources_files(
             let files = sdk::files_source_files_as(vault, owner, input)?;
             let rows = world
                 .into_iter()
-                .chain(
-                    files
-                        .files
-                        .iter()
-                        .flat_map(|file| file.note.into_iter().chain(file.fork)),
-                )
+                .chain(files.files.iter().flat_map(|file| {
+                    file.note
+                        .into_iter()
+                        .chain(file.fork)
+                        .chain(file.original.as_ref().map(|original| original.artifact))
+                }))
                 .collect();
             Ok((files, rows))
         },

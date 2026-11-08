@@ -9,6 +9,19 @@ impl UsageLedger {
     /// Commits pending custody before the final ledger write. An existing event
     /// or pending row keeps its first payload; only event + source define replay.
     pub(crate) fn stage_settlement(&self, raw: &[u8]) -> Result<(), UsageError> {
+        self.vault
+            .try_with_write_txn_grouped(|txn| self.stage_settlement_in_write_txn(txn, raw))
+    }
+
+    /// Stages the frozen settlement in this vault's caller-owned writer, so
+    /// its producer can commit its terminal state and pending delivery together.
+    /// The caller commits or aborts the writer; this method acquires none.
+    /// An error must abort the caller's transaction.
+    pub(crate) fn stage_settlement_in_write_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        raw: &[u8],
+    ) -> Result<(), UsageError> {
         let stored = decode_entry(raw)?;
         stored.event.validate()?;
         let pending_key = pending_key(&stored)?;
@@ -17,20 +30,18 @@ impl UsageLedger {
             &stored.event.vault_id,
             &stored.event.idempotency_key,
         );
-        self.vault.try_with_write_txn_grouped(|txn| {
-            if let Some(first) = self.vault.sync_state_get_in_write_txn(txn, &event_key)? {
-                return same_settlement(&decode_entry(&first)?, &stored);
-            }
-            if let Some(first) = self.vault.sync_state_get_in_write_txn(txn, &pending_key)? {
-                return same_settlement(&decode_entry(&first)?, &stored);
-            }
-            let live = self
-                .vault
-                .usage_event_with_live_sources_in_write_txn(txn, raw)?;
-            self.vault
-                .sync_state_put_in_write_txn(txn, &pending_key, &live)?;
-            Ok(())
-        })
+        if let Some(first) = self.vault.sync_state_get_in_write_txn(txn, &event_key)? {
+            return same_settlement(&decode_entry(&first)?, &stored);
+        }
+        if let Some(first) = self.vault.sync_state_get_in_write_txn(txn, &pending_key)? {
+            return same_settlement(&decode_entry(&first)?, &stored);
+        }
+        let live = self
+            .vault
+            .usage_event_with_live_sources_in_write_txn(txn, raw)?;
+        self.vault
+            .sync_state_put_in_write_txn(txn, &pending_key, &live)?;
+        Ok(())
     }
 
     /// The pending row, final event and rollup marker share the SAME writer.
@@ -86,13 +97,7 @@ impl UsageLedger {
                 let Some(raw) = self.vault.sync_state_get_in_write_txn(txn, key)? else {
                     continue;
                 };
-                let stored = match decode_entry(&raw).and_then(|stored| {
-                    stored.event.validate()?;
-                    if stored.event.vault_id != vault_id || pending_key(&stored)? != *key {
-                        return Err(oneiron::Error::CorruptedIndex("pending usage scope").into());
-                    }
-                    Ok(stored)
-                }) {
+                let stored = match decode_pending(key, &raw, vault_id) {
                     Ok(stored) => stored,
                     Err(error) => {
                         tracing::warn!(%key, ?error, "a pending usage settlement needs repair; its bytes remain");
@@ -124,6 +129,20 @@ impl UsageLedger {
         }
         Ok(())
     }
+}
+
+/// The same validity check used by redelivery and a reviewed pending repair.
+pub(super) fn decode_pending(
+    key: &str,
+    raw: &[u8],
+    vault_id: &str,
+) -> Result<StoredUsageEvent, UsageError> {
+    let stored = decode_entry(raw)?;
+    stored.event.validate()?;
+    if stored.event.vault_id != vault_id || pending_key(&stored)? != key {
+        return Err(oneiron::Error::CorruptedIndex("pending usage scope").into());
+    }
+    Ok(stored)
 }
 
 fn pending_key(stored: &StoredUsageEvent) -> Result<String, UsageError> {

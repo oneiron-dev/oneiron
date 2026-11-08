@@ -1445,7 +1445,7 @@ suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async 
     });
     const pendingHex01 = hexId("31");
     const pendingHex02 = hexId("32");
-    const invocation01 = "hooks05-pending-01";
+    const invocation01 = "05000000000000000000000000000001";
     const stop01 = pendingOf(await callPending(pendingInput(pendingHex01, invocation01), invocation01), invocation01);
     expect(pendingOf(await callPending(pendingInput(pendingHex01, invocation01), invocation01, stop01.ask), invocation01))
       .toEqual(stop01);
@@ -1501,7 +1501,7 @@ suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async 
     // Revoke-then-answer ordering is the durable-pending oracle for the
     // REVOKED leg: the ask predates the revoke, the answer postdates the
     // restart, and current authority rechecks at resume.
-    const invocation02 = "hooks05-pending-02";
+    const invocation02 = "05000000000000000000000000000002";
     const stop02 = pendingOf(await callPending(pendingInput(pendingHex02, invocation02), invocation02), invocation02);
     await awaitPublic(
       async () => (await readForeignReceipts())
