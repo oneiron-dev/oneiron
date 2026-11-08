@@ -110,8 +110,7 @@ impl Vault {
         call_seq: u64,
     ) -> IntentLedgerResult<bool> {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
-        let (erased, withdrawn) =
-            erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
+        let (erased, withdrawn) = erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
         wtxn.commit().map_err(Error::from)?;
         let synced = force_sync(self);
         if erased {
@@ -138,8 +137,7 @@ impl Vault {
     ) -> IntentLedgerResult<bool> {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
         owner.revalidate_in_txn(self, &wtxn)?;
-        let (erased, withdrawn) =
-            erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
+        let (erased, withdrawn) = erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
         wtxn.commit().map_err(Error::from)?;
         let synced = force_sync(self);
         if erased {
