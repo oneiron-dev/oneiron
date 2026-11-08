@@ -239,7 +239,8 @@ fn sources_worlds(
 }
 
 /// Where the stored row `id` (`raw`) sits: the WORLD row in itself, a CLAIM in
-/// its body's world, a NOTE in each world it has an `InWorld` edge to, a
+/// its body's world, a NOTE or an ASSET in each world it has an `InWorld` edge
+/// to, a caption wherever its source ASSETs sit (they go to `sources`), a
 /// SUMMARY where `record_world_in` places it (unknown for an epoch it cannot
 /// place, never base) and in every world its withdrawal recorded. An epoch
 /// SUMMARY's `DerivedFrom` sources, and a CLAIM's prompt inputs, go to
@@ -267,11 +268,26 @@ fn row_worlds(
                 store, txn, id,
             )?);
         }
-        crate::registry::ENTITY_TYPE_NOTE => {
+        // An ASSET takes its worlds from its `InWorld` edges as a NOTE does
+        // (FIX 22223).
+        crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET => {
             for edge in
                 store.port_edges(txn, id, EdgeDirection::Out, Some(EdgeKind::InWorld), None)?
             {
                 carried.worlds.insert(edge?.target);
+            }
+        }
+        // A caption carries its source ASSETs' words, so their worlds too
+        // (FIX 22223; DEC-0005 Fix 2).
+        crate::registry::ENTITY_TYPE_ASSET_TEXT => {
+            for edge in store.port_edges(
+                txn,
+                id,
+                EdgeDirection::Out,
+                Some(EdgeKind::DerivedFrom),
+                None,
+            )? {
+                sources.push(edge?.target);
             }
         }
         crate::registry::ENTITY_TYPE_SUMMARY => {

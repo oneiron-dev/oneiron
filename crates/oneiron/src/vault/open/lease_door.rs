@@ -21,7 +21,12 @@ impl Vault {
         lease.validate_directory(&canonical)?;
         let store =
             Store::open_with_writer_lease(&canonical, &config, lease, super::engine_store_hooks())?;
-        Self::finish_open(store, config, DefaultPolicySeedMode::Required)
+        Self::finish_open(
+            store,
+            config,
+            DefaultPolicySeedMode::Required,
+            super::super::OpenOptions::default(),
+        )
     }
 
     /// The config checks [`Vault::open_owned`] makes before it touches the
