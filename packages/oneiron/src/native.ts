@@ -604,6 +604,7 @@ vaultConnectorsRepliesRetryFailed(input: unknown): unknown
 vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
 vaultConsentCreateAutoWeaveGrant(input: unknown): unknown
+vaultConsentCreateNightlyLinkGrant(input: unknown): unknown
 vaultConsentRegistry(input: unknown): unknown
 vaultConsentFailureSignalsHeld(input: unknown): unknown
 vaultConsentRevoke(input: unknown): unknown
@@ -731,9 +732,11 @@ vaultCodeSymbolsDeclare(input: unknown): unknown
 vaultCodeSymbolsRenew(input: unknown): unknown
 vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
+vaultCodeProposalRereview(input: unknown): unknown
 vaultCodeConflictRecord(input: unknown): unknown
 vaultCodeConflictView(input: unknown): unknown
 vaultCodeProposalResolve(input: unknown): unknown
+vaultCodeProposalResolveRereview(input: unknown): unknown
 vaultCodeProposalReview(input: unknown): unknown
 vaultCodeProposalSettle(input: unknown): unknown
 vaultCodeProposalSettlement(input: unknown): unknown
@@ -773,6 +776,7 @@ vaultCodeOriginPublishGet(input: unknown): unknown
 vaultCodeOriginPublishApprove(input: unknown): unknown
 vaultCodeOriginPublishExecute(input: unknown): unknown
 vaultCodeOriginPublishCancel(input: unknown): unknown
+vaultDevicesPredecessorName(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
@@ -1302,6 +1306,7 @@ vaultMailComplianceSearch(input: unknown): unknown
 vaultFilesSourcesConvert(input: unknown): unknown
 vaultSyncRepoManifestsConflictReview(input: unknown): unknown
 vaultSyncRepoManifestsConflictDiscard(input: unknown): unknown
+vaultDreamerFollowerKeyframe(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown

@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1305 facade rows, 4719 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1257.
+// UniFFI census: 1310 facade rows, 4731 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1262.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
-// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
+// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), DetachRemainderReason.WithdrawalFailed.kind (an enum with more than 256 variants (ErrorKind)), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -2278,6 +2278,12 @@ pub struct AgentHealthCard {
     pub updated_at: u64,
     #[serde(rename = "coach", default, skip_serializing_if = "Option::is_none")]
     pub coach: Option<AgentHealthCoachAsk>,
+    #[serde(
+        rename = "legacy_draft_scrubbed",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub legacy_draft_scrubbed: Option<bool>,
     #[serde(
         rename = "observed_brief",
         default,
@@ -5737,6 +5743,16 @@ pub enum TaskAskTarget {
     Guests(std::collections::HashMap<String, TaskAskGuest>),
 }
 
+/// `oneiron::task_verb::ask_types::TaskAskOption`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskOption {
+    #[serde(rename = "label")]
+    pub label: String,
+    #[serde(rename = "then", default, skip_serializing_if = "Option::is_none")]
+    pub then: Option<String>,
+}
+
 /// `oneiron_store::model_decision::questions::records::OutcomeSource`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
@@ -5822,7 +5838,7 @@ pub struct TaskAskQuestion {
     #[serde(rename = "revision")]
     pub revision: u64,
     #[serde(rename = "options")]
-    pub options: std::collections::HashMap<String, String>,
+    pub options: std::collections::HashMap<String, TaskAskOption>,
     #[serde(rename = "context_refs")]
     pub context_refs: Vec<ConsultPayloadRef>,
     #[serde(rename = "label", default, skip_serializing_if = "Option::is_none")]
@@ -5847,6 +5863,16 @@ pub struct TaskAskQuestion {
         skip_serializing_if = "Option::is_none"
     )]
     pub commitment: Option<bool>,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskRec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskRec {
+    #[serde(rename = "option")]
+    pub option: String,
+    #[serde(rename = "why")]
+    pub why: String,
 }
 
 /// `oneiron::task_verb::ask_types::TaskAskNeed`.
@@ -5899,6 +5925,8 @@ pub struct TaskAskSpec {
     pub who: Option<TaskAskTarget>,
     #[serde(rename = "what")]
     pub what: TaskAskQuestion,
+    #[serde(rename = "rec", default, skip_serializing_if = "Option::is_none")]
+    pub rec: Option<TaskAskRec>,
     #[serde(rename = "until", default, skip_serializing_if = "Option::is_none")]
     pub until: Option<u64>,
     #[serde(rename = "default", default, skip_serializing_if = "Option::is_none")]
@@ -5977,6 +6005,10 @@ pub struct TaskAskResult {
     pub coverage: TaskAskCoverage,
     #[serde(rename = "decision")]
     pub decision: TaskAskDecision,
+    #[serde(rename = "picked", default, skip_serializing_if = "Option::is_none")]
+    pub picked: Option<String>,
+    #[serde(rename = "was_rec")]
+    pub was_rec: bool,
     #[serde(rename = "fallback", default, skip_serializing_if = "Option::is_none")]
     pub fallback: Option<TaskAskFallback>,
     #[serde(rename = "evidence")]
@@ -8496,6 +8528,24 @@ pub struct FanoutAckRequest {
     pub remembered_cap: Option<u64>,
 }
 
+/// `oneiron::self_heal::audit::ObjectiveConfession`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectiveConfession {
+    #[serde(rename = "objective")]
+    pub objective: String,
+    #[serde(rename = "met", default, skip_serializing_if = "Option::is_none")]
+    pub met: Option<bool>,
+    #[serde(rename = "flaw", default, skip_serializing_if = "Option::is_none")]
+    pub flaw: Option<String>,
+    #[serde(
+        rename = "uncertainty",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub uncertainty: Option<String>,
+}
+
 /// `oneiron::task_verb::highway_types::TaskReportBody`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum TaskReportBody {
@@ -8535,6 +8585,12 @@ pub enum TaskReportBody {
             skip_serializing_if = "Option::is_none"
         )]
         confession: Option<String>,
+        #[serde(
+            rename = "confession_structured",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        confession_structured: Option<Vec<ObjectiveConfession>>,
     },
     #[serde(rename = "failed")]
     Failed {
@@ -8807,7 +8863,7 @@ pub enum StreamFinality {
 pub enum StreamFinalityReason {
     #[serde(rename = "explicit_finalize")]
     ExplicitFinalize,
-    #[serde(rename = "idle_timeout30s")]
+    #[serde(rename = "idle_timeout_30s")]
     IdleTimeout30s,
     #[serde(rename = "idle_timeout")]
     IdleTimeout {
@@ -22443,659 +22499,6 @@ pub struct SharedActExport {
     pub diary_reads: Vec<ExportDiaryRead>,
 }
 
-/// `oneiron_contracts::error::ErrorKind`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ErrorKind {
-    #[serde(rename = "storage")]
-    Storage,
-    #[serde(rename = "verb_hook_stopped")]
-    VerbHookStopped,
-    #[serde(rename = "io")]
-    Io,
-    #[serde(rename = "dimension_mismatch")]
-    DimensionMismatch,
-    #[serde(rename = "invalid_vector")]
-    InvalidVector,
-    #[serde(rename = "invalid_edge_weight")]
-    InvalidEdgeWeight,
-    #[serde(rename = "invalid_vad")]
-    InvalidVad,
-    #[serde(rename = "embedding_model_changed")]
-    EmbeddingModelChanged,
-    #[serde(rename = "hnsw_config_changed")]
-    HnswConfigChanged,
-    #[serde(rename = "storage_abi_version_changed")]
-    StorageAbiVersionChanged,
-    #[serde(rename = "storage_schema_version_changed")]
-    StorageSchemaVersionChanged,
-    #[serde(rename = "db_manifest_mismatch")]
-    DbManifestMismatch,
-    #[serde(rename = "vault_root_preflight")]
-    VaultRootPreflight,
-    #[serde(rename = "map_full")]
-    MapFull,
-    #[serde(rename = "invalid_config")]
-    InvalidConfig,
-    #[serde(rename = "invalid_temporal_expression")]
-    InvalidTemporalExpression,
-    #[serde(rename = "entity_not_found")]
-    EntityNotFound,
-    #[serde(rename = "access_grant_already_exists")]
-    AccessGrantAlreadyExists,
-    #[serde(rename = "outbound_grant_already_exists")]
-    OutboundGrantAlreadyExists,
-    #[serde(rename = "connector_key_already_exists")]
-    ConnectorKeyAlreadyExists,
-    #[serde(rename = "channel_identity_already_exists")]
-    ChannelIdentityAlreadyExists,
-    #[serde(rename = "counterparty_contact_already_exists")]
-    CounterpartyContactAlreadyExists,
-    #[serde(rename = "concurrent_write")]
-    ConcurrentWrite,
-    #[serde(rename = "arithmetic_overflow")]
-    ArithmeticOverflow,
-    #[serde(rename = "invariant_violation")]
-    InvariantViolation,
-    #[serde(rename = "invalid_key")]
-    InvalidKey,
-    #[serde(rename = "invalid_federation_grant_body")]
-    InvalidFederationGrantBody,
-    #[serde(rename = "invalid_authority_log_body")]
-    InvalidAuthorityLogBody,
-    #[serde(rename = "authority_refused")]
-    AuthorityRefused,
-    #[serde(rename = "checkpoint_policy_refused")]
-    CheckpointPolicyRefused,
-    #[serde(rename = "checkpoint_policy_revision_stale")]
-    CheckpointPolicyRevisionStale,
-    #[serde(rename = "world_recipient_limit")]
-    WorldRecipientLimit,
-    #[serde(rename = "world_placement_unverifiable")]
-    WorldPlacementUnverifiable,
-    #[serde(rename = "invalid_access_grant_body")]
-    InvalidAccessGrantBody,
-    #[serde(rename = "invalid_outbound_grant_body")]
-    InvalidOutboundGrantBody,
-    #[serde(rename = "invalid_connector_key_body")]
-    InvalidConnectorKeyBody,
-    #[serde(rename = "connector_charter_compile")]
-    ConnectorCharterCompile,
-    #[serde(rename = "connector_charter_approval_mismatch")]
-    ConnectorCharterApprovalMismatch,
-    #[serde(rename = "connector_charter_missing")]
-    ConnectorCharterMissing,
-    #[serde(rename = "invalid_channel_identity_body")]
-    InvalidChannelIdentityBody,
-    #[serde(rename = "workspace_mailbox_autonomy_not_ready")]
-    WorkspaceMailboxAutonomyNotReady,
-    #[serde(rename = "work_companion_required")]
-    WorkCompanionRequired,
-    #[serde(rename = "invalid_counterparty_contact_body")]
-    InvalidCounterpartyContactBody,
-    #[serde(rename = "invalid_comm_record_body")]
-    InvalidCommRecordBody,
-    #[serde(rename = "invalid_diagnostic_body")]
-    InvalidDiagnosticBody,
-    #[serde(rename = "invalid_disclosure_scope")]
-    InvalidDisclosureScope,
-    #[serde(rename = "disclosure_clamp_violation")]
-    DisclosureClampViolation,
-    #[serde(rename = "invalid_consent_bound")]
-    InvalidConsentBound,
-    #[serde(rename = "invalid_consent_grant_row")]
-    InvalidConsentGrantRow,
-    #[serde(rename = "invalid_consent_effect_facts")]
-    InvalidConsentEffectFacts,
-    #[serde(rename = "consent_owner_not_authenticated")]
-    ConsentOwnerNotAuthenticated,
-    #[serde(rename = "consent_unauthenticated_actor")]
-    ConsentUnauthenticatedActor,
-    #[serde(rename = "consent_guest_not_recorded")]
-    ConsentGuestNotRecorded,
-    #[serde(rename = "consent_catastrophe_not_rememberable")]
-    ConsentCatastropheNotRememberable,
-    #[serde(rename = "consent_grant_not_found")]
-    ConsentGrantNotFound,
-    #[serde(rename = "consent_grant_revoked")]
-    ConsentGrantRevoked,
-    #[serde(rename = "consent_approve_once_spent")]
-    ConsentApproveOnceSpent,
-    #[serde(rename = "invalid_task_body")]
-    InvalidTaskBody,
-    #[serde(rename = "ask_dependency_pending")]
-    AskDependencyPending,
-    #[serde(rename = "corrupted_index")]
-    CorruptedIndex,
-    #[serde(rename = "context_pack_validation")]
-    ContextPackValidation,
-    #[serde(rename = "index_overflow")]
-    IndexOverflow,
-    #[serde(rename = "missing_posting_entry")]
-    MissingPostingEntry,
-    #[serde(rename = "invalid_entity_type")]
-    InvalidEntityType,
-    #[serde(rename = "invalid_facet")]
-    InvalidFacet,
-    #[serde(rename = "invalid_relationship")]
-    InvalidRelationship,
-    #[serde(rename = "invalid_facet_of_edge")]
-    InvalidFacetOfEdge,
-    #[serde(rename = "facet_stamp_immutable")]
-    FacetStampImmutable,
-    #[serde(rename = "invalid_claim_body")]
-    InvalidClaimBody,
-    #[serde(rename = "invalid_psych_profile_body")]
-    InvalidPsychProfileBody,
-    #[serde(rename = "invalid_persona_snapshot")]
-    InvalidPersonaSnapshot,
-    #[serde(rename = "persona_snapshot_consent_stale")]
-    PersonaSnapshotConsentStale,
-    #[serde(rename = "invalid_code_artifact_body")]
-    InvalidCodeArtifactBody,
-    #[serde(rename = "invalid_blob_artifact_body")]
-    InvalidBlobArtifactBody,
-    #[serde(rename = "invalid_lfs_object")]
-    InvalidLfsObject,
-    #[serde(rename = "invalid_note_body")]
-    InvalidNoteBody,
-    #[serde(rename = "invalid_witness_message_body")]
-    InvalidWitnessMessageBody,
-    #[serde(rename = "invalid_anchor")]
-    InvalidAnchor,
-    #[serde(rename = "annotation_thread_not_found")]
-    AnnotationThreadNotFound,
-    #[serde(rename = "invalid_edit_manifest")]
-    InvalidEditManifest,
-    #[serde(rename = "edit_roundtrip_failed")]
-    EditRoundtripFailed,
-    #[serde(rename = "live_deck_refused")]
-    LiveDeckRefused,
-    #[serde(rename = "memory_floor_refused")]
-    MemoryFloorRefused,
-    #[serde(rename = "edit_proposal_already_settled")]
-    EditProposalAlreadySettled,
-    #[serde(rename = "edit_proposal_stale")]
-    EditProposalStale,
-    #[serde(rename = "settle_not_authorized")]
-    SettleNotAuthorized,
-    #[serde(rename = "invalid_skill_body")]
-    InvalidSkillBody,
-    #[serde(rename = "skill_edit_gate_retry")]
-    SkillEditGateRetry,
-    #[serde(rename = "skill_content_anchor_type_mismatch")]
-    SkillContentAnchorTypeMismatch,
-    #[serde(rename = "skill_package_unavailable")]
-    SkillPackageUnavailable,
-    #[serde(rename = "invalid_agent_def_body")]
-    InvalidAgentDefBody,
-    #[serde(rename = "invalid_embedding_setup_body")]
-    InvalidEmbeddingSetupBody,
-    #[serde(rename = "embedding_setup_dependency_pending")]
-    EmbeddingSetupDependencyPending,
-    #[serde(rename = "agent_definition_not_found")]
-    AgentDefinitionNotFound,
-    #[serde(rename = "agent_definition_disabled")]
-    AgentDefinitionDisabled,
-    #[serde(rename = "seeded_agent_definition_conflict")]
-    SeededAgentDefinitionConflict,
-    #[serde(rename = "agent_not_dispatchable")]
-    AgentNotDispatchable,
-    #[serde(rename = "invalid_agent_dispatch_input")]
-    InvalidAgentDispatchInput,
-    #[serde(rename = "model_pin_unavailable")]
-    ModelPinUnavailable,
-    #[serde(rename = "invalid_recovery_artifact")]
-    InvalidRecoveryArtifact,
-    #[serde(rename = "body_key_custody_unavailable")]
-    BodyKeyCustodyUnavailable,
-    #[serde(rename = "known_value_history_unavailable")]
-    KnownValueHistoryUnavailable,
-    #[serde(rename = "recovery_artifact_quarantine_exhausted")]
-    RecoveryArtifactQuarantineExhausted,
-    #[serde(rename = "invalid_codebase_snapshot_body")]
-    InvalidCodebaseSnapshotBody,
-    #[serde(rename = "hosted_media_hash_match_known_match")]
-    HostedMediaHashMatchKnownMatch,
-    #[serde(rename = "invalid_code_symbol_manifest_body")]
-    InvalidCodeSymbolManifestBody,
-    #[serde(rename = "invalid_repo_mutation_record")]
-    InvalidRepoMutationRecord,
-    #[serde(rename = "repo_mutation_failed")]
-    RepoMutationFailed,
-    #[serde(rename = "repo_mutation_recovery_diverged")]
-    RepoMutationRecoveryDiverged,
-    #[serde(rename = "invalid_predicate")]
-    InvalidPredicate,
-    #[serde(rename = "reserved_predicate")]
-    ReservedPredicate,
-    #[serde(rename = "source_not_trusted_for_auto")]
-    SourceNotTrustedForAuto,
-    #[serde(rename = "gate_write_rejected")]
-    GateWriteRejected,
-    #[serde(rename = "share_create_paced")]
-    ShareCreatePaced,
-    #[serde(rename = "family_requires_auto_grant")]
-    FamilyRequiresAutoGrant,
-    #[serde(rename = "actor_lacks_claim_authority")]
-    ActorLacksClaimAuthority,
-    #[serde(rename = "guest_claim_withheld")]
-    GuestClaimWithheld,
-    #[serde(rename = "gate_consent_stale")]
-    GateConsentStale,
-    #[serde(rename = "maintenance_kind_not_writable")]
-    MaintenanceKindNotWritable,
-    #[serde(rename = "structural_kind_zone_violation")]
-    StructuralKindZoneViolation,
-    #[serde(rename = "structural_kind_collision")]
-    StructuralKindCollision,
-    #[serde(rename = "invalid_structural_kind_registration")]
-    InvalidStructuralKindRegistration,
-    #[serde(rename = "invalid_attempt_queue_record")]
-    InvalidAttemptQueueRecord,
-    #[serde(rename = "invalid_attempt_queue_transition")]
-    InvalidAttemptQueueTransition,
-    #[serde(rename = "surface_event_correlation_kind_collision")]
-    SurfaceEventCorrelationKindCollision,
-    #[serde(rename = "entity_type_immutable")]
-    EntityTypeImmutable,
-    #[serde(rename = "invalid_time_range")]
-    InvalidTimeRange,
-    #[serde(rename = "edge_not_found")]
-    EdgeNotFound,
-    #[serde(rename = "provenance_on_structural_edge")]
-    ProvenanceOnStructuralEdge,
-    #[serde(rename = "actor_class_mismatch")]
-    ActorClassMismatch,
-    #[serde(rename = "invalid_provenance_body")]
-    InvalidProvenanceBody,
-    #[serde(rename = "invalid_model_substrate")]
-    InvalidModelSubstrate,
-    #[serde(rename = "emit_adjacent_receipt_required")]
-    EmitAdjacentReceiptRequired,
-    #[serde(rename = "claim_already_closed")]
-    ClaimAlreadyClosed,
-    #[serde(rename = "write_verb_target_stale")]
-    WriteVerbTargetStale,
-    #[serde(rename = "claim_self_supersession")]
-    ClaimSelfSupersession,
-    #[serde(rename = "provenance_claim_lifecycle")]
-    ProvenanceClaimLifecycle,
-    #[serde(rename = "not_a_provenance_claim")]
-    NotAProvenanceClaim,
-    #[serde(rename = "provenance_claim_already_closed")]
-    ProvenanceClaimAlreadyClosed,
-    #[serde(rename = "provenance_claim_id_in_use")]
-    ProvenanceClaimIdInUse,
-    #[serde(rename = "provenance_subject_mismatch")]
-    ProvenanceSubjectMismatch,
-    #[serde(rename = "provenance_self_supersession")]
-    ProvenanceSelfSupersession,
-    #[serde(rename = "provenance_precedence_violation")]
-    ProvenancePrecedenceViolation,
-    #[serde(rename = "edge_is_provenanced")]
-    EdgeIsProvenanced,
-    #[serde(rename = "cycle_detected")]
-    CycleDetected,
-    #[serde(rename = "child_of_cardinality")]
-    ChildOfCardinality,
-    #[serde(rename = "incompatible_analyzer")]
-    IncompatibleAnalyzer,
-    #[serde(rename = "bm25_field_schema_changed")]
-    Bm25FieldSchemaChanged,
-    #[serde(rename = "invalid_rank_profile")]
-    InvalidRankProfile,
-    #[serde(rename = "analyzer_asset_missing")]
-    AnalyzerAssetMissing,
-    #[serde(rename = "analyzer_error")]
-    AnalyzerError,
-    #[serde(rename = "indexed_text_too_large")]
-    IndexedTextTooLarge,
-    #[serde(rename = "upstream_tool_failure")]
-    UpstreamToolFailure,
-    #[serde(rename = "retrieval_stage_cut")]
-    RetrievalStageCut,
-    #[serde(rename = "provider_unavailable")]
-    ProviderUnavailable,
-    #[serde(rename = "durable_step_trapped")]
-    DurableStepTrapped,
-    #[serde(rename = "refused")]
-    Refused,
-    #[serde(rename = "legal_hold")]
-    LegalHold,
-    #[serde(rename = "crdt_decode_error")]
-    CrdtDecodeError,
-    #[serde(rename = "window_not_found")]
-    WindowNotFound,
-    #[serde(rename = "window_busy")]
-    WindowBusy,
-    #[serde(rename = "live_document_waited_out")]
-    LiveDocumentWaitedOut,
-    #[serde(rename = "sync_protocol_error")]
-    SyncProtocolError,
-    #[serde(rename = "sync_engine_error")]
-    SyncEngineError,
-    #[serde(rename = "held_facet_stamps_full")]
-    HeldFacetStampsFull,
-    #[serde(rename = "invalid_redaction_receipt_body")]
-    InvalidRedactionReceiptBody,
-    #[serde(rename = "kill_switch_disabled")]
-    KillSwitchDisabled,
-    #[serde(rename = "off_record_session_already_exists")]
-    OffRecordSessionAlreadyExists,
-    #[serde(rename = "off_record_session_not_found")]
-    OffRecordSessionNotFound,
-    #[serde(rename = "off_record_session_closing")]
-    OffRecordSessionClosing,
-    #[serde(rename = "off_record_overlay_full")]
-    OffRecordOverlayFull,
-    #[serde(rename = "off_record_overlay_lease_closed")]
-    OffRecordOverlayLeaseClosed,
-    #[serde(rename = "off_record_promote_unauthenticated")]
-    OffRecordPromoteUnauthenticated,
-    #[serde(rename = "off_record_tainted_base_write")]
-    OffRecordTaintedBaseWrite,
-    #[serde(rename = "off_record_witness_door_rejected")]
-    OffRecordWitnessDoorRejected,
-    #[serde(rename = "off_record_guest_turn_ref_rejected")]
-    OffRecordGuestTurnRefRejected,
-    #[serde(rename = "off_record_talk_only")]
-    OffRecordTalkOnly,
-    #[serde(rename = "off_record_turn_not_in_journal")]
-    OffRecordTurnNotInJournal,
-    #[serde(rename = "off_record_promote_author_missing")]
-    OffRecordPromoteAuthorMissing,
-    #[serde(rename = "off_record_not_in_room")]
-    OffRecordNotInRoom,
-    #[serde(rename = "off_record_saving_stopped")]
-    OffRecordSavingStopped,
-    #[serde(rename = "off_record_copy_conflict")]
-    OffRecordCopyConflict,
-    #[serde(rename = "redaction_receipt_divergence")]
-    RedactionReceiptDivergence,
-    #[serde(rename = "receipt_attestation_invalid")]
-    ReceiptAttestationInvalid,
-    #[serde(rename = "receipt_lease_unknown")]
-    ReceiptLeaseUnknown,
-    #[serde(rename = "receipt_lease_revoked")]
-    ReceiptLeaseRevoked,
-    #[serde(rename = "identity_topology_rejected")]
-    IdentityTopologyRejected,
-    #[serde(rename = "identity_topology_unarmed")]
-    IdentityTopologyUnarmed,
-    #[serde(rename = "identity_proposal_amendment_out_of_scope")]
-    IdentityProposalAmendmentOutOfScope,
-    #[serde(rename = "delta_capture_unavailable")]
-    DeltaCaptureUnavailable,
-    #[serde(rename = "invalid_identity_topology_event_body")]
-    InvalidIdentityTopologyEventBody,
-    #[serde(rename = "reserved_edge_kind")]
-    ReservedEdgeKind,
-    #[serde(rename = "identity_topology_event_divergence")]
-    IdentityTopologyEventDivergence,
-    #[serde(rename = "authority_log_append_only_violation")]
-    AuthorityLogAppendOnlyViolation,
-    #[serde(rename = "authority_log_store_key_mismatch")]
-    AuthorityLogStoreKeyMismatch,
-    #[serde(rename = "authority_log_signer_pending")]
-    AuthorityLogSignerPending,
-    #[serde(rename = "authority_log_full")]
-    AuthorityLogFull,
-    #[serde(rename = "authority_history_required")]
-    AuthorityHistoryRequired,
-    #[serde(rename = "authority_clock_corrupt")]
-    AuthorityClockCorrupt,
-    #[serde(rename = "seal_standing_unverifiable")]
-    SealStandingUnverifiable,
-    #[serde(rename = "hold_target_erased")]
-    HoldTargetErased,
-    #[serde(rename = "invalid_secret_custody_body")]
-    InvalidSecretCustodyBody,
-    #[serde(rename = "secret_name_in_use")]
-    SecretNameInUse,
-    #[serde(rename = "secret_custody_not_active")]
-    SecretCustodyNotActive,
-    #[serde(rename = "credential_leaf_unreadable")]
-    CredentialLeafUnreadable,
-    #[serde(rename = "credential_custody_unavailable")]
-    CredentialCustodyUnavailable,
-    #[serde(rename = "secret_binding_denied")]
-    SecretBindingDenied,
-    #[serde(rename = "manifest_widens_floor")]
-    ManifestWidensFloor,
-    #[serde(rename = "secret_tier_denied")]
-    SecretTierDenied,
-    #[serde(rename = "secret_door_policy_refused")]
-    SecretDoorPolicyRefused,
-    #[serde(rename = "sealed_file_withheld")]
-    SealedFileWithheld,
-    #[serde(rename = "masked_copy_withheld")]
-    MaskedCopyWithheld,
-    #[serde(rename = "secret_ref_not_found")]
-    SecretRefNotFound,
-    #[serde(rename = "secret_wider_than_manifest")]
-    SecretWiderThanManifest,
-    #[serde(rename = "secret_manifest_not_found")]
-    SecretManifestNotFound,
-    #[serde(rename = "secret_lease_not_found")]
-    SecretLeaseNotFound,
-    #[serde(rename = "secret_lease_not_active")]
-    SecretLeaseNotActive,
-    #[serde(rename = "secret_lease_path_not_declared")]
-    SecretLeasePathNotDeclared,
-    #[serde(rename = "secret_lease_path_conflict")]
-    SecretLeasePathConflict,
-    #[serde(rename = "secret_lease_path_refused")]
-    SecretLeasePathRefused,
-    #[serde(rename = "secret_lease_receipt_write_failed")]
-    SecretLeaseReceiptWriteFailed,
-    #[serde(rename = "invalid_secret_lease_body")]
-    InvalidSecretLeaseBody,
-    #[serde(rename = "secret_grant_stale")]
-    SecretGrantStale,
-    #[serde(rename = "secret_grant_target_mismatch")]
-    SecretGrantTargetMismatch,
-    #[serde(rename = "secret_grant_spent")]
-    SecretGrantSpent,
-    #[serde(rename = "secret_host_delivery_refused")]
-    SecretHostDeliveryRefused,
-    #[serde(rename = "secret_grant_cleanup_kept")]
-    SecretGrantCleanupKept,
-    #[serde(rename = "invalid_secret_rotation_body")]
-    InvalidSecretRotationBody,
-    #[serde(rename = "tainted_artifact_stale")]
-    TaintedArtifactStale,
-    #[serde(rename = "world_key_refused")]
-    WorldKeyRefused,
-    #[serde(rename = "keystore_unavailable")]
-    KeystoreUnavailable,
-    #[serde(rename = "unverified_kit_restore")]
-    UnverifiedKitRestore,
-    #[serde(rename = "kit_confirmation_stale")]
-    KitConfirmationStale,
-    #[serde(rename = "micro_vm_backend_unavailable")]
-    MicroVmBackendUnavailable,
-    #[serde(rename = "micro_vm_backend_error")]
-    MicroVmBackendError,
-    #[serde(rename = "sandbox_proposal_disk_floor")]
-    SandboxProposalDiskFloor,
-    #[serde(rename = "micro_vm_overlay_error")]
-    MicroVmOverlayError,
-    #[serde(rename = "micro_vm_credential_destination_denied")]
-    MicroVmCredentialDestinationDenied,
-    #[serde(rename = "code_step_cancelled")]
-    CodeStepCancelled,
-    #[serde(rename = "response_erased")]
-    ResponseErased,
-    #[serde(rename = "relay_attestation_invalid_service_identity")]
-    RelayAttestationInvalidServiceIdentity,
-    #[serde(rename = "relay_attestation_class_mismatch")]
-    RelayAttestationClassMismatch,
-    #[serde(rename = "relay_attestation_edge_service_conflict")]
-    RelayAttestationEdgeServiceConflict,
-    #[serde(rename = "relay_hosted_legal_policy_invalid")]
-    RelayHostedLegalPolicyInvalid,
-    #[serde(rename = "policy_manifest_invalid")]
-    PolicyManifestInvalid,
-    #[serde(rename = "code_emission_missing_dreamer_run_id")]
-    CodeEmissionMissingDreamerRunId,
-    #[serde(rename = "code_review_context_required")]
-    CodeReviewContextRequired,
-    #[serde(rename = "code_review_unsupported_operation")]
-    CodeReviewUnsupportedOperation,
-    #[serde(rename = "code_review_missing_reviewer_run_id")]
-    CodeReviewMissingReviewerRunId,
-    #[serde(rename = "code_review_run_id_not_distinct")]
-    CodeReviewRunIdNotDistinct,
-    #[serde(rename = "code_review_missing_artifact_refs")]
-    CodeReviewMissingArtifactRefs,
-    #[serde(rename = "code_review_authoring_run_id_mismatch")]
-    CodeReviewAuthoringRunIdMismatch,
-    #[serde(rename = "code_blast_radius_missing_touched_symbols")]
-    CodeBlastRadiusMissingTouchedSymbols,
-    #[serde(rename = "code_blast_radius_unknown_symbol")]
-    CodeBlastRadiusUnknownSymbol,
-    #[serde(rename = "relay_vault_receipt_untrusted")]
-    RelayVaultReceiptUntrusted,
-    #[serde(rename = "policy_verdict_not_in_force")]
-    PolicyVerdictNotInForce,
-    #[serde(rename = "code_memory_invalid_anchor")]
-    CodeMemoryInvalidAnchor,
-    #[serde(rename = "code_memory_invalid_anchor_transfer")]
-    CodeMemoryInvalidAnchorTransfer,
-    #[serde(rename = "code_memory_blocks_cycle")]
-    CodeMemoryBlocksCycle,
-    #[serde(rename = "code_memory_blocks_actor_denied")]
-    CodeMemoryBlocksActorDenied,
-    #[serde(rename = "code_memory_blocks_source_untrusted")]
-    CodeMemoryBlocksSourceUntrusted,
-    #[serde(rename = "code_memory_always_on_invalid")]
-    CodeMemoryAlwaysOnInvalid,
-    #[serde(rename = "code_memory_limit_exceeded")]
-    CodeMemoryLimitExceeded,
-    #[serde(rename = "compaction_packet_rejected")]
-    CompactionPacketRejected,
-    #[serde(rename = "git_http_invalid_repo_name")]
-    GitHttpInvalidRepoName,
-    #[serde(rename = "git_http_repo_not_found")]
-    GitHttpRepoNotFound,
-    #[serde(rename = "git_http_serve_failed")]
-    GitHttpServeFailed,
-    #[serde(rename = "git_http_exchange_idle")]
-    GitHttpExchangeIdle,
-    #[serde(rename = "git_http_repository_busy")]
-    GitHttpRepositoryBusy,
-    #[serde(rename = "lfs_read_room_waited_out")]
-    LfsReadRoomWaitedOut,
-    #[serde(rename = "receive_pack_door_rejected")]
-    ReceivePackDoorRejected,
-    #[serde(rename = "git_push_capability_required")]
-    GitPushCapabilityRequired,
-    #[serde(rename = "receive_pack_landing_refused")]
-    ReceivePackLandingRefused,
-    #[serde(rename = "origin_publication_beyond_owner")]
-    OriginPublicationBeyondOwner,
-    #[serde(rename = "vault_cleanup_restore_not_archived")]
-    VaultCleanupRestoreNotArchived,
-    #[serde(rename = "vault_cleanup_archive_marker_undecodable")]
-    VaultCleanupArchiveMarkerUndecodable,
-    #[serde(rename = "vault_cleanup_proposal_not_found")]
-    VaultCleanupProposalNotFound,
-    #[serde(rename = "vault_cleanup_wake_trigger_rejected")]
-    VaultCleanupWakeTriggerRejected,
-    #[serde(rename = "vault_read")]
-    VaultRead,
-    #[serde(rename = "invalid_project_body")]
-    InvalidProjectBody,
-    #[serde(rename = "invalid_project_room_body")]
-    InvalidProjectRoomBody,
-    #[serde(rename = "project_dependency_pending")]
-    ProjectDependencyPending,
-    #[serde(rename = "project_revision_collision")]
-    ProjectRevisionCollision,
-    #[serde(rename = "project_revision_write")]
-    ProjectRevisionWrite,
-    #[serde(rename = "identity_unsettled")]
-    IdentityUnsettled,
-    #[serde(rename = "project_history_over_budget")]
-    ProjectHistoryOverBudget,
-    #[serde(rename = "project_authority_unresolved")]
-    ProjectAuthorityUnresolved,
-    #[serde(rename = "invalid_conversation_body")]
-    InvalidConversationBody,
-    #[serde(rename = "conversation_state")]
-    ConversationState,
-    #[serde(rename = "conversation_denied")]
-    ConversationDenied,
-    #[serde(rename = "message_stream_recovery_failed")]
-    MessageStreamRecoveryFailed,
-    #[serde(rename = "key_value_write_requires_owned_door")]
-    KeyValueWriteRequiresOwnedDoor,
-    #[serde(rename = "stream_already_active")]
-    StreamAlreadyActive,
-    #[serde(rename = "stream_not_active")]
-    StreamNotActive,
-    #[serde(rename = "stream_limit")]
-    StreamLimit,
-    #[serde(rename = "dag_parent_outside_conversation")]
-    DagParentOutsideConversation,
-    #[serde(rename = "head_advance_off_trunk")]
-    HeadAdvanceOffTrunk,
-    #[serde(rename = "invalid_conversation_dag")]
-    InvalidConversationDag,
-    #[serde(rename = "invalid_scope_summary")]
-    InvalidScopeSummary,
-    #[serde(rename = "invalid_pairing_scope")]
-    InvalidPairingScope,
-    #[serde(rename = "overlay_limit")]
-    OverlayLimit,
-    #[serde(rename = "cooperative_deletion_requires_terminal_pact")]
-    CooperativeDeletionRequiresTerminalPact,
-    #[serde(rename = "invalid_cooperative_deletion_request")]
-    InvalidCooperativeDeletionRequest,
-    #[serde(rename = "write_concurrent_with_revocation")]
-    WriteConcurrentWithRevocation,
-    #[serde(rename = "pack_kind_name_collision")]
-    PackKindNameCollision,
-    #[serde(rename = "pack_kind_not_installed")]
-    PackKindNotInstalled,
-    #[serde(rename = "invalid_pack_byte_map")]
-    InvalidPackByteMap,
-    #[serde(rename = "invalid_suppression_receipt_body")]
-    InvalidSuppressionReceiptBody,
-    #[serde(rename = "suppression_receipt_divergence")]
-    SuppressionReceiptDivergence,
-    #[serde(rename = "pack_predicate_name_collision")]
-    PackPredicateNameCollision,
-    #[serde(rename = "dreamer_actor_immutable")]
-    DreamerActorImmutable,
-    #[serde(rename = "pack_install_rule_blocked")]
-    PackInstallRuleBlocked,
-    #[serde(rename = "resident_owner_dependency_pending")]
-    ResidentOwnerDependencyPending,
-    #[serde(rename = "invalid_machine_claim_proof")]
-    InvalidMachineClaimProof,
-    #[serde(rename = "machine_claim_history_incomplete")]
-    MachineClaimHistoryIncomplete,
-    #[serde(rename = "remote_machine_history_pending")]
-    RemoteMachineHistoryPending,
-    #[serde(rename = "engine_identities_not_provisioned")]
-    EngineIdentitiesNotProvisioned,
-    #[serde(rename = "side_table_row")]
-    SideTableRow,
-    #[serde(rename = "side_table_key_undeclared")]
-    SideTableKeyUndeclared,
-    #[serde(rename = "scoped_read_owner_not_live")]
-    ScopedReadOwnerNotLive,
-    #[serde(rename = "embedding_transform_changed")]
-    EmbeddingTransformChanged,
-    #[serde(rename = "archived_vault")]
-    ArchivedVault,
-    #[serde(rename = "host_action_requires_support_grant")]
-    HostActionRequiresSupportGrant,
-    #[serde(rename = "vault_served_elsewhere")]
-    VaultServedElsewhere,
-}
-
 /// `oneiron::federation::shared_act::DetachRemainderReason`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DetachRemainderReason {
@@ -23104,7 +22507,7 @@ pub enum DetachRemainderReason {
     #[serde(rename = "withdrawal_failed")]
     WithdrawalFailed {
         #[serde(rename = "kind")]
-        kind: ErrorKind,
+        kind: crate::WireJson,
     },
 }
 
@@ -26111,6 +25514,17 @@ pub enum FileReadiness {
     },
 }
 
+/// `oneiron::note::folder_source::original::FileOriginal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FileOriginal {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
+    #[serde(rename = "version")]
+    pub version: u64,
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+}
+
 /// `oneiron::verbs::files::FilesFileView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -26127,6 +25541,8 @@ pub struct FilesFileView {
     pub fork: Option<String>,
     #[serde(rename = "revision", default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
+    #[serde(rename = "original", default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<FileOriginal>,
     #[serde(rename = "bytes", default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
     #[serde(
@@ -26620,6 +26036,8 @@ pub enum ContentPart {
         name: String,
         #[serde(rename = "input")]
         input: crate::WireJson,
+        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     #[serde(rename = "tool_result")]
     ToolResult {
@@ -36887,24 +36305,6 @@ pub struct LearningProjectionView {
     pub receipt: Option<LateCreditReceipt>,
 }
 
-/// `oneiron::self_heal::audit::ObjectiveConfession`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ObjectiveConfession {
-    #[serde(rename = "objective")]
-    pub objective: String,
-    #[serde(rename = "met", default, skip_serializing_if = "Option::is_none")]
-    pub met: Option<bool>,
-    #[serde(rename = "flaw", default, skip_serializing_if = "Option::is_none")]
-    pub flaw: Option<String>,
-    #[serde(
-        rename = "uncertainty",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub uncertainty: Option<String>,
-}
-
 /// `oneiron::self_heal::audit::AttemptConfession`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -37978,6 +37378,8 @@ pub struct WidenProposalAnswer {
 pub struct ClaimProposalReviewRequest {
     #[serde(rename = "claim_ref")]
     pub claim_ref: String,
+    #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
 }
 
 /// `oneiron::memory::claims::settle::ClaimProposalReview`.
@@ -38022,6 +37424,8 @@ pub struct ClaimSettleRequest {
     pub review_id: String,
     #[serde(rename = "decision")]
     pub decision: ClaimSettleDecision,
+    #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
 }
 
 /// `oneiron::memory::claims::settle::ClaimSettlementVerdict`.
@@ -38051,6 +37455,11 @@ pub enum ClaimSettlementAnswer {
         #[serde(rename = "person_ref")]
         person_ref: String,
     },
+    #[serde(rename = "grant")]
+    Grant {
+        #[serde(rename = "grant_ref")]
+        grant_ref: String,
+    },
 }
 
 /// `oneiron::memory::claims::settle::ClaimSettlementReason`.
@@ -38060,6 +37469,10 @@ pub enum ClaimSettlementReason {
     OwnerApproved,
     #[serde(rename = "gate.claim.settle.declined")]
     OwnerDeclined,
+    #[serde(rename = "gate.claim.settle.holder_approved")]
+    HolderApproved,
+    #[serde(rename = "gate.claim.settle.holder_declined")]
+    HolderDeclined,
 }
 
 /// `oneiron::memory::claims::settle::ClaimSettlementRevert`.
@@ -38250,7 +37663,7 @@ pub struct LensProposeRequest {
     #[serde(rename = "pack_content_hash")]
     pub pack_content_hash: String,
     #[serde(rename = "compiled")]
-    pub compiled: crate::WireJson,
+    pub compiled: GeneratedLens,
     #[serde(rename = "intent_prompt")]
     pub intent_prompt: String,
     #[serde(rename = "trigger", default, skip_serializing_if = "Option::is_none")]
@@ -41082,6 +40495,16 @@ pub struct CodeProposalSubmitted {
     pub status: RepoProposalStatus,
 }
 
+/// `oneiron::memory::code_doors::types::CodeProposalRereviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeProposalRereviewRequest {
+    #[serde(rename = "original")]
+    pub original: String,
+    #[serde(rename = "change")]
+    pub change: CodeProposalSubmitRequest,
+}
+
 /// `oneiron::memory::code_doors::conflict_types::CodeConflictRecordRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -41171,6 +40594,16 @@ pub struct CodeProposalResolveRequest {
     pub conflict: String,
     #[serde(rename = "branch")]
     pub branch: String,
+}
+
+/// `oneiron::memory::code_doors::conflict_types::CodeProposalResolveRereviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeProposalResolveRereviewRequest {
+    #[serde(rename = "original")]
+    pub original: String,
+    #[serde(rename = "change")]
+    pub change: CodeProposalResolveRequest,
 }
 
 /// `oneiron::claim::learning_predicate::LearningPredicate`.
@@ -41301,8 +40734,8 @@ pub enum RepoProposalDecision {
 pub struct RepoProposalSettlement {
     #[serde(rename = "receipt")]
     pub receipt: String,
-    #[serde(rename = "actor")]
-    pub actor: String,
+    #[serde(rename = "actor", default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
     #[serde(rename = "decision")]
     pub decision: RepoProposalDecision,
     #[serde(rename = "settled_at")]
@@ -43346,6 +42779,41 @@ pub struct ExternalImportRequest {
     pub door: ExternalImportDoor,
 }
 
+/// `oneiron::repo_mutation::external_import::types::ExternalImportLfsRoute`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ExternalImportLfsRoute {
+    #[serde(rename = "broker")]
+    Broker,
+}
+
+/// `oneiron_model::llm::backend::BrokerIsolation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BrokerIsolation {
+    #[serde(rename = "separate_user")]
+    SeparateUser,
+    #[serde(rename = "same_user")]
+    SameUser,
+}
+
+/// `oneiron::repo_mutation::external_import::types::ExternalImportLfsTransfer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ExternalImportLfsTransfer {
+    #[serde(rename = "route")]
+    pub route: ExternalImportLfsRoute,
+    #[serde(
+        rename = "broker_isolation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub broker_isolation: Option<BrokerIsolation>,
+    #[serde(
+        rename = "credential_rewrites",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub credential_rewrites: Option<u64>,
+}
+
 /// `oneiron::repo_mutation::external_import::types::ExternalImportReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ExternalImportReceipt {
@@ -43381,8 +42849,12 @@ pub struct ExternalImportReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub publication: Option<String>,
-    #[serde(rename = "lfs_daemon_residual")]
-    pub lfs_daemon_residual: bool,
+    #[serde(
+        rename = "lfs_transfer",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lfs_transfer: Option<ExternalImportLfsTransfer>,
 }
 
 /// `oneiron::repo_mutation::external_import::types::ExternalImportLookup`.
@@ -43731,6 +43203,34 @@ pub enum OriginMirrorReadiness {
     },
 }
 
+/// `oneiron::origin::mirror::OriginMirrorLfsRoute`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OriginMirrorLfsRoute {
+    #[serde(rename = "broker")]
+    Broker,
+    #[serde(rename = "daemon")]
+    Daemon,
+}
+
+/// `oneiron::origin::mirror::OriginMirrorLfsTransfer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginMirrorLfsTransfer {
+    #[serde(rename = "route")]
+    pub route: OriginMirrorLfsRoute,
+    #[serde(
+        rename = "broker_isolation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub broker_isolation: Option<BrokerIsolation>,
+    #[serde(
+        rename = "credential_rewrites",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub credential_rewrites: Option<u64>,
+}
+
 /// `oneiron::origin::mirror::OriginMirrorRun`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OriginMirrorRun {
@@ -43744,6 +43244,12 @@ pub struct OriginMirrorRun {
     pub failure: Option<String>,
     #[serde(rename = "readiness", default, skip_serializing_if = "Option::is_none")]
     pub readiness: Option<OriginMirrorReadiness>,
+    #[serde(
+        rename = "lfs_transfer",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lfs_transfer: Option<OriginMirrorLfsTransfer>,
 }
 
 /// `oneiron_store::origin::mirror_strategy::OriginMirrorSyncStrategy`.
@@ -44061,15 +43567,6 @@ pub enum MirrorBatchClaim {
     },
     #[serde(rename = "paused")]
     Paused,
-}
-
-/// `oneiron_model::llm::backend::BrokerIsolation`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum BrokerIsolation {
-    #[serde(rename = "separate_user")]
-    SeparateUser,
-    #[serde(rename = "same_user")]
-    SameUser,
 }
 
 /// `oneiron::origin::publish::mirror_plan_view::OriginMirrorPlanBatchView`.
@@ -44485,6 +43982,16 @@ pub struct OriginPublishApproveRequest {
     pub review_digest: String,
     #[serde(rename = "code_repo", default, skip_serializing_if = "Option::is_none")]
     pub code_repo: Option<String>,
+}
+
+/// `oneiron::memory::device_succession::DevicePredecessor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DevicePredecessor {
+    #[serde(rename = "client")]
+    pub client: String,
+    #[serde(rename = "device_key")]
+    pub device_key: String,
 }
 
 /// `oneiron::origin::residence::OriginResidence`.
@@ -51318,6 +50825,12 @@ pub struct DeckProposeRequest {
     pub context: Option<DeckEditContext>,
     #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
     pub made_by: Option<MadeBy>,
+    #[serde(
+        rename = "delta_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub delta_receipt: Option<String>,
 }
 
 /// `oneiron_docedit::edit::wire::DeckInspection`.
@@ -51663,6 +51176,12 @@ pub struct NativeOutputRequest {
     pub made_by: Option<MadeBy>,
     #[serde(rename = "read_rows", default, skip_serializing_if = "Option::is_none")]
     pub read_rows: Option<Vec<String>>,
+    #[serde(
+        rename = "delta_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub delta_receipt: Option<String>,
 }
 
 /// `oneiron::blob_artifact::family::VersionReconciliation`.
@@ -56111,6 +55630,8 @@ pub enum LlmStreamEvent {
         name: String,
         #[serde(rename = "input")]
         input: crate::WireJson,
+        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
     #[serde(rename = "tool_result_start")]
     ToolResultStart {
@@ -61628,6 +61149,18 @@ pub enum TranscriptIngestOutcome {
         #[serde(rename = "open_session_ref")]
         open_session_ref: String,
     },
+    #[serde(rename = "hook_pending")]
+    HookPending {
+        #[serde(rename = "session_ref")]
+        session_ref: String,
+        #[serde(rename = "ask")]
+        ask: String,
+    },
+    #[serde(rename = "queued")]
+    Queued {
+        #[serde(rename = "attempt_ref")]
+        attempt_ref: String,
+    },
     #[serde(rename = "note_fallback")]
     NoteFallback {
         #[serde(rename = "note_ref")]
@@ -63634,8 +63167,8 @@ pub struct EsignSigningRequest {
 pub enum FieldControl {
     #[serde(rename = "text")]
     Text {
-        #[serde(rename = "max_bytes")]
-        max_bytes: u32,
+        #[serde(rename = "max_bytes", default, skip_serializing_if = "Option::is_none")]
+        max_bytes: Option<u32>,
         #[serde(rename = "server_computed")]
         server_computed: bool,
     },
@@ -63685,6 +63218,24 @@ pub struct SigningPage {
     pub values: std::collections::HashMap<String, SignatureRow>,
 }
 
+/// `oneiron_store::blob_artifact::esign::sealer::SealActiveContentFacts`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SealActiveContentFacts {
+    #[serde(rename = "javascript")]
+    pub javascript: bool,
+    #[serde(rename = "launch")]
+    pub launch: bool,
+}
+
+/// `oneiron::blob_artifact::esign::ceremony::SigningSealedItem`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SigningSealedItem {
+    #[serde(rename = "sha256")]
+    pub sha256: String,
+    #[serde(rename = "active_content")]
+    pub active_content: SealActiveContentFacts,
+}
+
 /// `oneiron::blob_artifact::esign::ceremony::SigningOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "outcome", content = "data")]
@@ -63699,6 +63250,12 @@ pub enum SigningOutcome {
         status: DocumentStatus,
         #[serde(rename = "item_count")]
         item_count: u64,
+        #[serde(
+            rename = "sealed_items",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        sealed_items: Option<Vec<SigningSealedItem>>,
     },
     #[serde(rename = "awaiting_seal")]
     AwaitingSeal,
@@ -63829,6 +63386,8 @@ pub struct EsignSealedItemView {
     pub sha256: String,
     #[serde(rename = "profile")]
     pub profile: SealProfileEvidence,
+    #[serde(rename = "active_content")]
+    pub active_content: SealActiveContentFacts,
 }
 
 /// `oneiron::blob_artifact::esign::door::EsignSealedView`.
@@ -69217,6 +68776,8 @@ pub struct WakeRecipeJobView {
 pub enum WakeOutcomeState {
     #[serde(rename = "running")]
     Running,
+    #[serde(rename = "awaiting_host")]
+    AwaitingHost,
     #[serde(rename = "succeeded")]
     Succeeded,
     #[serde(rename = "partial")]
@@ -69463,6 +69024,8 @@ pub struct WakeRecipePolicy {
     pub arc_min_new_statements: u32,
     #[serde(rename = "arc_child_calls_per_wake")]
     pub arc_child_calls_per_wake: u32,
+    #[serde(rename = "arc_synopsis_enabled")]
+    pub arc_synopsis_enabled: bool,
     #[serde(rename = "audit_window_instruction")]
     pub audit_window_instruction: String,
     #[serde(rename = "follower_enabled")]
@@ -70175,6 +69738,12 @@ pub struct ChannelIdentityLifecycleReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub request_ref: Option<String>,
+    #[serde(
+        rename = "paced_until",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub paced_until: Option<u64>,
 }
 
 /// `oneiron::channel_identity::custody::DelegatedGrantScope`.
@@ -71322,6 +70891,12 @@ pub struct ForkRecord {
     pub read_refs: Vec<String>,
     #[serde(rename = "keep", default, skip_serializing_if = "Option::is_none")]
     pub keep: Option<String>,
+    #[serde(
+        rename = "delta_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub delta_receipt: Option<String>,
 }
 
 /// `oneiron::entity_doc::forks::ProposalBundle`.
@@ -74089,6 +73664,14 @@ pub enum RepoManifestConflictDiscardView {
     Stale,
     #[serde(rename = "window_live")]
     WindowLive,
+}
+
+/// `oneiron::verbs::follower_keyframe::DreamerFollowerKeyframeResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DreamerFollowerKeyframeResult {
+    #[serde(rename = "sessions_marked")]
+    pub sessions_marked: u64,
 }
 
 /// `oneiron::code_run::dispatcher::connector_answer::ConnectorAnswerAction`.

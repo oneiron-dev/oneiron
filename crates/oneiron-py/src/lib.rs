@@ -5571,6 +5571,21 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_consent_create_nightly_link_grant(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.consent.create_nightly_link_grant")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.consent.create_nightly_link_grant", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_consent_registry(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.consent.registry")?;
         let output = py
@@ -6690,6 +6705,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_proposal_rereview(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.proposal_rereview")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.proposal_rereview", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_conflict_record(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.code.conflict_record")?;
         let output = py
@@ -6708,6 +6730,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.code.proposal_resolve")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.code.proposal_resolve", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_proposal_resolve_rereview(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.proposal_resolve_rereview")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.proposal_resolve_rereview", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }
@@ -7040,6 +7076,16 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.code.origin.publish.cancel", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_devices_predecessor_name(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.devices.predecessor.name")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.devices.predecessor.name", input)
             })
             .map_err(raise)?;
         encode(&output)
@@ -11580,6 +11626,20 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.sync.repo_manifests.conflict.discard", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_dreamer_follower_keyframe(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.dreamer.follower.keyframe")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.dreamer.follower.keyframe", input)
             })
             .map_err(raise)?;
         encode(&output)
