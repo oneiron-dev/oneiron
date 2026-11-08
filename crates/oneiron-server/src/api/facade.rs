@@ -84,6 +84,7 @@ mod decision_ask_doors;
 mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod deck_creation_doors;
+mod device_succession_doors;
 mod disclosure_doors;
 #[path = "facade/generated/dispatch.rs"]
 mod dispatch;
@@ -170,6 +171,8 @@ mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
 pub(super) mod role_picks;
+// FIX 13274: the owner reviews and settles a retained document-copy edit.
+mod repo_copy_edit_doors;
 mod root_request_doors;
 mod run_read_doors;
 mod run_review_doors;

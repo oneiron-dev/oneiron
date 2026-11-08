@@ -419,6 +419,8 @@ vaultFederationBurstBaseline(input: unknown): unknown
 vaultFederationBurstPolicy(input: unknown): unknown
 vaultFederationBurstPolicySet(input: unknown): unknown
 vaultSyncQuarantineHeldEdits(input: unknown): unknown
+vaultSyncDocumentsCopyEditReview(input: unknown): unknown
+vaultSyncDocumentsCopyEditSettle(input: unknown): unknown
 vaultSyncRetainedWorkWaitSet(input: unknown): unknown
 vaultFederationBurstIngress(input: unknown): unknown
 vaultFederationBurstDisposition(input: unknown): unknown
@@ -596,11 +598,14 @@ vaultPolicyOwnerRowChange(input: unknown): unknown
 vaultPolicyOutboundDecide(input: unknown): unknown
 vaultPolicyRelayDecide(input: unknown): unknown
 vaultConsentApproveOnce(input: unknown): unknown
+vaultCampaignHeld(input: unknown): unknown
+vaultCampaignApproveOnce(input: unknown): unknown
 vaultConnectorsCallsApproveOnce(input: unknown): unknown
 vaultConnectorsRepliesRetryFailed(input: unknown): unknown
 vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
 vaultConsentCreateAutoWeaveGrant(input: unknown): unknown
+vaultConsentCreateNightlyLinkGrant(input: unknown): unknown
 vaultConsentRegistry(input: unknown): unknown
 vaultConsentFailureSignalsHeld(input: unknown): unknown
 vaultConsentRevoke(input: unknown): unknown
@@ -728,9 +733,11 @@ vaultCodeSymbolsDeclare(input: unknown): unknown
 vaultCodeSymbolsRenew(input: unknown): unknown
 vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
+vaultCodeProposalRereview(input: unknown): unknown
 vaultCodeConflictRecord(input: unknown): unknown
 vaultCodeConflictView(input: unknown): unknown
 vaultCodeProposalResolve(input: unknown): unknown
+vaultCodeProposalResolveRereview(input: unknown): unknown
 vaultCodeProposalReview(input: unknown): unknown
 vaultCodeProposalSettle(input: unknown): unknown
 vaultCodeProposalSettlement(input: unknown): unknown
@@ -770,6 +777,7 @@ vaultCodeOriginPublishGet(input: unknown): unknown
 vaultCodeOriginPublishApprove(input: unknown): unknown
 vaultCodeOriginPublishExecute(input: unknown): unknown
 vaultCodeOriginPublishCancel(input: unknown): unknown
+vaultDevicesPredecessorName(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
@@ -1238,6 +1246,7 @@ vaultNotesCreate(input: unknown): unknown
 vaultNotesAuthorTake(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
+vaultNotesReadIndexed(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown
 vaultNotesFork(input: unknown): unknown
 vaultNotesForksRead(input: unknown): unknown
