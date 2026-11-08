@@ -17,6 +17,7 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::EntityId;
 use oneiron::llm::decision::{DecisionAnswer, DecisionAsk, HostRule};
+use oneiron::outbound_intent_ledger::RemoteTaskInputChoice;
 use serde::Deserialize;
 
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
@@ -183,6 +184,15 @@ async fn answer(
         server
             .vault()
             .press_pack_setup_allow(&owner, request.seq, &request.answer)?;
+        // A background MCP task's parked question takes the owner's Decline
+        // or Cancel on its own ask first (FIX 16029, L06-A); a press that
+        // fails records no answer, so the ask stays open. An ask that is not
+        // a parked question's passes on unchanged.
+        if let Some(choice) = RemoteTaskInputChoice::of_answer(&request.answer) {
+            server
+                .vault()
+                .press_remote_task_input_ask(&owner, request.seq, choice)?;
+        }
         asks.answer_with_reason(
             &owner,
             request.seq,

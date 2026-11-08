@@ -81,6 +81,21 @@ pub(crate) fn record_settlement_in_txn(
     )? {
         return Ok(());
     }
+    let (position, row) = prepare_settlement_in_txn(vault, txn, fact)?;
+    SETTLED.put(
+        &vault.store,
+        txn,
+        &position.0,
+        &SettlementFeedRow::Settled(row),
+    )?;
+    SETTLED_NEXT.put(&vault.store, txn, &(), &position.0)
+}
+
+fn prepare_settlement_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    fact: SettledFact,
+) -> Result<(SettlementPosition, SettledRow)> {
     let last = SETTLED_NEXT.get(&vault.store, txn, &())?.unwrap_or(0);
     let sequence = last
         .checked_add(1)
@@ -97,13 +112,7 @@ pub(crate) fn record_settlement_in_txn(
         body_hash,
         recorded_at: vault.store.clock.now_recorded_at(),
     };
-    SETTLED.put(
-        &vault.store,
-        txn,
-        &sequence,
-        &SettlementFeedRow::Settled(row),
-    )?;
-    SETTLED_NEXT.put(&vault.store, txn, &(), &sequence)
+    Ok((SettlementPosition(sequence), row))
 }
 
 /// The actor a critical-confirm timeout demotion settles as (FIX 1093): no
@@ -141,12 +150,21 @@ pub(super) fn settlements_after(
     max_entries: usize,
 ) -> Result<SourceBatch> {
     let rtxn = vault.store.env.read_txn()?;
+    settlements_after_in_txn(vault, &rtxn, after, max_entries)
+}
+
+pub(super) fn settlements_after_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    after: Option<SettlementPosition>,
+    max_entries: usize,
+) -> Result<SourceBatch> {
     let start = after
         .as_ref()
         .map_or(Bound::Unbounded, |position| Bound::Excluded(&position.0));
     let mut batch = SourceBatch::default();
     for (scanned, row) in SETTLED
-        .iter_range(&vault.store, &rtxn, start, Bound::Unbounded)?
+        .iter_range(&vault.store, txn, start, Bound::Unbounded)?
         .enumerate()
     {
         if scanned >= max_entries {
@@ -159,35 +177,50 @@ pub(super) fn settlements_after(
         let SettlementFeedRow::Settled(settled) = row else {
             continue;
         };
-        let revision = match settled.body_hash.as_ref() {
-            Some(body_hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
-                vault,
-                &rtxn,
-                &settled.proposal,
-                body_hash,
-            )?,
-            None => None,
-        };
-        batch.entries.push(FactEntry {
-            position,
-            kind: FactKind::ProposalSettled,
-            entity: settled.proposal,
-            op: FactOp::Settle,
-            actor: settled.settled_by,
-            recorded_at: settled.recorded_at,
-            input_hash: settled.input_hash(),
-            body_hash: settled.body_hash,
-            revision,
-            settlement: Some(SettlementDetails {
-                kind: settled.kind,
-                outcome: settled.outcome,
-            }),
-            predicate: None,
-            tick: None,
-            surface: None,
-        });
+        batch.entries.push(settlement_fact_in_txn(
+            vault,
+            txn,
+            SettlementPosition(sequence),
+            &settled,
+        )?);
     }
     Ok(batch)
+}
+
+fn settlement_fact_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    position: SettlementPosition,
+    settled: &SettledRow,
+) -> Result<FactEntry> {
+    let position = FactPosition::Settlement(position);
+    let revision = match settled.body_hash.as_ref() {
+        Some(body_hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
+            vault,
+            txn,
+            &settled.proposal,
+            body_hash,
+        )?,
+        None => None,
+    };
+    Ok(FactEntry {
+        position,
+        kind: FactKind::ProposalSettled,
+        entity: settled.proposal,
+        op: FactOp::Settle,
+        actor: settled.settled_by,
+        recorded_at: settled.recorded_at,
+        input_hash: settled.input_hash(),
+        body_hash: settled.body_hash,
+        revision,
+        settlement: Some(SettlementDetails {
+            kind: settled.kind,
+            outcome: settled.outcome,
+        }),
+        predicate: None,
+        tick: None,
+        surface: None,
+    })
 }
 
 /// The newest settlement position, or `None` while the feed is empty, in
