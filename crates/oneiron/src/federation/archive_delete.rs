@@ -320,7 +320,8 @@ fn owned_by(
 /// `delete` class in its explicit verb set, holds the record, was given by
 /// a live owner (an owner's agent Grant) or by a person still holding an
 /// Admin grant that holds the record (a Delegate), and on a shared vault
-/// keeps its pact membership. Grants are never unioned.
+/// keeps its pact membership. Grants are never unioned. On an owner's agent
+/// Grant, a verb class it names that admits `delete` lists it (FIX 8735).
 fn agent_arm(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -336,14 +337,24 @@ fn agent_arm(
     let now = vault.instant_in_txn(txn)?.secs();
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let shared = vault.shared_vault_creation_in_txn(txn)?.is_some();
-    for (id, grant) in live_grants_in(vault, txn)? {
+    let grants = live_grants_in(vault, txn)?;
+    let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
+        &vault.store,
+        txn,
+        grants
+            .iter()
+            .filter(|(_, grant)| grant.member_ref == caller.actor)
+            .map(|(_, grant)| grant),
+    )?;
+    for (id, grant) in grants {
+        let scope = grant.scope_for_verb(DELETE_VERB, &classes);
         if grant.member_ref != caller.actor
             || grant.role != FederationGrantRole::Delegate
-            || !grant.confers_at(now)
-            || !names_delete(&grant.authority_scope)
-            || !grant.authority_scope.admits(
+            || !grant.confers_with_classes_at(now, &classes)
+            || !names_delete(&scope)
+            || !scope.admits(
                 DELETE_VERB,
-                &delete_record(&any_world_at(position, &grant.authority_scope.worlds)),
+                &delete_record(&any_world_at(position, &scope.worlds)),
                 &Scope::top(),
             )
         {
