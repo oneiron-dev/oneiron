@@ -160,6 +160,9 @@ struct StageMeter {
     xxh32: xxhash_rust::xxh32::Xxh32,
     len: u64,
     head: Vec<u8>,
+    /// The first byte past JSON whitespace: a birth source's marker needs an
+    /// object or an array there, whatever bytes its strings hold.
+    lead: Option<u8>,
     utf8: Utf8Stream,
     /// The result body store's write-door rules over a body as it streams.
     secrets: SecretScan,
@@ -174,6 +177,7 @@ impl StageMeter {
             xxh32: xxhash_rust::xxh32::Xxh32::new(0),
             len: 0,
             head: Vec::with_capacity(HEAD_BYTES),
+            lead: None,
             utf8: Utf8Stream::default(),
             secrets: SecretScan::default(),
             known: known.map(KnownStreamFinder::new),
@@ -186,6 +190,12 @@ impl StageMeter {
         self.len = self.len.saturating_add(bytes.len() as u64);
         let room = HEAD_BYTES.saturating_sub(self.head.len());
         self.head.extend_from_slice(&bytes[..room.min(bytes.len())]);
+        if self.lead.is_none() {
+            self.lead = bytes
+                .iter()
+                .copied()
+                .find(|byte| !matches!(byte, b' ' | b'\n' | b'\t' | b'\r'));
+        }
         self.utf8.feed(bytes);
         self.secrets.feed(bytes);
         if let Some(known) = &mut self.known {
@@ -194,12 +204,13 @@ impl StageMeter {
     }
 
     /// The body's facts, what its stream shows it, whether it is UTF-8
-    /// text, and the values custody holds that it carries. A body an owning
+    /// text, whether a JSON object or array opens it, and the values custody
+    /// holds that it carries. A body an owning
     /// adapter's tag leads is a carrier ([`StreamShape::Carrier`]); one with
     /// UTF-8 text in it, or a hit of the write door's stream rules, is
     /// interpreted ([`StreamShape::Interpreted`]); any other is as its head
     /// shows it ([`stream_shape`]).
-    fn finish(mut self) -> (AssetBodyFacts, StreamShape, bool, StreamKnown) {
+    fn finish(mut self) -> (AssetBodyFacts, StreamShape, bool, bool, StreamKnown) {
         let facts = AssetBodyFacts {
             blake3: *self.hasher.finalize().as_bytes(),
             len: self.len,
@@ -207,10 +218,11 @@ impl StageMeter {
         };
         let text = self.utf8.text();
         let shape = stream_shape(&self.head, text, self.secrets.finish().is_some());
+        let json = matches!(self.lead, Some(b'{' | b'['));
         let known = self
             .known
             .map_or_else(StreamKnown::default, KnownStreamFinder::finish);
-        (facts, shape, text, known)
+        (facts, shape, text, json, known)
     }
 }
 
@@ -311,8 +323,15 @@ fn judge_messagepack(file: &BodyFile, len: u64) -> Result<Judged> {
             },
         );
     }
-    // No keyed map leads it: what the whole-body test still reads is whether
-    // an owning adapter (a pack source's marker) reads it: a carrier file.
+    // No string-keyed map leads it: what the whole-body test still reads is
+    // whether an owning adapter reads it, a shape seed's or a pack source's
+    // marker in any field-name form: a carrier file.
+    if crate::vault_shape::names_shape_seed(io::BufReader::with_capacity(
+        LINE_INDEX_BLOCK_BYTES as usize,
+        FileFromStart::new(file, len),
+    )) {
+        return Ok(Judged::File(AssetFileKind::Carrier));
+    }
     let attaches = crate::serialize::attaches_as_file_read(
         ENTITY_TYPE_ASSET,
         &mut FileFromStart::new(file, len),
@@ -324,9 +343,10 @@ fn judge_messagepack(file: &BodyFile, len: u64) -> Result<Judged> {
     }))
 }
 
-/// Whether a staged text body is what an agent's birth source decoder reads
-/// as one, valid or not, read through as it does: a carrier file its
-/// validator and readers read whole (FIX 22075, 22091).
+/// Whether a staged body a JSON object or array opens is what an agent's
+/// birth source decoder reads as one, valid or not, read through as it does
+/// and whatever bytes its strings hold: a carrier file its validator and
+/// readers read whole (FIX 22075, 22091).
 fn names_birth_source(file: &BodyFile, len: u64) -> bool {
     crate::agent_def::is_birth_source_candidate(io::BufReader::with_capacity(
         LINE_INDEX_BLOCK_BYTES as usize,
@@ -565,7 +585,7 @@ impl crate::Vault {
                 spill = Some(opened);
             }
         }
-        let (facts, shape, text, known) = meter.finish();
+        let (facts, shape, text, json, known) = meter.finish();
         let staged = |body| StagedAssetBody {
             facts,
             mime: mime.map(str::to_owned),
@@ -592,14 +612,18 @@ impl crate::Vault {
             held.read_range(0, len)
         };
         let kind = match shape {
+            StreamShape::Opaque | StreamShape::Interpreted
+                if ASSET_FILE_PLANE
+                    && mint.is_some()
+                    && json
+                    && names_birth_source(&held, facts.len) =>
+            {
+                AssetFileKind::Carrier
+            }
             StreamShape::Opaque if ASSET_FILE_PLANE && mint.is_some() => AssetFileKind::Opaque,
             StreamShape::Carrier if ASSET_FILE_PLANE && mint.is_some() => AssetFileKind::Carrier,
             StreamShape::Interpreted if ASSET_FILE_PLANE && mint.is_some() => {
-                if text && names_birth_source(&held, facts.len) {
-                    AssetFileKind::Carrier
-                } else {
-                    AssetFileKind::Interpreted
-                }
+                AssetFileKind::Interpreted
             }
             StreamShape::MessagePack if ASSET_FILE_PLANE && mint.is_some() => {
                 match judge_messagepack(&held, facts.len)
