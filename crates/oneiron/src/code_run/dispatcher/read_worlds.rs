@@ -65,20 +65,31 @@ impl Drop for ReadWorldEntry<'_, '_> {
 }
 
 impl<'a> HostSelfDispatcher<'a> {
-    /// Declares the run's task its caller's own text (FIX 6130), as an MCP
-    /// `execute_code` caller's is: no row of the vault wrote it. A run whose
-    /// host builds its task declares nothing, and its ledger never reads
-    /// complete, since that task may carry rows no capture noted.
+    /// Declares `task` the caller's own text for `run` (FIX 6130, FIX 7087),
+    /// as an MCP `execute_code` caller's is: no row of the vault wrote it.
+    /// The declaration covers that exact text only. An entry of `run` whose
+    /// task is not exactly `task`, such as one its host added to, still marks
+    /// the host task. A run whose host builds its task declares nothing, and
+    /// its ledger never reads complete, since that task may carry rows no
+    /// capture noted. Every other cause the run meets marks the ledger as
+    /// before. A self-written summary that wore the run's home marks it when
+    /// it lands (FIX 7087).
     #[must_use]
-    pub fn with_caller_task(mut self) -> Self {
-        self.caller_task = true;
+    pub fn with_caller_task(mut self, run: EntityId, task: &str) -> Self {
+        self.caller_task = Some((run, task.to_owned()));
         self
     }
 
-    /// Enters a capture epoch of `run`'s ledger for one entry of the run.
-    pub(crate) fn enter_read_worlds(&self, run: EntityId) -> ReadWorldEntry<'_, 'a> {
+    /// Enters a capture epoch of `run`'s ledger for one entry of the run,
+    /// which runs `task`. Only a task its host declared the caller's own,
+    /// byte for byte, is spared the host-task mark (FIX 7087).
+    pub(crate) fn enter_read_worlds(&self, run: EntityId, task: &str) -> ReadWorldEntry<'_, 'a> {
         self.read_worlds.set(self.opened(run));
-        if !self.caller_task {
+        let declared = self
+            .caller_task
+            .as_ref()
+            .is_some_and(|(caller_run, caller_task)| *caller_run == run && caller_task == task);
+        if !declared {
             self.read_worlds_unknown(run, ReadWorldUnknown::HostTask);
         }
         ReadWorldEntry { dispatcher: self }
