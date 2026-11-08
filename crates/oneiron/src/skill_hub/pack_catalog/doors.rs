@@ -32,7 +32,13 @@ impl Vault {
             if !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live() {
                 return Err(invalid("source is deleted; explicit restore required"));
             }
-            if header.entity_type != ENTITY_TYPE_ASSET || raw[ENTITY_METADATA_HEADER_LEN..] != bytes
+            if header.entity_type != ENTITY_TYPE_ASSET
+                || *crate::store::asset_carrier_body_in_txn(
+                    &self.store,
+                    txn,
+                    &id,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                )? != *bytes
             {
                 return Err(invalid("source identity collision"));
             }
@@ -67,7 +73,13 @@ impl Vault {
         if header.entity_type != ENTITY_TYPE_ASSET {
             return Ok(None);
         }
-        let source = codec::decode(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let body = crate::store::asset_carrier_body_in_txn(
+            &self.store,
+            txn,
+            id,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        let source = codec::decode(&body)?;
         if let Some(source) = &source
             && codec::source_id(source)? != *id
         {
@@ -119,7 +131,13 @@ impl Vault {
             if header.entity_type != ENTITY_TYPE_ASSET {
                 return Err(invalid("source index type drift"));
             }
-            if let Some(source) = codec::decode(&raw[ENTITY_METADATA_HEADER_LEN..])? {
+            let body = crate::store::asset_carrier_body_in_txn(
+                &self.store,
+                txn,
+                &id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            if let Some(source) = codec::decode(&body)? {
                 if codec::source_id(&source)? != id {
                     return Err(invalid("stored source identity drift"));
                 }

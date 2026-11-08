@@ -130,8 +130,11 @@ pub(super) fn stage_put_projections(
             )?;
         }
     }
-    crate::agent_def::stage_birth_custody_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;
-    crate::receipt::stage_receipt_archive_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;
+    // An owning adapter's custody reads what a body file holds, never its
+    // manifest (FIX 22091).
+    let carrier = fixed.file_body.unwrap_or(data);
+    crate::agent_def::stage_birth_custody_put(write, wtxn, &fixed.id, fixed.entity_type, carrier)?;
+    crate::receipt::stage_receipt_archive_put(write, wtxn, &fixed.id, fixed.entity_type, carrier)?;
     crate::receipt::stage_receipt_record_index(store, wtxn, &fixed.id, fixed.entity_type, data)?;
 
     if let Some(plan) = short_id_plan {

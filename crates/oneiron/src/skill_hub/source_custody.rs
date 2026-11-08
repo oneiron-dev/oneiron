@@ -193,7 +193,13 @@ fn retire_revision(
         if header.entity_type != ENTITY_TYPE_ASSET {
             return Err(Error::CorruptedIndex("source custody carrier type"));
         }
-        let (bound_holder, package) = decode_source_carrier(&raw[ENTITY_METADATA_HEADER_LEN..])
+        let body = crate::store::asset_carrier_body_in_txn(
+            store,
+            txn,
+            &carrier,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        let (bound_holder, package) = decode_source_carrier(&body)
             .map_err(|_| Error::CorruptedIndex("source custody carrier body"))?
             .ok_or(Error::CorruptedIndex("source custody carrier body"))?;
         if bound_holder != *holder
@@ -256,10 +262,19 @@ pub(crate) fn remove_source_custody_in_txn(
     if let Some(raw) = &raw {
         let header = EntityMetadataHeader::parse(raw)
             .ok_or(Error::CorruptedIndex("source delete header"))?;
-        if header.entity_type == ENTITY_TYPE_ASSET
-            && let Some((holder, package)) =
-                decode_source_carrier(&raw[ENTITY_METADATA_HEADER_LEN..])
-                    .map_err(|_| Error::CorruptedIndex("source delete body"))?
+        let body = if header.entity_type == ENTITY_TYPE_ASSET {
+            Some(crate::store::asset_carrier_body_in_txn(
+                store,
+                txn,
+                id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?)
+        } else {
+            None
+        };
+        if let Some(body) = &body
+            && let Some((holder, package)) = decode_source_carrier(body)
+                .map_err(|_| Error::CorruptedIndex("source delete body"))?
         {
             let hash = package.content_hash()?;
             if source_carrier_id(&holder, &hash)? != *id {

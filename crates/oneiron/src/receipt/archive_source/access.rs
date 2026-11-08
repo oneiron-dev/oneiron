@@ -121,7 +121,12 @@ impl Vault {
                 let head = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("receipt source existing header"))?;
                 if head.entity_type != ENTITY_TYPE_ASSET
-                    || decode(&raw[ENTITY_METADATA_HEADER_LEN..])? != Some(archive)
+                    || decode(&crate::store::asset_carrier_body_in_txn(
+                        &self.store,
+                        txn,
+                        &id,
+                        &raw[ENTITY_METADATA_HEADER_LEN..],
+                    )?)? != Some(archive)
                 {
                     return Err(invalid());
                 }

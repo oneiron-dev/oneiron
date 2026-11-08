@@ -2,16 +2,54 @@
 //! reader that streams a body file, checked as it is read, and the
 //! materializing readers the whole-body doors keep.
 
+use std::borrow::Cow;
 use std::io::Read;
 
 use heed::RoTxn;
 
-use super::{AssetFileManifest, CheckedAssetBody, asset_file_of_raw_in_txn};
+use super::{
+    AssetFileKind, AssetFileManifest, CheckedAssetBody, asset_file_in_txn, asset_file_of_raw_in_txn,
+};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ASSET;
+use crate::store::Store;
+
+/// The bytes an owning adapter reads in ASSET `id`'s stored body `body`
+/// (its row after the metadata header), whichever plane holds them (FIX
+/// 22091): an inline body as it is, whatever its bytes; a carrier's body
+/// file ([`AssetFileKind::Carrier`]) read whole and checked against its
+/// manifest's length and BLAKE3, through the key row `txn` names. Any other
+/// body file comes back as its stored manifest, which no adapter's decoder
+/// takes for a carrier: a reader that walks every ASSET reads no file that
+/// holds none. This is storage, not a read grant: the caller has admitted
+/// the row.
+///
+/// The caller holds what a file read needs: a writer, whose snapshot keeps
+/// the file, or a read transaction opened under the custody guard after
+/// the result bodies were pinned ([`crate::Vault::pin_all_result_bodies`]).
+///
+/// # Errors
+///
+/// [`crate::error::Error::CorruptedIndex`] when the row's descriptor and
+/// manifest disagree; a missing file, one whose bytes disagree with its
+/// manifest, and storage and filesystem errors.
+pub(crate) fn asset_carrier_body_in_txn<'b>(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    body: &'b [u8],
+) -> Result<Cow<'b, [u8]>> {
+    let Some(manifest) = asset_file_in_txn(store, txn, id, body)?
+        .filter(|manifest| manifest.kind == AssetFileKind::Carrier)
+    else {
+        return Ok(Cow::Borrowed(body));
+    };
+    let key = crate::store::body_key_row_in_txn(store, txn, &manifest.facts.blake3)?;
+    CheckedAssetBody::read_all(&store.body_dir()?, &manifest.facts, key.as_ref()).map(Cow::Owned)
+}
 
 impl crate::Vault {
     /// The whole body `manifest` names, read from its file and checked, as
