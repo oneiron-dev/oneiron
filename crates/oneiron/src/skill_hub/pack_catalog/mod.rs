@@ -4,7 +4,7 @@ mod agent_admission;
 mod agent_facets;
 mod builtin;
 pub use builtin::CheckedBuiltinConnection;
-pub(crate) use builtin::seed_builtin_packs;
+pub(crate) use builtin::{builtin_pack_seed_ids, seed_builtin_packs};
 mod codec;
 mod doors;
 mod hooks;
@@ -29,9 +29,9 @@ pub use agent_facets::AgentPackFacets;
 pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
 pub(crate) use hooks::is_hook_binding;
 pub use hooks::{
-    FOREIGN_SKILL_PUBLISHER, HookActorClass, HookAuthor, HookOutcomeKind, HookPhase,
-    HookRenderClass, HookSelector, HookWidening, PackHook, PackHookBinding, PackHookProposal,
-    PackHookProposalStatus,
+    FOREIGN_SKILL_PUBLISHER, HookActorClass, HookAuthor, HookGoldenExpect, HookGoldenInput,
+    HookOutcomeKind, HookPhase, HookRenderClass, HookSelector, HookWidening, PackHook,
+    PackHookBinding, PackHookProposal, PackHookProposalStatus,
 };
 pub use hub_install::hub_pin;
 pub use import_notice::PackImportPreview;
@@ -40,6 +40,7 @@ pub use lenses::{
     WEAVE_REPORT_LENS, weave_lens_pack_files,
 };
 pub use local::LOCAL_PACK_NAME;
+pub(crate) use local::PreparedPackPut;
 pub use manifest::{PackAdapter, PackKind, PackManifest};
 pub use migrations::PackMigration;
 pub(crate) use model_pack::AdmittedModelPacks;
@@ -90,8 +91,9 @@ mod route_halt;
 #[cfg(test)]
 pub(in crate::skill_hub) use bundled_skills::pack_skill_hub_ref;
 pub use qualify::{
-    BuiltinProbeQualifier, ConnectorPackQualification, PackConnectorReceipt, PackHookQualification,
-    PackHookReplay, ProbePackQualifier, QualifiedPackFitPolicy, SetupCheckQualifier,
+    BuiltinProbeQualifier, ConnectorPackQualification, PackConnectorReceipt, PackHookGoldenRun,
+    PackHookQualification, PackHookReplay, ProbePackQualifier, QualifiedPackFitPolicy,
+    SetupCheckQualifier,
 };
 mod schema;
 mod screening;
