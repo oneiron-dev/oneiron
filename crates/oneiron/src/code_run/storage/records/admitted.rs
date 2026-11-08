@@ -165,6 +165,31 @@ impl Vault {
         sources: &[EntityId],
         receipt: Option<(&mut CodeRunReplayRecord, &mut CodeRunReplayGeneration)>,
     ) -> Result<ReplyBody> {
+        self.publish_admitted_code_run_output_and(
+            path,
+            spool,
+            complete,
+            owner,
+            sources,
+            receipt,
+            |_, _| Ok(()),
+        )
+    }
+
+    /// Publishes the admitted occurrence and `also`'s rows in the SAME writer.
+    /// The callback runs once, after mint retries and only for a placed body.
+    /// Its reply sources (FIX 18924) and a supplied write receipt's manifest
+    /// commit in that writer too.
+    pub(crate) fn publish_admitted_code_run_output_and(
+        &self,
+        path: String,
+        spool: BodySink,
+        complete: bool,
+        owner: EntityId,
+        sources: &[EntityId],
+        receipt: Option<(&mut CodeRunReplayRecord, &mut CodeRunReplayGeneration)>,
+        also: impl FnOnce(&mut heed::RwTxn<'_>, &CodeRunRawOutput) -> Result<()>,
+    ) -> Result<ReplyBody> {
         let reply = ReplySpool::of(spool, owner, &path, self.code_result_inline_bytes())?;
         let mut reserved = reply.reserves();
         loop {
@@ -191,6 +216,7 @@ impl Vault {
                 &reply.occurrence,
                 sources,
             )?;
+            also(&mut wtxn, &finished.output)?;
             if let Some((receipt, generation)) = receipt {
                 let current = REPLAY_RECORDS.get(&self.store, &wtxn, &receipt.run_id)?;
                 replay_generation_matches(current.as_ref(), Some(*generation))?;

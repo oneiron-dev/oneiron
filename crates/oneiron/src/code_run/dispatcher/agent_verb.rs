@@ -29,7 +29,7 @@ use crate::runtime_hooks::VerbHookStop;
 use crate::task_verb::sdk::AgentVerb;
 use serde::{Deserialize, Serialize};
 
-use super::{ExecutorCallSite, HostSelfDispatcher};
+use super::{ExecutorCallSite, ExecutorReply, HostSelfDispatcher};
 
 use self::receipts::{
     KEPT_ANSWER_REFUSED, KeptWrite, MEDIA_STEP_TRAPPED, PROVIDER_UNAVAILABLE, VERB_HOOK_HIDDEN,
@@ -168,7 +168,7 @@ impl HostSelfDispatcher<'_> {
                 {
                     self.note_program_write_uncertain(write);
                 }
-                return self.kept_write_answer(Some(&**door), *receipt, call);
+                return self.kept_write_answer(Some(&**door), *receipt, call, site);
             }
             KeptWrite::Fresh(stopped) => stopped,
         };
@@ -182,7 +182,7 @@ impl HostSelfDispatcher<'_> {
             Some(consent_site) => origin.with_code_consent(consent_site.clone()),
             None => origin,
         };
-        let outcome = match self.program_door_call(&**door, &call, &origin, invocation) {
+        let mut outcome = match self.program_door_call(&**door, &call, &origin, invocation) {
             // A held connector call parks before its receipt keeps it, so a
             // resumed step parks on the same call again: on its code consent
             // wait when one was bound to it, else on the call itself.
@@ -251,31 +251,77 @@ impl HostSelfDispatcher<'_> {
             }
             Err(error) => return Err(error),
         };
-        let mut outcome = outcome;
-        stored_answer::store(
-            &self.storage,
-            site.run_id,
-            &mut receipt,
-            &mut generation,
-            &mut outcome,
-        )?;
-        // A receipt keeps its call's answer as its record's first row.
-        receipt.bridge_calls.push(CodeRunBridgeCall::record(
-            0,
-            &SelfCall::AgentVerb(call),
-            &outcome,
-            0,
-            0,
-        )?);
-        self.put_write_receipt(
-            &receipt,
-            Some(generation),
-            program.as_ref(),
-            true,
-            site.run_id,
-        )?;
+        // Only a delivered connector reply spills here. Holds already parked;
+        // questions and self.use's outer envelope keep their existing paths.
+        let published = match (&mut outcome, site.reply_publisher) {
+            (SelfDispatchOutcome::AgentVerb(answer), Some(publisher))
+                if call.verb == AgentVerb::ConnectorCall
+                    && answer.output.get("outcome").and_then(Value::as_str)
+                        == Some("delivered") =>
+            {
+                // Every field of the answer but its output, which the
+                // publisher replaces with the stored body's card: the large
+                // reply is never cloned.
+                let output = std::mem::take(&mut answer.output);
+                let template = AgentVerbAnswer {
+                    stored_output: None,
+                    ..answer.clone()
+                };
+                answer.output = output;
+                publisher.publish(&mut answer.output, &mut |wtxn, card, reply| {
+                    let answer = SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
+                        output: card.clone(),
+                        ..template.clone()
+                    });
+                    let mut row = CodeRunBridgeCall::record(
+                        0,
+                        &SelfCall::AgentVerb(call.clone()),
+                        &answer,
+                        0,
+                        0,
+                    )?;
+                    reply.keep(&mut row.outcome)?;
+                    receipt.bridge_calls.push(row);
+                    self.put_write_receipt_in_txn(wtxn, &receipt, generation, program.as_ref())?;
+                    Ok(())
+                })?
+            }
+            _ => None,
+        };
+        // A placed body already committed its receipt in the publishing writer.
+        // Inline and unplaceable answers keep their original receipt path; a
+        // large answer of any other write is stored before its receipt (#5996).
+        if published.is_none() {
+            stored_answer::store(
+                &self.storage,
+                site.run_id,
+                &mut receipt,
+                &mut generation,
+                &mut outcome,
+            )?;
+            // A receipt keeps its call's answer as its record's first row.
+            receipt.bridge_calls.push(CodeRunBridgeCall::record(
+                0,
+                &SelfCall::AgentVerb(call),
+                &outcome,
+                0,
+                0,
+            )?);
+            self.put_write_receipt(
+                &receipt,
+                Some(generation),
+                program.as_ref(),
+                true,
+                site.run_id,
+            )?;
+        }
         // The replay row is persisted; the door releases what the answer held (FIX 10633).
         door.answer_recorded();
+        if let (Some(reply), Some(publisher), SelfDispatchOutcome::AgentVerb(answer)) =
+            (published, site.reply_publisher, &outcome)
+        {
+            publisher.adopt(reply, &answer.output)?;
+        }
         Ok(outcome)
     }
 
@@ -294,6 +340,7 @@ impl HostSelfDispatcher<'_> {
         door: Option<&dyn AgentVerbDoor>,
         receipt: CodeRunReplayRecord,
         call: SelfAgentVerbCall,
+        site: ExecutorCallSite<'_>,
     ) -> Result<SelfDispatchOutcome> {
         let Some(row) = receipt.bridge_calls.first() else {
             return Err(Error::ConcurrentWrite(
@@ -335,6 +382,12 @@ impl HostSelfDispatcher<'_> {
         }
         let mut outcome = decode_self_dispatch_outcome(&row.outcome)?;
         stored_answer::restore(&receipt, &mut outcome);
+        if let (Some(publisher), SelfDispatchOutcome::AgentVerb(answer)) =
+            (site.reply_publisher, &outcome)
+            && let Some(reply) = ExecutorReply::kept(&row.outcome, site.run_id)?
+        {
+            publisher.adopt(reply, &answer.output)?;
+        }
         Ok(outcome)
     }
 

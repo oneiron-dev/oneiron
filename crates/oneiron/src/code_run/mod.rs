@@ -59,7 +59,6 @@ mod team_submit;
 mod type_diagnostics;
 mod types;
 mod wait_rows;
-
 #[cfg(test)]
 mod tests;
 
@@ -122,8 +121,8 @@ pub use self::correction::{
     ExecutorWireRepairs,
 };
 pub(crate) use self::dispatcher::{
-    ExecutorCallSite, agent_attempt_run_ref, check_write_gate_against_vault, recorded_verb_call,
-    write_receipt_may_have_run,
+    ExecutorCallSite, ExecutorReply, ExecutorReplyPublisher, agent_attempt_run_ref,
+    check_write_gate_against_vault, recorded_verb_call, write_receipt_may_have_run,
 };
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
@@ -159,14 +158,14 @@ pub(crate) use self::replay_context::{
 };
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
-pub(crate) use self::result_read::unmarked_secret;
+pub(crate) use self::result_read::{unmarked_secret, unplaced_answer};
 pub(crate) use self::result_read::{
     DeliveredRanges, Reply as ResultReply, ResultRead, cannot as result_cannot,
     card as result_card, read_result_in, refusal as result_refusal, resolve as resolve_result,
     result_cards_in, unknown_handle,
 };
 pub use self::storage::ReadWorldUnknown;
-pub(crate) use self::storage::SessionCheckpointBody;
+pub(crate) use self::storage::{ReplyBody, SessionCheckpointBody};
 pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
