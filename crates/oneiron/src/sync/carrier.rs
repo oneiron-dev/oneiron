@@ -128,6 +128,16 @@ pub(crate) fn upgrade_unauthorized(error: &WsError) -> bool {
     )
 }
 
+/// Whether `error` is this machine's own setup of a sync socket, not the
+/// carrier or the far end failing (FIX 22217): a URL this build cannot dial,
+/// `wss` with no TLS or one with no host name, which no answer of the far
+/// end mends. A URL nobody answered ([`UrlError::UnableToConnect`]) is the
+/// far end's. The home session's connect and the residence dial both read
+/// a failed [`connect_sync_socket`] by this one rule.
+pub(crate) fn own_setup_fault(error: &WsError) -> bool {
+    matches!(error, WsError::Url(url) if !matches!(url, UrlError::UnableToConnect(_)))
+}
+
 /// Opens `request`'s WebSocket on `dialer`'s carrier when there is one, else on
 /// TCP to the request's host. TCP carries `ws` only: this build has no TLS, so
 /// a `wss` URL is refused as `connect_async` refuses it. Returns the upgrade
