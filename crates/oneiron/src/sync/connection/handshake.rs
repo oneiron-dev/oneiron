@@ -1,4 +1,4 @@
-//! Handshake: run loop, connect_and_sync, overflow check, resync markers.
+//! Handshake: run loop, open_sync_session, overflow check, resync markers.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -12,9 +12,9 @@ use crate::sync::client::{SyncClient, SyncEvent, SyncStatus, next_backoff};
 use crate::sync::types::parse_window_key_str;
 use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
-use super::peer_session::{HomeReach, home_served};
+use super::peer_session::HomeReach;
 use super::server_close::ServerClose;
-use super::session::FullResyncMarker;
+use super::session::{FullResyncMarker, SessionFault};
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
 mod acks;
@@ -29,7 +29,7 @@ impl SyncConnection {
     /// Overflow triggers a REAL re-bootstrap (ONE-1128): the queue is
     /// cleared (`q:` rows only — the `h:`/`m:`/`x:`/`e:` families and
     /// delete-bearing rows + `d:` markers survive)
-    /// and the in-memory Docs are dropped, so the next `connect_and_sync`
+    /// and the in-memory Docs are dropped, so the next `open_sync_session`
     /// re-runs the Phase 1-3 initial sync from scratch. Docs are dropped
     /// only AFTER the queue clear succeeds — on failure both queue and docs
     /// stay intact and the check retries next cycle.
@@ -185,6 +185,8 @@ impl SyncConnection {
         // sessions go to this vault's other machines (FIX 4748).
         let mut reach = HomeReach::new(self.config.client_config.peer_dialer.is_some());
         self.running.send_replace(true);
+        // Every connection's upkeep, owned here across reconnects (FIX 12785).
+        let mut upkeep = super::steady::UpkeepTasks::default();
 
         loop {
             // A member who left the shared vault this env holds never
@@ -224,19 +226,18 @@ impl SyncConnection {
                     let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
                     break;
                 }
-                connected = self.connect_and_sync(&mut client, &event_tx) => connected,
+                connected = self.open_sync_session(&mut client, &event_tx) => connected,
             };
             drop(connect_batch);
-            // Whether the far end served this session's sync, opened or not:
-            // a home that did not counts toward down (FIX 4748).
-            let served = client.home_served;
             let mut renegotiate = false;
             let mut home_returned = false;
             match connected {
                 Ok(ws_stream) => {
-                    reach.opened(peer, served);
+                    // A home session opens once its first round completed:
+                    // the home served this machine's sync (FIX 4748).
+                    reach.opened(peer);
                     // Reset backoff on successful connect
-                    // Note: connect_and_sync already emits Synced, so we don't emit Connected here
+                    // Note: open_sync_session already emits Synced, so we don't emit Connected here
                     // to avoid regressing status for observers.
                     backoff_ms = self.config.client_config.reconnect_initial_ms;
 
@@ -250,6 +251,7 @@ impl SyncConnection {
                             &mut debounce_buffer,
                             &mut promotion_rx,
                             &mut shutdown_rx,
+                            &mut upkeep,
                         )
                         .await;
 
@@ -280,8 +282,9 @@ impl SyncConnection {
                                 event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
                             renegotiate = super::residence_mode::RENEGOTIATE_AT_ONCE;
                         }
-                        // FIX 4748: the home serves this machine's sync
-                        // again; its session follows at once.
+                        // FIX 4748: the home sent a peer session's probe
+                        // its root; its session follows at once, the home
+                        // still down until that session's round completes.
                         LoopExit::HomeReturned => {
                             let _ =
                                 event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
@@ -292,8 +295,10 @@ impl SyncConnection {
                 }
                 Err(e) => {
                     // The first peer is dialed on the first backoff step, not
-                    // the home's grown one (FIX 4748).
-                    if reach.failed(peer, served) {
+                    // the home's grown one, as is the peer after a home turn
+                    // that failed (FIX 4748). A fault of this machine's own
+                    // counts the home nothing (FIX 22107).
+                    if reach.failed(peer, &e) {
                         backoff_ms = self.config.client_config.reconnect_initial_ms;
                     }
                     let _ = event_tx.send(SyncEvent::Error(format!("Connection failed: {e}")));
@@ -310,8 +315,8 @@ impl SyncConnection {
             }
 
             // Check for queue overflow → re-bootstrap. Not while the home is
-            // down: nothing re-bootstraps then, and the home session replays
-            // the queue whole once the home answers (FIX 4748).
+            // down, its probe turn included: nothing re-bootstraps then, and
+            // the home session replays the queue whole (FIX 4748).
             if !reach.down() {
                 self.admitted_overflow_check(&mut client, &event_tx).await;
             }
@@ -336,6 +341,9 @@ impl SyncConnection {
             }
         }
 
+        // The run ends its upkeep, every connection's, before anything else
+        // (FIX 12037): none of its writes lands after the run.
+        upkeep.end().await;
         // A peer session the run ended in takes its end too (FIX 4748).
         if let Some(receipt) = client.peer_receipt.take() {
             receipt.close(self.manager.vault());
@@ -372,15 +380,17 @@ impl SyncConnection {
 
     /// Connects to the server and performs initial sync + queue replay. A
     /// peer session (FIX 4748, `client.peer_session`) dials its peer over
-    /// the mesh and runs the same exchange, confirming nothing. Either way it
-    /// ends, `client.home_served` says whether the far end served this
-    /// machine's sync on it ([`home_served`]).
-    pub(super) async fn connect_and_sync(
+    /// the mesh and runs the same exchange, confirming nothing. A home
+    /// session returns its socket only once its first round completed, so
+    /// the home served this machine's sync; a fault of the far end before
+    /// that, the home's refusal, fault or close included, leaves it unserved
+    /// ([`HomeReach`]). A fault of this machine's own ([`SessionFault`], FIX
+    /// 22107) says nothing of the home.
+    pub(super) async fn open_sync_session(
         &self,
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
-    ) -> Result<crate::sync::carrier::SyncSocket, String> {
-        client.home_served = false;
+    ) -> Result<crate::sync::carrier::SyncSocket, SessionFault> {
         client.note_session_bound = false;
         client.artifact_publication_resend.clear();
         client.document_retries = Default::default();
@@ -392,6 +402,18 @@ impl SyncConnection {
         let (ws_stream, response, binding) = self.open_socket(client, event_tx).await?;
         self.sync_socket(client, event_tx, ws_stream, &response, binding.as_ref())
             .await
+    }
+
+    /// [`Self::open_sync_session`], its fault told as its message alone.
+    #[cfg(test)]
+    pub(super) async fn connect_and_sync(
+        &self,
+        client: &mut SyncClient,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
+    ) -> Result<crate::sync::carrier::SyncSocket, String> {
+        self.open_sync_session(client, event_tx)
+            .await
+            .map_err(|fault| fault.to_string())
     }
 
     /// Initial sync and queue replay on the open socket whose upgrade
@@ -406,7 +428,7 @@ impl SyncConnection {
         ws_stream: crate::sync::carrier::SyncSocket,
         response: &tokio_tungstenite::tungstenite::http::HeaderMap,
         binding: Option<&crate::sync::home_proof::UpgradeBinding>,
-    ) -> Result<crate::sync::carrier::SyncSocket, String> {
+    ) -> Result<crate::sync::carrier::SyncSocket, SessionFault> {
         // Every send on this socket is judged for the machine the home
         // proved over this upgrade's own proof (OF-534 G6), before the first.
         client.home_peer =
@@ -421,10 +443,10 @@ impl SyncConnection {
                 crate::authority::PeerMachine::Proven { machine, .. } if machine == peer
             )
         {
-            return Err(format!(
+            return Err(SessionFault::Remote(format!(
                 "peer {} proved no machine of its own on the upgrade; no peer session",
                 peer.to_hex()
-            ));
+            )));
         }
         // This end's receipt of the session, by the upgrade proof's nonce,
         // which the serving end reads too.
@@ -445,12 +467,12 @@ impl SyncConnection {
         client.begin_connection_sync();
         let initial_messages = client
             .try_generate_initial_sync()
-            .map_err(|e| format!("Generate initial sync failed: {e}"))?;
+            .map_err(|e| SessionFault::Local(format!("Generate initial sync failed: {e}")))?;
         for msg in initial_messages {
             write
                 .send(Message::Binary(msg.into()))
                 .await
-                .map_err(|e| format!("Send initial sync failed: {e}"))?;
+                .map_err(|e| SessionFault::Remote(format!("Send initial sync failed: {e}")))?;
         }
 
         // Read server responses until we get all window states
@@ -462,18 +484,13 @@ impl SyncConnection {
         'initial_sync: while init_messages_received < max_init_messages {
             let msg = tokio::time::timeout(Duration::from_secs(30), read.next())
                 .await
-                .map_err(|_| "Initial sync timeout".to_string())?;
+                .map_err(|_| SessionFault::remote("Initial sync timeout"))?;
 
             match msg {
                 Some(Ok(Message::Binary(data))) => {
-                    // FIX 4748: the far end served this machine's sync when
-                    // the first frame it sends is its root.
-                    if init_messages_received == 0 {
-                        client.home_served = home_served(&data);
-                    }
-                    let responses = client
-                        .handle_server_message(&data)
-                        .map_err(|e| format!("Handle server message failed: {e}"))?;
+                    let responses = client.handle_server_message(&data).map_err(|e| {
+                        SessionFault::Remote(format!("Handle server message failed: {e}"))
+                    })?;
                     // Judged per frame: a device-only flag may turn while an
                     // earlier frame waits on the socket.
                     for resp in responses
@@ -482,7 +499,9 @@ impl SyncConnection {
                     {
                         self.send_document_response(&mut write, &client, resp)
                             .await
-                            .map_err(super::document_response::response_error)?;
+                            .map_err(|exit| {
+                                SessionFault::remote(super::document_response::response_error(exit))
+                            })?;
                     }
                     init_messages_received += 1;
 
@@ -503,9 +522,12 @@ impl SyncConnection {
                             tokio::time::timeout(Duration::from_millis(200), read.next()).await;
                         match quiet_check {
                             Ok(Some(Ok(Message::Binary(data)))) => {
-                                let responses = client
-                                    .handle_server_message(&data)
-                                    .map_err(|e| format!("Handle server message failed: {e}"))?;
+                                let responses =
+                                    client.handle_server_message(&data).map_err(|e| {
+                                        SessionFault::Remote(format!(
+                                            "Handle server message failed: {e}"
+                                        ))
+                                    })?;
                                 // Judged per frame: a device-only flag may turn while an
                                 // earlier frame waits on the socket.
                                 for resp in responses
@@ -514,7 +536,11 @@ impl SyncConnection {
                                 {
                                     self.send_document_response(&mut write, &client, resp)
                                         .await
-                                        .map_err(super::document_response::response_error)?;
+                                        .map_err(|exit| {
+                                            SessionFault::remote(
+                                                super::document_response::response_error(exit),
+                                            )
+                                        })?;
                                 }
                                 init_messages_received += 1;
                             }
@@ -522,10 +548,10 @@ impl SyncConnection {
                                 // Read the close code — a 4xxx code here is how a
                                 // protocol-version mismatch shows up, a 1011 is the
                                 // server's own fault (FIX 5927).
-                                return Err(format!(
+                                return Err(SessionFault::Remote(format!(
                                     "Initial sync ended: {}",
                                     ServerClose::read(frame.as_ref())
-                                ));
+                                )));
                             }
                             Ok(Some(Ok(
                                 Message::Ping(_)
@@ -536,10 +562,14 @@ impl SyncConnection {
                                 // Ignore keepalive/non-binary messages during quiet check
                             }
                             Ok(Some(Err(e))) => {
-                                return Err(format!("WS error during initial sync: {e}"));
+                                return Err(SessionFault::Remote(format!(
+                                    "WS error during initial sync: {e}"
+                                )));
                             }
                             Ok(None) => {
-                                return Err("WS stream ended during initial sync".to_string());
+                                return Err(SessionFault::remote(
+                                    "WS stream ended during initial sync",
+                                ));
                             }
                             // Timeout means initial sync is done
                             Err(_) => break 'initial_sync,
@@ -550,16 +580,18 @@ impl SyncConnection {
                     // Read the close code — a 4xxx code here is how a protocol-version
                     // mismatch shows up (ONE-1127), a 1011 is the server's own fault
                     // (FIX 5927).
-                    return Err(format!(
+                    return Err(SessionFault::Remote(format!(
                         "Initial sync ended: {}",
                         ServerClose::read(frame.as_ref())
-                    ));
+                    )));
                 }
                 None => {
-                    return Err("Server closed during initial sync".to_string());
+                    return Err(SessionFault::remote("Server closed during initial sync"));
                 }
                 Some(Err(e)) => {
-                    return Err(format!("WS error during initial sync: {e}"));
+                    return Err(SessionFault::Remote(format!(
+                        "WS error during initial sync: {e}"
+                    )));
                 }
                 _ => continue, // Skip ping/pong/text
             }
@@ -577,11 +609,11 @@ impl SyncConnection {
             client
                 .fetch_current_index(now_secs)
                 .await
-                .map_err(|e| format!("Fetch residence index failed: {e}"))?;
+                .map_err(|e| SessionFault::Remote(format!("Fetch residence index failed: {e}")))?;
         }
 
         // Phase 3: Drain offline queue
-        let queued = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
+        let queued = self.queue.drain_updates().map_err(SessionFault::local)?;
         if peer.is_some() {
             // FIX 4748: the peer takes the queue's writes and answers with its
             // own, and nothing here clears, retires or re-bootstraps; the
@@ -595,7 +627,7 @@ impl SyncConnection {
                         .await?;
                 }
             }
-            let ws_stream = read.reunite(write).map_err(|e| format!("{e}"))?;
+            let ws_stream = read.reunite(write).map_err(SessionFault::local)?;
             // A peer session is not the home's sync: no `m:last_sync`.
             let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Connected));
             return Ok(ws_stream);
@@ -608,7 +640,9 @@ impl SyncConnection {
         if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
             && !full_resync_markers.is_empty()
         {
-            return Err("opened-item full-resync requires explicit sync-all recovery".into());
+            return Err(SessionFault::local(
+                "opened-item full-resync requires explicit sync-all recovery",
+            ));
         }
         if !full_resync_markers.is_empty() {
             tracing::info!(
@@ -656,8 +690,10 @@ impl SyncConnection {
         }
 
         // Reunite the stream
-        let ws_stream = read.reunite(write).map_err(|e| format!("{e}"))?;
+        let ws_stream = read.reunite(write).map_err(SessionFault::local)?;
 
+        // The first round is complete: root and windows applied, the queue
+        // replayed and taken. The home served this machine's sync (FIX 4748).
         let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Synced));
 
         // m:last_sync (ARCH-0023b key table) — last successful sync stamp.
@@ -670,20 +706,21 @@ impl SyncConnection {
         Ok(ws_stream)
     }
 
-    fn full_resync_markers(&self) -> Result<Vec<FullResyncMarker>, String> {
+    fn full_resync_markers(&self) -> Result<Vec<FullResyncMarker>, SessionFault> {
         let vault = self.manager.vault();
-        let rtxn = vault
-            .store
-            .env
-            .read_txn()
-            .map_err(|e| format!("Read full-resync markers failed: {e}"))?;
+        let rtxn =
+            vault.store.env.read_txn().map_err(|e| {
+                SessionFault::Local(format!("Read full-resync markers failed: {e}"))
+            })?;
         let keys = WINDOW_FULL_RESYNC_MARKER
             .scan_keys(&vault.store, &rtxn, &[])
-            .map_err(|e| format!("Read full-resync markers failed: {e}"))?;
+            .map_err(|e| SessionFault::Local(format!("Read full-resync markers failed: {e}")))?;
         let mut markers = Vec::with_capacity(keys.len());
         for window_key in keys {
             if parse_window_key_str(&window_key).is_none() {
-                return Err(format!("Invalid full-resync marker key: fr:w:{window_key}"));
+                return Err(SessionFault::Local(format!(
+                    "Invalid full-resync marker key: fr:w:{window_key}"
+                )));
             }
             markers.push(FullResyncMarker { window_key });
         }
@@ -693,7 +730,7 @@ impl SyncConnection {
     pub(super) fn set_full_resync_markers(
         &self,
         markers: &[FullResyncMarker],
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionFault> {
         if markers.is_empty() {
             return Ok(());
         }
@@ -710,13 +747,13 @@ impl SyncConnection {
                 }
                 Ok(())
             })
-            .map_err(|e| format!("Set full-resync markers failed: {e}"))
+            .map_err(|e| SessionFault::Local(format!("Set full-resync markers failed: {e}")))
     }
 
     pub(super) fn clear_full_resync_markers(
         &self,
         markers: &[FullResyncMarker],
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionFault> {
         if markers.is_empty() {
             return Ok(());
         }
@@ -728,6 +765,6 @@ impl SyncConnection {
                 }
                 Ok(())
             })
-            .map_err(|e| format!("Clear full-resync markers failed: {e}"))
+            .map_err(|e| SessionFault::Local(format!("Clear full-resync markers failed: {e}")))
     }
 }
