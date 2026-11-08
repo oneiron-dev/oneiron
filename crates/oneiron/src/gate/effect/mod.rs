@@ -6,6 +6,7 @@ mod effect_grants;
 mod effect_paced;
 mod effect_pair;
 mod evaluate;
+mod evaluate_recipients;
 mod preflight;
 mod record;
 
@@ -87,6 +88,10 @@ pub(crate) struct ExternalEffectGovernance {
     approval_context: ApprovalContext,
     ask_consent: Option<crate::llm::decision::AskConsent>,
     matched_grant: Option<(EntityId, StandingOutboundGrant)>,
+    /// Fix list row 17645: the standing grants that released the other
+    /// recipients of one message to several, each once and none of them
+    /// `matched_grant`; touched as used when the message is admitted.
+    recipient_grants: Vec<(EntityId, StandingOutboundGrant)>,
     /// OF-374: the sender row's envelope slot covering this send, spent only
     /// when the decision is recorded as an admitting Allow.
     envelope_reservation: Option<crate::outbound_grant::ChannelIdentityGrantReservation>,
@@ -115,6 +120,11 @@ pub(crate) struct ExternalEffectJudgment {
     approval_context: ApprovalContext,
     ask_consent: Option<crate::llm::decision::AskConsent>,
     matched_grant: Option<(EntityId, StandingOutboundGrant)>,
+    /// Fix list row 17645: the standing grants that released the other
+    /// recipients of one message to several, each once and none of them
+    /// `matched_grant`; carried into governance and touched as used when the
+    /// message is admitted.
+    recipient_grants: Vec<(EntityId, StandingOutboundGrant)>,
     /// OF-374: the sender row's envelope slot covering this send, spent only
     /// when the decision is recorded as an admitting Allow.
     envelope_reservation: Option<crate::outbound_grant::ChannelIdentityGrantReservation>,
@@ -139,6 +149,7 @@ impl ExternalEffectJudgment {
             approval_context: self.approval_context,
             ask_consent: self.ask_consent,
             matched_grant: self.matched_grant,
+            recipient_grants: self.recipient_grants,
             envelope_reservation: self.envelope_reservation,
             envelope_wait: self.envelope_wait,
             budget_target: self.budget_target,
