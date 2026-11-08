@@ -261,13 +261,7 @@ impl Vault {
         // manifest. A registration committed between passes excludes its blob
         // from ASSET, CODE_SYMBOL and snapshot in one transaction.
         self.commit_ingest_snapshot(
-            &snapshot,
-            &blobs,
-            occurred,
-            learned_at,
-            &contents,
-            owner,
-            admit,
+            &snapshot, &blobs, occurred, learned_at, &contents, owner, admit,
         )
     }
 
@@ -298,6 +292,10 @@ impl Vault {
 
     /// The final writer of the import: its admission first, then custody,
     /// reclaim and every derived row, in one grouped transaction.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the final writer takes the first pass as it stood"
+    )]
     pub(super) fn commit_ingest_snapshot<R>(
         &self,
         snapshot: &CodebaseSnapshot,
@@ -415,15 +413,14 @@ impl Vault {
             let read: &RoTxn<'_> = wtxn;
             let identity =
                 crate::codebase::resolve_repo_identity_in_txn(self, read, &snapshot.repo_ref)?;
-            let symbol_sources =
-                symbol_texts
-                    .iter()
-                    .map(|(path, text)| {
-                        Ok(CodeSymbolSource::new(path, text).with_document(
-                            code_symbol_document_in_txn(&self.store, read, &identity, path)?,
-                        ))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
+            let symbol_sources = symbol_texts
+                .iter()
+                .map(|(path, text)| {
+                    Ok(CodeSymbolSource::new(path, text).with_document(
+                        code_symbol_document_in_txn(&self.store, read, &identity, path)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
             // Symbol rows first, then every edge a working batch at a time.
             let mut symbol_graph = prepare_code_symbol_graph(
                 snapshot.repo_ref.clone(),

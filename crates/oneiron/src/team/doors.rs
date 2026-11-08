@@ -299,6 +299,9 @@ pub struct LaunchedMember {
     /// The team its dispatch froze, which a leader's may predate.
     #[serde(default)]
     pub team_ref: Option<String>,
+    /// The caller origin the dispatch froze (FIX 4973): provenance only,
+    /// read from the attempt's own input, never the reading host's.
+    pub caller_origin: crate::agent_dispatch::CallerOrigin,
 }
 
 /// The team the frozen plan resolved to, given only when the one team the
