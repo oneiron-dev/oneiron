@@ -311,6 +311,10 @@ pub enum FatalLlmError {
         /// The provider's structured error code, never inferred from its text.
         code: Option<String>,
     },
+    /// A provider's structured refusal because the input exceeds its context
+    /// window, with the same bounded provider message as other request errors.
+    #[error("context window exceeded: {message}")]
+    ContextWindowExceeded { message: String },
     #[error("authentication failed")]
     Auth,
     #[error("content filtered")]

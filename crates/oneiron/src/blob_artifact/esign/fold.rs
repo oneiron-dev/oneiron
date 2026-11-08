@@ -297,9 +297,7 @@ pub(super) fn validate_value(field: &EsignField, value: &FieldValue) -> Result<(
             Ok(())
         }
         (FieldMeta::Select { options }, FieldValue::Text(v)) if options.contains(v) => Ok(()),
-        (FieldMeta::Email, FieldValue::Text(v))
-            if v.len() <= EMAIL_MAX_BYTES && v.contains('@') && !v.contains(['\r', '\n']) =>
-        {
+        (FieldMeta::Email, FieldValue::Text(v)) if v.contains('@') && !v.contains(['\r', '\n']) => {
             Ok(())
         }
         // No engine cap on a name (Rule 5): the field's box bounds what fits.
