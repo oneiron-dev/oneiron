@@ -362,6 +362,9 @@ impl RecordingJsHost<'_, '_> {
         let cause = crate::code_run::ReadWorldUnknown::CallableSkill;
         self.gated_write.read_worlds_unknown(run_id, cause);
         let (mut loaded, mut selected) = (Vec::new(), None);
+        // The outputs its own calls publish (FIX 5878): a later entry that
+        // answers it whole replays none of them.
+        let published_before = self.captured.len();
         // The answer check holds its buffers on the run's own share (FIX
         // 10149); a host lent none checks unheld, as before.
         let memory = self.result_share.zip(self.storage).map(|(share, storage)| {
@@ -390,8 +393,11 @@ impl RecordingJsHost<'_, '_> {
         self.callable_rows.0.extend(loaded);
         self.callable_depth -= 1;
         // A pinned entry's callable (FIX 5878): where its own calls end, and
-        // whether its body was still running when it returned, on the
-        // entry's wait or a halt of the bridge.
+        // whether a later entry cannot answer it from its row alone. Its
+        // body reached the entry's wait, whether or not it then returned (a
+        // caught wait's owner sits inside it), the bridge halted inside it,
+        // or its own calls published outputs a whole answer would leave
+        // unconsumed for a later store of the same bytes.
         if self.injection.is_some() {
             self.program_callables.push(ProgramCallableSpan {
                 seq,
@@ -399,7 +405,8 @@ impl RecordingJsHost<'_, '_> {
                 open: self.durable_wait.is_some()
                     || self.hard_failure.is_some()
                     || self.left_a_gap
-                    || self.declined.is_some(),
+                    || self.declined.is_some()
+                    || self.captured.len() > published_before,
             });
         }
         // The callable's type feedback stays beside the run, however the

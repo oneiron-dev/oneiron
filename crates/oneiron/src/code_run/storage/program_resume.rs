@@ -120,9 +120,11 @@ pub(crate) enum ProgramResumeKind {
     /// row's answer stands for them.
     #[default]
     Settled,
-    /// A callable whose body reached the wait the entry parked on: its own
-    /// calls follow it, up to that wait. Its row's answer is the body's
-    /// unwinding, not its result.
+    /// A callable a later entry cannot answer from its row alone: its body
+    /// reached the wait the entry parked on (whether or not it then
+    /// returned), the bridge halted inside it, or its own calls published
+    /// outputs. Its own calls follow it, up to that wait. A later entry
+    /// holds on it.
     OpenCallable,
 }
 
