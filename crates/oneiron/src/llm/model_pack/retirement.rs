@@ -25,7 +25,10 @@
 //! retired model's roles move to its successor in the resolver itself
 //! ([`super::resolve_model_pack_role`]). The notices sent are recorded by
 //! subject, retirement day and mark, so a restart or a second pass never
-//! sends one twice.
+//! sends one twice. A pass that finds several marks passed since the last
+//! notice (the vault stopped through a mark day, or no serving host ran on
+//! it) sends the newest alone and records each mark it passed as handled,
+//! so no later pass sends an older one (FIX 22119).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -56,7 +59,9 @@ const NOTICES: SideTable<(u64, u64, String), RetirementNoticeSent, Named> =
 /// Producer of the owner's notice of a coming pack or model retirement.
 pub const MODEL_PACK_RETIREMENT_NOTIFICATION_PRODUCER: &str = "llm.model_pack.retirement";
 
-/// One retirement notice sent to the vault's owners.
+/// One retirement notice mark handled: its notice sent to the vault's
+/// owners, or, for a mark a pass found passed beside a newer one, the newer
+/// mark's notice sent in its place (FIX 22119).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RetirementNoticeSent {
@@ -78,6 +83,10 @@ pub(crate) struct ModelPackRetirementReport {
 /// One notice a pass owes.
 struct DueNotice {
     key: (u64, u64, String),
+    /// The record keys of the earlier marks the schedule passed with no
+    /// notice recorded: handled by this notice and recorded with it (FIX
+    /// 22119).
+    passed: Vec<(u64, u64, String)>,
     /// The pack or model id the notice is about.
     subject: String,
     detail: String,
@@ -235,12 +244,9 @@ impl Vault {
             let sent_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let owners = crate::policy_model::owners_in_txn(self, txn)?;
             for notice in &work.notices {
-                NOTICES.put(
-                    &self.store,
-                    txn,
-                    &notice.key,
-                    &RetirementNoticeSent { sent_at },
-                )?;
+                for key in std::iter::once(&notice.key).chain(&notice.passed) {
+                    NOTICES.put(&self.store, txn, key, &RetirementNoticeSent { sent_at })?;
+                }
                 let (retires, mark, subject) = &notice.key;
                 for owner in &owners {
                     self.record_notification_in_txn(
@@ -276,6 +282,8 @@ impl Vault {
     /// the pack binds, by the test the role pick reads
     /// ([`manifest_outranks_model_pack`]): a manifest that outranks the pack
     /// leaves no notice, of the pack or of a model, as the pack picks nothing.
+    /// Each subject owes one notice at most, at today's mark, the newest it
+    /// passed; the earlier marks it passed unrecorded go with it (FIX 22119).
     fn model_pack_retirement_work_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -306,14 +314,17 @@ impl Vault {
             if let Some(retirement) = pack.retirement
                 && let Some(mark) = retirement_notice_mark(retirement, today)
             {
-                let key = notice_key(
-                    retirement.retires_epoch_day,
-                    mark,
-                    &format!("pack:{}", pack.id),
-                );
+                let subject_key = format!("pack:{}", pack.id);
+                let key = notice_key(retirement.retires_epoch_day, mark, &subject_key);
                 if NOTICES.get(&self.store, txn, &key)?.is_none() {
                     notices.push(DueNotice {
                         key,
+                        passed: self.unrecorded_passed_marks_in_txn(
+                            txn,
+                            retirement,
+                            mark,
+                            &subject_key,
+                        )?,
                         subject: pack.id.to_string(),
                         detail: pack_notice_text(
                             &packs,
@@ -333,14 +344,17 @@ impl Vault {
                 let Some(mark) = retirement_notice_mark(retirement, today) else {
                     continue;
                 };
-                let key = notice_key(
-                    retirement.retires_epoch_day,
-                    mark,
-                    &format!("model:{model}"),
-                );
+                let subject_key = format!("model:{model}");
+                let key = notice_key(retirement.retires_epoch_day, mark, &subject_key);
                 if NOTICES.get(&self.store, txn, &key)?.is_none() {
                     notices.push(DueNotice {
                         key,
+                        passed: self.unrecorded_passed_marks_in_txn(
+                            txn,
+                            retirement,
+                            mark,
+                            &subject_key,
+                        )?,
                         subject: model.to_string(),
                         detail: model_notice_text(
                             pack,
@@ -357,6 +371,31 @@ impl Vault {
             active_retired,
             notices,
         })
+    }
+
+    /// The record keys of the marks before `mark` that `retirement` passed
+    /// by today with no notice recorded for `subject` (FIX 22119): a vault
+    /// stopped through a mark day, or a day no serving host ran, passes a
+    /// mark unsent. The pass sends `mark`'s notice, the newest, alone, and
+    /// records these with it as handled, so no later pass sends one.
+    fn unrecorded_passed_marks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        retirement: ModelStackDeprecation,
+        mark: u32,
+        subject: &str,
+    ) -> Result<Vec<(u64, u64, String)>> {
+        let mut passed = Vec::new();
+        for earlier in MODEL_PACK_RETIREMENT_NOTICE_DAYS
+            .into_iter()
+            .filter(|earlier| *earlier > mark)
+        {
+            let key = notice_key(retirement.retires_epoch_day, earlier, subject);
+            if NOTICES.get(&self.store, txn, &key)?.is_none() {
+                passed.push(key);
+            }
+        }
+        Ok(passed)
     }
 
     /// When a stopped vault must next run a retirement pass (FIX 22059), in
