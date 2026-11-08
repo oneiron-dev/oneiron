@@ -24,7 +24,8 @@ use super::source::{
 pub(crate) use erase::scrub_hook_source_in_txn;
 pub(super) use erase::{
     dependencies_erased_in_txn, erased_dependency_ids_in_txn, scrub_erased_actor_in_txn,
-    scrub_intent_payload, scrub_memo_payload, scrub_receipt_payload, scrub_verb_payload,
+    scrub_erased_verb_actor_in_txn, scrub_intent_payload, scrub_memo_payload,
+    scrub_receipt_payload, scrub_verb_payload,
 };
 
 /// A run's identity: BLAKE3 over its derivation envelope and its position.
