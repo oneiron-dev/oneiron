@@ -102,6 +102,8 @@ pub(crate) use self::esign::delivery_outbox::spawn as spawn_esign_delivery_outbo
 pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;
 pub(crate) use self::esign::notice_worker::dispatch_due_notices as dispatch_esign_due_notices;
 #[cfg(unix)]
+pub(crate) use self::esign::page_inspector::EsignOrganPageInspector;
+#[cfg(unix)]
 pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
