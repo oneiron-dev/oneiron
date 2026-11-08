@@ -2,9 +2,11 @@
 //! runs, so removal undoes exactly that, in one transaction: the receipt
 //! leaves the Active catalog, every hook binding of the pack stops, the
 //! bundled skills no other holder keeps stop loading, its kinds take no new
-//! writes and its predicates lose their owner. The source, its CODE entities,
-//! its skill revisions and its history stay, so the pack installs again
-//! through the ordinary door, which brings back the skills removal retired.
+//! writes and its predicates lose their owner. A model pack's version that an
+//! update replaced, kept for a revert, goes too (FIX 20192). The source, its
+//! CODE entities, its skill revisions and its history stay, so the pack
+//! installs again through the ordinary door, which brings back the skills
+//! removal retired.
 //! Its setup sessions end too: the grants their permissions minted are
 //! revoked with the owner's receipts, while stored credentials stay in
 //! custody. A built-in goes back to its seeded Candidate and qualifies again
@@ -52,7 +54,22 @@ impl Vault {
                     PACK_PREDICATE.delete(&self.store, txn, predicate)?;
                 }
             }
+            let model_pack_before = if receipt.kind == super::PackKind::Model {
+                self.model_pack_in_effect_in_txn(txn)?
+            } else {
+                None
+            };
             admission::PACK_INSTALL.delete(&self.store, txn, &name)?;
+            // Removing a model pack may change the pack the vault follows;
+            // the version an update of it replaced goes with it (FIX 20192).
+            if receipt.kind == super::PackKind::Model {
+                self.drop_replaced_model_pack_in_txn(txn, pack)?;
+                self.note_active_model_pack_in_txn(
+                    txn,
+                    model_pack_before,
+                    crate::llm::model_pack::ModelPackChangeCause::Removal,
+                )?;
+            }
             if let Some(candidate) = super::builtin::reseeded_candidate(&receipt) {
                 admission::PACK_CANDIDATE.put(
                     &self.store,

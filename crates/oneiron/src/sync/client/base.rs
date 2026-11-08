@@ -58,6 +58,10 @@ pub struct SyncClient {
     pub(crate) vault: Arc<Vault>,
     pub(crate) manager: Arc<WindowManager>,
     pub(crate) root_doc: LoroDoc,
+    /// The home answered this connection's NOTE session bind: the NOTE lane
+    /// (NOTE requests, operations, imports and receipts, publications) runs.
+    /// A peer session binds the socket's actor, never the NOTE authority, so
+    /// this stays false on one (FIX 4748).
     pub(crate) note_session_bound: bool,
     /// FIX 11111: the main socket already logged that it withholds this
     /// machine's credentials from a cleartext server.
@@ -121,6 +125,23 @@ pub struct SyncClient {
     /// G6/G7), rechecked at each use; `Unknown` until a connection proves one.
     /// Cleared at every connect.
     pub(crate) home_peer: crate::authority::PeerMachine,
+    /// Whether the far end served this connection's sync (FIX 4748): the
+    /// first frame it sent was its root. The device counts its home down by
+    /// it. Cleared at every connect.
+    pub(crate) home_served: bool,
+    /// The peer this connection syncs with while its home is down (FIX 4748),
+    /// set before each connect; `None` for a session with the home. A peer
+    /// session confirms nothing: no queue or document journal clears on its
+    /// answers, and it takes none of the home's relays or roles.
+    pub(crate) peer_session: Option<crate::EntityId>,
+    /// The open peer session's receipt, written again with its end (FIX
+    /// 4748); `None` for a home session.
+    pub(crate) peer_receipt: Option<crate::sync::peer_route::PeerSyncReceipt>,
+    /// The version of the last state-only copy of each window this peer
+    /// session kept out (FIX 4748): it asks a peer for a window again only
+    /// while the peer's copies move on. Cleared at every connect and at each
+    /// copy it installs.
+    pub(crate) kept_out_peer_copies: HashMap<String, VersionVector>,
     pub(crate) status: SyncStatus,
     pub(crate) event_tx: mpsc::UnboundedSender<SyncEvent>,
 }
@@ -236,6 +257,10 @@ impl SyncClient {
             sealed_updates: Default::default(),
             staged_body_pulls: Default::default(),
             home_peer: crate::authority::PeerMachine::Unknown,
+            home_served: false,
+            peer_session: None,
+            peer_receipt: None,
+            kept_out_peer_copies: HashMap::new(),
             status: SyncStatus::Disconnected,
             event_tx,
         };

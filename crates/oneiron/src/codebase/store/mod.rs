@@ -312,12 +312,7 @@ impl Vault {
             crate::origin::secret_projection::index::RepoIndexMarks::read_in_txn(self, &wtxn)?;
         let (files, custody_report) =
             self.repo_snapshot_inputs_in_txn(&wtxn, &repo_marks, snapshot, file_contents)?;
-        let filtered_snapshot = CodebaseSnapshot::new(
-            snapshot.project_id.clone(),
-            snapshot.repo_ref.clone(),
-            snapshot.commit_hash.clone(),
-            files,
-        )?;
+        let filtered_snapshot = snapshot.rebuilt_with_files(files)?;
         self.put_filtered_codebase_snapshot_in_txn(
             &mut wtxn,
             code_artifact_id,
@@ -325,6 +320,15 @@ impl Vault {
             custody_report,
         )?;
         wtxn.commit()?;
+        // FIX 7905: annotation threads on this code artifact follow the tree
+        // that stands for it, read in a grouped write of their own once the
+        // snapshot commits. A sweep that fails leaves them on the old commit,
+        // still reading their words by file hash, and the snapshot put stands.
+        if let Err(error) = self.with_write_txn_grouped(|wtxn| {
+            self.reanchor_code_threads_in_txn(wtxn, code_artifact_id)
+        }) {
+            tracing::warn!(%error, "code annotation threads did not follow the new snapshot");
+        }
         Ok(())
     }
 
