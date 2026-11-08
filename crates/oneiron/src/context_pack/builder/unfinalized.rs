@@ -606,8 +606,17 @@ impl<'a> ContextPackBuilder<'a> {
                     || pack_deadline.is_some_and(|deadline| deadline.was_cut_short()),
             };
             critical.report(&mut stats);
+            // A retrieval RET-01 withheld says so, though the L2 base rides
+            // along: the base answers no query, and the caller must see the
+            // abstention, not a pack that looks answered (FIX 22309).
+            let abstained = matches!(
+                pipeline_empty_reason,
+                Some(crate::context_pack::EmptyReason::BelowThreshold)
+            ) && results.is_empty()
+                && neighbors.is_empty()
+                && capabilities.is_empty();
             let empty = empty_context(
-                pack_is_empty,
+                pack_is_empty || abstained,
                 &stats,
                 pipeline_empty_reason,
                 &retrieval_quality,

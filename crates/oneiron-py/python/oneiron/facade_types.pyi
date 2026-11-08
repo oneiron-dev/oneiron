@@ -4,8 +4,8 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1351 facade rows, 4858 declarations.
-Inputs: 1280 of 1351 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1351 facade rows, 4866 declarations.
+Inputs: 1279 of 1351 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1180 of 1351 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
@@ -16750,6 +16750,62 @@ class UndoneKeep(TypedDict):
     reattached: int
 class TaskCanAskRequest(TypedDict):
     ask: TaskAskSpec
+RelationshipContext = Literal["work_deal", "scheduling_logistics", "campaign_outreach", "transactional_system", "personal_friends", "group_space"]
+class SelectionRuleScopeVaultDefault(TypedDict):
+    kind: Literal["vault_default"]
+class SelectionRuleScopeWorld(TypedDict):
+    kind: Literal["world"]
+    world_ref: EntityId
+class SelectionRuleScopeRelationship(TypedDict):
+    kind: Literal["relationship"]
+    relationship_ref: EntityId
+class SelectionRuleScopeBrief(TypedDict):
+    kind: Literal["brief"]
+    brief_ref: str
+class SelectionRuleScopeSpace(TypedDict):
+    kind: Literal["space"]
+    space_ref: str
+SelectionRuleScope = SelectionRuleScopeVaultDefault | SelectionRuleScopeWorld | SelectionRuleScopeRelationship | SelectionRuleScopeBrief | SelectionRuleScopeSpace
+ChannelIdentityFace = Literal["delegated_owner_account", "agent_named_address", "side_domain_address", "house_identity", "companion_identity", "named_group_participant"]
+class ChannelSelectionCandidateInput(TypedDict):
+    identity_ref: EntityId
+    face: ChannelIdentityFace
+class ChannelSelectionRequest(TypedDict):
+    relationship: RelationshipContext
+    applicable_scopes: NotRequired[list[SelectionRuleScope]]
+    candidates: list[ChannelSelectionCandidateInput]
+    thread_ref: NotRequired[str | None]
+class OutboundScheduleRequest(TypedDict):
+    verb: str
+    channel: str
+    target: str
+    on_behalf_of: NotRequired[str | None]
+    content_ref: NotRequired[str | None]
+    idempotency_key: NotRequired[str | None]
+    dedupe_key: NotRequired[str | None]
+    trigger: str
+    trigger_ref: str
+    job_ref: NotRequired[str | None]
+    occurred_at: NotRequired[int | None]
+    mention: NotRequired[MentionProvenance | None]
+    selection: NotRequired[ChannelSelectionRequest | None]
+    counterparty_class: NotRequired[str | None]
+class CanOutboundSchedule(TypedDict):
+    outbound_schedule: OutboundScheduleRequest
+ConnectorSource = Literal["catalog", "builtin"]
+MutationIntent = Literal["preview", "explicit_mutation"]
+class ConnectorCallRequest(TypedDict):
+    name: str
+    source: NotRequired[ConnectorSource | None]
+    tool: str
+    arguments: NotRequired[Any]
+    mutation: NotRequired[MutationIntent]
+class CanConnectorCall(TypedDict):
+    connector_call: ConnectorCallRequest
+CanEffect = CanOutboundSchedule | CanConnectorCall
+class CanEffectRequest(TypedDict):
+    effect: CanEffect
+CanRequest = TaskCanAskRequest | CanEffectRequest
 class TaskAskPreflightRecipient(TypedDict):
     who: EntityId
     face: NotRequired[str | None]
@@ -16757,6 +16813,15 @@ class TaskAskPreflightRecipient(TypedDict):
     word_required: bool
 class TaskAskPreflight(TypedDict):
     recipients: list[TaskAskPreflightRecipient]
+CanEffectVerdict = Literal["allow", "deny", "would_ask", "held"]
+class CanEffectAnswer(TypedDict):
+    verdict: CanEffectVerdict
+    reasons: list[str]
+    holds: list[str]
+    waits_for_envelope_window: bool
+    rate_window_opens_at: NotRequired[int | None]
+    checked_at: int
+CanAnswer = TaskAskPreflight | CanEffectAnswer
 TaskAskPersonKind = Literal["word", "companion", "default", "unknown"]
 class TaskAskPersonEvidence(TypedDict):
     who: EntityId
@@ -18479,14 +18544,6 @@ class LiveVoiceUsage(TypedDict):
     terminal: bool
     metering_enabled: bool
     settlements: list[RunRungSettlement]
-ConnectorSource = Literal["catalog", "builtin"]
-MutationIntent = Literal["preview", "explicit_mutation"]
-class ConnectorCallRequest(TypedDict):
-    name: str
-    source: NotRequired[ConnectorSource | None]
-    tool: str
-    arguments: NotRequired[Any]
-    mutation: NotRequired[MutationIntent]
 class LiveVoiceToolRequest(TypedDict):
     session_ref: str
     call: ConnectorCallRequest
@@ -23156,23 +23213,6 @@ class ChannelIdentityReleaseRequest(TypedDict):
     identity_ref: EntityId
     quarantine_until: int
     request_ref: NotRequired[EntityId | None]
-RelationshipContext = Literal["work_deal", "scheduling_logistics", "campaign_outreach", "transactional_system", "personal_friends", "group_space"]
-class SelectionRuleScopeVaultDefault(TypedDict):
-    kind: Literal["vault_default"]
-class SelectionRuleScopeWorld(TypedDict):
-    kind: Literal["world"]
-    world_ref: EntityId
-class SelectionRuleScopeRelationship(TypedDict):
-    kind: Literal["relationship"]
-    relationship_ref: EntityId
-class SelectionRuleScopeBrief(TypedDict):
-    kind: Literal["brief"]
-    brief_ref: str
-class SelectionRuleScopeSpace(TypedDict):
-    kind: Literal["space"]
-    space_ref: str
-SelectionRuleScope = SelectionRuleScopeVaultDefault | SelectionRuleScopeWorld | SelectionRuleScopeRelationship | SelectionRuleScopeBrief | SelectionRuleScopeSpace
-ChannelIdentityFace = Literal["delegated_owner_account", "agent_named_address", "side_domain_address", "house_identity", "companion_identity", "named_group_participant"]
 SelectionRuleWriterKind = Literal["system_default", "owner", "agent"]
 class ChannelIdentitySelectionRule(TypedDict):
     rule_id: str
@@ -23209,14 +23249,6 @@ ChannelSelectionPatchInput = ChannelSelectionPatchInputUpsert | ChannelSelection
 class ChannelSelectionUpdateRequest(TypedDict):
     expected_revision: int
     patch: ChannelSelectionPatchInput
-class ChannelSelectionCandidateInput(TypedDict):
-    identity_ref: EntityId
-    face: ChannelIdentityFace
-class ChannelSelectionRequest(TypedDict):
-    relationship: RelationshipContext
-    applicable_scopes: NotRequired[list[SelectionRuleScope]]
-    candidates: list[ChannelSelectionCandidateInput]
-    thread_ref: NotRequired[str | None]
 class ChannelIdentitySelectionDecision(TypedDict):
     identity_ref: EntityId
     facet_ref: NotRequired[EntityId | None]
@@ -23330,21 +23362,6 @@ class DeliveryWindowResolution(TypedDict):
 class DeliveryWindowPreview(TypedDict):
     policy_refs: list[EntityId]
     resolution: DeliveryWindowResolution
-class OutboundScheduleRequest(TypedDict):
-    verb: str
-    channel: str
-    target: str
-    on_behalf_of: NotRequired[str | None]
-    content_ref: NotRequired[str | None]
-    idempotency_key: NotRequired[str | None]
-    dedupe_key: NotRequired[str | None]
-    trigger: str
-    trigger_ref: str
-    job_ref: NotRequired[str | None]
-    occurred_at: NotRequired[int | None]
-    mention: NotRequired[MentionProvenance | None]
-    selection: NotRequired[ChannelSelectionRequest | None]
-    counterparty_class: NotRequired[str | None]
 class SummaryPathBranch(TypedDict):
     branch: str
 class SummaryPathBranchSpanBody(TypedDict):
@@ -24327,6 +24344,10 @@ class MailSyncStatusView(TypedDict):
     bodies: int
     bodies_waiting: int
     deleted_at_provider: int
+    claim_rechecks_pending: int
+    claim_rechecks_checked: int
+    claim_rechecks_review_needed: int
+    claim_rechecks_obsolete: int
     last_step_at: NotRequired[int | None]
     last_error: NotRequired[str | None]
 class MailMboxImportRequest(TypedDict):

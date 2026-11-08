@@ -17,11 +17,13 @@ use crate::outbound_intent_ledger::{
 use super::authority::{OutboundBindingAuthority, observed_freeze_events_since};
 use super::connector_call::escalation_code;
 use super::connector_elicitation_asks::ConnectorElicitationAnswer;
-use super::result_scrub::{OutboundResultSender, scrub_outbound_result};
+use super::raw_body::RawOutboundBody;
+use super::result_scrub::{OutboundResultSender, scrub_outbound_result_with_body};
 use super::scope::{
     ScopedMcpCall, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason,
     evaluate_scoped_mcp_call,
 };
+pub(super) use super::scoped_prepared_effect::scoped_prepared_effect;
 use super::tool_call::PreparedToolCall;
 
 /// Counted output of one consent-bound durable dispatch.
@@ -178,52 +180,14 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
     #[cfg(not(test))]
     let freeze_event_baseline = ();
     let _ = grant;
-    let call = prepared_call.call().clone();
-    // FIX 6424 part 3: the gate input pins this prepared call.
-    let gate = super::approval::scoped_mcp_pinned_gate_input(
-        principal_ref,
+    let prepared = scoped_prepared_effect(
+        vault,
         grant_id,
+        principal_ref,
+        attempt_id,
+        call_seq,
         &prepared_call,
-        attempt_id,
-        call_seq,
-    );
-    let idempotency_supported = prepared_call.idempotency_supported();
-    // The Send class follows the dispatched tool's own effect (FIX 8688): a
-    // tool its approved slate row declares read-only never debits `Sends`;
-    // any other tool on a counterparty-communication catalog does.
-    let budget_class = {
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        crate::connector_key::scoped_tool_effect_in_txn(
-            &vault.store,
-            &txn,
-            &call.server,
-            prepared_call.is_read_only(),
-        )?
-        .budget_class()
-    };
-    let prepared = crate::outbound_chokepoint::PreparedEffect {
-        attempt_id,
-        call_seq,
-        server: call.server,
-        tool: call.tool,
-        payload: prepared_call.frozen_bytes().to_vec(),
-        idempotency_supported,
-        resolved_endpoint: Some(call.resolved_endpoint),
-        gate,
-        budget_class,
-        authorization: crate::outbound_chokepoint::PreparedAuthorization::ScopedMcp {
-            grant_id,
-            principal_ref: principal_ref.to_owned(),
-            prepared: Box::new(prepared_call.clone()),
-        },
-        verified_actor: None,
-        owner_proof: None,
-        dedupe_key: None,
-        suppression_receipt: None,
-        admission_ceiling: None,
-        co_actor: None,
-        exclusive_route: None,
-    };
+    )?;
     // FIX 4747 slice 5: a call an agent run makes goes only while the run's
     // machine holds the run.
     let mut transport = ScopedResultTransport::new(sender).fenced(
@@ -546,7 +510,7 @@ pub(super) struct ScopedResultTransport<'a, S> {
     pub(super) checked_bytes: Vec<u8>,
     /// The body the last authorized send returned, handed on to that send's
     /// own terminal bridge only (DOOR-141 PR2), never counted or logged.
-    settled_body: Option<Vec<u8>>,
+    settled_body: Option<RawOutboundBody>,
     /// FIX 4747 slice 5: the fence of the agent run that makes the call,
     /// checked right before each transport call.
     run_fence: Option<(&'a Vault, crate::agent_dispatch::AgentRunFence)>,
@@ -601,15 +565,16 @@ impl<S: OutboundResultSender> crate::outbound_chokepoint::OutboundTransport
         let transport = self.inner.send(call);
         self.effectful_sends = self.effectful_sends.saturating_add(1);
         let scrubbable = transport.raw_result.scrubbable_field_count();
-        self.settled_body = transport.raw_result.body().map(<[u8]>::to_vec);
-        let scrubbed = scrub_outbound_result(transport.raw_result).scrubbed_field_count();
+        let (body, scrubbed) = scrub_outbound_result_with_body(transport.raw_result);
+        self.settled_body = body;
+        let scrubbed = scrubbed.scrubbed_field_count();
         self.scrubbable_result_fields = self.scrubbable_result_fields.saturating_add(scrubbable);
         self.scrubbed_result_fields = self.scrubbed_result_fields.saturating_add(scrubbed);
         transport.outcome
     }
 
-    fn settled_result(&self) -> Option<&[u8]> {
-        self.settled_body.as_deref()
+    fn take_settled_result(&mut self) -> Option<RawOutboundBody> {
+        self.settled_body.take()
     }
 
     fn remote_task(&self) -> Option<crate::outbound_intent_ledger::RemoteTaskHandle> {

@@ -56,6 +56,7 @@ mod note_session;
 mod own_device;
 mod repo_projection;
 mod residence;
+mod root_updates;
 mod sealed_updates;
 mod staged_bodies;
 mod staged_body_pull;
