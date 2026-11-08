@@ -136,8 +136,10 @@ impl<'v> ScopedRead<'v> {
         }
         let lane = self.as_owner(owner)?;
         let floor = policy.retrieval_floor_for_actor(Some(&lane.actor_key));
-        let filter = crate::gate::narrow_retrieval_filter(&floor, request)?
-            .under_credential_of(&lane.actor_key);
+        let filter = lane.under_caller_filter(
+            crate::gate::narrow_retrieval_filter(&floor, request)?
+                .under_credential_of(&lane.actor_key),
+        );
         Ok(lane
             .own_row_readable_in(rtxn, policy, id, raw, &filter, authority, None)?
             .then_some(lane))
@@ -157,6 +159,7 @@ impl<'v> ScopedRead<'v> {
         owner_key.channel.clone_from(&key.channel);
         owner_key.owner_exemption = key.owner_exemption;
         owner_key.room_turn.clone_from(&key.room_turn);
+        owner_key.phone_lines.clone_from(&key.phone_lines);
         owner_key.worlds.clone_from(&key.worlds);
         let room_ceiling = self
             .room_ceiling
@@ -178,6 +181,7 @@ impl<'v> ScopedRead<'v> {
             own_owner_authority: false,
             records_cover: self.records_cover.clone(),
             judged_at: self.judged_at,
+            read_filter: self.read_filter.clone(),
         })
     }
 }

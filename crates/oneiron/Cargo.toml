@@ -19,6 +19,7 @@ categories.workspace = true
 doctest = true
 
 [dependencies]
+stacker = { git = "https://github.com/rust-lang/stacker", rev = "d3ac2df79a409c681329006e9b31c96ab9c5fcae" }
 # Lower engine crates split out of this one. This crate re-exports each moved
 # module at its old `oneiron::<module>` path.
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
@@ -118,7 +119,7 @@ tree-sitter-python = "=0.25.0"
 icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }
 unicode-script = "0.5"
 loro = { workspace = true }
-tokio = { version = "1", features = ["net", "sync", "time"] }
+tokio = { version = "1", features = ["net", "rt", "sync", "time"] }
 tokio-tungstenite = { version = "0.26", optional = true }
 base64 = "0.22"
 futures-util = { version = "0.3", optional = true }
@@ -155,6 +156,12 @@ jiff-tzdb = "=0.1.8"
 tz-rs = "0.7.3"
 icalendar = "0.17"
 rrule = "0.14"
+# FIX 15425: the mail pack's own IMAP4rev1 client speaks implicit TLS
+# through rustls (ring, no aws-lc) with the platform's trust roots. Both
+# crates are already in the lock through reqwest; no new crate enters the
+# graph (Engine 2026-11-06 09:26).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
 
 # CMT-02 (ONE-1539): the commitment RECURRENCE vocabulary
 # (`oneiron_vault_contract::commitment::{Schedule, QuotaWindow}`) is shared
