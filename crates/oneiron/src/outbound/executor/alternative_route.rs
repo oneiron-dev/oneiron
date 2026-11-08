@@ -61,9 +61,9 @@ const ALTERNATIVE_STOPPED_UNKNOWN: &str = "stopped_delivery_unknown";
 const CARRIED_CHILD_FIELDS: [&str; 5] = [
     "retry_at",
     "delivery_may_have_occurred",
-    SENT_LOOKUP_FIELD,
     PROVIDER_RETRY_AFTER_FIELD,
     PROVIDER_WAIT_FIELD,
+    SENT_LOOKUP_FIELD,
 ];
 
 /// Routes one claimed attempt of `task` by its bound alternative's ledger
