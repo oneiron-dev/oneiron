@@ -40,10 +40,22 @@ pub(crate) struct OAuthAct {
 const MAX_JWKS_BYTES: usize = 1024 * 1024;
 const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+/// How old a cached key set may be before a read with a known key id
+/// fetches it again (FIX 9530): a key the issuer removed stops verifying
+/// within this, while the issuer answers.
+const JWKS_REFRESH_AFTER: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+/// How long a key set stays trusted after its last good fetch (FIX 9530).
+/// Past it, a refresh that fails or returns a malformed set refuses every
+/// token, so a key the issuer removed cannot outlive an unreachable issuer.
+const JWKS_TRUST_LIFETIME: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 struct CachedJwks {
     body: String,
-    last_kid_miss_refresh: Option<std::time::Instant>,
+    /// When `body` was last fetched and validated.
+    fetched_at: std::time::Instant,
+    /// The last refresh tried, good or not: refreshes run at most once per
+    /// [`REFRESH_INTERVAL`].
+    last_refresh_try: Option<std::time::Instant>,
 }
 
 // Holding this short-lived lock across a bounded fetch coalesces concurrent
@@ -161,48 +173,50 @@ fn test_transports() -> &'static Mutex<HashMap<String, TestTransport>> {
 }
 
 fn fetch_jwks(uri: &str, refresh: bool) -> Result<String, ApiError> {
-    let mut guard = cache()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut guard = cache().lock().map_err(|_| ApiError::unauthorized())?;
     let now = std::time::Instant::now();
-    let mut last_kid_miss_refresh = None;
+    // The cached set while it is still trusted; past its trust lifetime only
+    // a good fetch serves keys (FIX 9530).
+    let trusted = |entry: &CachedJwks| {
+        (now.duration_since(entry.fetched_at) < JWKS_TRUST_LIFETIME).then(|| entry.body.clone())
+    };
     if let Some(entry) = guard.get_mut(uri) {
-        if !refresh {
+        let due = now.duration_since(entry.fetched_at) >= JWKS_REFRESH_AFTER;
+        if !refresh && !due {
             return Ok(entry.body.clone());
         }
         if entry
-            .last_kid_miss_refresh
+            .last_refresh_try
             .is_some_and(|last| now.duration_since(last) < REFRESH_INTERVAL)
         {
-            return Ok(entry.body.clone());
+            return trusted(entry).ok_or_else(ApiError::unauthorized);
         }
         // Record the attempt before fetching so failures are rate-limited too.
-        // The cached body remains available if replacement fails.
-        entry.last_kid_miss_refresh = Some(now);
-        last_kid_miss_refresh = entry.last_kid_miss_refresh;
+        // The cached body remains available, while trusted, if replacement fails.
+        entry.last_refresh_try = Some(now);
     }
-    let body = match transport_fetch(uri) {
+    let fetched = transport_fetch(uri).and_then(|body| {
+        // Validate before replacement so malformed 2xx responses cannot
+        // clobber known-good material.
+        serde_json::from_str::<jsonwebtoken::jwk::JwkSet>(&body)
+            .map(|_| body)
+            .map_err(|_| ApiError::unauthorized())
+    });
+    let body = match fetched {
         Ok(body) => body,
         Err(error) => {
-            if let Some(entry) = guard.get(uri) {
-                return Ok(entry.body.clone());
-            }
-            return Err(error);
+            return match guard.get(uri) {
+                Some(entry) => trusted(entry).ok_or_else(ApiError::unauthorized),
+                None => Err(error),
+            };
         }
     };
-    // Validate before replacement so malformed 2xx responses cannot clobber
-    // known-good material.
-    if serde_json::from_str::<jsonwebtoken::jwk::JwkSet>(&body).is_err() {
-        if let Some(entry) = guard.get(uri) {
-            return Ok(entry.body.clone());
-        }
-        return Err(ApiError::unauthorized());
-    }
     guard.insert(
         uri.to_owned(),
         CachedJwks {
             body: body.clone(),
-            last_kid_miss_refresh,
+            fetched_at: now,
+            last_refresh_try: Some(now),
         },
     );
     Ok(body)
@@ -394,7 +408,8 @@ mod tests {
             config.oauth_jwks_uri.clone().unwrap(),
             CachedJwks {
                 body: JWKS.into(),
-                last_kid_miss_refresh: None,
+                fetched_at: std::time::Instant::now(),
+                last_refresh_try: None,
             },
         );
     }
