@@ -362,6 +362,7 @@ pub(super) fn withheld_part_key(root: &str, key: &str) -> bool {
                 | ROOM_FACTS_MAP
                 | DOCUMENT_PINS_MAP
                 | MESSAGE_DOCS_MAP
+                | TYPED_BODY_ROWS_MAP
                 | REPO_MANIFESTS_MAP
         )
 }

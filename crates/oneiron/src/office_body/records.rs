@@ -663,4 +663,132 @@ impl Vault {
                 .iter()
                 .any(|conflict| conflict.kind == ConflictKind::BothEdited))
     }
+
+    /// The office record of `artifact`'s deck fork `fork`, which rides beside
+    /// its typed fork to the owner's other machines (FIX 12470), in its
+    /// table's spelling. `None` for a fork with none, as every DOCX and XLSX
+    /// fork is.
+    pub(crate) fn office_fork_companion_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        artifact: &EntityId,
+        fork: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
+        FORKS
+            .get(&self.store, txn, &(*artifact, *fork))?
+            .map(|record| FORKS.encode_value(&record))
+            .transpose()
+    }
+
+    /// Installs `companion`, the office record another machine holds of
+    /// `artifact`'s deck fork `fork`, as it came (FIX 12470): no fork lands
+    /// or goes here. A record of another fork refuses.
+    pub(crate) fn adopt_office_fork_companion_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact: &EntityId,
+        fork: &EntityId,
+        companion: &[u8],
+    ) -> Result<()> {
+        let record = decode_fork_companion(companion)?;
+        if record.artifact != *artifact || record.id != *fork {
+            return Err(invalid("a carried office fork record names another fork"));
+        }
+        FORKS.put(&self.store, wtxn, &(*artifact, *fork), &record)
+    }
+
+    /// `companion`, a carried deck fork's office record, as this vault holds
+    /// it (FIX 12470), as the erase leaves one here
+    /// (`actor_erase::erase_fork_actor_in_txn`): naming no one where this
+    /// vault erased an actor, read from its own hard-delete markers. `None`
+    /// for an open fork whose opener this vault erased, which goes.
+    pub(crate) fn erased_office_fork_companion_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        companion: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        let mut record = decode_fork_companion(companion)?;
+        let erased = |actor: &mut BodyActor| -> Result<bool> {
+            let gone = match actor.id() {
+                Some(id) => self.carrier_actor_erased_in_txn(txn, &id)?,
+                None => false,
+            };
+            if gone {
+                *actor = BodyActor::Erased;
+            }
+            Ok(gone)
+        };
+        if erased(&mut record.opener)? && record.state == ForkState::Open {
+            return Ok(None);
+        }
+        if let ForkState::Merged { by, .. } | ForkState::Discarded { by, .. } = &mut record.state {
+            erased(by)?;
+        }
+        FORKS.encode_value(&record).map(Some)
+    }
+}
+
+/// Two copies of one deck fork's office record as one (FIX 12470): the same
+/// record, naming no one in each field either copy names no one, since an
+/// erase wins. `None` when they differ otherwise.
+#[cfg(feature = "sync")]
+pub(crate) fn joined_office_fork_companion(held: &[u8], carried: &[u8]) -> Result<Option<Vec<u8>>> {
+    let ours = decode_fork_companion(held)?;
+    let theirs = decode_fork_companion(carried)?;
+    let Some(opener) = met(ours.opener, theirs.opener) else {
+        return Ok(None);
+    };
+    let state = match (&ours.state, &theirs.state) {
+        (ForkState::Open, ForkState::Open) => ForkState::Open,
+        (
+            ForkState::Merged { by: a, at, head },
+            ForkState::Merged {
+                by: b,
+                at: when,
+                head: landed,
+            },
+        ) if at == when && head == landed => match met(*a, *b) {
+            Some(by) => ForkState::Merged {
+                by,
+                at: *at,
+                head: head.clone(),
+            },
+            None => return Ok(None),
+        },
+        (ForkState::Discarded { by: a, at }, ForkState::Discarded { by: b, at: when })
+            if at == when =>
+        {
+            match met(*a, *b) {
+                Some(by) => ForkState::Discarded { by, at: *at },
+                None => return Ok(None),
+            }
+        }
+        _ => return Ok(None),
+    };
+    let joined = OfficeBodyFork {
+        opener,
+        state,
+        ..ours
+    };
+    let other = OfficeBodyFork {
+        opener,
+        state: joined.state.clone(),
+        ..theirs
+    };
+    if joined != other {
+        return Ok(None);
+    }
+    FORKS.encode_value(&joined).map(Some)
+}
+
+/// A carried deck fork's office record, in its table's one spelling.
+#[cfg(feature = "sync")]
+fn decode_fork_companion(bytes: &[u8]) -> Result<OfficeBodyFork> {
+    let record = FORKS.decode_value(bytes)?;
+    if FORKS.encode_value(&record)? != bytes {
+        return Err(invalid(
+            "a carried office fork record is not in its one spelling",
+        ));
+    }
+    Ok(record)
 }
