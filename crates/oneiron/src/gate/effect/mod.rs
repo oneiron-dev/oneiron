@@ -81,6 +81,10 @@ pub(crate) struct ExternalEffectGovernance {
     approval_context: ApprovalContext,
     ask_consent: Option<crate::llm::decision::AskConsent>,
     matched_grant: Option<StandingOutboundGrant>,
+    /// Fix list row 17645: the standing grants that released the other
+    /// recipients of one message to several, each once and none of them
+    /// `matched_grant`; recorded as used when the message is admitted.
+    recipient_grants: Vec<StandingOutboundGrant>,
     /// OF-374: the sender row's envelope slot covering this send, spent only
     /// when the decision is recorded as an admitting Allow.
     envelope_reservation: Option<crate::outbound_grant::ChannelIdentityGrantReservation>,

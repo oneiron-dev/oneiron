@@ -107,19 +107,35 @@ pub(super) fn replayed(
     if peer != Some(release.peer) {
         tracing::debug!("mcp invocation answer reprojected for the waiter's machine");
     }
+    // The owner's own whole-vault export, as the first call's recorded
+    // envelope names its tool and this waiter's fresh proof admits him as
+    // its owner now, is released again as his will (owner ruling 1-EXPORT =
+    // B).
+    let owner_whole_vault_export =
+        super::device_release::owner_whole_vault_export_kept(server, actor, &release.value);
     let result = match release.rows.as_deref() {
         None => release.value,
         Some(rows)
             if actor.auth.as_ref().is_some_and(|auth| {
-                !crate::api::facade::rows_still_admitted(server.vault(), auth, rows)
+                !crate::api::facade::rows_still_admitted(
+                    server.vault(),
+                    auth,
+                    rows,
+                    owner_whole_vault_export,
+                )
             }) =>
         {
             details_on_device_result()
         }
-        Some(rows) => {
-            super::device_release::mcp_release_result(server, actor, rows, false, release.value)
-                .unwrap_or_else(|_| details_on_device_result())
-        }
+        Some(rows) => super::device_release::mcp_release_result(
+            server,
+            actor,
+            rows,
+            false,
+            release.value,
+            owner_whole_vault_export,
+        )
+        .unwrap_or_else(|_| details_on_device_result()),
     };
     if let Some(reply) = reply.as_object_mut() {
         // FIX 10498: a waiter whose projection is kept from a withheld reply

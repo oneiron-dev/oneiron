@@ -47,7 +47,8 @@ pub use self::codec::{
 };
 pub use self::credential_binding::{
     CONNECTOR_ISSUER_HOLD_REASON, ConnectorBindingDependent, ConnectorCredentialBinding,
-    ConnectorIssuerObservation, ConnectorIssuerTransition, ConnectorIssuerTransitionState,
+    ConnectorIssuerHaltView, ConnectorIssuerObservation, ConnectorIssuerTransition,
+    ConnectorIssuerTransitionState,
 };
 pub use self::lifecycle::{
     ActorConnectorRegistration, ConnectorCallRoute, ConnectorConsentRowView,
@@ -149,6 +150,11 @@ pub use slate_draft::{
     SlateTrait, draft_connector_slate, rule_draft_row,
 };
 pub use slate_holder::ConnectorKeySlateNarrowed;
+#[allow(
+    unused_imports,
+    reason = "FIX 9230 seam for the L13/L06-A consent, slate and reach overlays"
+)]
+pub(crate) use slate_holder::{KeySlateNarrows, narrowed_settings_in_txn};
 pub use slate_revision::{
     ConnectorRevisionDeferral, ConnectorSlateRevisionAccepted, ConnectorSlateRevisionOffer,
     SlateRevisionCause,

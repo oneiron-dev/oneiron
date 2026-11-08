@@ -65,6 +65,7 @@ pub mod seal_checks;
 mod source_erase;
 pub(crate) use source_erase::erase_source_copies_in_txn;
 pub mod stewardship;
+
 #[cfg(test)]
 mod tests;
 mod type_tree_gate;
@@ -329,7 +330,7 @@ pub(crate) fn execute(
     }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: 0,
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     })
 }
 fn load_row<T: serde::Serialize + serde::de::DeserializeOwned>(
