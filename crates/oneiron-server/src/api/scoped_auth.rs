@@ -226,6 +226,9 @@ fn transport_memory<'a>(
         memory = memory.with_attested_owner(holder);
     }
     if let Some(auth) = auth {
+        memory = memory.with_caller_origin(oneiron::agent_dispatch::CallerOrigin::Connection {
+            locality: auth.locality(),
+        });
         // Only this host verifies the credential again, so a verb hook's
         // settlement never runs this caller's call without it.
         memory = memory.for_credential();

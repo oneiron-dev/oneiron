@@ -5,10 +5,9 @@ use crate::memory::message_presence::MessagePresenceScope;
 use crate::memory::message_presence::ScopedPresenceFrame;
 use crate::sync::{EphemeralStore, LoroValue, transport};
 use tokio::sync::broadcast;
-const FRAME_BUDGET: usize = 64 * 1024;
 /// Frames the lossy channel buffers for a socket that has not read them.
 const PRESENCE_FRAMES: usize = 256;
-/// One partial whose frame fits the budget, ready to publish.
+/// One partial, ready to publish.
 pub(super) struct PresencePartial {
     key: String,
     value: LoroValue,
@@ -49,11 +48,11 @@ impl StreamPresence {
     pub(crate) fn subscribe_frames(&self) -> broadcast::Receiver<Vec<u8>> {
         self.sender.subscribe()
     }
-    /// Builds `text`'s partial and preflights it on a scratch native store,
-    /// so a refusal comes before the delta is checkpointed or accepted and
-    /// leaves no local presence mutation. `None` in atomic mode. Manual
-    /// buffering can exceed the cap; flush then refuses but finalize still
-    /// commits every buffered byte.
+    /// Builds `text`'s partial. `None` in atomic mode. A partial has no byte
+    /// bound of its own (FIX 20846, as FIX 161 lifted the server's): the
+    /// stream's buffer limit bounds its text, the socket's message floor
+    /// bounds the frame it makes, and a host's hub charges what it keeps to
+    /// its retained-memory line.
     pub(super) fn prepare(
         seed: &Seed,
         text: &str,
@@ -81,11 +80,6 @@ impl StreamPresence {
             ]
             .into(),
         );
-        let scratch = EphemeralStore::new(DEFAULT_MESSAGE_STREAM_IDLE_MS as i64);
-        scratch.set(&key, value.clone());
-        if scratch.encode(&key).len().saturating_add(1) > FRAME_BUDGET {
-            return Err(MessageStreamError::PresenceFrameTooLarge);
-        }
         Ok(Some(PresencePartial {
             key,
             value,

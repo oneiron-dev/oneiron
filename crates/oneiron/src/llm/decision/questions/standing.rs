@@ -27,6 +27,7 @@ pub(super) struct BackfillKey {
     pub(super) question: EntityId,
     version: u32,
     pub(super) unit: EntityId,
+    /// Source frontier, scoped by effective criteria for an explicit override.
     frontier: [u8; 32],
 }
 impl SideKey for BackfillKey {
@@ -178,9 +179,11 @@ fn sources_in_txn(
     unit: EntityId,
     evidence: &[EntityId],
     proposals: &[AnswerRecord],
+    current: Option<&ScopedReadActorKey>,
 ) -> Result<([u8; 32], Vec<Source>)> {
-    let (frontier, sources, _) =
-        sources_with_caller_in_txn(vault, txn, record, actor, unit, evidence, proposals, None)?;
+    let (frontier, sources, _) = sources_with_caller_in_txn(
+        vault, txn, record, actor, unit, evidence, proposals, None, current,
+    )?;
     Ok((frontier, sources))
 }
 
@@ -193,6 +196,7 @@ fn sources_with_caller_in_txn(
     evidence: &[EntityId],
     proposals: &[AnswerRecord],
     caller: Option<&crate::claim::ScopedRead<'_>>,
+    current: Option<&ScopedReadActorKey>,
 ) -> Result<([u8; 32], Vec<Source>, Vec<super::GraphContextSource>)> {
     // Every evidence source is read: their count is no refusal (FIX 9914).
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
@@ -202,8 +206,13 @@ fn sources_with_caller_in_txn(
     // relationships' rows as it does on every lane, inside the lane the
     // version was saved under (OF-506).
     let principal = record.principal;
-    let reader =
-        super::saved_reader::saved_reader_in_txn(vault, txn, principal, &record.read_lane)?;
+    let reader = super::saved_reader::saved_reader_in_txn_with_current(
+        vault,
+        txn,
+        principal,
+        &record.read_lane,
+        current,
+    )?;
     let holder = ScopedReadActorKey::with_actor_class(
         actor.entity_ref().to_hex(),
         actor.actor_class().gate_actor_class(),
@@ -224,7 +233,7 @@ fn sources_with_caller_in_txn(
         let proposal = proposals
             .iter()
             .find(|answer| answer.claim == *id && *id != unit);
-        let reader_lane = question_lane(vault, reader.clone());
+        let reader_lane = super::saved_reader::current_reader_lane(vault, reader.clone(), current);
         let readable = if proposal.is_some() {
             // Only results already returned to this workflow may feed its next
             // proposal. They remain private to the asker and are never kept here.
@@ -380,7 +389,7 @@ pub fn standing_source_frontier(
     if !record.definition.units.contains(&unit) {
         return Err(Error::EntityNotFound);
     }
-    Ok(sources_in_txn(vault, &txn, &record, actor, unit, evidence, &[])?.0)
+    Ok(sources_in_txn(vault, &txn, &record, actor, unit, evidence, &[], None)?.0)
 }
 
 /// Keep a graph answer and its immutable-version receipt atomically. Repeated
@@ -405,6 +414,8 @@ pub fn backfill_standing_answer(
         Measured::Bare,
         &[],
         now,
+        None,
+        None,
     )
 }
 
@@ -416,6 +427,7 @@ pub(super) fn prepare_graph_answer(
     actor: WriteActor,
     input: &super::GraphQuestionInput,
     proposals: &[AnswerRecord],
+    current: Option<&ScopedReadActorKey>,
 ) -> Result<(QuestionRecord, super::GraphUnitContext, [u8; 32])> {
     vault.store.authorization_now()?;
     let txn = vault.store.env.read_txn()?;
@@ -431,9 +443,16 @@ pub(super) fn prepare_graph_answer(
         input.unit,
         &input.evidence,
         proposals,
+        current,
     )?;
-    let key = super::saved_reader::saved_reader_in_txn(vault, &txn, principal, &record.read_lane)?;
-    let scoped = question_lane(vault, key.clone());
+    let key = super::saved_reader::saved_reader_in_txn_with_current(
+        vault,
+        &txn,
+        principal,
+        &record.read_lane,
+        current,
+    )?;
+    let scoped = super::saved_reader::current_reader_lane(vault, key.clone(), current);
     let mut sources = Vec::with_capacity(input.evidence.len() + 1);
     for id in std::iter::once(&input.unit).chain(input.evidence.iter()) {
         let lane = if proposals
@@ -442,7 +461,7 @@ pub(super) fn prepare_graph_answer(
         {
             scoped.recorded_lane()?
         } else {
-            question_lane(vault, key.clone())
+            super::saved_reader::current_reader_lane(vault, key.clone(), current)
         };
         let Some((kind, _, body)) = lane.graph_ask_parts_in_txn(&txn, id)? else {
             return Err(Error::EntityNotFound);
@@ -483,6 +502,8 @@ pub(super) fn backfill_graph_answer(
     prediction: super::GraphPrediction,
     proposals: &[AnswerRecord],
     now: u64,
+    current: Option<&ScopedReadActorKey>,
+    criteria_override: Option<&QuestionCriteria>,
 ) -> Result<AnswerRecord> {
     let versions = context
         .sources
@@ -521,6 +542,8 @@ pub(super) fn backfill_graph_answer(
         Measured::Graph(versions, prediction.cost_per_thousand),
         proposals,
         now,
+        current,
+        criteria_override,
     )
 }
 
@@ -539,6 +562,8 @@ pub(super) fn backfill_graph_decision(
     decision: TypedDecision,
     proposals: &[AnswerRecord],
     now: u64,
+    current: Option<&ScopedReadActorKey>,
+    criteria_override: Option<&QuestionCriteria>,
 ) -> Result<AnswerRecord> {
     let decision = super::graph_ask::decided(&context, images, audio, decision);
     let input = StandingAnswer {
@@ -566,6 +591,8 @@ pub(super) fn backfill_graph_decision(
         Measured::Decided(Box::new(decision)),
         proposals,
         now,
+        current,
+        criteria_override,
     )
 }
 
@@ -591,6 +618,8 @@ fn backfill_answer(
     measurement: Measured,
     proposals: &[AnswerRecord],
     now: u64,
+    current: Option<&ScopedReadActorKey>,
+    criteria_override: Option<&QuestionCriteria>,
 ) -> Result<AnswerRecord> {
     backfill_answer_with_caller(
         vault,
@@ -603,6 +632,8 @@ fn backfill_answer(
         proposals,
         None,
         now,
+        current,
+        criteria_override,
     )
 }
 
@@ -617,7 +648,18 @@ fn backfill_answer_with_caller(
     proposals: &[AnswerRecord],
     caller: Option<&crate::claim::ScopedRead<'_>>,
     now: u64,
+    current: Option<&ScopedReadActorKey>,
+    criteria_override: Option<&QuestionCriteria>,
 ) -> Result<AnswerRecord> {
+    let dedup_frontier = match criteria_override {
+        None => input.source_frontier,
+        Some(criteria) => {
+            let mut hasher = blake3::Hasher::new_derive_key("oneiron.graph.criteria-override");
+            hasher.update(&input.source_frontier);
+            hasher.update(&encode(criteria)?);
+            *hasher.finalize().as_bytes()
+        }
+    };
     vault.store.authorization_now()?;
     vault.with_write_txn_grouped(|txn| {
         let (mut head, record) =
@@ -650,6 +692,7 @@ fn backfill_answer_with_caller(
             &input.evidence,
             proposals,
             caller,
+            current,
         )?;
         if frontier != input.source_frontier {
             return Err(Error::ConcurrentWrite("standing source changed"));
@@ -672,7 +715,7 @@ fn backfill_answer_with_caller(
             question,
             version: expected_version,
             unit: input.unit,
-            frontier,
+            frontier: dedup_frontier,
         };
         if let Some(claim) = QUESTION_BACKFILL.get(&vault.store, txn, &dedup)? {
             let answer = QUESTION_ANSWER

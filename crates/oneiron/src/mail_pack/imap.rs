@@ -1,10 +1,13 @@
 //! The IMAP mail wire (FIX 12559 row 4, fix list row 15425): one IMAP4rev1
-//! mailbox over implicit TLS, through the engine's own client
+//! mailbox over TLS, through the engine's own client
 //! ([`super::imap_client`]).
 //!
 //! - **Credential.** The source's custody record, read at its door with
-//!   effector `connector:imap`, is JSON: `host`, `port` (993 when absent),
-//!   `username`, and `password` or an OAuth `access_token` (`XOAUTH2`). The
+//!   effector `connector:imap`, is JSON: `host`, `port`, `security` (`tls`,
+//!   TLS from the first byte, port 993 when absent; or `starttls`, the plain
+//!   port upgraded before anything else is sent, port 143 when absent; a
+//!   record naming port 143 alone means `starttls`), `username`, and
+//!   `password` or an OAuth `access_token` (`XOAUTH2`). The
 //!   source's provider account is `<username>@<host>`: a credential for
 //!   another account never fills it. One session serves one wire, opened at
 //!   the first read and opened again when the record changes.
@@ -22,6 +25,10 @@
 //!   with it that it no longer holds is looked for in the other folders:
 //!   moved, it carries its new folders; in trash or junk, or nowhere, it was
 //!   deleted at the provider. A changed UIDVALIDITY expires the anchor.
+//! - **What a folder holds.** The wire keeps which message each UID of a
+//!   folder it read holds (fix list row 17871): a folder that lost mail is
+//!   checked by one UID search, and only the UIDs it never read are fetched
+//!   for their `Message-ID`, not every message in the folder.
 //!
 //! Call it from a blocking context: each call is socket I/O.
 
@@ -29,12 +36,13 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::credential::WireReads;
-use super::gmail::{address_list, rfc2822_seconds};
+use super::gmail::rfc2822_seconds;
 use super::imap_client::{
-    Fetched, FolderStatus, ImapSession, Item, ListedFolder, decode_mailbox_name, uid_set,
+    Fetched, FolderStatus, ImapSession, Item, ListedFolder, decode_mailbox_name, range_set,
+    ranges_hold, uid_set,
 };
 use super::mime::MimeMessage;
 use super::rest::refused;
@@ -45,6 +53,7 @@ use super::wire::{
     MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
 };
 use crate::error::Result;
+use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
 /// The effector an IMAP source's credential is injected at.
@@ -59,6 +68,8 @@ const NEW_PER_FOLDER: usize = 200;
 const MAX_FOLDERS: usize = 1_000;
 /// The old UIDs one read of a folder's `Message-ID`s covers.
 const DEPARTURE_BATCH: u64 = 2_000;
+/// The most UID ranges one such read names, so its command line stays short.
+const MAX_SET_RANGES: usize = 200;
 /// The search hits one read of their `Message-ID`s checks.
 const HIT_BATCH: usize = 64;
 /// The largest message read whole: a bigger one lands by its headers.
@@ -68,6 +79,29 @@ const ANCHOR_PREFIX: &str = "imap2";
 /// The prefix of a listing page this wire writes.
 const LIST_PREFIX: &str = "imap1";
 
+/// Which message each UID of a read folder holds: by the source, the
+/// BLAKE3 of the folder's digest and the UID. A UID names one message for
+/// as long as its folder's UIDVALIDITY stands, which the row keeps.
+const UIDS: SideTable<(EntityId, [u8; 32], u64), HeldUid, Named> =
+    SideTable::new(&side_table::MAIL_PACK_IMAP_UID);
+
+/// The message one UID holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct HeldUid {
+    uid_validity: u64,
+    provider_id: String,
+}
+
+/// How a session reaches TLS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ImapSecurity {
+    /// TLS from the first byte.
+    Tls,
+    /// The plain port, upgraded by `STARTTLS` before anything else is sent.
+    Starttls,
+}
+
 /// The custody record of an IMAP source.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,11 +109,110 @@ struct ImapCredential {
     host: String,
     #[serde(default)]
     port: Option<u16>,
+    #[serde(default)]
+    security: Option<ImapSecurity>,
     username: String,
     #[serde(default)]
     password: Option<String>,
     #[serde(default)]
     access_token: Option<String>,
+    /// Where the mailbox submits mail: what its drafted replies are sent
+    /// through (fix list row 17872).
+    #[serde(default)]
+    submission: Option<SubmissionConfig>,
+}
+
+/// The submission server (RFC 6409) of an IMAP mailbox: the same account,
+/// its own host.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubmissionConfig {
+    host: String,
+    #[serde(default)]
+    port: Option<u16>,
+    /// `tls` (port 465) or `starttls` (port 587, the default).
+    #[serde(default)]
+    security: Option<ImapSecurity>,
+}
+
+/// The submission account an IMAP source's credential names, checked as
+/// its read is checked: the source's own account.
+pub(super) struct SubmissionAccount {
+    pub(super) host: String,
+    pub(super) port: u16,
+    pub(super) security: super::smtp_client::SmtpSecurity,
+    pub(super) username: String,
+    pub(super) password: Option<String>,
+    pub(super) access_token: Option<String>,
+}
+
+/// `host` as a server name the credential may name: letters, digits, dots
+/// and hyphens, lower case.
+fn server_name(host: &str, reason: &'static str) -> Result<String> {
+    let host = host.trim().to_ascii_lowercase();
+    if host.is_empty()
+        || host.len() > 253
+        || !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return Err(refused(reason));
+    }
+    Ok(host)
+}
+
+/// Whether `source` names the account `username` at `host`: its user
+/// exactly, as a server may tell case apart, and its host.
+fn names_account(source: &MailSyncSource, username: &str, host: &str) -> bool {
+    source
+        .provider_account
+        .rsplit_once('@')
+        .is_some_and(|(user, named)| user == username && named.eq_ignore_ascii_case(host))
+}
+
+/// The submission account of the IMAP source `source`, from its custody
+/// record `secret`.
+///
+/// # Errors
+///
+/// A record that does not read, names another account, names no
+/// submission server, or holds neither a password nor a token.
+pub(super) fn submission_account(
+    source: &MailSyncSource,
+    secret: &[u8],
+) -> Result<SubmissionAccount> {
+    use super::smtp_client::SmtpSecurity;
+    let stored: ImapCredential =
+        serde_json::from_slice(secret).map_err(|_| refused("imap_credential_unreadable"))?;
+    let imap_host = server_name(&stored.host, "imap_credential_host_invalid")?;
+    if !names_account(source, &stored.username, &imap_host) {
+        return Err(refused("imap_credential_reads_another_account"));
+    }
+    let submission = stored
+        .submission
+        .ok_or_else(|| refused("imap_submission_not_configured"))?;
+    let host = server_name(&submission.host, "smtp_host_invalid")?;
+    let security = match submission.security {
+        Some(ImapSecurity::Tls) => SmtpSecurity::Tls,
+        Some(ImapSecurity::Starttls) => SmtpSecurity::Starttls,
+        None if submission.port == Some(465) => SmtpSecurity::Tls,
+        None => SmtpSecurity::Starttls,
+    };
+    let port = submission.port.unwrap_or(match security {
+        SmtpSecurity::Tls => 465,
+        SmtpSecurity::Starttls => 587,
+    });
+    if stored.password.is_none() && stored.access_token.is_none() {
+        return Err(refused("imap_credential_holds_no_secret"));
+    }
+    Ok(SubmissionAccount {
+        host,
+        port,
+        security,
+        username: stored.username,
+        password: stored.password,
+        access_token: stored.access_token,
+    })
 }
 
 /// What a folder is for.
@@ -306,12 +439,7 @@ fn headers_of(
     let provider_id = rfc_message_id
         .as_deref()
         .map_or_else(|| place_id(folder, uid_validity, read.uid), content_id);
-    let addresses = |name: &str| {
-        parsed
-            .header(name)
-            .map(|value| address_list(&value))
-            .unwrap_or_default()
-    };
+    let addresses = |name: &str| parsed.address_header(name);
     let date = parsed.header("date").as_deref().and_then(rfc2822_seconds);
     let flagged = |flag: &str| read.flags.iter().any(|held| held == flag);
     MailHeaders {
@@ -322,7 +450,7 @@ fn headers_of(
             .header("references")
             .map(|value| value.split_whitespace().map(str::to_owned).collect())
             .unwrap_or_default(),
-        from: parsed.header("from").filter(|from| !from.is_empty()),
+        from: Some(parsed.address_header("from").join(", ")).filter(|from| !from.is_empty()),
         to: addresses("to"),
         cc: addresses("cc"),
         reply_to: addresses("reply-to"),
@@ -815,25 +943,8 @@ impl ImapMailWire<'_> {
         pending: &mut BTreeMap<String, Vec<String>>,
     ) -> Result<()> {
         let place = open.folders[folder].clone();
-        let mut held = BTreeSet::new();
         let status = open.session.examine(&place.name)?;
-        // The folder's old messages by id, read a bounded batch at a time.
-        let mut low = 1;
-        while low < uid_next {
-            let high = low.saturating_add(DEPARTURE_BATCH - 1).min(uid_next - 1);
-            let fetched = open.session.uid_fetch(
-                &format!("{low}:{high}"),
-                "UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]",
-            )?;
-            for message in &fetched {
-                if message.uid().is_some_and(|uid| uid < uid_next)
-                    && let Some(id) = fetched_id(message, &place, status.uid_validity)
-                {
-                    held.insert(id);
-                }
-            }
-            low = high + 1;
-        }
+        let held = self.held_below(open, source.source_ref, &place, status, uid_next)?;
         let gone: Vec<String> = {
             let txn = self.vault.store.env.read_txn()?;
             let mut gone = Vec::new();
@@ -876,6 +987,159 @@ impl ImapMailWire<'_> {
     }
 }
 
+impl ImapMailWire<'_> {
+    /// The ids of the messages the open `place` holds below `top`: the UIDs
+    /// one search answers, each named from the UID map, and only the UIDs
+    /// the map does not hold read for their `Message-ID`, a bounded batch at
+    /// a time. The map learns those, and forgets the UIDs the folder no
+    /// longer holds and the rows of an older UIDVALIDITY.
+    fn held_below(
+        &self,
+        open: &mut OpenSession,
+        source: EntityId,
+        place: &Folder,
+        status: FolderStatus,
+        top: u64,
+    ) -> Result<BTreeSet<String>> {
+        let mut held = BTreeSet::new();
+        if top <= 1 {
+            return Ok(held);
+        }
+        let present = open.session.uid_ranges(1, top - 1)?;
+        let folder_key = *blake3::hash(place.digest.as_bytes()).as_bytes();
+        let mut prefix = source.as_bytes().to_vec();
+        prefix.extend_from_slice(&folder_key);
+        let mapped = {
+            let txn = self.vault.store.env.read_txn()?;
+            UIDS.iter_from(&self.vault.store, &txn, &prefix)?
+                .collect::<Result<Vec<_>>>()?
+        };
+        let mut known = BTreeSet::new();
+        let mut stale = Vec::new();
+        for ((_, _, uid), row) in mapped {
+            if row.uid_validity != status.uid_validity {
+                stale.push(uid);
+            } else if ranges_hold(&present, uid) {
+                known.insert(uid);
+                held.insert(row.provider_id);
+            } else if uid < top {
+                stale.push(uid);
+            }
+        }
+        let unknown = without(&present, &known);
+        for batch in (UidBatches {
+            ranges: unknown.iter(),
+            current: None,
+        }) {
+            let fetched = open.session.uid_fetch(
+                &range_set(&batch),
+                "UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]",
+            )?;
+            let learned: Vec<(u64, String)> = fetched
+                .iter()
+                .filter_map(|message| {
+                    let uid = message.uid().filter(|&uid| uid < top)?;
+                    // Only an answer that carries the section asked for
+                    // names the message: an unsolicited update (its flags)
+                    // carries none.
+                    message
+                        .value_starting("BODY[HEADER.FIELDS")
+                        .and_then(Item::bytes)?;
+                    Some((uid, fetched_id(message, place, status.uid_validity)?))
+                })
+                .collect();
+            held.extend(learned.iter().map(|(_, id)| id.clone()));
+            self.remember_uids(source, folder_key, status.uid_validity, learned)?;
+        }
+        self.forget_uids(source, folder_key, &stale)?;
+        Ok(held)
+    }
+
+    /// Records which message each of the `learned` UIDs of a folder holds.
+    fn remember_uids(
+        &self,
+        source: EntityId,
+        folder_key: [u8; 32],
+        uid_validity: u64,
+        learned: Vec<(u64, String)>,
+    ) -> Result<()> {
+        if learned.is_empty() {
+            return Ok(());
+        }
+        self.vault.with_write_txn_grouped(|txn| {
+            for (uid, provider_id) in learned {
+                let row = HeldUid {
+                    uid_validity,
+                    provider_id,
+                };
+                UIDS.put(&self.vault.store, txn, &(source, folder_key, uid), &row)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Forgets the rows of a folder's `uids`.
+    fn forget_uids(&self, source: EntityId, folder_key: [u8; 32], uids: &[u64]) -> Result<()> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+        self.vault.with_write_txn_grouped(|txn| {
+            for uid in uids {
+                UIDS.delete(&self.vault.store, txn, &(source, folder_key, *uid))?;
+            }
+            Ok(())
+        })
+    }
+}
+
+/// The UIDs of ascending `ranges` not in `known`, as ascending ranges.
+fn without(ranges: &[(u64, u64)], known: &BTreeSet<u64>) -> Vec<(u64, u64)> {
+    let mut out = Vec::new();
+    for &(low, high) in ranges {
+        let mut start = low;
+        for &uid in known.range(low..=high) {
+            if uid > start {
+                out.push((start, uid - 1));
+            }
+            start = uid + 1;
+        }
+        if start <= high {
+            out.push((start, high));
+        }
+    }
+    out
+}
+
+/// Ascending UID ranges cut into batches of at most `DEPARTURE_BATCH` UIDs
+/// and `MAX_SET_RANGES` ranges, as one fetch names them.
+struct UidBatches<'r> {
+    ranges: std::slice::Iter<'r, (u64, u64)>,
+    /// What is left of a range the last batch cut.
+    current: Option<(u64, u64)>,
+}
+
+impl Iterator for UidBatches<'_> {
+    type Item = Vec<(u64, u64)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut batch = Vec::new();
+        let mut span = 0;
+        while span < DEPARTURE_BATCH && batch.len() < MAX_SET_RANGES {
+            let Some((low, high)) = self.current.take().or_else(|| self.ranges.next().copied())
+            else {
+                break;
+            };
+            let take = (high - low + 1).min(DEPARTURE_BATCH - span);
+            batch.push((low, low + take - 1));
+            span += take;
+            if low + take <= high {
+                self.current = Some((low + take, high));
+            }
+        }
+        (!batch.is_empty()).then_some(batch)
+    }
+}
+
 /// The id of a message fetched with its `Message-ID` field.
 fn fetched_id(message: &Fetched, folder: &Folder, uid_validity: u64) -> Option<String> {
     let uid = message.uid()?;
@@ -915,25 +1179,18 @@ fn open_session(
 ) -> Result<OpenSession> {
     let stored: ImapCredential =
         serde_json::from_slice(secret).map_err(|_| refused("imap_credential_unreadable"))?;
-    let host = stored.host.trim().to_ascii_lowercase();
-    if host.is_empty()
-        || host.len() > 253
-        || !host
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
-    {
-        return Err(refused("imap_credential_host_invalid"));
-    }
-    // The credential reads the account the source names, and no other: its
-    // user exactly, as a server may tell case apart, and its host.
-    let reads_account = source
-        .provider_account
-        .rsplit_once('@')
-        .is_some_and(|(user, named)| user == stored.username && named.eq_ignore_ascii_case(&host));
-    if !reads_account {
+    let host = server_name(&stored.host, "imap_credential_host_invalid")?;
+    // The credential reads the account the source names, and no other.
+    if !names_account(source, &stored.username, &host) {
         return Err(refused("imap_credential_reads_another_account"));
     }
-    let mut session = ImapSession::connect(&host, stored.port.unwrap_or(993))?;
+    let starttls = stored
+        .security
+        .map_or(stored.port == Some(143), |security| {
+            security == ImapSecurity::Starttls
+        });
+    let port = stored.port.unwrap_or(if starttls { 143 } else { 993 });
+    let mut session = ImapSession::connect(&host, port, starttls)?;
     session.authenticate(
         &stored.username,
         stored.password.as_deref(),

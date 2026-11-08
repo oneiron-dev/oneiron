@@ -8,6 +8,18 @@
 //! hash keys is shared by every snapshot of that fork, so no one snapshot
 //! holds it and it is not compartmented. Nothing calls this until KS7-5, and
 //! only once CHECKPOINT_PAYLOADS_ENABLED is on.
+//!
+//! FIX 4299 (CODE-CUSTODY-01): a snapshot row now names the registered
+//! repository it belongs to, and its scope key derives from that anchor or
+//! from the commit-free locator. Both ride the snapshot row and its scope
+//! rows under the snapshot's own tree; `check` decodes each with the one
+//! snapshot codec, so a row of the old shape refuses rather than restores.
+//! The anchor's retained configuration is its CODE body, an ordinary entity
+//! row, never a row here.
+//!
+//! FIX 4300: a scope also holds its registered anchor and every symbol of
+//! each snapshot's manifest. A scope row naming a CODE_ARTIFACT or a
+//! CODE_SYMBOL goes under that entity's own tree.
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
@@ -21,7 +33,7 @@ use super::{CUSTODY_REPORTS, FORK_INDEX, PROJECT_INDEX, REPO_INDEX, SCOPE_INDEX,
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL};
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
     self, Captured, OpenedOwnerRows, OtherClient, OwnerRef, OwnerRows, Restored, RowLocator,
@@ -29,7 +41,8 @@ use crate::store::checkpoint_payload::rows::{
 };
 
 /// Where a scope row goes, by the entity its id names: a snapshot's tree,
-/// the body client for an ASSET, or nowhere for an id that names neither.
+/// an anchor's or a symbol's own tree, the body client for an ASSET, or
+/// nowhere for an id that names none of them.
 fn scope_row(
     dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -49,7 +62,9 @@ fn scope_row(
         .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
     match kind {
         Some(ENTITY_TYPE_ASSET) => out.dispatch(OtherClient::Body, at, value),
-        Some(ENTITY_TYPE_CODE_ARTIFACT) => out.exact(OwnerRef::entity(id), at, value),
+        Some(ENTITY_TYPE_CODE_ARTIFACT | ENTITY_TYPE_CODE_SYMBOL) => {
+            out.exact(OwnerRef::entity(id), at, value);
+        }
         _ => out.unclassified(at, None, Unresolved::NoOwner),
     }
     Ok(())

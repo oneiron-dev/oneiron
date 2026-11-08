@@ -22,15 +22,19 @@ use serde::{Deserialize, Serialize};
 use super::landing::{LandOutcome, Landing};
 use super::pack::require_pack_active_in;
 use super::provider_delete::{
-    ProviderDeleteOutcome, apply_provider_delete, restore_from_provider_trash, update_labels,
+    ProviderDeleteOutcome, apply_provider_delete, restore_from_provider_trash, resume_owed_forgets,
+    update_labels,
 };
-use super::source::{MailCopySetting, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
+use super::source::{
+    MailCopySetting, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES,
+    proven_own_address_set,
+};
 use super::state::{
-    MailPresence, MailSyncState, OCCURRENCES, SYNC, bodies_waiting_in, occurrence_key,
+    MailPresence, MailRelist, MailSyncState, OCCURRENCES, SYNC, bodies_waiting_in, occurrence_key,
 };
 use super::wire::{
-    MailHeaders, MailHistoryChange, MailHistoryRead, MailListQuery, MailProviderWire,
-    MailSyncSource,
+    MailHeaders, MailHistoryChange, MailHistoryRead, MailListQuery, MailMessageRef,
+    MailProviderWire, MailSyncSource,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
@@ -299,6 +303,7 @@ impl Step<'_> {
                 .history(&self.wire_source, &anchor, page.as_deref())?;
             let MailHistoryRead::Page(read) = read else {
                 let fresh = self.wire.current_anchor(&self.wire_source)?;
+                let at = self.at;
                 self.write_state(|state| {
                     state.anchor = Some(fresh);
                     state.history_page = None;
@@ -307,6 +312,11 @@ impl Step<'_> {
                     state.backfill_page = None;
                     state.backfill_done = false;
                     state.generation += 1;
+                    // The fresh listing settles what the lost feed missed.
+                    state.relist = Some(MailRelist {
+                        generation: state.generation,
+                        since: at,
+                    });
                 })?;
                 self.report.anchor_expired = true;
                 return Ok(());
@@ -376,10 +386,28 @@ impl Step<'_> {
                 state.backfill_page = None;
                 state.backfill_done = false;
                 state.generation += 1;
+                // A listing settling an expired anchor goes on as this one.
+                if let Some(relist) = &mut state.relist {
+                    relist.generation = state.generation;
+                }
             })?;
         }
         if copy == MailCopySetting::SearchOnly {
+            // No listing runs, so none settles anything.
+            if self.state()?.relist.is_some() {
+                self.write_state(|state| state.relist = None)?;
+            }
             return Ok(());
+        }
+        // A listing complete but not yet settled (a delete failed) settles
+        // again first.
+        let state = self.state()?;
+        if state.backfill_done
+            && let Some(relist) = state
+                .relist
+                .filter(|relist| relist.generation == state.generation)
+        {
+            self.settle_relist(relist, state.backfill_newer_than)?;
         }
         let newer_than = self.state()?.backfill_newer_than;
         for _ in 0..pages {
@@ -396,6 +424,12 @@ impl Step<'_> {
                 self.land_headers(&message.provider_id)?;
             }
             let generation = state.generation;
+            let relist = state
+                .relist
+                .filter(|relist| relist.generation == generation);
+            if relist.is_some() {
+                self.mark_listed(&listed.messages, generation)?;
+            }
             let next = listed.next_page;
             self.write_state(|state| {
                 // A listing started over meanwhile keeps its own place.
@@ -404,7 +438,140 @@ impl Step<'_> {
                     state.backfill_page = next;
                 }
             })?;
+            let after = self.state()?;
+            if let Some(relist) = relist
+                && after.backfill_done
+                && after.generation == generation
+                && after.relist == Some(relist)
+            {
+                self.settle_relist(relist, after.backfill_newer_than)?;
+            }
         }
+        Ok(())
+    }
+
+    /// Records that the provider still holds `provider_id` as of this
+    /// listing (`generation`).
+    fn mark_listed_one(&self, provider_id: &str, generation: u64) -> Result<()> {
+        self.mark_listed(
+            &[MailMessageRef {
+                provider_id: provider_id.to_owned(),
+                thread_id: None,
+            }],
+            generation,
+        )
+    }
+
+    /// Records that this listing (`generation`) named each of `messages`
+    /// the vault holds a copy of.
+    fn mark_listed(&self, messages: &[MailMessageRef], generation: u64) -> Result<()> {
+        self.vault.with_write_txn_grouped(|txn| {
+            for message in messages {
+                let key = occurrence_key(self.source, &message.provider_id);
+                if let Some(mut occurrence) = OCCURRENCES.get(&self.vault.store, txn, &key)?
+                    && occurrence.listed_in != Some(generation)
+                {
+                    occurrence.listed_in = Some(generation);
+                    OCCURRENCES.put(&self.vault.store, txn, &key, &occurrence)?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Settles a completed listing after an expired anchor (fix list row
+    /// 17937): each live copy landed before it began, within its cutoff,
+    /// that it never named is asked of the provider again; one it no longer
+    /// holds, or holds as trash or spam, was deleted while the feed was lost
+    /// and takes the source's delete setting. A delete that fails leaves the
+    /// listing unsettled, and the next step settles it again.
+    fn settle_relist(&mut self, relist: MailRelist, cutoff: Option<u64>) -> MemoryResult<()> {
+        let lost: Vec<String> = {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
+            let mut lost = Vec::new();
+            for occurrence in
+                OCCURRENCES.iter_from(&self.vault.store, &txn, self.source.as_bytes())?
+            {
+                let (_, occurrence) = occurrence?;
+                if matches!(occurrence.presence, MailPresence::Present)
+                    && occurrence.landed_at < relist.since
+                    && occurrence.listed_in != Some(relist.generation)
+                    && cutoff.is_none_or(|cutoff| occurrence.received_at >= cutoff)
+                {
+                    lost.push(occurrence.provider_id);
+                }
+            }
+            lost
+        };
+        let mut settled = true;
+        for provider_id in lost {
+            // A copy the listing missed may have moved behind its cursor:
+            // the provider's own answer decides.
+            if let Some(headers) = self.wire.headers(&self.wire_source, &provider_id)?
+                && !headers.trash_or_spam
+            {
+                update_labels(
+                    self.vault,
+                    self.source,
+                    &provider_id,
+                    &headers.labels,
+                    self.at,
+                )?;
+                self.mark_listed_one(&provider_id, relist.generation)?;
+                continue;
+            }
+            if self.delete(&provider_id).is_err() {
+                settled = false;
+            }
+        }
+        if settled {
+            self.write_state(|state| {
+                if state.relist == Some(relist) {
+                    state.relist = None;
+                }
+            })?;
+        }
+        Ok(())
+    }
+
+    /// The mailbox's own addresses as its provider proves them now (fix
+    /// list row 20400), written to the source in a commit of their own
+    /// when they changed, at most once per
+    /// [`OWN_ADDRESSES_REFRESH_SECS`](super::state::OWN_ADDRESSES_REFRESH_SECS)
+    /// of answers. A provider that proves none, or a read it refuses (a
+    /// missing scope) or that fails, keeps the stored set for this step:
+    /// never the step's failure.
+    fn refresh_own_addresses(&mut self) -> Result<()> {
+        if self.state()?.own_addresses_read_at.is_some_and(|read| {
+            self.at.saturating_sub(read) < super::state::OWN_ADDRESSES_REFRESH_SECS
+        }) {
+            return Ok(());
+        }
+        let Ok(Some(proven)) = self.wire.own_addresses(&self.wire_source) else {
+            return Ok(());
+        };
+        let at = self.at;
+        self.write_state(|state| state.own_addresses_read_at = Some(at))?;
+        let own = proven_own_address_set(&self.row.address, &proven);
+        if own == self.row.own_addresses {
+            return Ok(());
+        }
+        let (vault, source) = (self.vault, self.source);
+        vault.with_write_txn_grouped(|txn| {
+            if let Some(mut row) = SOURCES.get(&vault.store, txn, &source)?
+                && row.own_addresses != own
+            {
+                row.own_addresses.clone_from(&own);
+                SOURCES.put(&vault.store, txn, &source, &row)?;
+            }
+            Ok(())
+        })?;
+        self.row.own_addresses = own;
         Ok(())
     }
 
@@ -545,7 +712,10 @@ impl Vault {
         // Header revisions a body superseded and whose delete did not return
         // go first, whether or not the provider lists them again (FIX 15413).
         super::header_retire::retire_superseded_headers(self, source_ref);
+        let mut owed = None;
         let outcome = (|| -> MemoryResult<()> {
+            // Then a forget a failure stopped part-way (fix list row 18084).
+            owed = resume_owed_forgets(step.vault, step.source)?;
             if step.state()?.anchor.is_none() {
                 let anchor = step.wire.current_anchor(&step.wire_source)?;
                 step.write_state(|state| state.anchor = Some(anchor))?;
@@ -562,9 +732,14 @@ impl Vault {
                 budget.attachments,
             )?;
             step.report.attachments_stored += stored;
+            step.refresh_own_addresses()?;
             Ok(())
         })();
-        let error = outcome.as_ref().err().map(|error| error.message.clone());
+        let error = outcome
+            .as_ref()
+            .err()
+            .map(|error| error.message.clone())
+            .or(owed);
         step.write_state(|state| {
             state.last_step_at = Some(at);
             state.last_error = error;

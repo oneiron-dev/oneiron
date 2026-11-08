@@ -30,9 +30,17 @@ side_tables! {
         => crate::mail_pack::erase_compliance_actor_in_txn;
     /// The org compliance search setting, off when absent (FIX 12560). Key: ().
     MAIL_PACK_COMPLIANCE_SETTING: VaultMeta b"mail_pack:compliance_setting:v1" Named;
+    /// The "Forget too" provider deletes a mail source still owes (fix list row 18084): the
+    /// rows of each forgotten message not yet deleted and its thread's CONVERSATION, recorded
+    /// before the first row goes. Key: id16(source) + blake3 (32) of the provider id.
+    MAIL_PACK_FORGET_OWED: VaultMeta b"mail_pack:forget_owed:v1:" Named;
     /// A mail message's header-only revision its body superseded, owed its delete (FIX 15413).
     /// Key: id16(source) + blake3 (32) of the provider id + id16(MESSAGE).
     MAIL_PACK_HEADER_RETIREMENT: VaultMeta b"mail_pack:header_retirement:v1:" Named;
+    /// Which message each UID of an IMAP folder the mail pack read holds (fix list row 17871),
+    /// with the folder's UIDVALIDITY. Key: id16(source) + blake3 (32) of the folder digest +
+    /// u64be UID.
+    MAIL_PACK_IMAP_UID: VaultMeta b"mail_pack:imap_uid:v1:" Named;
     /// Where one mbox or Takeout import into a mail source stands (FIX 12559): the file, its
     /// size and change time, the archive entry and byte offset. Key: id16(source) + blake3 (32)
     /// of the path.
@@ -58,6 +66,10 @@ side_tables! {
     /// Where one mail source's import stands: its change anchor, its newest-first copy and its
     /// counts (FIX 12559). Key: id16(source).
     MAIL_PACK_SYNC: VaultMeta b"mail_pack:sync:v1:" Named;
+    /// How many times a mail thread's CONVERSATION was forgotten whole (fix list row 18084): a
+    /// message landing in the thread afterwards opens a new CONVERSATION. Key: id16(source) +
+    /// blake3 (32) of the thread key.
+    MAIL_PACK_THREAD_EPOCH: VaultMeta b"mail_pack:thread_epoch:v1:" Named;
     /// Idle publication delay. Key: ().
     ENTITY_TEXT_INDEXED_IDLE_DELAY_MS: VaultMeta b"manifest:entity_text:indexed_idle_delay_ms" Raw;
     /// FIX 9970: a TURN whose landing could not record its program wake, and why, written in

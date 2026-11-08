@@ -10,7 +10,7 @@ use base64::Engine as _;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 
 use super::rest::html_text;
-use super::wire::MailAttachmentRef;
+use super::wire::{MailAddressHeaders, MailAttachmentRef};
 
 /// The deepest part nesting read.
 const MAX_PART_DEPTH: usize = 32;
@@ -145,6 +145,143 @@ pub(super) fn decode_words(raw: &[u8]) -> String {
     out
 }
 
+/// The address fields a reply reads, lowercased, in the order of
+/// [`MailAddressHeaders`]'s fields.
+const ADDRESS_FIELDS: [&str; 4] = ["from", "reply-to", "to", "cc"];
+
+/// The address headers of the raw message `bytes`: From, Reply-To, To and
+/// Cc, each the first field of its name, read as
+/// [`MimeMessage::address_header`] reads it. The header block is read to its
+/// end and only these four fields are kept, so a message with more fields
+/// than a parse keeps ([`MAX_FIELDS`]) still names each address field it
+/// carries, however late (fix list row 20520). Values are unfolded as
+/// [`split_header`] unfolds them.
+pub(super) fn raw_address_headers(bytes: &[u8]) -> MailAddressHeaders {
+    let mut fields: [Option<Vec<u8>>; 4] = Default::default();
+    // The kept field a continuation line goes on: the one on the line above.
+    let mut continued: Option<usize> = None;
+    for line in lines(bytes) {
+        let text = &bytes[line.start..line.end];
+        if text.is_empty() {
+            break;
+        }
+        if matches!(text[0], b' ' | b'\t') {
+            if let Some(slot) = continued
+                && let Some(value) = fields[slot].as_mut()
+            {
+                value.extend_from_slice(text);
+            }
+            continue;
+        }
+        continued = None;
+        let Some(colon) = text.iter().position(|&byte| byte == b':') else {
+            continue;
+        };
+        let name = String::from_utf8_lossy(&text[..colon])
+            .trim()
+            .to_ascii_lowercase();
+        if let Some(slot) = ADDRESS_FIELDS.iter().position(|field| *field == name)
+            && fields[slot].is_none()
+        {
+            fields[slot] = Some(text[colon + 1..].trim_ascii_start().to_vec());
+            continued = Some(slot);
+        }
+    }
+    let [from, reply_to, to, cc] =
+        fields.map(|value| value.as_deref().map(address_values).unwrap_or_default());
+    MailAddressHeaders {
+        from,
+        reply_to,
+        to,
+        cc,
+    }
+}
+
+/// The mailboxes of one raw address field value, one entry each, split at
+/// its top-level commas BEFORE any encoded word is decoded
+/// ([`MimeMessage::address_header`]).
+fn address_values(value: &[u8]) -> Vec<String> {
+    super::gmail::address_list(&decode_charset(value, None))
+        .iter()
+        .map(|mailbox| decoded_mailbox(mailbox))
+        .collect()
+}
+
+/// One mailbox of a raw address header (`phrase <address>` or an address):
+/// a phrase with encoded words decoded and written as a display name again
+/// (a quoted phrase read without its quotes first), the angle address as
+/// the sender wrote it. The angle address is the one outside quoted strings
+/// and comments; a mailbox with no encoded word, not exactly one such angle
+/// address ending it, or a `:` in its phrase (a group's opening) is left
+/// as it is.
+fn decoded_mailbox(mailbox: &str) -> String {
+    let mailbox = mailbox.trim();
+    let (places, unclosed) = super::gmail::address_places(mailbox);
+    let mut angles = places.iter().filter(|(_, character, place)| {
+        *character == '<' && *place == super::gmail::AddressPlace::Top
+    });
+    let (Some(&(open, _, _)), None, false) = (angles.next(), angles.next(), unclosed) else {
+        return mailbox.to_owned();
+    };
+    let (phrase, address) = (mailbox[..open].trim(), &mailbox[open..]);
+    if !phrase.contains("=?") || !address.ends_with('>') || phrase.contains(':') {
+        return mailbox.to_owned();
+    }
+    let unquoted = match phrase
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))
+    {
+        Some(inner) => {
+            let mut text = String::with_capacity(inner.len());
+            let mut escaped = false;
+            for character in inner.chars() {
+                if escaped || character != '\\' {
+                    text.push(character);
+                    escaped = false;
+                } else {
+                    escaped = true;
+                }
+            }
+            text
+        }
+        None => phrase.to_owned(),
+    };
+    let name = decode_words(unquoted.as_bytes());
+    let name = name.trim();
+    if name.is_empty() {
+        return address.to_owned();
+    }
+    format!("{} {address}", display_name(name))
+}
+
+/// `name` as an RFC 5322 display name: as it is when it is plain words
+/// (atom characters and spaces), else a quoted string with each `\\` and `"`
+/// escaped and each control character written as a space, so a comma,
+/// colon or angle bracket in it never reads as a list, group or address
+/// boundary (fix list row 17645).
+pub(super) fn display_name(name: &str) -> String {
+    let plain = name.chars().all(|character| {
+        character.is_alphanumeric() || character == ' ' || "!#$%&'*+-/=?^_`{|}~".contains(character)
+    });
+    if plain {
+        return name.to_owned();
+    }
+    let mut quoted = String::with_capacity(name.len() + 2);
+    quoted.push('"');
+    for character in name.chars() {
+        match character {
+            '\\' | '"' => {
+                quoted.push('\\');
+                quoted.push(character);
+            }
+            control if control.is_control() => quoted.push(' '),
+            other => quoted.push(other),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
 /// One encoded word at the start of `text`: its words, and how many bytes
 /// of `text` it took.
 fn encoded_word(text: &str) -> Option<(String, usize)> {
@@ -276,7 +413,11 @@ struct Parameterized {
 impl Parameterized {
     fn parse(raw: &str) -> Self {
         let mut pieces = split_params(raw).into_iter();
-        let value = pieces.next().unwrap_or_default().trim().to_ascii_lowercase();
+        let value = pieces
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
         let mut params: Vec<(String, String)> = Vec::new();
         let mut extended: Vec<(String, u32, bool, String)> = Vec::new();
         for piece in pieces {
@@ -539,6 +680,21 @@ impl<'m> MimeMessage<'m> {
             .map(|(_, value)| decode_words(value).trim().to_owned())
     }
 
+    /// The mailboxes of the first address header field named `name` (From,
+    /// To, Cc, Reply-To), one entry each. The field is split at its
+    /// top-level commas BEFORE any encoded word is decoded, so a comma an
+    /// encoded display name decodes to never splits a mailbox (fix list row
+    /// 17645). A display name with encoded words is then decoded and written
+    /// as a display name again ([`display_name`]); every other mailbox, and
+    /// a group's bounds, stay as the sender wrote them.
+    pub(super) fn address_header(&self, name: &str) -> Vec<String> {
+        let name = name.to_ascii_lowercase();
+        let Some((_, value)) = self.root.fields.iter().find(|(held, _)| *held == name) else {
+            return Vec::new();
+        };
+        address_values(value)
+    }
+
     /// Its plain text (or its HTML's text) and its attachments, the way the
     /// Gmail wire reads a message: a part with a file name, an attachment
     /// disposition, or a type that is not text is an attachment.
@@ -602,8 +758,8 @@ fn collect(
         });
         return;
     }
-    let text = decode_charset(&part.decoded(), part.content_type.param("charset"))
-        .replace("\r\n", "\n");
+    let text =
+        decode_charset(&part.decoded(), part.content_type.param("charset")).replace("\r\n", "\n");
     match media_type {
         "text/plain" => plain.push(text),
         "text/html" => html.push(text),

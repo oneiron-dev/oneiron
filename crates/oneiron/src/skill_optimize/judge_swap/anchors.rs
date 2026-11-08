@@ -162,6 +162,21 @@ where
     )
 }
 
+/// The frozen goal revision a case was judged under (FIX 10146): the top
+/// level first, then the serve judge's `replay`, then the coverage
+/// decorator's `replay.replay`. First hit wins.
+fn frozen_goal_revision(state: &Value) -> Option<String> {
+    let text = |value: &Value| value.get("goal_revision")?.as_str().map(str::to_owned);
+    if let Some(revision) = text(state) {
+        return Some(revision);
+    }
+    let replay = state.get("replay")?;
+    if let Some(revision) = text(replay) {
+        return Some(revision);
+    }
+    text(replay.get("replay")?)
+}
+
 /// Where the settled outcome of a case asked under `kind` is read; `None`
 /// for a structural or contrastive audit and for a response score, which
 /// nothing settles, and for a state that lacks what its kind reads.
@@ -209,7 +224,7 @@ fn outcome_link(kind: &str, state: &Value) -> Option<JudgeOutcomeLink> {
                 skill: text(state, "skill")?,
                 axis: axis.to_owned(),
                 receipts: receipts(state)?,
-                goal_revision: text(state, "goal_revision"),
+                goal_revision: frozen_goal_revision(state),
             })
         }
     }
