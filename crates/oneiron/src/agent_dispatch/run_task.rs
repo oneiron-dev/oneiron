@@ -857,21 +857,21 @@ fn spawning_parent(payload: &[u8]) -> Option<AttemptId> {
 }
 
 /// The run TASK the try `attempt` shares, read in `txn`, as
-/// [`agent_run_task_ref_in`] finds it for that try's queue row; a try this
-/// queue does not hold is judged by its own id alone. `None` for a try with
-/// none (FIX 4747 slice 7: what an effect's run names).
+/// [`agent_run_task_ref_in`] finds it for that try's queue row: a child's
+/// effects are marked on the run TASK its claim is fenced on, its nearest
+/// ancestor's or its own. A try this queue does not hold is judged by its
+/// own id alone. `None` for a try with none, or whose run TASK a hard erase
+/// took (FIX 4747 slice 7: what an effect's run names).
 pub(super) fn agent_run_task_of_attempt_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     attempt: AttemptId,
 ) -> Result<Option<EntityId>> {
-    let retry_of = AttemptQueue::new(vault)
-        .get_in_txn(txn, attempt)?
-        .and_then(|row| row.retry_of);
-    Ok(
-        agent_run_task_slot_in(&vault.store, txn, attempt, retry_of)?
-            .and_then(|(task_ref, erased)| (!erased).then_some(task_ref)),
-    )
+    if let Some(row) = AttemptQueue::new(vault).get_in_txn(txn, attempt)? {
+        return Ok(agent_run_task_ref_in(vault, txn, &row)?.map(|link| link.task_ref));
+    }
+    Ok(agent_run_task_slot_at_in(&vault.store, txn, attempt)?
+        .and_then(|(task_ref, erased)| (!erased).then_some(task_ref)))
 }
 
 /// Whether a hard erase took the run TASK `task_ref`: its permanent
