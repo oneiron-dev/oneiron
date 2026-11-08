@@ -897,23 +897,19 @@ impl StepRunner {
             context.parent = parent;
             context
         });
-        // The admitted request is the step's replay capsule (FIX 3028),
-        // finalized with the rung that answers it. A capture that fails
-        // leaves none and never fails the step.
-        let capture_completed = continuation
-            .as_ref()
-            .is_some_and(|saved| saved.progress.cursor.capture_completed);
-        let capture = |request: &LlmRequest| {
-            if capture_completed {
-                return None;
-            }
+        // Each admitted request is a replay capsule of the step (FIX 3028),
+        // one per model round (FIX 7013), finalized with the rung that
+        // answers it. The tool rounds' cursor says which round already has
+        // one. A capture that fails leaves none and never fails the step.
+        let capture = |request: &LlmRequest, round: u64| {
             oneiron::code_run::capture_workflow_step(
                 vault,
                 attempt.id,
                 attempt.attempt_count,
                 actor,
                 request,
-                sources,
+                sources.clone(),
+                round,
             )
         };
         let may_send = || {
@@ -990,7 +986,7 @@ impl StepRunner {
                 &mut save,
             ),
             None => {
-                let staged = capture(&request);
+                let staged = capture(&request, 0);
                 let final_request = request.clone();
                 runtime
                     .block_on(ladder.generate_recorded_while(&run, request, None, &may_send))

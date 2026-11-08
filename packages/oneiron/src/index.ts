@@ -977,6 +977,10 @@ export class Oneiron {
         /** Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops. */
         archive: (input: Facade.ArchiveCampaignProgramRequest): Facade.CampaignProgramRecord => this.#call(() => this.#client.vaultCampaignProgramArchive(input) as Facade.CampaignProgramRecord),
       },
+      /** The owner reviews the last-observed campaign enrollment holds and their queued redrives; a redrive is not a sent or completed call. */
+      held: (input: Facade.EmptyRequest = {}): Facade.CampaignEnrollmentHeldCall[] => this.#call(() => this.#client.vaultCampaignHeld(input) as Facade.CampaignEnrollmentHeldCall[]),
+      /** The owner approves exactly one current campaign enrollment hold by its call ref and reviewed digest, queuing the original work without a standing grant or bypassing its ordinary send checks. */
+      approve_once: (input: Facade.CampaignEnrollmentApproveOnceRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultCampaignApproveOnce(input) as Facade.ConsentActReceipt),
     },
     turn_programs: {
       /** Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration. */
@@ -1601,6 +1605,14 @@ export class Oneiron {
       quarantine: {
         /** The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status. */
         held_edits: (input: Facade.EmptyRequest): [number, Facade.SyncHeldEditEvidence][] => this.#call(() => this.#client.vaultSyncQuarantineHeldEdits(input) as [number, Facade.SyncHeldEditEvidence][]),
+      },
+      documents: {
+        copy_edit: {
+          /** The owner reviews the edit a retained document copy holds for one source document: why it is held, the masked text the copy submitted, and the revision to settle it under; the revision is a token, not authority. */
+          review: (input: Facade.RepoCopyEditReviewRequest): Facade.RepoCopyEditReviewView | null => this.#call(() => this.#client.vaultSyncDocumentsCopyEditReview(input) as Facade.RepoCopyEditReviewView | null),
+          /** The owner settles that held copy edit to an exact replacement text, under the revision they reviewed; a changed or settled edit answers stale. Answers the committed document frame, a local commit, not a delivery. */
+          settle: (input: Facade.RepoCopyEditSettleRequest): Facade.RepoCopyEditSettleView => this.#call(() => this.#client.vaultSyncDocumentsCopyEditSettle(input) as Facade.RepoCopyEditSettleView),
+        },
       },
       retained_work: {
         wait: {
@@ -3311,6 +3323,8 @@ export class Oneiron {
       from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
       /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */
       read: (input: Facade.NoteReadRequest): Facade.ScopedReadResult<Facade.NoteReadView | null> => this.#call(() => this.#client.vaultNotesRead(input) as Facade.ScopedReadResult<Facade.NoteReadView | null>),
+      /** Reads the independently indexed NOTE text and stable edit anchors in the same scoped snapshot. */
+      read_indexed: (input: Facade.NoteIndexedReadRequest): Facade.ScopedReadResult<Facade.NoteReadView | null> => this.#call(() => this.#client.vaultNotesReadIndexed(input) as Facade.ScopedReadResult<Facade.NoteReadView | null>),
       /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
       history: (input: Facade.NoteAccessRequest): Facade.ScopedReadResult<Facade.NoteHistoryView | null> => this.#call(() => this.#client.vaultNotesHistory(input) as Facade.ScopedReadResult<Facade.NoteHistoryView | null>),
       /** Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head. */
