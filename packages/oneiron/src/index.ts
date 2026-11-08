@@ -2657,6 +2657,12 @@ export class Oneiron {
       /** The agent's travelling AgentPack folder (files base64) and what stayed home. */
       export_pack: (request: Facade.AgentPackExportRequest): Facade.AgentPackExport => this.#call(() => {  const result = JSON.parse(this.#client.vaultAgentsExportPack(keyedJson(request))) as Facade.AgentPackExport; return result }),
     },
+    oauth: {
+      authorization: {
+        /** The owner allows, at a tier and optional world, or denies one outside app's pending OAuth sign-in request for this vault's MCP endpoint. */
+        answer: (input: Facade.OAuthAuthorizationAnswer): Facade.OAuthAuthorizationAnswered => this.#call(() => this.#client.vaultOauthAuthorizationAnswer(input) as Facade.OAuthAuthorizationAnswered),
+      },
+    },
     repo: {
       git_push: {
         /** The owner grants one live person or agent raw git_push on explicitly named repos, each whole, until he revokes it or until the expiry he sets; a write grant never implies it. */
