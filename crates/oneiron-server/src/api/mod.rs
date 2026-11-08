@@ -151,7 +151,7 @@ mod git_http;
 pub(crate) use self::git_http::install_origin_git_transport;
 mod git_lfs;
 mod transfer;
-pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers};
+pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers, send_within, spawn_worker};
 mod lease;
 // FIX 9382: a caller's own push of one TASK to Linear now.
 mod linear_push;
