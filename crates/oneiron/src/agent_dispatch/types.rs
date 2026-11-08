@@ -66,6 +66,10 @@ pub(super) const KEY_DIRECT_SPAWN: &str = AGENT_DISPATCH_INPUT_KEYS[22];
 /// FIX 11592: who queued the dispatch, and what his request stood on.
 pub(super) const KEY_REQUESTER: &str = AGENT_DISPATCH_INPUT_KEYS[23];
 pub(super) const KEY_TASK_TYPE_PARENTS: &str = AGENT_DISPATCH_INPUT_KEYS[24];
+/// FIX 4973: the caller origin, frozen provenance only. Required.
+pub(super) const KEY_CALLER_ORIGIN: &str = AGENT_DISPATCH_INPUT_KEYS[25];
+/// FIX 7766: the owner's agent Grant an unmetered lineage is funded by.
+pub(super) const KEY_FUNDING: &str = AGENT_DISPATCH_INPUT_KEYS[26];
 
 /// The depth a lineage with no explicit slice once stopped at. Such a
 /// lineage spends no depth (FIX 9560): past this many ancestors its walk
@@ -156,6 +160,18 @@ pub struct AgentDispatchInput {
     /// positive withdrawal ends the try. `None`: the in-process host's own
     /// work, which runs as before. Never part of `spawn_intent`.
     pub requester: Option<super::QueuedRequester>,
+    /// The caller origin admission froze. Provenance only: never authority,
+    /// a read destination, or part of the spawn intent digest.
+    pub caller_origin: super::CallerOrigin,
+    /// FIX 7766: the owner's agent Grant this work is funded by, when no
+    /// spend root carries it: a root's that the authenticated owner selected
+    /// and its dispatch writer proved ([`AgentDispatcher::funded_by`]), and
+    /// its descendants', inherited from their parent, never named by a
+    /// child. A spend root's own funding comes first. `None`: no Grant funds
+    /// it.
+    ///
+    /// [`AgentDispatcher::funded_by`]: super::AgentDispatcher::funded_by
+    pub funding: Option<super::GrantSpendBinding>,
 }
 
 impl AgentDispatchInput {
@@ -185,6 +201,8 @@ impl AgentDispatchInput {
             comm: super::comm::default_comm_reach(super::comm::SpawnRole::Worker),
             direct_spawn: None,
             requester: None,
+            caller_origin: super::CallerOrigin::Unknown,
+            funding: None,
         }
     }
 }
@@ -254,6 +272,10 @@ pub struct AgentSpawnContext {
     /// dispatch its request queues. `None` keeps the parent's, or none for a
     /// root. Outside the intent digest.
     pub requester: Option<super::QueuedRequester>,
+    /// The host's root-admission fact. A child always keeps its parent's
+    /// frozen origin, including Unknown; this value cannot replace it.
+    /// None means no fact was supplied for a new root, not on-device.
+    pub caller_origin: Option<super::CallerOrigin>,
 }
 
 impl AgentSpawnContext {
@@ -307,6 +329,12 @@ impl AgentSpawnContext {
     #[must_use]
     pub const fn with_origin_conversation(mut self, conversation: EntityId) -> Self {
         self.origin_conversation = Some(conversation);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_caller_origin(mut self, origin: super::CallerOrigin) -> Self {
+        self.caller_origin = Some(origin);
         self
     }
 

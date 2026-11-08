@@ -79,26 +79,53 @@ pub(super) fn history_admission(
 }
 
 /// Reads the fact's entity under `lane` and `grant`. `None` is withheld or
-/// gone: the hook may not see this fact.
+/// gone: the hook may not see this fact. Live delivery and live replay both
+/// pass here, so a watcher fact fires only on a row the grant shows.
 pub(super) fn fact_row(
     lane: &ScopedRead<'_>,
     grant: &HookGrant,
     entry: &FactEntry,
 ) -> Result<Option<SeenFact>> {
-    if entry.body_hash.is_some() && entry.revision.is_none() {
+    let Some(point) = fact_point(entry) else {
         return Ok(None);
+    };
+    let rows = lane.read(&[point], None)?.value;
+    seen_fact(grant, entry, rows)
+}
+
+/// Read through a lane prepared before opening the caller's snapshot.
+/// Keep its point-read body guard through this read and projection.
+pub(super) fn fact_row_in_txn(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    grant: &HookGrant,
+    entry: &FactEntry,
+) -> Result<Option<SeenFact>> {
+    let Some(point) = fact_point(entry) else {
+        return Ok(None);
+    };
+    let rows = lane
+        .read_projected_in_txn(txn, &[point], None, |_, rows| Ok::<_, crate::Error>(rows))?
+        .value;
+    seen_fact(grant, entry, rows)
+}
+
+pub(super) fn fact_point(entry: &FactEntry) -> Option<PointRead<'static>> {
+    if entry.body_hash.is_some() && entry.revision.is_none() {
+        return None;
     }
-    let point = match entry.revision {
+    Some(match entry.revision {
         Some(revision) => PointRead::id(entry.entity).at(ReadMode::Pinned(revision)),
         None => PointRead::id(entry.entity),
-    };
-    let Some(row) = lane
-        .read(&[point], None)?
-        .value
-        .into_iter()
-        .next()
-        .flatten()
-    else {
+    })
+}
+
+fn seen_fact(
+    grant: &HookGrant,
+    entry: &FactEntry,
+    rows: Vec<Option<crate::claim::ReadRow>>,
+) -> Result<Option<SeenFact>> {
+    let Some(row) = rows.into_iter().next().flatten() else {
         return Ok(None);
     };
     let Some(body) = row.body.as_deref() else {
@@ -112,6 +139,12 @@ pub(super) fn fact_row(
         return Ok(None);
     }
     if row.entity_type != ENTITY_TYPE_CLAIM {
+        // A watcher's TASK or identity row (FIX 4749) passes the grant as
+        // any row the hook reads does: it carries no world and no predicate,
+        // so a grant that names either does not show it.
+        if entry.kind.is_watcher_source() && !grant_view::shows_row(grant, &row)? {
+            return Ok(None);
+        }
         return Ok(Some(SeenFact {
             claim: None,
             claim_json: Value::Null,
@@ -166,15 +199,46 @@ pub(super) fn answer_within(
     request: &str,
     pins: &mut Vec<HookReadPin>,
 ) -> std::result::Result<String, String> {
+    answer_in_snapshot(lane, cap, None, grant, request, pins)
+}
+
+/// The fact body's read through its real lane and the caller's snapshot.
+/// Prepare and hold the lane's point-read guard before opening that snapshot.
+pub(super) fn answer_in_txn(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    grant: &HookGrant,
+    request: &str,
+    pins: &mut Vec<HookReadPin>,
+) -> std::result::Result<String, String> {
+    answer_in_snapshot(lane, None, Some(txn), grant, request, pins)
+}
+
+fn answer_in_snapshot(
+    lane: &ScopedRead<'_>,
+    cap: Option<&ScopedRead<'_>>,
+    txn: Option<&heed::RoTxn<'_>>,
+    grant: &HookGrant,
+    request: &str,
+    pins: &mut Vec<HookReadPin>,
+) -> std::result::Result<String, String> {
     let parsed: ReadRequest =
         serde_json::from_str(request).map_err(|_| "read request does not parse".to_owned())?;
     let (response, rows) = match parsed {
-        ReadRequest::Claim { claim } => read_claim(lane, cap, grant, &claim),
+        ReadRequest::Claim { claim } => read_claim(lane, cap, txn, grant, &claim),
         ReadRequest::About {
             claims_about,
             predicate,
             limit,
-        } => read_about(lane, cap, grant, &claims_about, predicate.as_deref(), limit),
+        } => read_about(
+            lane,
+            cap,
+            txn,
+            grant,
+            &claims_about,
+            predicate.as_deref(),
+            limit,
+        ),
     }
     .map_err(|error| error.to_string())?;
     pins.push(HookReadPin {
@@ -272,12 +336,13 @@ pub(super) fn answer_pinned(
 fn read_claim(
     lane: &ScopedRead<'_>,
     cap: Option<&ScopedRead<'_>>,
+    txn: Option<&heed::RoTxn<'_>>,
     grant: &HookGrant,
     id: &str,
 ) -> Result<(String, Vec<HookReadRow>)> {
     let id = EntityId::from_hex(id)?;
     let reads = [PointRead::id(id)];
-    let rows = lane.read(&reads, None)?.value;
+    let rows = read_rows(lane, txn, &reads)?;
     let mut served = Vec::new();
     let mut value = Value::Null;
     if let Some(row) = rows.into_iter().next().flatten()
@@ -285,7 +350,9 @@ fn read_claim(
         && let Some(body) = row.body.as_deref()
     {
         let claim = crate::claim::decode_claim_body(body, true)?;
-        if grant.admits(&claim) && visible_to(cap, &reads)?.is_none_or(|seen| seen.contains(&id)) {
+        if grant.admits(&claim)
+            && visible_to(cap, txn, &reads)?.is_none_or(|seen| seen.contains(&id))
+        {
             value = claim_json(id, &claim);
             served.push(HookReadRow {
                 id,
@@ -300,6 +367,7 @@ fn read_claim(
 fn read_about(
     lane: &ScopedRead<'_>,
     cap: Option<&ScopedRead<'_>>,
+    txn: Option<&heed::RoTxn<'_>>,
     grant: &HookGrant,
     subject: &str,
     predicate: Option<&str>,
@@ -309,16 +377,12 @@ fn read_about(
     // The claims about the subject in the content the lane reads: a room's
     // overlay over base for a lane in a room (WILL L11-01 S01-2c), base
     // alone otherwise. Each still passes the lane, the cap and the grant.
-    let ids: Vec<EntityId> = {
-        let rtxn = lane.vault().store.env.read_txn()?;
-        crate::vault::filtered_edge_peers_in(
-            &lane.store_read(),
-            &rtxn,
-            EdgeDirection::In,
-            &subject,
-            EdgeKind::ClaimOf,
-            Some(ENTITY_TYPE_CLAIM),
-        )?
+    let ids = match txn {
+        Some(txn) => read_about_ids(lane, txn, &subject)?,
+        None => {
+            let rtxn = lane.vault().store.env.read_txn()?;
+            read_about_ids(lane, &rtxn, &subject)?
+        }
     };
     let mut served = Vec::new();
     let mut values = Vec::new();
@@ -327,8 +391,8 @@ fn read_about(
             break;
         }
         let reads: Vec<PointRead<'_>> = step.iter().map(|id| PointRead::id(*id)).collect();
-        let rows = lane.read(&reads, None)?.value;
-        let seen = visible_to(cap, &reads)?;
+        let rows = read_rows(lane, txn, &reads)?;
+        let seen = visible_to(cap, txn, &reads)?;
         for row in rows.into_iter().flatten() {
             if limit.is_some_and(|limit| values.len() >= limit) {
                 break;
@@ -358,17 +422,45 @@ fn read_about(
     Ok((Value::Array(values).to_string(), served))
 }
 
+fn read_rows(
+    lane: &ScopedRead<'_>,
+    txn: Option<&heed::RoTxn<'_>>,
+    reads: &[PointRead<'_>],
+) -> Result<Vec<Option<crate::claim::ReadRow>>> {
+    match txn {
+        Some(txn) => Ok(lane
+            .read_projected_in_txn(txn, reads, None, |_, rows| Ok::<_, crate::Error>(rows))?
+            .value),
+        None => Ok(lane.read(reads, None)?.value),
+    }
+}
+
+fn read_about_ids(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+) -> Result<Vec<EntityId>> {
+    crate::vault::filtered_edge_peers_in(
+        &lane.store_read(),
+        txn,
+        EdgeDirection::In,
+        subject,
+        EdgeKind::ClaimOf,
+        Some(ENTITY_TYPE_CLAIM),
+    )
+}
+
 /// The ids of `reads` that `cap` reads; `None` with no cap.
 fn visible_to(
     cap: Option<&ScopedRead<'_>>,
+    txn: Option<&heed::RoTxn<'_>>,
     reads: &[PointRead<'_>],
 ) -> Result<Option<HashSet<EntityId>>> {
     let Some(cap) = cap else {
         return Ok(None);
     };
     Ok(Some(
-        cap.read(reads, None)?
-            .value
+        read_rows(cap, txn, reads)?
             .into_iter()
             .flatten()
             .map(|row| row.id)
