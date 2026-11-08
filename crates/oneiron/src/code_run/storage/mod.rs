@@ -10,6 +10,7 @@ mod program_resume;
 mod read_worlds;
 mod reader_folds;
 mod reader_jobs;
+pub(crate) use reader_jobs::erase_reader_caller_actor_in_txn;
 mod records;
 mod replay_bodies;
 mod replay_capsule;
@@ -40,7 +41,9 @@ pub(crate) use self::continuation::{
 };
 pub use self::read_worlds::ReadWorldUnknown;
 pub(crate) use self::read_worlds::{
-    ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
+    ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn,
+    closed_read_world_capture_in_txn, invalidate_imported_read_world_capture_in_txn,
+    read_world_snapshot_in_txn,
 };
 pub(crate) use self::reader_folds::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -53,9 +56,9 @@ pub(crate) use self::reader_jobs::{
 pub use self::reader_jobs::{ReaderJobs, SummaryMember, SummaryRead};
 pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{
-    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
-    code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
-    retire_unlanded_inline_body_keys_in_txn,
+    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
+    code_run_body_in_file_in_txn, code_run_body_row_key, code_run_inline_body_of_row,
+    lift_code_run_file_hold_in_txn, retire_unlanded_inline_body_keys_in_txn,
 };
 pub(crate) use self::replay_bodies::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,

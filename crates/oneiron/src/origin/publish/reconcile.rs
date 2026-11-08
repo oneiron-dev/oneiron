@@ -94,8 +94,9 @@ impl Vault {
 
     /// Runs `apply` with the mirror's basic-auth header for `destination`,
     /// inside the custody door (effector `origin:mirror-push`). A served
-    /// host's mirror relay hands it to the credential broker this way, after
-    /// the broker acknowledged an exchange's body (FIX 19083).
+    /// host's mirror relay and its Git-LFS transport hand it to the
+    /// credential broker this way, after the broker acknowledged an
+    /// exchange's body (FIX 19083, FIX 19876).
     ///
     /// # Errors
     /// The custody door's refusal of the destination's record.

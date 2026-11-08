@@ -149,16 +149,26 @@ impl McpEngineNativeCodeHost {
     /// The seat `request`'s run spawns reader children under, when this
     /// host lends seats. The run spends under no scope, so its children
     /// spend on the host's meter, as its own calls do, on a clock one window
-    /// from its first spawn.
-    fn reader_seat(&self, request: &McpCodeExecutionRequest<'_>) -> Option<SpawnHostSeat> {
-        self.reader_seats.as_ref().map(|lent| {
-            lent.seat(
-                request.run_id,
-                None,
-                request.actor.destination(),
-                self.provider.reader_window_tokens(),
-            )
-        })
+    /// from its first spawn. The seat's reader jobs are the vault's own and
+    /// its children read as the run's writer does.
+    fn reader_seat(
+        &self,
+        request: &McpCodeExecutionRequest<'_>,
+    ) -> Result<Option<SpawnHostSeat>, McpCodeExecutionError> {
+        self.reader_seats
+            .as_ref()
+            .map(|lent| {
+                lent.seat(
+                    &oneiron::code_run::ReaderJobs::canonical(&request.vault),
+                    oneiron::code_run::ReaderActor::of(request.actor.write_actor()),
+                    request.run_id,
+                    None,
+                    request.actor.destination(),
+                    self.provider.reader_window_tokens(),
+                )
+            })
+            .transpose()
+            .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))
     }
 
     /// `request`'s run permit. Past the bound the run waits its
@@ -195,6 +205,7 @@ impl McpEngineNativeCodeHost {
             .as_ref()
             .map(|_| (request.actor.actor_ref, request.off_record_session.clone()));
         let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
+        let birth_position = request.actor.scope.birth_position();
         let verbs = Arc::clone(&request.verbs);
         // The admitted caller a code consent wait of the run keeps (FIX 4606).
         let consent_origin = request.consent_origin.clone();
@@ -269,6 +280,7 @@ impl McpEngineNativeCodeHost {
                     verbs,
                     opener.as_ref(),
                     worlds,
+                    birth_position,
                     reader_seat,
                     seat.as_mut(),
                     git_door_base,
@@ -330,7 +342,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             let guard = self.single_flight(&request).await?;
             // A caller's own call is lent its reader seat before it waits
             // for its permit.
-            let reader_seat = self.reader_seat(&request);
+            let reader_seat = self.reader_seat(&request)?;
             let permit = self.permit(&request).await?;
             self.run_admitted(request, guard, permit, reader_seat).await
         })
@@ -355,7 +367,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             if !condition.stands(&request.vault) {
                 return Ok(McpCodeRunResumed::Superseded);
             }
-            let reader_seat = self.reader_seat(&request);
+            let reader_seat = self.reader_seat(&request)?;
             self.run_admitted(request, guard, permit, reader_seat)
                 .await
                 .map(|outcome| McpCodeRunResumed::Entered(Box::new(outcome)))
