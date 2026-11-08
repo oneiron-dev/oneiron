@@ -375,7 +375,7 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 | `hard_erase_sweep` | day; hour while an erasure waits | the history an erase left in sync carriers (the 30-day erasure deadline) |
 | `ppr_cache_eviction` | day | cached graph walks older than the longest serve window (168 h) |
 | `drafter_corpus_sweep` | day, and at start | drafter training examples past the newest `DRAFTER_EXAMPLES_KEPT` (their keys retire), sealed drafter corpora no prepared, training or returned drafter version names, and stray files in a kept one |
-| `model_pack_retirement` | minute | a model pack's retirement: its notices 60, 30 and 7 days before (none while your model manifest outranks the pack), and on the day the move to its successor, with the change notice and its revert. `oneiron maintain` holds no model offers, so it sends no retiring model's notice |
+| `model_pack_retirement` | minute | a model pack's retirement: its notices 60, 30 and 7 days before (none while your model manifest outranks the pack), and on the day the move to its successor, with the change notice and its revert. `oneiron maintain` holds no model offers (only a serving host has them), so it sends no retiring model's notice; `serve` sends it |
 | `oauth_expiry` | hour | an app's OAuth sign-in rows past their lifetime: sign-in requests (their inbox ask offers no tap any more), codes, access and refresh tokens, token families past their last refresh token, and stale copies of an app's client metadata document that no sign-in uses |
 
 The signing sweeps and the cache eviction walk their records a page at a time and go on from
@@ -398,8 +398,8 @@ counted as refused.
 
 A managed vault that is stopped between uses tells its supervisor when to wake it: a
 `housekeeping` entry in its wake ledger carries the next secret-lease expiry, voice-print
-retention deadline, critical-confirm window or waiting erasure. Cache and retention hygiene never
-wake a vault.
+retention deadline, critical-confirm window, waiting erasure, or model pack notice mark or
+retirement day. Cache and retention hygiene never wake a vault.
 Signing reminders, consult digests, moderation-hold pruning, the TASK attribution pump, attempt
 lease reclaim and self-heal detector runs need authority only the host holds; the report lists
 them as `host_only` with the reason.

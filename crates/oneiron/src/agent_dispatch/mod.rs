@@ -75,9 +75,21 @@ mod requester;
 pub use self::requester::{QueuedRequester, RequesterStanding, RequesterWithdrawn};
 mod resident;
 mod room_join;
+mod run_handover;
+pub use self::run_handover::AgentRunLeaseReap;
 mod run_lineage;
 pub(crate) use run_lineage::delegation_lineage_parent_in_txn;
 mod run_objectives;
+mod run_task;
+pub(crate) use self::run_task::{
+    AGENT_RUN_FENCE_FIELD, AGENT_RUN_STOOD_DOWN, AgentRunFences, agent_run_fence_permits_effect,
+    erase_agent_run_tasks_in_txn, fence_agent_run_effect_in_txn, fence_agent_run_settlement_in_txn,
+    fence_agent_run_step_in_txn, is_agent_run_task_in, renew_agent_run_lease_in_txn,
+    settle_agent_run_task_in_txn,
+};
+pub use self::run_task::{
+    AGENT_RUN_TASK_SUBKIND, AgentRunExecutorLease, AgentRunFence, AgentRunOutcome,
+};
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
 mod skill_default;

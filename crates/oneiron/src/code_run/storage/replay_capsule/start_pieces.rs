@@ -676,6 +676,49 @@ pub(super) fn manifest_content_pieces(
     content
 }
 
+/// The digest whose MessagePack encoding in a ref is the widest (FIX
+/// 11415): each of its bytes is 0x80 or above.
+pub(super) const WIDEST_DIGEST: [u8; 32] = [0xff; 32];
+
+/// The ref whose encoding is the widest a manifest or a node names (FIX
+/// 11415): the widest digest and the widest length.
+const WIDEST_REF: OutputRef = OutputRef {
+    hash: WIDEST_DIGEST,
+    byte_len: u64::MAX,
+};
+
+/// FIX 11415: the most bytes one node of a growing array takes, as the cut
+/// encodes it: a node that names the widest ref before it and the widest
+/// element.
+///
+/// # Errors
+///
+/// A node that does not encode.
+pub(super) fn widest_node_len() -> Result<u64> {
+    let node = ElementNode {
+        prior: Some(WIDEST_REF),
+        element: WIDEST_REF,
+    };
+    Ok(encode_piece(&node)?.len() as u64)
+}
+
+/// FIX 11415: the most a manifest grows by when one ref it names changes.
+/// A retired ask changes one ref: its calls' last node, or the start kept
+/// as one piece. The growth is the widest ref's encoding less the
+/// narrowest ref's.
+///
+/// # Errors
+///
+/// A ref that does not encode.
+pub(super) fn ref_change_growth() -> Result<u64> {
+    let narrowest = OutputRef {
+        hash: [0; 32],
+        byte_len: 0,
+    };
+    let (widest, narrowest) = (encode_piece(&WIDEST_REF)?, encode_piece(&narrowest)?);
+    Ok(widest.len().saturating_sub(narrowest.len()) as u64)
+}
+
 /// The name of the growing array `key` names, if it names one.
 fn growing(key: &Value) -> Option<&'static str> {
     let key = key.as_str()?;
