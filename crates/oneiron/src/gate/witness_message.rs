@@ -231,7 +231,7 @@ fn witness_message_gate_input(
 /// passes on its writer's exact Auto row, or on the Coach's offer-question
 /// permit for exactly these bytes (`coach_offer_reach`). A contribution
 /// pair's part passes only on the Coach's permit, whatever its author
-/// (FIX 3609).
+/// (FIX 3609). A training companion question requires the same permit.
 fn witness_message_floor_denial(
     envelope: &WitnessMessageEnvelope<'_>,
     actor: WriteActor,
@@ -254,10 +254,15 @@ fn witness_message_floor_denial(
             )
         })
     };
-    if envelope.author == WITNESS_AUTHOR_SYSTEM
-        && !system_author_authorized(actor, policy, agent_definition_ceiling)
-        && !permitted()
-    {
+    let needs_permit = (envelope.author == WITNESS_AUTHOR_SYSTEM
+        && !system_author_authorized(actor, policy, agent_definition_ceiling))
+        || (envelope.author == WITNESS_AUTHOR_COMPANION
+            && matches!(
+                envelope.message_type,
+                super::training_ask_kind::OFFER_QUESTION_TYPE
+                    | super::training_ask_kind::SWAP_QUESTION_TYPE
+            ));
+    if needs_permit && !permitted() {
         return Some(GateReasonCode::DenyWitnessMessageAuthorNotAuthorized);
     }
     if envelope.message_type == crate::task_verb::CONTRIBUTION_PAIR_QUESTION_TYPE && !permitted() {
