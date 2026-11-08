@@ -256,6 +256,54 @@ pub(crate) fn read_world_snapshot_in_txn(
     Some(ReadWorldSnapshot { worlds })
 }
 
+/// A finished run's captured worlds and the actual rows whose scopes its
+/// reads recorded. It is not the run's birth placement or read authority.
+pub(crate) struct ClosedReadWorldCapture {
+    pub(crate) worlds: BTreeSet<EntityId>,
+    pub(crate) rows: BTreeSet<EntityId>,
+}
+
+/// Reads only complete, closed capture. An archive has no live epoch seal.
+pub(crate) fn closed_read_world_capture_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    run: EntityId,
+) -> Result<Option<ClosedReadWorldCapture>> {
+    let Some(header) = HEADERS.get(&vault.store, txn, &HeaderKey(run))? else {
+        return Ok(None);
+    };
+    if !header.unknown.is_empty() || !header.open.is_empty() {
+        return Ok(None);
+    }
+    let worlds = SEEN
+        .scan_keys(&vault.store, txn, &seen_prefix(run))?
+        .into_iter()
+        .map(|key| key.world)
+        .collect();
+    let mut prefix = run.as_bytes().to_vec();
+    prefix.push(ROW_TAG);
+    let rows = ROW_SCOPES
+        .scan_keys(&vault.store, txn, &prefix)?
+        .into_iter()
+        .map(|key| key.row)
+        .collect();
+    Ok(Some(ClosedReadWorldCapture { worlds, rows }))
+}
+
+/// An imported result record carries no captured execution. A stale ledger
+/// for a formerly stored same-id run cannot prove the imported body's reads.
+pub(crate) fn invalidate_imported_read_world_capture_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    run: EntityId,
+) -> Result<()> {
+    if let Some(mut header) = HEADERS.get(&vault.store, txn, &HeaderKey(run))? {
+        header.unknown.insert(ReadWorldUnknown::NotFromStart);
+        HEADERS.put(&vault.store, txn, &HeaderKey(run), &header)?;
+    }
+    Ok(())
+}
+
 /// The scopes of every row `capsule` holds, parallel to its `source_rows`,
 /// as the reads before its start proved them (FIX 7162). `None` means any
 /// input or its proof is unknown; an empty vector is only a proved empty
