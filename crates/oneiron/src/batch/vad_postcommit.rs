@@ -25,6 +25,8 @@ pub(crate) struct PostcommitWork {
     pub(crate) verb_hook_ask_changed: bool,
     /// An answered consent receipt, announced only after this writer commits.
     pub(crate) consent_answered: bool,
+    /// Decision asks answered or withdrawn, announced only after this writer commits.
+    pub(crate) decision_answers: BTreeSet<u64>,
     /// TASKs this transaction wrote, announced only after it commits.
     pub(crate) task_ids: BTreeSet<EntityId>,
     /// Rows this transaction wrote (puts, and the sources of edges it wrote),
@@ -354,6 +356,7 @@ pub(super) fn merge_postcommit_work(vault: &Vault, txn: &RwTxn<'_>, work: Postco
             queued.proactivity_changed |= work.proactivity_changed;
             queued.verb_hook_ask_changed |= work.verb_hook_ask_changed;
             queued.consent_answered |= work.consent_answered;
+            queued.decision_answers.extend(work.decision_answers);
             queued.task_ids.extend(work.task_ids);
             queued.rows.extend(work.rows);
             queued.room_joins.extend(work.room_joins);
@@ -361,6 +364,15 @@ pub(super) fn merge_postcommit_work(vault: &Vault, txn: &RwTxn<'_>, work: Postco
             queued.settled_tasks.extend(work.settled_tasks);
             queued.notifications_changed |= work.notifications_changed;
             queued.note_document_ids.extend(work.note_document_ids);
+        }
+    });
+}
+
+/// Announces a changed decision ask only after its owning transaction commits.
+pub(crate) fn queue_decision_answer(vault: &Vault, txn: &RwTxn<'_>, seq: u64) {
+    PENDING_VAD.with(|pending| {
+        if let Some(work) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
+            work.decision_answers.insert(seq);
         }
     });
 }
