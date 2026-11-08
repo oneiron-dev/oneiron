@@ -33,6 +33,9 @@ pub(crate) struct OutboundEffectResult {
     pub(crate) gate_reason_codes: Vec<String>,
     pub(crate) gate_receipt_reasons: Vec<String>,
     pub(crate) budget_charge: Option<EffectorBudgetCharge>,
+    /// Newly fired by this call's committed Done, independent of whether
+    /// this execution made a new admission charge or resumed an old one.
+    pub(crate) budget_settlement_events: Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
     /// OF-327 suppression is not a Gate denial or a Gate reason code.
     pub(crate) dedupe_suppressed: bool,
     pub(crate) suppression_receipt: Option<ReceiptRecord>,
@@ -318,6 +321,17 @@ pub(crate) trait OutboundTransport {
     /// [`Self::looks_up_uncertain_sends`]; by default nobody can tell.
     fn uncertain_send_step(&mut self, _call: &FrozenOutboundCall) -> UncertainSendStep {
         UncertainSendStep::Hold
+    }
+
+    /// What the provider's own record says became of `call`, a row the
+    /// ledger holds uncertain (FIX 8814 follow-up): read back from the
+    /// provider, never inferred. By default a transport cannot ask, and the
+    /// row stays uncertain.
+    fn read_back_delivery(
+        &self,
+        _call: &FrozenOutboundCall,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        crate::outbound_intent_ledger::DeliveryReadBack::Unknown
     }
 
     /// Whether this transport's caller holds a paced result and brings the
