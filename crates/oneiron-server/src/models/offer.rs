@@ -170,6 +170,23 @@ pub(super) fn native_local_offer(
         .workers
         .get(wire_model)
         .ok_or_else(|| anyhow::anyhow!("no supervised native worker serves {wire_model}"))?;
+    Ok(ServedOffer {
+        binding: native_local_binding(provider, model, worker)?,
+        backend: Arc::clone(&native.backend),
+        endpoint: OfferEndpoint::SupervisedNative,
+    })
+}
+
+/// The binding of [`native_local_offer`] for `model` on `provider`, at
+/// `worker`, the managed EXL3 worker that serves it: the provider's own
+/// offer on device, its route the native adapter at that worker. Read from
+/// the config alone, so `oneiron maintain` binds the on-device view a
+/// serving host's supervisor holds without launching one (FIX 22189).
+pub(super) fn native_local_binding(
+    provider: &ProviderConfig,
+    model: ModelId,
+    worker: &str,
+) -> anyhow::Result<OfferBinding> {
     let own = provider_offer(provider, model, false)?;
     let mut binding = own.clone();
     binding.route = OfferRoute::new(NATIVE_LOCAL_ADAPTER, format!("worker:{worker}"))
@@ -180,11 +197,7 @@ pub(super) fn native_local_offer(
             "a native on-device offer is paid exactly when its provider's offer is; a local-payer keyless provider at locality third_party has none"
         );
     }
-    Ok(ServedOffer {
-        binding,
-        backend: Arc::clone(&native.backend),
-        endpoint: OfferEndpoint::SupervisedNative,
-    })
+    Ok(binding)
 }
 
 /// The offer `[models.media]` binds for `model` on `provider` for one media

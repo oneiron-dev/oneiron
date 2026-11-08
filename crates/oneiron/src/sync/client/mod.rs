@@ -46,7 +46,7 @@ mod ask_forward;
 mod base;
 mod connect;
 mod documents;
-mod endpoint;
+pub(in crate::sync) mod endpoint;
 mod federated;
 mod federation_replay;
 mod inbound;
@@ -70,6 +70,7 @@ pub use self::connect::{
 pub use self::federated::ImportTier;
 pub(crate) use self::leaf_keys::send_leaf_key_requests;
 pub(in crate::sync) use self::own_device::OwnDeviceImport;
+pub(crate) use self::residence::IndexFetchFault;
 pub use self::residence::custody::drain_custody_residence_member_as;
 pub(crate) use self::residence::custody::relay_custody;
 pub(crate) use self::residence::default_claim_vector;

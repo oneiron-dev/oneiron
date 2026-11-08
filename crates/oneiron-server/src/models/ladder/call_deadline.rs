@@ -240,7 +240,7 @@ impl OfferLadder {
         if !self.picked || self.rungs.len() != 1 {
             return Err(oneiron::FatalLlmError::InvalidRequest.into());
         }
-        self.generate_from(
+        self.generate_from_streamed(
             run,
             request,
             selector,
@@ -249,6 +249,7 @@ impl OfferLadder {
             false,
             None,
             Some(observer),
+            true,
         )
         .await
     }

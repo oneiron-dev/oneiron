@@ -42,7 +42,7 @@ impl Default for PairingDescriptor {
     }
 }
 /// A link/QR payload. The code is random and stored only as a keyed hash.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PairingLink {
     pub code: String,
@@ -58,7 +58,7 @@ pub struct PairingLink {
 }
 /// What an owner-delivered link says of the checkpoint pin the link keeps: the
 /// link's fresh single-use challenge and the pin's digest.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PairingPinRef {
     pub challenge: [u8; 32],
@@ -89,6 +89,9 @@ pub struct PairingRedeemed {
     /// only (FIX 8636): `machine` is its standing as it was, and nothing
     /// joined the roster.
     pub re_paired: bool,
+    /// What the redemption's mesh binding did, when the joining machine sent
+    /// its mesh identity (FIX 3374).
+    pub mesh: Option<MeshEnrolment>,
 }
 /// Owner-approved identity constraints. Redemption can choose a connection key,
 /// but cannot replace these claims or add organization authority.
@@ -118,6 +121,8 @@ struct PairingPending {
     scope: Scope,
     host_key: [u8; 32],
     principal: PairingPrincipal,
+    /// A view-only brief credential, fixed when its link is issued.
+    share_ref: Option<crate::EntityId>,
     /// The owner's approval of the machine this link adds: his act and his
     /// answer; redemption must enrol that machine and cannot change either
     /// (mesh PR1b C2).

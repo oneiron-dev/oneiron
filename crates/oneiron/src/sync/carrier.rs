@@ -129,9 +129,12 @@ pub(crate) fn upgrade_unauthorized(error: &WsError) -> bool {
 }
 
 /// Opens `request`'s WebSocket on `dialer`'s carrier when there is one, else on
-/// TCP to the request's host. TCP carries `ws` only: this build has no TLS, so
-/// a `wss` URL is refused as `connect_async` refuses it. Returns the upgrade
-/// response's headers beside the socket: the home names itself there.
+/// TCP to the request's host. A carrier that fails to dial falls back to TCP
+/// when the URL carries credentials by itself (FIX 3374): `wss`, or `ws` to a
+/// loopback address, never a clear `ws` to another host, which the request's
+/// slip was not signed to cross. TCP carries `ws` only: this build has no TLS,
+/// so a `wss` URL is refused as `connect_async` refuses it. Returns the
+/// upgrade response's headers beside the socket: the home names itself there.
 pub(crate) async fn connect_sync_socket(
     request: impl IntoClientRequest + Unpin,
     dialer: Option<&dyn SyncDialer>,
@@ -149,30 +152,45 @@ pub(crate) async fn connect_sync_socket(
 }
 
 /// The carrier one sync socket to `uri` rides: `dialer`'s stream when there
-/// is one, else TCP to the URI's host, `ws` only. A home probe opens it alone
-/// (FIX 4748).
-pub(crate) async fn open_carrier(
+/// is one, else TCP to the URI's host, `ws` only. A carrier that fails to
+/// dial falls back to TCP when the URL carries credentials by itself (FIX
+/// 3374).
+async fn open_carrier(
     uri: &tokio_tungstenite::tungstenite::http::Uri,
     dialer: Option<&dyn SyncDialer>,
 ) -> Result<SyncIo, WsError> {
     match dialer {
-        Some(dialer) => Ok(SyncIo::Dialed(dialer.dial().await.map_err(WsError::Io)?)),
-        None => {
-            if uri.scheme_str() == Some("wss") {
-                return Err(WsError::Url(UrlError::TlsFeatureNotEnabled));
+        Some(dialer) => match dialer.dial().await {
+            Ok(stream) => Ok(SyncIo::Dialed(stream)),
+            Err(error)
+                if crate::sync::client::endpoint::admits_credentials(&uri.to_string(), false) =>
+            {
+                tracing::debug!(%error, "sync carrier dial failed; dialing the URL");
+                // A URL that does not open either leaves the carrier's own
+                // failure standing.
+                tcp(uri).await.map_err(|_| WsError::Io(error))
             }
-            let host = uri
-                .host()
-                .ok_or(WsError::Url(UrlError::NoHostName))?
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .to_owned();
-            let port = uri.port_u16().unwrap_or(80);
-            Ok(SyncIo::Tcp(
-                TcpStream::connect((host.as_str(), port))
-                    .await
-                    .map_err(WsError::Io)?,
-            ))
-        }
+            Err(error) => Err(WsError::Io(error)),
+        },
+        None => tcp(uri).await,
     }
+}
+
+/// TCP to `uri`'s host, for `ws`; `wss` is refused.
+async fn tcp(uri: &tokio_tungstenite::tungstenite::http::Uri) -> Result<SyncIo, WsError> {
+    if uri.scheme_str() == Some("wss") {
+        return Err(WsError::Url(UrlError::TlsFeatureNotEnabled));
+    }
+    let host = uri
+        .host()
+        .ok_or(WsError::Url(UrlError::NoHostName))?
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_owned();
+    let port = uri.port_u16().unwrap_or(80);
+    Ok(SyncIo::Tcp(
+        TcpStream::connect((host.as_str(), port))
+            .await
+            .map_err(WsError::Io)?,
+    ))
 }

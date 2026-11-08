@@ -28,9 +28,9 @@ pub use self::signal::{
     RunSignalInput, RunSignalKind, RunSignalState,
 };
 pub use self::types::{
-    RunTree, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeFailureDiagram, RunTreeNode,
-    RunTreeNodeMarker, RunTreeNodeMarkerKind, RunTreeRepair, RunTreeStatus, RunTreeTimestamps,
-    RunTreeWire, RunTreeWireNode,
+    RunTree, RunTreeDeletion, RunTreeEvent, RunTreeEventKind, RunTreeFailure,
+    RunTreeFailureDiagram, RunTreeNode, RunTreeNodeMarker, RunTreeNodeMarkerKind, RunTreeRepair,
+    RunTreeStatus, RunTreeTimestamps, RunTreeWire, RunTreeWireNode,
 };
 pub use self::wire::RunTreeWireError;
 

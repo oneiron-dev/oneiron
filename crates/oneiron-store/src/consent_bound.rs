@@ -234,6 +234,21 @@ pub fn verb_in_class(class: &str, verb: &str) -> bool {
             .any(|(name, members)| *name == class && members.contains(&verb))
 }
 
+/// Every class `verb` is a member of: its own literal spelling, then each
+/// registered class that lists it. The verb is trimmed.
+#[must_use]
+pub fn classes_of(verb: &str) -> Vec<&str> {
+    let verb = verb.trim();
+    let mut classes = vec![verb];
+    classes.extend(
+        OUTBOUND_VERB_CLASSES
+            .iter()
+            .filter(|(name, members)| *name != verb && members.contains(&verb))
+            .map(|(name, _)| *name),
+    );
+    classes
+}
+
 /// The class axis of a bound.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BoundClass {

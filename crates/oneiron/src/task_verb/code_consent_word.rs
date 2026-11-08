@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 use super::ConsultPayloadRef;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
-    TaskAskAnswer, TaskAskDefault, TaskAskOptionId, TaskAskQuestion, TaskAskSource, TaskAskSpec,
-    TaskAskTarget, TaskAskWord,
+    TaskAskAnswer, TaskAskDefault, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskSource,
+    TaskAskSpec, TaskAskTarget, TaskAskWord,
 };
 use crate::code_run::{
     CodeConsentChoice, CodeConsentWaitRow, attach_code_consent_ask_in_txn, offered_choices,
@@ -56,6 +56,15 @@ pub(super) fn is_code_consent_ask_intent(intent_key: &str) -> bool {
 /// tool.
 fn choice_label(choice: CodeConsentChoice, row: &CodeConsentWaitRow) -> String {
     let Some(action) = row.binding.pending.browser_action() else {
+        if choice == CodeConsentChoice::ApproveAndStopAsking
+            && row.binding.remember_offer.is_none()
+            && let Some(offer) = &row.binding.standing_offer
+        {
+            return format!(
+                "Approve and stop asking: this call and {}",
+                offer.scope_description()
+            );
+        }
         return match choice {
             CodeConsentChoice::ApproveOnce => "Approve once: this call only",
             CodeConsentChoice::ApproveAndStopAsking => {
@@ -96,7 +105,7 @@ fn ask_spec(row: &CodeConsentWaitRow) -> MemoryResult<TaskAskSpec> {
         .map(|choice| {
             Ok((
                 TaskAskOptionId::new(choice.as_str())?,
-                choice_label(choice, row),
+                TaskAskOption::new(choice_label(choice, row)),
             ))
         })
         .collect::<MemoryResult<BTreeMap<_, _>>>()?;
