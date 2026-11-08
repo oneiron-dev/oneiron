@@ -100,6 +100,7 @@ mod support_grant;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
 mod trusted_contact;
+mod uncertain_send;
 mod voice_bank;
 mod weave;
 mod web_connector;
@@ -546,6 +547,7 @@ pub use self::support_grant::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
 pub use self::trusted_contact::*;
+pub use self::uncertain_send::*;
 pub use self::voice_bank::*;
 pub use self::weave::*;
 pub use self::web_connector::*;
@@ -830,6 +832,7 @@ fn a_recall_the_engine_refuses_never_embeds_its_query() {
         format: format.map(str::to_owned),
         as_of: None,
         deadline_ms: None,
+        filter: None,
     };
     let call = |deadline_ms| RecallRequest {
         effort: Some(crate::memory::RecallEffort::Call),

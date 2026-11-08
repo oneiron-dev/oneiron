@@ -71,6 +71,34 @@ pub(crate) fn run_graph_question_with_proposals_sourced(
     now: u64,
     source_rows: &mut Option<Vec<EntityId>>,
 ) -> std::result::Result<GraphAskResult, GraphAskFailure> {
+    run_graph_question_with_current(
+        vault,
+        principal,
+        actor,
+        reference,
+        inputs,
+        proposals,
+        answerer,
+        now,
+        None,
+        source_rows,
+    )
+}
+
+/// The same saved recipe with the admitted caller's current credential
+/// reader conjoined with the saved version's lane at every source read.
+pub(crate) fn run_graph_question_with_current(
+    vault: &Vault,
+    principal: EntityId,
+    actor: WriteActor,
+    reference: GraphQuestionRef,
+    inputs: &[GraphQuestionInput],
+    proposals: &[super::AnswerRecord],
+    answerer: &mut impl GraphAnswerer,
+    now: u64,
+    current: Option<&crate::claim::ScopedReadActorKey>,
+    source_rows: &mut Option<Vec<EntityId>>,
+) -> std::result::Result<GraphAskResult, GraphAskFailure> {
     let validate = || -> crate::Result<()> {
         let record = read_question(vault, principal, reference.id, Some(reference.version))?
             .ok_or(Error::EntityNotFound)?;
@@ -100,7 +128,7 @@ pub(crate) fn run_graph_question_with_proposals_sourced(
     for input in inputs {
         let answer = (|| -> crate::Result<Option<super::AnswerRecord>> {
             let prepared = super::standing::prepare_graph_answer(
-                vault, principal, reference, actor, input, proposals,
+                vault, principal, reference, actor, input, proposals, current,
             );
             let (record, context, frontier) = match prepared {
                 Ok(prepared) => prepared,
@@ -110,27 +138,40 @@ pub(crate) fn run_graph_question_with_proposals_sourced(
                 }
                 Err(error) => return Err(error),
             };
+            answerer.prepare_saved_question(&record)?;
             if let Some(rows) = source_rows.as_mut() {
                 rows.extend(context.sources.iter().map(|source| source.id));
             }
             let question = &record.definition.question;
             let images = if answerer.reads_images() && record.definition.media.images {
                 *source_rows = None;
-                let key = super::saved_reader::saved_reader(vault, principal, &record.read_lane)?;
-                let lane = super::reader_authority::question_lane(vault, key);
+                let key = super::saved_reader::saved_reader_with_current(
+                    vault,
+                    principal,
+                    &record.read_lane,
+                    current,
+                )?;
+                let lane = super::saved_reader::current_reader_lane(vault, key, current);
                 super::graph_ask::unit_images(&lane, &context)?
             } else {
                 Vec::new()
             };
             let audio = if answerer.reads_audio() && record.definition.media.audio {
                 *source_rows = None;
-                let key = super::saved_reader::saved_reader(vault, principal, &record.read_lane)?;
-                let lane = super::reader_authority::question_lane(vault, key);
+                let key = super::saved_reader::saved_reader_with_current(
+                    vault,
+                    principal,
+                    &record.read_lane,
+                    current,
+                )?;
+                let lane = super::saved_reader::current_reader_lane(vault, key, current);
                 super::graph_ask::unit_audio(&lane, &context)?
             } else {
                 Vec::new()
             };
-            match answerer.decide(question, &context, &images, &audio)? {
+            let decision = answerer.decide(question, &context, &images, &audio)?;
+            let criteria_override = answerer.saved_criteria_override();
+            match decision {
                 None => Ok(None),
                 Some(GraphDecision::Prediction(prediction)) => {
                     if prediction.answer == DecisionAnswer::Abstain {
@@ -138,8 +179,17 @@ pub(crate) fn run_graph_question_with_proposals_sourced(
                     }
                     super::graph_ask::validate_prediction(question, &prediction)?;
                     super::standing::backfill_graph_answer(
-                        vault, principal, reference, actor, context, frontier, prediction,
-                        proposals, now,
+                        vault,
+                        principal,
+                        reference,
+                        actor,
+                        context,
+                        frontier,
+                        prediction,
+                        proposals,
+                        now,
+                        current,
+                        criteria_override,
                     )
                     .map(Some)
                 }
@@ -149,8 +199,19 @@ pub(crate) fn run_graph_question_with_proposals_sourced(
                         return Ok(None);
                     }
                     super::standing::backfill_graph_decision(
-                        vault, principal, reference, actor, context, frontier, &images, &audio,
-                        *decision, proposals, now,
+                        vault,
+                        principal,
+                        reference,
+                        actor,
+                        context,
+                        frontier,
+                        &images,
+                        &audio,
+                        *decision,
+                        proposals,
+                        now,
+                        current,
+                        criteria_override,
                     )
                     .map(Some)
                 }
