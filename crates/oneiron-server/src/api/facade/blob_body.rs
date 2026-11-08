@@ -66,8 +66,23 @@ pub(super) struct FacadeBlobBody(Arc<HeldContent>);
 struct HeldContent {
     verb: String,
     digest: String,
-    content: SpooledField,
+    content: HeldFile,
 }
+
+/// Where a held content's file came from.
+enum HeldFile {
+    /// This reader's own spool.
+    Spooled(SpooledField),
+    /// The action whose row this call is (FIX 22096).
+    Action(oneiron::code_run::actions::ActionBlobInput),
+}
+
+/// An action's input whose content its action holds as a file (FIX 22096):
+/// on the extensions of the action's call while its driver runs, then on
+/// those of its row's request, which carries the input with that member
+/// empty. Never on a request a caller sent.
+#[derive(Clone)]
+pub(super) struct HeldActionInput(pub(super) oneiron::code_run::actions::ActionBlobInput);
 
 impl FacadeBlobBody {
     /// The verb whose call the content arrived for.
@@ -82,7 +97,10 @@ impl FacadeBlobBody {
 
     /// The decoded content's file.
     pub(super) fn file(&self) -> &File {
-        self.0.content.file().0
+        match &self.0.content {
+            HeldFile::Spooled(content) => content.file().0,
+            HeldFile::Action(held) => held.file(),
+        }
     }
 }
 
@@ -99,6 +117,9 @@ pub(super) async fn read_receipt_body(
     body: Body,
     anonymous: bool,
 ) -> ReceiptBody {
+    if let Some(HeldActionInput(held)) = parts.extensions.remove::<HeldActionInput>() {
+        return action_held_body(server, parts, verb, body, held).await;
+    }
     let held = oneiron::task_verb::sdk::takes_blob_input(verb)
         && !anonymous
         && parts.method == Method::POST
@@ -130,7 +151,7 @@ pub(super) async fn read_receipt_body(
                 .insert(FacadeBlobBody(Arc::new(HeldContent {
                     verb: verb.to_owned(),
                     digest: digest.clone(),
-                    content,
+                    content: HeldFile::Spooled(content),
                 })));
             ReceiptBody {
                 bytes: Bytes::from(serde_json::to_vec(&head).unwrap_or_default()),
@@ -212,6 +233,53 @@ async fn spool(
         // A body that did not arrive whole reaches the route empty, as before.
         Err(Unspooled::Failed) => Ok(Spooled::Whole(Bytes::new())),
         Err(unspooled) => Err((FacadeApiError::from(unspooled.refusal()), None)),
+    }
+}
+
+/// The body of an action's row whose action holds its content as `held`
+/// (FIX 22096): the row's input with that member empty, read as any small
+/// body is. The content's file goes on the call as the spool's would, and
+/// the receipt states the digest of the whole input. A body that is not
+/// `held`'s input is refused: the row never runs without its content.
+async fn action_held_body(
+    server: &SyncServer,
+    parts: &mut Parts,
+    verb: &str,
+    body: Body,
+    held: oneiron::code_run::actions::ActionBlobInput,
+) -> ReceiptBody {
+    let (bytes, request) = super::secret_body::read_middleware_body(
+        body,
+        verb,
+        &mut parts.extensions,
+        crate::api::request_floor::request_floor(server),
+    )
+    .await;
+    let digest = held.receipt_digest().to_owned();
+    if held.verb().as_str() != verb || request.as_ref() != Some(held.head()) {
+        return ReceiptBody {
+            bytes: Bytes::new(),
+            request: None,
+            digest,
+            refused: Some(FacadeApiError::from(
+                crate::error::ApiError::internal_server_error(
+                    "an action's held input does not match its row",
+                ),
+            )),
+        };
+    }
+    parts
+        .extensions
+        .insert(FacadeBlobBody(Arc::new(HeldContent {
+            verb: verb.to_owned(),
+            digest: digest.clone(),
+            content: HeldFile::Action(held),
+        })));
+    ReceiptBody {
+        bytes,
+        request,
+        digest,
+        refused: None,
     }
 }
 

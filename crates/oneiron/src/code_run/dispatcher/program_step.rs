@@ -174,13 +174,29 @@ impl<'a> HostSelfDispatcher<'a> {
         origin: &HostWriteOrigin,
         invocation: InvocationId,
     ) -> Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        self.program_door_call_held(door, call, origin, invocation, None)
+    }
+
+    /// [`Self::program_door_call`] that hands `door` the file of `held`, the
+    /// action input `call` stands for (FIX 22096).
+    pub(super) fn program_door_call_held(
+        &self,
+        door: &dyn AgentVerbDoor,
+        call: &SelfAgentVerbCall,
+        origin: &HostWriteOrigin,
+        invocation: InvocationId,
+        held: Option<&crate::code_run::actions::ActionBlobInput>,
+    ) -> Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
         if let Some(code) = self.program_authority_refusal(call.verb.as_str())? {
             return Ok(Err(AgentVerbRefusal {
                 hook_notice: None,
                 code,
             }));
         }
-        door.call(call, origin, invocation)
+        match held {
+            Some(held) => door.call_held(call, origin, invocation, held),
+            None => door.call(call, origin, invocation),
+        }
     }
 
     /// The program's lease, lent to its pinned callable.
