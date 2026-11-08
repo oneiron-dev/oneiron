@@ -48,7 +48,7 @@ impl SyncClient {
             }
             document_sub_tags::ARTIFACT_RECEIPT => {
                 self.accept_artifact_receipt(frame.entity, frame.payload)
-                    .map_err(storage)?;
+                    .map_err(|error| refused_frame(&error, "invalid artifact receipt"))?;
                 return Ok(Vec::new());
             }
             document_sub_tags::ARTIFACT_PUBLICATION => {
@@ -75,7 +75,7 @@ impl SyncClient {
         let federated = self.config.federation_peer.as_ref();
         let refused = |error: crate::Error| match federated {
             Some(_) => super::federated::map_federated_admission_err(error),
-            None => storage(error),
+            None => refused_frame(&error, "document frame refused"),
         };
         let doc = self
             .manager
@@ -101,7 +101,7 @@ impl SyncClient {
                         frame.kind,
                         frame.payload,
                     )
-                    .map_err(storage)?;
+                    .map_err(|error| refused_frame(&error, "invalid NOTE authority frame"))?;
                     self.report_note_document(frame.entity).map_err(storage)?;
                     let mut out = vec![
                         transport::encode_document(
@@ -128,7 +128,7 @@ impl SyncClient {
                     self.manager
                         .documents()
                         .accept_note_receipt(frame.entity, &receipt)
-                        .map_err(storage)?;
+                        .map_err(|error| refused_frame(&error, "invalid NOTE receipt"))?;
                     return Ok(Vec::new());
                 }
                 document_sub_tags::NOTE_FORK_RECEIPT => {
@@ -137,7 +137,7 @@ impl SyncClient {
                     self.manager
                         .documents()
                         .accept_note_fork_receipt(frame.entity, &receipt)
-                        .map_err(storage)?;
+                        .map_err(|error| refused_frame(&error, "invalid NOTE fork receipt"))?;
                     return Ok(Vec::new());
                 }
                 // The authority's pending forks (FIX 12789). A fork this
@@ -182,7 +182,8 @@ impl SyncClient {
             // until the home covers them (FIX 4748).
             document_sub_tags::ACK if self.peer_session.is_some() => Ok(Vec::new()),
             document_sub_tags::ACK => {
-                doc.acknowledge(frame.payload).map_err(storage)?;
+                doc.acknowledge(frame.payload)
+                    .map_err(|error| refused_frame(&error, "invalid document ack"))?;
                 let settled = (|| -> Result<bool, TransportError> {
                     if !self
                         .document_retries
@@ -272,7 +273,7 @@ impl SyncClient {
         let reply = match frame.kind {
             document_sub_tags::ACK => documents
                 .copy_acknowledge(stream, frame.payload)
-                .map_err(storage)?,
+                .map_err(|error| refused_frame(&error, "invalid document ack"))?,
             document_sub_tags::STATE | document_sub_tags::UPDATE => {
                 let federated = self.config.federation_peer.as_ref();
                 documents
@@ -287,7 +288,7 @@ impl SyncClient {
                     })
                     .map_err(|error| match federated {
                         Some(_) => super::federated::map_federated_admission_err(error),
-                        None => storage(error),
+                        None => refused_frame(&error, "document frame refused"),
                     })?
             }
             _ => {
@@ -464,4 +465,16 @@ impl SyncClient {
 
 fn storage(error: crate::Error) -> TransportError {
     TransportError::Storage(error.to_string())
+}
+
+/// The transport error of the home's document frame that failed to apply
+/// with `error` (FIX 22153): a fault of this vault's own as
+/// [`TransportError::Storage`], any other as the home's frame refused,
+/// `refusal`, the cause logged.
+fn refused_frame(error: &crate::Error, refusal: &'static str) -> TransportError {
+    let refused = TransportError::from_applied(error, refusal);
+    if !matches!(refused, TransportError::Storage(_)) {
+        tracing::warn!(%error, refusal, "a document frame from the home did not apply");
+    }
+    refused
 }
