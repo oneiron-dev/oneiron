@@ -111,8 +111,8 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"counterparty.contact.identity",
                 b"consent.widen.contact_verdict",
                 b"connector_key/connector/v1\0",
-                b"gate_pending:run_index:v1:",
-                b"gate_pending:group_index:v1:",
+                b"gate_pending:run_index:v2:",
+                b"gate_pending:group_index:v2:",
                 b"gate_pending:hash_index:v1:",
                 b"gate_pending:sequence_index:v1:",
                 b"gate_pending:critical_confirm_by_id:v1:",
@@ -213,5 +213,24 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
             }
         }
         _ => Derived,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The run and group indexes of pending Gate consents are rebuilt on restore
+    /// (`rebuild_pending_gate_consent_sidecars`), so they never enter an image. Their
+    /// prefixes moved to v2 (#5369) while this classifier still named v1, so v2 rows
+    /// were imaged as canonical and refused as an undeclared family on restore.
+    #[test]
+    fn gate_pending_run_and_group_indexes_are_derived() {
+        for prefix in [
+            crate::side_table::PENDING_GATE_CONSENT_RUN_INDEX.prefix,
+            crate::side_table::PENDING_GATE_CONSENT_GROUP_INDEX.prefix,
+        ] {
+            assert_eq!(storage_tier("vault_meta", prefix), StorageTier::Derived);
+        }
     }
 }
