@@ -4402,6 +4402,11 @@ export_facade! {
     let output = client.tasks_outcomes(&input)?;
     crate::codec::lift_record("tasks.outcomes", &output)
 };
+"tasks.outcomes.route_calibration" => fn tasks_outcomes_route_calibration(&self, input: TaskAskHandle) -> RouteCalibrationReport = |client| {
+    let input: oneiron::task_verb::TaskAskHandle = crate::codec::lower_record("tasks.outcomes.route_calibration", input)?;
+    let output = client.tasks_outcomes_route_calibration(&input)?;
+    crate::codec::lift_record("tasks.outcomes.route_calibration", &output)
+};
 "vault.rooms.list" => fn vault_rooms_list(&self) -> Vec<RoomEntry> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.rooms.list")?;
     let output = client.vault_rooms_list(&input)?;

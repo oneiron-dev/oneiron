@@ -4820,8 +4820,8 @@ class Oneiron:
             """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
         @property
         def answer(self) -> "Oneiron._TasksAnswerVerbs": ...
-        def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
-            """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
+        @property
+        def outcomes(self) -> "Oneiron._TasksOutcomesVerbs": ...
         def refuse(self, spec: Facade.LiveRunRequest[Facade.TaskRefuseInput]) -> Facade.TaskRefuseOutput:
             """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
     class _TasksAnswerVerbs:
@@ -4836,6 +4836,11 @@ class Oneiron:
             """The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it."""
         def status(self, intent_ref: Facade.EntityId) -> Facade.AskForwardReceipt:
             """Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result."""
+    class _TasksOutcomesVerbs:
+        def __call__(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
+            """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
+        def route_calibration(self, handle: Facade.TaskAskHandle) -> Facade.RouteCalibrationReport:
+            """Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only."""
     class _AiVerbs:
         @property
         def chat(self) -> "Oneiron._AiChatVerbs": ...

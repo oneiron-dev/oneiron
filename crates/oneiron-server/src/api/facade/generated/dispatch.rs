@@ -28295,6 +28295,28 @@ async fn tasks_outcomes(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn tasks_outcomes_route_calibration(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "tasks.outcomes.route_calibration",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_rooms_list(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -49347,6 +49369,14 @@ fn boxed_tasks_outcomes<'a>(
     Box::pin(tasks_outcomes(server, call, input))
 }
 #[inline(never)]
+fn boxed_tasks_outcomes_route_calibration<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(tasks_outcomes_route_calibration(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_rooms_list<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -54680,6 +54710,9 @@ async fn call_verb_row(
             boxed_tasks_answer_forward_status(server, call, input).await
         }
         "tasks.outcomes" => boxed_tasks_outcomes(server, call, input).await,
+        "tasks.outcomes.route_calibration" => {
+            boxed_tasks_outcomes_route_calibration(server, call, input).await
+        }
         "vault.rooms.list" => boxed_vault_rooms_list(server, call, input).await,
         "vault.rooms.messages" => boxed_vault_rooms_messages(server, call, input).await,
         "vault.rooms.participants" => boxed_vault_rooms_participants(server, call, input).await,

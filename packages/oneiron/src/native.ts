@@ -915,6 +915,7 @@ tasksAnswerForwardChallenge(input: unknown): unknown
 tasksAnswerForward(input: unknown): unknown
 tasksAnswerForwardStatus(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
+tasksOutcomesRouteCalibration(input: unknown): unknown
 vaultRoomsList(input: unknown): unknown
 vaultRoomsMessages(input: unknown): unknown
 vaultRoomsParticipants(input: unknown): unknown

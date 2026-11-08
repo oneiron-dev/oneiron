@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1335 facade rows, 4801 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1287.
+// UniFFI census: 1336 facade rows, 4813 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1288.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), DetachRemainderReason.WithdrawalFailed.kind (an enum with more than 256 variants (ErrorKind)), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -52478,6 +52478,52 @@ pub struct OutcomeLabel {
     pub occurred_at: u64,
 }
 
+/// `oneiron_store::model_decision::questions::route::DecisionRoute`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum DecisionRoute {
+    #[serde(rename = "rule")]
+    Rule,
+    #[serde(rename = "direct")]
+    Direct {
+        #[serde(rename = "rung")]
+        rung: DecisionRung,
+    },
+    #[serde(rename = "stepped_up")]
+    SteppedUp {
+        #[serde(rename = "rung")]
+        rung: DecisionRung,
+    },
+    #[serde(rename = "step_unfinished")]
+    StepUnfinished {
+        #[serde(rename = "rung")]
+        rung: DecisionRung,
+    },
+    #[serde(rename = "person")]
+    Person,
+    #[serde(rename = "unrouted")]
+    Unrouted,
+}
+
+/// `oneiron_store::model_decision::questions::route::RoutingPolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RoutingPolicy {
+    #[serde(rename = "band_version")]
+    pub band_version: u32,
+    #[serde(rename = "think_row", default, skip_serializing_if = "Option::is_none")]
+    pub think_row: Option<u32>,
+    #[serde(
+        rename = "person_row",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub person_row: Option<u32>,
+    #[serde(rename = "rule", default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<HostRuleRef>,
+}
+
 /// `oneiron_store::model_decision::questions::records::CalibrationPair`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -52488,6 +52534,153 @@ pub struct CalibrationPair {
     pub probability: f64,
     #[serde(rename = "outcome")]
     pub outcome: OutcomeLabel,
+    #[serde(rename = "question_version")]
+    pub question_version: u32,
+    #[serde(rename = "route")]
+    pub route: DecisionRoute,
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<RoutingPolicy>,
+    #[serde(rename = "providers")]
+    pub providers: Vec<ProviderPin>,
+}
+
+/// `oneiron::llm::decision::questions::route_calibration::report::RouteGroupKey`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RouteGroupKey {
+    #[serde(rename = "question_version")]
+    pub question_version: u32,
+    #[serde(rename = "route")]
+    pub route: DecisionRoute,
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<RoutingPolicy>,
+    #[serde(rename = "providers")]
+    pub providers: Vec<ProviderPin>,
+}
+
+/// `oneiron::llm::decision::questions::route_calibration::report::CalibrationMetrics`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalibrationMetrics {
+    #[serde(rename = "brier_score")]
+    pub brier_score: f64,
+    #[serde(rename = "calibration_error")]
+    pub calibration_error: f64,
+}
+
+/// `oneiron::llm::decision::questions::route_calibration::report::CalibrationPairRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalibrationPairRef {
+    #[serde(rename = "answer")]
+    pub answer: String,
+    #[serde(rename = "fact")]
+    pub fact: String,
+}
+
+/// `oneiron::llm::decision::questions::route_calibration::report::MapKnot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MapKnot {
+    #[serde(rename = "raw")]
+    pub raw: f64,
+    #[serde(rename = "fitted")]
+    pub fitted: f64,
+}
+
+/// `oneiron::llm::decision::questions::route_calibration::report::RouteCalibrationMap`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RouteCalibrationMap {
+    #[serde(rename = "question")]
+    pub question: String,
+    #[serde(rename = "key")]
+    pub key: RouteGroupKey,
+    #[serde(rename = "fit")]
+    pub fit: Vec<CalibrationPairRef>,
+    #[serde(rename = "knots")]
+    pub knots: Vec<MapKnot>,
+}
+
+/// `oneiron::llm::decision::questions::route_calibration::report::AcceptanceAtCut`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AcceptanceAtCut {
+    #[serde(rename = "cut")]
+    pub cut: f64,
+    #[serde(rename = "raw")]
+    pub raw: f64,
+    #[serde(rename = "accepted")]
+    pub accepted: u64,
+    #[serde(rename = "coverage")]
+    pub coverage: f64,
+    #[serde(
+        rename = "accepted_error",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub accepted_error: Option<f64>,
+}
+
+/// `oneiron::llm::decision::questions::route_calibration::report::RouteFitRefusal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum RouteFitRefusal {
+    #[serde(rename = "too_few_fit_pairs")]
+    TooFewFitPairs {
+        #[serde(rename = "needed")]
+        needed: u64,
+    },
+    #[serde(rename = "weightless_fit")]
+    WeightlessFit,
+}
+
+/// `oneiron::llm::decision::questions::route_calibration::report::RouteFit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+#[serde(deny_unknown_fields)]
+pub enum RouteFit {
+    #[serde(rename = "fitted")]
+    Fitted {
+        #[serde(rename = "map")]
+        map: RouteCalibrationMap,
+        #[serde(rename = "fitted", default, skip_serializing_if = "Option::is_none")]
+        fitted: Option<CalibrationMetrics>,
+        #[serde(rename = "acceptance")]
+        acceptance: Vec<AcceptanceAtCut>,
+    },
+    #[serde(rename = "refused")]
+    Refused {
+        #[serde(rename = "reason")]
+        reason: RouteFitRefusal,
+    },
+}
+
+/// `oneiron::llm::decision::questions::route_calibration::report::RouteCalibrationGroup`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RouteCalibrationGroup {
+    #[serde(rename = "key")]
+    pub key: RouteGroupKey,
+    #[serde(rename = "fit_pairs")]
+    pub fit_pairs: u64,
+    #[serde(rename = "check_pairs")]
+    pub check_pairs: u64,
+    #[serde(rename = "raw", default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<CalibrationMetrics>,
+    #[serde(rename = "fit")]
+    pub fit: RouteFit,
+}
+
+/// `oneiron::llm::decision::questions::route_calibration::report::RouteCalibrationReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RouteCalibrationReport {
+    #[serde(rename = "question")]
+    pub question: String,
+    #[serde(rename = "groups")]
+    pub groups: Vec<RouteCalibrationGroup>,
 }
 
 /// `oneiron_store::conversation_body::RoomOriginCard`.
