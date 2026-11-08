@@ -26,22 +26,19 @@ mod retained_iterative;
 /// against these exact bytes: the root's entry takes it instead of hashing
 /// the file again (FIX 12270). `None` hashes as before.
 pub(crate) fn is_sealed(bytes: &[u8], digest: Option<&[u8; 32]>) -> bool {
-    matches!(
-        walk_members(
-            bytes,
-            &mut |_: &[MemberStep], _: &[u8]| -> Walked<()> { Ok(()) },
-            digest,
-        ),
-        Err(Stop::Refuse(_))
-    )
+    ContainerReader::default().is_sealed(bytes, digest)
 }
 
 /// Whether bytes no reader shows are handed to a scan's walk as a member
 /// (FIX 2470): plain bytes, and a container the walk reads whole. One the
 /// walk does not read is left to the scan of the file's own bytes: no reader
 /// shows it either.
-fn hidden_member(bytes: &[u8]) -> bool {
-    classify(bytes).is_none() || !is_sealed(bytes, None)
+fn hidden_member(bytes: &[u8], budget: &Budget) -> bool {
+    classify_with_pacing(bytes, &budget.pacing).is_none()
+        || !ContainerReader {
+            pacing: budget.pacing.clone(),
+        }
+        .is_sealed(bytes, None)
 }
 
 /// The write door's error for a walk that stopped.
@@ -76,10 +73,14 @@ fn walk_members_with_hidden(
     bytes: &[u8],
     visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
     digest: Option<&[u8; 32]>,
+    pacing: &ReadPacing,
 ) -> Walked<()> {
     retained_iterative::walk(
         bytes,
-        &mut Budget::new().reading_hidden().with_root_digest(digest),
+        &mut Budget::new()
+            .reading_hidden()
+            .with_root_digest(digest)
+            .with_pacing(pacing.clone()),
         visit,
     )
 }
@@ -130,11 +131,12 @@ fn members_hit(
     bytes: &[u8],
     rules: fn(&[u8]) -> Option<&'static str>,
     digest: Option<&[u8; 32]>,
+    pacing: &ReadPacing,
 ) -> Option<&'static str> {
     let mut scan = |_: &[MemberStep], member: &[u8]| -> Walked<()> {
         rules(member).map_or(Ok(()), |reason| Err(Stop::Refuse(reason)))
     };
-    match walk_members_with_hidden(bytes, &mut scan, digest) {
+    match walk_members_with_hidden(bytes, &mut scan, digest, pacing) {
         Ok(()) => None,
         Err(Stop::Refuse(reason)) => Some(reason),
         Err(Stop::Fail(_)) => Some(REASON_UNREADABLE),
@@ -144,7 +146,7 @@ fn members_hit(
 /// The release doors' rules over each member under `bytes` and the bytes no
 /// reader shows.
 pub(super) fn release_members_hit(bytes: &[u8]) -> Option<&'static str> {
-    members_hit(bytes, release_hit, None)
+    members_hit(bytes, release_hit, None, &ReadPacing::default())
 }
 
 /// [`super::scan_file_content`] over text, which is valid UTF-8. Text with
@@ -169,7 +171,7 @@ pub(crate) fn scan_text_content(text: &str) -> Option<&'static str> {
 /// against these exact bytes: the root's entry takes it instead of hashing
 /// the file again (FIX 12270). `None` hashes as before.
 pub(super) fn write_members_hit(bytes: &[u8], digest: Option<&[u8; 32]>) -> Option<&'static str> {
-    members_hit(bytes, write_payload_hit, digest)
+    members_hit(bytes, write_payload_hit, digest, &ReadPacing::default())
 }
 
 /// `bytes` with each key `places` names overwritten: the spans at a place
@@ -195,13 +197,7 @@ pub(crate) fn served_masked_copy(
     handles: &PlaceHandles,
     digest: Option<&[u8; 32]>,
 ) -> Result<Vec<u8>> {
-    masked_copy_in(
-        bytes,
-        places,
-        Some(handles),
-        Budget::new().with_root_digest(digest),
-    )
-    .map_err(withheld)
+    ContainerReader::default().served_masked_copy(bytes, places, handles, digest)
 }
 
 /// The copy a serving door's masked reader may be served of `bytes`, a
@@ -215,8 +211,7 @@ pub(crate) fn served_masked_copy(
 /// served. The copy is served only once the write door's scan reads it
 /// clean.
 pub(crate) fn tree_rebuilt_copy(bytes: &[u8], digest: Option<&[u8; 32]>) -> Option<Vec<u8>> {
-    classify(bytes)?;
-    retained_iterative::rebuild_tree(bytes, &mut Budget::new().with_root_digest(digest)).ok()
+    ContainerReader::default().tree_rebuilt_copy(bytes, digest)
 }
 
 /// The first write-rule hit in what a reader shows of `bytes` (FIX 12280):
@@ -234,25 +229,7 @@ pub(crate) fn tree_rebuilt_copy(bytes: &[u8], digest: Option<&[u8; 32]>) -> Opti
 /// re-handed byte for byte by the rebuild's readers, which is what makes
 /// its hit the rescan's hit too.
 pub(crate) fn live_content_hit(bytes: &[u8], digest: Option<&[u8; 32]>) -> Option<&'static str> {
-    let mut hit = None;
-    let mut scan = |path: &[MemberStep], member: &[u8]| -> Walked<()> {
-        if classify(member).is_some()
-            || path
-                .iter()
-                .any(|step| matches!(step, MemberStep::PdfObjectStream { .. }))
-        {
-            return Ok(());
-        }
-        match write_payload_hit(member) {
-            Some(reason) => {
-                hit = Some(reason);
-                Err(Stop::Refuse(reason))
-            }
-            None => Ok(()),
-        }
-    };
-    let _ = walk_members(bytes, &mut scan, digest);
-    hit
+    ContainerReader::default().live_content_hit(bytes, digest)
 }
 
 /// [`masked_copy`] of a retained repository blob, under its whole read
@@ -279,4 +256,82 @@ fn masked_copy_in(
         return Err(Stop::Fail(Error::CorruptedIndex("masked file member path")));
     }
     Ok(copy)
+}
+
+/// One masked read's explicit schedule, shared by every walk over its bytes.
+#[derive(Clone, Default)]
+pub(crate) struct ContainerReader {
+    pub(crate) pacing: ReadPacing,
+}
+
+impl ContainerReader {
+    fn budget(&self, digest: Option<&[u8; 32]>) -> Budget {
+        Budget::new()
+            .with_pacing(self.pacing.clone())
+            .with_root_digest(digest)
+    }
+
+    pub(crate) fn write_tree_hit(
+        &self,
+        bytes: &[u8],
+        digest: Option<&[u8; 32]>,
+    ) -> Option<&'static str> {
+        write_payload_hit(bytes)
+            .or_else(|| members_hit(bytes, write_payload_hit, digest, &self.pacing))
+    }
+    pub(crate) fn is_sealed(&self, bytes: &[u8], digest: Option<&[u8; 32]>) -> bool {
+        matches!(
+            retained_iterative::walk(
+                bytes,
+                &mut self.budget(digest),
+                &mut |_: &[MemberStep], _: &[u8]| -> Walked<()> { Ok(()) },
+            ),
+            Err(Stop::Refuse(_))
+        )
+    }
+
+    pub(crate) fn served_masked_copy(
+        &self,
+        bytes: &[u8],
+        places: &KeyPlaces,
+        handles: &PlaceHandles,
+        digest: Option<&[u8; 32]>,
+    ) -> Result<Vec<u8>> {
+        masked_copy_in(bytes, places, Some(handles), self.budget(digest)).map_err(withheld)
+    }
+
+    pub(crate) fn tree_rebuilt_copy(
+        &self,
+        bytes: &[u8],
+        digest: Option<&[u8; 32]>,
+    ) -> Option<Vec<u8>> {
+        classify_with_pacing(bytes, &self.pacing)?;
+        retained_iterative::rebuild_tree(bytes, &mut self.budget(digest)).ok()
+    }
+
+    pub(crate) fn live_content_hit(
+        &self,
+        bytes: &[u8],
+        digest: Option<&[u8; 32]>,
+    ) -> Option<&'static str> {
+        let mut hit = None;
+        let mut scan = |path: &[MemberStep], member: &[u8]| -> Walked<()> {
+            if classify_with_pacing(member, &self.pacing).is_some()
+                || path
+                    .iter()
+                    .any(|step| matches!(step, MemberStep::PdfObjectStream { .. }))
+            {
+                return Ok(());
+            }
+            match write_payload_hit(member) {
+                Some(reason) => {
+                    hit = Some(reason);
+                    Err(Stop::Refuse(reason))
+                }
+                None => Ok(()),
+            }
+        };
+        let _ = retained_iterative::walk(bytes, &mut self.budget(digest), &mut scan);
+        hit
+    }
 }

@@ -59,20 +59,26 @@ pub(super) fn is_text_media_type(media_type: &str) -> bool {
 /// The file's text: UTF-8 with any leading byte-order mark left out, or
 /// `None` when the bytes are not UTF-8. Every offset counts characters of
 /// this text.
-fn decoded(bytes: &[u8]) -> Option<&str> {
+pub(in crate::anchored_annotation) fn decoded(bytes: &[u8]) -> Option<&str> {
     let text = std::str::from_utf8(bytes).ok()?;
     Some(text.strip_prefix('\u{feff}').unwrap_or(text))
 }
 
 /// The words under a text span, or `None` when the spot cannot be read.
-pub(super) fn text_span(bytes: &[u8], char_start: u64, char_end: u64) -> Option<String> {
+pub(in crate::anchored_annotation) fn text_span(
+    bytes: &[u8],
+    char_start: u64,
+    char_end: u64,
+) -> Option<String> {
     char_slice(decoded(bytes)?, char_start, char_end)
 }
 
 /// One unit per line, in file order: the line's span without its line
 /// break, and its words when the line holds any. `None` when the bytes are
 /// not text.
-pub(super) fn text_units(bytes: &[u8]) -> Option<Vec<(Locator, Option<String>)>> {
+pub(in crate::anchored_annotation) fn text_units(
+    bytes: &[u8],
+) -> Option<Vec<(Locator, Option<String>)>> {
     let text = decoded(bytes)?;
     let mut units = Vec::new();
     let mut at = 0u64;
