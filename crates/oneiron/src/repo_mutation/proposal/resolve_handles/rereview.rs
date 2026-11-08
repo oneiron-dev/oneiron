@@ -40,6 +40,7 @@ impl Vault {
             ProposalBase::CurrentCheckout,
             None,
             None,
+            None,
             |txn| {
                 prepared.revalidate(self, txn)?;
                 Ok(Ok(()))
@@ -62,6 +63,7 @@ impl Vault {
             repository,
             request,
             review,
+            None,
             |txn| {
                 prepared.revalidate(self, txn)?;
                 Ok(Ok(()))
@@ -80,7 +82,7 @@ impl Vault {
         check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoProposal, R>> {
         let prepared = RereviewPrepared::new(self, original, &mut request)?;
-        self.propose_repo_mutation_for_run(request, review, base, stamp, |txn| {
+        self.propose_repo_mutation_for_run(request, review, base, stamp, None, |txn| {
             if let Err(refused) = check(txn)? {
                 return Ok(Err(refused));
             }
