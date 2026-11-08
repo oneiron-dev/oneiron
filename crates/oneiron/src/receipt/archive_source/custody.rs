@@ -53,6 +53,24 @@ fn retired(
         || store.off_record_sessions.contains_entity(id)?)
 }
 
+/// The body stored row `raw` of `id` holds, past its header: an ASSET's
+/// carrier read from its body file when it has one (FIX 22091), any other
+/// row's bytes as they are.
+fn stored_source<'r>(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    raw: &'r [u8],
+) -> Result<std::borrow::Cow<'r, [u8]>> {
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    if entity_type == ENTITY_TYPE_ASSET {
+        crate::store::asset_carrier_body_in_txn(store, txn, id, body)
+    } else {
+        Ok(std::borrow::Cow::Borrowed(body))
+    }
+}
+
 pub(crate) fn validate_receipt_archive_put(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -87,7 +105,9 @@ pub(crate) fn validate_receipt_archive_put(
     if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? {
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("receipt source header"))?;
-        if header.entity_type != ENTITY_TYPE_ASSET || raw[ENTITY_METADATA_HEADER_LEN..] != *body {
+        if header.entity_type != ENTITY_TYPE_ASSET
+            || *stored_source(store, txn, id, header.entity_type, &raw)? != *body
+        {
             return Err(invalid());
         }
     }
@@ -136,9 +156,10 @@ pub(crate) fn stage_receipt_archive_put(
                 };
                 let header = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("pending receipt source"))?;
-                let source = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?.ok_or(invalid())?;
+                let stored = stored_source(store, txn, &source_id, header.entity_type, &raw)?;
+                let source = decode(&stored)?.ok_or(invalid())?;
                 if header.entity_type != ENTITY_TYPE_ASSET
-                    || id_of_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])? != source_id
+                    || id_of_bytes(&stored)? != source_id
                     || source.holder()? != *id
                 {
                     return Err(invalid());
@@ -183,9 +204,9 @@ pub(super) fn read_source(
     if header.entity_type != ENTITY_TYPE_ASSET {
         return Err(invalid());
     }
-    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-    let source = decode(body)?.ok_or(invalid())?;
-    if id_of_bytes(body)? != *id || SLOT.get(store, txn, &slot_key(&source)?)?.as_ref() != Some(id)
+    let body = stored_source(store, txn, id, header.entity_type, &raw)?;
+    let source = decode(&body)?.ok_or(invalid())?;
+    if id_of_bytes(&body)? != *id || SLOT.get(store, txn, &slot_key(&source)?)?.as_ref() != Some(id)
     {
         return Err(invalid());
     }
@@ -240,9 +261,9 @@ fn erase_source_payload(
     };
     let header =
         EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("receipt source delete"))?;
-    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-    decode(body)?.ok_or(invalid())?;
-    if header.entity_type != ENTITY_TYPE_ASSET || id_of_bytes(body)? != *id {
+    let body = stored_source(store, txn, id, header.entity_type, &raw)?;
+    decode(&body)?.ok_or(invalid())?;
+    if header.entity_type != ENTITY_TYPE_ASSET || id_of_bytes(&body)? != *id {
         return Err(invalid());
     }
     let (_, vector, graph, neighbors) = crate::batch::deindex_entity(write, txn, id)?;

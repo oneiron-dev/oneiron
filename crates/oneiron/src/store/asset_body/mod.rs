@@ -39,6 +39,7 @@ mod read;
 mod spool;
 mod stage;
 
+pub(crate) use read::asset_carrier_body_in_txn;
 pub(crate) use spool::AssetBodySpool;
 pub(crate) use stage::{StagedAssetBody, StagedHold};
 
@@ -89,6 +90,12 @@ pub(crate) enum AssetFileKind {
     /// in its row, and mark it by its digest; its readers read it whole
     /// through the file plane.
     Interpreted,
+    /// An owning adapter's carrier (a hub source, a pack source, a receipt
+    /// archive source, a refinement receipt, an agent's birth source), kept
+    /// exactly as written (FIX 22091). Its adapter's readers and put checks
+    /// read it whole through [`asset_carrier_body_in_txn`]; no other file
+    /// kind holds a carrier, so they never read one.
+    Carrier,
 }
 
 impl AssetFileKind {
@@ -98,6 +105,7 @@ impl AssetFileKind {
             Self::Opaque => 1,
             Self::Record => 2,
             Self::Interpreted => 3,
+            Self::Carrier => 4,
         }
     }
 
@@ -107,6 +115,7 @@ impl AssetFileKind {
             1 => Some(Self::Opaque),
             2 => Some(Self::Record),
             3 => Some(Self::Interpreted),
+            4 => Some(Self::Carrier),
             _ => None,
         }
     }

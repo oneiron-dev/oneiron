@@ -96,12 +96,15 @@ pub(super) fn audit_and_stage_body(
         fixed.replicated,
     )?;
     stage_optional_side_row(store, wtxn, markers.hub_origin_marker)?;
+    // An owning adapter's custody reads what a body file holds, never its
+    // manifest (FIX 22091).
+    let carrier = fixed.file_body.unwrap_or(data);
     crate::skill_hub::stage_source_custody_put(
         write,
         wtxn,
         &fixed.id,
         fixed.entity_type,
-        data,
+        carrier,
         previous_skill_record.as_ref(),
         dispatch.new_skill_record.as_ref(),
     )?;
@@ -110,7 +113,7 @@ pub(super) fn audit_and_stage_body(
         wtxn,
         &fixed.id,
         fixed.entity_type,
-        data,
+        carrier,
     )?;
     if fixed.entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
         crate::channel_identity::maintain_assignment_put(store, wtxn, &fixed.id, data)?;

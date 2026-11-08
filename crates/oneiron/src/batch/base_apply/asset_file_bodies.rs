@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
@@ -45,11 +45,16 @@ pub(super) fn read_file_bodies(
     manifests
 }
 
-/// Puts each manifest [`read_file_bodies`] took back in its ASSET put, the
-/// file's bytes wiped.
-pub(super) fn restore_manifests(ops: &mut [BatchOp], mut manifests: HashMap<EntityId, Vec<u8>>) {
+/// Puts each manifest [`read_file_bodies`] took back in its ASSET put, and
+/// returns the file bytes it held, wiped when dropped: that put's adapter
+/// checks and custody read them (FIX 22091).
+pub(super) fn restore_manifests(
+    ops: &mut [BatchOp],
+    mut manifests: HashMap<EntityId, Vec<u8>>,
+) -> HashMap<EntityId, Zeroizing<Vec<u8>>> {
+    let mut bodies = HashMap::new();
     if manifests.is_empty() {
-        return;
+        return bodies;
     }
     for op in ops.iter_mut() {
         if let BatchOp::Put {
@@ -61,8 +66,8 @@ pub(super) fn restore_manifests(ops: &mut [BatchOp], mut manifests: HashMap<Enti
             && *entity_type == ENTITY_TYPE_ASSET
             && let Some(manifest) = manifests.remove(id)
         {
-            let mut body = std::mem::replace(data, manifest);
-            body.zeroize();
+            bodies.insert(*id, Zeroizing::new(std::mem::replace(data, manifest)));
         }
     }
+    bodies
 }
