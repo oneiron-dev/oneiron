@@ -12,6 +12,7 @@ mod ask;
 mod call_scope;
 mod chain;
 mod credential;
+mod golden;
 mod paced;
 mod plain_resume;
 mod record;
