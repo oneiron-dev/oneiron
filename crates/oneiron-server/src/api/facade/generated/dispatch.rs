@@ -14749,6 +14749,41 @@ async fn vault_guests_export_envelope(
         hook_notice,
     })
 }
+async fn vault_guests_propose(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    facade_outside_room_turn(call, "vault.guests.propose")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.guests.propose", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.guests.propose", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_guests_propose(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error.with_hook_notice(hook_notice));
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output)
+            .await
+            .map_err(|error| error.with_hook_notice(hook_notice))?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
+    })
+}
 async fn vault_guests_reshare(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -50003,6 +50038,14 @@ fn boxed_vault_guests_export_envelope<'a>(
     Box::pin(vault_guests_export_envelope(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_guests_propose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_guests_propose(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_guests_reshare<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -58260,6 +58303,7 @@ async fn call_verb_row(
         "vault.guests.export_envelope" => {
             boxed_vault_guests_export_envelope(server, call, input).await
         }
+        "vault.guests.propose" => boxed_vault_guests_propose(server, call, input).await,
         "vault.guests.reshare" => boxed_vault_guests_reshare(server, call, input).await,
         "vault.guests.revoke" => boxed_vault_guests_revoke(server, call, input).await,
         "vault.guests.mint_slip" => boxed_vault_guests_mint_slip(server, call, input).await,

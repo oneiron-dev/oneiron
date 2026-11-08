@@ -4,7 +4,7 @@ mod agent_admission;
 mod agent_facets;
 mod builtin;
 pub use builtin::CheckedBuiltinConnection;
-pub(crate) use builtin::seed_builtin_packs;
+pub(crate) use builtin::{builtin_pack_seed_ids, seed_builtin_packs};
 mod codec;
 mod doors;
 mod hooks;
