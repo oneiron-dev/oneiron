@@ -28,7 +28,10 @@ mod binding;
 mod browser;
 mod host;
 mod ledger;
+mod rebind;
+mod rebind_types;
 mod replay;
+mod resume;
 mod settle;
 mod standing_offer;
 mod types;
@@ -46,10 +49,14 @@ pub(crate) use self::replay::{
     consumed_external_code_reply, seal_parked_code_consent_in_txn, verify_code_consent_consumed,
     verify_parked_code_consent,
 };
+pub use self::resume::{
+    CodeConsentParkedRun, CodeConsentRunEndpoint, CodeConsentRunOrigin, CodeConsentRunPeer,
+};
 pub(crate) use self::settle::{
-    CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, code_consent_admission_in_txn, offered_choices,
-    original_authority_holds_in_txn, prove_code_consent_holder_act_in_txn,
-    refuse_code_consent_wait_in_txn, settle_code_consent_wait_listing_in_txn,
+    CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, active_authority_holds_in_txn,
+    code_consent_admission_in_txn, offered_choices, original_authority_holds_in_txn,
+    prove_code_consent_holder_act_in_txn, refuse_code_consent_wait_in_txn,
+    settle_code_consent_wait_listing_in_txn,
 };
 pub use self::standing_offer::CodeConsentStandingOffer;
 pub use self::types::{
@@ -60,6 +67,10 @@ pub use self::types::{
 pub(crate) use self::types::{
     CodeConsentCallSite, CodeConsentConnectorCall, CodeConsentPendingEffect, CodeConsentPrincipal,
     CodeConsentRememberOffer, CodeConsentWaitRow,
+};
+
+pub(crate) use self::rebind_types::{
+    CodeConsentRebind, CodeConsentRebindProposal, CodeConsentRebindTarget,
 };
 
 use crate::EntityId;

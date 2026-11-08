@@ -21,6 +21,7 @@ use super::support::{
 };
 use crate::error::GateError;
 
+mod code_wait_rebind;
 mod decision_slot;
 mod grants;
 mod invitee_credential;
@@ -650,12 +651,24 @@ pub fn load_active_standing_grants(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<StandingConsentGrant>> {
+    Ok(active_standing_grant_rows_in_txn(store, txn)?
+        .into_iter()
+        .map(|row| row.grant)
+        .collect())
+}
+
+/// [`load_active_standing_grants`] with each grant's whole row (reference,
+/// status, stamp). A bypass row is never an ordinary standing grant.
+pub(crate) fn active_standing_grant_rows_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<ConsentGrantRow>> {
     Ok(GRANTS
         .scan(store, txn)?
         .into_iter()
         // A bypass row covers only catastrophe-floor ops inside its scope,
         // through the bypass arm; it is never an ordinary standing grant.
-        .filter_map(|(_, row)| (row.is_active() && row.bypass.is_none()).then_some(row.grant))
+        .filter_map(|(_, row)| (row.is_active() && row.bypass.is_none()).then_some(row))
         .collect())
 }
 

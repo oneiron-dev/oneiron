@@ -68,6 +68,7 @@ use crate::server::SyncServer;
 
 mod adapters;
 mod attach;
+mod big_binding;
 mod claim_merge;
 mod doors;
 mod native_capture;
@@ -75,6 +76,7 @@ mod notes;
 mod refresh;
 
 pub(crate) use adapters::description_notes;
+pub use big_binding::BigRung;
 pub(crate) use refresh::{spawn_person_threshold, spawn_person_threshold_admitted};
 
 /// The rule table's identity on this host: the vault's host rule rows, which the owner's
@@ -147,8 +149,10 @@ const CAMPAIGN_TASTE_BUDGET: std::time::Duration = std::time::Duration::from_sec
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
-/// The ThinkThreshold row's version a host's start value takes.
-const THINK_THRESHOLD_VERSION: u32 = 1;
+/// The ThinkThreshold row's version a host's start value takes. Public so a
+/// host that builds its own house-read ladder (the route-calibration bench)
+/// pins the same routing-policy revision this host does.
+pub const THINK_THRESHOLD_VERSION: u32 = 1;
 /// The purpose the host's Local-vision rung budgets its calls under.
 const LOCAL_VISION_PURPOSE: &str = "decision.local_vision";
 /// The run each house read on the ladder is admitted as.
@@ -429,7 +433,8 @@ impl DecisionHost {
     }
 
     /// The big model on its rung (OF-495), through the seat
-    /// `[models.decisions.big]` names; its calls block on `runtime`.
+    /// `[models.decisions.big]` names, bound by [`BigRung::bind`]; its
+    /// calls block on `runtime`.
     fn with_big(
         mut self,
         settings: Option<&BigSettings>,
@@ -448,23 +453,9 @@ impl DecisionHost {
         // The house read's paired question, read jointly where the route
         // reports token scores (FIX 1557).
         let paired = self.ladder.paired.clone();
-        let bound = crate::big_rung::BigModel::bind(
-            settings,
-            Arc::clone(models),
-            Arc::clone(vault),
-            default_units,
-            runtime,
-        )
-        .map(|model| Arc::new(model.with_paired(paired)))
-        .and_then(|model| {
-            let pin = model.pin();
-            let provider = ModelDecisionProvider::new(pin, Arc::clone(&model) as _)
-                .map_err(anyhow::Error::from)?;
-            Ok((model, provider))
-        });
-        match bound {
-            Ok((model, rung)) => {
-                self.ladder.big = Some(Arc::new(rung));
+        match BigRung::bind(settings, models, vault, default_units, runtime, paired) {
+            Ok(BigRung { model, provider }) => {
+                self.ladder.big = Some(provider);
                 self.big_on_host =
                     ModelDecisionProvider::new(model.pin(), Arc::new(model.kept_on_host()))
                         .ok()

@@ -574,10 +574,7 @@ pub(crate) fn load_retained_head(
             super::storage::import_complete(&doc, &bytes)?;
             doc
         }
-        None => match super::document_birth_in_txn(vault, txn, note)? {
-            Some(doc) => doc,
-            None => return Ok(None),
-        },
+        None => return Ok(None),
     };
     for update in vault.store.port_document_updates(txn, slot)? {
         if !matches!(update.seq, Some(UpdateSeq::Sequence(_))) {

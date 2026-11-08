@@ -417,14 +417,27 @@ fn actor_records_in_txn(
 /// canonical native receipt keeps its original standing independently of
 /// its shared content hash.
 fn reply_occurrences(owner: EntityId, record: &CodeRunReplayRecord) -> Vec<Occurrence> {
-    record
+    let mut held: Vec<_> = record
         .outputs
         .iter()
         .filter(|output| {
             holds_reply_content(&output.path) && !record.output_is_retained_receipt(output)
         })
         .map(|output| (owner, output.path.clone(), output.handle.clone()))
-        .collect()
+        .collect();
+    // A write receipt can commit before the executor's checkpoint adopts its
+    // reply. The native owner row, not metadata in the answer, names its run.
+    held.extend(record.bridge_calls.iter().filter_map(|call| {
+        let reply = crate::code_run::ExecutorReply::kept(&call.outcome, owner)
+            .ok()
+            .flatten()?;
+        holds_reply_content(&reply.output.path).then_some((
+            owner,
+            reply.output.path,
+            reply.output.handle,
+        ))
+    }));
+    held
 }
 
 /// The path namespace of the bodies a run holds for its replay capsules and

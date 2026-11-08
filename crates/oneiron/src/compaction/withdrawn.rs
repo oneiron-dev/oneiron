@@ -229,8 +229,9 @@ pub(crate) fn erased_form(envelope: &[u8]) -> ScrubbedRecord {
 
 /// Takes withdrawn epoch summary `id`'s words from its row and from the
 /// carriers beside it on this device: its document, its row revisions, its
-/// short-id rows and the L2 cache. The row keeps its header and keyframe, or
-/// only its header when its keyframe keys do not decode.
+/// short-id rows, the L2 cache and its check material (FIX 5040). The row
+/// keeps its header and keyframe, or only its header when its keyframe keys
+/// do not decode.
 ///
 /// The caller has marked `id` stale, recorded its worlds and walked every
 /// epoch written from it; the keyframe still reads as an epoch for any walk
@@ -283,5 +284,6 @@ pub(crate) fn scrub_withdrawn_epoch_in_txn(
         .erase(id, store.env.info().last_txn_id);
     let scrubbed = keyframe.map_or(ScrubbedRecord::Shell, ScrubbedRecord::WithdrawnEpoch);
     store.port_entity_scrub(txn, id, scrubbed, at)?;
-    Ok(())
+    // The check material's reply copies the summary's words (FIX 5040).
+    super::erase_check_material_in_txn(store, txn, id)
 }

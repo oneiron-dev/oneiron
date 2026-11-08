@@ -242,8 +242,9 @@ impl SelfCompactionBackend {
     /// and fit: that route within the row's bound and within the compaction
     /// role's configured route, which bounds every seat-bound call
     /// (`admit_seat_bound`), and a window known for the model
-    /// (`input_allowances`). `None` with no
-    /// router, no seat, no pick, or a pick past any of these: the row's
+    /// (`input_allowances`). The pick reads the access a role's pick reads
+    /// (`ModelRuntime::offer_access`, FIX 22227). `None` with no seat, no
+    /// pick, or a pick past any of these: the row's
     /// cheap model writes instead, so a pack never stops a writer that works
     /// (review #6722). A pack read that fails refuses as an unreadable row
     /// does, as a role's pick refuses its call.
@@ -252,13 +253,13 @@ impl SelfCompactionBackend {
         row: &SelfCompactionDefault,
     ) -> Result<Option<(ModelId, ModelLocality)>, SelfCompactionUnavailable> {
         let models = &self.route.models;
-        let (Some(router), Some(seat)) = (models.router(), models.seat(self.route.role)) else {
+        let Some(seat) = models.seat(self.route.role) else {
             return Ok(None);
         };
         let choice = self
             .route
             .vault
-            .model_pack_compaction_choice(&router.access_snapshot())
+            .model_pack_compaction_choice(&models.offer_access())
             .map_err(|_| SelfCompactionUnavailable::PolicyUnreadable)?;
         let ceiling = models
             .configured_route_role(&self.route.vault, self.route.role, seat)

@@ -84,6 +84,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cua/taskgen.rs` | src | s | 6 crate-vis | — | Freeze paired seeds, disjoint holdouts and rotated arm assignments |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `src/eval/outcome_ingest.rs` | src | s | 1 crate-vis | — | JSONL terminal retrieval outcome ingest for the explicit eval command |
+| `src/eval/route_calibration.rs` | src | s | 1 crate-vis | — | `eval route-calibration` (Engine row 22229, PR 2): the known-answer bench that gives route-conditioned… |
+| `src/eval/route_calibration/cases.rs` | src | s | 8 crate-vis | — | The bench's two operator inputs, each checked whole before any vault exists: the one standing question… |
+| `src/eval/route_calibration/house_read.rs` | src | s | 5 crate-vis | — | The house model's decision read as the ladder's escalation rung, built from the `--models-toml` file as the… |
+| `src/eval/route_calibration/house_read/big_rung.rs` | src | s | 3 crate-vis | — | The Big rung on the bench's ladder (FIX 22229 run 2), bound from the `--models-toml` file's… |
+| `src/eval/route_calibration/report.rs` | src | s | 12 crate-vis | — | The run's report file: its header, the per-case table, the counts, and the engine's route calibration… |
+| `src/eval/route_calibration/vault_flow.rs` | src | m | 15 crate-vis | — | The run's vault: fresh, its embedded owner the one principal and writer, and every write through a public… |
 | `src/eval/tests.rs` | test | m | — | — | — |
 | `src/fleet/configuration.rs` | src | s | 3 crate-vis | — | Explicit fleet workload and host settings; smoke cannot masquerade as fleet scale |
 | `src/fleet/mod.rs` | src | s | 1 crate-vis | — | Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts |
@@ -96,10 +102,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/infer/args.rs` | src | m | 9 crate-vis | — | `infer run` and `infer summarize` flags, parsed by hand like the other subcommands: every flag takes one… |
 | `src/infer/arms.rs` | src | s | 6 crate-vis | — | The two production paths a call takes, each an `LlmBackend` the measurement loop drives the same way |
 | `src/infer/cases.rs` | src | s | 5 crate-vis | — | Case packets, read at run time from a JSONL file outside the source tree |
-| `src/infer/config.rs` | src | s | 3 crate-vis | — | The `--models-toml` file as the server reads its `[models]` section |
+| `src/infer/config.rs` | src | s | 4 crate-vis | — | The `--models-toml` file as the server reads its `[models]` section |
 | `src/infer/engine.rs` | src | s | 8 crate-vis | — | An engine the bench starts itself (`--engine-cmd`), in its own process group, with stdout and stderr… |
 | `src/infer/measure.rs` | src | m | 4 crate-vis | — | One call driven through `LlmBackend::stream`, timed with `Instant` |
-| `src/infer/mod.rs` | src | m | 1 crate-vis | — | `infer` subcommand — the built-in inference bench (FIX 6559): the proof harness for each inference trick an… |
+| `src/infer/mod.rs` | src | m | 3 crate-vis | — | `infer` subcommand — the built-in inference bench (FIX 6559): the proof harness for each inference trick an… |
 | `src/infer/native.rs` | src | m | 2 crate-vis | — | An external EXL3 worker over codec v1 |
 | `src/infer/request.rs` | src | s | 4 crate-vis | — | The request one case sends, and what of it the row records |
 | `src/infer/rows.rs` | src | s | 11 crate-vis | — | Result rows: one JSON line per finished (arm, case, rep), appended to `--out` and flushed and fsynced one by… |

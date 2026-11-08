@@ -1,9 +1,12 @@
 //! The whole external-effect governance evaluation; `effect` re-exports it.
 
+use super::evaluate_recipients::mail_once_in_txn;
 use super::*;
 
 /// Evaluates consent and connector governance without charging or recording.
 /// The caller must either finalize the returned decision or abort its txn.
+/// It stamps the recording time, runs [`judge_external_effect_in_txn`] on the
+/// writer's snapshot, then allocates the decision id.
 ///
 /// Fix list row 17645: one mail message to several recipients
 /// (`provenance.mail_recipients`) is one effect, judged for every recipient
@@ -18,7 +21,7 @@ use super::*;
 /// is the most restrictive any recipient met, so one recipient's hold or
 /// denial holds or denies the whole message, and no recipient's grant
 /// releases another. Its press, envelope slot and standing grants are every
-/// recipient's (`ExternalEffectGovernance::fold_recipient`): the press is
+/// recipient's (`ExternalEffectJudgment::fold_recipient`): the press is
 /// spent and kept once, only when every recipient allows.
 pub(crate) fn evaluate_external_effect_policy(
     store: &Store,
@@ -29,6 +32,44 @@ pub(crate) fn evaluate_external_effect_policy(
     prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
     approval_context: ApprovalContext,
 ) -> Result<ExternalEffectGovernance> {
+    let recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+    let judgment = judge_external_effect_in_txn(
+        store,
+        &*wtxn,
+        effect,
+        policy,
+        required_grant_id,
+        prepared,
+        approval_context,
+        recorded_at,
+        None,
+    )?;
+    let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
+    Ok(judgment.into_governance(decision_id))
+}
+
+/// The whole external-effect judgment on one read snapshot (FIX 22102): consent,
+/// grants, envelopes, campaign compliance, connector key, charter and manifest,
+/// read-only. It writes nothing and allocates no decision id. `recorded_at` dates
+/// the judgment and every window it compares; `override_now` dates a
+/// counterparty's send-override expiry (`None` samples the store clock there, as a
+/// writer's judgment does). Every recipient of one mail message is judged on this
+/// same snapshot and folded before the writer allocates its one decision id.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one effect's read-only judgment under its approval context and clock"
+)]
+pub(crate) fn judge_external_effect_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+    required_grant_id: Option<EntityId>,
+    prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
+    approval_context: ApprovalContext,
+    recorded_at: u64,
+    override_now: Option<u64>,
+) -> Result<ExternalEffectJudgment> {
     let addressed = effect
         .provenance
         .mail_recipients
@@ -44,129 +85,65 @@ pub(crate) fn evaluate_external_effect_policy(
     let mut message_once = false;
     if !addressed.is_empty() {
         for judged in std::iter::once(effect).chain(&addressed) {
-            if mail_once_in_txn(store, &*wtxn, judged, policy)? {
+            if mail_once_in_txn(store, txn, judged, policy, override_now)? {
                 message_once = true;
                 break;
             }
         }
     }
-    let mut governance = evaluate_counterparty_policy(
+    let mut judgment = judge_counterparty_policy(
         store,
-        wtxn,
+        txn,
         effect,
         policy,
         required_grant_id,
         prepared,
         approval_context,
+        recorded_at,
+        override_now,
         message_once,
     )?;
     for recipient in &addressed {
-        let judged = evaluate_counterparty_policy(
+        let judged = judge_counterparty_policy(
             store,
-            wtxn,
+            txn,
             recipient,
             policy,
             required_grant_id,
             prepared,
             approval_context,
+            recorded_at,
+            override_now,
             message_once,
         )?;
-        governance.fold_recipient(judged)?;
+        judgment.fold_recipient(judged)?;
     }
-    Ok(governance)
+    Ok(judgment)
 }
 
-/// Whether `effect`'s send, judged with its own counterparty, takes mail's
-/// one-send operation: a native-mail cold send or a member-mailbox send.
-/// Read with the counterparty's contact facts, as the evaluation reads them.
-fn mail_once_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    effect: &ExternalEffectGateInput,
-    policy: &PolicyManifestResolution,
-) -> Result<bool> {
-    let (hydrated, _, _) = hydrate_external_effect_contact(store, txn, effect, policy)?;
-    Ok(
-        crate::channel_identity_provider::native_mail::native_mail_cold_send_in_txn(
-            store, txn, &hydrated, policy,
-        )? || crate::channel_identity_provider::member_mail::member_mail_send_in_txn(
-            store, txn, &hydrated,
-        )?,
-    )
-}
-
-impl ExternalEffectGovernance {
-    /// Folds `judged`, the same message judged with another of its
-    /// recipients as the counterparty, into this, its first recipient's
-    /// (fix list row 17645). The decision is the more restrictive. Every
-    /// recipient was judged against the one message operation, so a press
-    /// either is found for all of them or for none; one found apart is no
-    /// press on this message. A recipient's envelope slot, or its place in a
-    /// full window's line, is the message's, and the standing grant that
-    /// released a recipient is touched as used with the message's Allow.
-    fn fold_recipient(&mut self, judged: Self) -> Result<()> {
-        if self.approve_once != judged.approve_once {
-            return Err(crate::error::Error::InvariantViolation(
-                "one message's recipients found different presses",
-            ));
-        }
-        if outcome_restriction(judged.decision.outcome())
-            > outcome_restriction(self.decision.outcome())
-        {
-            self.decision = judged.decision;
-        }
-        if self.envelope_reservation.is_none() {
-            self.envelope_reservation = judged.envelope_reservation;
-        }
-        if self.envelope_wait.is_none() {
-            self.envelope_wait = judged.envelope_wait;
-        }
-        if let Some(grant) = judged.matched_grant
-            && self
-                .matched_grant
-                .as_ref()
-                .is_none_or(|matched| matched.grant_ref() != grant.grant_ref())
-            && !self
-                .recipient_grants
-                .iter()
-                .any(|recorded| recorded.grant_ref() == grant.grant_ref())
-        {
-            self.recipient_grants.push(grant);
-        }
-        Ok(())
-    }
-}
-
-/// How far `outcome` restricts an effect: a denial most, then a hold.
-const fn outcome_restriction(outcome: GateOutcome) -> u8 {
-    match outcome {
-        GateOutcome::Allow => 0,
-        GateOutcome::Pending => 1,
-        GateOutcome::Deny => 2,
-    }
-}
-
-/// [`evaluate_external_effect_policy`] for `effect`'s one counterparty.
+/// [`judge_external_effect_in_txn`] for `effect`'s one counterparty.
 /// `message_once`: the message it is one recipient of takes mail's one-send
 /// operation, so this recipient is judged against it too (fix list row
 /// 17645); `false` for a send to one, judged on its own.
 #[expect(
     clippy::too_many_arguments,
-    reason = "one recipient's judgment under its message's operation and approval context"
+    reason = "one recipient's read-only judgment under its message's operation and approval context"
 )]
-fn evaluate_counterparty_policy(
+fn judge_counterparty_policy(
     store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
     required_grant_id: Option<EntityId>,
     prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
     approval_context: ApprovalContext,
+    recorded_at: u64,
+    override_now: Option<u64>,
     message_once: bool,
-) -> Result<ExternalEffectGovernance> {
-    let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+) -> Result<ExternalEffectJudgment> {
+    let mutation_recorded_at = recorded_at;
     let (mut hydrated_effect, counterparty_send_override, counterparty_contact_revoked) =
-        hydrate_external_effect_contact(store, &*wtxn, effect, policy)?;
+        hydrate_external_effect_contact_at(store, txn, effect, policy, override_now)?;
     // Send eligibility is checked with the Gate's writer snapshot. A sender
     // released after dispatch preparation cannot authorize even a known
     // contact through an ordinary policy grant. Terminal replay never enters
@@ -175,11 +152,11 @@ fn evaluate_counterparty_policy(
         && hydrated_effect.verb == "send"
         && let Some(identity) = hydrated_effect.channel_identity_ref
         && crate::channel_identity_provider::native_mail::is_native_mail_identity_in_txn(
-            store, &*wtxn, identity,
+            store, txn, identity,
         )?
         && !crate::channel_identity_provider::native_mail::native_mail_actor_may_send_in_txn(
             store,
-            &*wtxn,
+            txn,
             identity,
             hydrated_effect.provenance.actor_entity_ref,
         )?
@@ -194,11 +171,11 @@ fn evaluate_counterparty_policy(
         && hydrated_effect.verb == "send"
         && let Some(identity) = hydrated_effect.channel_identity_ref
         && crate::channel_identity_provider::member_mail::is_member_mail_identity_in_txn(
-            store, &*wtxn, identity,
+            store, txn, identity,
         )?
         && !crate::channel_identity_provider::member_mail::member_mail_actor_may_send_in_txn(
             store,
-            &*wtxn,
+            txn,
             identity,
             hydrated_effect.provenance.actor_entity_ref,
         )?
@@ -211,7 +188,7 @@ fn evaluate_counterparty_policy(
     let mut scoped_mcp_grant_authorized = false;
     let matched_grant = standing_outbound_grant_for_effect(
         store,
-        wtxn,
+        txn,
         &hydrated_effect,
         policy,
         required_grant_id,
@@ -227,7 +204,7 @@ fn evaluate_counterparty_policy(
     // class assertions.
     let agent_definition_ceiling = agent_definition_ceiling_for_effect_actor(
         store,
-        &*wtxn,
+        txn,
         &hydrated_effect.actor.actor_class,
         hydrated_effect.actor.actor_ref.as_deref(),
         hydrated_effect.provenance.actor_entity_ref,
@@ -242,10 +219,10 @@ fn evaluate_counterparty_policy(
     // authorized on remembered state is Auto on the consent axis exactly once,
     // honors revocation immediately, and an UNGRANTED irreversible effect is
     // the only one that enters the ask lane (invariant 1).
-    let mut consent_grants = crate::consent::load_active_standing_grants(store, wtxn)?;
+    let mut consent_grants = crate::consent::load_active_standing_grants(store, txn)?;
     let mail_cold = crate::channel_identity_provider::native_mail::native_mail_cold_send_in_txn(
         store,
-        &*wtxn,
+        txn,
         &hydrated_effect,
         policy,
     )?;
@@ -254,7 +231,7 @@ fn evaluate_counterparty_policy(
     // send"); a covering standing grant still releases it with no press.
     let member_mail = crate::channel_identity_provider::member_mail::member_mail_send_in_txn(
         store,
-        &*wtxn,
+        txn,
         &hydrated_effect,
     )?;
     // Fix list row 17645: a recipient of a message whose send takes it
@@ -264,10 +241,10 @@ fn evaluate_counterparty_policy(
     // mailbox's own account names no sender identity; the owner's one press
     // for exactly that send releases it, as a member-mail press does.
     let source_reply =
-        crate::mail_pack::approved_source_reply_in_txn(store, &*wtxn, &hydrated_effect)?;
+        crate::mail_pack::approved_source_reply_in_txn(store, txn, &hydrated_effect)?;
     let mail_graduated = crate::channel_identity_provider::native_mail::mail_graduated_in_txn(
         store,
-        &*wtxn,
+        txn,
         &hydrated_effect,
         policy,
     )?;
@@ -310,7 +287,7 @@ fn evaluate_counterparty_policy(
             .map(|composed| {
                 channel_identity_envelope_admission_in_txn(
                     store,
-                    &*wtxn,
+                    txn,
                     &hydrated_effect,
                     *composed.digest().as_bytes(),
                     mutation_recorded_at,
@@ -378,7 +355,7 @@ fn evaluate_counterparty_policy(
         .map(|(grant, call)| (call.server.as_str(), &grant.id, call.tool.as_str()));
     if connector_key::effect_slate_always_allows(
         store,
-        &*wtxn,
+        txn,
         &hydrated_effect.channel,
         &hydrated_effect.verb,
         slate_scoped,
@@ -410,7 +387,7 @@ fn evaluate_counterparty_policy(
         composed
             .as_ref()
             .map(|effect| {
-                crate::consent::approve_once_authorization_in_txn(store, &*wtxn, &effect.digest())
+                crate::consent::approve_once_authorization_in_txn(store, txn, &effect.digest())
             })
             .transpose()?
             .flatten()
@@ -450,12 +427,16 @@ fn evaluate_counterparty_policy(
         .map(|actor| {
             super::super::foreign_agent::resolve(
                 store,
-                &*wtxn,
+                txn,
                 crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::Agent),
             )
         })
         .transpose()?
         .flatten();
+    // The one proposed public effect a publish press can release.
+    let publish_press_target = hydrated_effect.channel == "artifact"
+        && hydrated_effect.verb == "publish"
+        && hydrated_effect.brief_ref.is_some();
     if let Some(effect) = input.external_effect.as_mut() {
         // A proven envelope reservation is the live standing Grant that
         // authorizes this send. An earlier matched grant keeps its ref when
@@ -471,19 +452,15 @@ fn evaluate_counterparty_policy(
             mail_retry_authorized || ((mail_once || source_reply) && approve_once.is_some());
         // Only a still-available marker looked up by the engine-computed,
         // exact publish digest can release this one proposed public effect.
-        effect.artifact_publish_approve_once = approve_once.is_some()
-            && hydrated_effect.channel == "artifact"
-            && hydrated_effect.verb == "publish"
-            && hydrated_effect.brief_ref.is_some();
+        effect.artifact_publish_approve_once = approve_once.is_some() && publish_press_target;
         // ONE-1752: the same post-conversion seam. Hydration cannot reach a
         // context that does not exist until `gate_input()` builds it, so the
         // override it resolved is written on here, once, before evaluation.
         effect.counterparty_send_override = counterparty_send_override;
         effect.counterparty_contact_revoked = counterparty_contact_revoked;
     }
-    let mut decision = policy.evaluate_gate_with_delegation_chain(store, &*wtxn, &input);
+    let mut decision = policy.evaluate_gate_with_delegation_chain(store, txn, &input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
-    let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
     let created_at = mutation_recorded_at;
     let grant_ref = input
         .external_effect
@@ -502,12 +479,9 @@ fn evaluate_counterparty_policy(
     // a campaign never reach the evaluator at all.
     if decision.outcome() != GateOutcome::Deny
         && let Some(crate::gate::dispatch_compliance::ComplianceVerdict::Block { reason, .. }) =
-            store.gate_hooks.campaign_compliance_gate(
-                store,
-                &*wtxn,
-                &hydrated_effect,
-                created_at,
-            )?
+            store
+                .gate_hooks
+                .campaign_compliance_gate(store, txn, &hydrated_effect, created_at)?
         && approve_once.is_none()
         && !press_retry_authorized
         && !mail_retry_authorized
@@ -550,7 +524,7 @@ fn evaluate_counterparty_policy(
     );
     let governing = connector_key::governing_connector_key(
         store,
-        wtxn,
+        txn,
         &governing_connector,
         hydrated_effect.provenance.actor_entity_ref.as_ref(),
     )?;
@@ -591,7 +565,7 @@ fn evaluate_counterparty_policy(
         // A per-grant key's call meets its catalog connector's charter too
         // (ONE-1794); the first wall wins.
         let mut charter_wall = None;
-        let catalog_charter = connector_key::catalog_charter_in_txn(store, &*wtxn, &key)?;
+        let catalog_charter = connector_key::catalog_charter_in_txn(store, txn, &key)?;
         for block in key.charter.iter().chain(catalog_charter.iter()) {
             if key.status != ConnectorKeyStatus::Active || charter_wall.is_some() {
                 break;
@@ -687,7 +661,7 @@ fn evaluate_counterparty_policy(
         if charter_wall.is_none() {
             match connector_key::connector_tool_setting_in_txn(
                 store,
-                &*wtxn,
+                txn,
                 &_key_id,
                 &key,
                 manifest_verb,
@@ -704,7 +678,7 @@ fn evaluate_counterparty_policy(
                         && !match hydrated_effect.scoped_mcp_call.as_ref() {
                             Some(call) => connector_key::connector_tool_remembered_in_txn(
                                 store,
-                                &*wtxn,
+                                txn,
                                 &_key_id,
                                 &key,
                                 call,
@@ -776,10 +750,16 @@ fn evaluate_counterparty_policy(
     } else {
         None
     };
-    Ok(ExternalEffectGovernance {
-        decision_id,
+    // A preflight reads whether the owner's press on this one effect would
+    // supply the external-effect authority it lacks (FIX 22102).
+    let press_supplies_authority = decision
+        .reason_codes()
+        .contains(&GateReasonCode::PendingExternalEffectAuthority)
+        && policy.press_supplies_external_effect_authority(&input, mail_once, publish_press_target);
+    Ok(ExternalEffectJudgment {
         decision,
         created_at,
+        press_supplies_authority,
         input,
         binding,
         grant_ref,

@@ -16,7 +16,10 @@ use crate::session_overlay::RouteTarget;
 use crate::{Error, ModelLocality, Vault};
 use serde::{Deserialize, Serialize};
 
+mod caller_task;
 mod step_digests;
+pub(crate) use self::caller_task::caller_task_in_txn;
+pub(super) use self::caller_task::record_caller_task;
 pub(super) use self::step_digests::{StepEnd, StepResultDigests};
 
 pub(super) struct LoadedReplayRecord {

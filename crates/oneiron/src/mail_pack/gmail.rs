@@ -22,8 +22,8 @@ use serde_json::Value;
 
 use super::credential::WireReads;
 use super::rest::{
-    self, RestAnswer, VerifiedCredentials, array, bearer_header, header_value, html_text, refused,
-    text_of,
+    self, FreshGoogleTokens, RestAnswer, VerifiedCredentials, array, header_value, html_text,
+    refused, text_of,
 };
 use super::source::MailProvider;
 use super::wire::{
@@ -63,6 +63,9 @@ pub struct HttpGmailMailWire<'v> {
     client: reqwest::blocking::Client,
     /// The credentials this wire has seen read their source's mailbox.
     verified: VerifiedCredentials,
+    /// The fresh access tokens its sources' stored grants were exchanged
+    /// for (fix list row 16311).
+    tokens: FreshGoogleTokens,
 }
 
 impl<'v> HttpGmailMailWire<'v> {
@@ -76,6 +79,7 @@ impl<'v> HttpGmailMailWire<'v> {
             vault,
             client: rest::https_client()?,
             verified: VerifiedCredentials::new(),
+            tokens: FreshGoogleTokens::new(),
         })
     }
 
@@ -120,7 +124,7 @@ impl<'v> HttpGmailMailWire<'v> {
             WireReads::Mailbox,
             GMAIL_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
-                let auth = bearer_header(token)?;
+                let auth = self.tokens.bearer(&self.client, source.source_ref, token)?;
                 // The credential presented here is the one checked.
                 let profile = if self.verified.holds(source.source_ref, token) {
                     None
@@ -544,6 +548,7 @@ fn full_from(headers: MailHeaders, parts: MessageParts) -> MailFull {
         headers,
         body_text: body_text.filter(|text| !text.trim().is_empty()),
         attachments: parts.attachments,
+        content_digest: None,
     }
 }
 

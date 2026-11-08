@@ -505,7 +505,7 @@ class Oneiron:
         """Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."""
         return json.loads(_translate(lambda: self._client.execute_code(json.dumps(spec))))
     def can(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Read-only ask routing or attributed partial answers."""
+        """Read-only ask routing, or one effect's dated allow, deny, would-ask or named hold."""
         return json.loads(_translate(lambda: self._client.can(json.dumps(request, allow_nan=False))))
     def peek(self, request: dict[str, Any]) -> list[dict[str, Any]]:
         """Read-only ask routing or attributed partial answers."""
@@ -3120,6 +3120,9 @@ class Oneiron:
         def export_envelope(self, spec):
             """The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket."""
             return json.loads(_translate(lambda: self._client.vault_guests_export_envelope(json.dumps(spec))))
+        def propose(self, spec):
+            """A Connect guest proposes one write of a record's text under its own live grant-bound credential; it lands in the owner's review inbox for that Connect and never writes the vault."""
+            return json.loads(_translate(lambda: self._client.vault_guests_propose(json.dumps(spec))))
         def reshare(self, spec):
             """The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused."""
             return json.loads(_translate(lambda: self._client.vault_guests_reshare(json.dumps(spec))))
@@ -4512,6 +4515,12 @@ class Oneiron:
     class _VaultCodeWaitsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def rebind_prepare(self, spec):
+            """Propose the original holder's actual successor credential for one admitted, unsettled code consent wait. Stores no active authorization; a separate owner rebind act must confirm it."""
+            return json.loads(_translate(lambda: self._client.vault_code_waits_rebind_prepare(json.dumps(spec))))
+        def rebind(self, spec):
+            """Explicitly authorize one exact holder-proposed successor as the independent authenticated owner. Only an admitted, unsettled wait continues under the same intent; its original answer, admission and delivery stay unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_code_waits_rebind(json.dumps(spec))))
         def resolve(self, spec):
             """Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption."""
             return json.loads(_translate(lambda: self._client.vault_code_waits_resolve(json.dumps(spec))))
@@ -5809,6 +5818,9 @@ class Oneiron:
         def signature(self, spec):
             """Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes."""
             return json.loads(_translate(lambda: self._client.vault_esign_signing_signature(json.dumps(spec))))
+        def preview(self, spec):
+            """The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields."""
+            return json.loads(_translate(lambda: self._client.vault_esign_signing_preview(json.dumps(spec))))
     class _VaultEsignSealVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -6281,7 +6293,7 @@ class Oneiron:
             """The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
             return json.loads(_translate(lambda: self._client.vault_mail_sources_sync(json.dumps(spec))))
         def search(self, spec):
-            """The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience."""
+            """The vault's owner searches a Google, Microsoft 365 or IMAP mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience."""
             return json.loads(_translate(lambda: self._client.vault_mail_sources_search(json.dumps(spec))))
     class _VaultMailSourcesSettingsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -6897,9 +6909,9 @@ class Oneiron:
         @property
         def answer(self) -> "Oneiron._TasksAnswerVerbs":
             return Oneiron._TasksAnswerVerbs(self._client)
-        def outcomes(self, handle):
-            """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
-            return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
+        @property
+        def outcomes(self) -> "Oneiron._TasksOutcomesVerbs":
+            return Oneiron._TasksOutcomesVerbs(self._client)
         def refuse(self, spec):
             """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
             return json.loads(_translate(lambda: self._client.tasks_refuse(json.dumps(spec))))
@@ -6924,6 +6936,15 @@ class Oneiron:
         def status(self, intent_ref):
             """Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result."""
             return json.loads(_translate(lambda: self._client.tasks_answer_forward_status(json.dumps({"intent_ref": intent_ref}))))
+    class _TasksOutcomesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, handle):
+            """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
+            return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
+        def route_calibration(self, handle):
+            """Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only."""
+            return json.loads(_translate(lambda: self._client.tasks_outcomes_route_calibration(json.dumps(handle))))
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
