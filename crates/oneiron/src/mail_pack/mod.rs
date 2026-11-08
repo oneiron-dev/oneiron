@@ -79,12 +79,12 @@ mod wire;
 pub use crate::source_audience::{SourceAudienceEventView, SourceAudienceOp};
 pub(crate) use attachments::collect_after_delete;
 pub use attachments::{MailAttachmentOpenRequest, MailAttachmentState, MailAttachmentView};
+pub use caldav_calendar::{CALDAV_CALENDAR_CONNECTOR_EFFECTOR, HttpCalDavCalendarWire};
 pub use calendar::{MailCalendarFeed, MailCalendarPull, MailCalendarRead, MailCalendarWire};
 pub(crate) use calendar::{
     bind_calendar_source_row_in_txn, calendar_source_occupancy, calendar_source_of_system_in,
     merge_busy,
 };
-pub use caldav_calendar::{CALDAV_CALENDAR_CONNECTOR_EFFECTOR, HttpCalDavCalendarWire};
 pub(crate) use compliance::erase_compliance_actor_in_txn;
 pub use compliance::{
     MailComplianceEventKind, MailComplianceEventView, MailComplianceHit, MailComplianceSearchReply,
@@ -104,7 +104,6 @@ pub use inbox::{
     MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView,
 };
 pub use local_sync::MailSourceSyncRequest;
-pub use search::{MailSearchReport, MailSourceSearchRequest};
 pub use mbox_import::{MailMboxImportReport, MailMboxImportRequest};
 pub use microsoft365::{HttpGraphMailWire, MICROSOFT365_CONNECTOR_EFFECTOR};
 pub use microsoft365_calendar::{HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR};
@@ -118,6 +117,7 @@ pub use reply::{
 pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn};
 pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
+pub use search::{MailSearchReport, MailSourceSearchRequest};
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};
 pub use source::{
     CalendarDetailSetting, MailCopySetting, MailProvider, MailProviderDeleteSetting,
