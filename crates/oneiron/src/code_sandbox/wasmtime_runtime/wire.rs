@@ -627,9 +627,9 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
         }
         SelfDispatchOutcome::InferenceDefaults(json) => json!({"json": json}),
         SelfDispatchOutcome::StoredReply(value) => json!({"output": value.output}),
-        SelfDispatchOutcome::Fold(json) => {
-            let output: Value =
-                serde_json::from_str(json).map_err(|_| failure("fold answer is not JSON"))?;
+        SelfDispatchOutcome::Fold(answer) => {
+            let output: Value = serde_json::from_str(&answer.json)
+                .map_err(|_| failure("fold answer is not JSON"))?;
             json!({ "output": output })
         }
         SelfDispatchOutcome::ReaderSpawn(receipt) => json!({ "output": receipt }),
@@ -758,6 +758,9 @@ pub(super) fn decode_output(output: &str, limit: usize) -> Result<JsCodeModeStep
     Ok(JsCodeModeStepOutcome {
         done: output.done,
         observation: output.observation,
+        // The component output has no console channel: streamed console
+        // lines join in `HeldOutput::into_outcome` (FIX 6885).
+        console: String::new(),
         outputs,
     })
 }

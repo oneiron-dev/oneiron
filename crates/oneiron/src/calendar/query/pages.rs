@@ -17,8 +17,10 @@
 //! deadline by its last slice. The first slice is one day, and a slice
 //! doubles only while the deadline leaves more than twice the time the last
 //! one took. An uncounted rule's walk in a slice is bounded by the slice's
-//! span; a COUNT rule's walk starts again at its DTSTART in every slice
-//! (bounded by its COUNT). The first slice always runs, so every call moves
+//! span; a COUNT rule's walk resumes in each slice where the slice before
+//! left it (FIX 16174: each series' cursor is kept for the page, by its
+//! EVENT, rule and start), so its prefix is walked once per page, bounded
+//! by its COUNT. The first slice always runs, so every call moves
 //! the frontier on. With neither a deadline nor a limit the window is one
 //! slice, as before.
 //!
