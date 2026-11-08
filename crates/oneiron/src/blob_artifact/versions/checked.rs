@@ -28,6 +28,7 @@ impl Vault {
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<(
         Option<BlobArtifactVersion>,
         Option<(u64, [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN])>,
@@ -65,16 +66,18 @@ impl Vault {
             return Ok((None, fork_base));
         }
         let version = match made_by {
-            Some(made_by) => self.append_blob_artifact_version_made_by_in_txn(
+            Some(made_by) => self.append_blob_artifact_version_with_parent_and_engine_in_txn(
                 wtxn,
                 artifact_id,
-                fork_parent,
                 bytes,
                 provenance,
-                made_by,
                 actor,
                 occurred,
                 learned_at,
+                fork_parent,
+                None,
+                Some(made_by),
+                lane,
             )?,
             None => self.append_blob_artifact_version_with_parent_in_txn(
                 wtxn,
@@ -85,13 +88,15 @@ impl Vault {
                 occurred,
                 learned_at,
                 fork_parent,
+                lane,
             )?,
         };
         Ok((Some(version), None))
     }
 
     /// Memory's checked append on its existing content writer. This door has
-    /// no caller-supplied made_by or reader: its proposal names only its writer.
+    /// no caller-supplied made_by: its proposal names only its writer, and a
+    /// landed append uses the content writer's actual credential lane.
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn append_blob_artifact_version_checked_in_txn(
         &self,
@@ -102,6 +107,7 @@ impl Vault {
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactAppendOutcome> {
         let (version, fork_base) = self.decide_blob_artifact_append_in_txn(
             wtxn,
@@ -113,6 +119,7 @@ impl Vault {
             actor,
             occurred,
             learned_at,
+            lane,
         )?;
         if let Some(version) = version {
             return Ok(BlobArtifactAppendOutcome::Landed(version));

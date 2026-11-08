@@ -2,6 +2,7 @@
 
 mod compaction;
 mod continuation;
+mod corrections;
 mod folds;
 mod lift;
 mod model_seat;
@@ -9,6 +10,7 @@ mod program_resume;
 mod read_worlds;
 mod reader_folds;
 mod reader_jobs;
+pub(crate) use reader_jobs::erase_reader_caller_actor_in_txn;
 mod records;
 mod replay_bodies;
 mod replay_capsule;
@@ -37,7 +39,9 @@ pub(crate) use self::continuation::{
 };
 pub use self::read_worlds::ReadWorldUnknown;
 pub(crate) use self::read_worlds::{
-    ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
+    ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn,
+    closed_read_world_capture_in_txn, invalidate_imported_read_world_capture_in_txn,
+    read_world_snapshot_in_txn,
 };
 pub(crate) use self::reader_folds::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -45,13 +49,14 @@ pub(crate) use self::reader_folds::{
 };
 pub(crate) use self::reader_jobs::{
     NewReaderJob, ReportOutcome, SpawnAdmission, SpendBook, WaitSetOutcome,
+    settle_evaporated_reader_spend,
 };
 pub use self::reader_jobs::{ReaderJobs, SummaryMember, SummaryRead};
 pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{
-    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
-    code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
-    retire_unlanded_inline_body_keys_in_txn,
+    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
+    code_run_body_in_file_in_txn, code_run_body_row_key, code_run_inline_body_of_row,
+    lift_code_run_file_hold_in_txn, retire_unlanded_inline_body_keys_in_txn,
 };
 pub(crate) use self::replay_bodies::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,
@@ -70,8 +75,8 @@ pub(crate) use self::replay_capsule::{
     store_fork_response,
 };
 pub(crate) use self::replay_capsule::{
-    bind_owner_pair_ask_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn,
-    owner_pair_in_txn, put_owner_pair,
+    accept_owner_pair_in_txn, bind_owner_pair_ask_in_txn, close_owner_pair_in_txn,
+    judge_owner_pair_in_txn, owner_pair_in_txn, put_owner_pair,
 };
 pub(crate) use self::replay_capsule::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
@@ -86,8 +91,8 @@ pub(crate) use self::routing::{
     ExecutorStorage, FeedbackRoute, SessionInstanceBind, require_facet_placement_in, unplaceable,
 };
 pub use self::secret_lift::{
-    CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView,
-    CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
+    CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
+    CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
 pub(crate) use self::spawn_erase::erase_spawn_targets_in_txn;
 #[cfg(test)]
@@ -112,7 +117,8 @@ pub(crate) use self::wait_delivery::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
 pub(crate) use self::wait_delivery::{
-    deliver_wait_in_txn, deliver_wait_listing_in_txn, settled_wait_reply_in_txn,
+    clear_parked_wait_in_txn, deliver_wait_in_txn, deliver_wait_listing_in_txn,
+    settled_wait_reply_in_txn,
 };
 // DOOR-141 PR3b: a turn program's resume checkpoint and its wait.
 pub(crate) use self::program_resume::{

@@ -13,21 +13,27 @@
 //! commit ([`settle_owner_pair_in_txn`]). That writer reads both kept
 //! answers and the capsule again, unblinds the choice, scores both forks
 //! with the owner's judgment and records the pair through the contribution
-//! check's own door. "Cannot judge", a fallback, a stale ask and an answer
-//! that no longer reads score nothing and close the pair. The pair keeps the
-//! original credit's anchor. The owner's word is each fork score's judge,
-//! never a world outcome.
+//! check's own door. A temporary subject fence keeps the accepted word for
+//! the Coach's next pass. "Cannot judge", a fallback, a stale ask and an
+//! answer that no longer reads score nothing and close the pair. The pair
+//! keeps the original credit's anchor. The owner's word is each fork
+//! score's judge, never a world outcome.
+//!
+//! The owner the pair asks is selected first, and each text it is shown is
+//! read under that owner's own admission to the pair's source (FIX 20607).
+//! The owner is asked again before the pair is shown. A selected owner row
+//! is no credential: the owner reads as a question's own reader reads.
 
 use serde::{Deserialize, Serialize};
 
 use super::super::storage::{
-    close_owner_pair_in_txn, fork_response, judge_owner_pair_in_txn, owner_pair_in_txn,
+    accept_owner_pair_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn, owner_pair_in_txn,
     put_owner_pair,
 };
 use super::{
     ContributionForkReceipt, ContributionReplayUnavailable as Unavailable, ExecutedForkView,
     ExecutedStepStatus, ForkEvidenceMode, ForkJudge, ForkScore, ForkScoring, ForkScoringIdentity,
-    ForkTreatment, Outcome, Prepared, Runner,
+    ForkTreatment, Outcome, PairReader, Prepared, Runner,
 };
 use crate::compaction::output::OutputRef;
 use crate::dreamer_runner::maintenance::ContributionForks;
@@ -165,6 +171,13 @@ pub(crate) enum OwnerPairRoute {
         revision: u64,
         question_digest: [u8; 32],
     },
+    /// The owner's word was admitted, but a temporary subject fence kept
+    /// it from scoring the forks. Its judgment carries the ask and time.
+    Accepted {
+        with_passed: bool,
+        without_passed: bool,
+        judgment: OwnerJudgment,
+    },
     /// The owner's word scored both forks.
     Judged(OwnerJudgment),
     /// Its ask settled with no score: "cannot judge", no owner's word, a
@@ -277,8 +290,9 @@ pub(crate) struct OwnerPairAnswer {
 /// digest it was admitted with, under the proof of the owner it asked,
 /// scores it: both forks get the unblinded passes and the owner's judgment,
 /// and the pair is recorded as a contribution check in this same writer.
-/// Every other settlement closes it unscored. A pair already judged or
-/// closed, or no longer kept, is left as it is.
+/// A temporary subject fence keeps that accepted judgment for a later
+/// Coach pass. Every other settlement closes it unscored. A pair already
+/// accepted, judged or closed, or no longer kept, is left as it is.
 ///
 /// # Errors
 ///
@@ -314,11 +328,21 @@ pub(crate) fn settle_owner_pair_in_txn(
     let Some(((with_passed, without_passed), judgment)) = verdict else {
         return close_owner_pair_in_txn(vault, txn, &key, ask, now);
     };
-    // The ask is settled, so a pair the writer refuses closes for any
-    // reason; the writer names it as the fork writers do (FIX 6256).
+    // An accepted word survives only a temporary subject fence. The ask
+    // is already settled, so the Coach retries from the pair itself.
     let judged =
         match judge_owner_pair_in_txn(vault, txn, &key, with_passed, without_passed, judgment)? {
             Ok(judged) => judged,
+            Err(Unavailable::Unfinished) => {
+                return accept_owner_pair_in_txn(
+                    vault,
+                    txn,
+                    &key,
+                    with_passed,
+                    without_passed,
+                    judgment,
+                );
+            }
             Err(reason) => {
                 tracing::debug!(
                     reason = reason.as_str(),
@@ -327,6 +351,20 @@ pub(crate) fn settle_owner_pair_in_txn(
                 return close_owner_pair_in_txn(vault, txn, &key, ask, now);
             }
         };
+    record_owner_pair_in_txn(vault, txn, &judged, with_passed, without_passed, now)
+}
+
+/// Records both forks through the contribution check's own door, in the
+/// writer that judged them. A refused check keeps its scores for the next
+/// Coach pass, as an ask's immediate settlement does.
+fn record_owner_pair_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    judged: &OwnerPair,
+    with_passed: bool,
+    without_passed: bool,
+    now: u64,
+) -> Result<()> {
     let contribution = ContributionPair {
         attempt_receipt: judged.attempt_receipt.clone(),
         outcome_receipt: judged.scoring.outcome_receipt.clone(),
@@ -396,7 +434,8 @@ impl Runner<'_> {
     /// settled: the pair as the owner's word scored it, else its pending
     /// pair, kept now on the first pass and asked while no ask carries it.
     /// A pending pair reads its kept answers again to ask, and pays for
-    /// nothing; it is `Unfinished` until the owner's word lands.
+    /// nothing; it is `Unfinished` until the owner's word lands. The owner
+    /// it asks is admitted again before it is shown the pair (FIX 20607).
     pub(super) fn owner_judged(
         &self,
         prepared: &Prepared,
@@ -416,6 +455,9 @@ impl Runner<'_> {
                 Err(reason) => return Ok(Err(reason)),
             },
         };
+        if matches!(pair.route, OwnerPairRoute::Accepted { .. }) {
+            return self.retry_owner_pair(pair.handle);
+        }
         if pair.route == OwnerPairRoute::Reserved {
             let texts = match self.owner_pair_texts(
                 prepared,
@@ -423,6 +465,7 @@ impl Runner<'_> {
                 pair.shown_first,
                 [&with_skill, &without_skill],
                 mode,
+                pair.owner,
             )? {
                 Ok(texts) => texts,
                 Err(reason) => return Ok(Err(reason)),
@@ -431,16 +474,72 @@ impl Runner<'_> {
             if !texts.match_presentation(&pair.presentation) {
                 return Ok(Err(Unavailable::Unreadable));
             }
+            let owner = PairReader::Consumer {
+                owner: Some(pair.owner),
+            };
+            if !prepared.source.admits_now(self.vault, owner)? {
+                return Ok(Err(Unavailable::Unfinished));
+            }
             crate::task_verb::ask_contribution_pair(self.vault, &pair, &texts);
         }
         Ok(Err(Unavailable::Unfinished))
+    }
+
+    /// Retries an already admitted owner's word, once, under the same
+    /// capsule, provenance and held-answer checks as immediate settlement.
+    fn retry_owner_pair(&self, handle: EntityId) -> Outcome<ContributionForks> {
+        let now = self.vault.store.clock.now_recorded_at();
+        self.vault.with_write_txn_grouped(|txn| {
+            let Some((key, pair)) = owner_pair_in_txn(self.vault, txn, handle)? else {
+                return Ok(Err(Unavailable::Unfinished));
+            };
+            let OwnerPairRoute::Accepted {
+                with_passed,
+                without_passed,
+                judgment,
+            } = pair.route
+            else {
+                return Ok(Err(Unavailable::Unfinished));
+            };
+            let judged = match judge_owner_pair_in_txn(
+                self.vault,
+                txn,
+                &key,
+                with_passed,
+                without_passed,
+                judgment,
+            )? {
+                Ok(judged) => judged,
+                Err(Unavailable::Unfinished) => return Ok(Err(Unavailable::Unfinished)),
+                Err(reason) => {
+                    tracing::debug!(
+                        reason = reason.as_str(),
+                        "an owner-judged pair closes unscored"
+                    );
+                    close_owner_pair_in_txn(self.vault, txn, &key, judgment.ask, now)?;
+                    return Ok(Err(Unavailable::Unfinished));
+                }
+            };
+            record_owner_pair_in_txn(self.vault, txn, &judged, with_passed, without_passed, now)?;
+            Ok(Ok(ContributionForks {
+                with_skill: ContributionFork {
+                    receipt: judged.with_skill.receipt,
+                    passed: with_passed,
+                },
+                without_skill: ContributionFork {
+                    receipt: judged.without_skill.receipt,
+                    passed: without_passed,
+                },
+            }))
+        })
     }
 
     /// Keeps this pair's pending pair, once: a fresh blinded mapping, the
     /// owner it asks, its presentation's ids and texts' digests, and the
     /// frozen criterion. A pair another pass kept first is returned as kept.
     /// A pair its writer does not keep is unavailable for that writer's own
-    /// reason (FIX 6256).
+    /// reason (FIX 6256). The owner is selected before any text is read, and
+    /// the texts are read under that owner's admission (FIX 20607).
     fn reserve_owner_pair(
         &self,
         prepared: &Prepared,
@@ -461,16 +560,6 @@ impl Runner<'_> {
         } else {
             ForkTreatment::WithoutSkill
         };
-        let texts = match self.owner_pair_texts(
-            prepared,
-            &criterion,
-            shown_first,
-            [with_skill, without_skill],
-            mode,
-        )? {
-            Ok(texts) => texts,
-            Err(reason) => return Ok(Err(reason)),
-        };
         let (owner, conversation) = {
             let txn = self.vault.store.env.read_txn()?;
             let Some(owner) = crate::policy_model::owners_in_txn(self.vault, &txn)?
@@ -482,6 +571,17 @@ impl Runner<'_> {
             let conversation =
                 crate::task_verb::coach_owner_conversation_in(self.vault, &txn, &owner)?;
             (owner, conversation)
+        };
+        let texts = match self.owner_pair_texts(
+            prepared,
+            &criterion,
+            shown_first,
+            [with_skill, without_skill],
+            mode,
+            owner,
+        )? {
+            Ok(texts) => texts,
+            Err(reason) => return Ok(Err(reason)),
         };
         let part = |text: &str| -> Result<OwnerPairPart> {
             Ok(OwnerPairPart {
@@ -527,8 +627,9 @@ impl Runner<'_> {
         put_owner_pair(self.vault, &self.pair, &self.provenance, &pair)
     }
 
-    /// The texts the owner reads, both answers read again from the bodies
-    /// the run owns and, in the `Executed` mode, with what each program did.
+    /// The texts `owner` reads, both answers read again from the bodies the
+    /// run owns under `owner`'s admission (FIX 20607) and, in the `Executed`
+    /// mode, with what each program did.
     fn owner_pair_texts(
         &self,
         prepared: &Prepared,
@@ -536,16 +637,18 @@ impl Runner<'_> {
         shown_first: ForkTreatment,
         [with_skill, without_skill]: [&ContributionForkReceipt; 2],
         mode: ForkEvidenceMode,
+        owner: EntityId,
     ) -> Outcome<OwnerPairTexts> {
         let (first, second) = match shown_first {
             ForkTreatment::WithSkill => (with_skill, without_skill),
             ForkTreatment::WithoutSkill => (without_skill, with_skill),
         };
-        let shown_a = match self.shown_answer(prepared, first, mode)? {
+        let reader = PairReader::Consumer { owner: Some(owner) };
+        let shown_a = match self.shown_answer(prepared, first, mode, reader)? {
             Ok(text) => text,
             Err(reason) => return Ok(Err(reason)),
         };
-        let shown_b = match self.shown_answer(prepared, second, mode)? {
+        let shown_b = match self.shown_answer(prepared, second, mode, reader)? {
             Ok(text) => text,
             Err(reason) => return Ok(Err(reason)),
         };
@@ -556,21 +659,20 @@ impl Runner<'_> {
         }))
     }
 
-    /// One fork's answer as the owner reads it, whole.
+    /// One fork's answer as the owner reads it, whole, read for `reader`,
+    /// the owner the pair asks (FIX 20607).
     fn shown_answer(
         &self,
         prepared: &Prepared,
         fork: &ContributionForkReceipt,
         mode: ForkEvidenceMode,
+        reader: PairReader,
     ) -> Outcome<String> {
-        let Some(response) = fork_response(self.vault, prepared.capsule.run, fork)? else {
-            return Ok(Err(if fork.response_erased {
-                Unavailable::Erased
-            } else {
-                Unavailable::Unreadable
-            }));
+        let response = match self.read_response(prepared, fork, reader)? {
+            Ok(response) => response,
+            Err(reason) => return Ok(Err(reason)),
         };
-        let executed = match self.executed_view(prepared, fork, mode)? {
+        let executed = match self.executed_view(prepared, fork, mode, reader)? {
             Ok(executed) => executed,
             Err(reason) => return Ok(Err(reason)),
         };
