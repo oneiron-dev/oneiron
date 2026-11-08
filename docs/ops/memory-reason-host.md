@@ -92,6 +92,68 @@ composition frames and pins, provider scratch and allocator overhead are not
 covered by this owner. Full working-set admission and Q remain open; no runtime,
 peak-memory or no-hang result is claimed.
 
+## Retained host pins
+
+The production host keeps its rerank and composition pins in a private owner
+through their actual model calls. Its lease uses the same server memory line
+and records the actual pin-vector backing and owned text-string capacities
+once. The original composition cohort stays owned through all whole, map and
+reduction passes. Reduction producer cohorts keep their existing ordered pin
+clones; those distinct vector and string allocations have their own per-pass
+owner. Each owner's pins and text drop before its charge, including errors.
+
+These are charges after allocation, not before-growth admission. Existing
+filtered text, pinned identity/hash checks, destination admission, source and
+citation cohorts, usage and reduction progress are unchanged. Raw read storage
+has a separate owner described below. Reference/revision/hash scratch, composition values and drafts,
+model-request copies, provider storage and allocator overhead remain outside
+these owners. This is not full working-set admission or Q, and it adds no
+memory growth wait, refusal, cap, default or timer.
+
+## Pinned read request storage
+
+Evidence collection and the production host's three source-read paths keep
+their already-collected native point-read vectors in a private owner. Its
+lease records each actual vector's backing capacity once on the same supplied
+memory line. These callers build id targets with pinned revisions; no owned
+reference text is included or estimated. Input vectors, raw output bodies and
+retained projected text are distinct allocations with separate owners.
+
+The native read borrows the same request slice, in the same order. The input
+owner stays alive throughout that read, including every evidence-frame
+callback, then drops before receipt handling and later citation, scope or
+model work. Its vector drops before its charge on errors and unwind. Rerank
+input construction still validates revisions before this owner is built.
+
+This is accounting after the request vector was built, not admission before
+its growth. Separate revision, id and hash vectors, maps, receipts, provider
+copies and allocator overhead are not covered by this owner. No growth wait,
+refusal, default or cap is added, and full working-set admission and Q remain
+open.
+
+## Host raw read storage
+
+The production host's rerank pins, composition pins and per-destination source
+checks use the same private raw-row owner as the evidence frame callback. Each
+actual scoped read supplies its own vector and body buffers. Immediately after
+that read returns, the owner records the actual vector backing and owned body
+capacities once on the same server memory line. Native read authority, pins,
+receipts, hash checks and filtered projections are unchanged.
+
+The host drains those rows through its existing validation, hashing and
+projection loop. Per-row bodies, decoded fields and the drain drop before the
+owner; remaining rows and vector backing drop before its lease on errors and
+unwind. The host explicitly drops this owner after the loop, before returning
+pins to a model call or starting the later session-scope check. Retained pin
+text is a distinct allocation charged by its existing owner, not a second
+charge of the raw body.
+
+This records storage after allocation; it adds no growth admission, memory
+wait or refusal. Reference and revision vectors, hashes, receipt storage,
+deletion metadata strings, decoded field maps, model-request and provider
+copies, and allocator overhead remain outside this owner. Full working-set
+admission and Q remain open; no compiler or runtime result is claimed here.
+
 ## Framed source projection
 
 Evidence collection uses the existing native row-frame geometry under one
@@ -99,6 +161,19 @@ snapshot, policy resolution, held authority and projection receipt. It processes
 all requested pins in order. The body budget still admits the same stored-body
 lengths in that order; missing or bodiless rows remain absent. Each frame's raw
 bodies and decoded field maps drop before its callback returns.
+
+A private frame owner records the actual frame-vector backing capacity and
+owned body-vector capacities once on a separate lease from the same supplied
+machine-memory line. The callback drains that same vector. Per-row raw bodies,
+field maps and the drain iterator drop before the owner, and its remaining rows
+and vector backing drop before its lease, including on early return or unwind.
+The charge ends before the post-read citation and omission lookups. Derived
+retained evidence strings remain distinct allocations on their existing owner;
+the raw-body charge does not count those strings again.
+
+This is accounting after the native frame was allocated, not admission before
+growth. Deletion request strings, decoded field-map storage and other transient
+allocations are not measured by the raw frame owner.
 
 The callback decodes in-hand bodies, hashes omitted bodies, spends down the
 body budget and records retained capacities. The unchanged undecoded-body
