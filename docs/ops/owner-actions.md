@@ -1042,7 +1042,11 @@ fields of its reply:
   `already_queued: true`.
 
 The resident Dreamer picks the step up at once: its deadline watch reads the queue again after
-every `host.wake`. Poll the root until `outcome.state` is not `running`:
+every `host.wake`. Poll the root until `outcome.state` is not `running`.
+`awaiting_host` still has unfinished work: it is not success, and `settled` stays false.
+Those jobs remain queued for their normal Coach host consumer; inspect the root again after
+that consumer serves them. This status does not say the host is absent or unavailable.
+To inspect the root:
 
 ```
 oneiron api call vault.sieve.settlements.get --data '{"wake":"<attempt>"}'
@@ -1051,7 +1055,11 @@ oneiron api call vault.sieve.settlements.get --data '{"wake":"<attempt>"}'
 (Over MCP, the `vault.sieve.settlements.get` tool with `{"spec": {"wake": "<attempt>"}}`.)
 `jobs` lists every job under the root; `outcome` says what they came to:
 
-- `running`: a job is still queued, leased, landing or scheduled (`outcome.waiting_on`).
+- `running`: a job is still queued, leased, landing or scheduled (`outcome.waiting_on`),
+  other than the all-host-queued case below. A leased or landing Coach job is still `running`.
+- `awaiting_host`: every job in `outcome.waiting_on` is queued or scheduled on `coach.host`
+  or `coach.heal`. Every job, its lineage and its queue eligibility remain unchanged; the
+  status does not mark it completed or claim a missing consumer has been installed.
 - `succeeded`: every job completed. `outcome.result_refs` and `outcome.conclusions` are what
   they produced.
 - `partial`: nothing is running, but a job is parked or paused (`parked`, with its cause), was
