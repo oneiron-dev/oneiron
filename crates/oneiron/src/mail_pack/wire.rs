@@ -194,6 +194,14 @@ pub trait MailProviderWire {
         page: Option<&str>,
     ) -> Result<MailHistoryRead>;
 
+    /// The labels a listing read for `provider_id` in this wire's step,
+    /// when they come at no further provider read: a provider whose folders
+    /// are labels (IMAP) names a message once per folder, so a message the
+    /// vault holds carries the folders it is found in. `None` by default.
+    fn listed_labels(&self, _provider_id: &str) -> Option<Vec<String>> {
+        None
+    }
+
     /// One attachment's bytes, as a reader opened it; `None` when the
     /// provider no longer has the message or the attachment.
     fn attachment(
