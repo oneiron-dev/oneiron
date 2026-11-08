@@ -1,8 +1,8 @@
 //! Whose act a repo proposal records, and the erase that forgets it
 //! (FIX 3520): its proposer, the critics whose evidence judged it (FIX 4477),
-//! the journal claims it wrote (FIX 4479) and the owner who decided its
-//! removed-name review, with each settlement receipt claim that names that
-//! owner (FIX 4365).
+//! the journal claims it wrote (FIX 4479), the owner who settled it (FIX
+//! 5220) and the owner who decided its removed-name review, with each
+//! settlement receipt claim that names either owner (FIX 4365).
 
 use std::collections::BTreeSet;
 
@@ -295,7 +295,9 @@ pub const ACTOR_ERASE_PENDING_REPO_PROPOSAL: PendingRepoProposalErase =
 /// already ran a member keeps it as an erased slot and ends at its last landed
 /// member instead (FIX 5219). Either way its journal claims name no one (FIX
 /// 4479). Each proposal it judged as a critic keeps that evidence under an
-/// opaque ref (FIX 4477). Each removed-name review it decided keeps its
+/// opaque ref (FIX 4477). Each it settled keeps its decision and names no
+/// settler, in its row and in its receipt claim (FIX 5220). Each
+/// removed-name review it decided keeps its
 /// decision and names no one, in its row and in its receipt claim (FIX
 /// 4365). Each settlement receipt claim that names it names no one too, even
 /// when no proposal row points at it any more (FIX 4365). One-way, in the
@@ -320,7 +322,17 @@ pub(crate) fn erase_proposal_actor_in_txn(
         if proposer {
             proposal.actor = ProposalActor::Erased;
         }
-        let receipts = proposal.forget_contract_reviewer(*actor);
+        let mut receipts = proposal.forget_contract_reviewer(*actor);
+        // The owner who settled it is forgotten on its row too, and its
+        // receipt is scrubbed with the others (FIX 5220).
+        if let Some(settlement) = proposal.settlement.as_mut()
+            && settlement.actor == Some(*actor)
+        {
+            settlement.actor = None;
+            if !receipts.contains(&settlement.receipt) {
+                receipts.push(settlement.receipt);
+            }
+        }
         if proposal.forget_critic(vault, &critic)? || proposer || !receipts.is_empty() {
             named.push((id, proposal, proposer, receipts));
         }
