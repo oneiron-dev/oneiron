@@ -56,7 +56,7 @@ pub(crate) use actor_erase::{
     erase_export_actor_in_txn, erase_export_author_actor_in_txn, erase_fork_actor_in_txn,
     erase_live_edit_ask_group_actor_in_txn, erase_oracle_actor_in_txn, erase_proposal_actor_in_txn,
 };
-pub(crate) use annotation_units::{DeckUnits, OfficeBodyUnits};
+pub(crate) use annotation_units::{DeckUnits, HeldDeckIds, OfficeBodyUnits};
 pub use consent::{
     AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OFFICE_BODY_EDIT_CLASS,
     OfficeBodyProposal, ProposalAsk, ProposalAskRefusal, ProposalHeader, ProposalMember,
@@ -134,9 +134,9 @@ use serde::{Deserialize, Serialize};
 pub use oneiron_docedit::resource::{RESERVE_STEP, ResourcePort, ResourceRefusal, Resources};
 use records::{EXPORT_AUTHORS, EXPORTS, FORKS, OfficeBodyRead, OfficeBodySource, SOURCES};
 pub use records::{
-    ForkState, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportAuthor, OfficeBodyExportRecord,
-    OfficeBodyExportRequest, OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, OfficeRecalcZone,
-    XlsxPreview,
+    ForkState, HeldDeckId, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportAuthor,
+    OfficeBodyExportRecord, OfficeBodyExportRequest, OfficeBodyFork, OfficeBodyHead,
+    OfficeBodyKind, OfficeRecalcZone, XlsxPreview,
 };
 pub use resources::{
     DocumentMemory, document_resources, document_resources_until, register_document_memory,

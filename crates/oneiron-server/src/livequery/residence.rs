@@ -188,6 +188,10 @@ struct SearchRequest {
     /// A later page of a search served in pages (FIX 8865).
     #[serde(default)]
     page: Option<oneiron::sync::residence::ResidenceSearchCursor>,
+    /// The caller's own retrieval filter (FIX 3977): the home's reader meets
+    /// it before the candidate cut, and a forwarded search signs it.
+    #[serde(default)]
+    filter: Option<oneiron::memory::ReadFilterInput>,
 }
 
 impl SearchRequest {
@@ -223,6 +227,7 @@ impl SearchRequest {
             &selector_wire,
             self.scope.as_ref(),
             self.as_of,
+            self.filter.as_ref(),
             locality,
             self.page.as_ref(),
             |request| {
