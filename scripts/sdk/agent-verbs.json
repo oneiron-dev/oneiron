@@ -1829,7 +1829,7 @@
       "scope": "Read",
       "admission": {
         "lane_record_scope": true,
-        "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit_nonzero(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECALL_LIMIT_DEFAULT))?; crate::memory::caps::check_as_of(input.as_of)?; crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
+        "validate": "crate::memory::caps::check_limit_nonzero(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECALL_LIMIT_DEFAULT))?; crate::memory::caps::check_as_of(input.as_of)?; crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
       "section": false,
       "binding": {
@@ -3414,7 +3414,7 @@
     },
     {
       "name": "vault.weave.item.wrong",
-      "description": "A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays.",
+      "description": "A person labels a claim, project, budget or sieve audit item in their own lens as wrong; the label teaches the loops and the record stays.",
       "input": "crate::claim::WeaveWrongItemRequest",
       "output": "crate::claim::WeaveItemCorrectionView",
       "call": "memory.weave_wrong_item(None, &memory.embedded_owner(\"vault.weave.item.wrong\")?, &input)?",
@@ -3429,7 +3429,7 @@
     },
     {
       "name": "vault.weave.owner.item.wrong",
-      "description": "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays.",
+      "description": "The owner labels a claim, project, budget or sieve audit item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays.",
       "input": "crate::claim::WeaveWrongItemRequest",
       "output": "crate::claim::WeaveItemCorrectionView",
       "call": "memory.weave_owner_wrong_item(&memory.embedded_owner(\"vault.weave.owner.item.wrong\")?, &input)?",
@@ -3923,6 +3923,38 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skill_hubs.clawhub.search",
+      "description": "Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages.",
+      "input": "ClawHubSearchRequest",
+      "output": "crate::skill_hub::ClawHubSearchReply",
+      "call": "crate::task_verb::sdk::skill_hub_clawhub_search_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.clawhub.search\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": false,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skill_hubs.clawhub.import",
+      "description": "Downloads an owner-selected ClawHub ZIP or pinned public-GitHub subtree and imports the same checked bytes through native publisher, scan and fit doors; provider contentHash is not a native pin.",
+      "input": "crate::skill_hub::ClawHubImportRequest",
+      "output": "crate::skill_hub::ClawHubImportReply",
+      "call": "crate::task_verb::sdk::skill_hub_clawhub_import_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.clawhub.import\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": false,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -5694,6 +5726,21 @@
       "section": false
     },
     {
+      "name": "vault.members.accept_with_credential",
+      "description": "The invitee accepts their own invitation and receives a regular member credential from the same writer, with required caller-chosen expiry and the same verified device key; plain acceptance stays unchanged.",
+      "input": "crate::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest",
+      "output": "crate::task_verb::sdk::SharedInvitationAcceptedWithCredential",
+      "call": "crate::task_verb::sdk::accept_shared_invitation_with_credential_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.members.decline",
       "description": "The invitee declines their own invitation; nothing is granted.",
       "input": "crate::task_verb::sdk::SharedInvitationRequest",
@@ -6654,6 +6701,22 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.files.sources.exclude",
+      "description": "The owner replaces a Files source's filters: the include patterns it reads, and the paths the host never opens. Absent keeps today's list; a list, even an empty one, replaces it.",
+      "input": "crate::task_verb::sdk::FilesSourceExcludeRequest",
+      "output": "crate::task_verb::sdk::FilesSourceExcludeAnswer",
+      "call": "crate::task_verb::sdk::exclude_files_source_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -8029,7 +8092,7 @@
       "name": "vault.roots.requests.create",
       "description": "The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was.",
       "input": "crate::task_verb::sdk::RootRequestCreateRequest",
-      "output": "crate::world_keys::OwnerWorkReceipt",
+      "output": "crate::task_verb::sdk::OwnerWorkView",
       "call": "crate::task_verb::sdk::create_root_request_as(memory.vault(), &memory.embedded_owner(\"vault.roots.requests.create\")?, crate::authority::ActSurface::ThisInstall, input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -8060,7 +8123,7 @@
       "name": "vault.owner_work.get",
       "description": "The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it.",
       "input": "crate::task_verb::sdk::OwnerWorkGetRequest",
-      "output": "crate::world_keys::OwnerWorkReceipt",
+      "output": "crate::task_verb::sdk::OwnerWorkView",
       "call": "crate::task_verb::sdk::owner_work_receipt_as(memory.vault(), &memory.embedded_owner(\"vault.owner_work.get\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -8667,6 +8730,22 @@
       "openapi": true
     },
     {
+      "name": "vault.connectors.replies.retry_failed",
+      "description": "The owner returns one Failed connector reply job (Ambiguous, owner-act Fault) to the queue now as its queued successor; the Failed predecessor row and its kept result stay as history.",
+      "input": "ConnectorReplyRetryRequest",
+      "output": "crate::task_verb::sdk::ConnectorReplyRetryView",
+      "call": "crate::task_verb::sdk::retry_failed_connector_reply_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.replies.retry_failed\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.consent.deny",
       "description": "The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority.",
       "input": "crate::consent::lifecycle::DenyConsentRequest",
@@ -8702,6 +8781,21 @@
       "input": "crate::consent::lifecycle::AutoWeaveGrantRequest",
       "output": "crate::consent::lifecycle::ConsentActReceipt",
       "call": "crate::consent::lifecycle::mint_auto_weave_grant(memory.vault(), &memory.embedded_owner(\"vault.consent.create_auto_weave_grant\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.create_nightly_link_grant",
+      "description": "The owner lets this vault's Dreamer apply the SameAs links its nightly continuations propose; nothing is granted by default.",
+      "input": "crate::dreamer_consolidation::NightlyLinkGrantRequest",
+      "output": "crate::consent::lifecycle::ConsentActReceipt",
+      "call": "crate::dreamer_consolidation::mint_nightly_link_grant(memory.vault(), &memory.embedded_owner(\"vault.consent.create_nightly_link_grant\")?, input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -10823,7 +10917,7 @@
     },
     {
       "name": "execute_code",
-      "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.",
+      "description": "Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.",
       "input": "crate::memory::foreign_code::ForeignCodeRunRequest",
       "output": "crate::memory::foreign_code::ForeignCodeRunResult",
       "call": "crate::task_verb::sdk::host_only(memory, \"execute_code\", &input)?",
@@ -11365,6 +11459,51 @@
       "output": "crate::memory::origin_doors::OriginPublicationsView",
       "call": "memory.origin_publications_as(&memory.embedded_owner(\"vault.code.origin.publications\")?, input)?",
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.secrets.purge.request",
+      "description": "Plan an owner purge of marked keys from one served repository's history: each ref's move to its masked copy, the purged blobs, dropped signatures, keep roots and what it never reaches. No ref moves.",
+      "input": "crate::memory::origin_doors::RepoSecretPurgeRequest",
+      "output": "crate::memory::origin_doors::RepoSecretPurgePlan",
+      "call": "memory.code_secrets_purge_request_as(&memory.embedded_owner(\"vault.code.secrets.purge.request\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.secrets.purge.get",
+      "description": "Read one of the owner's secret purge plans and, once executed, its receipt.",
+      "input": "crate::memory::origin_doors::RepoSecretPurgeIdRequest",
+      "output": "crate::memory::origin_doors::RepoSecretPurgeView",
+      "call": "memory.code_secrets_purge_get_as(&memory.embedded_owner(\"vault.code.secrets.purge.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.secrets.purge.execute",
+      "description": "Confirm one secret purge plan: move each ref to its masked copy through origin publication, release listed change owners, collect unreachable objects and file the receipt. No remote is pushed.",
+      "input": "crate::memory::origin_doors::RepoSecretPurgeIdRequest",
+      "output": "crate::memory::origin_doors::RepoSecretPurgeReceipt",
+      "call": "memory.code_secrets_purge_execute_as(&memory.embedded_owner(\"vault.code.secrets.purge.execute\")?, input)?",
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -14007,6 +14146,20 @@
       "section": false
     },
     {
+      "name": "vault.rooms.leave",
+      "description": "Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership.",
+      "input": "crate::workspace_roster::RoomLeaveRequest",
+      "output": "crate::workspace_roster::RoomLeaveOutcome",
+      "call": "memory.rooms_leave(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=room"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.rooms.offer",
       "description": "Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card.",
       "input": "crate::workspace_roster::OfferDraft",
@@ -15901,7 +16054,7 @@
     },
     {
       "name": "connector.call",
-      "description": "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data.",
+      "description": "Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data.",
       "input": "crate::outbound_consent::ConnectorCallRequest",
       "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::ConnectorCallReply>",
       "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::connector_call_host_only(memory, &input)?)",
@@ -15917,7 +16070,7 @@
     },
     {
       "name": "connector.schema",
-      "description": "One catalogued connector tool's approved input schema, as the caller's own grant resolves it.",
+      "description": "One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest.",
       "input": "crate::task_verb::sdk::ConnectorSchemaRequest",
       "output": "crate::task_verb::sdk::ConnectorSchemaReply",
       "call": "crate::task_verb::sdk::connector_schema_read(memory, input)?",
@@ -17589,7 +17742,7 @@
       "scope": "Read",
       "admission": {
         "lane_record_scope": true,
-        "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit_nonzero(input.limit)?;"
+        "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
       },
       "section": false,
       "binding": {
@@ -17622,6 +17775,24 @@
         "request": true
       },
       "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.edges.provenance",
+      "description": "Audits one directed edge: each edge.provenance claim of it the caller may read, closed ones included, with its author, actor class, source revision, confidence and lifecycle.",
+      "input": "crate::memory::EdgeProvenanceRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::EdgeProvenanceView>>",
+      "call": "memory.edge_provenance(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
     },
     {
       "name": "vault.structural.put",
@@ -20163,10 +20334,11 @@
     },
     {
       "name": "vault.notes.author_take",
-      "description": "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target.",
+      "description": "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target; each link gets an edge.provenance claim citing the optional source_ref.",
       "refs": [
         "/target/subject",
-        "/target/claim"
+        "/target/claim",
+        "/source_ref"
       ],
       "input": "AuthorTakeRequest",
       "output": "crate::memory::EntityRefReceipt",
@@ -20912,6 +21084,14 @@
       "effect": "RepoProposalSubmit"
     },
     {
+      "name": "self.code.proposal_resolve",
+      "input": "crate::memory::repo_doors::RepoProposalResolveInput",
+      "output": "crate::memory::repo_doors::RepoProposalSubmitOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoProposalResolve"
+    },
+    {
       "name": "self.code.merge_queue.enqueue",
       "input": "crate::memory::repo_doors::RepoMergeQueueEnqueueInput",
       "output": "crate::memory::repo_doors::RepoMergeQueueEnqueueOutput",
@@ -21598,6 +21778,22 @@
       "host_door_lists": true,
       "host_door_precheck": false,
       "rust_feature": "sync",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.dreamer.follower.keyframe",
+      "description": "The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::DreamerFollowerKeyframeResult",
+      "call": "crate::task_verb::sdk::dreamer_follower_keyframe_as(memory.vault(), &memory.embedded_owner(\"vault.dreamer.follower.keyframe\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
