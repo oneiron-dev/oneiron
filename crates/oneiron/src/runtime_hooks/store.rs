@@ -179,7 +179,7 @@ pub(super) fn cursor(
     cursor_in_txn(vault, &rtxn, binding, source)
 }
 
-/// [`cursor`], in the caller's snapshot.
+/// [`cursor`] in the caller's snapshot.
 pub(super) fn cursor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
