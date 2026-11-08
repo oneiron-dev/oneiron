@@ -184,6 +184,7 @@ impl AgentDispatcher<'_> {
                 now,
             },
             AgentSpawnContext::default()
+                .with_caller_origin(super::CallerOrigin::NativeHost)
                 .with_context_spec(ContextSpec::default().with_briefing(brief.to_string()))
                 .with_origin_conversation(source.conversation),
         )

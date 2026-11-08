@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use super::super::invalid;
-use super::{CASES, CaseCaller, FrozenCall, index};
+use super::{CASES, CaseCaller, FrozenCall, erase, index};
 use crate::error::{ClaimError, Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::store::Store;
@@ -92,6 +92,29 @@ pub fn amend_callable_case(
     let (key, row) = {
         let rtxn = vault.store.env.read_txn()?;
         vault.verify_write_actor_in_txn(&rtxn, by)?;
+        let caller =
+            match crate::receipt::attempt_pack_receipt_in_txn(&vault.store, &rtxn, &input.receipt)?
+            {
+                Some(receipt) => receipt.attempt_caller(),
+                None => {
+                    let attempt = erase::receipt_attempt(&input.receipt);
+                    let queue = crate::attempt_queue::AttemptQueue::from_store(&vault.store);
+                    match attempt {
+                        Some(attempt) => match queue.get_in_txn(&rtxn, attempt)? {
+                            Some(record) => crate::receipt::attempt_calling_principal_in_txn(
+                                &vault.store,
+                                &rtxn,
+                                &record,
+                            ),
+                            None => None,
+                        },
+                        None => None,
+                    }
+                }
+            };
+        if caller != Some(by.entity_ref()) {
+            return Err(not_allowed("only a call's caller amends its answer"));
+        }
         let Some((key, row)) = case_in_txn(&vault.store, &rtxn, &input.receipt, input.seq)? else {
             return Ok(CallableAmendReceipt::no_case());
         };

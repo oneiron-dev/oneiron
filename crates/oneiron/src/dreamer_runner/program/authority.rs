@@ -23,6 +23,7 @@ use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::authority::{InvocationSlipBinding, ManagedOwnerCheckError, VerifiedSlip};
 use crate::dreamer_runner::{DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerMilestoneClaim};
 use crate::error::{ClaimError, Error, Result};
+use crate::store::Store;
 use crate::write_envelope::WriteEnvelope;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
@@ -652,6 +653,24 @@ pub(crate) enum TurnProgramBound {
     Withdrawn {
         reason: &'static str,
     },
+}
+
+/// The actor `id`'s program stamp names, read on a caller's own snapshot
+/// (FIX 12306). This is the Store-level form of `stamped_actor_in_txn`:
+/// the same waking actor `for_turn_program` enforces, with no new read txn.
+/// Missing, mismatched or undecodable stamps are `None`, never a terminal
+/// settlement error.
+pub(crate) fn program_actor_for_attempt_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: AttemptId,
+) -> Option<WriteActor> {
+    let stamp = ATTEMPT.get(store, txn, &id).ok()??;
+    if stamp.attempt_id != *id.as_bytes() {
+        return None;
+    }
+    let class = EdgeActorClass::try_from_u8(stamp.actor_class)?;
+    Some(WriteActor::new(stamp.actor, class))
 }
 
 /// The actor `id`'s stamp names, in `txn`.

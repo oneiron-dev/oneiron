@@ -19,6 +19,7 @@ use super::permit::RunPermit;
 use super::receipt::{CalledTeacher, RunEvent, RunReceipt, RunReceiptSink, TeacherReport};
 use super::settle::CallOutcome;
 use super::work_context::WorkContext;
+use crate::agent_dispatch::GrantSpendBinding;
 
 mod denied;
 mod media;
@@ -87,6 +88,10 @@ pub(super) struct RunInner {
     pub(super) payer: Option<PayerPerson>,
     /// The item a bound run serves (FIX 4453), fixed when the run starts.
     pub(super) attribution: Option<RunAttribution>,
+    /// The owner's agent Grant the run's work is funded by (FIX 7766),
+    /// frozen when the run starts: every host-paid call holds only on a live
+    /// allocation of its wallet.
+    pub(super) funding: Option<GrantSpendBinding>,
     /// The host marked the run as memory work (FIX 11003).
     memory_work: AtomicBool,
     model_call_index: AtomicU64,
@@ -165,7 +170,47 @@ impl RunAdmission {
         receipts: Arc<dyn RunReceiptSink>,
         payer: Option<PayerPerson>,
     ) -> Self {
-        Self::start(run.into(), declaration, meter, host, receipts, payer, None)
+        Self::start(
+            run.into(),
+            declaration,
+            meter,
+            host,
+            receipts,
+            payer,
+            None,
+            None,
+        )
+    }
+
+    /// Starts a run as [`Self::with_payer`] does, its work funded by the
+    /// owner's agent Grant `funding` names (FIX 7766, Engine 19:59 W-D): the
+    /// binding the work's spend root, or its unmetered root dispatch, froze,
+    /// which the host read before the run began. Each host-paid call it
+    /// admits takes a hold only on a live allocation of that Grant's wallet;
+    /// another wallet's, or one the host named no wallet for, refuses it
+    /// with [`RunDenied::AllocationWalletMismatch`]. Its permits and
+    /// receipts carry the binding. `None` is a run no Grant funds, as
+    /// [`Self::with_payer`] starts it.
+    #[must_use]
+    pub fn with_funding(
+        run: impl Into<String>,
+        declaration: RunDeclaration,
+        meter: BudgetGuard,
+        host: Option<Arc<HostAccount>>,
+        receipts: Arc<dyn RunReceiptSink>,
+        payer: Option<PayerPerson>,
+        funding: Option<GrantSpendBinding>,
+    ) -> Self {
+        Self::start(
+            run.into(),
+            declaration,
+            meter,
+            host,
+            receipts,
+            payer,
+            None,
+            funding,
+        )
     }
 
     /// Starts a run as [`Self::with_payer`] does, bound to `attribution`: the
@@ -189,9 +234,14 @@ impl RunAdmission {
             receipts,
             payer,
             Some(attribution),
+            None,
         )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a run starts with its id, declaration, meter, host, receipts, payer, item and funding"
+    )]
     fn start(
         run: String,
         declaration: RunDeclaration,
@@ -200,6 +250,7 @@ impl RunAdmission {
         receipts: Arc<dyn RunReceiptSink>,
         payer: Option<PayerPerson>,
         attribution: Option<RunAttribution>,
+        funding: Option<GrantSpendBinding>,
     ) -> Self {
         Self {
             inner: Arc::new(RunInner {
@@ -213,6 +264,7 @@ impl RunAdmission {
                 host,
                 payer,
                 attribution,
+                funding,
                 memory_work: AtomicBool::new(false),
                 model_call_index: AtomicU64::new(0),
                 receipts,
@@ -258,6 +310,12 @@ impl RunAdmission {
     #[must_use]
     pub fn attribution(&self) -> Option<&RunAttribution> {
         self.inner.attribution.as_ref()
+    }
+
+    /// The owner's agent Grant this run's work is funded by (FIX 7766).
+    #[must_use]
+    pub fn funding(&self) -> Option<&GrantSpendBinding> {
+        self.inner.funding.as_ref()
     }
 
     /// This run, for calls whose input the host code that assembled it read

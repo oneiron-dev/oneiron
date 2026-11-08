@@ -45,7 +45,7 @@ impl OfferLadder {
             .send(call, 0, &|| true, None, RungPrompt::Configured, &mut walk)
             .await?
         {
-            Sent::Answer(response) => Ok(response),
+            Sent::Answer(response, _) => Ok(response),
             Sent::Failed | Sent::Held | Sent::Stopped => {
                 Err(self.record_step_offer_result(call, walk))
             }

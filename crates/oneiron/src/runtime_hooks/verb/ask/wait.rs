@@ -1,9 +1,12 @@
 //! Wake hints for a host retaining a caller-only verb-hook wait.
 
+use std::sync::Arc;
+
 use super::{ASKS, VerbAskState, author_memory};
 use crate::runtime_hooks::InvocationId;
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::task_verb::{TaskAskHandle, TaskAskStatus};
+use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Result, Vault};
 
 /// Whether a retained call can retry its hook boundary. This grants no
@@ -27,6 +30,7 @@ pub(in crate::runtime_hooks::verb) fn status(
     actor: EntityId,
     class: HookActorClass,
     ask: EntityId,
+    turn: Option<&Arc<TaskWorkTurn>>,
 ) -> Result<VerbHookWaitStatus> {
     let row = {
         let txn = vault.store.env.read_txn()?;
@@ -44,7 +48,7 @@ pub(in crate::runtime_hooks::verb) fn status(
     // Use the author kept by this exact call, just as its retry does. The
     // caller need not be in the ask's audience. Reading status may settle an
     // elapsed native ask deadline; it never resumes or consumes this call.
-    let status = author_memory(vault, row.author, row.author_class, None)
+    let status = author_memory(vault, row.author, row.author_class, turn)
         .tasks_ask_status(TaskAskHandle { group_ref: row.ask });
     Ok(match status {
         Ok(TaskAskStatus::Pending { .. } | TaskAskStatus::Changed { .. }) => {
