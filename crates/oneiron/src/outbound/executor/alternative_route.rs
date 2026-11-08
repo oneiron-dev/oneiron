@@ -398,15 +398,7 @@ fn send_live_alternative<S: OutboundExecutionSink>(
                 };
             stop_alternative(vault, task, alternative, stop, now)?;
             let reason = format!("ambient_alternative_{}", outcome.as_str());
-            retry_connector_task_attempt(
-                vault,
-                queue,
-                attempt,
-                task.task_ref,
-                now,
-                &reason,
-                None,
-            )?;
+            retry_connector_task_attempt(vault, queue, attempt, task.task_ref, now, &reason, None)?;
             Ok(RoutedAttempt::Settled)
         }
         _ => {
