@@ -271,6 +271,7 @@ impl EngineNativeExecutor<'_> {
                     let callable_rows = host.result_rows();
                     let durable_wait = host.durable_wait;
                     let bridge_calls = host.bridge_calls;
+                    let no_bridge_calls = bridge_calls.is_empty();
                     let captured = host.captured;
                     let bound = host.bound;
                     let receipts = host.receipts;
@@ -297,6 +298,17 @@ impl EngineNativeExecutor<'_> {
                     {
                         checking.ended(Some(&status));
                         return Ok(self.outcome(status, steps_run + 1, record));
+                    }
+                    // A response whose program failed before its first host bridge call
+                    // commits no step; its correction record is written alone, as a
+                    // rejected one is, and the step's original error still returns (FIX
+                    // 14992).
+                    if no_bridge_calls
+                        && let Err(error) = self
+                            .storage
+                            .put_uncommitted_code_run_correction(&correction)
+                    {
+                        tracing::warn!(%error, "a failed step's correction record was not kept");
                     }
                     // A step a provider outage ended stops on that outage,
                     // which parks its run, however its guest took the
