@@ -8,8 +8,8 @@ use crate::claim::ScopedRead;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::PolicyManifestResolution;
+use crate::ports::ReadRow;
 use crate::ports::ScopedReadResult;
-use crate::ports::{PointRead, ReadRow};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::sandbox_import::SandboxLinkedImport;
 use oneiron_contracts::claim::ScopedReadReceipt;
@@ -249,32 +249,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 
     pub fn read_link(&self, path: &str) -> Result<Option<String>> {
-        let normalized = normalize_path(path)?;
-        let components = path_components(&normalized)?;
-        if self.snapshot.is_some() {
-            return Ok(None);
-        }
-        let [component] = components.as_slice() else {
-            return Ok(None);
-        };
-        let Some(claim_hex) = component
-            .strip_prefix("[[claim:")
-            .and_then(|rest| rest.strip_suffix("]]"))
-        else {
-            return Ok(None);
-        };
-        let claim_id = parse_entity_id(claim_hex)?;
-        if self
-            .scoped_read
-            .read(&[PointRead::id(claim_id)], None)?
-            .single()
-            .value
-            .is_some()
-        {
-            Ok(Some(format!("/claims/{}", claim_id.to_hex())))
-        } else {
-            Ok(None)
-        }
+        Ok(self.read_link_with_receipt(path)?.value)
     }
 
     pub(super) fn entity_type_in(
