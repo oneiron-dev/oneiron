@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1304 facade rows, 4733 declarations.
-Inputs: 1233 of 1304 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1133 of 1304 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 121; unread shapes: 0.
+Census: 1313 facade rows, 4749 declarations.
+Inputs: 1242 of 1313 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1142 of 1313 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -681,6 +681,7 @@ class AgentHealthCard(TypedDict):
     opened_at: int
     updated_at: int
     coach: NotRequired[AgentHealthCoachAsk | None]
+    legacy_draft_scrubbed: NotRequired[bool]
     observed_brief: NotRequired[HealthBriefPin | None]
     reviewer: str
     reviewer_revision: NotRequired[EntityId | None]
@@ -1801,6 +1802,9 @@ class TaskAskTargetPeople(TypedDict):
 class TaskAskTargetGuests(TypedDict):
     guests: dict[str, TaskAskGuest]
 TaskAskTarget = TaskAskTargetAuthority | TaskAskTargetResponder | TaskAskTargetPeople | TaskAskTargetGuests
+class TaskAskOption(TypedDict):
+    label: str
+    then: NotRequired[str | None]
 class OutcomeSourceClaim(TypedDict):
     kind: Literal["claim"]
     predicate: str
@@ -1828,13 +1832,16 @@ class TaskAskLadderPrediction(TypedDict):
 class TaskAskQuestion(TypedDict):
     reference: ConsultPayloadRef
     revision: int
-    options: dict[str, str]
+    options: dict[str, TaskAskOption]
     context_refs: list[ConsultPayloadRef]
     label: NotRequired[str | None]
     outcome_binding: NotRequired[OutcomeBinding | None]
     ladder_answer: NotRequired[TaskAskLadderPrediction | None]
     class_key: NotRequired[str | None]
     commitment: NotRequired[bool]
+class TaskAskRec(TypedDict):
+    option: TaskAskOptionId
+    why: str
 class TaskAskNeed(TypedDict):
     count: int
     of: NotRequired[TaskAskElectorate]
@@ -1843,7 +1850,7 @@ TaskAskBranch = Literal["hold", "proceed"]
 class TaskAskDisagree(TypedDict):
     branch: TaskAskBranch
     surface: TaskAskSurface
-TaskAskSpec = TypedDict("TaskAskSpec", {"intent_key": str, "task_ref": NotRequired[EntityId | None], "class": NotRequired[TaskAskClass | None], "who": NotRequired[TaskAskTarget | None], "what": TaskAskQuestion, "until": NotRequired[int | None], "default": NotRequired[TaskAskDefault], "need": NotRequired[TaskAskNeed], "decide": NotRequired[TaskAskDecide | None], "provisional": NotRequired[TaskAskProvisional], "on_disagree": NotRequired[TaskAskDisagree], "remind": NotRequired[list[int] | None]})
+TaskAskSpec = TypedDict("TaskAskSpec", {"intent_key": str, "task_ref": NotRequired[EntityId | None], "class": NotRequired[TaskAskClass | None], "who": NotRequired[TaskAskTarget | None], "what": TaskAskQuestion, "rec": NotRequired[TaskAskRec | None], "until": NotRequired[int | None], "default": NotRequired[TaskAskDefault], "need": NotRequired[TaskAskNeed], "decide": NotRequired[TaskAskDecide | None], "provisional": NotRequired[TaskAskProvisional], "on_disagree": NotRequired[TaskAskDisagree], "remind": NotRequired[list[int] | None]})
 class TaskAskSettlement(TypedDict):
     group_ref: EntityId
     reference: EntityId
@@ -1864,6 +1871,8 @@ class TaskAskResult(TypedDict):
     effect_authorization: TaskAskEffectAuthorization
     coverage: TaskAskCoverage
     decision: TaskAskDecision
+    picked: NotRequired[TaskAskOptionId | None]
+    was_rec: bool
     fallback: NotRequired[TaskAskFallback | None]
     evidence: list[TaskAskEvidence]
     settlement: TaskAskSettlement
@@ -2170,6 +2179,7 @@ class TaskCreateRequest(TypedDict):
     brief: NotRequired[QueueTaskBrief | None]
     ttl: NotRequired[TaskTtl | None]
     parent_ref: NotRequired[str | None]
+    due_at: NotRequired[int | None]
 class TaskCreateReceipt(TypedDict):
     task_ref: NotRequired[EntityId | None]
     proposal_ref: NotRequired[EntityId | None]
@@ -2674,6 +2684,11 @@ class FanoutAckRequest(TypedDict):
     plan_digest: str
     answer: FanoutCheckChoice
     remembered_cap: NotRequired[int | None]
+class ObjectiveConfession(TypedDict):
+    objective: str
+    met: NotRequired[bool | None]
+    flaw: NotRequired[str | None]
+    uncertainty: NotRequired[str | None]
 class TaskReportBodyProgressBody(TypedDict):
     evidence_refs: NotRequired[list[EntityId]]
     renew_lease: NotRequired[bool]
@@ -2688,6 +2703,7 @@ class TaskReportBodyBlocked(TypedDict):
 class TaskReportBodyDoneBody(TypedDict):
     result_ref: EntityId
     confession: NotRequired[str | None]
+    confession_structured: NotRequired[list[ObjectiveConfession] | None]
 class TaskReportBodyDone(TypedDict):
     done: TaskReportBodyDoneBody
 class TaskReportBodyFailedBody(TypedDict):
@@ -2785,7 +2801,7 @@ class StreamFinalityReasonIdleTimeout(TypedDict):
     idle_timeout: StreamFinalityReasonIdleTimeoutBody
 class StreamFinalityReasonCustom(TypedDict):
     custom: str
-StreamFinalityReason = Literal["explicit_finalize", "idle_timeout30s", "process_crash_recovery", "user_interrupted", "agent_aborted", "external_signal"] | StreamFinalityReasonIdleTimeout | StreamFinalityReasonCustom
+StreamFinalityReason = Literal["explicit_finalize", "idle_timeout_30s", "process_crash_recovery", "user_interrupted", "agent_aborted", "external_signal"] | StreamFinalityReasonIdleTimeout | StreamFinalityReasonCustom
 IncompleteReason = Literal["terminal_disagreement"]
 class FinishReasonOtherBody(TypedDict):
     name: str
@@ -2891,6 +2907,7 @@ class ContentPartToolCall(TypedDict):
     call_id: str
     name: str
     input: Any
+    signature: NotRequired[str | None]
 class ContentPartToolResult(TypedDict):
     kind: Literal["tool_result"]
     call_id: str
@@ -6142,9 +6159,9 @@ class HookGrantRequest(TypedDict):
     binding: EntityId
 class HubHookQualifyRequest(TypedDict):
     source: EntityId
-FactSource = Literal["claim_changelog", "settlement"]
+FactSource = Literal["claim_changelog", "settlement", "schedule", "surface_inbound"]
 FactPositionHex = str
-FactKind = Literal["claim.landed", "claim.superseded", "proposal.settled"]
+FactKind = Literal["claim.landed", "claim.superseded", "proposal.settled", "schedule.tick", "surface.inbound"]
 class HookReplayCaseFact(TypedDict):
     on: Literal["fact"]
     source: FactSource
@@ -6543,6 +6560,7 @@ ChatCompletionRemembered = ChatCompletionRememberedSaved | ChatCompletionRemembe
 class ChatCompletionMemory(TypedDict):
     injected: bool
     remembered: ChatCompletionRemembered
+    recall_skipped: NotRequired[str | None]
 class ChatCompletionResponse(TypedDict):
     id: str
     object: ChatCompletionObject
@@ -7689,6 +7707,20 @@ class SyncHeldEditEvidence(TypedDict):
     reason_code: str
     payload_hash: str
     quarantined_at: int
+class RepoCopyEditReviewRequest(TypedDict):
+    source: str
+class RepoCopyEditReviewView(TypedDict):
+    source: str
+    cause: str
+    submitted: str
+    revision: str
+class RepoCopyEditSettleRequest(TypedDict):
+    source: str
+    revision: str
+    replacement: str
+class RepoCopyEditSettleView(TypedDict):
+    source: str
+    frame_base64: str
 RetainedWorkQueue = Literal["federation_burst", "maintenance_ingest", "facet_stamp"]
 class RetainedWorkWaitSetRequest(TypedDict):
     queue: RetainedWorkQueue
@@ -10990,6 +11022,26 @@ class ConsentActReceipt(TypedDict):
     reason_code: str
     grant_ref: NotRequired[str | None]
     diff_handle: list[int]
+class CampaignEnrollmentHeldCall(TypedDict):
+    call_ref: EntityId
+    consequence_ref: EntityId
+    call_seq: int
+    campaign_ref: EntityId
+    program_ref: EntityId
+    step_ref: EntityId
+    member_ref: EntityId
+    owner_actor: EntityId
+    frozen_event_ref: EntityId
+    attempt_ref: str
+    approval_digest: str
+    approval_actor: NotRequired[EntityId | None]
+    envelope_hash: str
+    held_at_ms: int
+    owner_ask_seq: NotRequired[int | None]
+    approved_redrive: NotRequired[str | None]
+class CampaignEnrollmentApproveOnceRequest(TypedDict):
+    call_ref: str
+    approval_digest: str
 class ConnectorCallApproveOnceRequest(TypedDict):
     call_ref: str
     approval_digest: str
@@ -11017,6 +11069,8 @@ class AutoWeaveGrantRequest(TypedDict):
     writer_class: AutoWeaveWriterClass
     scope: str
     scope_id: str
+class NightlyLinkGrantRequest(TypedDict):
+    ...
 class ConsentRegistryQuery(TypedDict):
     limit: int
     include_revoked: NotRequired[bool]
@@ -11517,11 +11571,6 @@ class LateCreditReceipt(TypedDict):
     shares: list[LateCreditShare]
 class LearningProjectionView(TypedDict):
     receipt: NotRequired[LateCreditReceipt | None]
-class ObjectiveConfession(TypedDict):
-    objective: str
-    met: NotRequired[bool | None]
-    flaw: NotRequired[str | None]
-    uncertainty: NotRequired[str | None]
 class AttemptConfession(TypedDict):
     attempt: AttemptId
     subject: EntityId
@@ -11850,6 +11899,7 @@ class WidenProposalAnswer(TypedDict):
     proposal_id: str
 class ClaimProposalReviewRequest(TypedDict):
     claim_ref: str
+    grant_ref: NotRequired[str | None]
 class ClaimProposalReview(TypedDict):
     review_id: str
     proposal_ref: str
@@ -11861,14 +11911,19 @@ class ClaimSettleRequest(TypedDict):
     claim_ref: str
     review_id: str
     decision: ClaimSettleDecision
+    grant_ref: NotRequired[str | None]
 ClaimSettlementVerdict = Literal["landed", "rejected"]
 class ClaimChangeVerdict(TypedDict):
     claim_ref: str
     verdict: ClaimSettlementVerdict
-class ClaimSettlementAnswer(TypedDict):
+class ClaimSettlementAnswerWord(TypedDict):
     kind: Literal["word"]
     person_ref: str
-ClaimSettlementReason = Literal["gate.claim.settle.approved", "gate.claim.settle.declined"]
+class ClaimSettlementAnswerGrant(TypedDict):
+    kind: Literal["grant"]
+    grant_ref: str
+ClaimSettlementAnswer = ClaimSettlementAnswerWord | ClaimSettlementAnswerGrant
+ClaimSettlementReason = Literal["gate.claim.settle.approved", "gate.claim.settle.declined", "gate.claim.settle.holder_approved", "gate.claim.settle.holder_declined"]
 class ClaimSettlementRevert(TypedDict):
     verb: str
     claim_ref: str
@@ -11931,7 +11986,7 @@ class LensScope(TypedDict):
 class LensProposeRequest(TypedDict):
     slot: LensSlot
     pack_content_hash: str
-    compiled: Any
+    compiled: GeneratedLens
     intent_prompt: str
     trigger: NotRequired[MadeByTrigger | None]
     scope: NotRequired[LensScope | None]
@@ -12475,6 +12530,7 @@ class ArtifactView(TypedDict):
 class ArtifactUnitsRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
+    path: NotRequired[str | None]
 class AnnotationLocatorXlsx(TypedDict):
     format: Literal["xlsx"]
     sheet: str
@@ -12497,7 +12553,14 @@ class AnnotationLocatorText(TypedDict):
     format: Literal["text"]
     char_start: int
     char_end: int
-AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx | AnnotationLocatorHtml | AnnotationLocatorText
+class AnnotationLocatorCode(TypedDict):
+    format: Literal["code"]
+    commit: str
+    path: str
+    file_hash: str
+    char_start: int
+    char_end: int
+AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx | AnnotationLocatorHtml | AnnotationLocatorText | AnnotationLocatorCode
 class ArtifactUnitView(TypedDict):
     locator: AnnotationLocator
     quote: NotRequired[str | None]
@@ -12791,6 +12854,9 @@ class CodeProposalSubmitted(TypedDict):
     provenance_claim: EntityId
     base: str
     status: RepoProposalStatus
+class CodeProposalRereviewRequest(TypedDict):
+    original: EntityId
+    change: CodeProposalSubmitRequest
 class CodeConflictRecordRequest(TypedDict):
     repo: EntityId
     branch_subject: EntityId
@@ -12826,6 +12892,9 @@ class CodeProposalResolveRequest(TypedDict):
     branch_subject: EntityId
     conflict: EntityId
     branch: str
+class CodeProposalResolveRereviewRequest(TypedDict):
+    original: EntityId
+    change: CodeProposalResolveRequest
 LearningPredicate = Literal["reliability", "edit_cost", "retest_noise", "setting"]
 class LearningCell(TypedDict):
     predicate: LearningPredicate
@@ -13860,6 +13929,9 @@ class OriginPublishApproveRequest(TypedDict):
     request_id: EntityId
     review_digest: str
     code_repo: NotRequired[EntityId | None]
+class DevicePredecessor(TypedDict):
+    client: str
+    device_key: str
 OriginResidence = Literal["local-vault", "cloud-vault"]
 class OriginAuthority(TypedDict):
     epoch: int
@@ -14716,10 +14788,17 @@ class WorkflowDispatchRequest(TypedDict):
     briefing: str
     context_spec: NotRequired[ContextSpec | None]
     task_ref: NotRequired[EntityId | None]
+CallerLocality = Literal["on_device", "off_device"]
+class CallerOriginConnectionBody(TypedDict):
+    locality: CallerLocality
+class CallerOriginConnection(TypedDict):
+    connection: CallerOriginConnectionBody
+CallerOrigin = Literal["native_host", "unknown"] | CallerOriginConnection
 class WorkflowStepCapture(TypedDict):
     requested_agent_ref: EntityId
     agent_def_ref: EntityId
     definition: AgentDefinitionSpec
+    caller_origin: CallerOrigin
 class WorkflowStepRun(TypedDict):
     ordinal: int
     requested_agent_ref: EntityId
@@ -14812,6 +14891,7 @@ class LaunchedMember(TypedDict):
     state: str
     type_ref: TypeStamp
     team_ref: NotRequired[str | None]
+    caller_origin: CallerOrigin
 TeamAxis = Literal["converge", "diverge"]
 class ResolvedTeam(TypedDict):
     type_ref: TypeStamp
@@ -17613,6 +17693,7 @@ class LlmStreamEventToolCallEnd(TypedDict):
     call_id: str
     name: str
     input: Any
+    signature: NotRequired[str | None]
 class LlmStreamEventToolResultStart(TypedDict):
     event: Literal["tool_result_start"]
     part_id: str
@@ -19376,10 +19457,17 @@ class TranscriptIngestOutcomeSession(TypedDict):
 class TranscriptIngestOutcomeRetryOpenSession(TypedDict):
     outcome: Literal["retry_open_session"]
     open_session_ref: EntityId
+class TranscriptIngestOutcomeHookPending(TypedDict):
+    outcome: Literal["hook_pending"]
+    session_ref: EntityId
+    ask: EntityId
+class TranscriptIngestOutcomeQueued(TypedDict):
+    outcome: Literal["queued"]
+    attempt_ref: str
 class TranscriptIngestOutcomeNoteFallback(TypedDict):
     outcome: Literal["note_fallback"]
     note_ref: EntityId
-TranscriptIngestOutcome = TranscriptIngestOutcomeSession | TranscriptIngestOutcomeRetryOpenSession | TranscriptIngestOutcomeNoteFallback
+TranscriptIngestOutcome = TranscriptIngestOutcomeSession | TranscriptIngestOutcomeRetryOpenSession | TranscriptIngestOutcomeHookPending | TranscriptIngestOutcomeQueued | TranscriptIngestOutcomeNoteFallback
 class ClaimListFilter(TypedDict):
     subject_ref: NotRequired[str | None]
     predicate: NotRequired[str | None]
@@ -21213,6 +21301,10 @@ class OfficeBodyExportVerbRequest(TypedDict):
     made_by: NotRequired[Any | None]
     utc_offset_minutes: NotRequired[int | None]
     iana_timezone: NotRequired[str | None]
+class HeldDeckId(TypedDict):
+    node: int
+    native_id: NotRequired[int | None]
+    creation_id: NotRequired[str | None]
 class OfficeRecalcFailure(TypedDict):
     code: str
     detail: str
@@ -21224,6 +21316,7 @@ class OfficeBodyExportRecord(TypedDict):
     version: int
     frontier: list[int]
     rebind_frontier: NotRequired[list[int] | None]
+    held_ids: NotRequired[list[HeldDeckId] | None]
     source_version: int
     actor: BodyActor
     author: str
@@ -22160,7 +22253,7 @@ class WakeRecipeJobView(TypedDict):
     parked_at: NotRequired[int | None]
     result_ref: NotRequired[str | None]
     conclusions: list[EntityId]
-WakeOutcomeState = Literal["running", "succeeded", "partial", "failed"]
+WakeOutcomeState = Literal["running", "awaiting_host", "succeeded", "partial", "failed"]
 class WakeParkedJob(TypedDict):
     attempt: EntityId
     cause: NotRequired[DreamerParkCauseView | None]
@@ -22256,6 +22349,7 @@ class WakeRecipePolicy(TypedDict):
     narrative_instruction: str
     arc_min_new_statements: int
     arc_child_calls_per_wake: int
+    arc_synopsis_enabled: bool
     audit_window_instruction: str
     follower_enabled: bool
     follower_instruction: str
@@ -22459,6 +22553,7 @@ class ChannelIdentityLifecycleReceipt(TypedDict):
     identity_retiring: bool
     approval_digest: NotRequired[str | None]
     request_ref: NotRequired[EntityId | None]
+    paced_until: NotRequired[int | None]
 DelegatedGrantScope = Literal["mail.read", "mail.metadata", "mail.send"]
 class DelegatedGrant(TypedDict):
     custody_record_ref: str
@@ -22921,6 +23016,10 @@ class NoteReadRequest(TypedDict):
     note_ref: str
     reason: NotRequired[str | None]
     version: NotRequired[NoteVersion | None]
+    spans: NotRequired[list[NoteReadSpan]]
+class NoteIndexedReadRequest(TypedDict):
+    note_ref: str
+    reason: NotRequired[str | None]
     spans: NotRequired[list[NoteReadSpan]]
 class NoteAccessRequest(TypedDict):
     note_ref: str
