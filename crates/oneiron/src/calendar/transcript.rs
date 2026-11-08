@@ -16,11 +16,11 @@ mod door;
 mod landing;
 mod pending;
 
+pub use door::TranscriptFileDropInput;
 use landing::ingest_parsed_transcript_in_txn;
 pub(crate) use landing::{
     ingest_meeting_transcript_in_txn, ingest_prepared_meeting_transcript_in_txn,
 };
-pub use door::TranscriptFileDropInput;
 pub use pending::{
     PendingTranscriptPass, TRANSCRIPT_OPEN_SESSION_WAIT_SECS, TRANSCRIPT_PENDING_ATTEMPT_KIND,
     run_pending_transcript_ingests,

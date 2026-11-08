@@ -301,6 +301,12 @@ pub struct AgentHealthCard {
     pub diagnostics: Vec<EntityId>,
     /// Receipt and attempt ids, newest last.
     pub evidence: Vec<EntityId>,
+    /// Host-local model-input read-row union behind the merged numbers.
+    /// `None` when any contributing read is unknown. These may be native
+    /// side-table keys, not primary entities or authority/erasure proofs.
+    /// Routing, recipients and owner-copy policy are outside this union.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub source_rows: Option<Vec<EntityId>>,
     pub window_from: u64,
     pub window_to: u64,
     /// The number the dial was held against, and the dial.
@@ -334,6 +340,10 @@ pub struct AgentHealthCard {
     /// The newest ask of the Coach (`ask_coach`), and its answer once drafted.
     #[serde(default)]
     pub coach: Option<AgentHealthCoachAsk>,
+    /// An erase scrubbed an unattributed Coach draft on this card. Kept
+    /// across newer asks so saved copies cannot regain the erased text.
+    #[serde(default)]
+    pub legacy_draft_scrubbed: bool,
     /// The typed brief the newest finding's review observed on the TASK
     /// (`brief`): a witness, never a launch snapshot. An ask and an outcome
     /// receipt each keep their own copy.
@@ -390,6 +400,7 @@ pub(super) struct Finding {
     /// exists at emission (an actor-only call stream).
     pub(super) generation: Option<u32>,
     pub(super) evidence: Vec<EntityId>,
+    pub(super) source_rows: Option<Vec<EntityId>>,
     pub(super) window: (u64, u64),
     /// The stable number the DIAGNOSTIC carries, and the dial.
     pub(super) actual: i64,
