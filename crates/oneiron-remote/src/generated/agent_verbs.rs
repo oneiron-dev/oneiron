@@ -2263,6 +2263,12 @@ impl OneironClient {
                 "vault.code.type_diagnostics" => remote_agent_verb_output::<
                     Option<oneiron::code_run::ProgramStepFeedbackRelease>,
                 >(client, verb, &input),
+                "vault.code.waits.rebind_prepare" => remote_agent_verb_output::<
+                    oneiron::memory::code_wait_doors::CodeWaitRebindPrepared,
+                >(client, verb, &input),
+                "vault.code.waits.rebind" => remote_agent_verb_output::<
+                    oneiron::memory::code_wait_doors::CodeWaitRebindReceipt,
+                >(client, verb, &input),
                 "vault.code.waits.resolve" => remote_agent_verb_output::<
                     oneiron::memory::code_wait_doors::CodeWaitReceiptView,
                 >(client, verb, &input),
@@ -2752,6 +2758,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "tasks.outcomes" => remote_agent_verb_output::<
                     Vec<oneiron::llm::decision::questions::CalibrationPair>,
+                >(client, verb, &input),
+                "tasks.outcomes.route_calibration" => remote_agent_verb_output::<
+                    oneiron::llm::decision::questions::RouteCalibrationReport,
                 >(client, verb, &input),
                 "vault.rooms.list" => remote_agent_verb_output::<
                     Vec<oneiron::task_verb::sdk::RoomEntry>,
@@ -3505,6 +3514,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.esign.signing.signature" => remote_agent_verb_output::<
                     oneiron::blob_artifact::esign::EsignSigningSignatureView,
+                >(client, verb, &input),
+                "vault.esign.signing.preview" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignSigningPreviewView,
                 >(client, verb, &input),
                 "vault.esign.seal.get" => remote_agent_verb_output::<
                     oneiron::blob_artifact::esign::EsignSealView,
@@ -13124,6 +13136,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.code.type_diagnostics", value)
     }
+    pub fn vault_code_waits_rebind_prepare(
+        &self,
+        input: &oneiron::memory::code_wait_doors::CodeWaitRebindPrepareRequest,
+    ) -> Result<oneiron::memory::code_wait_doors::CodeWaitRebindPrepared, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.waits.rebind_prepare", value)
+    }
+    pub fn vault_code_waits_rebind(
+        &self,
+        input: &oneiron::memory::code_wait_doors::CodeWaitRebindRequest,
+    ) -> Result<oneiron::memory::code_wait_doors::CodeWaitRebindReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.waits.rebind", value)
+    }
     pub fn vault_code_waits_resolve(
         &self,
         input: &oneiron::memory::code_wait_doors::CodeWaitResolveRequest,
@@ -15101,6 +15137,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("tasks.outcomes", value)
+    }
+    pub fn tasks_outcomes_route_calibration(
+        &self,
+        input: &oneiron::task_verb::TaskAskHandle,
+    ) -> Result<oneiron::llm::decision::questions::RouteCalibrationReport, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.outcomes.route_calibration", value)
     }
     pub fn vault_rooms_list(
         &self,
@@ -18074,6 +18122,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.esign.signing.signature", value)
+    }
+    pub fn vault_esign_signing_preview(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignSigningPreviewRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignSigningPreviewView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.signing.preview", value)
     }
     pub fn vault_esign_seal_get(
         &self,
