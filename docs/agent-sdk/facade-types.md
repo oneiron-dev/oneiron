@@ -1046,7 +1046,7 @@ export type MessageStreamRequest = { handle: MessageStreamHandle }
 /** `oneiron::memory::witness::stream::types::StreamFinality` */
 export type StreamFinality = "final" | "partial" | "cancelled"
 /** `oneiron::memory::witness::stream::types::StreamFinalityReason` */
-export type StreamFinalityReason = "explicit_finalize" | "idle_timeout30s" | { idle_timeout: { timeout_ms: number } } | "process_crash_recovery" | "user_interrupted" | "agent_aborted" | "external_signal" | { custom: string }
+export type StreamFinalityReason = "explicit_finalize" | "idle_timeout_30s" | { idle_timeout: { timeout_ms: number } } | "process_crash_recovery" | "user_interrupted" | "agent_aborted" | "external_signal" | { custom: string }
 /** `oneiron_model::llm::protocol::IncompleteReason` */
 export type IncompleteReason = "terminal_disagreement"
 /** `oneiron_model::llm::protocol::FinishReason` */
