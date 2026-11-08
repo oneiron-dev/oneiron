@@ -252,11 +252,17 @@ impl FacadeRowDoor {
     /// 10748), and its receipt names the action's hold (FIX 10938). A row
     /// the credential's own call runs meets the route's destination release
     /// before the run reads it (`released_value`, FIX 21054).
+    ///
+    /// `held`, the action's input whose content it holds as a file (FIX
+    /// 22096), rides the row's request beside `call`'s input, which names
+    /// the content empty; the row reads the file. A row the credential's own
+    /// call runs takes no held input.
     fn post_row(
         &self,
         call: &SelfAgentVerbCall,
         origin: &HostWriteOrigin,
         invocation: oneiron::runtime_hooks::InvocationId,
+        held: Option<&oneiron::code_run::actions::ActionBlobInput>,
     ) -> RowAnswer {
         let refused = || AgentVerbRefusal {
             hook_notice: None,
@@ -264,6 +270,11 @@ impl FacadeRowDoor {
         };
         let run_writes = run_write_token_of_origin(origin);
         let outer = *self.outer.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.credential.is_some() && held.is_some() {
+            return Err(oneiron::Error::InvalidConfig(
+                "a credential's own row takes no held input".to_owned(),
+            ));
+        }
         if let Some(auth) = &self.credential {
             let auth = auth.clone();
             let server = Arc::clone(&self.server);
@@ -352,6 +363,19 @@ impl FacadeRowDoor {
         *request.extensions_mut() = self.extensions.clone();
         if let Some(outer) = outer {
             request.extensions_mut().insert(HeldOuterAttempt(outer));
+        }
+        // The row's content is this call's own held input or none: never a
+        // file another request left on the extensions (FIX 22096).
+        request
+            .extensions_mut()
+            .remove::<super::super::blob_body::FacadeBlobBody>();
+        request
+            .extensions_mut()
+            .remove::<super::super::blob_body::HeldActionInput>();
+        if let Some(held) = held {
+            request
+                .extensions_mut()
+                .insert(super::super::blob_body::HeldActionInput(held.clone()));
         }
         // The dispatcher holds its driver thread while the row runs on
         // the server runtime, as a request of its own would.
@@ -486,7 +510,17 @@ impl AgentVerbDoor for FacadeRowDoor {
         origin: &HostWriteOrigin,
         invocation: oneiron::runtime_hooks::InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
-        self.post_row(call, origin, invocation)
+        self.post_row(call, origin, invocation, None)
+    }
+
+    fn call_held(
+        &self,
+        call: &SelfAgentVerbCall,
+        origin: &HostWriteOrigin,
+        invocation: oneiron::runtime_hooks::InvocationId,
+        held: &oneiron::code_run::actions::ActionBlobInput,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        self.post_row(call, origin, invocation, Some(held))
     }
 
     /// The typed actions keep their own ceiling and owner proof; this door

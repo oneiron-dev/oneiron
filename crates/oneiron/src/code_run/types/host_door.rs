@@ -172,6 +172,27 @@ pub trait AgentVerbDoor: Send + Sync {
         invocation: crate::runtime_hooks::InvocationId,
     ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>>;
 
+    /// [`Self::call`] for an action's call whose input's base64 member its
+    /// host holds as a file (FIX 22096): `call`'s input is `held`'s head,
+    /// and the door hands the row the file, never the string. A door that
+    /// carries no held input refuses the call, and the action does not run.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::call`]; a door that carries no held input.
+    fn call_held(
+        &self,
+        call: &SelfAgentVerbCall,
+        origin: &crate::memory::HostWriteOrigin,
+        invocation: crate::runtime_hooks::InvocationId,
+        held: &crate::code_run::actions::ActionBlobInput,
+    ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        let _ = (call, origin, invocation, held);
+        Err(crate::Error::InvalidConfig(
+            "this verb door carries no held input".to_owned(),
+        ))
+    }
+
     /// A granted `reveal.wait` its step made before a park, made again as the
     /// resumed step replays it (FIX 2360): the value read again under
     /// `lease`, the T1 lease its kept answer names, for the replayed guest's

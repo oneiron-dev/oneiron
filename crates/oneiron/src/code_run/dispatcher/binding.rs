@@ -103,6 +103,7 @@ impl<'a> HostSelfDispatcher<'a> {
             task_refusal_output: RefCell::new(None),
             skill_bodies: RefCell::new(None),
             pre_hooked_fold: None,
+            action_blob: None,
             parked_hooks: RefCell::new(Vec::new()),
             reader_spawn: None,
             reader_child: None,

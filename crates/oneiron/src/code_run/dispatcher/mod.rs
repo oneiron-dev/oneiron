@@ -136,6 +136,10 @@ pub struct HostSelfDispatcher<'a> {
     pub(super) skill_bodies: RefCell<Option<crate::skill::SkillBodyCapture>>,
     /// The public fold boundary's completed pre chain, for its exact Mark only.
     pub(super) pre_hooked_fold: Option<crate::code_run::actions::PreHookedFold>,
+    /// An action's input whose base64 member its host holds as a file (FIX
+    /// 22096), for the action's own call only: its door takes the file, and
+    /// its receipt keeps the whole input's digests.
+    pub(super) action_blob: Option<crate::code_run::actions::ActionBlobInput>,
     /// The calls a verb hook's ask parked, as the run's history shows them,
     /// with the invocation each ask waits under and the ask's handle, which
     /// the same call names as the pause it resumes (FIX 5526). Each keeps
