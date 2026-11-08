@@ -304,7 +304,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/ingress.rs` | src | m | 15 crate-vis | — | Token-first ingress at the public signing doors (FIX 3808, Engine rulings 10-18 and 10-19) |
 | `src/api/esign/notice_worker.rs` | src | s | 1 crate-vis | — | The e-sign notice worker (FIX 6219, Engine design B): staged transition notices (pending, completed… |
 | `src/api/esign/parse_lease.rs` | src | s | 4 crate-vis | — | A PDF inspection's parse on this machine's memory (FIX 8065): the editor's geometry door, the anonymous one… |
-| `src/api/esign/parse_lease/isolated.rs` | src | s | 1 crate-vis | — | The geometry callers' input lease, region and isolated parse |
+| `src/api/esign/parse_lease/isolated.rs` | src | s | 1 crate-vis | — | Geometry and ceremony-preview callers' input lease, region and isolated parse |
 | `src/api/esign/presentation.rs` | src | m | 8 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | m | 3 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
 | `src/api/facade.rs` | src | m | 36 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
