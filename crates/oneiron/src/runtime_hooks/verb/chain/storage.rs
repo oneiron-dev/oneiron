@@ -4,6 +4,7 @@
 //! store (WILL L11-01 S01-2c); and the queued outcomes the vault lands once
 //! its write committed.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use crate::receipt::{ReceiptKind, ReceiptRecord, hex_lower};
@@ -47,26 +48,45 @@ impl Chain<'_> {
     /// runs stay in the keep. A room's chain, and a call whose consequences
     /// do not run, holds none.
     pub(super) fn consequences_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        self.consequences_at_in_txn(txn, self.vault.store.clock.now_recorded_at())
+    }
+
+    /// The chain's blocks with their lineage and its intents, each written
+    /// once; `at` (Unix seconds) stamps when a block on an erased source
+    /// expires and an intent on one is refused. A caller a permanent erase
+    /// fenced before this write leaves the lineage of each, as the erase's
+    /// own scrub would have taken it had the chain committed first
+    /// ([`lineage::erase_entity`]; FIX 22184).
+    fn consequences_at_in_txn(&self, txn: &mut heed::RwTxn<'_>, at: u64) -> Result<()> {
+        if self.blocks.is_empty() && self.intents.is_empty() {
+            return Ok(());
+        }
         let vault = self.vault;
-        let at = vault.store.clock.now_recorded_at();
         let erased = self.erased_sources(txn)?;
+        let caller =
+            store::source_erased_in_txn(vault, txn, &self.call.actor)?.then_some(self.call.actor);
         for (id, row, chain) in &self.blocks {
+            let chain = lineage::without_erased(chain, caller.as_ref());
             if row.refs.iter().any(|id| erased.contains(id)) {
                 let mut row = row.clone();
                 block::scrub_block_payload(&mut row, at);
                 block::put_block_in_txn(vault, txn, *id, &row)?;
-                lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
+                lineage::put_in_txn(vault, txn, id.as_bytes(), &chain)?;
                 continue;
             }
             if block::put_new_block_in_txn(vault, txn, *id, row)? {
-                lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
+                lineage::put_in_txn(vault, txn, id.as_bytes(), &chain)?;
             }
         }
         for (key, intent, proposal) in &self.intents {
+            let mut intent = Cow::Borrowed(intent);
+            if let Some(caller) = &caller {
+                lineage::erase_entity(&mut intent.to_mut().lineage, caller);
+            }
             if store::dependencies_erased_in_txn(vault, txn, &intent.dependencies)? {
-                let mut intent = intent.clone();
-                store::scrub_intent_payload(&mut intent, at);
-                store::INTENTS.put(vault, txn, key, &intent)?;
+                let intent = intent.to_mut();
+                store::scrub_intent_payload(intent, at);
+                store::INTENTS.put(vault, txn, key, intent)?;
                 continue;
             }
             if store::INTENTS.get(&vault.store, txn, key)?.is_some() {
@@ -75,7 +95,7 @@ impl Chain<'_> {
             if let Some(id) = proposal {
                 lineage::put_in_txn(vault, txn, id.as_bytes(), &intent.lineage)?;
             }
-            store::INTENTS.put(vault, txn, key, intent)?;
+            store::INTENTS.put(vault, txn, key, &intent)?;
         }
         Ok(())
     }
@@ -154,35 +174,7 @@ impl Chain<'_> {
             store::RECEIPTS.put(vault, txn, &run.key, &receipt)?;
             record::put_in_txn(vault, vault, txn, &run.key, &saved)?;
         }
-        let erased = self.erased_sources(txn)?;
-        for (id, row, chain) in &self.blocks {
-            if row.refs.iter().any(|id| erased.contains(id)) {
-                let mut row = row.clone();
-                block::scrub_block_payload(&mut row, at / 1_000);
-                block::put_block_in_txn(vault, txn, *id, &row)?;
-                lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
-                continue;
-            }
-            if block::put_new_block_in_txn(vault, txn, *id, row)? {
-                lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
-            }
-        }
-        for (key, intent, proposal) in &self.intents {
-            if store::dependencies_erased_in_txn(vault, txn, &intent.dependencies)? {
-                let mut intent = intent.clone();
-                store::scrub_intent_payload(&mut intent, at / 1_000);
-                store::INTENTS.put(vault, txn, key, &intent)?;
-                continue;
-            }
-            if store::INTENTS.get(&vault.store, txn, key)?.is_some() {
-                continue;
-            }
-            if let Some(id) = proposal {
-                lineage::put_in_txn(vault, txn, id.as_bytes(), &intent.lineage)?;
-            }
-            store::INTENTS.put(vault, txn, key, intent)?;
-        }
-        Ok(())
+        self.consequences_at_in_txn(txn, at / 1_000)
     }
 
     /// Lands the post chain's queued outcomes, each once, as its hook's
