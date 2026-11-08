@@ -164,12 +164,12 @@ impl AgentDispatcher<'_> {
         .require_relationship_grants(Some(house))
         .for_destination(&ReadDestination::on_device());
         let reader = self.vault.scoped_read(key);
-        let txn = self.vault.store.env.read_txn()?;
-        let Some((kind, _, body)) = reader
-            .get_entities_parts_in_txn(&txn, std::slice::from_ref(&source.message))?
-            .pop()
-            .flatten()
-        else {
+        // The grant time is persisted before the snapshot opens, so a grant
+        // that expired while the question waited is judged expired.
+        let row = reader.with_grant_read_snapshot(|txn| {
+            reader.get_entities_parts_in_txn(txn, std::slice::from_ref(&source.message))
+        })?;
+        let Some((kind, _, body)) = row.into_iter().next().flatten() else {
             return Ok(None);
         };
         if kind != ENTITY_TYPE_MESSAGE {
