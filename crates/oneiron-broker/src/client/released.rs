@@ -10,8 +10,8 @@ use crate::frame::{
 };
 use crate::send::push_wiped;
 use crate::{
-    BrokerError, CallHeader, DispatchError, Failure, MAX_BODY, Outcome,
-    PROTOCOL_VERSION, ReplyHeader,
+    BrokerError, CallHeader, DispatchError, Failure, MAX_BODY, Outcome, PROTOCOL_VERSION,
+    ReplyHeader,
 };
 
 impl BrokerConnection {
