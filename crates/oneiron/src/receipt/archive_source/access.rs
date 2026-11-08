@@ -1,7 +1,8 @@
 //! Archive receipt I/O through ordinary ASSET admission, not terminal ledgers.
 use super::{
-    codec::{ReceiptArchive, decode, id_of_bytes, invalid, is_inert_holder},
+    codec::{ReceiptArchive, decode, invalid, is_inert_holder},
     custody::{read_source, receipt_archives_for_holder},
+    prepared::ReceiptArchivePreparation,
 };
 use crate::{
     Vault,
@@ -95,6 +96,7 @@ impl Vault {
         }
         let mut existing = archived_receipt_sources_in_txn(&self.store, txn, holder)?;
         let mut prepared = Vec::new();
+        let mut preparation = None;
         for source in sources {
             let source = source.as_imported_archive();
             source.validate()?;
@@ -105,8 +107,14 @@ impl Vault {
                 continue;
             }
             let archive = ReceiptArchive::new(holder, body, source.clone())?;
-            let bytes = archive.bytes()?;
-            let id = id_of_bytes(&bytes)?;
+            if preparation.is_none() {
+                preparation = Some(ReceiptArchivePreparation::new(self.store.body_dir()?)?);
+            }
+            let encoded = preparation
+                .as_mut()
+                .expect("receipt preparation opened")
+                .push(&archive)?;
+            let id = encoded.id;
             if let Some(raw) =
                 crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
             {
@@ -118,24 +126,32 @@ impl Vault {
                     return Err(invalid());
                 }
             } else {
-                prepared.push((id, bytes));
+                prepared.push((id, encoded));
             }
             existing.insert(source.receipt_id().to_owned(), source);
         }
-        for (id, bytes) in &prepared {
-            self.batch_in()
-                .put(
-                    id,
-                    ENTITY_TYPE_ASSET,
-                    TimeRange {
-                        start: header.occurred_start,
-                        end: header.occurred_end,
-                    },
-                    header.learned_at,
-                    bytes,
-                )
-                .apply(txn)?;
+        let count = prepared.len();
+        let Some(preparation) = preparation else {
+            return Ok(count);
+        };
+        let bytes = preparation.finish()?;
+        for (id, encoded) in prepared {
+            // Receipt archives remain owning-adapter rows. No file manifest
+            // or persistent instance is introduced: the native stager reads
+            // this one frozen archive back for the ordinary ASSET put.
+            let staged = self.stage_asset_body(bytes.reader(&encoded), None, None, None)?;
+            encoded.check_facts(staged.facts())?;
+            self.put_asset_body_in_txn(
+                txn,
+                &id,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+                &staged,
+            )?;
         }
-        Ok(prepared.len())
+        Ok(count)
     }
 }

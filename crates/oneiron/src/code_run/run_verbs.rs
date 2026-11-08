@@ -28,6 +28,10 @@ pub struct MemorySearchInput {
     pub query: String,
     #[schemars(range(max = "u32::MAX"))]
     pub limit: Option<u32>,
+    /// The caller's retrieval filter (FIX 3977): it only narrows what the
+    /// run's reader key admits.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 /// `vault.claims.put`: one claim candidate through the run's gate.
@@ -231,7 +235,7 @@ pub struct AgentSpawnInput {
 
 /// One spawn field as the parent sets it (ARCH-0079 #seed-pin): a seed is
 /// where the planner starts, weighted in runs; a pin is never overridden.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum SpawnKnob<T> {
     Seed { value: T, weight_runs: f64 },
@@ -266,7 +270,7 @@ pub enum SpawnCare {
 }
 
 /// A coordination pattern by its word.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SpawnPattern {
     Solo,

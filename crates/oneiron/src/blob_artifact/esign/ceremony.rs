@@ -1,10 +1,13 @@
 //! One public signing executor: turn, access, viewed, terminal, then action.
+use super::rate::{LimitCrossing, keep_limit_crossings};
 use super::{
     capability::{EsignCapability, binding},
-    ledger::{append, state_in},
+    field_admission::{EventFields, InspectedPages, inspect_event_pages},
+    ledger::{append, append_inspected, state_in},
     model::*,
     principals::automated_signing_allowed,
 };
+use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -25,6 +28,13 @@ pub struct SigningPage {
     pub presentations: Vec<super::render::FieldPresentation>,
     pub values: BTreeMap<String, SignatureRow>,
 }
+/// Receipt observations of the sealed bytes, in document item order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SigningSealedItem {
+    pub sha256: String,
+    pub active_content: super::sealer::SealActiveContentFacts,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", content = "data", rename_all = "snake_case")]
 pub enum SigningOutcome {
@@ -33,6 +43,8 @@ pub enum SigningOutcome {
     Terminal {
         status: DocumentStatus,
         item_count: usize,
+        /// None when no sealing receipt is available to read.
+        sealed_items: Option<Vec<SigningSealedItem>>,
     },
     AwaitingSeal,
     /// D6: the signing dial does not open this automated sign act, so the
@@ -134,7 +146,9 @@ pub(super) fn enqueue_seal(
     Ok(())
 }
 /// Lands one recipient's Complete on `state`: the signed event, the notice
-/// to each recipient it promotes, and the seal once the chain is ready.
+/// to each recipient it promotes, and the seal once the chain is ready. Its
+/// fields are laid out on `inspected`, the recipient's PDFs as they were
+/// inspected before this writer (FIX 9609).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sign(
     vault: &Vault,
@@ -146,14 +160,16 @@ pub(super) fn sign(
     evidence: EsignSigningEvidence,
     actor: EsignAuditActor,
     now: u64,
+    inspected: &InspectedPages,
 ) -> Result<()> {
-    let advanced = append(
+    let advanced = append_inspected(
         vault,
         txn,
         document,
         signed_event(&state.document, recipient, next, evidence),
         actor,
         now,
+        inspected,
     )?;
     let promoted = advanced
         .recipients
@@ -177,6 +193,81 @@ pub(super) fn sign(
         },
     )?;
     enqueue_seal(vault, txn, document, now)
+}
+/// The PDFs a signing act's writer lays fields on, inspected before it (FIX
+/// 9609): none for an act that appends no field event, or that the writer's
+/// own capability, ceiling, turn, status, consent or D6 gates refuse in this
+/// read snapshot, so a refused call parses nothing.
+fn inspect_act_pages(
+    vault: &Vault,
+    token: &EsignCapability,
+    action: &SigningAction,
+    caller: SigningCaller,
+    now: u64,
+    ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
+) -> InspectedPages {
+    if !matches!(
+        action,
+        SigningAction::SaveField { .. } | SigningAction::Complete { consent: true, .. }
+    ) {
+        return InspectedPages::default();
+    }
+    inspect_event_pages(vault, |txn| {
+        let cap = binding(vault, txn, token)?;
+        super::lane_scope::ceiling_admits_in(ceiling, txn, &cap.document)?;
+        let state = state_in(vault, txn, EntityId::from_hex(&cap.document)?)?;
+        let (Some(recipient), Some(progress)) = (
+            state
+                .document
+                .recipients
+                .iter()
+                .find(|r| r.id == cap.recipient),
+            state.recipients.get(&cap.recipient),
+        ) else {
+            return Ok(None);
+        };
+        if state.status != DocumentStatus::Pending
+            || state.rejection.is_some()
+            || matches!(
+                progress.signing,
+                SigningStatus::Waiting | SigningStatus::Completed
+            )
+            || cap.revoked_at.is_some()
+            || now >= cap.hard_expires_at
+            || now >= progress.expires_at
+        {
+            return Ok(None);
+        }
+        let fields = match action {
+            SigningAction::SaveField { field, .. } => {
+                if !state
+                    .document
+                    .fields
+                    .iter()
+                    .any(|f| f.id == *field && f.recipient == recipient.id)
+                {
+                    return Ok(None);
+                }
+                EventFields::Saved(field.clone())
+            }
+            SigningAction::Complete { .. } => {
+                let automated = recipient.automated || caller == SigningCaller::Agent;
+                if automated
+                    && (recipient.natural_person.is_some()
+                        || !automated_signing_allowed(
+                            vault,
+                            txn,
+                            recipient.principal_ref.as_deref(),
+                        )?)
+                {
+                    return Ok(None);
+                }
+                EventFields::Signer(recipient.id.clone())
+            }
+            SigningAction::Load | SigningAction::Reject { .. } => return Ok(None),
+        };
+        Ok(Some((state, fields)))
+    })
 }
 impl Vault {
     /// No session or identity cookie. The capability proves access; explicit
@@ -250,6 +341,9 @@ impl Vault {
                 verified_actor,
             )
         });
+        // FIX 9609: the PDFs this act lays fields on are inspected here,
+        // before its writer, which lays the fields out on this inspection.
+        let inspected = inspect_act_pages(self, token, action, caller, now, ceiling);
         self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
             super::lane_scope::ceiling_admits_in(ceiling, txn, &cap.document)?;
@@ -341,9 +435,24 @@ impl Vault {
                     | DocumentStatus::Voided
                     | DocumentStatus::Expired
             ) {
+                let sealed_items = super::seal::CANONICAL
+                    .get(&self.store, txn, &document)
+                    .ok()
+                    .flatten()
+                    .map(|manifest| {
+                        manifest
+                            .items
+                            .into_iter()
+                            .map(|item| SigningSealedItem {
+                                sha256: crate::entity_id::bytes_to_hex_lower(&item.sha256),
+                                active_content: item.active_content,
+                            })
+                            .collect()
+                    });
                 return Ok(SigningOutcome::Terminal {
                     status: state.status,
                     item_count: state.document.items.len(),
+                    sealed_items,
                 });
             }
             if state.rejection.is_some()
@@ -381,7 +490,18 @@ impl Vault {
                     } else {
                         value.clone()
                     };
-                    state = append(
+                    let crossing = match (&definition.meta, &value) {
+                        (FieldMeta::Email, FieldValue::Text(text)) => text_crossing(
+                            self,
+                            EngineLimit::EsignEmailFieldBytes,
+                            text.len() as u64,
+                        ),
+                        (FieldMeta::Name | FieldMeta::Date, FieldValue::Text(text)) => {
+                            text_crossing(self, EngineLimit::EsignNameFieldBytes, text.len() as u64)
+                        }
+                        _ => None,
+                    };
+                    state = append_inspected(
                         self,
                         txn,
                         document,
@@ -395,7 +515,18 @@ impl Vault {
                         },
                         actor,
                         now,
+                        &inspected,
                     )?;
+                    if let Some(crossing) = crossing {
+                        keep_limit_crossings(
+                            self,
+                            txn,
+                            &cap.document,
+                            &cap.recipient,
+                            &[crossing],
+                            now,
+                        )?;
+                    }
                 }
                 SigningAction::Complete { consent, next } => {
                     if !consent {
@@ -451,6 +582,7 @@ impl Vault {
                         evidence,
                         actor,
                         now,
+                        &inspected,
                     )?;
                     return Ok(SigningOutcome::AwaitingSeal);
                 }
@@ -466,6 +598,20 @@ impl Vault {
                         actor,
                         now,
                     )?;
+                    if let Some(crossing) = text_crossing(
+                        self,
+                        EngineLimit::EsignRejectReasonBytes,
+                        reason.len() as u64,
+                    ) {
+                        keep_limit_crossings(
+                            self,
+                            txn,
+                            &cap.document,
+                            &cap.recipient,
+                            &[crossing],
+                            now,
+                        )?;
+                    }
                     enqueue_seal(self, txn, document, now)?;
                     return Ok(SigningOutcome::AwaitingSeal);
                 }
@@ -502,4 +648,9 @@ impl Vault {
             }))
         })
     }
+}
+
+fn text_crossing(vault: &Vault, row: EngineLimit, measured: u64) -> Option<LimitCrossing> {
+    let bound = vault.limit_watch().bound(row);
+    (measured > bound).then_some((row, bound, measured))
 }

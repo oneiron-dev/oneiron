@@ -177,6 +177,11 @@ pub(super) struct TaskVerbBody {
     pub(super) spec: Value,
     pub(super) consult: Option<ConsultPayload>,
     pub(super) ttl: Option<TaskTtl>,
+    /// FIX685: the hook-chosen due/deadline stamp, Unix seconds. `None`
+    /// is no due annotation. Never TTL expiry (that is `ttl`), never a
+    /// not-before wait; an open standard TASK with one ticks once on
+    /// `schedule.tick` after it (FIX 4749).
+    pub(super) due_at: Option<u64>,
     pub(super) state: Option<TaskExecutionState>,
     pub(super) provenance: Value,
     pub(super) created_at: u64,

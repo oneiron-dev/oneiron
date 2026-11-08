@@ -122,6 +122,18 @@ struct Waiter {
     woken_blocking: Condvar,
 }
 
+struct BlockingWaitWake(std::thread::Thread);
+
+impl std::task::Wake for BlockingWaitWake {
+    fn wake(self: Arc<Self>) {
+        self.0.unpark();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.unpark();
+    }
+}
+
 /// One admitted piece of work. Dropping it hands the permit to the next
 /// waiter, or returns it to the pool.
 #[must_use = "work runs only as long as its permit is held"]
@@ -285,6 +297,73 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
         self.wait_blocking(Some(key), Some(wait))
     }
 
+    /// [`Self::admit_blocking`] with the observation
+    /// [`Self::admit_in_line_observed`] makes, on this thread: this caller's
+    /// queued/held transition, said to the serving call's receipt when it
+    /// has one (FIX 21154).
+    pub fn admit_blocking_observed(
+        &self,
+        key: K,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> Result<LinePermit, WaitTimedOut> {
+        self.wait_blocking_observed(key, None, observer)
+    }
+
+    /// [`Self::admit_blocking_for`] with the same observation.
+    pub fn admit_blocking_for_observed(
+        &self,
+        key: K,
+        wait: Duration,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> Result<LinePermit, WaitTimedOut> {
+        self.wait_blocking_observed(key, Some(wait), observer)
+    }
+
+    /// [`Self::admit_blocking_untimed`] with the same observation.
+    pub fn admit_blocking_untimed_observed(
+        &self,
+        key: K,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> LinePermit {
+        let entry = self.enter(Some(key));
+        observe_entry(observer.as_deref(), &entry);
+        let mut place = match entry {
+            Entry::Admitted(permit) => return permit,
+            Entry::Queued(place) => place,
+        };
+        place.wait_granted(None);
+        let permit = place
+            .settle()
+            .expect("a place whose permit was handed over settles with it");
+        if let Some(observer) = observer {
+            observer.held();
+        }
+        permit
+    }
+
+    /// A caller's blocking wait at its place, observed as an awaited one is:
+    /// queued or held as it enters, held once its permit comes.
+    fn wait_blocking_observed(
+        &self,
+        key: K,
+        wait: Option<Duration>,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> Result<LinePermit, WaitTimedOut> {
+        let entry = self.enter(Some(key));
+        observe_entry(observer.as_deref(), &entry);
+        let mut place = match entry {
+            Entry::Admitted(permit) => return Ok(permit),
+            Entry::Queued(place) => place,
+        };
+        let deadline = Instant::now() + wait.unwrap_or_else(|| *lock(&self.pool.wait));
+        place.wait_granted(Some(deadline));
+        let permit = place.settle().ok_or(WaitTimedOut)?;
+        if let Some(observer) = observer {
+            observer.held();
+        }
+        Ok(permit)
+    }
+
     /// A permit for the host's own work, given only when no caller waits.
     pub fn admit_background_blocking(&self) -> Result<LinePermit, WaitTimedOut> {
         self.wait_blocking(None, None)
@@ -297,6 +376,42 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
         wait: Duration,
     ) -> Result<LinePermit, WaitTimedOut> {
         self.wait_blocking(None, Some(wait))
+    }
+
+    /// The same background line and wait, also ending when `cancel` completes.
+    /// Both notifications wake this blocking thread; no runtime is needed.
+    /// A permit handed over while the wait ends is settled normally.
+    pub fn admit_background_blocking_for_cancel(
+        &self,
+        wait: Duration,
+        cancel: impl Future<Output = ()>,
+    ) -> Result<LinePermit, WaitTimedOut> {
+        let waker = std::task::Waker::from(Arc::new(BlockingWaitWake(std::thread::current())));
+        let mut context = std::task::Context::from_waker(&waker);
+        let mut cancel = std::pin::pin!(cancel);
+        if cancel.as_mut().poll(&mut context).is_ready() {
+            return Err(WaitTimedOut);
+        }
+        let mut place = match self.enter(None) {
+            Entry::Admitted(permit) => return Ok(permit),
+            Entry::Queued(place) => place,
+        };
+        let deadline = Instant::now() + wait;
+        let waiter = Arc::clone(&place.waiter);
+        let mut granted = std::pin::pin!(waiter.granted());
+        loop {
+            if granted.as_mut().poll(&mut context).is_ready()
+                || cancel.as_mut().poll(&mut context).is_ready()
+            {
+                break;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            std::thread::park_timeout(left);
+        }
+        place.settle().ok_or(WaitTimedOut)
     }
 
     /// A free permit for the host's own work, or `None` with nothing put in
@@ -711,6 +826,20 @@ impl Waiter {
 impl Drop for LinePermit {
     fn drop(&mut self) {
         self.pool.release();
+    }
+}
+
+/// Says `entry` to `observer`: held when it took a permit at once, queued
+/// when it waits for one.
+fn observe_entry<K: Eq + Hash + Clone + Send + 'static>(
+    observer: Option<&dyn LineObserver>,
+    entry: &Entry<K>,
+) {
+    if let Some(observer) = observer {
+        match entry {
+            Entry::Admitted(_) => observer.held(),
+            Entry::Queued(_) => observer.queued(),
+        }
     }
 }
 

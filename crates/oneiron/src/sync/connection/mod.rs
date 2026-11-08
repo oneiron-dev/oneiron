@@ -31,18 +31,30 @@
 //! - Queue overflow (`SyncQueue::is_full`) triggers the same re-bootstrap:
 //!   docs dropped + queue cleared between reconnect attempts, so the next
 //!   connection re-runs Phase 1-3 from scratch.
+//!
+//! While the home is down (FIX 4748, `peer_session`): once the dials to
+//! the home have failed unanswered for
+//! [`crate::sync::peer_route::HOME_DOWN_AFTER_SECS`], and a peer dialer is
+//! set, the sessions go to this vault's other machines over the mesh. A peer
+//! session runs the same exchange but confirms nothing (no queue clear, no
+//! re-bootstrap; where a home session would re-bootstrap it ends), takes no
+//! home role, and ends once a probe finds the home answering; the home
+//! session then replays the queue whole.
 
 mod batch_admission;
 mod converge;
 mod directives;
+mod document_response;
 mod handshake;
 mod home_handoff;
 mod home_search;
 mod node_batch;
 mod note_reads;
+mod peer_session;
 mod residence_mode;
 mod server_close;
 mod session;
+mod shared_leave;
 mod steady;
 mod topology;
 
@@ -286,6 +298,7 @@ impl SyncConnection {
             .map_err(|_| TransportError::InvalidPayload("the sync server URL does not parse"))?;
         url.set_path(LEFT_NOTICES_PATH);
         url.set_query(None);
+        shared_leave::require_credential_transport(&url)?;
         let headers = credential
             .left_notice_headers(crate::unix_seconds_now())
             .map_err(TransportError::InvalidPayload)?;
@@ -365,6 +378,18 @@ impl SyncConnection {
         member: &str,
     ) -> Result<Option<crate::sync::shared_leave::SharedLeaveReceipt>, crate::sync::TransportError>
     {
+        let Some(notice) = self.fetch_shared_leave_notice(vault_id, member).await? else {
+            return Ok(None);
+        };
+        self.confirm_shared_leave_notice(&notice).await.map(Some)
+    }
+
+    async fn fetch_shared_leave_notice(
+        &self,
+        vault_id: u64,
+        member: &str,
+    ) -> Result<Option<crate::sync::shared_leave::VerifiedLeaveNotice>, crate::sync::TransportError>
+    {
         use crate::sync::TransportError;
         use crate::sync::shared_leave::{LeaveNoticeCheck, first_verified_leave};
 
@@ -406,6 +431,15 @@ impl SyncConnection {
             }
             LeaveNoticeCheck::Refused => return Ok(None),
         };
+        Ok(Some(notice))
+    }
+
+    async fn confirm_shared_leave_notice(
+        &self,
+        notice: &crate::sync::shared_leave::VerifiedLeaveNotice,
+    ) -> Result<crate::sync::shared_leave::SharedLeaveReceipt, crate::sync::TransportError> {
+        use crate::sync::TransportError;
+
         if !self.stop_for_leave().await {
             return Err(TransportError::Storage(
                 "the sync lane did not quiesce for the leave; retry next round".to_owned(),
@@ -430,10 +464,9 @@ impl SyncConnection {
         };
         crate::sync::shared_leave::confirm_verified_shared_leave(
             self.manager.vault(),
-            &notice,
+            notice,
             unqueued,
         )
-        .map(Some)
         .map_err(|e| TransportError::Storage(e.to_string()))
     }
 
@@ -827,6 +860,9 @@ enum LoopExit {
     /// The residence mode changed (FIX 8869): what was buffered is queued,
     /// and the next connect sends the new mode's hello.
     Renegotiate,
+    /// A peer session's probe found the home answering (FIX 4748): what was
+    /// buffered is queued, and the next connect is the home's.
+    HomeReturned,
 }
 
 #[cfg(test)]

@@ -274,6 +274,16 @@ fn keep_stored_copy(copy: RemovalExportCopy, input: &'static str) -> RemovalExpo
     }
 }
 
+/// What the spool file `file` holds, from its start, read whole: the copy a
+/// holder is answered.
+fn read_spool(file: &mut std::fs::File) -> Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    file.seek(SeekFrom::Start(0))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 /// Each of `ids`'s position as `txn`, the archive's own snapshot, holds it
 /// ([`Vault::export_positions_in_txn`]), encoded on their own.
 pub(super) fn freeze_positions_in_txn(
@@ -369,8 +379,14 @@ impl Vault {
             return whole(self, stored).map(Some);
         }
         let TransferMode::ProjectStoredSnapshot = REMOVAL_ARCHIVE_TRANSFER_MODE;
-        let archive = self.read_removal_archive_in_txn(txn, row, &stored.file)?;
-        match crate::batch::export::project_stored_archive(&archive, &archived, &kept) {
+        // The stored archive and its projection are spool files, read and
+        // written where they lie (FIX 21529); only the answered copy is whole.
+        let mut archive = self.spool_removal_archive_in_txn(txn, row, &stored.file)?;
+        let sink = self.archive_spool_file()?;
+        let projected =
+            crate::batch::export::project_stored_archive(&mut archive, &archived, &kept, sink)
+                .and_then(|mut out| read_spool(&mut out));
+        match projected {
             Ok(bytes) => {
                 let ProjectedDigest::ProjectedBytes = REMOVAL_ARCHIVE_PROJECTED_DIGEST;
                 let digest = blake3::hash(&bytes).to_hex().to_string();
@@ -378,6 +394,7 @@ impl Vault {
             }
             Err(_) if stored.erased.is_empty() => {
                 let digest = stored.digest();
+                let archive = read_spool(&mut archive)?;
                 Ok(Some(keep_stored_copy(
                     stored.copy.with_archive(archive, digest),
                     "stored archive",
@@ -586,24 +603,27 @@ impl Vault {
             return Ok(None);
         }
         let kept: BTreeSet<EntityId> = left.iter().map(|record| record.id).collect();
+        // Read, projected and staged file to file (FIX 21529): no archive is
+        // held whole.
         let archive = {
             let _pin = self.pin_all_result_bodies();
             let _custody = self.store.gate_custody_read_guard()?;
             let txn = self.store.env.read_txn()?;
-            self.read_removal_archive_in_txn(&txn, row, &stored.file)
+            self.spool_removal_archive_in_txn(&txn, row, &stored.file)
         };
         let Ok(archive) = archive else {
             return unreadable("stored archive");
         };
-        let Ok(bytes) = crate::batch::export::project_stored_archive(&archive, &archived, &kept)
+        let sink = self.archive_spool_file()?;
+        let Ok(mut projected) =
+            crate::batch::export::project_stored_archive(archive, &archived, &kept, sink)
         else {
             return unreadable("stored archive");
         };
-        drop(archive);
         let Ok(positions) = rmp_serde::to_vec_named(&left) else {
             return unreadable("frozen positions");
         };
-        let staged = self.stage_removal_archive(&mut std::io::Cursor::new(bytes))?;
+        let staged = self.stage_removal_archive(&mut projected)?;
         Ok(Some((staged, positions)))
     }
 

@@ -10,9 +10,12 @@
 // aliases keep every `federation::<module>::` path this crate uses.
 pub(crate) use oneiron_authority::federation::{codec, pact_scope, scope_codec};
 mod agent_grant;
+mod agent_verb_class;
 pub(crate) use agent_grant::{
-    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, agent_grants_for_store_in_txn,
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, SelectedOwnerAgentFundingGrant,
+    agent_grants_for_store_in_txn,
 };
+pub(crate) use agent_verb_class::AgentVerbClasses;
 // The self brief's GRANT producer (FIX 17594).
 mod agent_grant_brief;
 // Who may delete one record the cleanup archived (OF-449 L4).
@@ -82,13 +85,13 @@ pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 #[cfg(all(unix, feature = "sync"))]
 pub(crate) use shared_act::removal_archive_body_keys_in_txn;
 pub use shared_act::{
-    DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind, EraseAskStatus,
-    NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS,
-    ReceivedRemovalArchive, ReceivedRemovalArchiveState, RemovalExportCopy, RemovalExportDelivery,
-    RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN, SHARED_INVITATION_TTL_SECS,
-    SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind,
-    SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState, SharedVaultChange,
-    SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
+    AddOwnerPlan, DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind,
+    EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization,
+    REMOVAL_EXPORT_RETAIN_SECS, ReceivedRemovalArchive, ReceivedRemovalArchiveState,
+    RemovalExportCopy, RemovalExportDelivery, RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN,
+    SHARED_INVITATION_TTL_SECS, SharedActExecution, SharedActExecutionReceipt, SharedActExport,
+    SharedActKind, SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState,
+    SharedVaultChange, SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
     shared_act_outcome_transcript,
 };
 pub(crate) use shared_act::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};
@@ -143,8 +146,8 @@ pub use self::pact_scope::{
     selector_range_of,
 };
 pub use self::peer_authority::{
-    MAX_PEER_AUTHORITY_ENTRIES_PER_PEER, PEER_AUTHORITY_KEY_PREFIX, admit_peer_authority_log_entry,
-    peer_authority_entry_key, peer_authority_roster, peer_consent_roots,
+    PEER_AUTHORITY_KEY_PREFIX, admit_peer_authority_log_entry, peer_authority_entry_key,
+    peer_authority_roster, peer_consent_roots,
 };
 pub use self::relationships::{
     MAX_RELATIONSHIP_LABEL_BYTES, MemberRelationship, MemberRelationshipContext,
@@ -229,7 +232,7 @@ use std::io::Cursor;
 pub use oneiron_authority::federation::{
     FederationGrantKind, GIT_PUSH_VERB, GitPushBounds, GitPushRepo, REPO_EDIT_VERB, REPO_READ_VERB,
     RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget, Scope, ScopeAtom, ScopeAxis,
-    ScopeId, Sensitivity, SensitivityCeiling,
+    ScopeId, Sensitivity, SensitivityCeiling, WalletRef,
 };
 
 mod org_admin;

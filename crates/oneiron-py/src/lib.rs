@@ -164,6 +164,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             resets_at: Vec::new(),
             reason_codes: Vec::new(),
             legal_hold: None,
+            room_join_hold: None,
         })
     })
 }
@@ -184,6 +185,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
         legal_hold: None,
+        room_join_hold: None,
     })
 }
 
@@ -498,6 +500,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.commitments.get")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.commitments.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_commitments_ledger(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commitments.ledger")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.commitments.ledger", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -1318,7 +1327,7 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None, media_json=None, query_affect_json=None, token_budget=None, reader_agent_ref=None))]
+    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None, media_json=None, query_affect_json=None, token_budget=None, reader_agent_ref=None, filter_json=None))]
     #[expect(
         clippy::too_many_arguments,
         reason = "one parameter per SDK argument of the verb"
@@ -1336,6 +1345,7 @@ impl NativeClient {
         query_affect_json: Option<&str>,
         token_budget: Option<u64>,
         reader_agent_ref: Option<String>,
+        filter_json: Option<&str>,
     ) -> PyResult<String> {
         let effort = oneiron_remote::parse_effort(effort.unwrap_or("medium")).map_err(raise)?;
         let scope_json = match scope_json {
@@ -1351,6 +1361,9 @@ impl NativeClient {
             .map(|value| decode(value, "recall query affect"))
             .transpose()?;
 
+        let filter_json: Option<oneiron::memory::ReadFilterInput> = filter_json
+            .map(|value| decode(value, "recall filter"))
+            .transpose()?;
         let inner = &slf.inner;
         let py = slf.py();
         let output = py
@@ -1367,6 +1380,7 @@ impl NativeClient {
                     query_affect_json,
                     token_budget,
                     reader_agent_ref.as_deref(),
+                    filter_json,
                 )
             })
             .map_err(raise)?;
@@ -2411,6 +2425,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_skill_hubs_clawhub_search(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skill_hubs.clawhub.search")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skill_hubs.clawhub.search", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skill_hubs_clawhub_import(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skill_hubs.clawhub.import")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skill_hubs.clawhub.import", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_skill_hubs_publishers_admit(
         &self,
         py: Python<'_>,
@@ -2485,6 +2527,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.skills.sync")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.skills.sync", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_proposal_settle(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.proposal.settle")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.proposal.settle", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -3342,6 +3391,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shared_propose_add_owner(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.propose_add_owner")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.shared.propose_add_owner", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_shared_execute(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.shared.execute")?;
         let output = py
@@ -3474,6 +3533,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_members_accept_with_credential(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.accept_with_credential")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.members.accept_with_credential", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_members_decline(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.members.decline")?;
         let output = py
@@ -3586,6 +3659,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shared_owner_change_wait_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.owner_change_wait.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.shared.owner_change_wait.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_owner_change_wait_get(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.owner_change_wait.get")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.shared.owner_change_wait.get", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_federation_coreference_link(
         &self,
         py: Python<'_>,
@@ -3695,6 +3796,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_sync_documents_copy_edit_review(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sync.documents.copy_edit.review")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.sync.documents.copy_edit.review", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sync_documents_copy_edit_settle(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sync.documents.copy_edit.settle")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.sync.documents.copy_edit.settle", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_sync_retained_work_wait_set(
         &self,
         py: Python<'_>,
@@ -3778,6 +3907,13 @@ impl NativeClient {
                 self.inner
                     .agent_verb("vault.federation.burst.replay", input)
             })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.federation.status", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -4161,6 +4297,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_files_sources_exclude(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.files.sources.exclude")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.files.sources.exclude", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_residence_mode(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.residence.mode")?;
         let output = py
@@ -4431,6 +4574,20 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.outbound_calls.request.erase", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_outbound_uncertain_send_answer(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.outbound.uncertain_send.answer")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.outbound.uncertain_send.answer", input)
             })
             .map_err(raise)?;
         encode(&output)
@@ -5082,6 +5239,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_archive_attempt_delete_preview(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.archive.attempt.delete.preview")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.archive.attempt.delete.preview", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_archive_attempt_delete_confirm(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.archive.attempt.delete.confirm")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.archive.attempt.delete.confirm", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_usage_events_undecodable(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.usage.events.undecodable")?;
         let output = py
@@ -5405,6 +5590,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_campaign_held(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.held")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.campaign.held", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_campaign_approve_once(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.approve_once")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.campaign.approve_once", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_connectors_calls_approve_once(
         &self,
         py: Python<'_>,
@@ -5415,6 +5614,20 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.connectors.calls.approve_once", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_replies_retry_failed(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.replies.retry_failed")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.replies.retry_failed", input)
             })
             .map_err(raise)?;
         encode(&output)
@@ -5450,6 +5663,21 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.consent.create_auto_weave_grant", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consent_create_nightly_link_grant(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.consent.create_nightly_link_grant")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.consent.create_nightly_link_grant", input)
             })
             .map_err(raise)?;
         encode(&output)
@@ -6573,6 +6801,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_proposal_rereview(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.proposal_rereview")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.proposal_rereview", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_conflict_record(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.code.conflict_record")?;
         let output = py
@@ -6591,6 +6826,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.code.proposal_resolve")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.code.proposal_resolve", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_proposal_resolve_rereview(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.proposal_resolve_rereview")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.proposal_resolve_rereview", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }
@@ -6625,6 +6874,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_secrets_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.secrets.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.secrets.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_secrets_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.secrets.propose")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.secrets.propose", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn execute_code(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "execute_code")?;
         let output = py
@@ -6639,10 +6902,31 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_session_model_heal_count(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.session_model_heal_count")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.session_model_heal_count", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_corrections(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.code.corrections")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.code.corrections", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_step_evidence(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.step_evidence")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.step_evidence", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -6913,6 +7197,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_devices_predecessor_name(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.devices.predecessor.name")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.devices.predecessor.name", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_origin_authority_get(
         &self,
         py: Python<'_>,
@@ -6947,6 +7241,55 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.code.origin.publications", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_secrets_purge_request(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.secrets.purge.request")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.secrets.purge.request", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_secrets_purge_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.secrets.purge.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.secrets.purge.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_secrets_purge_execute(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.secrets.purge.execute")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.secrets.purge.execute", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_checkout_holder_bind(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.checkout.holder.bind")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.checkout.holder.bind", input)
             })
             .map_err(raise)?;
         encode(&output)
@@ -7091,6 +7434,13 @@ impl NativeClient {
                 self.inner
                     .agent_verb("vault.code.symbols.definitions", input)
             })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_symbols_neighbors(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.symbols.neighbors")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.symbols.neighbors", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -7323,6 +7673,30 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_agents_verb_classes_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agents.verb_classes.get")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.agents.verb_classes.get", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_agents_verb_classes_configure(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agents.verb_classes.configure")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.agents.verb_classes.configure", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_repo_git_push_mint(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.repo.git_push.mint")?;
         let output = py
@@ -7393,6 +7767,13 @@ impl NativeClient {
                 self.inner
                     .agent_verb("vault.repo.symbols.definitions", input)
             })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_repo_symbols_neighbors(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.repo.symbols.neighbors")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.repo.symbols.neighbors", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -8161,6 +8542,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_rooms_leave(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.leave")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.rooms.leave", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_rooms_offer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.rooms.offer")?;
         let output = py
@@ -8442,6 +8830,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_settings_model_pack(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.model_pack")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.settings.model_pack", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_model_pack_replace(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.model_pack.replace")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.model_pack.replace", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_model_pack_revert(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.model_pack.revert")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.model_pack.revert", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_connectors_web_usage(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.connectors.web.usage")?;
         let output = py
@@ -8633,6 +9049,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "ai.streams.terminal")?;
         let output = py
             .detach(|| self.inner.agent_verb("ai.streams.terminal", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_streams_release(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.streams.release")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.streams.release", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -8981,6 +9404,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_skills_graph(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.skills.graph")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.skills.graph", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_graph_admit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.graph.admit")?;
         let output = py
@@ -9006,6 +9436,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.questions.pause")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.questions.pause", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_questions_prepare(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.questions.prepare")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.questions.prepare", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_questions_admit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.questions.admit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.questions.admit", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -9644,6 +10088,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.neighbors")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.neighbors", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_edges_provenance(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.edges.provenance")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.edges.provenance", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -10810,6 +11261,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_notes_read_indexed(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.read_indexed")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.read_indexed", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_notes_history(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.notes.history")?;
         let output = py
@@ -11308,6 +11766,50 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.files.sources.convert")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.files.sources.convert", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sync_repo_manifests_conflict_review(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.sync.repo_manifests.conflict.review")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.sync.repo_manifests.conflict.review", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sync_repo_manifests_conflict_discard(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.sync.repo_manifests.conflict.discard")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.sync.repo_manifests.conflict.discard", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_dreamer_follower_keyframe(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.dreamer.follower.keyframe")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.dreamer.follower.keyframe", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

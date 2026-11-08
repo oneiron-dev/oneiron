@@ -12,12 +12,14 @@ mod coreutils_text;
 mod device_scan;
 mod model;
 mod paging;
+mod read_link;
 mod readdir;
 mod repo_projection;
 mod scoped_files;
 mod snapshot;
 mod walk;
 
+pub use self::read_link::GraphFsLinkRead;
 pub use self::readdir::GraphFsFileRead;
 pub use self::snapshot::GraphFsReference;
 
