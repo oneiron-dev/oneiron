@@ -41,6 +41,9 @@ impl ExternalEffectJudgment {
         {
             self.decision = judged.decision;
         }
+        // An owner press releases the message only where it releases every
+        // recipient (FIX 22102).
+        self.press_supplies_authority &= judged.press_supplies_authority;
         if self.envelope_reservation.is_none() {
             self.envelope_reservation = judged.envelope_reservation;
         }
