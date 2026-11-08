@@ -49,9 +49,12 @@ company server), connect it with provider `imap`:
 
 - The person stores, through the owner secrets form, a JSON credential for
   effector `connector:imap`: `host` (the IMAP server, for example
-  `imap.fastmail.com`), `port` (993 when absent; the server must speak TLS
-  from the first byte), `username`, and either `password` (an app password
-  where the provider offers one) or `access_token` (OAuth, `XOAUTH2`).
+  `imap.fastmail.com`), `security` (`tls`, the default: TLS from the first
+  byte, port 993; or `starttls`: the server's plain port, port 143, upgraded
+  to TLS before anything else is sent, and refused if the server does not
+  upgrade), `port` (only when the server uses another), `username`, and
+  either `password` (an app password where the provider offers one) or
+  `access_token` (OAuth, `XOAUTH2`).
 - The provider account is `<username>@<host>`, exactly as stored: a credential
   for another account never fills the source.
 - Every folder is read but drafts; trash and junk are only looked in.

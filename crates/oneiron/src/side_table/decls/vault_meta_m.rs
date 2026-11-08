@@ -37,6 +37,10 @@ side_tables! {
     /// A mail message's header-only revision its body superseded, owed its delete (FIX 15413).
     /// Key: id16(source) + blake3 (32) of the provider id + id16(MESSAGE).
     MAIL_PACK_HEADER_RETIREMENT: VaultMeta b"mail_pack:header_retirement:v1:" Named;
+    /// Which message each UID of an IMAP folder the mail pack read holds (fix list row 17871),
+    /// with the folder's UIDVALIDITY. Key: id16(source) + blake3 (32) of the folder digest +
+    /// u64be UID.
+    MAIL_PACK_IMAP_UID: VaultMeta b"mail_pack:imap_uid:v1:" Named;
     /// Where one mbox or Takeout import into a mail source stands (FIX 12559): the file, its
     /// size and change time, the archive entry and byte offset. Key: id16(source) + blake3 (32)
     /// of the path.
