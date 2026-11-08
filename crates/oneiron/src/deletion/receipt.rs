@@ -554,6 +554,39 @@ impl Vault {
         Ok(sweep_key)
     }
 
+    /// Records the retained payload retirement of an already hard-deleted
+    /// record under a completed owner act. The caller claims that act with
+    /// this same request and receipt in this writer; no new tombstone or
+    /// claim about the earlier deletion's request is made.
+    pub(crate) fn record_completed_owner_payload_erase_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &EntityId,
+        actor_principal: EntityId,
+        request_id: [u8; 16],
+        requested_at: u64,
+    ) -> Result<EntityId> {
+        let receipt_id = self.store.clock.entity_id()?;
+        let now = self.store.clock.now_recorded_at();
+        self.write_redaction_receipt_and_sweep_in_txn(
+            wtxn,
+            &receipt_id,
+            RedactionReceiptInput {
+                actor_principal: Some(actor_principal),
+                room_authority: None,
+                request_id: uuid::Uuid::from_bytes(request_id).to_string(),
+                scope: RedactionScope::entity(record),
+                reason: DeleteReason::OwnerErase,
+                requested_at,
+                soft_complete_at: now,
+                hard_purge_complete_at: now,
+                sweep_queued_at: Some(now),
+            },
+            HardEraseSweepExtras::default(),
+        )?;
+        Ok(receipt_id)
+    }
+
     /// Records the privacy erase of the thread audience edit `edit` in the
     /// write that rewrote it in place (FIX 10234): a content-free
     /// REDACTION_AUDIT receipt naming the edit, with no hard-erase sweep, as

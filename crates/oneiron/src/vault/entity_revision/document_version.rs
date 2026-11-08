@@ -27,9 +27,8 @@ pub(crate) fn common_document_retains_in_txn(
     }
     match fork_revision_with_namespace(store, txn, id, revision) {
         Ok((_, RevisionNamespace::Common)) => Ok(true),
-        Ok((_, RevisionNamespace::Generic)) | Err(Error::EntityNotFound | Error::Artifact(_)) => {
-            Ok(false)
-        }
+        Ok((_, RevisionNamespace::Generic | RevisionNamespace::Note))
+        | Err(Error::EntityNotFound | Error::Artifact(_)) => Ok(false),
         Err(error) => Err(error),
     }
 }
