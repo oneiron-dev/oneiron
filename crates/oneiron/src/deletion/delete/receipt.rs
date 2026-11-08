@@ -45,6 +45,7 @@ impl Vault {
         let receipt_id = self.store.clock.entity_id()?;
         let mut scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
+        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
         // The purge txn: the one that actually tears. It re-checks authority
         // ONLY if nothing has settled this delete yet — i.e. no publish commit
@@ -154,6 +155,7 @@ impl Vault {
                 false,
             )?;
             self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
+            rekeys.finish(&self.store, &mut wtxn)?;
             wtxn.commit()?;
             crate::attempt_queue::AttemptQueue::new(self)
                 .erased_payload_cancellations_committed(&cancelled);
@@ -287,6 +289,7 @@ impl Vault {
         claim_in_txn(gate.as_ref(), &mut wtxn, &tombstone, Some(&receipt_id))?;
         self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
 
+        rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         crate::attempt_queue::AttemptQueue::new(self)
             .erased_payload_cancellations_committed(&cancelled);

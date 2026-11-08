@@ -44,7 +44,15 @@ pub(crate) fn setup_birth_stamp_target(
     if preceding.any(|prior| prior == id) {
         return Ok(None);
     }
-    validation::birth_stamp_target(store, txn, id, entity_type, false, (None, None), data)
+    validation::birth_stamp_target(
+        store,
+        txn,
+        id,
+        entity_type,
+        false,
+        (None, None, false),
+        data,
+    )
 }
 
 /// Check the decode point while this replay op still owns its buffers. On
@@ -185,6 +193,8 @@ struct BatchApplyState {
     refinement_admission: Option<crate::skill_hub::RefinementAdmissionProof>,
     birth_mask: Option<EntityId>,
     text_births: HashMap<EntityId, Vec<EntityId>>,
+    /// The ids this batch writes a `DerivedFrom` edge from (FIX 8741).
+    derived_from_edge_sources: BTreeSet<EntityId>,
     births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
     replicated_puts: BTreeSet<EntityId>,
@@ -367,6 +377,7 @@ pub(super) fn apply_ops_with_authority_beside(
     let mut project_edge_endpoints = BTreeSet::new();
     let mut touched_projects = BTreeSet::new();
     let local_chat_turns = super::leader_chat_admission::local_turns(&ops);
+    let derived_from_edge_sources = self::validation::derived_from_edge_sources(&ops);
     // ONE-1604-D1: shell-edge sources orphaned by a dominance eviction. Their
     // inducing type-76 rows are gone, so the full reconciler's
     // surviving-events derivation can no longer reach them. Non-empty here
@@ -405,6 +416,7 @@ pub(super) fn apply_ops_with_authority_beside(
         refinement_admission,
         birth_mask,
         text_births,
+        derived_from_edge_sources,
         births,
         asset_files,
         replicated_puts,
