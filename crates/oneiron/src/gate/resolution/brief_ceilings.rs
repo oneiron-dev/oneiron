@@ -220,7 +220,8 @@ impl PolicyManifestResolution {
     /// authority. A scoped connector call's Gate input names the actor class
     /// `first_party`, and a verified scoped grant dissolves a Proposed
     /// definition ceiling and the actor ceiling with it, never a foreign
-    /// agent's clamp. Beyond its bound, an act would ask. The lines are sorted by
+    /// agent's clamp. Beyond its bound, an act meets the same walls and the
+    /// consent ask an uncovered act raises (`beyond_bound`). The lines are sorted by
     /// class, then by source kind, then by grant.
     ///
     /// # Errors
@@ -297,7 +298,7 @@ impl PolicyManifestResolution {
                     scope: BriefOutboundScope::of_grant_scope(&grant.scope),
                 },
                 line_codes,
-                Some(CanEffectVerdict::WouldAsk),
+                Some(beyond_bound(line_codes)),
                 per_act,
             ));
         }
@@ -315,7 +316,7 @@ impl PolicyManifestResolution {
                     receipt_required: row.receipt_required,
                 },
                 &target_free_codes,
-                Some(CanEffectVerdict::WouldAsk),
+                Some(beyond_bound(&target_free_codes)),
                 SEND_CHECKS.to_vec(),
             ));
         }
@@ -522,6 +523,16 @@ fn default_rule_words(
 
 /// The line for `class` from `source`: inside its bound, the words reason
 /// codes `codes` give, classed with no press; beyond it, `outside`.
+/// The word for an act beyond a grant's bound: the same target-free walls
+/// `codes`, plus the consent ask an uncovered irreversible act raises. It
+/// asks unless a wall holds or denies the act anyway, so an administrative
+/// hold stays held past the bound, as inside it.
+fn beyond_bound(codes: &[GateReasonCode]) -> CanEffectVerdict {
+    let mut beyond = codes.to_vec();
+    beyond.push(GateReasonCode::PendingConsentIrreversibleEffect);
+    CanEffectVerdict::of_preflight(crate::gate::preflight_words(&beyond, false).verdict)
+}
+
 fn worded_line(
     class: String,
     source: BriefClassSource,
