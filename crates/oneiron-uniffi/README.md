@@ -120,8 +120,14 @@ items with provenance, `assetRef`, every raw per-space `embeddingMatches`
 element, `reactions` and `citedMessages` (each with its typed `record` ref), scope honesty with
 `censusCapped`, retrieval accounting, `packVersion` (always
 `HEAD_MEMORY_PACK_SCHEMA_VERSION`) and the read's `narrowing` receipt. The
-read verbs return `{value, narrowing}`. Blob content crosses as bytes; an
-omitted write time is stamped with the current Unix second at the call.
+read verbs return `{value, narrowing}`. `ClaimView` also carries the stored
+four-axis `claimScope`, the typed `claim` ref and optional host-stamped `madeBy`;
+`EntityView` carries `madeBy` too. These use the existing generated `ClaimScope`,
+`RecordRef` and `MadeBy` records. Provenance preserves the engine's filtering of
+unreadable input refs; it does not grant access to those inputs. Ordinary claim
+inputs keep their optional placement fields and host-side defaults.
+Blob content crosses as bytes; an omitted write time is stamped with the current
+Unix second at the call.
 
 Host-door rows are exported like every other row. An embedded handle answers
 them with the row's own embedded `call`; the ones only a server's state can

@@ -379,8 +379,8 @@ fn property_name(raw: &str) -> String {
 
 /// Archives the ICS one connector pull returned for `(system, calendar_ref,
 /// uid)`: one BLOB_ARTIFACT per resource, one version per distinct body, so a
-/// later write renders over the copy the remote holds. Returns the `hex#vN`
-/// reference the remote-object row keeps.
+/// later write renders over the copy the remote holds. Returns the exact
+/// stored artifact/version; the remote-object locator is its projection.
 pub(super) fn archive_remote_source(
     vault: &Vault,
     system: &str,
@@ -388,7 +388,7 @@ pub(super) fn archive_remote_source(
     uid: &str,
     ics: &[u8],
     now: u64,
-) -> Result<String, CalendarConnectorError> {
+) -> Result<CalendarPassportSource, CalendarConnectorError> {
     let artifact_id = EntityId::derive(
         CALENDAR_CONNECTOR_SOURCE_BLOB,
         &[system.as_bytes(), calendar_ref.as_bytes(), uid.as_bytes()],
@@ -419,7 +419,10 @@ pub(super) fn archive_remote_source(
         at,
         now,
     )?;
-    Ok(format!("{}#v{}", artifact_id.to_hex(), version.version))
+    Ok(CalendarPassportSource {
+        artifact: artifact_id,
+        version: version.version,
+    })
 }
 
 /// The archived source a write of `uid` renders over: the copy this seat last
@@ -444,11 +447,23 @@ pub(super) fn archived_source(
         };
         if body.lifecycle != ClaimLifecycleStatus::Active
             || body.predicate != PREDICATE_CALENDAR_PASSPORT
-            || decode_passport_value(&body.value)?.uid != uid
         {
             continue;
         }
-        // Feed admissions cite `hex#vN:uid`, the archived feed version.
+        let passport = decode_passport_value(&body.value)?;
+        if passport.uid != uid {
+            continue;
+        }
+        if let Some(source) = passport.source {
+            if let Some(bytes) =
+                vault.read_blob_artifact_version(&source.artifact, source.version)?
+            {
+                return Ok(Some(bytes));
+            }
+            // A missing exact version never falls back to this claim's locator.
+            continue;
+        }
+        // Record-only admissions can still cite an archived feed locator.
         let cited = body
             .evidence
             .as_ref()
