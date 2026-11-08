@@ -204,6 +204,32 @@ pub(super) fn apply_frontier_join(
     Ok(())
 }
 
+struct PreparedAuthorityFrontierJoins {
+    rows: Vec<(AuthorityLogEntry, TimeRange, u64)>,
+    joins: Vec<AuthorityEntryHash>,
+}
+
+impl PreparedAuthorityFrontierJoins {
+    // The native caller consumes these signed rows immediately in its writer,
+    // before it allocates the act's sequence and parents from the new fold.
+    fn apply(
+        self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+    ) -> Result<(AuthorityView, Vec<EntityId>)> {
+        let staged = vault.put_authority_log_entries_in_txn(txn, &self.rows)?;
+        let joined = vault.authority_view_readonly_in_txn(txn)?;
+        if !self
+            .joins
+            .iter()
+            .all(|hash| joined.valid_entries.contains(hash))
+        {
+            return Err(authority_refused(JOIN_NOT_FOLDED));
+        }
+        Ok((joined, staged))
+    }
+}
+
 impl Vault {
     /// Joins `fold`'s main-log heads in `txn` when an act would name more of
     /// them than `room`, the heads it may name beside its other rows (one
@@ -283,6 +309,22 @@ impl Vault {
         signer: FrontierSigner<'_>,
         room: usize,
     ) -> Result<Option<(AuthorityView, Vec<EntityId>)>> {
+        let Some(prepared) =
+            self.prepare_scoped_authority_joins_in_txn(txn, fold, (heads, scope), signer, room)?
+        else {
+            return Ok(None);
+        };
+        prepared.apply(self, txn).map(Some)
+    }
+
+    fn prepare_scoped_authority_joins_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        (heads, scope): (&BTreeSet<AuthorityEntryHash>, FrontierJoinScope),
+        signer: FrontierSigner<'_>,
+        room: usize,
+    ) -> Result<Option<PreparedAuthorityFrontierJoins>> {
         let room = room.max(1);
         if heads.len() <= room {
             return Ok(None);
@@ -299,12 +341,10 @@ impl Vault {
         let seq = signer.first_sequence(fold)?;
         let join = signer.sign(fold, scope, seq, heads.clone(), now)?;
         let hash = authority_entry_hash(&join)?;
-        let staged = self.put_authority_log_entries_in_txn(txn, &[(join, at, now)])?;
-        let joined = self.authority_view_readonly_in_txn(txn)?;
-        if !joined.valid_entries.contains(&hash) {
-            return Err(authority_refused(JOIN_NOT_FOLDED));
-        }
-        Ok(Some((joined, staged)))
+        Ok(Some(PreparedAuthorityFrontierJoins {
+            rows: vec![(join, at, now)],
+            joins: vec![hash],
+        }))
     }
 
     /// Whether the merge of every one of `heads`' states admits `signer` to

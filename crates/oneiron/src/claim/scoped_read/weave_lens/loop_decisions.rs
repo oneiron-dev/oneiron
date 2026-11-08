@@ -1,7 +1,7 @@
 //! A loop decision's weave lens row (OF-499 A2): its decision, time,
 //! family, kind, exact outcome and redacted flag, each reason, and each ref
-//! it carries, as plain hex cells. No backing handle is minted for its refs
-//! and no wrong control is offered (FIX 7598). No cell is cut short: a value
+//! it carries, as plain hex cells. Its parent row's wrong control names the
+//! decision, never these refs; no backing handle is minted for them. A value
 //! past one cell's share of a lens text's bound continues in the next cell
 //! under the same label, and no row or reason is ever skipped.
 use super::WeaveItem;
