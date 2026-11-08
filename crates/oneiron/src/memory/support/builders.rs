@@ -17,6 +17,29 @@ impl Memory<'_> {
         self.vault
     }
 
+    /// This handle for one call bound to the caller's own retrieval filter
+    /// (FIX 3977, RETRIEVAL-04): every read lane it opens meets `filter`
+    /// after the floor (live proof or owner, the vault manifest, the actor
+    /// and credential floor), so the call's reads only narrow. It binds a
+    /// request, never authority. A rebind meets the filter already bound and
+    /// never widens it; `None` leaves it as it is.
+    #[must_use]
+    pub fn with_read_filter(&self, filter: Option<&crate::memory::ReadFilterInput>) -> Self {
+        let mut bound = self.clone();
+        if let Some(filter) = filter {
+            bound.read_filter = crate::gate::RetrievalFilter::meet_requests(
+                self.read_filter.as_ref(),
+                Some(&filter.to_filter()),
+            );
+        }
+        bound
+    }
+
+    /// The caller filter this handle's reads are bound to, if any.
+    pub(crate) fn read_filter(&self) -> Option<&crate::gate::RetrievalFilter> {
+        self.read_filter.as_ref()
+    }
+
     /// Binds the vault task-work turn a host already holds for this
     /// operation (Rule 5): the surface's task work runs on it and never waits
     /// in the line again. A host that waited for the turn passes that one.
@@ -66,6 +89,22 @@ impl Memory<'_> {
     pub fn with_read_proof(mut self, proof: &crate::authority::VerifiedSlip) -> Self {
         self.read_proof = Some(proof.clone());
         self
+    }
+
+    /// Conjoins the frozen call ceilings of a genuine phone reader holding
+    /// this exact actor and verified credential. It grants no read, replaces
+    /// no proof, and never drops an earlier phone ceiling.
+    pub fn within_phone_line_read(
+        mut self,
+        key: &crate::claim::ScopedReadActorKey,
+    ) -> MemoryResult<Self> {
+        let proof = self
+            .read_proof
+            .as_ref()
+            .ok_or_else(|| MemoryError::from(crate::phone_line::invalid()))?;
+        key.phone_line_ceilings_for(proof, self.actor)?;
+        self.phone_reads.push(key.clone());
+        Ok(self)
     }
 
     /// Marks this surface's claim writes as made in person by the vault's

@@ -315,6 +315,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::HOOKS_SURFACE_INBOUND, CONTENT),
     (&t::HOOKS_SURFACE_INBOUND_NEXT, CONTENT),
     (&t::HOOKS_TASK_DUE, CONTENT),
+    (&t::HOOKS_TASK_DUE_REVERSE, CONTENT),
     (&t::HOOKS_TICK, CONTENT),
     (&t::HOOKS_TICK_NEXT, CONTENT),
     (&t::HOOKS_VERB_ASK, LIVE),
@@ -390,6 +391,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // names; the owner's follow-or-pin preference stands as the live vault holds it.
     (&t::LLM_MODEL_PACK_ACTIVE, CONTENT),
     (&t::LLM_MODEL_PACK_PREFERENCE, LIVE),
+    // FIX 20192: a model pack's replaced version travels with the install
+    // receipts a revert puts it back among.
+    (&t::LLM_MODEL_PACK_REPLACED, CONTENT),
     // FIX 5368: a retirement notice the owners were sent stays sent; a restore
     // never sends it again.
     (&t::LLM_MODEL_PACK_RETIREMENT_NOTICE, LIVE),

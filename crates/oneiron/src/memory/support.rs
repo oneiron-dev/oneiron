@@ -51,6 +51,9 @@ pub struct Memory<'v> {
     /// The verified credential this actor presented, when a host bound one:
     /// every read verb then reads under the key that proof builds.
     pub(super) read_proof: Option<crate::authority::VerifiedSlip>,
+    /// Original call-bound read keys. Each identity read conjoins their
+    /// frozen ceilings and must still carry the same verified credential.
+    pub(super) phone_reads: Vec<crate::claim::ScopedReadActorKey>,
     /// The host action this handle's actor is, when a host bound one
     /// (`with_host_action_authority`, FIX 2222): every read verb then reads
     /// under its guarded owner key.
@@ -159,6 +162,10 @@ pub struct Memory<'v> {
     /// credential rides it, with the actual recipient when the host proved
     /// one (FIX 7608 2b-ii). Off on every other handle.
     pub(super) repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient,
+    /// The caller's own retrieval filter this handle's reads are bound to
+    /// (FIX 3977, [`Memory::with_read_filter`]): a request, never
+    /// authority. Every read lane the handle opens meets it.
+    pub(super) read_filter: Option<crate::gate::RetrievalFilter>,
 }
 
 /// Actual transport metadata from a host's request or socket upgrade.
