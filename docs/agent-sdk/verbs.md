@@ -1270,3 +1270,4 @@ both bindings and their export-census tests in one change.
 - `vault.files.sources.convert`
 - `vault.sync.repo_manifests.conflict.review`
 - `vault.sync.repo_manifests.conflict.discard`
+- `vault.dreamer.follower.keyframe`

@@ -7,8 +7,9 @@
 //! the upload-then-verify order, the bound of a batch answer, the store's
 //! size and SHA-256 checks before an upload, and the upload door's scan,
 //! SHA-256 and size checks on a download. A transport carries each exchange
-//! once and judges no answer. Today every exchange goes through the direct
-//! HTTPS client; a host's credential broker can carry the same requests.
+//! once and judges no answer. A served host's credential broker carries a
+//! mirror's upload and an outside import's download; a vault opened with no
+//! host sends a mirror's upload through the direct HTTPS client.
 //!
 //! No request holds a credential. A batch call names its credential slot:
 //! none, or the remote's own credential (a mirror's push credential, an
@@ -16,14 +17,21 @@
 //! object action carries the headers its batch answer named for it, as
 //! given, and never the remote's credential. A body is a file or bytes,
 //! and a reply's body streams.
+//!
+//! A served host's transport sends each exchange through its credential
+//! broker, which alone installs the remote's credential; the host answers
+//! how its exchanges went with the orchestration's own answer
+//! ([`LfsTransferReport`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 
 use serde::Deserialize;
 
 use super::LfsOid;
 use crate::error::{ArtifactError, Error, Result};
+use crate::llm::BrokerIsolation;
+use crate::origin::smart_http::SpillFloor;
 
 /// An LFS exchange or answer refused, `why` naming the step.
 pub(super) fn invalid(why: &'static str) -> Error {
@@ -40,6 +48,31 @@ pub trait LfsTransport {
     /// A request this transport refuses to send, or one it could not send
     /// or get an answer to.
     fn exchange(&self, request: LfsRequest<'_>) -> Result<LfsReply>;
+
+    /// The free disk an upload's spool keeps: each write of an object's
+    /// bytes to the spool its upload goes from first asks it for room above
+    /// its reserve, as a served host's git relay spool does. `None`, the
+    /// direct transport's, keeps none.
+    fn spool_floor(&self) -> Option<&dyn SpillFloor> {
+        None
+    }
+}
+
+/// How one remote's Git-LFS transfer through a host's transport went: the
+/// orchestration's answer, and what the host's credential broker did.
+pub struct LfsTransferReport {
+    /// The objects the remote is still not known to hold (an upload) or
+    /// that did not arrive (a download), or the batch failure that stopped
+    /// the transfer.
+    pub missing: Result<BTreeSet<LfsOid>>,
+    /// How the credential broker the exchanges went through is kept apart
+    /// from the daemon; `None` when no exchange reached it.
+    pub broker_isolation: Option<BrokerIsolation>,
+    /// How many action header values of the batch replies the broker
+    /// rewrote to its placeholder, each the remote's installed credential
+    /// handed back, counted over replies that ended clean: a count, never a
+    /// value.
+    pub credential_rewrites: u64,
 }
 
 /// One exchange with a Git-LFS remote.
