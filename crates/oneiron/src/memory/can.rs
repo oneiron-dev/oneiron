@@ -60,17 +60,23 @@ pub enum CanEffectVerdict {
     Held,
 }
 
+impl CanEffectVerdict {
+    /// The word the Gate's preflight verdict `verdict` names.
+    pub(crate) fn of_preflight(verdict: crate::gate::PreflightVerdict) -> Self {
+        match verdict {
+            crate::gate::PreflightVerdict::Allow => Self::Allow,
+            crate::gate::PreflightVerdict::Deny => Self::Deny,
+            crate::gate::PreflightVerdict::WouldAsk => Self::WouldAsk,
+            crate::gate::PreflightVerdict::Held => Self::Held,
+        }
+    }
+}
+
 impl CanEffectAnswer {
     /// The answer `preflight` reads off a judgment dated `checked_at`.
     pub(crate) fn judged(preflight: crate::gate::ExternalEffectPreflight, checked_at: u64) -> Self {
-        let verdict = match preflight.verdict {
-            crate::gate::PreflightVerdict::Allow => CanEffectVerdict::Allow,
-            crate::gate::PreflightVerdict::Deny => CanEffectVerdict::Deny,
-            crate::gate::PreflightVerdict::WouldAsk => CanEffectVerdict::WouldAsk,
-            crate::gate::PreflightVerdict::Held => CanEffectVerdict::Held,
-        };
         Self {
-            verdict,
+            verdict: CanEffectVerdict::of_preflight(preflight.verdict),
             reasons: preflight.reasons.into_iter().map(str::to_owned).collect(),
             holds: preflight.holds.into_iter().map(str::to_owned).collect(),
             waits_for_envelope_window: preflight.waits_for_envelope_window,

@@ -1,8 +1,12 @@
 //! The self brief's CLASSES producer (FIX 17594, Engine ruling 21:47 CLASSES
 //! = B): the concrete class ceilings the resolved policy holds, each a dated
 //! description of its configured row, beside the actor's live definition
-//! ceiling. It evaluates no Gate and gives no verdict on any act: class
-//! verdicts stay unavailable.
+//! ceiling. Beside them, in the same snapshot, the per-class verdicts (FIX
+//! 20734, Engine ruling 11:16): one line for each class the actor's standing
+//! outbound grants, its effector policy rows and its act-policy rows name,
+//! and DEC-0006 invariant 1's default lines, each word classed as
+//! `can(effect)` classes it, from the checks the actor meets for any target.
+//! It evaluates no Gate and judges no one act.
 //!
 //! The rows come from the policy fold, which takes them from trusted packs
 //! only: a quarantined or untrusted pack adds none. Each row keeps its own
@@ -11,18 +15,46 @@
 //! writes nothing; like every fold, it may park a scan check in memory,
 //! which the vault's next write keeps.
 
+use std::collections::BTreeSet;
+
 use crate::Vault;
 use crate::context_board::{
     BriefActPosture, BriefCeiling, BriefCeilingPosture, BriefCeilingTarget, BriefClassPrecedence,
+    BriefClassReads, BriefClassSource, BriefClassVerdict, BriefClassVerdicts, BriefDefaultRule,
+    BriefOutboundScope, BriefPerActCheck,
 };
-use crate::entity_id::bytes_to_hex_lower;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::gate::GateReasonCode;
 use crate::gate::ceiling::PolicyApprovalCeiling;
 use crate::gate::class_policy::{ActPosture, ClassPolicyPrecedence};
+use crate::gate::constants::{
+    EXTERNAL_EFFECT_EFFECTOR_LONG_PREFIX, EXTERNAL_EFFECT_EFFECTOR_PREFIX,
+};
+use crate::gate::grants::{PolicyScopedGrant, external_effect_grant_admits_effect};
+use crate::memory::CanEffectVerdict;
+use crate::outbound_grant::StandingOutboundGrantScope;
 use crate::policy_manifest_doors::{PolicyCeiling, PolicyScopedGrantRow};
+use crate::store::Store;
 use crate::write_envelope::WriteActor;
 
 use super::manifest_types::PolicyManifestResolution;
+
+/// The actor class a scoped connector call's Gate input names, whoever the
+/// actor is (`outbound_consent::execution::scoped_mcp_gate_input`).
+const SCOPED_MCP_ACTOR_CLASS: &str = "first_party";
+
+/// The class an artifact-publish grant covers: the verb its effect names.
+const ARTIFACT_PUBLISH_CLASS: &str = "publish";
+
+/// The checks every send inside a grant's or a row's bound still meets.
+const SEND_CHECKS: [BriefPerActCheck; 5] = [
+    BriefPerActCheck::CounterpartyOptOut,
+    BriefPerActCheck::CampaignCompliance,
+    BriefPerActCheck::EnvelopeWindow,
+    BriefPerActCheck::Budget,
+    BriefPerActCheck::Permission,
+];
 
 impl PolicyManifestResolution {
     /// The class ceilings this resolved policy holds for `actor`, beside the
@@ -49,11 +81,7 @@ impl PolicyManifestResolution {
         as_of_secs: u64,
         definition: Option<PolicyApprovalCeiling>,
     ) -> Result<Vec<BriefCeiling>> {
-        if self.diagnostics.loaded_manifest_forces_fail_closed() {
-            return Err(Error::InvalidConfig(
-                "the policy is held fail-closed; its class rows do not govern".into(),
-            ));
-        }
+        self.refuse_fail_closed_class_rows()?;
         let policy_frontier = bytes_to_hex_lower(&self.read_frontier_hash()?);
         let dated = |class_or_effect, posture| BriefCeiling {
             class_or_effect,
@@ -100,14 +128,11 @@ impl PolicyManifestResolution {
         // A holder row governs only its holder's acts: the agent's brief
         // shows the vault rows and its own holder rows, never another
         // holder's.
-        let own_or_vault = |holder: Option<crate::entity_id::EntityId>| {
-            holder.is_none_or(|holder| holder == actor.entity_ref())
-        };
         for row in self
             .act_policy
             .rows()
             .iter()
-            .filter(|row| own_or_vault(row.holder_ref))
+            .filter(|row| vault_or_own(row.holder_ref, actor))
         {
             rows.push(dated(
                 BriefCeilingTarget::Act {
@@ -131,7 +156,7 @@ impl PolicyManifestResolution {
             .wait_policy
             .rows()
             .iter()
-            .filter(|row| own_or_vault(row.holder_ref))
+            .filter(|row| vault_or_own(row.holder_ref, actor))
         {
             rows.push(dated(
                 BriefCeilingTarget::Wait {
@@ -148,16 +173,11 @@ impl PolicyManifestResolution {
                 },
             ));
         }
-        for grant in self.scoped_grants().iter().filter(|grant| {
-            grant
-                .actor_class
-                .as_deref()
-                .is_none_or(|bound| bound == actor_class)
-                && grant
-                    .actor_ref
-                    .as_deref()
-                    .is_none_or(|bound| bound == actor_ref)
-        }) {
+        for grant in self
+            .scoped_grants()
+            .iter()
+            .filter(|grant| scoped_grant_admits(grant, actor_class, &actor_ref))
+        {
             let row = PolicyScopedGrantRow::of_decoded(grant)?;
             rows.push(dated(
                 BriefCeilingTarget::Effector {
@@ -175,24 +195,335 @@ impl PolicyManifestResolution {
         }
         Ok(rows)
     }
+
+    /// The per-class verdicts this resolved policy gives `actor`, read on
+    /// `txn` beside the live definition ceiling `definition` read for it in
+    /// the same snapshot, dated `as_of_secs` and this policy's frontier
+    /// hash. One line for:
+    ///
+    /// 1. each standing outbound grant whose principal is the actor and that
+    ///    is active under this policy: the class its scope dial covers;
+    /// 2. each scoped policy grant row whose own actor binding admits the
+    ///    actor, that has no budget row and whose Scope admits an external
+    ///    effect: the effector it covers;
+    /// 3. each act-policy pairing a vault row or the actor's own holder row
+    ///    names, whose posture resolves to deny for the actor;
+    /// 4. each default rule of DEC-0006 invariant 1.
+    ///
+    /// Inside its bound, a grant line or an effector line gets the words of
+    /// the checks the actor meets for any target, classed as `can(effect)`
+    /// classes them with no press (`crate::gate::preflight_words`). The
+    /// checks are an actor ceiling below auto and, on every line except a
+    /// scoped connector call's, a Proposed definition ceiling, which also
+    /// withholds the external-effect authority. A scoped connector call's
+    /// Gate input names the actor class `first_party`, and a verified scoped
+    /// grant dissolves a Proposed definition ceiling and the actor ceiling
+    /// with it. Beyond its bound, an act would ask. The lines are sorted by
+    /// class, then by source kind, then by grant.
+    ///
+    /// # Errors
+    /// [`Error::InvalidConfig`] when a loaded manifest holds the policy
+    /// fail-closed, so its rows do not govern; a frontier hash that does not
+    /// compute; a grant read that fails or does not decode; a selector value
+    /// that does not encode.
+    pub(crate) fn brief_class_verdicts(
+        &self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        actor: WriteActor,
+        as_of_secs: u64,
+        definition: Option<PolicyApprovalCeiling>,
+    ) -> Result<BriefClassVerdicts> {
+        self.refuse_fail_closed_class_rows()?;
+        let frontier = self.read_frontier_hash()?;
+        let actor_class = actor.actor_class().gate_actor_class();
+        let actor_ref = actor.entity_ref().to_hex();
+        let below_auto = |class: &str| {
+            self.actor_ceiling(class, Some(actor_ref.as_str())) != PolicyApprovalCeiling::Auto
+        };
+        let proposed = definition == Some(PolicyApprovalCeiling::Proposed);
+        let mut target_free_codes = Vec::new();
+        if proposed || below_auto(actor_class) {
+            target_free_codes.push(GateReasonCode::PendingActorCeiling);
+        }
+        if proposed {
+            target_free_codes.push(GateReasonCode::PendingExternalEffectAuthority);
+        }
+        let scoped_mcp_codes = if !proposed && below_auto(SCOPED_MCP_ACTOR_CLASS) {
+            vec![GateReasonCode::PendingActorCeiling]
+        } else {
+            Vec::new()
+        };
+        let mut verdicts = Vec::new();
+        for id in crate::outbound_grant::standing_outbound_grant_ids_for_principal(
+            store, txn, &actor_ref,
+        )? {
+            let Some(grant) =
+                crate::outbound_grant::standing_outbound_grant_in_txn(store, txn, &id)?
+            else {
+                continue;
+            };
+            if !grant.is_active_under_policy(&frontier) {
+                continue;
+            }
+            let (class, per_act) = outbound_class(&grant.scope);
+            let line_codes = if matches!(grant.scope, StandingOutboundGrantScope::ScopedMcp { .. })
+            {
+                &scoped_mcp_codes
+            } else {
+                &target_free_codes
+            };
+            verdicts.push(worded_line(
+                class,
+                BriefClassSource::OutboundGrant {
+                    grant: id,
+                    scope: BriefOutboundScope::of_grant_scope(&grant.scope),
+                },
+                line_codes,
+                Some(CanEffectVerdict::WouldAsk),
+                per_act,
+            ));
+        }
+        for grant in self.scoped_grants().iter().filter(|grant| {
+            scoped_grant_admits(grant, actor_class, &actor_ref)
+                && grant.budget.is_none()
+                && external_effect_grant_admits_effect(grant)
+        }) {
+            let row = PolicyScopedGrantRow::of_decoded(grant)?;
+            verdicts.push(worded_line(
+                effector_class(&row.effector).to_owned(),
+                BriefClassSource::Effector {
+                    effector: row.effector,
+                    selectors: row.selectors,
+                    receipt_required: row.receipt_required,
+                },
+                &target_free_codes,
+                Some(CanEffectVerdict::WouldAsk),
+                SEND_CHECKS.to_vec(),
+            ));
+        }
+        let pairings: BTreeSet<(&str, &str)> = self
+            .act_policy
+            .rows()
+            .iter()
+            .filter(|row| vault_or_own(row.holder_ref, actor))
+            .map(|row| (row.act_class.as_str(), row.subject_class.as_str()))
+            .collect();
+        for (act_class, subject_class) in pairings {
+            if self
+                .act_policy
+                .resolve(act_class, subject_class, Some(actor.entity_ref()))
+                == Some(ActPosture::Deny)
+            {
+                verdicts.push(BriefClassVerdict {
+                    class: act_class.to_owned(),
+                    source: BriefClassSource::Act {
+                        act_class: act_class.to_owned(),
+                        subject_class: subject_class.to_owned(),
+                    },
+                    inside: CanEffectVerdict::Deny,
+                    reasons: Vec::new(),
+                    holds: Vec::new(),
+                    outside: None,
+                    per_act: Vec::new(),
+                });
+            }
+        }
+        for rule in BriefDefaultRule::ALL {
+            let (codes, per_act) = default_rule_words(rule);
+            verdicts.push(worded_line(
+                rule.as_str().to_owned(),
+                BriefClassSource::Default { rule },
+                codes,
+                None,
+                per_act,
+            ));
+        }
+        verdicts.sort_by(|left, right| {
+            left.class
+                .cmp(&right.class)
+                .then_with(|| source_rank(&left.source).cmp(&source_rank(&right.source)))
+                .then_with(|| source_grant(&left.source).cmp(&source_grant(&right.source)))
+        });
+        Ok(BriefClassVerdicts {
+            as_of_secs,
+            policy_frontier: bytes_to_hex_lower(&frontier),
+            verdicts,
+        })
+    }
+
+    /// Refuses to describe the class rows of a policy a loaded manifest
+    /// holds fail-closed: its rows do not govern.
+    fn refuse_fail_closed_class_rows(&self) -> Result<()> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return Err(Error::InvalidConfig(
+                "the policy is held fail-closed; its class rows do not govern".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl Vault {
-    /// The concrete class ceilings that bound the host-bound agent `actor`,
-    /// for its self brief, read in one snapshot: the vault's authority
-    /// instant, the policy resolved once, its rows (`brief_ceiling_rows`)
-    /// and the live definition ceiling (`agent_definition_ceiling_for_actor`).
-    /// Each is a dated description; none is a verdict on an act.
+    /// The class reads of the host-bound agent `actor`'s self brief, read in
+    /// one snapshot: the vault's authority instant, the policy resolved
+    /// once, the live definition ceiling
+    /// (`agent_definition_ceiling_for_actor`), and from them the concrete
+    /// class ceilings (`brief_ceiling_rows`) and the per-class verdicts
+    /// (`brief_class_verdicts`), each dated with that instant and the
+    /// policy's frontier. Each ceiling is a dated description, and each
+    /// verdict is a class's, never one act's.
     ///
     /// # Errors
-    /// A store, fold or clock failure, or a policy a loaded manifest holds
-    /// fail-closed.
-    pub fn self_brief_ceilings(&self, actor: WriteActor) -> Result<Vec<BriefCeiling>> {
+    /// A store, fold or clock failure, a grant that does not decode, or a
+    /// policy a loaded manifest holds fail-closed.
+    pub fn self_brief_class_reads(&self, actor: WriteActor) -> Result<BriefClassReads> {
         let txn = self.store.env.read_txn()?;
         let as_of_secs = self.instant_in_txn(&txn)?.secs();
         let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
         let definition = crate::gate::agent_definition_ceiling_for_actor(&self.store, &txn, actor);
-        policy.brief_ceiling_rows(actor, as_of_secs, definition)
+        Ok(BriefClassReads {
+            ceilings: policy.brief_ceiling_rows(actor, as_of_secs, definition)?,
+            class_verdicts: policy.brief_class_verdicts(
+                &self.store,
+                &txn,
+                actor,
+                as_of_secs,
+                definition,
+            )?,
+        })
+    }
+}
+
+/// Whether a row held by `holder` governs `actor`'s acts: a vault row, or
+/// the actor's own holder row.
+fn vault_or_own(holder: Option<EntityId>, actor: WriteActor) -> bool {
+    holder.is_none_or(|holder| holder == actor.entity_ref())
+}
+
+/// Whether scoped policy grant row `grant`'s own actor binding admits the
+/// actor of class `actor_class` and ref `actor_ref`.
+fn scoped_grant_admits(grant: &PolicyScopedGrant, actor_class: &str, actor_ref: &str) -> bool {
+    grant
+        .actor_class
+        .as_deref()
+        .is_none_or(|bound| bound == actor_class)
+        && grant
+            .actor_ref
+            .as_deref()
+            .is_none_or(|bound| bound == actor_ref)
+}
+
+/// The class standing outbound grant dial `scope` covers, and the checks
+/// every act inside it still meets.
+fn outbound_class(scope: &StandingOutboundGrantScope) -> (String, Vec<BriefPerActCheck>) {
+    match scope {
+        StandingOutboundGrantScope::Contact { .. } | StandingOutboundGrantScope::Channel { .. } => {
+            (
+                crate::store::consent_bound::SEND_VERB_CLASS.to_owned(),
+                SEND_CHECKS.to_vec(),
+            )
+        }
+        StandingOutboundGrantScope::VerbClass { verb_class }
+        | StandingOutboundGrantScope::BriefVerbClass { verb_class, .. } => {
+            (verb_class.clone(), SEND_CHECKS.to_vec())
+        }
+        StandingOutboundGrantScope::ArtifactPublish { .. } => (
+            ARTIFACT_PUBLISH_CLASS.to_owned(),
+            vec![BriefPerActCheck::Budget],
+        ),
+        StandingOutboundGrantScope::ScopedMcp { server, tool, .. } => (
+            format!("mcp:{server}/{tool}"),
+            vec![
+                BriefPerActCheck::DataClassAndEndpoint,
+                BriefPerActCheck::ManifestBinding,
+                BriefPerActCheck::ToolSetting,
+                BriefPerActCheck::Budget,
+            ],
+        ),
+        StandingOutboundGrantScope::BookingPageInvites { .. } => (
+            crate::calendar::CALENDAR_INVITE_VERB.to_owned(),
+            vec![BriefPerActCheck::BoundContainment, BriefPerActCheck::Budget],
+        ),
+        StandingOutboundGrantScope::ChannelIdentityEnvelope { verb_class, .. } => (
+            verb_class.clone(),
+            vec![
+                BriefPerActCheck::EnvelopeWindow,
+                BriefPerActCheck::CounterpartyOptOut,
+                BriefPerActCheck::CampaignCompliance,
+                BriefPerActCheck::Budget,
+            ],
+        ),
+    }
+}
+
+/// The class a scoped policy grant row's effector covers: the verb, without
+/// its `external:` or `external_effect:` prefix; `*` stays `*`.
+fn effector_class(effector: &str) -> &str {
+    let effector = effector.trim();
+    effector
+        .strip_prefix(EXTERNAL_EFFECT_EFFECTOR_PREFIX)
+        .or_else(|| effector.strip_prefix(EXTERNAL_EFFECT_EFFECTOR_LONG_PREFIX))
+        .unwrap_or(effector)
+}
+
+/// The reason codes behind default rule `rule`'s word, and the checks every
+/// act under it still meets: a reversible vault effect proceeds; a
+/// destructive, outbound or critical one asks unless a standing grant
+/// covers it, which the act's own bound decides; the catastrophe floor
+/// asks.
+fn default_rule_words(
+    rule: BriefDefaultRule,
+) -> (&'static [GateReasonCode], Vec<BriefPerActCheck>) {
+    match rule {
+        BriefDefaultRule::ReversibleVaultEffect => (&[], Vec::new()),
+        BriefDefaultRule::DestructiveOutboundOrCritical => (
+            &[GateReasonCode::PendingConsentIrreversibleEffect],
+            vec![BriefPerActCheck::BoundContainment],
+        ),
+        BriefDefaultRule::CatastropheFloor => (
+            &[GateReasonCode::PendingConsentCatastropheFloor],
+            Vec::new(),
+        ),
+    }
+}
+
+/// The line for `class` from `source`: inside its bound, the words reason
+/// codes `codes` give, classed with no press; beyond it, `outside`.
+fn worded_line(
+    class: String,
+    source: BriefClassSource,
+    codes: &[GateReasonCode],
+    outside: Option<CanEffectVerdict>,
+    per_act: Vec<BriefPerActCheck>,
+) -> BriefClassVerdict {
+    let words = crate::gate::preflight_words(codes, false);
+    BriefClassVerdict {
+        class,
+        source,
+        inside: CanEffectVerdict::of_preflight(words.verdict),
+        reasons: words.reasons.into_iter().map(str::to_owned).collect(),
+        holds: words.holds.into_iter().map(str::to_owned).collect(),
+        outside,
+        per_act,
+    }
+}
+
+/// A line source's place among the lines of one class.
+fn source_rank(source: &BriefClassSource) -> u8 {
+    match source {
+        BriefClassSource::OutboundGrant { .. } => 0,
+        BriefClassSource::Effector { .. } => 1,
+        BriefClassSource::Act { .. } => 2,
+        BriefClassSource::Default { .. } => 3,
+    }
+}
+
+/// The standing outbound grant a line comes from, if any.
+fn source_grant(source: &BriefClassSource) -> Option<EntityId> {
+    match source {
+        BriefClassSource::OutboundGrant { grant, .. } => Some(*grant),
+        _ => None,
     }
 }
 
