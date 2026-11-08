@@ -212,7 +212,8 @@ pub(crate) use admission::{
 };
 pub(crate) use ledger::{
     displaced_judge_revision_in_txn, ensure_current_judge_in_txn, skill_edit_verdict_in_txn,
-    skill_edit_verdict_receipts, validate_judge_revision,
+    skill_edit_verdict_receipts, skill_edit_verdict_sourced, skill_edit_verdict_sourced_in_txn,
+    validate_judge_revision,
 };
 pub(crate) use preflight::{
     SkillEditTrialBasis, skill_edit_preflight_passed_in_txn, skill_edit_trial_basis_in_txn,
@@ -220,7 +221,10 @@ pub(crate) use preflight::{
 pub(crate) use project_goal::{
     project_axes, project_goal_revision_proposals_in_txn, project_rules_for_record,
 };
-pub(crate) use tradeoff::{settle_skill_tradeoff_ask_as_in_txn, settle_skill_tradeoff_ask_in_txn};
+pub(crate) use tradeoff::{
+    settle_skill_tradeoff_ask_as_in_txn, settle_skill_tradeoff_ask_in_txn,
+    skill_tradeoff_ask_sourced,
+};
 
 #[cfg(test)]
 pub(super) use admission::optimizer_origin_marker_key;
@@ -356,3 +360,4 @@ const VERDICT_ROW_LABEL: &str = "skill edit verdict row";
 const SKILL_EDIT_RECEIPT_PREFIX: &str = "skill_edit:";
 
 pub(crate) use goal_axis::skill_edit_goal_in_txn;
+pub(crate) use goal_axis::{skill_edit_goal_sourced, skill_edit_goal_sourced_in_txn};
