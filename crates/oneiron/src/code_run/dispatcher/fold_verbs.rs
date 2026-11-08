@@ -4,8 +4,8 @@
 //! for a live run (OF-181) reaches that run's log, never its own replay.
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
-use crate::code_run::SelfDispatchOutcome;
-use crate::compaction::SelfFoldCall;
+use crate::code_run::{FoldAnswer, FoldWordRef, SelfDispatchOutcome};
+use crate::compaction::{FoldLedger, SelfFoldCall};
 use crate::{EntityId, Error, Result};
 
 /// Whose log a dispatcher's fold verbs reach: its executor call's own run,
@@ -63,14 +63,86 @@ impl HostSelfDispatcher<'_> {
             .iter()
             .map(|row| row.last())
             .max();
-        let answer = if call.writes() {
-            self.storage
-                .update_code_run_folds(run_id, |ledger| ledger.answer(call, step, prefix_end))?
+        // The words the answer copies are named from the same fenced ledger
+        // that answers it, under the run whose log it reads (FIX 18924).
+        let (mut answer, words) = if call.writes() {
+            self.storage.update_code_run_folds(run_id, |ledger| {
+                let answer = ledger.answer(call, step, prefix_end);
+                (answer, answer_words(ledger, run_id, call))
+            })?
         } else {
-            self.storage
-                .code_run_folds(run_id)?
-                .answer(call, step, prefix_end)
+            let mut ledger = self.storage.code_run_folds(run_id)?;
+            let answer = ledger.answer(call, step, prefix_end);
+            (answer, answer_words(&ledger, run_id, call))
         };
-        Ok(SelfDispatchOutcome::Fold(answer.to_string()))
+        // A fold's answer can quote its stub, ids and note: every known
+        // custody value in its text reaches the guest as its handle. Only
+        // text values are masked, so the answer stays the same JSON.
+        mask_answer_text(&self.storage, &mut answer)?;
+        Ok(SelfDispatchOutcome::Fold(FoldAnswer::new(
+            answer.to_string(),
+            words,
+        )))
     }
+}
+
+/// The folds of run `run_id`'s `ledger` whose accepted summary the answer to
+/// `call` copies (FIX 18924): `describe({fold})` of a fold that still keeps
+/// its words. No other answer copies a summary.
+fn answer_words(ledger: &FoldLedger, run_id: EntityId, call: &SelfFoldCall) -> Vec<FoldWordRef> {
+    let SelfFoldCall::Describe { fold } = call else {
+        return Vec::new();
+    };
+    ledger
+        .fold(*fold)
+        .filter(|record| record.summary.is_some())
+        .map(|record| FoldWordRef {
+            source_run: run_id,
+            fold: record.fold,
+            sources: record.sources.clone(),
+        })
+        .into_iter()
+        .collect()
+}
+
+/// The fields of a fold answer that quote text a fold keeps: a stub, a
+/// note, ids, result handles and a mark's failure. Every other field is
+/// engine-typed (fold handles, spans, kinds, verbs, sources, flags) and is
+/// never masked.
+const FOLD_ANSWER_TEXT_KEYS: [&str; 5] = ["stub", "note", "ids", "handles", "failed"];
+
+/// Masks every known custody value in the text fields of one fold answer,
+/// by its schema: only string values under a [`FOLD_ANSWER_TEXT_KEYS`] field,
+/// at any depth, pass through the masking. Keys, numbers, booleans and the
+/// typed fields keep their values, so the answer stays the same JSON.
+fn mask_answer_text(
+    storage: &crate::code_run::storage::ExecutorStorage<'_>,
+    value: &mut serde_json::Value,
+) -> Result<()> {
+    mask_answer_value(storage, value, false)
+}
+
+fn mask_answer_value(
+    storage: &crate::code_run::storage::ExecutorStorage<'_>,
+    value: &mut serde_json::Value,
+    text: bool,
+) -> Result<()> {
+    match value {
+        serde_json::Value::String(string) if text => {
+            *string = crate::engine_executor::mask_known_text(storage, string)?;
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                mask_answer_value(storage, item, text)?;
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for (key, item) in fields.iter_mut() {
+                let text = text || FOLD_ANSWER_TEXT_KEYS.contains(&key.as_str());
+                mask_answer_value(storage, item, text)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }

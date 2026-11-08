@@ -261,6 +261,7 @@ fn route_project(
                     now,
                 },
                 AgentSpawnContext {
+                    caller_origin: Some(crate::agent_dispatch::CallerOrigin::NativeHost),
                     context_spec: Some(ContextSpec::default().with_briefing(briefing)),
                     ..AgentSpawnContext::default()
                 },

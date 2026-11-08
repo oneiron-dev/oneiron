@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 use crate::store::{DefaultPolicySeedMode, Store, VaultWriterLease};
 #[cfg(feature = "test-support")]
 use crate::temporal::TimeRange;
+use crate::work_line::{TASK_WORK_BOUND, TASK_WORK_WAIT, WorkLine};
 use std::path::Path;
 
 mod config_validation;
@@ -557,6 +558,8 @@ impl Vault {
         seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
         crate::batch::sweep_scope_stamps(&store)?;
+        // FIX 12327: rows of a kind no executor serves leave the queue.
+        crate::attempt_queue::drop_unserved_kinds(&store)?;
         let seed_content = matches!(seed_mode, DefaultPolicySeedMode::Required)
             && !crate::store::shared_leave_receipt::has_left(&store)?;
         // ONE-1890: the seeded system-agent roster reconciles on every seeded
@@ -592,6 +595,7 @@ impl Vault {
             .or_else(|| directory_identity(store.env.path()));
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
+            admitted_model_packs: Default::default(),
             vault_id: super::VaultId::resolve_at_open(
                 &store,
                 config
@@ -611,6 +615,7 @@ impl Vault {
             tagging_arm: Default::default(),
             analyzer,
             writer_lease: None,
+            secret_use_t1_operations: Default::default(),
             page_seal_mirror_carry: Default::default(),
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
@@ -624,16 +629,12 @@ impl Vault {
             confirm_demotion_retries: Default::default(),
             launch_usd_prices: Default::default(),
             message_streams: Default::default(),
+            #[cfg(unix)]
+            host_legal_captures: Default::default(),
             live_rows: Default::default(),
             attempt_activity: Default::default(),
-            task_work: crate::work_line::WorkLine::new(
-                None,
-                crate::work_line::TASK_WORK_BOUND,
-                crate::work_line::TASK_WORK_WAIT,
-            ),
-            linear_rate_line: crate::work_line::WorkLine::exclusive(
-                crate::work_line::TASK_WORK_WAIT,
-            ),
+            task_work: WorkLine::new(None, TASK_WORK_BOUND, TASK_WORK_WAIT),
+            linear_rate_line: WorkLine::exclusive(TASK_WORK_WAIT),
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
@@ -645,6 +646,8 @@ impl Vault {
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
+            executor_leases_released: std::sync::atomic::AtomicBool::new(false),
+            agent_run_fences: Default::default(),
             #[cfg(feature = "sync")]
             home_search: Default::default(),
             speculative_passes: Default::default(),
@@ -659,14 +662,17 @@ impl Vault {
             code_consent_host: Default::default(),
             managed_owner_check: Default::default(),
             served_transports: Default::default(),
+            esign_page_inspector: Default::default(),
+            xlsx_precision_recalc: Default::default(),
             coach_weave_digest_host: Default::default(),
             origin_mirror_wake: Default::default(),
+            ask_forward_arrivals: Default::default(),
+            origin_git_transport: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
         };
-        // A sealed vault (maximum tier) admits the wrap its seal was
-        // unlocked with, holds its data key and mirrors its wraps before any
-        // caller holds it.
+        // A sealed vault (maximum tier) admits the wrap its seal was unlocked with,
+        // holds its data key and mirrors its wraps before any caller holds it.
         vault.settle_page_seal()?;
         // A published deletion must finish its request-bound topology tear
         // before any caller can apply a new merge or observe this vault.
@@ -883,6 +889,22 @@ impl Vault {
             .and_then(|manager| manager.upgrade());
         if let Some(manager) = manager {
             manager.notify_note(id);
+        }
+    }
+
+    /// Invalidate own devices' copies of `id`'s forks after a committed fork
+    /// change at this authority (FIX 12789): a fork made or uploaded here, a
+    /// decision, a bundle opened. Content-free and best effort, as
+    /// [`Self::notify_note_document`]; a replica's notice stays on it.
+    #[cfg(feature = "sync")]
+    pub(crate) fn notify_note_forks(&self, id: crate::EntityId) {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .ok()
+            .and_then(|manager| manager.upgrade());
+        if let Some(manager) = manager {
+            manager.notify_note_forks(id);
         }
     }
 

@@ -58,6 +58,10 @@ pub struct TemporalSearchRequest {
     #[serde(default)]
     pub learned_range: Option<TemporalSearchRange>,
     pub limit: usize,
+    /// The caller's retrieval filter (FIX 3977): bound before candidate
+    /// generation, so it narrows every channel, seed and terminal read.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 fn adaptive_enabled() -> bool {
@@ -121,10 +125,23 @@ impl Memory<'_> {
         &self,
         input: &TemporalSearchRequest,
     ) -> MemoryResult<ScopedReadResult<TemporalSearchResult>> {
+        if let Some(filter) = &input.filter {
+            // Bind the caller's filter on this call's handle once, so every
+            // lane the search opens meets it (FIX 3977).
+            let bound = TemporalSearchRequest {
+                filter: None,
+                ..input.clone()
+            };
+            return self.with_read_filter(Some(filter)).query_temporal(&bound);
+        }
         input.validate()?;
         let limit = input.limit;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        let (filter, policy) = lane.recall_plan()?;
+        let crate::claim::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = lane.recall_plan()?;
         // The ranges here, then the actor gate under one authority per
         // snapshot (FIX 11648).
         let gate = lane.recall_candidate_gate(&policy, &filter);
@@ -153,7 +170,7 @@ impl Memory<'_> {
             .vault
             .query()
             .reading(lane.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates)
             .scoped_note_reader(lane.actor_key().clone())
             .for_destination(lane.actor_key().destination())
             .filter_candidates(&admitted)

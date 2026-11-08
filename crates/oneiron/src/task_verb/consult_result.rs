@@ -177,6 +177,14 @@ pub(super) struct TaskVerbBody {
     pub(super) spec: Value,
     pub(super) consult: Option<ConsultPayload>,
     pub(super) ttl: Option<TaskTtl>,
+    /// FIX685: the hook-chosen due/deadline stamp, Unix seconds. `None`
+    /// is no due annotation. Never TTL expiry (that is `ttl`), never a
+    /// not-before wait; an open standard TASK with one ticks once on
+    /// `schedule.tick` after it (FIX 4749).
+    pub(super) due_at: Option<u64>,
+    /// FIX 22121: a watch TASK, whose `due_at` tick runs its hooks and
+    /// settles it; nothing realizes it. False on every other TASK.
+    pub(super) watch: bool,
     pub(super) state: Option<TaskExecutionState>,
     pub(super) provenance: Value,
     pub(super) created_at: u64,
@@ -211,6 +219,11 @@ impl TaskVerbBody {
     /// The OF-543 stamp on this body; pre-OF-543 rows read as the root.
     pub(super) fn resolved_type_ref(&self) -> crate::task_type::TaskTypeRef {
         self.type_ref.clone().unwrap_or_default()
+    }
+
+    /// The due time a watch TASK ticks at (FIX 22121); `None` on any other.
+    pub(super) const fn watch_due_at(&self) -> Option<u64> {
+        if self.watch { self.due_at } else { None }
     }
 
     pub(super) const fn terminal(&self) -> Option<&TaskTerminalRecord> {

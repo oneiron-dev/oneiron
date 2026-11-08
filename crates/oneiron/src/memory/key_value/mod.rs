@@ -28,9 +28,6 @@ pub use types::*;
 pub(super) const PREDICATE: &str = crate::claim::KEY_VALUE_PREDICATE;
 /// The verb row a keyed value's prose links are receipted under.
 pub(crate) const KEY_VALUE_PROSE_ROW: &str = "vault.kv.put";
-const MAX_ADDRESS_BYTES: usize = 4096;
-const MAX_SEGMENTS: usize = 32;
-const MAX_OFFSET: usize = 1_000_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -55,24 +52,28 @@ pub(crate) fn key_value_text_of(body: &ClaimBody) -> Option<serde_json::Value> {
         .map(|stored| stored.value)
 }
 
+/// The exact segment grammar of a namespace, prefix or suffix: nonempty
+/// unless `empty`, and every segment nonempty, without NUL, never the `*`
+/// wildcard. Its size is measured where a caller names it
+/// ([`Memory::measure_key_value_namespace`]), never refused (ABC rows 28,
+/// 29).
 fn check_namespace(namespace: &[String], empty: bool) -> MemoryResult<()> {
     if (!empty && namespace.is_empty())
-        || namespace.len() > MAX_SEGMENTS
         || namespace
             .iter()
             .any(|s| s.is_empty() || s.contains('\0') || s == "*")
-        || namespace.iter().map(String::len).sum::<usize>() > MAX_ADDRESS_BYTES
     {
         return Err(MemoryError::bad_request("invalid exact namespace segments"));
     }
     Ok(())
 }
+/// The exact grammar of an address: its namespace's, and a nonempty key
+/// without NUL, of any length (ABC row 30).
 fn check_address(address: &KeyValueAddress) -> MemoryResult<()> {
     check_namespace(&address.namespace, false)?;
-    if address.key.is_empty() || address.key.len() > MAX_ADDRESS_BYTES || address.key.contains('\0')
-    {
+    if address.key.is_empty() || address.key.contains('\0') {
         return Err(MemoryError::bad_request(
-            "key must be a nonempty bounded string",
+            "key must be a nonempty string without NUL",
         ));
     }
     Ok(())
@@ -83,12 +84,9 @@ fn check_address(address: &KeyValueAddress) -> MemoryResult<()> {
 pub(crate) fn address_parses(address: &KeyValueAddress) -> bool {
     check_address(address).is_ok()
 }
-fn check_page(limit: usize, offset: usize) -> MemoryResult<()> {
-    super::caps::check_limit_nonzero(limit)?;
-    if offset > MAX_OFFSET {
-        return Err(MemoryError::bad_request("offset exceeds 1000000"));
-    }
-    Ok(())
+/// A page: a positive limit, and any nonnegative offset (ABC row 31).
+fn check_page(limit: usize) -> MemoryResult<()> {
+    super::caps::check_limit_nonzero(limit)
 }
 fn conflict(message: &str) -> MemoryError {
     MemoryError::new(
@@ -121,6 +119,34 @@ impl KeyValueRows {
 }
 
 impl Memory<'_> {
+    /// A namespace, prefix or suffix a caller names, measured against the
+    /// `keyed_namespace_segments` and `keyed_namespace_bytes` rows (ABC rows
+    /// 28, 29): past either it asks whether everything is okay, and the
+    /// namespace is kept and served whole.
+    fn measure_key_value_namespace(&self, namespace: &[String]) {
+        let _ = self.vault.measure_limit(
+            crate::limit_ask::EngineLimit::KeyedNamespaceSegments,
+            u64::try_from(namespace.len()).unwrap_or(u64::MAX),
+        );
+        let bytes = namespace.iter().fold(0_u64, |sum, segment| {
+            sum.saturating_add(segment.len() as u64)
+        });
+        let _ = self
+            .vault
+            .measure_limit(crate::limit_ask::EngineLimit::KeyedNamespaceBytes, bytes);
+    }
+
+    /// An address a caller names, measured: its namespace, and its key
+    /// against the `keyed_key_bytes` row (ABC row 30). Past a row it asks,
+    /// and the address is kept and served whole.
+    fn measure_key_value_address(&self, address: &KeyValueAddress) {
+        self.measure_key_value_namespace(&address.namespace);
+        let _ = self.vault.measure_limit(
+            crate::limit_ask::EngineLimit::KeyedKeyBytes,
+            address.key.len() as u64,
+        );
+    }
+
     fn key_value_scope(&self, address: &KeyValueAddress) -> rmpv::Value {
         json_to_rmpv(
             &serde_json::json!({"key_value": {"version": 1, "actor_class": self.actor_class.gate_actor_class(), "namespace": address.namespace, "key": address.key}}),
@@ -335,6 +361,7 @@ impl Memory<'_> {
     /// Exact get in the bound actor/class's worldless namespace.
     pub fn key_value_get(&self, address: &KeyValueAddress) -> MemoryResult<Option<KeyValueItem>> {
         check_address(address)?;
+        self.measure_key_value_address(address);
         let readable = self.key_value_readable()?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         self.key_value_rows(&txn, readable.as_ref())?
@@ -346,7 +373,8 @@ impl Memory<'_> {
     /// Exact prefix and equality search, ordered by namespace then key.
     pub fn key_value_search(&self, request: &KeyValueSearch) -> MemoryResult<Vec<KeyValueItem>> {
         check_namespace(&request.namespace_prefix, true)?;
-        check_page(request.limit, request.offset)?;
+        check_page(request.limit)?;
+        self.measure_key_value_namespace(&request.namespace_prefix);
         if let Some(filter) = &request.filter {
             // A filter of any size is matched whole; past its row, the row asks.
             let bytes = serde_json::to_vec(filter)
@@ -406,15 +434,15 @@ impl Memory<'_> {
     ) -> MemoryResult<Vec<Vec<String>>> {
         check_namespace(&request.prefix, true)?;
         check_namespace(&request.suffix, true)?;
-        check_page(request.limit, request.offset)?;
-        if request
-            .max_depth
-            .is_some_and(|depth| depth == 0 || depth > MAX_SEGMENTS)
-        {
+        check_page(request.limit)?;
+        // Any positive depth truncates the listed namespaces (ABC row 32).
+        if request.max_depth == Some(0) {
             return Err(MemoryError::bad_request(
-                "max_depth must be between 1 and 32",
+                "max_depth must be a positive integer",
             ));
         }
+        self.measure_key_value_namespace(&request.prefix);
+        self.measure_key_value_namespace(&request.suffix);
         let readable = self.key_value_readable()?;
         // The requested page, measured where no read stands: the readable
         // snapshot is closed and the page's own opens below.

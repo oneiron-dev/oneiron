@@ -2,7 +2,7 @@
 //! demotion of a promoted canonical window.
 //!
 //! Only the thin read cache of an unpromoted item is pruned: its body
-//! (`ri:b:`), text document (`ri:d:`), opened marker (`ro:e:`) and touch row
+//! (`ri:b:`), text document (`ri:d:`), source provenance (`ri:s:`), opened marker (`ro:e:`) and touch row
 //! (`rt:e:`). The thin index, promoted windows, local writes, deletes and
 //! authority stay, and so does the cache of an item a legal hold names. No
 //! tombstone or Loro operation is produced: a pruned item is fetched again on
@@ -57,9 +57,86 @@ pub fn record_item_touch(vault: &Vault, item: EntityId) -> Result<()> {
     })
 }
 
+/// The four rows of a native read cache whose blob is still the exact
+/// canonical row the caller selected. A checkpoint leaves the cache whole
+/// unless its opened window, document and touch row read as the producer
+/// wrote them. Removing its opened marker with the bytes permits refetch.
+pub(crate) fn checkpoint_read_cache_keys(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    item: EntityId,
+    canonical: &[u8],
+) -> Result<Option<[String; 4]>> {
+    let id = item.to_hex();
+    let opened = format!("ro:e:{id}");
+    let Some(raw_window) = store.sync_state.get(txn, &opened)? else {
+        return Ok(None);
+    };
+    let Some(window) = std::str::from_utf8(&raw_window)
+        .ok()
+        .and_then(WindowKey::try_new)
+    else {
+        return Ok(None);
+    };
+    if store
+        .sync_state
+        .get(txn, &format!("rp:w:{window}"))?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    let blob_key = format!("ri:b:{id}");
+    let Some(raw) = store.sync_state.get(txn, &blob_key)? else {
+        return Ok(None);
+    };
+    if raw != canonical {
+        return Ok(None);
+    }
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+        return Ok(None);
+    };
+    if window
+        .start_timestamp()
+        .is_none_or(|start| header.learned_at < start)
+        || window
+            .end_timestamp()
+            .is_some_and(|end| header.learned_at >= end)
+    {
+        return Ok(None);
+    }
+    let document_key = format!("ri:d:{id}");
+    let Some(document) = store.sync_state.get(txn, &document_key)? else {
+        return Ok(None);
+    };
+    let Some((&crate::sync::transport::TAG_DOCUMENT, bytes)) = document.split_first() else {
+        return Ok(None);
+    };
+    let Ok(frame) = crate::sync::transport::decode_document(bytes) else {
+        return Ok(None);
+    };
+    if frame.entity != item
+        || !matches!(
+            frame.kind,
+            crate::sync::transport::document_sub_tags::STATE
+                | crate::sync::transport::document_sub_tags::UPDATE
+        )
+    {
+        return Ok(None);
+    }
+    let touched = format!("{TOUCH_PREFIX}{id}");
+    if !store
+        .sync_state
+        .get(txn, &touched)?
+        .is_some_and(|bytes| bytes.len() == std::mem::size_of::<u64>())
+    {
+        return Ok(None);
+    }
+    Ok(Some([blob_key, document_key, opened, touched]))
+}
+
 /// Erase reach for the read caches of `items` (FIX 7608, owner ruling KEY
 /// STORE = A, FIX 10799): an erased item's cached body, text document,
-/// content-world witness, opened marker, touch row and thin index rows go in the erase's own
+/// content-world witness, source provenance, opened marker, touch row and thin index rows go in the erase's own
 /// transaction, under its id and its masked copy's alike. Absent-ok key
 /// deletes only: nothing is decoded, no mark is read, and an item with no
 /// cache erases as before.
@@ -95,7 +172,7 @@ pub(crate) fn erase_item_caches_in_txn(
 }
 
 /// Drops `item`'s fetched copy: its cached body, text document,
-/// content-world witness, opened marker and touch row. Its thin index rows
+/// content-world witness, source provenance, opened marker and touch row. Its thin index rows
 /// stay; absent-ok key deletes only.
 pub(crate) fn clear_thin_item_cache_in_txn(
     store: &Store,
@@ -103,7 +180,7 @@ pub(crate) fn clear_thin_item_cache_in_txn(
     item: EntityId,
 ) -> Result<()> {
     let hex = item.to_hex();
-    for family in ["ri:b:", "ri:c:", "ri:d:", "ro:e:", TOUCH_PREFIX] {
+    for family in ["ri:b:", "ri:c:", "ri:d:", "ri:s:", "ro:e:", TOUCH_PREFIX] {
         store.sync_state.delete(txn, &format!("{family}{hex}"))?;
     }
     Ok(())
@@ -173,7 +250,7 @@ pub(crate) fn prune_thin_items_in_txn(
         {
             continue;
         }
-        for family in ["ri:b:", "ri:c:", "ri:d:", TOUCH_PREFIX] {
+        for family in ["ri:b:", "ri:c:", "ri:d:", "ri:s:", TOUCH_PREFIX] {
             vault
                 .store
                 .sync_state

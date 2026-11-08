@@ -98,6 +98,17 @@ pub(super) fn decode_task_create_proposal(value: &Value) -> MemoryResult<TaskCre
                 .ok_or_else(|| invalid("tasks.proposal.ttl"))
         })
         .transpose()?;
+    // FIX685: the due annotation rides back out of the parked proposal, so
+    // the approved TASK lands carrying it.
+    spec.due_at = task_body_optional(entries, "due_at")?
+        .map(|value| {
+            value
+                .as_u64()
+                .ok_or_else(|| invalid("tasks.proposal.due_at"))
+        })
+        .transpose()?;
+    // FIX 22121: so does the watch flag, so it lands a watch TASK.
+    spec.watch = super::watch_task::decode_watch(entries, "tasks.proposal.watch")?;
     spec.type_ref = task_body_optional(entries, "type_ref")?
         .map(|value| {
             value

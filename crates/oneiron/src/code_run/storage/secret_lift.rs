@@ -11,6 +11,9 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{Error, Result, Vault};
 
+mod room;
+pub use room::CodeRunRoomSecretLiftRequest;
+
 const DISMISSED: SideTable<String, CodeRunSecretLiftDismissal, Named> =
     SideTable::new(&side_table::CODE_RUN_SECRET_LIFT_DISMISSED);
 const CONTENT_KIND: &str = "code_run_secret_lift";
@@ -182,18 +185,15 @@ pub(crate) fn drop_code_run_result_marks_in_txn(
     Ok(())
 }
 
-/// Erases the marks of result occurrences retained by the row being erased,
-/// read before its descriptors go. Only MESSAGE result holds carry `result`;
-/// other owners and other occurrences of the same bytes remain unchanged.
+/// Erases the marks of the held occurrences the row being erased owns,
+/// read before its descriptors go. The optional MESSAGE source provenance is
+/// not an occurrence marker. Other owners' and occurrences' marks stay intact.
 pub(crate) fn erase_retained_result_marks_in_txn(
     dbs: &impl crate::side_table::SideTableDbs,
     txn: &mut heed::RwTxn<'_>,
     bodies: &[crate::provenance::body::OwnedBody],
 ) -> Result<()> {
     for body in bodies {
-        if body.result.is_none() {
-            continue;
-        }
         let Some(held) = body.state.held() else {
             continue;
         };

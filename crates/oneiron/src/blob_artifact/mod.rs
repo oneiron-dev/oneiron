@@ -81,9 +81,13 @@ pub(crate) use self::holders::{
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 // FIX 9949: an uploaded or generated ASSET's reference to its bytes.
-pub(crate) use self::lifecycle::{hold_asset_reference_in_txn, release_asset_reference_in_txn};
+pub(crate) use self::lifecycle::{
+    discard_asset_reference_in_txn, discard_local_copy_in_txn, hold_asset_reference_in_txn,
+    release_asset_reference_in_txn,
+};
 // FIX 6225: a step response's exact version, released by its last pin.
 pub(crate) use self::lifecycle::{release_response_version_in_txn, response_version_stands_in_txn};
+pub(crate) use self::lifecycle::{archive_version_stands_in_txn, release_archive_version_in_txn};
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::archive_version_claim_tables;
 pub(crate) use self::references::{
@@ -103,6 +107,7 @@ pub use self::verbs::{
     NativeOutputRequest, ProposalSettleRequest, ReleasedWait, SlideReviewOutcome,
     SlideReviewSubmit, SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
 };
+pub(crate) use self::versions::RoomResponseVersion;
 pub(crate) use self::versions::archive_version_tables;
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
 // FIX 7227: the queue-check completion writer (token-only, no raw bytes/ids),

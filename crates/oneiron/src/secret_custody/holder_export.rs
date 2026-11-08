@@ -27,10 +27,13 @@
 //! copy past one row rides in numbered parts the receiver joins first (FIX
 //! 12063), each signed in the result's commit by the key that signed the
 //! result, so each part proves itself alone (`part_signature`, FIX 12373).
+//! A sound row whose holder's standing a receiver has not folded yet waits
+//! in its window, never kept, until it proves itself (FIX 12352).
 //! A kept copy whose secret an admitted revoke ended or an erase
 //! here fenced is forgotten (`settle`, FIX 12064). Once the owner's import
 //! of a copy commits, the recipient marks its request imported, and no
-//! install relays the copy any more (`import_mark`, FIX 12062).
+//! install relays the copy any more (`import_mark`, FIX 12062); a mark it
+//! cannot sign then stays owed, value-free, until it can (FIX 12291).
 
 mod import_mark;
 mod part_signature;
@@ -49,9 +52,9 @@ use self::relay::kept_output_in_txn;
 pub(crate) use self::relay::witnessed_output;
 #[cfg(feature = "sync")]
 pub(crate) use self::relay::{
-    MAX_EXPORT_OUTPUT_WITNESS_BYTES, MAX_RELAYED_OUTPUT_BYTES, WitnessedResult,
-    held_export_outputs, keep_relayed_export_output_in_txn, kept_export_output_sealed_at_in_txn,
-    relayed_export_output_due_in_txn, witnessed_result,
+    MAX_EXPORT_OUTPUT_WITNESS_BYTES, MAX_RELAYED_OUTPUT_BYTES, ProofState, WitnessedResult,
+    assess_witness, held_export_outputs, keep_relayed_export_output_in_txn,
+    kept_export_output_sealed_at_in_txn, relayed_export_output_due_in_txn, witnessed_result,
 };
 use self::sealed::{SupplementBinding, open_supplement, output_of, seal_supplement};
 use super::control::permits::{permit_for, permitted_keys};
@@ -296,6 +299,7 @@ impl Vault {
             holder: asked.executor,
             recipient: work.recipient.machine,
             status,
+            marked_imported: fold.export_supplement_imported(&request),
             digest: output
                 .map(|output| blake3::Hash::from_bytes(output.digest).to_hex().to_string()),
             bytes: output.map(|output| output.bytes),

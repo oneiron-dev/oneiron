@@ -8,6 +8,8 @@ impl Memory<'_> {
     /// writer's credential is narrowed to (ARCH-0067 §5). Every TASK minted
     /// through this surface is stamped there at birth, so the writer hears
     /// and reads its own tasks and a reader narrowed elsewhere does not.
+    /// The `blob.version` claim of a version this surface appends is born
+    /// there too (FIX 3171).
     ///
     /// A host passes the ceiling it authenticated; nothing a caller sends
     /// reaches it. A vault-wide writer binds nothing, and its TASKs are born

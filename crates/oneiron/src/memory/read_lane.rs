@@ -13,6 +13,8 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::vault::ReadMode;
 
+mod hydrate_filtered;
+
 /// One resolved read target: the entity a reference names, at its frontier.
 /// `None` is a reference that resolves to nothing, never a withheld row.
 pub(super) type ReadTargetSlot = Option<(EntityId, ReadMode)>;
@@ -43,7 +45,8 @@ impl Memory<'_> {
         Ok(self
             .vault
             .scoped_read(self.in_room_turn(key)?)
-            .with_claim_status(claims))
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
     }
 
     /// [`Self::read_lane`] for rows that go on to `destination` as well
@@ -59,7 +62,8 @@ impl Memory<'_> {
         Ok(self
             .vault
             .scoped_read(self.in_room_turn(key)?)
-            .with_claim_status(claims))
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
     }
 
     /// The queue-exhaust Owner's reader, retaining this handle's actual
@@ -85,7 +89,8 @@ impl Memory<'_> {
         Ok(self
             .vault
             .scoped_read(self.in_room_turn(key)?)
-            .with_claim_status(claims))
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
     }
 
     /// [`Self::read_lane`], or `None` exactly when this handle's bound
@@ -113,7 +118,7 @@ impl Memory<'_> {
                         .vault
                         .credential_read_key_in_txn(&txn, proof, self.actor, owner)?;
                     match key {
-                        Some(key) => key,
+                        Some(key) => self.in_phone_lines(key)?,
                         None => return Ok(None),
                     }
                 }
@@ -121,7 +126,12 @@ impl Memory<'_> {
             }
         };
         let key = self.in_room_turn(key.for_destination(&self.destination))?;
-        Ok(Some(self.vault.scoped_read(key).with_claim_status(claims)))
+        Ok(Some(
+            self.vault
+                .scoped_read(key)
+                .with_claim_status(claims)
+                .with_read_filter(self.read_filter.as_ref()),
+        ))
     }
 
     /// The key every read verb on this handle reads under: its proof's, its
@@ -133,6 +143,16 @@ impl Memory<'_> {
     /// As [`Self::read_lane`] refuses.
     pub fn read_key(&self) -> MemoryResult<ScopedReadActorKey> {
         self.in_room_turn(self.actor_read_key()?)
+    }
+
+    /// The current credential's read key, when this handle carries one.
+    /// Native callers without a credential keep their existing identity
+    /// reader instead of acquiring a new credential requirement.
+    pub fn proof_backed_read_key(&self) -> MemoryResult<Option<ScopedReadActorKey>> {
+        if self.read_proof.is_none() {
+            return Ok(None);
+        }
+        self.read_key().map(Some)
     }
 
     /// The bound actor's own read, without a bound room turn's ceiling: what
@@ -224,6 +244,20 @@ impl Memory<'_> {
     /// (FIX 6992): the store keeps one reader per thread, so a read inside a
     /// projection's snapshot never opens a second one.
     fn identity_read_key_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<ScopedReadActorKey> {
+        self.in_phone_lines(self.base_identity_read_key_in_txn(txn)?)
+    }
+
+    fn in_phone_lines(&self, mut key: ScopedReadActorKey) -> MemoryResult<ScopedReadActorKey> {
+        for original in &self.phone_reads {
+            key = key.within_phone_read(original)?;
+        }
+        Ok(key)
+    }
+
+    fn base_identity_read_key_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<ScopedReadActorKey> {
         verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
         if let Some(action) = &self.host_action {
             // The host action's guarded owner key (FIX 2222), its action

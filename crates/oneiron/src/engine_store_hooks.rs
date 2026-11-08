@@ -863,9 +863,16 @@ impl StoreGateHooks for EngineGateHooks {
         store: &Store,
         txn: &RoTxn<'_>,
         machine: EntityId,
+        authored_by: Option<EntityId>,
         body: &[u8],
     ) -> Result<()> {
-        crate::gate::validate_own_device_witness_message_body(store, txn, machine, body)
+        crate::gate::validate_own_device_witness_message_body(
+            store,
+            txn,
+            machine,
+            authored_by,
+            body,
+        )
     }
 
     fn claim_consolidation_eligible_in_txn(

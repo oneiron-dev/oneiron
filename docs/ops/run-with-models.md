@@ -224,8 +224,25 @@ role or model `on_device`); every other call keeps the provider's offer,
 native when the worker's socket is up and HTTP otherwise, as before, and stays
 `own_server`. An on-device call never falls back to HTTP, to another rung, or
 to an owner's fallback off the device, and an on-device extraction needs no
-`extraction_egress`. Only free work gets the on-device offer: a provider with
-a key or a payer other than `local` keeps its calls `own_server` and paid. The
+`extraction_egress`.
+
+The on-device offer changes where a call runs, never who pays for it. It
+keeps the provider offer's payer, key custody and rates. A free provider
+(payer `local`, no key) stays free work on device. A paid provider (a
+`key_env` key, or a payer other than `local`) gets the on-device offer too,
+so a vault routed `on_device` can use it: each call is charged to that payer,
+reserves on its run's budget line (and on the vault's allocation for payer
+`host`), and is refused when they refuse it, exactly as its own-server call
+is. A paid on-device call also reserves on the budget lines of its durable
+model step or Dreamer pass, and its purpose's policy rows cap it, as an
+own-server paid call does. A declared run still refuses a `key_env` (T1)
+offer unless the owner allowed that offer. The native channel sends no key; a key the provider holds
+still makes its calls paid. The receipt names the place `on_device`
+(`<model>@on_device`) and the route `exl3-native@worker:<id>`. One kind of
+provider gets no on-device offer: payer `local`, no key, and locality
+`third_party` (the `openai-compat` default). Its calls are paid only because
+of that locality, and on device they would turn free. Set `locality = "own_server"`
+on it to make its calls free work and give it the on-device offer. The
 reranker and a raw `/v1/llm` call keep the provider's own offer.
 
 A `key_secret` names a vault secret instead of a variable: the key stays in
@@ -514,6 +531,14 @@ before the file is settled, at the level it settles to (`--log-level` over the
 file's `log_level`). A file with `[models.voice]` and no `--voice-socket` runs
 no voice loop, logged once with the reason `voice_socket_missing`; live voice
 sessions still run.
+
+An own-device sync connection can also copy settled default CLAIM vectors from
+its reachable home during scheduled housekeeping, even when this server has no
+ready embedder. This uses the existing pass budget and write admission. The
+current source, embedding model, transform, provenance and world route must
+match; another worker's active matching lease is left alone. A miss keeps the
+pending job for a later pass or the normal model worker. This is scheduled
+catch-up, not an offline vector carrier or an immediate fill at import.
 
 A managed vault reports how it came up on every ctl `Ping`, as `readiness`
 (contract v3): `{"state":"ready"}`, or `{"state":"degraded","missing":[...]}`
@@ -1020,6 +1045,29 @@ vault the server has mounted, and are non-additive facts: they neither
 alter the worker's own row nor any quota or admission, and a row's bytes
 mix device pages with host snapshots.
 
+### Failure healers for agent runs
+
+Served resident, TASK-backed and tree agent runs keep their human-only failure
+policy unless the operator selects a healer in the config file or settings file:
+
+```toml
+[self_heal]
+agent_failure_healer = "Coach"
+```
+
+This routes eligible failure cases to the existing Coach heal queue. Configure
+its models and wording separately. The native `AgentDef` slot is also accepted:
+`agent_failure_healer = { AgentDef = { agent_def_ref = "<hex EntityId>" } }`.
+The referenced live definition still passes the existing dispatchability and
+propose-only ceiling checks. `"Reserved"` explicitly restores human-only routing,
+including over a lower config layer that selected a healer. With no setting,
+the previous Human/Reserved policy remains unchanged.
+
+The choice does not change retry limits, evidence, checkpoint or Q&A references,
+provider-outage and payer parks, read authority, or proposal approval. It creates
+no Q&A messages and applies no repair. Saved workflow steps keep their existing
+human-only failure policy; this setting does not route those steps to a healer.
+
 ## 5. Saved workflows
 
 A dispatched saved workflow runs its steps on the `generative_reasoner` seat
@@ -1062,6 +1110,11 @@ budget_units = 10000000      # optional; process-lifetime meter for its model ca
 max_runs = 32                # optional; runs at once, each its own thread (default: from cores and memory)
 step_wall_secs = 30           # optional; one step's time allowance in seconds (default: 5)
 ```
+
+The same package may override `blocks/code-reader-summary.md` for `summarize`.
+Without that optional block, summaries use the shipped text. See
+[Code-reader summary prompts](code-reader-summaries.md) for placeholders and the
+queued recipe's prompt binding.
 
 A run holds its place until its worker ends, whether or not its caller is
 still waiting. Past `max_runs` a new run waits its turn, round-robin across
@@ -1134,6 +1187,12 @@ room than `window_tokens`, `disabled`, or `code_mode_off`). Each `execute_code` 
 `in_flight`, `last_swap`, and `suppressed` (`auth`, `no_credit`,
 `turn_scoped` with the failed `check`, or `sticky` with `why`).
 
+Self-written summaries (`compaction_backend = "self"`, below) also need
+`blocks/compaction-self-writer.md` in the same package: the words that make
+the compaction call the agent's own, read once when the host starts (FIX
+4575). Without it they are off (`sticky` with `why: "no_compaction_prompt"`);
+every other run compacts as above.
+
 A run whose actor is a saved agent definition compacts by that agent's
 `memory_profile`: its `window_token_budget` is the run's window, its summary
 share sizes the summary, and `compaction = "byoa"` leaves the window to the
@@ -1141,7 +1200,9 @@ agent's own harness (`sticky` with `why: "harness_compacts"`). Its
 `compaction_backend` names `code-mode-compaction` (the seat above) or a
 reasoning seat by its role's key (`checker`, `local_reasoner`,
 `generative_reasoner`); a key this host does not serve compacts on the seat
-above. Any other run uses the table above. A long run never outgrows one
+above. A saved agent definition with no `memory_profile` compacts as
+itself (`compaction_backend = "self"`, below) on this host's window (FIX
+7744). Any other run uses the table above. A long run never outgrows one
 summary's sources: each summary stands for the records the calls before it
 were served, so the next one names only the records served since.
 
@@ -1263,14 +1324,17 @@ cheap writer, its window cut to the whole turns that writer takes.
 A pass that cannot be written as the agent keeps its raw window for the turn
 and says why; it never falls back to the Dreamer or to the plain house
 writer. Under `auto` a live fork that cannot be bound (no rung, a rung wider
-than `locality`, no room beside the prefix, a cold prefix) is not such a
-failure: the cheap writer writes the flight as the agent. A forced
+than `locality`, no room beside the prefix, a cold prefix, a request read
+from rows its host did not witness whole) is not such a failure: the cheap
+writer writes the flight as the agent. A forced
 `live_fork` names every one of them. The run's `compaction` object carries
 `self_unavailable`: `live_fork_not_captured` (the row selects `live_fork` and
 the flight carries no capture from its breakpoint), `live_rung_unbound` (the
 live route refused the step's request, or no rung of its ladder could take it
 then), `live_prefix_too_long` (the live request and the reply leave the live
-model no room for the span), `live_fork_not_admitted` (the profile's writer
+model no room for the span), `live_prefix_unwitnessed` (the live request was
+read from rows its host did not witness whole: a code run's step request, for
+now, since its host-built task names no row), `live_fork_not_admitted` (the profile's writer
 is not `self`, or the capture is not the run's own), `live_fork_stale` (the
 live route no longer admits the captured rung), `no_identity` (the actor is
 not an agent anchored to a PERSON), `identity_unreadable`,
@@ -1287,7 +1351,8 @@ the source its flight ran on (`retained_turns` or `live_fork`, never
 `auto`), the admitted model, the provider and the model it reported, the
 provider-reported input, cached-read, cache-write and output tokens (`null`
 when the provider reported none, never a guessed zero), each try the gate
-refused as its own line, the call's step hash and the home parts it wore.
+refused as its own line, the call's step hash and the home parts it wore,
+and, on the live fork, every row the captured request was read from.
 The epoch's receipt rides its coverage row and is named by its SUMMARY's
 birth; a fold's rides its fold record. The run's `compaction` object shows
 the last pass as `self_writer` (landed or not) and every summary the run
@@ -1303,12 +1368,18 @@ and the revision of the retained steps the window was cut from.
 
 A self-written summary depends on each home part it wore whole, as on any
 source: erasing a diary entry, a lesson or the voice it wore withdraws the
-summary's words. Each self-written epoch or fold that lands in the vault
+summary's words. A summary forked from the live context also depends on
+every row its captured request was read from (a chat turn's pinned log,
+board rows and witnessed messages), so erasing a row only the live context
+held withdraws it too. A live fork is bound only for a request whose rows
+were all witnessed. Each self-written epoch or fold that lands in the vault
 also queues the Dreamer's check of it, in the same write. The check reads
 the summary against the run's retained steps for exactly its span and
 records a finding: `supported`, `mismatch`, `stale_evidence` or
 `unreadable_evidence`, with the hashes, revisions and the steps a conflict
-cites. A mismatch also reaches the agent's inbox. The check never rewrites
+cites. To reword its built-in rubric, set
+`models.dreamer.compaction_check_prompt` or `compaction_check_prompt_file`.
+A mismatch also reaches the agent's inbox. The check never rewrites
 the summary, never changes its byline and never writes in the agent's
 voice. A summary that stays in an off-record room's overlay is not checked:
 nothing of the room reaches the vault, where the Dreamer reads.
@@ -2244,10 +2315,17 @@ A call opens with one JSON line:
   claim, or a managed hello on a plain one, is refused.
 
 After that the stream carries:
-- **the transcript ops** (`open`, `partial`, `final`, `close`);
+- **the transcript ops** (`open`, `partial`, `final`, `close`). A `final`
+  heard as a backchannel while the agent holds the floor is answered
+  `{"op":"backchannel","handle":..,"revision":..}`: its utterance is closed
+  and no reply starts;
 - **media in:** `pcm` (STANDARD base64 of whole PCM16LE samples, at most about
-  12 KiB raw a frame), `cut`, `speaking`, `roster_changed`, and
-  `drained{generation}` once a `generation_end`'s audio has all played;
+  12 KiB raw a frame), `cut`, `speaking`, `roster_changed`,
+  `drained{generation, played_samples?}` once a `generation_end`'s audio has
+  all played, and `stopped{generation, played_samples?}` once the client has
+  applied a `flush` and `playout_stop`. `played_samples` is how many of the
+  generation's samples the client actually played, counted over its `pcm`
+  frames in order, each at its own rate;
 - **media out:** `pcm{generation, sample_rate, data}` (mono PCM16LE),
   `generation_end`, `flush`, `playout_stop`, `safeguard`, `notice`,
   `memories{generation, found, heard, withheld, part, parts, receipts}` and
@@ -2267,6 +2345,24 @@ How a call runs:
 - Partials are enriched with the extraction prompt on the runtime's
   summarizer route, which must name a model that `[models]` serves.
 - The enrichment and the safeguard model run on the call's own line.
+- A backchannel does not take the floor. Speech over the agent's reply past
+  the barge-in hold (120 ms by default) is a pending interruption. It stops
+  the reply once held for 600 ms, or once its words are not a backchannel
+  ("mm-hmm", "yeah", "うん", "なるほど" and the rest of the engine's
+  lexicon). A run that ends with only a backchannel, or no words, stops
+  nothing, and a backchannel `final` while the agent holds the floor starts
+  no reply. Once the reply's audio has drained, a short final ("うん" to a
+  question) is an answer and starts a reply, even while a safeguard verdict
+  on the reply is still out.
+- What the person heard is recorded apart from the generated text. Each
+  sentence handed to speech is one utterance, keyed by session, generation
+  and submission. Its played share comes from the `played_samples` that
+  `drained` or `stopped` names; without it the record counts the samples
+  sent, an upper bound. A part-played sentence's heard text needs a TTS
+  alignment, which no rung supplies yet, so it is left out. The next turn
+  hears which sentences the person heard in full when that was fewer than
+  were spoken, or when an interrupted reply generated words that speech
+  never took.
 
 A full media queue makes heard audio wait for the next cut and a sentence
 wait for room. A queue that takes nothing for 30 seconds stops the reply.
