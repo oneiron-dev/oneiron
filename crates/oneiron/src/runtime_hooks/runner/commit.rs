@@ -109,9 +109,10 @@ impl<'run, 'binding> PreparedRunCommit<'run, 'binding> {
             at,
         } = self;
         // A body that ran across a permanent erase keeps its content-free
-        // run identity, never erased bytes, an erased actor or a pending effect.
-        store::scrub_erased_actor_in_txn(vault, txn, &mut memo, run.entry.actor)?;
-        let erased = store::dependencies_erased_in_txn(vault, txn, &memo.derivation.dependencies)?;
+        // run identity, never erased bytes, an erased actor or a pending
+        // effect; an input naming an erased row retires it too (FIX 22240).
+        let erased = store::scrub_erased_memo_in_txn(vault, txn, &mut memo, run.entry.actor)?
+            || store::dependencies_erased_in_txn(vault, txn, &memo.derivation.dependencies)?;
         if erased {
             store::scrub_memo_payload(&mut memo);
             queued = false;

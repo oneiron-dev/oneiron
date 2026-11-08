@@ -327,6 +327,7 @@ fn record_with_derivation(
         fact: run.entry.kind,
         entity: run.entry.entity,
         input_json: (input.len() <= MAX_PINNED_INPUT).then(|| input.to_owned()),
+        named_rows: store::rows_named_by_fact(input),
         history_erased: false,
         input_hash: blake3::hash(input.as_bytes()).to_hex().to_string(),
         reads,
