@@ -1646,7 +1646,11 @@ class TaskRouteOutcomeHumanFollowupBody(TypedDict):
     actor_ref: EntityId
 class TaskRouteOutcomeHumanFollowup(TypedDict):
     HumanFollowup: TaskRouteOutcomeHumanFollowupBody
-TaskRouteOutcome = TaskRouteOutcomeDreamerAttempt | TaskRouteOutcomeAgentDispatch | TaskRouteOutcomePeerSyncedOnly | TaskRouteOutcomeChildAddressed | TaskRouteOutcomeHumanFollowup
+class TaskRouteOutcomeWatchTickBody(TypedDict):
+    due_at: int
+class TaskRouteOutcomeWatchTick(TypedDict):
+    WatchTick: TaskRouteOutcomeWatchTickBody
+TaskRouteOutcome = TaskRouteOutcomeDreamerAttempt | TaskRouteOutcomeAgentDispatch | TaskRouteOutcomePeerSyncedOnly | TaskRouteOutcomeChildAddressed | TaskRouteOutcomeHumanFollowup | TaskRouteOutcomeWatchTick
 class TaskAskHandle(TypedDict):
     group_ref: EntityId
 class TaskPhaseProposed(TypedDict):
@@ -2183,6 +2187,7 @@ class TaskCreateRequest(TypedDict):
     ttl: NotRequired[TaskTtl | None]
     parent_ref: NotRequired[str | None]
     due_at: NotRequired[int | None]
+    watch: NotRequired[bool]
 class TaskCreateReceipt(TypedDict):
     task_ref: NotRequired[EntityId | None]
     proposal_ref: NotRequired[EntityId | None]
