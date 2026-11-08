@@ -13,6 +13,8 @@ pub(in crate::outbound) struct DispatchVerdict {
     pub(in crate::outbound) gate_reason_codes: Vec<String>,
     pub(in crate::outbound) gate_receipt_reasons: Vec<String>,
     pub(in crate::outbound) effector_charge: Option<EffectorBudgetCharge>,
+    pub(in crate::outbound) budget_settlement_events:
+        Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
     pub(in crate::outbound) effect_state: Option<IntentState>,
     pub(in crate::outbound) resolution: Option<IntentResolution>,
     pub(in crate::outbound) outcome: OutboundDispatchOutcome,
