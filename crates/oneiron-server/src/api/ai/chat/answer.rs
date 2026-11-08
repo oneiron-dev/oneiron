@@ -118,12 +118,15 @@ pub(crate) fn begin_sourced_answer_with_fallback(
     let wakes = container.map(|_| vault.subscribe_task_updates());
     // FIX 4465 D: a self agent's breakpoint, right before the answer's
     // stream: its live fork is this answer's own admitted call, bound to the
-    // rung that answered it once the answer ends (FIX 4933).
+    // rung that answered it once the answer ends (FIX 4933). A reuse's seed
+    // is kept for this stream's generation before that call is sent (FIX
+    // 5028).
     let pending = breakpoint.map(|breakpoint| {
         compaction::enter(
+            &vault,
             breakpoint,
             &admitted,
-            handle.correlation_id(),
+            &handle,
             compaction::TurnMeter {
                 payer,
                 funding: funding.clone(),
@@ -178,8 +181,12 @@ pub(crate) fn begin_sourced_answer_with_fallback(
     let stream = match started {
         Ok(stream) => stream,
         // A Retry its budget refused never started: its stream goes and no
-        // TURN or MESSAGE is left (FIX 3152).
+        // TURN or MESSAGE is left (FIX 3152). A reply that never started
+        // keeps no seed (FIX 5028).
         Err(reason) => {
+            if let Some(pending) = &pending {
+                pending.withdraw();
+            }
             let memory = answer_memory(&vault, agent, session_key);
             if let AnswerStream::Recorded(recorded) = &handle
                 && matches!(open, AnswerOpen::Retry { .. })
