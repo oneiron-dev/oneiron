@@ -41,10 +41,12 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 mod admission;
+mod body_file;
 mod output_retention;
 mod output_settle;
 mod view;
 pub use admission::MadeByReader;
+use body_file::{PendingFile, StagedPendingBody};
 use output_settle::output_record;
 pub use view::{PendingProposalKind, PendingProposalView};
 
@@ -80,6 +82,10 @@ pub(super) struct PendingRow {
     #[serde(default)]
     explicit_fork: bool,
     new_bytes: Vec<u8>,
+    /// A waiting output past the inline size: the body file its bytes are
+    /// in, with `new_bytes` empty (FIX 20812). Old rows read back as none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    new_file: Option<PendingFile>,
     body: PendingBody,
     /// The rows its producer read beside its base and its made_by: each
     /// other version an ask read, its evidence and its stored images,
@@ -153,6 +159,10 @@ impl PendingRow {
         else {
             return Ok(None);
         };
+        // Only a native output waits in a body file.
+        if self.new_file.is_some() {
+            return Err(Error::CorruptedIndex("pending edit proposal body file"));
+        }
         Ok(Some(EditProposal {
             run_ref: self.proposal_ref.clone(),
             format: *format,
@@ -176,6 +186,14 @@ impl PendingRow {
             base_content_hash: self.base_content_hash.unwrap_or_default(),
             sheet_answers: sheet_answers.clone().map(Box::new),
         }))
+    }
+
+    /// The length of the bytes the row waits with, read from its body
+    /// file's descriptor when it has one.
+    fn payload_len(&self) -> u64 {
+        self.new_file
+            .as_ref()
+            .map_or(self.new_bytes.len() as u64, |file| file.body.bytes)
     }
 }
 
@@ -275,7 +293,7 @@ impl Vault {
             read_rows,
             delta_receipt,
         )?;
-        self.put_pending(artifact_id, &row, reader)
+        self.put_pending(artifact_id, &row, None, reader)
     }
 
     /// [`Self::retain_edit_proposal`] in the caller's own write transaction, for a
@@ -339,8 +357,7 @@ impl Vault {
             read_rows,
             delta_receipt,
         )?;
-        self.put_pending_in_txn(wtxn, artifact_id, &row)?;
-        Ok(row.view(*artifact_id))
+        self.put_pending_in_txn(wtxn, artifact_id, &row, None)
     }
 
     /// The lane a retention in the caller's own transaction admits `made_by` through
@@ -478,6 +495,13 @@ impl Vault {
             (None, Some((base, _))) => Some(*base),
             (None, None) => head.as_ref().map(|head| (head.version, head.content_hash)),
         };
+        // An output past the inline size waits in its body file, written
+        // before the writer that keeps its row opens; the row names it
+        // (FIX 20812).
+        let staged = self.stage_pending_output_body(
+            &output.bytes,
+            self.asset_body_mint([output.bytes.len() as u64])?.as_ref(),
+        )?;
         // The producer is bound once, here, at proposal authentication and
         // retention: Keep preserves this envelope instead of rebinding it to
         // the keeper, and the provenance matches what Keep settles under
@@ -491,14 +515,21 @@ impl Vault {
             deck.map(|(_, hold)| hold),
             report,
             delta_receipt,
+            staged.is_some(),
         );
         row.read_rows.extend_from_slice(read_rows);
         row.read_rows.sort_unstable();
         row.read_rows.dedup();
         if authorize_content_write {
-            self.put_pending_with_content_write_grant(artifact_id, &row, reader, actor)
+            self.put_pending_with_content_write_grant(
+                artifact_id,
+                &row,
+                staged.as_ref(),
+                reader,
+                actor,
+            )
         } else {
-            self.put_pending(artifact_id, &row, reader)
+            self.put_pending(artifact_id, &row, staged.as_ref(), reader)
         }
     }
 
@@ -674,9 +705,19 @@ impl Vault {
         let provenance = BlobVersionProvenance::AgentRun {
             run_ref: row.proposal_ref.clone(),
         };
+        // An output waiting in its body file is read whole before the writer
+        // opens and checked against its digest; a Discard or purge that
+        // commits first leaves this Keep settled or its artifact gone
+        // (FIX 20812).
+        let filed = row
+            .new_file
+            .as_ref()
+            .map(|file| self.read_pending_output_body(artifact_id, file))
+            .transpose()?;
+        let bytes = filed.as_deref().unwrap_or(row.new_bytes.as_slice());
         // A kept version past the inline size goes to its body file under an
         // instance minted before the writer opens (FIX 20812).
-        let mint = self.asset_body_mint([row.new_bytes.len() as u64])?;
+        let mint = self.asset_body_mint([bytes.len() as u64])?;
         let (version, record, reconciliation, _hold) = self.with_write_txn_grouped(|wtxn| {
             let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
             if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
@@ -697,7 +738,7 @@ impl Vault {
                 wtxn,
                 artifact_id,
                 fork_parent,
-                &row.new_bytes,
+                bytes,
                 &provenance,
                 row.made_by.as_ref(),
                 mint.as_ref(),
@@ -746,6 +787,7 @@ impl Vault {
         &self,
         artifact_id: &EntityId,
         row: &PendingRow,
+        staged: Option<&StagedPendingBody>,
         reader: Option<MadeByReader<'_>>,
     ) -> Result<PendingProposalView> {
         let lane =
@@ -756,9 +798,8 @@ impl Vault {
             if let (Some(lane), Some(made_by)) = (&lane, &row.made_by) {
                 admission::admit_made_by_in_txn(self, wtxn, lane, made_by, row.retained_by)?;
             }
-            self.put_pending_in_txn(wtxn, artifact_id, row)
-        })?;
-        Ok(row.view(*artifact_id))
+            self.put_pending_in_txn(wtxn, artifact_id, row, staged)
+        })
     }
 
     /// [`Self::put_pending`] with the direct append door's shared content-write
@@ -767,6 +808,7 @@ impl Vault {
         &self,
         artifact_id: &EntityId,
         row: &PendingRow,
+        staged: Option<&StagedPendingBody>,
         reader: Option<MadeByReader<'_>>,
         actor: WriteActor,
     ) -> Result<PendingProposalView> {
@@ -777,6 +819,7 @@ impl Vault {
                 wtxn,
                 artifact_id,
                 row,
+                staged,
                 lane.as_ref(),
                 actor,
             )
@@ -784,13 +827,16 @@ impl Vault {
     }
 
     /// Holds `row` beside its artifact in `wtxn`: a settled ref, or one already
-    /// waiting, is refused.
+    /// waiting, is refused. An output staged to its body file (`staged`) is
+    /// named here, its descriptor committing with the row (FIX 20812). The
+    /// view is the row as it is kept.
     fn put_pending_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         artifact_id: &EntityId,
         row: &PendingRow,
-    ) -> Result<()> {
+        staged: Option<&StagedPendingBody>,
+    ) -> Result<PendingProposalView> {
         validate_pending_ref(&row.proposal_ref)?;
         let key = settlement_key_parts(artifact_id, &row.proposal_ref);
         if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
@@ -804,7 +850,16 @@ impl Vault {
         if super::artifact_retention_deleted_in_txn(&self.store, wtxn, artifact_id)? {
             return Err(Error::EntityNotFound);
         }
-        PENDING.put(&self.store, wtxn, &key, row)
+        let Some(staged) = staged else {
+            PENDING.put(&self.store, wtxn, &key, row)?;
+            return Ok(row.view(*artifact_id));
+        };
+        let row = PendingRow {
+            new_file: Some(self.bind_pending_output_body_in_txn(wtxn, artifact_id, staged)?),
+            ..row.clone()
+        };
+        PENDING.put(&self.store, wtxn, &key, &row)?;
+        Ok(row.view(*artifact_id))
     }
 
     fn pending_row(
@@ -827,9 +882,24 @@ impl Vault {
         Ok(Some(row))
     }
 
+    /// Deletes one waiting row and releases the body file it names, in one
+    /// writer (FIX 20812).
     fn drop_pending(&self, artifact_id: &EntityId, proposal_ref: &str) -> Result<()> {
         let key = settlement_key_parts(artifact_id, proposal_ref);
-        self.with_write_txn_grouped(|wtxn| PENDING.delete(&self.store, wtxn, &key).map(|_| ()))
+        self.with_write_txn_grouped(|wtxn| {
+            if let Some(file) = PENDING
+                .get(&self.store, wtxn, &key)?
+                .and_then(|row| row.new_file)
+            {
+                body_file::release_pending_output_body_in_txn(
+                    &self.store,
+                    wtxn,
+                    artifact_id,
+                    &file,
+                )?;
+            }
+            PENDING.delete(&self.store, wtxn, &key).map(|_| ())
+        })
     }
 }
 
@@ -859,6 +929,7 @@ fn edit_pending_row(
         base_content_hash: Some(proposal.base_content_hash),
         explicit_fork: false,
         new_bytes: proposal.new_bytes.clone(),
+        new_file: None,
         read_rows: {
             let mut rows = read_rows.to_vec();
             rows.sort_unstable();
@@ -890,12 +961,23 @@ pub(super) fn validate_pending_ref(proposal_ref: &str) -> Result<()> {
     crate::batch::secret_scan::scan_metadata_field(proposal_ref)
 }
 
+/// Deletes every row waiting beside `artifact_id`, releasing each body file
+/// a row names (FIX 20812). A row that does not decode is deleted all the
+/// same; any file it named is the artifact's, which an artifact's own
+/// release of its bodies takes.
 pub(super) fn purge_artifact_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     artifact_id: &EntityId,
 ) -> Result<()> {
     for key in PENDING.scan_keys(store, txn, artifact_id.as_bytes())? {
+        let file = PENDING
+            .get_bytes(store, txn, &key)?
+            .and_then(|bytes| PENDING.decode_value(&bytes).ok())
+            .and_then(|row| row.new_file);
+        if let Some(file) = file {
+            body_file::release_pending_output_body_in_txn(store, txn, artifact_id, &file)?;
+        }
         PENDING.delete(store, txn, &key)?;
     }
     Ok(())

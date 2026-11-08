@@ -106,10 +106,10 @@ impl Vault {
 
     /// Memory's checked append on its existing content writer. This door has
     /// no caller-supplied made_by: its proposal names only its writer, and a
-    /// landed append uses the content writer's actual credential lane. A
-    /// landed body file's hold comes back beside the outcome: the caller took
-    /// `mint` before its writer opened and keeps the hold until it commits
-    /// (FIX 20812).
+    /// landed append uses the content writer's actual credential lane. The
+    /// hold on a body file, a landed version's or a waiting proposal's, comes
+    /// back beside the outcome: the caller took `mint` before its writer
+    /// opened and keeps the hold until it commits (FIX 20812).
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn append_blob_artifact_version_checked_in_txn(
         &self,
@@ -147,11 +147,12 @@ impl Vault {
             wtxn,
             artifact_id,
             &output,
+            mint,
             actor,
             learned_at,
             fork_base,
         )
-        .map(|proposal| (BlobArtifactAppendOutcome::Proposed(proposal), None))
+        .map(|(proposal, hold)| (BlobArtifactAppendOutcome::Proposed(proposal), hold))
     }
 }
 

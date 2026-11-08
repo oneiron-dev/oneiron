@@ -84,8 +84,13 @@ impl PendingRow {
                 PendingBody::Output { .. } => PendingProposalKind::Output,
             },
             base_version: self.base_version,
-            content_hash: hash_hex(blake3::hash(&self.new_bytes).as_bytes()),
-            byte_len: self.new_bytes.len(),
+            // An output waiting in its body file is listed from its
+            // descriptor, never read (FIX 20812).
+            content_hash: match &self.new_file {
+                Some(file) => hash_hex(&file.body.blake3),
+                None => hash_hex(blake3::hash(&self.new_bytes).as_bytes()),
+            },
+            byte_len: usize::try_from(self.payload_len()).unwrap_or(usize::MAX),
             retained_by: self.retained_by,
             retained_by_record: self
                 .retained_by_kind
