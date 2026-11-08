@@ -142,7 +142,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_snapshot.rs` | src | s | 5 mod | — | Store-layer modules of core `store::code_snapshot`; core re-exports each one at its old path |
 | `src/code_snapshot/file_mode.rs` | src | s | 1 fn · 1 const | — | The Git file modes a code snapshot keeps (FIX 6869, G4 PR1) |
 | `src/code_snapshot/ids.rs` | src | s | 4 fn | — | Domain-separated entity identifiers for immutable snapshot assets and manifests |
-| `src/code_snapshot/repo_ref.rs` | src | s | 1 enum · 8 fn · 2 const | RepoRef | RepoRef identity: local-folder and GitHub-at-commit references with parsing and commit-hash normalization |
+| `src/code_snapshot/repo_ref.rs` | src | s | 1 enum · 8 fn · 2 const | RepoRef | Repository references: committed local/GitHub trees and current local captures |
 | `src/code_snapshot/snapshot.rs` | src | m | 2 struct · 10 fn · 2 type · 8 const | CodebaseFileEntry, CodebaseSnapshot | Codebase snapshot value type, MessagePack codec, fork/scope hashing, and manifest validation |
 | `src/code_snapshot/validation.rs` | src | s | 2 fn | — | Project identifiers and normalized paths in code snapshot manifests |
 | `src/code_tree_blob.rs` | src | s | 1 struct · 1 const | CodeTreeBlob | Untouched blob references and submodule mode in tested code trees |
@@ -311,7 +311,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/manifest_origin_keys.rs` | src | s | 2 fn | — | The row keys of a policy manifest's trusted-origin and seeded-confidence side tables, spelled for the… |
 | `src/materialization_event.rs` | src | s | 1 struct | OriginMark | Commit-bound materialization revisions and read invalidation data |
 | `src/merge_queue.rs` | src | s | 5 mod | — | Store-layer modules of core `merge_queue`; core re-exports each one at its old path |
-| `src/merge_queue/driver_types.rs` | src | s | 7 struct · 4 enum · 2 fn | QueueBatchDrive, QueueConflictLink, QueueConflictView, QueueDriveHold, QueueDriveHoldReason, QueueDriveOutcome, QueueDrivePass, QueueDriveStatus +3 | The queue driver's instructions, outcomes, holds and the durable drive record a batch keeps (FIX 6868, G2 PR2) |
+| `src/merge_queue/driver_types.rs` | src | s | 8 struct · 4 enum · 2 fn | QueueBatchDrive, QueueConflictLink, QueueConflictView, QueueDiagnosisDecision, QueueDriveHold, QueueDriveHoldReason, QueueDriveOutcome, QueueDrivePass +4 | The queue driver's instructions, outcomes, holds and the durable drive record a batch keeps (FIX 6868, G2 PR2) |
 | `src/merge_queue/file_metadata.rs` | src | s | 2 fn | — | A received bundle's files in speculation (FIX 6869, G4 PR2): each one's reviewed exact Git state change… |
 | `src/merge_queue/source_types.rs` | src | s | 1 struct · 2 const | ServedQueueSource | The served queue source's names (FIX 6869): which authenticated import a served repository's checked queue… |
 | `src/merge_queue/tested_types.rs` | src | s | 6 struct · 5 enum · 3 fn | CodePushProjectionSourceLink, CodePushSourceLink, QueueAppliedSource, QueueExportHold, QueueExportHoldReason, QueueGreenExportView, QueueRevisionIntent, QueueRevisionLink +3 | The tested-revision seal's records, links and holds (FIX 6868, G2 PR3) |
