@@ -9409,6 +9409,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/blob_artifact/esign/input_producer.rs",
+     "purpose": "The immutable prepared PDF and the unissued phase of one seal item",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/blob_artifact/esign/lane_scope.rs",
      "purpose": "FIX 6403: the credential ceiling every e-sign door judges a narrowed caller by",
      "surface": {
@@ -9453,7 +9463,7 @@
      "surface": {
       "crate-vis": 8,
       "mod": 2,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -9584,6 +9594,20 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EsignInputBudget"
+     ],
+     "path": "src/blob_artifact/esign/producer_input.rs",
+     "purpose": "One whole pre-dispatch reservation, rebuilt only after its phase unwinds",
+     "surface": {
+      "crate-vis": 12,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -9810,6 +9834,7 @@
      "kind": "src",
      "notable": [
       "EsignSealInput",
+      "EsignSealProducer",
       "EsignSealer"
      ],
      "path": "src/blob_artifact/esign/sealer.rs",
@@ -9817,7 +9842,7 @@
      "surface": {
       "re-export": 1,
       "struct": 1,
-      "trait": 1
+      "trait": 2
      }
     },
     {
@@ -9851,7 +9876,7 @@
      "path": "src/blob_artifact/esign/signature_revision.rs",
      "purpose": "Core half of `blob_artifact::esign::signature_revision`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "re-export": 1
      }
@@ -12430,7 +12455,7 @@
      "path": "src/calendar/mod.rs",
      "purpose": "Calendar module home (CAL-00)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "mod": 19,
       "re-export": 17
@@ -12851,6 +12876,16 @@
       "crate-vis": 6,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/windows_zones.rs",
+     "purpose": "Windows time-zone names as IANA zones (fix list row 17868): the zone a Microsoft 365 event names…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -36482,10 +36517,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SheetAnswerBundle",
+      "SheetAnswerWork",
       "SheetCellAnswer",
       "SheetRowReads",
       "SheetRowsAsk"
@@ -36493,9 +36529,9 @@
      "path": "src/edit_roundtrip/judgment.rs",
      "purpose": "Typed sheet answers: one ask over a bounded range becomes one retained edit",
      "surface": {
-      "crate-vis": 2,
-      "fn": 3,
-      "struct": 4
+      "crate-vis": 3,
+      "fn": 4,
+      "struct": 5
      }
     },
     {
@@ -36630,6 +36666,7 @@
      "path": "src/edit_roundtrip/pipeline.rs",
      "purpose": "Round-trip pipeline entry",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 3,
       "struct": 1
@@ -36851,7 +36888,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ReaskShape",
@@ -37026,6 +37063,17 @@
      "purpose": "The ledger record a native output's Keep or Discard writes",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_settle/pending/sheet_answers.rs",
+     "purpose": "Paid sheet answers wait in the same pending record until byte staging succeeds",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
      }
     },
     {
@@ -98010,7 +98058,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 84,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98059,7 +98107,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 86,
+     "files": 87,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98481,12 +98529,12 @@
     "edit_roundtrip": {
      "files": 40,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99515,9 +99563,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 234,
+   "over_bar": 236,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7095,
+   "source_files": 7099,
    "test_files": 895
   },
   "oneiron-android": {
@@ -115139,7 +115187,7 @@
      "path": "src/budget.rs",
      "purpose": "One admission budget for every organ: threads, memory, in-flight calls",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 35,
       "fn": 1,
       "struct": 1
      }
@@ -115199,7 +115247,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "OrganHost"
@@ -115207,7 +115255,7 @@
      "path": "src/host.rs",
      "purpose": "The organ host: install, call, unload, revoke",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 17,
       "re-export": 2,
       "struct": 1
@@ -115221,6 +115269,16 @@
      "purpose": "A call's reply, checked: its outputs mapped, hashed and kept in the call's room, which grows to hold them…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/host/producer.rs",
+     "purpose": "The pre-dispatch producer and its one admitted call",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -115606,7 +115664,7 @@
      "path": "src/seal/observe.rs",
      "purpose": "What one seal or verification call measured, against the engine's `[limits]` rows (OF-520, Rule 5)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -115639,6 +115697,16 @@
      "notable": [],
      "path": "src/seal/pdf_work/native.rs",
      "purpose": "Trusted native preparation when no first-party prepare organ is selected",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/seal/producer.rs",
+     "purpose": "The seal's input is built inside its original admitted host call",
      "surface": {
       "crate-vis": 1
      }
@@ -115786,9 +115854,9 @@
      "purpose": "The handlers a caller supplies for an organ's asks (protocol 1.1)"
     },
     "host": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The organ host: install, call, unload, revoke"
     },
@@ -115877,7 +115945,7 @@
      "purpose": "What the host does to an organ process between fork and exec"
     },
     "seal": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -115905,9 +115973,9 @@
      "purpose": "Organ calls that wait for a node, held in the vault (OF-575, owner ruling MESH: \"one node is too weak, means…"
     }
    },
-   "over_bar": 1,
+   "over_bar": 2,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 47,
+   "source_files": 49,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
