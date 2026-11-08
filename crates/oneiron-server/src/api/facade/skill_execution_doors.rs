@@ -203,7 +203,10 @@ impl AgentVerbDoor for SkillCredentialDoor {
         invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         if let Err(error) = self.read_key() {
-            return Ok(Err(AgentVerbRefusal { code: error.code }));
+            return Ok(Err(AgentVerbRefusal {
+                hook_notice: None,
+                code: error.code,
+            }));
         }
         let server = Arc::clone(&self.server);
         let auth = self.auth.clone();
@@ -226,9 +229,11 @@ impl AgentVerbDoor for SkillCredentialDoor {
         Ok(match receiver.recv() {
             Ok(Ok(answer)) => Ok(AgentVerbAnswer::new(answer.value, answer.rows)),
             Ok(Err(error)) => Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: error.into_memory_error().code,
             }),
             Err(_) => Err(AgentVerbRefusal {
+                hook_notice: None,
                 code: oneiron::memory::MEMORY_CODE_INTERNAL.to_owned(),
             }),
         })
@@ -257,7 +262,10 @@ impl AgentVerbDoor for SkillCredentialDoor {
                 _ => None,
             })
         };
-        check().map_err(|error| AgentVerbRefusal { code: error.code })
+        check().map_err(|error| AgentVerbRefusal {
+            hook_notice: None,
+            code: error.code,
+        })
     }
 
     /// The host turn's hooks read on the credential's lane, with its proof
@@ -279,6 +287,7 @@ impl AgentVerbDoor for SkillCredentialDoor {
         };
         crate::device_local::withholds_retained(self.server.vault(), destination, rows, &[])
             .map_err(|_| AgentVerbRefusal {
+                hook_notice: None,
                 code: oneiron::memory::MEMORY_CODE_INTERNAL.to_owned(),
             })
     }

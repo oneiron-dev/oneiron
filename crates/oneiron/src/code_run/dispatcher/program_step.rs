@@ -175,7 +175,10 @@ impl<'a> HostSelfDispatcher<'a> {
         invocation: InvocationId,
     ) -> Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
         if let Some(code) = self.program_authority_refusal(call.verb.as_str())? {
-            return Ok(Err(AgentVerbRefusal { code }));
+            return Ok(Err(AgentVerbRefusal {
+                hook_notice: None,
+                code,
+            }));
         }
         door.call(call, origin, invocation)
     }
