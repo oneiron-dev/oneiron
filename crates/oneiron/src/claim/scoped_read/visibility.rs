@@ -824,7 +824,7 @@ impl<'v> ScopedRead<'v> {
         raw: &[u8],
     ) -> Result<bool> {
         let (filter, policy) = self.resolve_retrieval_filter_in(rtxn, None)?;
-        let authority = HeldAuthority::for_request(None);
+        let authority = self.held_for(None);
         self.is_entity_raw_readable_held_in(rtxn, &policy, id, raw, &filter, &authority)
     }
 
