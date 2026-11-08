@@ -31,11 +31,11 @@
 //! While its home is down, a device with a mesh listener syncs with the
 //! vault's other machines over the mesh (FIX 4748): once the home has served
 //! this machine no sync for a minute (dials unanswered, refused, or ended
-//! before the home's root), each connection goes to a machine marked mine,
-//! the standby home first, and confirms nothing there; a probe of the home
-//! ends it once the home serves sync again, and the home's own connection
-//! then replays everything queued (`oneiron::sync::peer_route`). Without a
-//! listener here nothing of it runs.
+//! before their first round completed), each connection goes to a machine
+//! marked mine, the standby home first, and confirms nothing there; a probe
+//! that gets the home's root ends it, and the home's own connection then
+//! replays everything queued, or, failing first, hands back to a peer
+//! (`oneiron::sync::peer_route`). Without a listener here nothing of it runs.
 //!
 //! While the home connection is synced, the device also learns the models
 //! the owner's other nodes offer (OF-575): it asks them on each sync and then
