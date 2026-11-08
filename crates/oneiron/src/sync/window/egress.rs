@@ -58,17 +58,31 @@ use loro::{CommitOptions, LoroDoc};
 /// (`source_audiences::mirror_record`); one whose binding does not resolve,
 /// or whose words came from a row bound otherwise, stays on this vault
 /// (Engine A, 6 Nov 03:46; `source_audience::withheld_from_replication_in`).
+/// A packing pass asks it through [`window_packing_excludes_entity_with`].
+#[cfg(test)]
 pub(super) fn window_packing_excludes_entity(
     vault: &Vault,
     device_only: &std::collections::BTreeSet<EntityId>,
     id: &EntityId,
 ) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
-    if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, id)?
-        || crate::settings::device_only_withholds(&vault.store, &rtxn, device_only, id)?
-        || crate::source_audience::withheld_from_replication_in(
-            vault,
-            &rtxn,
+    let mut lineage = crate::source_audience::LineagePass::new(vault, &rtxn)?;
+    window_packing_excludes_entity_with(vault, &mut lineage, device_only, id)
+}
+
+/// `window_packing_excludes_entity` in one packing pass's read snapshot,
+/// `lineage`'s: the source-audience verdicts on the rows' ancestry are
+/// kept across the rows and edge ends of the pass (FIX 16254).
+pub(super) fn window_packing_excludes_entity_with(
+    vault: &Vault,
+    lineage: &mut crate::source_audience::LineagePass<'_, '_>,
+    device_only: &std::collections::BTreeSet<EntityId>,
+    id: &EntityId,
+) -> Result<bool> {
+    let rtxn = lineage.txn();
+    if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, rtxn, id)?
+        || crate::settings::device_only_withholds(&vault.store, rtxn, device_only, id)?
+        || lineage.withheld_from_replication(
             id,
             crate::source_audience::ReplicationScope::FullOwnerWindow,
         )?
@@ -651,6 +665,10 @@ fn replay_mirrors(
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let edges_map = doc.get_map("edges");
     let device_only = super::device_only::canonical_withheld_worlds(vault, window_key)?;
+    // One snapshot for the pass's source-audience verdicts, kept across its
+    // rows and edge ends (FIX 16254).
+    let lineage_txn = vault.store.env.read_txn()?;
+    let mut lineage = crate::source_audience::LineagePass::new(vault, &lineage_txn)?;
 
     let mut replayed = 0u32;
 
@@ -676,7 +694,7 @@ fn replay_mirrors(
         // Defer-sync egress door: a live overlay member is device-local until
         // explicit promotion. Keep the pending marker so the promoted turn can
         // flow through this ordinary path later.
-        if window_packing_excludes_entity(vault, &device_only, id)? {
+        if window_packing_excludes_entity_with(vault, &mut lineage, &device_only, id)? {
             continue;
         }
 
@@ -752,7 +770,12 @@ fn replay_mirrors(
                 if !super::types::edge_belongs_to_window(vault, id, &edge.target, window_key)?
                     || !local_claim_sync_allowed(vault, &edge.target)?
                     || tombstones.contains(&edge.target)
-                    || window_packing_excludes_entity(vault, &device_only, &edge.target)?
+                    || window_packing_excludes_entity_with(
+                        vault,
+                        &mut lineage,
+                        &device_only,
+                        &edge.target,
+                    )?
                 {
                     continue;
                 }
@@ -810,7 +833,12 @@ fn replay_mirrors(
             if !super::types::edge_belongs_to_window(vault, id, &edge.target, window_key)?
                 || !local_claim_sync_allowed(vault, &edge.target)?
                 || tombstones.contains(&edge.target)
-                || window_packing_excludes_entity(vault, &device_only, &edge.target)?
+                || window_packing_excludes_entity_with(
+                    vault,
+                    &mut lineage,
+                    &device_only,
+                    &edge.target,
+                )?
             {
                 continue;
             }
@@ -912,12 +940,13 @@ pub(in crate::sync) fn withhold_audience_carriers(
         // By this vault's own lineage, not its holds: a row held back here,
         // or one whose words came from a held row, stays as its source
         // carried it, and its holders are not told (Sol AUD-3).
+        // One pass over the carried rows: each verdict on an ancestry is
+        // read once (FIX 17212).
+        let mut lineage = crate::source_audience::LineagePass::new(vault, &rtxn)?;
         let mut withheld = Vec::new();
         for id in carried {
-            if !crate::source_audience::lineage_held_in(vault, &rtxn, &id)?
-                && crate::source_audience::withheld_by_lineage_in(
-                    vault,
-                    &rtxn,
+            if !lineage.lineage_held(&id)?
+                && lineage.withheld_by_lineage(
                     &id,
                     crate::source_audience::ReplicationScope::FullOwnerWindow,
                 )?

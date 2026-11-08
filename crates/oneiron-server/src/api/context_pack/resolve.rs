@@ -140,14 +140,24 @@ fn admit_context_pack(
 }
 
 /// An admitted context pack, assembled for `auth` through the shared
-/// pipeline, as the JSON the route answers.
+/// pipeline, as the JSON the route answers. The answer goes beside the rows
+/// the final response lists it was derived from
+/// (`CoreContextPackResponse::producer_rows`, FIX 1435). A response whose
+/// rows are not all known lists none.
 async fn read_context_pack(
     server: &SyncServer,
     auth: &CoreAuth,
     req: CoreContextPackRequest,
 ) -> Result<NativeReadAnswer, NativeReadError> {
     let (response, _, _) = run_context_pack(server, auth, req, None).await?;
-    Ok(NativeReadAnswer::unlisted(encoded(&response)?))
+    let rows = response
+        .producer_rows()
+        .map_err(|error| core_engine_error("producer ids failed", error))?;
+    let value = encoded(&response)?;
+    Ok(match rows {
+        Some(rows) => NativeReadAnswer::listed(value, rows),
+        None => NativeReadAnswer::unlisted(value),
+    })
 }
 
 /// The shared context-pack pipeline behind `/v1/core/context-pack` and the
@@ -241,6 +251,13 @@ pub(crate) async fn run_context_pack(
         room.as_ref(),
         interlocutors.as_ref(),
     )?;
+    // The caller's own filter binds the pack's reader once its audience is
+    // set, before any candidate is read (FIX 3977).
+    let request = req
+        .filter
+        .as_ref()
+        .map(oneiron::memory::ReadFilterInput::to_filter);
+    let scoped_read = scoped_read.with_read_filter(request.as_ref());
     let candidate_limit = scoped_read
         .search_candidate_limit(req.limit)
         .map_err(|error| {
@@ -275,9 +292,15 @@ pub(crate) async fn run_context_pack(
         ),
     );
 
-    let mut builder = server
-        .vault
-        .context_pack()
+    // Every channel and neighbor takes the reader's row gate, its bound
+    // caller filter included, before its cut (FIX 3977); the pack is still
+    // filtered under the reader once it runs.
+    let plan = scoped_read.context_pack_plan().map_err(|error| {
+        tracing::error!(kind = ?error.kind(), "core context-pack scoped plan failed");
+        core_engine_error("core context-pack scoped read setup failed", error)
+    })?;
+    let mut builder = plan
+        .admit(server.vault.context_pack())
         .media_query_memory(&server.memory)
         .limit(candidate_limit)
         .hydrate(hydrate)
@@ -704,12 +727,14 @@ fn read_reaction_signals(
     // withholds. Only an owner-grade caller with no slip keeps the raw feed
     // of one person's messages; a delegated, room-scoped or
     // interlocutor-scoped read is filtered by the same scoped read and
-    // disclosure clamp as the pack. Paging follows the filter, so a cursor
-    // never names a signal this caller was not shown.
+    // disclosure clamp as the pack, and so is a read that names its own
+    // filter, which the pack's reader carries (FIX 3977). Paging follows the
+    // filter, so a cursor never names a signal this caller was not shown.
     let scoped = auth.verified_slip().is_some()
         || !auth.is_owner_grade()
         || req.conversation_id.is_some()
-        || req.interlocutors.is_some();
+        || req.interlocutors.is_some()
+        || req.filter.is_some();
     let mut kept = Vec::new();
     for signal in signals {
         checkpoint()?;

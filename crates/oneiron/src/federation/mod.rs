@@ -10,9 +10,12 @@
 // aliases keep every `federation::<module>::` path this crate uses.
 pub(crate) use oneiron_authority::federation::{codec, pact_scope, scope_codec};
 mod agent_grant;
+mod agent_verb_class;
 pub(crate) use agent_grant::{
-    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, agent_grants_for_store_in_txn,
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, SelectedOwnerAgentFundingGrant,
+    agent_grants_for_store_in_txn,
 };
+pub(crate) use agent_verb_class::AgentVerbClasses;
 // The self brief's GRANT producer (FIX 17594).
 mod agent_grant_brief;
 // Who may delete one record the cleanup archived (OF-449 L4).
@@ -239,7 +242,7 @@ use std::io::Cursor;
 pub use oneiron_authority::federation::{
     FederationGrantKind, GIT_PUSH_VERB, GitPushBounds, GitPushRepo, REPO_EDIT_VERB, REPO_READ_VERB,
     RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget, Scope, ScopeAtom, ScopeAxis,
-    ScopeId, Sensitivity, SensitivityCeiling,
+    ScopeId, Sensitivity, SensitivityCeiling, WalletRef,
 };
 
 mod org_admin;
