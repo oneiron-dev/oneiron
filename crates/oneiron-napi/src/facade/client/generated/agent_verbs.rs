@@ -11474,6 +11474,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_dreamer_follower_keyframe(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.dreamer.follower.keyframe", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn connector_answer(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("connector.answer", js_json(input))
