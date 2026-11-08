@@ -33,7 +33,8 @@ use super::payload::{
 };
 use super::{CustodyTransition, refused};
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, CustodyRecipientPermit, custody_recipient_set,
+    AuthorityEntryHash, AuthorityFold, CustodyPermitSet, CustodyRecipientPermit,
+    custody_recipient_set,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -100,7 +101,7 @@ impl CustodyTransition {
     /// are the run of it at `first`, and the last piece ends it. A piece
     /// before the last ends it too only when the next carries on its last
     /// value (FIX 7953), which [`CustodyPieces::whole`] decides.
-    pub(super) fn piece_of(&self, recipients: &[CustodyRecipientPermit]) -> bool {
+    pub(super) fn piece_of(&self, recipients: &CustodyPermitSet) -> bool {
         let Ok(start) = usize::try_from(self.first) else {
             return false;
         };
@@ -108,10 +109,9 @@ impl CustodyTransition {
             return false;
         };
         let last = self.piece.checked_add(1) == Some(self.pieces);
-        self.set == custody_recipient_set(recipients)
-            && recipients
-                .get(start..end)
-                .is_some_and(|run| run.iter().eq(self.permits()))
+        self.set == recipients.recipient_set()
+            && end <= recipients.len()
+            && recipients.range(start, end).eq(self.permits())
             && (!last || end == recipients.len())
     }
 
