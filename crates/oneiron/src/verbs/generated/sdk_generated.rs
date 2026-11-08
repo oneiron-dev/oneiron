@@ -3066,6 +3066,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.consent.create_nightly_link_grant",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_consolidation::NightlyLinkGrantRequest,
+                >(),
+            ),
+            (
                 "vault.consent.registry",
                 crate::code_run::vault_read::request_schema::<crate::consent::ConsentRegistryQuery>(
                 ),
@@ -7918,6 +7924,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.consent.deny",
     "vault.consent.create_standing_grant",
     "vault.consent.create_auto_weave_grant",
+    "vault.consent.create_nightly_link_grant",
     "vault.consent.registry",
     "vault.consent.failure_signals_held",
     "vault.consent.revoke",
@@ -9664,6 +9671,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::consent::lifecycle::ConsentActReceipt,
         >(),
         "vault.consent.create_auto_weave_grant" => crate::code_run::vault_read::request_schema::<
+            crate::consent::lifecycle::ConsentActReceipt,
+        >(),
+        "vault.consent.create_nightly_link_grant" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
         >(),
         "vault.consent.registry" => {
@@ -15164,6 +15174,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.consent.create_auto_weave_grant" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.create_nightly_link_grant" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21120,6 +21137,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consent.create_auto_weave_grant" => {
             validate_input_vault_consent_create_auto_weave_grant(value)?
         }
+        "vault.consent.create_nightly_link_grant" => {
+            validate_input_vault_consent_create_nightly_link_grant(value)?
+        }
         "vault.consent.registry" => validate_input_vault_consent_registry(value)?,
         "vault.consent.failure_signals_held" => {
             validate_input_vault_consent_failure_signals_held(value)?
@@ -25146,6 +25166,13 @@ fn validate_input_vault_consent_create_auto_weave_grant(
     value: &serde_json::Value,
 ) -> MemoryResult<()> {
     let _input: crate::consent::lifecycle::AutoWeaveGrantRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_consent_create_nightly_link_grant(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::dreamer_consolidation::NightlyLinkGrantRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -30129,6 +30156,9 @@ pub fn invoke(
         }
         "vault.consent.create_auto_weave_grant" => {
             invoke_vault_consent_create_auto_weave_grant(memory, value)
+        }
+        "vault.consent.create_nightly_link_grant" => {
+            invoke_vault_consent_create_nightly_link_grant(memory, value)
         }
         "vault.consent.registry" => invoke_vault_consent_registry(memory, value),
         "vault.consent.failure_signals_held" => {
@@ -35155,6 +35185,16 @@ fn invoke_vault_consent_create_auto_weave_grant(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_consent_create_auto_weave_grant(
+        memory,
+        decode(value)?,
+    )?)
+}
+#[inline(never)]
+fn invoke_vault_consent_create_nightly_link_grant(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_consent_create_nightly_link_grant(
         memory,
         decode(value)?,
     )?)
@@ -45417,6 +45457,16 @@ pub fn vault_consent_create_auto_weave_grant(
     crate::consent::lifecycle::mint_auto_weave_grant(
         memory.vault(),
         &memory.embedded_owner("vault.consent.create_auto_weave_grant")?,
+        input,
+    )
+}
+pub fn vault_consent_create_nightly_link_grant(
+    memory: &Memory<'_>,
+    input: crate::dreamer_consolidation::NightlyLinkGrantRequest,
+) -> MemoryResult<crate::consent::lifecycle::ConsentActReceipt> {
+    crate::dreamer_consolidation::mint_nightly_link_grant(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.create_nightly_link_grant")?,
         input,
     )
 }
