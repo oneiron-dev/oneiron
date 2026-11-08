@@ -9,7 +9,9 @@
 //! before and after with their changelog headlines. The notice's tap names
 //! the change; [`Vault::revert_model_pack_change_as_owner`] judges it again
 //! when called. A revert pins the pack before the change and is itself a
-//! change, so its own notice reverts it.
+//! change, so its own notice reverts it. When a same-name update replaced
+//! that pack, the revert installs the version the update kept again, after
+//! its bytes pass an install's checks once more (FIX 20192).
 
 use serde::{Deserialize, Serialize};
 
@@ -78,11 +80,20 @@ pub enum ModelPackRevertBlock {
     Superseded,
     /// The change had no pack before it: the vault's first pack.
     NoPreviousPack,
-    /// The pack before the change is no longer installed at the bytes the
-    /// change recorded.
+    /// The pack before the change is neither installed nor kept as the
+    /// version a same-name update replaced at the bytes the change recorded,
+    /// or its kept bytes no longer pass an install's checks.
     NotInstalled,
     /// The pack before the change has retired: it is no longer served.
     Retired,
+    /// The hub ref the pack before the change came from is frozen to other
+    /// bytes, the newer version's, so its drift check refuses the version
+    /// the change recorded. The owner lifts the freeze, then reverts: the
+    /// newer version stays in effect while the freeze is lifted, so the
+    /// change still stands. Moving the freeze to the older bytes instead
+    /// ends the newer version first, a change of its own that supersedes
+    /// this one (review #6755).
+    FrozenRefPinsNewer,
 }
 
 /// What a revert did.
@@ -94,6 +105,23 @@ pub struct ModelPackRevert {
     pub blocked: Option<ModelPackRevertBlock>,
     /// The owner's model pack setting after the call.
     pub setting: ModelPackSetting,
+}
+
+/// The pack a revert returns to, and where it is now.
+enum RevertTarget {
+    /// Installed at the bytes the change recorded: the revert pins it.
+    Installed(InstalledModelPack),
+    /// The version a same-name update replaced, kept at those bytes and
+    /// admitted again (FIX 20192): the revert installs it again and pins it.
+    Replaced(InstalledModelPack),
+}
+
+impl RevertTarget {
+    fn pack(&self) -> &InstalledModelPack {
+        match self {
+            Self::Installed(pack) | Self::Replaced(pack) => pack,
+        }
+    }
 }
 
 /// The preference a revert to `previous` stores. An engine call (CALLS, FIX
@@ -201,16 +229,19 @@ impl Vault {
     }
 
     /// The pack a revert of `change_ref` restores, read in `txn`, or why it
-    /// cannot run now. An engine call (CALLS, FIX 5369): the change must be
-    /// the vault's last, as a later change's own notice carries the way
-    /// back from it, and the pack before it must be installed at the bytes
-    /// the change recorded, never another version of the same pack, and
-    /// served today.
+    /// cannot run now. An engine call (CALLS, FIX 5369, 20192): the change
+    /// must be the vault's last, as a later change's own notice carries the
+    /// way back from it, and the pack before it must be at the bytes the
+    /// change recorded, never another version of the same pack, and served
+    /// today: installed, or else kept as the version a same-name update
+    /// replaced, whose bytes pass an install's checks again
+    /// ([`Vault::replaced_model_pack_in_txn`]). A version held at those bytes
+    /// under a hub ref frozen to other bytes answers that freeze (FIX 22058).
     fn model_pack_revert_target_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         change_ref: &str,
-    ) -> Result<std::result::Result<InstalledModelPack, ModelPackRevertBlock>> {
+    ) -> Result<std::result::Result<RevertTarget, ModelPackRevertBlock>> {
         let Some(change) = ACTIVE
             .get(&self.store, txn, &())?
             .filter(|change| change.change_ref == change_ref)
@@ -220,17 +251,32 @@ impl Vault {
         let Some(previous) = change.previous else {
             return Ok(Err(ModelPackRevertBlock::NoPreviousPack));
         };
-        let Some(installed) = self
+        let installed = self
             .installed_model_packs_in_txn(txn)?
             .into_iter()
-            .find(|installed| previous.names(installed))
-        else {
-            return Ok(Err(ModelPackRevertBlock::NotInstalled));
+            .find(|installed| previous.names(installed));
+        let target = match installed {
+            Some(installed) => RevertTarget::Installed(installed),
+            None => match self.replaced_model_pack_in_txn(txn, &previous.pack)? {
+                Some(replaced) if previous.names(&replaced) => RevertTarget::Replaced(replaced),
+                _ => {
+                    let block = if self.model_pack_frozen_out_in_txn(
+                        txn,
+                        &previous.pack,
+                        &previous.content_hash,
+                    )? {
+                        ModelPackRevertBlock::FrozenRefPinsNewer
+                    } else {
+                        ModelPackRevertBlock::NotInstalled
+                    };
+                    return Ok(Err(block));
+                }
+            },
         };
-        if !installed.pack.is_served_on(self.model_pack_today()) {
+        if !target.pack().pack.is_served_on(self.model_pack_today()) {
             return Ok(Err(ModelPackRevertBlock::Retired));
         }
-        Ok(Ok(installed))
+        Ok(Ok(target))
     }
 
     /// Whether a change notice offers its revert now (FIX 5369): the change
@@ -249,10 +295,14 @@ impl Vault {
     /// The owner's one-tap revert of the pack change `request` names, under
     /// the owner proof (FIX 5369): the pack the vault followed before it is
     /// pinned ([`model_pack_revert_preference`]) and followed, recorded as a
-    /// change of its own with its own notice. A change a later one replaced,
-    /// with no pack before it, or whose pack before it is no longer
-    /// installed at its bytes or served, answers why it cannot run now and
-    /// changes nothing.
+    /// change of its own with its own notice. When a same-name update
+    /// replaced that pack, its kept version is installed again first, and
+    /// the version it replaces is kept in turn, so the revert's own notice
+    /// reverts it the same way (FIX 20192). A change a later one replaced,
+    /// with no pack before it, or whose pack before it is neither installed
+    /// nor kept at its bytes, fails an install's checks (a frozen hub ref
+    /// that pins other bytes named apart) or is not served, answers why it
+    /// cannot run now and changes nothing.
     ///
     /// # Errors
     /// The owner proof; [`crate::Error::InvalidConfig`] for a blank change id.
@@ -267,13 +317,16 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let blocked = match self.model_pack_revert_target_in_txn(txn, &request.change_ref)? {
-                Ok(previous) => {
+                Ok(target) => {
                     let before = self.model_pack_in_effect_in_txn(txn)?;
+                    if let RevertTarget::Replaced(replaced) = &target {
+                        self.restore_replaced_model_pack_in_txn(txn, &replaced.receipt.pack_name)?;
+                    }
                     PREFERENCE.put(
                         &self.store,
                         txn,
                         &(),
-                        &model_pack_revert_preference(&previous),
+                        &model_pack_revert_preference(target.pack()),
                     )?;
                     self.note_active_model_pack_in_txn(txn, before, ModelPackChangeCause::Revert)?;
                     None
