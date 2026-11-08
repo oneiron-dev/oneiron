@@ -387,10 +387,12 @@ impl StepReplayCapsule {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutorStepStart {
     /// The start body (its encoded prefix row, its config, its teaching
-    /// fingerprint), owned by the run, as the wall admitted it.
+    /// fingerprint), owned by the run, as the wall admitted it. FIX 4192:
+    /// this is the body's manifest; the run holds the body as shared
+    /// pieces the manifest names.
     pub body: OutputRef,
     pub path: String,
-    /// BLAKE3 of the body bytes as stored.
+    /// BLAKE3 of the whole body bytes as stored, its pieces put together.
     pub digest: [u8; 32],
     /// The bridge log's length at the step's start.
     pub bridge_start: u64,
