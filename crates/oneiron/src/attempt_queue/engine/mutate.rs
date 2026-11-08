@@ -101,6 +101,7 @@ impl AttemptQueue<'_> {
             state: AttemptState::Scheduled,
             lease_owner: None,
             attempt_count: 0,
+            lease_expirations: Vec::new(),
             claimed_at: None,
             scheduled_at: Some(input.backoff_until),
             retry_of: Some(source.id),

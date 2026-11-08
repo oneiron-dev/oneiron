@@ -33,6 +33,7 @@ mod step_attempt;
 mod step_quota;
 // FIX 1743: a stream's probation slot, and its end to its offer's health.
 mod stream_health;
+mod streamed_generation;
 mod worker_lease;
 
 use futures_util::StreamExt;
@@ -476,6 +477,21 @@ impl OfferLadder {
     pub fn exact_prompt(&self) -> Option<Option<&str>> {
         match self.rungs.as_slice() {
             [rung] if self.picked => Some(rung.prompt.as_deref()),
+            _ => None,
+        }
+    }
+
+    /// The immutable offer held by an exact-model call's single picked rung.
+    /// This is route and price evidence, not availability or run authority.
+    pub(crate) fn exact_offer_binding(&self) -> Option<&OfferBinding> {
+        match self.rungs.as_slice() {
+            [rung]
+                if self.picked
+                    && self.name == rung.model
+                    && rung.model == rung.offer.binding.model =>
+            {
+                Some(&rung.offer.binding)
+            }
             _ => None,
         }
     }
