@@ -219,6 +219,8 @@ struct PoolState {
     wanted: bool,
     /// A put found the pool dry since the last top-up, and that was logged.
     dry_logged: bool,
+    /// One top-up is minting: no other mints beside it.
+    refilling: bool,
 }
 
 impl PoolState {
@@ -262,20 +264,31 @@ impl BodyInstancePool {
         drawn
     }
 
-    /// How many instances the next top-up mints: none until a put has
-    /// wanted one, then what the pool lacks of its target.
-    fn missing(&self) -> usize {
-        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.wanted {
-            BODY_INSTANCE_POOL_TARGET.saturating_sub(state.held())
-        } else {
-            0
+    /// How many instances this top-up mints, claiming the refill: none
+    /// until a put has wanted one, none while another top-up mints, then
+    /// what the pool lacks of its target.
+    fn claim_refill(&self) -> usize {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if !state.wanted || state.refilling {
+            return 0;
         }
+        let missing = BODY_INSTANCE_POOL_TARGET.saturating_sub(state.held());
+        state.refilling = missing > 0;
+        missing
     }
 
-    /// Adds the instances `fresh` holds to the pool.
+    /// Ends a refill that minted nothing.
+    fn abandon_refill(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .refilling = false;
+    }
+
+    /// Adds the instances `fresh` holds to the pool, ending the refill.
     fn fill(&self, fresh: BodyMint) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.refilling = false;
         state.dry_logged = false;
         if state.held() == 0 {
             state.mint = Some(fresh);
@@ -299,13 +312,17 @@ impl Store {
     /// instance. A vault that cannot mint (an archived one) leaves it as it
     /// is, and its long bodies stay in their rows.
     pub(crate) fn top_up_body_instance_pool(&self) {
-        let missing = self.body_instance_pool.missing();
+        // Minted outside the pool's lock, which a put inside a writer takes.
+        let missing = self.body_instance_pool.claim_refill();
         if missing == 0 {
             return;
         }
         match self.body_mint().and_then(|mint| mint.reserve(missing)) {
             Ok(fresh) => self.body_instance_pool.fill(fresh),
-            Err(error) => tracing::debug!(%error, "body instance pool not topped up"),
+            Err(error) => {
+                self.body_instance_pool.abandon_refill();
+                tracing::debug!(%error, "body instance pool not topped up");
+            }
         }
     }
 }
