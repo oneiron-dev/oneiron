@@ -129,6 +129,8 @@ pub(super) fn put_critical_confirm_item_in_txn(
         // local Dreamer envelope.
         dreamer_run_id: None,
         predicate: Some(body.predicate.clone()),
+        // A hold attached on sync has no deadline here.
+        expires_at: None,
     };
     // This also writes the exact-confirm index and the ordinary tray indexes.
     store.put_pending_gate_consent_in_txn(wtxn, &pending)?;

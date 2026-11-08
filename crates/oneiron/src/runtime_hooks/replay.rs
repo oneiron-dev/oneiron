@@ -67,6 +67,12 @@ pub enum HookReplayCase {
         verb: String,
         phase: HookPhase,
     },
+    /// A run the run index names whose saved row is gone: only its run key
+    /// remains, so this entry carries nothing else (FIX 2394).
+    UnknownRun {
+        /// The run's key, as 64 hex.
+        run_key: String,
+    },
 }
 
 /// How a replayed outcome stands to the one its run recorded.
@@ -107,16 +113,19 @@ pub enum HookReplayResult {
     MissingHistory { reason: String },
 }
 
-/// A run the run index names, with its saved row.
+/// A run the run index names, with its saved row when it still has one.
 pub(super) enum SavedRun {
     Fact(RunKey, HookRunRecord),
     Verb(RunKey, HookVerbRunRecord),
+    /// The index names this run but its saved row is gone: the entry is
+    /// reported missing, never taken as index corruption (FIX 2394).
+    Missing(RunKey),
 }
 
 impl SavedRun {
     const fn key(&self) -> &RunKey {
         match self {
-            Self::Fact(key, _) | Self::Verb(key, _) => key,
+            Self::Fact(key, _) | Self::Verb(key, _) | Self::Missing(key) => key,
         }
     }
 }
@@ -131,6 +140,7 @@ pub(super) fn saved_runs(vault: &Vault, binding: EntityId, limit: usize) -> Resu
         .take(limit)
     {
         let (_, run) = row?;
+        let key = run.key();
         let saved = match run {
             HookRunRef::Fact(key) => store::MEMOS
                 .get(&vault.store, &rtxn, &key)?
@@ -139,9 +149,7 @@ pub(super) fn saved_runs(vault: &Vault, binding: EntityId, limit: usize) -> Resu
                 .get(&vault.store, &rtxn, &key)?
                 .map(|saved| SavedRun::Verb(key, saved)),
         };
-        runs.push(saved.ok_or(Error::CorruptedIndex(
-            "a hook run index row names no saved run",
-        ))?);
+        runs.push(saved.unwrap_or(SavedRun::Missing(key)));
     }
     Ok(runs)
 }
@@ -431,6 +439,14 @@ impl Replay<'_> {
                     phase: saved.phase,
                 },
                 result: self.verb_run(lane, saved),
+            },
+            SavedRun::Missing(key) => HookReplayEntry {
+                case: HookReplayCase::UnknownRun {
+                    run_key: hex_lower(key),
+                },
+                result: HookReplayResult::MissingHistory {
+                    reason: "a hook run index row names no saved run".to_owned(),
+                },
             },
         }
     }

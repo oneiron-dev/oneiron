@@ -37,8 +37,18 @@ impl Memory<'_> {
         binding: &RepoRunBinding,
         input: RepoSnapshotsGetInput,
     ) -> MemoryResult<RepoRunAnswer<RepoSnapshotsGetOutput>> {
-        let target = repo_target(input.repo, &input.git_ref, NO_PATHS);
-        let admitted = self.repo_run_admit(binding, &target, RepoAccessIntent::Read)?;
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let (selected, _, admission) = self.vault.admit_repo_run_with_portable_in_txn(
+            &txn,
+            binding,
+            input.repo,
+            input.portable_repo.as_ref(),
+            &input.git_ref,
+            NO_PATHS,
+            RepoAccessIntent::Read,
+        )?;
+        drop(txn);
+        let admitted = admission.map_err(refusal_error)?;
         let (mount, commit) =
             self.repo_pinned_snapshot(binding, &admitted, &input.git_ref, &input.snapshot)?;
         let bounds = &admitted.membership.bounds;
@@ -58,9 +68,9 @@ impl Memory<'_> {
             })
             .collect();
         Ok(RepoRunAnswer {
-            rows: vec![input.repo, mount.code_artifact_id()],
+            rows: vec![selected, mount.code_artifact_id()],
             output: RepoSnapshotView {
-                repo: input.repo,
+                repo: selected,
                 git_ref: input.git_ref,
                 commit,
                 snapshot: input.snapshot,
@@ -78,8 +88,18 @@ impl Memory<'_> {
         binding: &RepoRunBinding,
         input: RepoSnapshotsReadInput,
     ) -> MemoryResult<RepoRunAnswer<RepoSnapshotsReadOutput>> {
-        let target = repo_target(input.repo, &input.git_ref, [input.path.as_str()]);
-        let admitted = self.repo_run_admit(binding, &target, RepoAccessIntent::Read)?;
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let (selected, portable_hit, admission) = self.vault.admit_repo_run_with_portable_in_txn(
+            &txn,
+            binding,
+            input.repo,
+            input.portable_repo.as_ref(),
+            &input.git_ref,
+            [input.path.as_str()],
+            RepoAccessIntent::Read,
+        )?;
+        drop(txn);
+        let admitted = admission.map_err(refusal_error)?;
         let (mount, _) =
             self.repo_pinned_snapshot(binding, &admitted, &input.git_ref, &input.snapshot)?;
         let absent = || MemoryError::not_found("the file is absent or withheld in this snapshot");
@@ -106,14 +126,21 @@ impl Memory<'_> {
                 let artifact = mount.code_artifact_id();
                 let readmit = || -> crate::error::Result<()> {
                     let txn = self.vault.store.env.read_txn()?;
-                    let again = self.vault.admit_repo_run_in_txn(
-                        &txn,
-                        binding,
-                        &target,
-                        RepoAccessIntent::Read,
-                    )?;
+                    let (selected_again, hit_again, admission) =
+                        self.vault.admit_repo_run_with_portable_in_txn(
+                            &txn,
+                            binding,
+                            input.repo,
+                            input.portable_repo.as_ref(),
+                            &input.git_ref,
+                            [input.path.as_str()],
+                            RepoAccessIntent::Read,
+                        )?;
                     drop(txn);
-                    let again = again
+                    if selected_again != selected || hit_again != portable_hit {
+                        return Err(changed());
+                    }
+                    let again = admission
                         .ok()
                         .filter(|again| again.same_lease(&admitted))
                         .ok_or_else(changed)?;
@@ -126,8 +153,18 @@ impl Memory<'_> {
                     self.repo_lane_reads(binding, &[asset])
                         .map_err(|_| changed())
                 };
-                let read = run_reveal_reader(self, binding, &admitted)
-                    .snapshot_file_read_with_why(
+                let reader = run_reveal_reader(self, binding, &admitted);
+                let read = if portable_hit {
+                    reader.snapshot_file_read_with_why_at_repo(
+                        &mount,
+                        selected,
+                        &input.path,
+                        input.why.as_deref(),
+                        RepoReadDoor::Text,
+                        readmit,
+                    )?
+                } else {
+                    reader.snapshot_file_read_with_why(
                         &mount,
                         input.repo,
                         &input.path,
@@ -135,7 +172,8 @@ impl Memory<'_> {
                         RepoReadDoor::Text,
                         readmit,
                     )?
-                    .ok_or_else(absent)?;
+                }
+                .ok_or_else(absent)?;
                 (read.projection, read.byte_route)
             }
         };
@@ -151,9 +189,9 @@ impl Memory<'_> {
         let content = String::from_utf8(bytes)
             .map_err(|_| MemoryError::bad_request("the pinned file is not UTF-8 text"))?;
         Ok(RepoRunAnswer {
-            rows: vec![input.repo, mount.code_artifact_id(), asset],
+            rows: vec![selected, mount.code_artifact_id(), asset],
             output: RepoSnapshotsReadOutput {
-                repo: input.repo,
+                repo: selected,
                 git_ref: input.git_ref,
                 snapshot: input.snapshot,
                 file,
@@ -171,8 +209,18 @@ impl Memory<'_> {
         binding: &RepoRunBinding,
         input: RepoSymbolsDefinitionsInput,
     ) -> MemoryResult<RepoRunAnswer<RepoSymbolsDefinitionsOutput>> {
-        let target = repo_target(input.repo, &input.git_ref, NO_PATHS);
-        let admitted = self.repo_run_admit(binding, &target, RepoAccessIntent::Read)?;
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let (selected, _, admission) = self.vault.admit_repo_run_with_portable_in_txn(
+            &txn,
+            binding,
+            input.repo,
+            input.portable_repo.as_ref(),
+            &input.git_ref,
+            NO_PATHS,
+            RepoAccessIntent::Read,
+        )?;
+        drop(txn);
+        let admitted = admission.map_err(refusal_error)?;
         let (mount, _) =
             self.repo_pinned_snapshot(binding, &admitted, &input.git_ref, &input.snapshot)?;
         let artifact = mount.code_artifact_id();
@@ -193,12 +241,12 @@ impl Memory<'_> {
             .into_iter()
             .filter(|definition| bounds.admits_path(RepoAccessIntent::Read, &definition.path))
             .collect();
-        let mut rows = vec![input.repo, artifact];
+        let mut rows = vec![selected, artifact];
         rows.extend(definitions.iter().map(|definition| definition.entity_id));
         Ok(RepoRunAnswer {
             rows,
             output: RepoSymbolsDefinitionsOutput {
-                repo: input.repo,
+                repo: selected,
                 git_ref: input.git_ref,
                 snapshot: input.snapshot,
                 definitions: definitions
@@ -398,7 +446,7 @@ impl Memory<'_> {
     /// ref contract"): no snapshot of another commit or another repo is
     /// served under an admitted ref. The run's lane must read the repo and
     /// the snapshot's artifact.
-    fn repo_pinned_snapshot(
+    pub(super) fn repo_pinned_snapshot(
         &self,
         binding: &RepoRunBinding,
         admitted: &RepoRunAdmitted,
