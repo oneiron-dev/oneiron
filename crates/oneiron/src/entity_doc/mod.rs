@@ -6,6 +6,7 @@
 
 #[cfg(feature = "sync")]
 mod adoption;
+mod artifact;
 mod carried;
 pub(crate) mod checkpoint;
 mod citation_floor;
@@ -65,6 +66,10 @@ pub(crate) use recovery::{
 };
 mod verbs;
 
+pub(crate) use artifact::{
+    ArtifactDocumentRows, artifact_document_rows_in_txn, erase_artifact_document_in_txn,
+    put_artifact_document_in_txn,
+};
 #[cfg(feature = "sync")]
 pub(crate) use carried::{CarriedDocument, DocumentMerge, moved_pointer_row_in_txn};
 pub use doc_actor::DocActor;
