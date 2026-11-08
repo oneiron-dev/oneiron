@@ -202,6 +202,11 @@ pub fn supersede_displaced_judge_receipts(
         } else {
             REVISION_FENCE.put(&vault.store, txn, &fence, &replacement.to_owned())?;
         }
+        // A label proposal quoting the displaced judge's notes goes while it
+        // waits on its owner (FIX 21885).
+        crate::dreamer_runner::maintenance::withdraw_label_proposals_judged_by_in_txn(
+            vault, txn, displaced,
+        )?;
         for judgment in &judgments {
             let origin = JUDGE_REVISION.get(&vault.store, txn, &judgment.sequence)?;
             if origin.as_ref().map(|origin| origin.0.as_str()) != Some(displaced) {
