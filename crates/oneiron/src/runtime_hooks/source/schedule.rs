@@ -268,24 +268,24 @@ pub(super) fn head_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option
         .map(|(sequence, _)| FactPosition::Schedule(SchedulePosition(sequence))))
 }
 
-/// Deletes the tick rows at or before `floor`, the lowest cursor of every
-/// enabled fact binding, at most `max_rows`, in the caller's write. The
+/// The tick rows at or before `floor`, the lowest cursor of every enabled
+/// fact binding, that no binding reads again, at most `max_rows`, read in
+/// `txn` for a later write to delete ([`delete_ticks_in_txn`]). The
 /// tick an open TASK's due index entry holds stays: a binding new to the
 /// feed starts before it ([`open_tick_start_in_txn`]). Every other passed
 /// row is one no binding takes again, as the runner delivers a tick only
 /// while its TASK is open at that due time. The scan passes over the kept
 /// ticks, at most one per open TASK.
-pub(super) fn prune_passed_ticks_in_txn(
+pub(super) fn passed_ticks_in_txn(
     vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     floor: SchedulePosition,
     max_rows: usize,
-) -> Result<()> {
-    let read: &heed::RoTxn<'_> = txn;
+) -> Result<Vec<u64>> {
     let mut passed = Vec::new();
     for row in TICKS.iter_range(
         &vault.store,
-        read,
+        txn,
         Bound::Unbounded,
         Bound::Included(&floor.0),
     )? {
@@ -295,14 +295,23 @@ pub(super) fn prune_passed_ticks_in_txn(
         let (sequence, row) = row?;
         if let TickRow::Released(tick) = &row
             && TASK_DUE_REVERSE
-                .get(&vault.store, read, &tick.task)?
+                .get(&vault.store, txn, &tick.task)?
                 .is_some_and(|entry| entry.tick == Some(sequence))
         {
             continue;
         }
         passed.push(sequence);
     }
-    for sequence in &passed {
+    Ok(passed)
+}
+
+/// Deletes the tick feed rows `sequences` names, in the caller's write.
+pub(super) fn delete_ticks_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    sequences: &[u64],
+) -> Result<()> {
+    for sequence in sequences {
         TICKS.delete(&vault.store, txn, sequence)?;
     }
     Ok(())

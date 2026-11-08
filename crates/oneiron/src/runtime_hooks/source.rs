@@ -592,24 +592,35 @@ pub(super) fn head_in_txn(
     Ok(head)
 }
 
-/// Deletes, in the caller's write, the watcher feed rows at or before
-/// `floor`, the lowest cursor of every enabled fact binding, at most
-/// `max_rows`. The claim changelog and the settlement feed prune nothing
-/// here.
-pub(super) fn prune_passed_in_txn(
+/// The watcher feed rows at or before `floor`, the lowest cursor of every
+/// enabled fact binding, that no binding reads again, at most `max_rows`,
+/// read in `txn`. The claim changelog and the settlement feed prune nothing.
+pub(super) fn passed_rows_in_txn(
     vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     floor: FactPosition,
     max_rows: usize,
-) -> Result<()> {
+) -> Result<Vec<u64>> {
     match floor {
-        FactPosition::Schedule(floor) => {
-            schedule::prune_passed_ticks_in_txn(vault, txn, floor, max_rows)
-        }
+        FactPosition::Schedule(floor) => schedule::passed_ticks_in_txn(vault, txn, floor, max_rows),
         FactPosition::SurfaceInbound(floor) => {
-            surface_inbound::prune_passed_events_in_txn(vault, txn, floor, max_rows)
+            surface_inbound::passed_events_in_txn(vault, txn, floor, max_rows)
         }
-        FactPosition::ClaimChangelog(_) | FactPosition::Settlement(_) => Ok(()),
+        FactPosition::ClaimChangelog(_) | FactPosition::Settlement(_) => Ok(Vec::new()),
+    }
+}
+
+/// Deletes `source`'s watcher feed rows `rows`, in the caller's write.
+pub(super) fn delete_feed_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    source: FactSource,
+    rows: &[u64],
+) -> Result<()> {
+    match source {
+        FactSource::Schedule => schedule::delete_ticks_in_txn(vault, txn, rows),
+        FactSource::SurfaceInbound => surface_inbound::delete_events_in_txn(vault, txn, rows),
+        FactSource::ClaimChangelog | FactSource::Settlement => Ok(()),
     }
 }
 

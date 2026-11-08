@@ -233,6 +233,7 @@ impl FactHookRunner {
                 pass.run_source(source, max_entries, &bindings)?;
             }
         }
+        pass.prune_watcher_feeds(&bindings, max_entries)?;
         Ok(pass.report)
     }
 
@@ -442,7 +443,7 @@ impl Pass<'_, '_> {
             }
         }
         // Every entry up to `through` was delivered or passed over; skipped
-        // entries move the cursor as runs do, and passed watcher rows go.
+        // entries move the cursor as runs do.
         if let Some(through) = batch.through {
             let vault = self.vault;
             let at = vault.store.clock.now_recorded_at();
@@ -453,7 +454,7 @@ impl Pass<'_, '_> {
                     }
                     store::advance_cursor_in_txn(vault, txn, *id, through, at)?;
                 }
-                self.prune_watcher_feed_in_txn(txn, source, bindings, max_entries)
+                Ok(())
             })?;
         }
         Ok(())

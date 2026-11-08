@@ -184,16 +184,16 @@ pub(super) fn head_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option
         .map(|(sequence, _)| FactPosition::SurfaceInbound(SurfaceInboundPosition(sequence))))
 }
 
-/// Deletes the inbound rows at or before `floor`, the lowest cursor of
-/// every enabled fact binding, at most `max_rows`, in the caller's write. A
-/// binding new to the feed starts at its head, so no passed row is read
-/// again.
-pub(super) fn prune_passed_events_in_txn(
+/// The inbound rows at or before `floor`, the lowest cursor of every
+/// enabled fact binding, at most `max_rows`, read in `txn` for a later
+/// write to delete ([`delete_events_in_txn`]). A binding new to the feed
+/// starts at its head, so no passed row is read again.
+pub(super) fn passed_events_in_txn(
     vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     floor: SurfaceInboundPosition,
     max_rows: usize,
-) -> Result<()> {
+) -> Result<Vec<u64>> {
     let mut passed = Vec::new();
     for row in SURFACE_INBOUND.iter_range(
         &vault.store,
@@ -207,7 +207,16 @@ pub(super) fn prune_passed_events_in_txn(
         let (sequence, _) = row?;
         passed.push(sequence);
     }
-    for sequence in &passed {
+    Ok(passed)
+}
+
+/// Deletes the inbound feed rows `sequences` names, in the caller's write.
+pub(super) fn delete_events_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    sequences: &[u64],
+) -> Result<()> {
+    for sequence in sequences {
         SURFACE_INBOUND.delete(&vault.store, txn, sequence)?;
     }
     Ok(())
