@@ -131,6 +131,9 @@ pub struct DeckProposeRequest {
     /// The envelope Keep gives the version, with the task or ask it answers.
     #[serde(default)]
     pub made_by: Option<MadeBy>,
+    /// The delta receipt id this rework answers (FIX 11967).
+    #[serde(default)]
+    pub delta_receipt: Option<String>,
 }
 
 /// A held proposal, or the refusal naming the step and its check.
@@ -158,6 +161,9 @@ pub struct NativeOutputRequest {
     /// must admit each row. This is not authority or a complete read log.
     #[serde(default)]
     pub read_rows: Vec<String>,
+    /// The delta receipt id this rework answers (FIX 11967).
+    #[serde(default)]
+    pub delta_receipt: Option<String>,
 }
 
 /// Keep, Discard or Undo of one proposal by its ref.
@@ -877,6 +883,7 @@ impl Memory<'_> {
                 self.made_by_reader(made_by)?,
                 (actor, at),
                 &read,
+                None,
             )?),
             None => None,
         };
@@ -1083,6 +1090,7 @@ impl Memory<'_> {
                 self.made_by_reader(made_by)?,
                 (actor, at),
                 &read,
+                None,
             )?),
             None => None,
         };
@@ -1179,6 +1187,7 @@ impl Memory<'_> {
                     self.made_by_reader(input.made_by.as_ref())?,
                     (self.artifact_actor(), self.vault().now_recorded_at()),
                     &read_rows,
+                    input.delta_receipt.as_deref(),
                 )?),
                 rejected: None,
             }),
@@ -1216,6 +1225,7 @@ impl Memory<'_> {
             self.made_by_reader(output.made_by.as_ref())?,
             (self.artifact_actor(), self.vault().now_recorded_at()),
             &read_rows,
+            input.delta_receipt.as_deref(),
         )?)
     }
 

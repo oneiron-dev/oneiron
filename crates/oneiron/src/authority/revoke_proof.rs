@@ -241,7 +241,7 @@ impl RevokeFacts {
             }
             let restriction = match &entry.op {
                 AuthorityOp::SlipRevoke { slip_id } => Restriction::SlipRevoke(*slip_id),
-                AuthorityOp::SlipGrantRevoke { grant_ref } => {
+                AuthorityOp::SlipGrantRevoke { grant_ref, .. } => {
                     Restriction::SlipGrantRevoke(grant_ref.to_hex())
                 }
                 AuthorityOp::MembershipExecution(record) if !record.withdrawn_grants.is_empty() => {
