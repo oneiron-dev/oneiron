@@ -47,6 +47,7 @@ impl OfferLadder {
                 0,
                 &|| true,
                 None,
+                None,
                 false,
                 RungPrompt::Configured,
                 &mut walk,

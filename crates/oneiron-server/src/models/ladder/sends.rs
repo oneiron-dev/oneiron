@@ -15,6 +15,7 @@ impl OfferLadder {
         index: usize,
         may_send: &(dyn Fn() -> bool + Sync),
         sources: Option<&dyn SourceAdmission>,
+        observer: Option<&(dyn Fn(&LlmRequest) -> bool + Send + Sync)>,
         prefer_stream: bool,
         prompt: RungPrompt<'_>,
         walk: &mut Walk,
@@ -80,6 +81,10 @@ impl OfferLadder {
             };
             let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
             let warmth = cache_warmth::Sending::of(&self.rests, &rung, &bound);
+            if observer.is_some_and(|observe| !observe(&bound)) {
+                settle_failed(permit);
+                return Ok(Sent::Stopped);
+            }
             let sent = async {
                 if stream_reply {
                     super::streamed_generation::response(gate.stream(bound, permit.lease())?).await

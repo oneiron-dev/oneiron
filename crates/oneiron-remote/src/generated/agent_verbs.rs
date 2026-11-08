@@ -2586,6 +2586,9 @@ impl OneironClient {
                 "vault.repo.symbols.release" => remote_agent_verb_output::<
                     oneiron::memory::repo_doors::RepoSymbolsReleaseOutput,
                 >(client, verb, &input),
+                "vault.repo.model.generate" => {
+                    remote_agent_verb_output::<oneiron::LlmResponse>(client, verb, &input)
+                }
                 "vault.repo.proposal_submit" => remote_agent_verb_output::<
                     oneiron::memory::repo_doors::RepoProposalSubmitOutput,
                 >(client, verb, &input),
@@ -2733,9 +2736,9 @@ impl OneironClient {
                 "vault.artifacts.undo" => remote_agent_verb_output::<
                     oneiron::blob_artifact::UndoneKeep,
                 >(client, verb, &input),
-                "can" => remote_agent_verb_output::<oneiron::task_verb::TaskAskPreflight>(
-                    client, verb, &input,
-                ),
+                "can" => {
+                    remote_agent_verb_output::<oneiron::memory::CanAnswer>(client, verb, &input)
+                }
                 "peek" => {
                     remote_agent_verb_output::<Vec<oneiron::task_verb::TaskAskPersonEvidence>>(
                         client, verb, &input,
@@ -14430,6 +14433,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.repo.symbols.release", value)
     }
+    pub fn vault_repo_model_generate(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::RepoModelGenerateInput>,
+    ) -> Result<oneiron::LlmResponse, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.model.generate", value)
+    }
     pub fn vault_repo_proposal_submit(
         &self,
         input: &oneiron::task_verb::sdk::LiveRunRequest<
@@ -15043,11 +15058,11 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.artifacts.undo", value)
     }
-    /// Read-only ask preflight or partial answer evidence.
+    /// Read-only ask preflight, or one effect's dated preflight.
     pub fn can(
         &self,
-        input: &oneiron::task_verb::sdk::TaskCanAskRequest,
-    ) -> Result<oneiron::task_verb::TaskAskPreflight, MemoryError> {
+        input: &oneiron::verbs::CanRequest,
+    ) -> Result<oneiron::memory::CanAnswer, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

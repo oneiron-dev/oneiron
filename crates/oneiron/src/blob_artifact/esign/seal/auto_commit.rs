@@ -53,6 +53,10 @@ impl VerifiedSealOutput {
         })
     }
 
+    pub(super) fn buffer_capacity(&self) -> usize {
+        self.bytes.capacity()
+    }
+
     pub(super) fn sha256(&self) -> [u8; 32] {
         self.sha256
     }
