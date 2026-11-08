@@ -13,7 +13,9 @@
 //! FIX 4933). The shipped row, `auto`, forks while the live prefix is still
 //! warm in its provider's prompt cache and writes on the cheap model
 //! otherwise. The same factory serves a self agent's chat turn (FIX 4465
-//! D), with or without the code sandbox.
+//! D), with or without the code sandbox. Its words come from the package's
+//! self-writer block (FIX 4575); without that block only self-written
+//! summaries are off.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -226,6 +228,8 @@ impl CodeModeCompaction {
             }
         };
         let prompt_tokens = oneiron::count_context_pack_tokens(&prompt) as u64;
+        // The self-writer frame, once, beside the prompt (FIX 4575).
+        let self_writer_frame = self_writer::SelfWriterFrame::resolve(prompt_package);
         let allowances = input_allowances(models, runtime);
         let rung_contexts = rung_contexts(models);
         let served = |key: String, role: ModelRole, seat: &crate::models::Seat| {
@@ -239,6 +243,7 @@ impl CodeModeCompaction {
                 locality: seat.locality,
                 prompt: prompt.clone(),
                 prompt_tokens,
+                self_writer_frame: self_writer_frame.clone(),
                 allowances: allowances.clone(),
                 rung_contexts: rung_contexts.clone(),
                 handle: tokio::runtime::Handle::current(),
@@ -392,10 +397,7 @@ impl CodeModeCompaction {
                         scoped = registry;
                         &scoped
                     }
-                    Err(error) => {
-                        tracing::error!(kind = ?error.kind(), "a run's own compaction writer did not register");
-                        return RunCompaction::off(CompactionOff::BackendFailed);
-                    }
+                    Err(why) => return RunCompaction::off(why),
                 }
             }
             (None, None) => &live.registry,
@@ -455,7 +457,10 @@ impl LiveCompaction {
     /// its own compaction model. It reads its run's live rung through
     /// `admission` for a flight whose row selects the live fork (C) or
     /// resolves `auto` to it (FIX 6029). Its calls spend on `meter`, else on
-    /// the house route's (a chat turn's names its own, FIX 4465 D).
+    /// the house route's (a chat turn's names its own, FIX 4465 D). Every
+    /// call wears the frame the house route resolved; a package without one
+    /// leaves this writer off with `NoPrompt` (FIX 4575), and the house
+    /// route still compacts every other run.
     fn self_registry(
         &self,
         profile: &MemoryProfile,
@@ -463,25 +468,33 @@ impl LiveCompaction {
         host: CompactionHostBinding,
         meter: Option<CompactionMeter>,
         admission: &Arc<dyn LiveAdmission>,
-    ) -> oneiron::Result<CompactionBackendRegistry> {
-        let house = self
-            .served
-            .first()
-            .ok_or(oneiron::Error::InvariantViolation(
-                "code mode's compaction serves no house seat",
-            ))?;
+    ) -> Result<CompactionBackendRegistry, CompactionOff> {
+        let Some(house) = self.served.first() else {
+            tracing::error!("code mode's compaction serves no house seat");
+            return Err(CompactionOff::BackendFailed);
+        };
+        let frame = house
+            .self_writer_frame
+            .clone()
+            .ok_or(CompactionOff::NoPrompt)?;
         let route = ServedCompactionBackend {
             meter: meter.unwrap_or_else(|| house.meter.clone()),
             ..ServedCompactionBackend::clone(house)
         };
         let mut registry = CompactionBackendRegistry::new();
-        registry.register(Arc::new(self_writer::SelfCompactionBackend::new(
-            profile.compaction_backend.as_str().to_owned(),
-            route,
-            definition,
-            host,
-            Arc::clone(admission),
-        )))?;
+        registry
+            .register(Arc::new(self_writer::SelfCompactionBackend::new(
+                profile.compaction_backend.as_str().to_owned(),
+                route,
+                frame,
+                definition,
+                host,
+                Arc::clone(admission),
+            )))
+            .map_err(|error| {
+                tracing::error!(kind = ?error.kind(), "an agent's own compaction writer did not register");
+                CompactionOff::BackendFailed
+            })?;
         Ok(registry)
     }
 
@@ -704,6 +717,10 @@ struct ServedCompactionBackend {
     locality: ModelLocality,
     prompt: String,
     prompt_tokens: u64,
+    /// The self-writer frame resolved beside `prompt` (FIX 4575). `None`
+    /// when the package holds none: then only self-written summaries are
+    /// off.
+    self_writer_frame: Option<self_writer::SelfWriterFrame>,
     /// See [`input_allowances`]. A model id not here is trusted with no
     /// window.
     allowances: BTreeMap<ModelId, u64>,
