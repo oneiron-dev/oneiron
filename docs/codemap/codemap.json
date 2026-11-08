@@ -11687,8 +11687,20 @@
      "surface": {
       "const": 1,
       "fn": 4,
+      "re-export": 1,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/caldav/collection_zone.rs",
+     "purpose": "A CalDAV collection's zone across the sync cursor and the pulled bytes (fix list row 19192)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -11831,9 +11843,10 @@
      "path": "src/calendar/connectors/outbound.rs",
      "purpose": "Conditional writes plus durable outbox and remote-object cursor store",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 2,
       "fn": 5,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -11845,6 +11858,21 @@
      "purpose": "The retained calendar carriers an archived vault's custody fork needs",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalendarCollectionMember",
+      "CalendarRemoteObjectObservation"
+     ],
+     "path": "src/calendar/connectors/outbound/collection.rs",
+     "purpose": "A full listing's omissions, checked against this seat's remote object rows (fix list row 19192)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -11885,7 +11913,7 @@
      "path": "src/calendar/connectors/resource.rs",
      "purpose": "One UID is one remote resource: master plus every live detached exception",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -11965,6 +11993,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/ics/calendar_timezone.rs",
+     "purpose": "A CalDAV collection's zone, read from its VTIMEZONE and given to the resources it carries (fix list row 19192)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -11986,7 +12024,7 @@
      "path": "src/calendar/ics/mod.rs",
      "purpose": "ICS (RFC 5545) codec: feed parse half plus iMIP emit half",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 2
      }
     },
@@ -12000,7 +12038,7 @@
      "path": "src/calendar/ics/parse.rs",
      "purpose": "ICS feed parse half (CAL-02, ONE-1784): RFC 5545 bytes into calendar-owned rows",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 8,
       "fn": 1,
       "re-export": 1,
       "struct": 2
@@ -12125,7 +12163,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/calendar/ingest/calendar_source.rs",
@@ -12230,7 +12268,7 @@
      "path": "src/calendar/ingest/property_claims.rs",
      "purpose": "Shared ICS-poll and connector property admission through their existing gates",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -12473,7 +12511,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PrepHomeNodeJob"
@@ -12481,7 +12519,7 @@
      "path": "src/calendar/prep/home_node.rs",
      "purpose": "Closed-vault due execution of prep jobs",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 3,
       "struct": 1
      }
@@ -17993,7 +18031,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -18052,7 +18090,7 @@
      "purpose": "State and export seam for the host-bound first-party dispatcher",
      "surface": {
       "crate-vis": 10,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 1,
       "type": 1
      }
@@ -18123,11 +18161,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "RepoRequestWitness"
+     ],
      "path": "src/code_run/dispatcher/repo_sources.rs",
      "purpose": "The attribution a run's proposal records (FIX 6867, G1 PR2b; CALL \"FIX 6867 review policy and provenance\")…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -18407,7 +18449,7 @@
      "surface": {
       "crate-vis": 59,
       "mod": 8,
-      "re-export": 35
+      "re-export": 36
      }
     },
     {
@@ -18765,6 +18807,18 @@
       "crate-vis": 4,
       "enum": 1,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RepoModelGenerateInput"
+     ],
+     "path": "src/code_run/repo_model.rs",
+     "purpose": "Request content for an attached run's real model invocation (FIX 7176)",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -50208,7 +50262,7 @@
      "path": "src/mail_pack/calendar.rs",
      "purpose": "The pack's calendar sources (FIX 12559 rows 3 and 5; MAIL-SHARE = A): every person's calendar connects into…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 2,
       "struct": 2,
@@ -53986,7 +54040,7 @@
      "path": "src/memory/repo_doors/host.rs",
      "purpose": "The run binding of a public `vault.repo.*` call (FIX 6867, G1 PR3b): an external agent's credential-bound…",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -76672,13 +76726,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/source_audience/obligation.rs",
      "purpose": "The source-audience obligation's authority (fix list row 16256): the proof a source landing holds to stamp…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -91917,7 +91971,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1384
+      "fn": 1385
      }
     },
     {
@@ -97994,7 +98048,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 83,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -98113,7 +98167,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 264,
+     "files": 265,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -99452,7 +99506,7 @@
    },
    "over_bar": 233,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7090,
+   "source_files": 7094,
    "test_files": 895
   },
   "oneiron-android": {
@@ -114669,7 +114723,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1351
+      "fn": 1352
      }
     },
     {
@@ -116473,7 +116527,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1352
+      "fn": 1353
      }
     },
     {
@@ -118466,7 +118520,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/code_mode.rs",
@@ -122971,7 +123025,7 @@
      "path": "src/api/facade/repo_doors.rs",
      "purpose": "The public `vault.repo.*` run doors (FIX 6867, G1 PR3b): an external agent's own attached live run reads and…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -133776,7 +133830,7 @@
       "re-export": 2,
       "struct": 2,
       "trait": 3,
-      "type": 5
+      "type": 6
      }
     },
     {
@@ -134574,7 +134628,7 @@
      "path": "src/models/ladder/call_deadline.rs",
      "purpose": "One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 7
      }
@@ -137467,6 +137521,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/live_runs/model_request.rs",
+     "purpose": "Real model requests served on one held credential attachment (FIX 7176)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/live_runs/pattern_action.rs",
      "purpose": "A live run's own pattern runner for an action between its entries (OF-181, DOOR-111 S4c-4)",
      "surface": {
@@ -139708,7 +139772,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 94,
+     "files": 95,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -139799,9 +139863,9 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 64,
+   "over_bar": 65,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1823,
+   "source_files": 1824,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -153213,6 +153277,7 @@
       "LiveRunRequestRepoExportInput",
       "LiveRunRequestRepoMergeQueueEnqueueInput",
       "LiveRunRequestRepoMergeQueueObserveInput",
+      "LiveRunRequestRepoModelGenerateInput",
       "LiveRunRequestRepoProposalSubmitInput",
       "LiveRunRequestRepoSnapshotsGetInput",
       "LiveRunRequestRepoSnapshotsIngestInput",
@@ -154267,6 +154332,7 @@
       "RepoMergeQueueEnqueueInput",
       "RepoMergeQueueObserveInput",
       "RepoMergeQueueObserveOutput",
+      "RepoModelGenerateInput",
       "RepoProposalDecision",
       "RepoProposalSettlement",
       "RepoProposalStatus",
@@ -155712,7 +155778,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1186,
-      "struct": 3674
+      "struct": 3676
      }
     },
     {
