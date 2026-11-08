@@ -3942,9 +3942,21 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.session_model_heal_count",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_run_doors::CodeRunSessionModelHealCountRequest,
+                >(),
+            ),
+            (
                 "vault.code.corrections",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_run_doors::CodeRunCorrectionsRequest,
+                >(),
+            ),
+            (
+                "vault.code.step_evidence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_run_doors::CodeRunStepEvidenceRequest,
                 >(),
             ),
             (
@@ -4435,6 +4447,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.agents.grants.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::AgentGrantRevokeRequest,
+                >(),
+            ),
+            (
+                "vault.agents.verb_classes.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.agents.verb_classes.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_manifest_doors::AgentVerbClassesConfigureRequest,
                 >(),
             ),
             (
@@ -8144,7 +8166,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.secrets.propose",
     "execute_code",
     "vault.code.model_heal_count",
+    "vault.code.session_model_heal_count",
     "vault.code.corrections",
+    "vault.code.step_evidence",
     "vault.code.type_diagnostics",
     "vault.code.waits.resolve",
     "vault.code.waits.receipt",
@@ -8208,6 +8232,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.dreaming.set",
     "vault.agents.grants.mint",
     "vault.agents.grants.revoke",
+    "vault.agents.verb_classes.get",
+    "vault.agents.verb_classes.configure",
     "vault.repo.git_push.mint",
     "vault.repo.git_push.revoke",
     "vault.connectors.read_grants.grant",
@@ -10135,8 +10161,14 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
         >(),
+        "vault.code.session_model_heal_count" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_run_doors::CodeRunSessionModelHealCountView,
+        >(),
         "vault.code.corrections" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunCorrectionsView,
+        >(),
+        "vault.code.step_evidence" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::code_run_doors::CodeRunStepEvidenceView>,
         >(),
         "vault.code.type_diagnostics" => crate::code_run::vault_read::request_schema::<
             Option<crate::code_run::ProgramStepFeedbackRelease>,
@@ -10332,6 +10364,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.agents.grants.revoke" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AgentGrantRevoked,
+        >(),
+        "vault.agents.verb_classes.get" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::AgentVerbClassesView,
+        >(),
+        "vault.agents.verb_classes.configure" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::AgentVerbClassesReceipt,
         >(),
         "vault.repo.git_push.mint" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::GitPushGrantMintOutput,
@@ -16407,7 +16445,21 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.session_model_heal_count" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.corrections" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.step_evidence" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -16976,6 +17028,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.agents.grants.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agents.verb_classes.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agents.verb_classes.configure" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21650,7 +21716,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.secrets.propose" => validate_input_vault_code_secrets_propose(value)?,
         "execute_code" => validate_input_execute_code(value)?,
         "vault.code.model_heal_count" => validate_input_vault_code_model_heal_count(value)?,
+        "vault.code.session_model_heal_count" => {
+            validate_input_vault_code_session_model_heal_count(value)?
+        }
         "vault.code.corrections" => validate_input_vault_code_corrections(value)?,
+        "vault.code.step_evidence" => validate_input_vault_code_step_evidence(value)?,
         "vault.code.type_diagnostics" => validate_input_vault_code_type_diagnostics(value)?,
         "vault.code.waits.resolve" => validate_input_vault_code_waits_resolve(value)?,
         "vault.code.waits.receipt" => validate_input_vault_code_waits_receipt(value)?,
@@ -21763,6 +21833,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.agents.dreaming.set" => validate_input_vault_agents_dreaming_set(value)?,
         "vault.agents.grants.mint" => validate_input_vault_agents_grants_mint(value)?,
         "vault.agents.grants.revoke" => validate_input_vault_agents_grants_revoke(value)?,
+        "vault.agents.verb_classes.get" => validate_input_vault_agents_verb_classes_get(value)?,
+        "vault.agents.verb_classes.configure" => {
+            validate_input_vault_agents_verb_classes_configure(value)?
+        }
         "vault.repo.git_push.mint" => validate_input_vault_repo_git_push_mint(value)?,
         "vault.repo.git_push.revoke" => validate_input_vault_repo_git_push_revoke(value)?,
         "vault.connectors.read_grants.grant" => {
@@ -26336,8 +26410,21 @@ fn validate_input_vault_code_model_heal_count(value: &serde_json::Value) -> Memo
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_code_session_model_heal_count(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::memory::code_run_doors::CodeRunSessionModelHealCountRequest =
+        decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_code_corrections(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::code_run_doors::CodeRunCorrectionsRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_code_step_evidence(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::code_run_doors::CodeRunStepEvidenceRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -26770,6 +26857,19 @@ fn validate_input_vault_agents_grants_mint(value: &serde_json::Value) -> MemoryR
 #[inline(never)]
 fn validate_input_vault_agents_grants_revoke(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::AgentGrantRevokeRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_agents_verb_classes_get(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: EmptyRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_agents_verb_classes_configure(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::policy_manifest_doors::AgentVerbClassesConfigureRequest =
+        decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -30815,7 +30915,11 @@ pub fn invoke(
         "vault.code.secrets.propose" => invoke_vault_code_secrets_propose(memory, value),
         "execute_code" => invoke_execute_code(memory, value),
         "vault.code.model_heal_count" => invoke_vault_code_model_heal_count(memory, value),
+        "vault.code.session_model_heal_count" => {
+            invoke_vault_code_session_model_heal_count(memory, value)
+        }
         "vault.code.corrections" => invoke_vault_code_corrections(memory, value),
+        "vault.code.step_evidence" => invoke_vault_code_step_evidence(memory, value),
         "vault.code.type_diagnostics" => invoke_vault_code_type_diagnostics(memory, value),
         "vault.code.waits.resolve" => invoke_vault_code_waits_resolve(memory, value),
         "vault.code.waits.receipt" => invoke_vault_code_waits_receipt(memory, value),
@@ -30928,6 +31032,10 @@ pub fn invoke(
         "vault.agents.dreaming.set" => invoke_vault_agents_dreaming_set(memory, value),
         "vault.agents.grants.mint" => invoke_vault_agents_grants_mint(memory, value),
         "vault.agents.grants.revoke" => invoke_vault_agents_grants_revoke(memory, value),
+        "vault.agents.verb_classes.get" => invoke_vault_agents_verb_classes_get(memory, value),
+        "vault.agents.verb_classes.configure" => {
+            invoke_vault_agents_verb_classes_configure(memory, value)
+        }
         "vault.repo.git_push.mint" => invoke_vault_repo_git_push_mint(memory, value),
         "vault.repo.git_push.revoke" => invoke_vault_repo_git_push_revoke(memory, value),
         "vault.connectors.read_grants.grant" => {
@@ -36766,11 +36874,25 @@ fn invoke_vault_code_model_heal_count(
     encode(vault_code_model_heal_count(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_code_session_model_heal_count(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_session_model_heal_count(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_code_corrections(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_code_corrections(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_code_step_evidence(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_step_evidence(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_code_type_diagnostics(
@@ -37357,6 +37479,20 @@ fn invoke_vault_agents_grants_revoke(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_agents_grants_revoke(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_agents_verb_classes_get(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_agents_verb_classes_get(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_agents_verb_classes_configure(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_agents_verb_classes_configure(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_repo_git_push_mint(
@@ -47337,11 +47473,26 @@ pub fn vault_code_model_heal_count(
         input,
     )
 }
+pub fn vault_code_session_model_heal_count(
+    memory: &Memory<'_>,
+    input: crate::memory::code_run_doors::CodeRunSessionModelHealCountRequest,
+) -> MemoryResult<crate::memory::code_run_doors::CodeRunSessionModelHealCountView> {
+    memory.code_run_session_model_heal_count_as(
+        &memory.embedded_owner("vault.code.session_model_heal_count")?,
+        input,
+    )
+}
 pub fn vault_code_corrections(
     memory: &Memory<'_>,
     input: crate::memory::code_run_doors::CodeRunCorrectionsRequest,
 ) -> MemoryResult<crate::memory::code_run_doors::CodeRunCorrectionsView> {
     memory.code_run_corrections_as(&memory.embedded_owner("vault.code.corrections")?, input)
+}
+pub fn vault_code_step_evidence(
+    memory: &Memory<'_>,
+    input: crate::memory::code_run_doors::CodeRunStepEvidenceRequest,
+) -> MemoryResult<Option<crate::memory::code_run_doors::CodeRunStepEvidenceView>> {
+    memory.code_run_step_evidence_as(&memory.embedded_owner("vault.code.step_evidence")?, input)
 }
 pub fn vault_code_type_diagnostics(
     memory: &Memory<'_>,
@@ -47991,6 +48142,27 @@ pub fn vault_agents_grants_revoke(
         crate::authority::ActSurface::ThisInstall,
         input,
     )
+}
+pub fn vault_agents_verb_classes_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::policy_manifest_doors::AgentVerbClassesView> {
+    crate::policy_manifest_doors::agent_verb_classes_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.verb_classes.get")?,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_agents_verb_classes_configure(
+    memory: &Memory<'_>,
+    input: crate::policy_manifest_doors::AgentVerbClassesConfigureRequest,
+) -> MemoryResult<crate::policy_manifest_doors::AgentVerbClassesReceipt> {
+    crate::policy_manifest_doors::configure_agent_verb_classes_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.verb_classes.configure")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_repo_git_push_mint(
     memory: &Memory<'_>,

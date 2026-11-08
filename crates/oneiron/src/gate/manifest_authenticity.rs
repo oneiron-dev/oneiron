@@ -542,6 +542,15 @@ impl Vault {
         let mut steps = vec![false; installs.len()];
         let mut txn = self.store.env.write_txn()?;
         let mut before = super::resolve_policy_manifest(&self.store, &txn)?;
+        // The owner's verb-class table is agent Grant authority the resolved
+        // policy does not carry: an install that widens it is no narrowing
+        // (FIX 8735 review). Only the default manifest declares it.
+        let default_id = super::default_policy_manifest_id()?;
+        let mut classes_before =
+            super::policy_manifest_doors::agent_verb_class_rows_for_store_in_txn(
+                &self.store,
+                &txn,
+            )?;
         folded(&txn);
         let mut placed = true;
         for ((id, data), step) in installs.iter().zip(&mut steps) {
@@ -549,9 +558,16 @@ impl Vault {
             // id (`install_shape_manifest`), so they never land in the
             // projection either (FIX 5956). Bytes that do not decode, the
             // write below refuses itself.
-            let quarantined = match super::owner_policy_manifest_as_stored(data.clone()) {
-                Ok(stored) => manifest_is_quarantined(&self.store, &txn, id, &stored)?,
-                Err(_) => false,
+            let stored = super::owner_policy_manifest_as_stored(data.clone()).ok();
+            let quarantined = match &stored {
+                Some(stored) => manifest_is_quarantined(&self.store, &txn, id, stored)?,
+                None => false,
+            };
+            let classes_after = match (&stored, *id == default_id) {
+                (Some(stored), true) => {
+                    super::policy_manifest_doors::agent_verb_class_rows_of_body(stored)
+                }
+                _ => classes_before.clone(),
             };
             if quarantined
                 || self
@@ -563,8 +579,13 @@ impl Vault {
             }
             let after = super::resolve_policy_manifest(&self.store, &txn)?;
             folded(&txn);
-            *step = super::resolution::manifest_resolution_narrows(&before, &after);
+            *step = super::resolution::manifest_resolution_narrows(&before, &after)
+                && super::policy_manifest_doors::verb_classes_narrow(
+                    &classes_before,
+                    &classes_after,
+                );
             before = after;
+            classes_before = classes_after;
         }
         for id in retires {
             placed = placed && quarantine_current_in_txn(self, &mut txn, id, None)?;
@@ -596,11 +617,23 @@ impl Vault {
     ) -> Result<bool> {
         let mut txn = self.store.env.write_txn()?;
         let before = super::resolve_policy_manifest(&self.store, &txn)?;
+        let classes_before = super::policy_manifest_doors::agent_verb_class_rows_for_store_in_txn(
+            &self.store,
+            &txn,
+        )?;
         folded(&txn);
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
         let after = super::resolve_policy_manifest(&self.store, &txn)?;
+        let classes_after = super::policy_manifest_doors::agent_verb_class_rows_for_store_in_txn(
+            &self.store,
+            &txn,
+        )?;
         folded(&txn);
-        if !super::resolution::manifest_resolution_narrows(&before, &after) {
+        // A widened verb-class table is agent Grant authority the resolved
+        // policy does not carry (FIX 8735 review).
+        if !super::resolution::manifest_resolution_narrows(&before, &after)
+            || !super::policy_manifest_doors::verb_classes_narrow(&classes_before, &classes_after)
+        {
             txn.abort();
             return Ok(false);
         }
