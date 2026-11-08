@@ -4,6 +4,7 @@ use super::admission::ensure_ics_import_actor;
 use super::credential;
 use super::poll::{IcsFeedPollConfig, ics_feed_poll_dedupe_key};
 use crate::calendar::CalendarError;
+use crate::calendar::claims::CalendarPassportSource;
 use crate::calendar::ics::parse_ics_feed;
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::CALENDAR_ICS_FEED_BLOB;
@@ -197,14 +198,14 @@ impl crate::ingest::IngestSource for IcsFeedSource {
 /// Archives the raw feed body BEFORE any semantic read: one BLOB_ARTIFACT
 /// per feed (deterministic id), one content-hash version per distinct body.
 /// Re-archiving identical bytes is the blob store's own dedupe no-op.
-/// Returns the provenance ref admitted claims carry as their source record
-/// prefix.
+/// Returns the exact stored artifact/version; source-record labels are only
+/// projections of this pair.
 pub(super) fn archive_raw_feed(
     vault: &Vault,
     config: &IcsFeedPollConfig,
     body: &[u8],
     now: u64,
-) -> Result<String, CalendarError> {
+) -> Result<CalendarPassportSource, CalendarError> {
     let feed_ref = ics_feed_poll_dedupe_key(config);
     let artifact_id = EntityId::derive(CALENDAR_ICS_FEED_BLOB, &[feed_ref.as_bytes()])?;
     if vault.get_blob_artifact(&artifact_id)?.is_none() {
@@ -233,5 +234,8 @@ pub(super) fn archive_raw_feed(
         },
         now,
     )?;
-    Ok(format!("{}#v{}", artifact_id.to_hex(), version.version))
+    Ok(CalendarPassportSource {
+        artifact: artifact_id,
+        version: version.version,
+    })
 }

@@ -135,6 +135,28 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
         batch.apply_actor(self.txn, &self.writer, self.lane)
     }
 
+    /// Writes the `edge.provenance` Claim of one link this writer staged in
+    /// this transaction (FIX 3959): a supporting effect of the NOTE the link
+    /// leaves, not a separately granted content record, so it runs no claim
+    /// write gate of its own and leaves the link's value as stored. The Claim
+    /// names this writer and its class, and no other actor.
+    pub(crate) fn put_authored_link_provenance(
+        &mut self,
+        write: crate::provenance::EdgeProvenanceWrite<'_>,
+    ) -> Result<()> {
+        if write.body.actor_entity_ref != self.writer.entity_ref()
+            || write.actor_class != self.writer.actor_class()
+        {
+            return Err(Error::Claim(
+                crate::error::ClaimError::InvalidProvenanceBody(
+                    "an authored link's provenance names an actor other than its writer",
+                ),
+            ));
+        }
+        self.vault
+            .put_authored_link_provenance_in_txn(self.txn, write)
+    }
+
     /// Candidate admission uses the same effect collector as typed batches.
     /// This retains the caller's Gate decision/pending mode and runs before
     /// any supersession or dependent metadata settles.

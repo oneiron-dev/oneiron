@@ -425,12 +425,19 @@ impl ScopedRead<'_> {
         if !self.per_item_judge_in(rtxn, id, raw, &body, principal, authority)? {
             return Ok(Some(false));
         }
-        if let Some(verdict) = held {
-            return Ok(Some(verdict));
-        }
-        let verdict = class_judge_in(self.vault, rtxn, &reader, &view, authority)?;
-        verdicts.hold(&reader, class, verdict);
-        Ok(Some(verdict))
+        let verdict = match held {
+            Some(verdict) => verdict,
+            None => {
+                let verdict = class_judge_in(self.vault, rtxn, &reader, &view, authority)?;
+                verdicts.hold(&reader, class, verdict);
+                verdict
+            }
+        };
+        // A provenance Claim's named records are the row's own, never its
+        // class's: judged last, for an admitted row only (FIX 3959).
+        Ok(Some(
+            verdict && self.provenance_cited_readable_in(rtxn, policy, &body, authority)?,
+        ))
     }
 
     /// Whether this lane's CLAIM rows may be judged by class: neither its

@@ -166,6 +166,11 @@ pub struct OutboundDispatchRequest {
     /// when the delivery window degrades this send to its surface, the
     /// pipeline sends it as a send of its own. `None` keeps today's park.
     pub ambient_alternative: Option<Box<super::OutboundAmbientAlternative>>,
+    /// The ledger identity of a sibling route this send must not go beside
+    /// (FIX 11029: an interrupt and its ambient alternative): the
+    /// chokepoint refuses this send's first admission while the sibling's
+    /// call may have gone.
+    pub exclusive_route_ref: Option<String>,
     /// Set when the pipeline resolves this send's sender: its outbound send
     /// runs under the posture the default manifest ships, because the
     /// vault's manifests name no act row for its pairing. The dispatch
@@ -231,6 +236,7 @@ impl OutboundDispatchRequest {
             send_autonomy: None,
             publisher_signature: None,
             ambient_alternative: None,
+            exclusive_route_ref: None,
             sender_posture_fallback: false,
             send_executor_fence: None,
         }
