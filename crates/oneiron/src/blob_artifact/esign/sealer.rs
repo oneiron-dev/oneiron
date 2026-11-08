@@ -35,7 +35,6 @@ pub trait EsignSealProducer {
     ) -> Result<EsignSealed, super::seal::EsignSealError>;
 }
 
-
 /// A PAdES sealer the engine reaches through a port. It blocks: the seal
 /// task runs it, never a request.
 pub trait EsignSealer: Send + Sync {

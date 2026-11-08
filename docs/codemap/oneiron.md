@@ -818,10 +818,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign/field_admission.rs` | src | s | 4 crate-vis | — | Admit saved and final field marks against the immutable original page geometry |
 | `src/blob_artifact/esign/fold.rs` | src | m | 1 fn · 4 crate-vis | — | Pure projection of the append-only esign claim family |
 | `src/blob_artifact/esign/ingress.rs` | src | s | 1 struct · 2 fn | EsignIngress | Token-first admission at the public signing doors (FIX 3808, Engine ruling 10-18): a recipient link's… |
+| `src/blob_artifact/esign/input_producer.rs` | src | s | 3 crate-vis | — | The immutable prepared PDF and the unissued phase of one seal item |
 | `src/blob_artifact/esign/lane_scope.rs` | src | s | 14 crate-vis | — | FIX 6403: the credential ceiling every e-sign door judges a narrowed caller by |
 | `src/blob_artifact/esign/ledger.rs` | src | m | 3 fn · 1 const · 17 crate-vis | — | Claims are the document state machine |
 | `src/blob_artifact/esign/lifecycle.rs` | src | m | 4 struct · 4 fn · 7 crate-vis | EsignLifecycleRules, EsignNoticeSwitches, EsignReminderSweep, HeldEsignReminder | Pack-supplied lifecycle timing and atomic claim/edge-handoff sweeps |
-| `src/blob_artifact/esign/mod.rs` | src | s | 2 mod · 24 re-export · 8 crate-vis | — | Native signing requests on versioned blob artifacts; claims are the state machine |
+| `src/blob_artifact/esign/mod.rs` | src | s | 2 mod · 25 re-export · 8 crate-vis | — | Native signing requests on versioned blob artifacts; claims are the state machine |
 | `src/blob_artifact/esign/model.rs` | src | s | 3 struct · 1 enum · 1 re-export · 2 crate-vis | EsignDocument, EsignEvent, EsignEventRow, EsignState | Core half of `blob_artifact::esign::model`: its store-layer items live in… |
 | `src/blob_artifact/esign/notice_dispatch.rs` | src | m | 1 struct · 2 fn · 1 const · 7 crate-vis | EsignNotice | Durable e-sign transition intents cross OF-327 before edge handoff |
 | `src/blob_artifact/esign/notice_door.rs` | src | s | 3 struct · 1 fn · 1 crate-vis | EsignNoticeOutcome, EsignNoticesDispatchRequest, EsignNoticesDispatchView | `vault.esign.notices.dispatch` (FIX 5239): a signing document's staged transition notices (pending… |
@@ -831,6 +832,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign/outbound.rs` | src | m | 1 struct · 1 enum · 5 fn · 6 crate-vis | EsignOutboundCommand, EsignOutboundVerb | SGN-02 uses the ordinary OF-327 gate and durable intent ledger |
 | `src/blob_artifact/esign/page_inspector.rs` | src | s | 1 trait · 1 fn · 1 crate-vis | EsignPageInspector | The host's isolated inspection of an e-sign original PDF's pages: a port the engine calls before the writer… |
 | `src/blob_artifact/esign/principals.rs` | src | s | 1 struct · 1 enum · 2 fn · 3 crate-vis | SigningAutonomy, SigningPrincipal | Owner-editable principal set and the legal-reality-gated D6 action dial |
+| `src/blob_artifact/esign/producer_input.rs` | src | m | 1 struct · 5 fn · 12 crate-vis | EsignInputBudget | One whole pre-dispatch reservation, rebuilt only after its phase unwinds |
 | `src/blob_artifact/esign/public_read.rs` | src | m | 1 enum · 7 fn · 2 crate-vis | EsignLeasedReadError | Capability-scoped PDF bytes |
 | `src/blob_artifact/esign/rate.rs` | src | m | 2 struct · 3 fn · 2 const · 3 crate-vis | EsignRateCheck, EsignRateReceipt | Vault-local, receipt-backed ceremony observation and the `[limits]` crossings of signature uploads and… |
 | `src/blob_artifact/esign/render.rs` | src | m | 4 struct · 1 enum · 10 fn · 3 re-export · 2 crate-vis | PdfFieldRect, PdfPreparation, PdfPreparationError, PreparedEsignPdf, SignatureRaster | Lossless PDF preparation and shared field presentation |
@@ -849,10 +851,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign/seal.rs` | src | m | 2 struct · 1 enum · 3 fn · 2 crate-vis | EsignSealError, SealedDocument, SealedItem | Lease-fenced seal job |
 | `src/blob_artifact/esign/seal/auto_commit.rs` | src | s | 21 crate-vis | — | Native policy checker for the verified SealJob producer |
 | `src/blob_artifact/esign/seal_run.rs` | src | s | 1 enum · 1 fn | EsignSealRun | The seal task's runner (ARCH-0064 section 7: the seal "runs as a task, never inline in a request") |
-| `src/blob_artifact/esign/sealer.rs` | src | s | 1 struct · 1 trait · 1 re-export | EsignSealInput, EsignSealer | Core half of `blob_artifact::esign::sealer`: its store-layer items live in… |
+| `src/blob_artifact/esign/sealer.rs` | src | s | 1 struct · 2 trait · 1 re-export | EsignSealInput, EsignSealProducer, EsignSealer | Core half of `blob_artifact::esign::sealer`: its store-layer items live in… |
 | `src/blob_artifact/esign/signature_image.rs` | src | m | 1 struct · 7 fn · 4 crate-vis | SignatureImagePlan | Capability-bound, decoded and re-encoded signature images |
 | `src/blob_artifact/esign/signature_image/memory.rs` | src | s | 2 crate-vis | — | — |
-| `src/blob_artifact/esign/signature_revision.rs` | src | m | 1 fn · 1 re-export · 2 crate-vis | — | Core half of `blob_artifact::esign::signature_revision`: its store-layer items live in… |
+| `src/blob_artifact/esign/signature_revision.rs` | src | m | 1 fn · 1 re-export · 3 crate-vis | — | Core half of `blob_artifact::esign::signature_revision`: its store-layer items live in… |
 | `src/blob_artifact/esign/signature_revision_tests.rs` | test | s | — | — | The engine's signature revision re-emits the first page, the catalog and the AcroForm; what it re-emits must… |
 | `src/blob_artifact/esign/template.rs` | src | s | 1 struct · 1 enum · 3 fn · 1 re-export | ContentTemplateError, PreparedContent | Core half of `blob_artifact::esign::template`: its store-layer items live in… |
 | `src/blob_artifact/esign/template/html.rs` | src | m | 2 crate-vis | — | HTML5 DOM merge and safe, deterministic document typography |
@@ -1050,7 +1052,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/invite/tests/pending_passport.rs` | test | s | — | — | A pending `calendar.passport` never picks the EVENT an invite binds to |
 | `src/calendar/meeting/facts.rs` | src | s | 2 crate-vis | — | Hydration under the caller's lane, shared by prep, check-in and transcript linking |
 | `src/calendar/meeting/mod.rs` | src | m | 5 struct · 2 enum · 4 fn · 1 crate-vis | CalendarCheckInAnswer, CalendarCheckInDue, CalendarCheckInReceipt, CalendarCheckInRequest, CalendarEventOutcome, CalendarMeetingRequest, CalendarOutcomePolicy | Typed meeting prep, outcome observation and the owner's check-in policy |
-| `src/calendar/mod.rs` | src | m | 1 enum · 19 mod · 17 re-export · 12 crate-vis | CalendarError | Calendar module home (CAL-00) |
+| `src/calendar/mod.rs` | src | m | 1 enum · 19 mod · 17 re-export · 13 crate-vis | CalendarError | Calendar module home (CAL-00) |
 | `src/calendar/origin.rs` | src | m | 1 struct · 5 fn · 9 crate-vis | CalendarEventInput | Calendar EVENT origin union: atomic recorded provenance and source invalidation |
 | `src/calendar/origin/tests.rs` | test | m | — | — | — |
 | `src/calendar/outcome.rs` | src | m | 6 struct · 5 enum · 19 fn · 2 const · 1 re-export · 5 crate-vis | CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue +3 | CAL-07 event outcome: evidence ladder, outcome head, post-end check-in |
@@ -1081,6 +1083,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/transcript/landing.rs` | src | s | 6 crate-vis | — | Shared mint/turn/close/wake landing for typed transcript inputs |
 | `src/calendar/transcript/pending.rs` | src | m | 1 struct · 1 fn · 2 const · 2 crate-vis | PendingTranscriptPass | Retained transcript ingestion through the caller's original hook boundary |
 | `src/calendar/tz.rs` | src | m | 1 struct · 2 fn · 6 crate-vis | WallTime | IANA time-zone border (CAL-01) |
+| `src/calendar/windows_zones.rs` | src | s | 1 crate-vis | — | Windows time-zone names as IANA zones (fix list row 17868): the zone a Microsoft 365 event names… |
 | `src/campaign.rs` | src | s | 1 struct · 2 fn · 10 mod · 2 re-export | CrmPackRegistration | CRM pack engine-side registration home |
 | `src/campaign/claims/codec.rs` | src | s | 7 re-export · 36 crate-vis | — | Cohort claim codecs are defined below the pack |
 | `src/campaign/claims/member_replacement.rs` | src | s | 1 crate-vis | — | The successor body for a live `campaign.member` head |
@@ -2978,7 +2981,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/folder_review.rs` | src | m | 2 struct · 1 fn | FolderAsk, FolderItem | Typed questions over files in a folder (ARCH-0076 §2, "File in a folder"): each selected file is one unit… |
 | `src/edit_roundtrip/formula.rs` | src | s | 1 crate-vis | — | Serialize post-2007 spreadsheet functions with Excel's OOXML prefix |
 | `src/edit_roundtrip/inspect.rs` | src | s | 3 struct · 3 crate-vis | CrossSheetDep, SheetSummary, StructureSummary | Workbook inspect scanners |
-| `src/edit_roundtrip/judgment.rs` | src | m | 4 struct · 3 fn · 2 crate-vis | SheetAnswerBundle, SheetCellAnswer, SheetRowReads, SheetRowsAsk | Typed sheet answers: one ask over a bounded range becomes one retained edit |
+| `src/edit_roundtrip/judgment.rs` | src | L | 5 struct · 4 fn · 3 crate-vis | SheetAnswerBundle, SheetAnswerWork, SheetCellAnswer, SheetRowReads, SheetRowsAsk | Typed sheet answers: one ask over a bounded range becomes one retained edit |
 | `src/edit_roundtrip/judgment/batches.rs` | src | s | 1 crate-vis | — | Ordered answer-write batches over one proposal's edit session |
 | `src/edit_roundtrip/judgment_cells.rs` | src | s | 2 crate-vis | — | Typed sheet-answer verification and reader seam |
 | `src/edit_roundtrip/judgment_cells/read.rs` | src | m | 10 crate-vis | — | Independent named-sheet cell reads from OOXML |
@@ -2989,7 +2992,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/native_recalc_tests.rs` | test | L | — | — | The default stage-3 route ([`RecalcPolicy::NativeFirst`]) on real XLSX |
 | `src/edit_roundtrip/ops.rs` | src | m | 2 struct · 3 enum · 5 fn | AnchorEffect, CellValue, CellWrite, EditOp, StructuralShift | Edit operation vocabulary and anchor effects |
 | `src/edit_roundtrip/paragraph_review.rs` | src | m | 2 struct · 1 fn · 3 crate-vis | ParagraphAsk, ParagraphJudgment | Typed questions over paragraphs (ARCH-0076 §2, "Paragraph or clause"): each selected paragraph of a DOCX… |
-| `src/edit_roundtrip/pipeline.rs` | src | m | 1 struct · 2 enum · 3 fn | EditOutcome, EditProposal, RecalcStatus | Round-trip pipeline entry |
+| `src/edit_roundtrip/pipeline.rs` | src | m | 1 struct · 2 enum · 3 fn · 1 crate-vis | EditOutcome, EditProposal, RecalcStatus | Round-trip pipeline entry |
 | `src/edit_roundtrip/pptx/comments.rs` | src | s | 1 fn · 4 crate-vis | — | The engine door onto the docedit organ's modern-comment writer: engine identities become Office GUIDs, and… |
 | `src/edit_roundtrip/pptx/identities.rs` | src | s | 2 fn · 1 crate-vis | — | The engine door onto the docedit organ's slide and shape identities, and the annotation locator re-binding… |
 | `src/edit_roundtrip/pptx/limits.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | PptxOperationalLimits | Policy-manifest budgets for the modern-comment writer |
@@ -3007,7 +3010,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/slides_review/tests.rs` | test | L | — | — | — |
 | `src/edit_roundtrip/slides_review/verify.rs` | src | s | 6 crate-vis | — | Verification of retained slide judgment rows |
 | `src/edit_roundtrip/tests.rs` | test | L | — | — | ARTL-3 pipeline tests |
-| `src/edit_settle/carry.rs` | src | m | 2 struct · 3 enum · 3 fn · 10 crate-vis | ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit | ARCH-0075 §4: a held answer proposal whose units change under it |
+| `src/edit_settle/carry.rs` | src | L | 2 struct · 3 enum · 3 fn · 10 crate-vis | ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit | ARCH-0075 §4: a held answer proposal whose units change under it |
 | `src/edit_settle/carry/live.rs` | src | m | 14 crate-vis | — | The live-body half of a held answer proposal's split (FIX 2115) |
 | `src/edit_settle/carry/sheet_keep.rs` | src | s | 3 crate-vis | — | Source revisions that bind a sheet answer split to its settlement transaction |
 | `src/edit_settle/carry/split.rs` | src | m | 3 crate-vis | — | Splitting carried editor answers into their native units |
@@ -3022,6 +3025,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_settle/pending/keep_output.rs` | src | s | 1 crate-vis | — | A native output's Keep (moved out of `pending`): the waiting file lands as a version forked from the head it… |
 | `src/edit_settle/pending/output_retention.rs` | src | s | 4 crate-vis | — | Native-output row preparation and direct-append retention |
 | `src/edit_settle/pending/output_settle.rs` | src | s | 1 crate-vis | — | The ledger record a native output's Keep or Discard writes |
+| `src/edit_settle/pending/sheet_answers.rs` | src | s | 2 fn · 2 crate-vis | — | Paid sheet answers wait in the same pending record until byte staging succeeds |
 | `src/edit_settle/pending/view.rs` | src | s | 1 struct · 1 enum · 1 crate-vis | PendingProposalKind, PendingProposalView | A waiting proposal as a review surface lists it |
 | `src/edit_settle/receipts.rs` | src | s | 5 crate-vis | — | Receipt projection for the family |
 | `src/edit_settle/records.rs` | src | s | 8 struct · 2 enum · 2 fn · 2 crate-vis | PptxReviewIdentity, SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleReceiptDoor, SettleSelectOutcome, SettledAnchor, SettledReview +2 | Consent, outcome and settlement records |

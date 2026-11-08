@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7095 | 895 | 234 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7099 | 895 | 236 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 67 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 35 | 2 | 1 |
@@ -47,7 +47,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 7 | 2 | 0 |
 | [oneiron-model](codemap/oneiron-model.md) | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… | 54 | 6 | 0 |
 | [oneiron-napi](codemap/oneiron-napi.md) | The raw N-API addon root: module registrations and the crate-level native exports | 29 | 1 | 3 |
-| [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 47 | 4 | 1 |
+| [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 49 | 4 | 2 |
 | [oneiron-organ-protocol](codemap/oneiron-organ-protocol.md) | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 19 | 2 | 0 |
 | [oneiron-policy-vocabulary](codemap/oneiron-policy-vocabulary.md) | Policy-model vocabulary of the oneiron engine: the output contract a policy document asks the model for, the… | 5 | 0 | 0 |
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 5 | 0 | 1 |
@@ -82,14 +82,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `authority` | dir | 276 | L | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 24 | m | — | Engine-side AR-3 campaign reports and read-only experiment selection |
 | `batch` | dir | 187 | XL | yes | — |
-| `blob_artifact` | dir | 84 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
+| `blob_artifact` | dir | 86 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
 | `bm25` | dir | 10 | m | — | Analyzer-driven fielded inverted index + BM25F scorer |
 | `board_verb` | file | 1 | s | — | — |
 | `booking` | dir | 82 | m | — | Engine-generic booking module |
 | `branch_store_oracle` | dir | 9 | m | — | BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725) |
 | `browser_library` | file+dir | 8 | m | — | The replay library's store (OF-598; EIRI-ARCH-0002 "The replay library"): solved browser runs, filed per… |
 | `build_cache` | file+dir | 7 | m | — | Explicit account-scoped immutable build results |
-| `calendar` | dir | 86 | L | yes | Calendar module home (CAL-00) |
+| `calendar` | dir | 87 | L | yes | Calendar module home (CAL-00) |
 | `campaign` | file+dir | 63 | L | yes | CRM pack engine-side registration home |
 | `carry_forward_admission` | file | 1 | s | yes | The engine side of carry-forward claims (`write_envelope::carry_forward`): the confidence floor enforced at… |
 | `channel_identity` | dir | 21 | m | yes | ChannelIdentity record substrate (OF-347 CID-1) |
@@ -149,8 +149,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `dreamer_wake` | dir | 72 | L | yes | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
 | `edge_regeneration` | file | 1 | s | — | The `regenerates` link proofs over stored rows (FIX 5972) |
 | `edit_distance` | file+dir | 86 | L | — | ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the… |
-| `edit_roundtrip` | dir | 40 | m | yes | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
-| `edit_settle` | dir | 22 | L | yes | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
+| `edit_roundtrip` | dir | 40 | L | yes | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
+| `edit_settle` | dir | 23 | L | yes | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
 | `embed` | file+dir | 41 | L | yes | Embedding pipeline root: attach, decide, and reconcile under one budget dial |
 | `engine_executor` | dir | 68 | L | — | Engine-native JS code-mode executor |
 | `engine_store_hooks` | file+dir | 2 | L | — | The engine's implementation of the store layer's hooks: each method forwards to the engine function of the… |
@@ -716,7 +716,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `error` | file | 1 | s | What can go wrong on the engine side of an organ call |
 | `fetch` | file | 1 | m | The granted fetch, `net.fetch`: the engine fetches for an organ that has no network of its own, inside the… |
 | `handlers` | file | 1 | s | The handlers a caller supplies for an organ's asks (protocol 1.1) |
-| `host` | file+dir | 4 | m | The organ host: install, call, unload, revoke |
+| `host` | file+dir | 5 | L | The organ host: install, call, unload, revoke |
 | `isolation` | file | 1 | s | What the kernel isolated an organ process with, as its start found it (`sandbox`): plain facts, read on the… |
 | `landing` | file | 1 | m | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |
 | `measure` | file | 1 | s | The organ host's `[limits]` rows (OF-520, Rule 5): what a call counted and carried, measured where the host… |
@@ -729,7 +729,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `resource_memory` | file | 1 | s | `memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to… |
 | `route` | file | 1 | m | Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on… |
 | `sandbox` | file+dir | 5 | m | What the host does to an organ process between fork and exec |
-| `seal` | file+dir | 10 | m | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
+| `seal` | file+dir | 11 | m | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
 | `slot` | file | 1 | m | One installed organ: its process, its crash history, its condition |
 | `spec` | file | 1 | s | What the engine installs and what a caller asks |
 | `wait` | file | 1 | m | Organ calls that wait for a node, held in the vault (OF-575, owner ruling MESH: "one node is too weak, means… |
