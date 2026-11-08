@@ -27,6 +27,9 @@ impl SyncClient {
         self.root_bootstrapped = false;
         self.leaf_key_sends = Default::default();
         self.sealed_updates.restart();
+        // A grant or a replacement on an earlier socket proves nothing on this one (FIX 20202).
+        self.promotions_granted.clear();
+        self.replacements_installed.clear();
     }
 
     /// Drops all in-memory CRDT state for a forced re-bootstrap (ARCH-0023b
