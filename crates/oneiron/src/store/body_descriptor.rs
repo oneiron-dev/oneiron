@@ -62,6 +62,12 @@ pub struct OwnedBody {
     /// This body or version occurrence. Two occurrences of the same bytes may
     /// have different owners, births and grants.
     pub occurrence: EntityId,
+    /// The occurrence whose taint and secret marks this body's bytes carry:
+    /// `occurrence` itself, but the owner's own owner/path occurrence on a
+    /// code-run raw hold (FIX 7364). It is metadata of this descriptor
+    /// only: it grants nothing and proves no bytes landed at that
+    /// occurrence.
+    pub mark_occurrence: EntityId,
     pub state: BodyState,
     /// What a MESSAGE that holds a run's result keeps of where the body came
     /// from (FIX 365), so a read reopens it after the run's replay is gone.
