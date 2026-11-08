@@ -111,7 +111,18 @@ pub(super) async fn facade_invocation_claim(
                     .into_response();
             }
             let verb = parts.uri.path().trim_start_matches('/');
-            facade_replay(server.vault(), &auth, verb, outcome)
+            // The owner's own whole-vault export is released again as its
+            // owner's, once the waiter's fresh proof admits him as that
+            // owner now (owner ruling 1-EXPORT = B).
+            let owner_whole_vault_export =
+                super::export_transfer::owner_whole_vault_export_admitted(&server, &auth, verb);
+            facade_replay(
+                server.vault(),
+                &auth,
+                verb,
+                outcome,
+                owner_whole_vault_export,
+            )
         }
         DoorClaim::InFlight => FacadeApiError::new(
             StatusCode::CONFLICT,
@@ -182,20 +193,24 @@ impl ResolvedCaller {
 
 /// The caller the receipt layer resolved for this same request, its path
 /// and headers unchanged, for the route's own `CoreAuth` extractor (FIX
-/// 12323). Only a caller whose standing the server reads again here, a
-/// slip, a token id or an attested owner, is taken, and only while it is
-/// still live ([`CoreAuth::credential_is_live`]). `None` for any other: the
-/// extractor resolves it as before, so a revoked or expired credential is
-/// refused there exactly as before, and an account key meets its own
-/// verifier again.
+/// 12323). A slip, token id or attested owner stands as before. An account
+/// key also stands when its verifier's live verdict lease still names the
+/// exact key, scopes and principal (FIX 12332); a no-jti owner bearer or dev
+/// hatch re-reads its admitting config, and an attested person matches this
+/// request's holder. Every caller must still be live
+/// ([`CoreAuth::credential_is_live`]). `None` for any other or any
+/// uncertainty: the extractor resolves it as before, so a revoked, punched
+/// or expired credential gets today's refusal.
 pub(crate) fn resolved_facade_caller(
     parts: &axum::http::request::Parts,
     server: &SyncServer,
 ) -> Option<CoreAuth> {
     let resolved = parts.extensions.get::<ResolvedCaller>()?;
     let auth = &resolved.auth;
-    let standing =
-        auth.verified_slip().is_some() || auth.jti().is_some() || auth.managed_owner().is_some();
+    let standing = auth.verified_slip().is_some()
+        || auth.jti().is_some()
+        || auth.managed_owner().is_some()
+        || auth.facade_reuse_stands(server, parts);
     (resolved.path == parts.uri.path()
         && resolved.headers == parts.headers
         && standing
@@ -481,7 +496,7 @@ pub(crate) fn door_replay_for(
     verb: &str,
     outcome: InvocationOutcome,
 ) -> Response {
-    let (status, body) = replayed_reply(vault, auth, verb, outcome);
+    let (status, body) = replayed_reply(vault, auth, verb, outcome, false);
     (status, Json(body)).into_response()
 }
 
@@ -489,14 +504,16 @@ pub(crate) fn door_replay_for(
 /// facade's own ([`FacadeApiError::replayed`], FIX 2005), every word and
 /// field the first one carried under a request id of its own, so this
 /// call's receipt records its code, while it still names the first call's
-/// receipt, the original.
+/// receipt, the original. `owner_whole_vault_export` as
+/// [`replayed_value`] takes it.
 fn facade_replay(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     verb: &str,
     outcome: InvocationOutcome,
+    owner_whole_vault_export: bool,
 ) -> Response {
-    let (status, body) = replayed_reply(vault, auth, verb, outcome);
+    let (status, body) = replayed_reply(vault, auth, verb, outcome, owner_whole_vault_export);
     match FacadeApiError::replayed(status, &body) {
         Some(refusal) => refusal.into_response(),
         None => (status, Json(body)).into_response(),
@@ -509,10 +526,11 @@ fn replayed_reply(
     auth: &CoreAuth,
     verb: &str,
     outcome: InvocationOutcome,
+    owner_whole_vault_export: bool,
 ) -> (StatusCode, serde_json::Value) {
     let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = match outcome.release {
-        Some(release) => replayed_value(vault, auth, verb, release),
+        Some(release) => replayed_value(vault, auth, verb, release, owner_whole_vault_export),
         None => rereleased_refusal(vault, auth, outcome.body),
     };
     (status, body)

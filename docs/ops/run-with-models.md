@@ -1187,6 +1187,12 @@ room than `window_tokens`, `disabled`, or `code_mode_off`). Each `execute_code` 
 `in_flight`, `last_swap`, and `suppressed` (`auth`, `no_credit`,
 `turn_scoped` with the failed `check`, or `sticky` with `why`).
 
+Self-written summaries (`compaction_backend = "self"`, below) also need
+`blocks/compaction-self-writer.md` in the same package: the words that make
+the compaction call the agent's own, read once when the host starts (FIX
+4575). Without it they are off (`sticky` with `why: "no_compaction_prompt"`);
+every other run compacts as above.
+
 A run whose actor is a saved agent definition compacts by that agent's
 `memory_profile`: its `window_token_budget` is the run's window, its summary
 share sizes the summary, and `compaction = "byoa"` leaves the window to the

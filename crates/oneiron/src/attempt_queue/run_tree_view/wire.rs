@@ -27,7 +27,11 @@ impl std::error::Error for RunTreeWireError {}
 
 impl From<RunTree> for RunTreeWire {
     fn from(tree: RunTree) -> Self {
-        let RunTree { roots, repairs } = tree;
+        let RunTree {
+            roots,
+            repairs,
+            deletions,
+        } = tree;
         let mut nodes: Vec<RunTreeWireNode> = Vec::new();
         let mut root_indexes = Vec::with_capacity(roots.len());
         // Pre-order: a node takes the next index and joins its parent's
@@ -49,6 +53,7 @@ impl From<RunTree> for RunTreeWire {
             nodes,
             roots: root_indexes,
             repairs,
+            deletions,
         }
     }
 }
@@ -61,6 +66,7 @@ impl TryFrom<RunTreeWire> for RunTree {
             nodes,
             roots,
             repairs,
+            deletions,
         } = wire;
         let count = nodes.len();
         let mut built: Vec<Option<RunTreeNode>> = Vec::with_capacity(count);
@@ -122,7 +128,11 @@ impl TryFrom<RunTreeWire> for RunTree {
                     .ok_or(RunTreeWireError)
             })
             .collect::<Result<_, _>>()?;
-        Ok(Self { roots, repairs })
+        Ok(Self {
+            roots,
+            repairs,
+            deletions,
+        })
     }
 }
 

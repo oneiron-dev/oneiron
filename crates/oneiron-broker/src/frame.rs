@@ -14,7 +14,9 @@
 //! A call body past [`MAX_BODY`] (a long recording to transcribe, an image
 //! to edit) comes as chunks the same way (FIX 1895): in place of its
 //! segment, the length word [`CHUNKED_BODY`], then one segment per chunk,
-//! then an empty segment, then the key. It is at most [`MAX_STREAM`] bytes.
+//! then an empty segment, then the key. Ordinary chunked bodies have no
+//! cumulative byte limit; allocation failures and the call's deadline still
+//! end the read.
 //!
 //! A git exchange (OSH-3) opens with the length word [`GIT_CALL`] in place
 //! of the header's length, and runs its own steps (see `git_http`): its
@@ -23,6 +25,8 @@
 //! the same steps (see `lfs_http`), its key segment empty when it carries
 //! none; an answered batch reply has one more JSON segment between its
 //! header and its first chunk, the count of the broker's rewrites in it.
+
+pub(crate) mod dispatch;
 
 use std::io;
 
@@ -37,21 +41,21 @@ use crate::send::push_wiped;
 use crate::{CallHeader, Failure, Refusal, ReplyHeader};
 
 /// The frame protocol's version.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
-/// The largest body one segment carries: a buffered reply's, and a call's
-/// sent whole. The server transport's own bound.
+/// The largest ordinary body sent as one segment, including buffered replies.
+/// Larger ordinary requests use chunks.
 pub const MAX_BODY: usize = 16 << 20;
 
-/// The largest body that comes in chunks: a streamed reply's
-/// ([`crate::Shape::streams`]), or a call's past [`MAX_BODY`].
+/// The existing bound for a Responses create and its admitted whole turn.
+/// Ordinary chunked requests and streamed replies have no cumulative bound.
 pub const MAX_STREAM: usize = 512 << 20;
 
 /// The largest chunk of a streamed reply or a chunked call body.
 pub(crate) const STREAM_CHUNK: usize = 1 << 20;
 
 /// The length word that stands in a call's body segment for a body sent in
-/// chunks. No segment is that long: [`MAX_BODY`] bounds one.
+/// chunks. Its ordinary non-chunked form is bounded by [`MAX_BODY`].
 const CHUNKED_BODY: u32 = u32::MAX;
 
 /// The largest key.
@@ -138,7 +142,17 @@ pub(crate) async fn write_call<W: AsyncWrite + Unpin>(
     body: &[u8],
     secret: &[u8],
 ) -> io::Result<()> {
-    write_call_parts(writer, header, body, None, secret).await
+    write_call_parts(writer, header, body, None, secret, false).await
+}
+
+/// Writes an HTTP call that checks the daemon's release before each send.
+pub(crate) async fn write_call_released<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    header: &CallHeader,
+    body: &[u8],
+    secret: &[u8],
+) -> io::Result<()> {
+    write_call_parts(writer, header, body, None, secret, true).await
 }
 
 /// Writes a Responses call: its header, planned create body, the whole turn
@@ -150,8 +164,9 @@ pub(crate) async fn write_call_with_whole<W: AsyncWrite + Unpin>(
     body: &[u8],
     whole: &[u8],
     secret: &[u8],
+    released: bool,
 ) -> io::Result<()> {
-    write_call_parts(writer, header, body, Some(whole), secret).await
+    write_call_parts(writer, header, body, Some(whole), secret, released).await
 }
 
 async fn write_call_parts<W: AsyncWrite + Unpin>(
@@ -160,6 +175,7 @@ async fn write_call_parts<W: AsyncWrite + Unpin>(
     body: &[u8],
     whole: Option<&[u8]>,
     secret: &[u8],
+    released: bool,
 ) -> io::Result<()> {
     let header = serde_json::to_vec(header).map_err(io::Error::other)?;
     write_segment(writer, &header).await?;
@@ -176,6 +192,7 @@ async fn write_call_parts<W: AsyncWrite + Unpin>(
         write_segment(writer, whole).await?;
     }
     write_segment(writer, secret).await?;
+    writer.write_all(&[u8::from(released)]).await?;
     writer.flush().await
 }
 
@@ -186,6 +203,8 @@ pub(crate) struct ReadCall {
     /// The whole Responses turn for a same-socket full retry; absent for HTTP shapes.
     pub(crate) whole: Option<Zeroizing<Vec<u8>>>,
     pub(crate) secret: Zeroizing<Vec<u8>>,
+    /// The broker waits for the daemon before each physical provider send.
+    pub(crate) released: bool,
 }
 
 /// One frame as read from the wire: a model call whole, or a git or an
@@ -232,11 +251,13 @@ async fn read_call_rest<R: AsyncRead + Unpin>(
     let secret = read_segment(reader, MAX_SECRET)
         .await
         .map_err(|_| Refusal::Frame)?;
+    let released = read_release_mode(reader).await?;
     Ok(ReadCall {
         header,
         body,
         whole,
         secret,
+        released,
     })
 }
 
@@ -277,6 +298,7 @@ pub(crate) async fn skip_frame<R: AsyncRead + Unpin>(
     read_segment(reader, MAX_SECRET)
         .await
         .map_err(|_| Refusal::Frame)?;
+    read_release_mode(reader).await?;
     Ok(SkippedFrame::Model(header))
 }
 
@@ -290,8 +312,16 @@ async fn read_exchange_header<R: AsyncRead + Unpin, T: DeserializeOwned>(
     serde_json::from_slice(&header).map_err(|_| Refusal::Frame)
 }
 
+async fn read_release_mode<R: AsyncRead + Unpin>(reader: &mut R) -> Result<bool, Refusal> {
+    match reader.read_u8().await.map_err(|_| Refusal::Frame)? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(Refusal::Frame),
+    }
+}
+
 /// Reads a call's body: one segment of at most [`MAX_BODY`] bytes, or the
-/// chunks of a larger one, at most [`MAX_STREAM`] bytes in all (FIX 1895).
+/// chunks of a larger one, with no cumulative byte limit (FIX 1895).
 async fn read_body<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Zeroizing<Vec<u8>>> {
     let len = read_len(reader).await?;
     if len != CHUNKED_BODY {
@@ -299,9 +329,6 @@ async fn read_body<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Zeroizing
     }
     let mut body = Zeroizing::new(Vec::new());
     while let Some(chunk) = read_chunk(reader).await? {
-        if body.len() + chunk.len() > MAX_STREAM {
-            return Err(io::ErrorKind::InvalidData.into());
-        }
         push_wiped(&mut body, &chunk)?;
     }
     Ok(body)
@@ -314,15 +341,10 @@ async fn skip_body<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<()> {
     if len != CHUNKED_BODY {
         return skip_sized(reader, len, MAX_BODY).await;
     }
-    let mut skipped = 0_usize;
     loop {
         let len = read_len(reader).await?;
         if len == 0 {
             return Ok(());
-        }
-        skipped += bounded(len, STREAM_CHUNK)?;
-        if skipped > MAX_STREAM {
-            return Err(io::ErrorKind::InvalidData.into());
         }
         skip_sized(reader, len, STREAM_CHUNK).await?;
     }

@@ -74,6 +74,15 @@ pub struct CodeProposalResolveRequest {
     pub branch: String,
 }
 
+/// A fresh review of an approved conflict resolution, under the current
+/// owner's proof and the ordinary resolution's current conflict checks.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeProposalResolveRereviewRequest {
+    pub original: EntityId,
+    pub change: CodeProposalResolveRequest,
+}
+
 /// An owner's own immutable opinion for a lens, not a contract-check receipt.
 /// The door binds candidate, critic identity, class and timestamp itself.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
