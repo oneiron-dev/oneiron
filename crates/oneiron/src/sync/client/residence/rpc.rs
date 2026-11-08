@@ -117,9 +117,10 @@ impl RpcFault {
         Self::Remote(refused())
     }
 
-    /// This machine's own fault, told as [`refused`].
-    fn local() -> Self {
-        Self::Local(refused())
+    /// This machine's own fault, told with `cause`: the step of this
+    /// machine's that failed (FIX 22236).
+    fn local(cause: &'static str) -> Self {
+        Self::Local(TransportError::InvalidPayload(cause))
     }
 
     /// The error the call tells, its side dropped.
@@ -171,11 +172,13 @@ impl ResidenceRpc {
     ) -> Result<Option<Self>, RpcFault> {
         let timeout = Duration::from_millis(budgets.rpc_timeout_ms);
         let deadline = tokio::time::Instant::now() + timeout;
-        let session = config.note_session.as_ref().ok_or_else(RpcFault::local)?;
+        let session = config.note_session.as_ref().ok_or_else(|| {
+            RpcFault::local("this machine has no actor session for the residence RPC")
+        })?;
         config
             .residence_selector
             .as_ref()
-            .ok_or_else(RpcFault::local)?;
+            .ok_or_else(|| RpcFault::local("this machine has no selector for the residence RPC"))?;
         let Some((mut socket, home, address)) = Self::dial(vault, config, deadline).await? else {
             return Ok(None);
         };
@@ -258,12 +261,12 @@ impl ResidenceRpc {
         // FIX 8862: the endpoint is read once, the carrier is chosen for
         // that endpoint, and both pass the credential check before any
         // header below is added.
-        let endpoint = ResidenceEndpoint::select(config).ok_or_else(RpcFault::local)?;
-        let mut request = endpoint
-            .url
-            .as_str()
-            .into_client_request()
-            .map_err(|_| RpcFault::local())?;
+        let endpoint = ResidenceEndpoint::select(config).ok_or_else(|| {
+            RpcFault::local("no residence endpoint fits this machine's sync config")
+        })?;
+        let mut request = endpoint.url.as_str().into_client_request().map_err(|_| {
+            RpcFault::local("the residence endpoint URL is not a WebSocket request")
+        })?;
         // The upgrade proves the device's transport slip, as the sync
         // socket does, signed on the wall clock as it is; a bind then
         // attenuates it to the actor.
@@ -272,12 +275,16 @@ impl ResidenceRpc {
             binding = Some(
                 credential
                     .sign_upgrade(vault, vault.store.clock.wall_now(), &mut request)
-                    .map_err(|_| RpcFault::local())?,
+                    .map_err(|_| {
+                        RpcFault::local("this machine could not sign its residence upgrade")
+                    })?,
             );
         } else if !config.auth_token.is_empty() {
             let header = format!("Bearer {}", config.auth_token)
                 .parse()
-                .map_err(|_| RpcFault::local())?;
+                .map_err(|_| {
+                    RpcFault::local("this machine's bearer token is not a valid header")
+                })?;
             request.headers_mut().insert(AUTHORIZATION, header);
         }
         let (mut socket, response) = match tokio::time::timeout_at(
@@ -291,7 +298,9 @@ impl ResidenceRpc {
                 return Err(RpcFault::remote());
             }
             Ok(Err(error)) if crate::sync::carrier::own_setup_fault(&error) => {
-                return Err(RpcFault::local());
+                return Err(RpcFault::local(
+                    "this machine cannot set up a carrier for the residence endpoint",
+                ));
             }
             Ok(Err(_)) | Err(_) => return Ok(None),
         };
@@ -377,7 +386,10 @@ impl ResidenceRpc {
         machine: Option<(&crate::Vault, crate::EntityId)>,
     ) -> Result<Result<Value, HomeRefused>, RpcFault> {
         let id = self.next_id;
-        self.next_id = self.next_id.checked_add(1).ok_or_else(RpcFault::local)?;
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .ok_or_else(|| RpcFault::local("this socket's residence RPC request ids ran out"))?;
         let request = RequestEnvelope {
             kind: "rpc.req",
             id,
@@ -385,9 +397,12 @@ impl ResidenceRpc {
             last: true,
             payload: json!({"method": method, "params": params}),
         };
-        let bytes = rmp_serde::to_vec_named(&request).map_err(|_| RpcFault::local())?;
+        let bytes = rmp_serde::to_vec_named(&request)
+            .map_err(|_| RpcFault::local("the residence RPC request did not encode"))?;
         if bytes.len() > transport::MAX_DECODED_PAYLOAD_BYTES {
-            return Err(RpcFault::local());
+            return Err(RpcFault::local(
+                "the residence RPC request is over the frame limit",
+            ));
         }
         let mut frame = vec![TAG_RPC];
         frame.extend(bytes);
