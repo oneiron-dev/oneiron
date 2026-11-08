@@ -670,6 +670,7 @@ impl Vault {
                     occurred_at: question.at,
                     receipt_ref: None,
                     payload_ref: Some(member.task),
+                    approval_digest: None,
                     concern: None,
                     diary_review: None,
                     sender: None,
