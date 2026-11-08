@@ -185,6 +185,8 @@ impl SyncConnection {
         // sessions go to this vault's other machines (FIX 4748).
         let mut reach = HomeReach::new(self.config.client_config.peer_dialer.is_some());
         self.running.send_replace(true);
+        // Every connection's upkeep, owned here across reconnects (FIX 12785).
+        let mut upkeep = super::steady::UpkeepTasks::default();
 
         loop {
             // A member who left the shared vault this env holds never
@@ -250,6 +252,7 @@ impl SyncConnection {
                             &mut debounce_buffer,
                             &mut promotion_rx,
                             &mut shutdown_rx,
+                            &mut upkeep,
                         )
                         .await;
 
@@ -336,6 +339,9 @@ impl SyncConnection {
             }
         }
 
+        // The run ends its upkeep, every connection's, before anything else
+        // (FIX 12037): none of its writes lands after the run.
+        upkeep.end().await;
         // A peer session the run ended in takes its end too (FIX 4748).
         if let Some(receipt) = client.peer_receipt.take() {
             receipt.close(self.manager.vault());
