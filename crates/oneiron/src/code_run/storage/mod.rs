@@ -24,6 +24,7 @@ pub(crate) use secret_lift::{
     drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
 };
 mod session_checkpoint;
+mod session_heal_count;
 pub(crate) use session_checkpoint::SessionCheckpointBody;
 mod session_write;
 // FIX 5426: the caller's view a room write's receipt keeps.
@@ -93,6 +94,7 @@ pub(crate) use self::replay_capsule::{
 };
 pub(crate) use self::response_erase::{
     actor_gone, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,
+    soft_delete_actor_responses_in_txn,
 };
 pub(crate) use self::response_owners::stamp_response_owner_in_txn;
 pub(crate) use self::routing::{
@@ -102,6 +104,8 @@ pub use self::secret_lift::{
     CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
     CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
+// FIX 4415: a live session's model heal tally, base plus its own delta.
+pub(crate) use self::session_heal_count::session_model_heal_count;
 pub(crate) use self::spawn_erase::erase_spawn_targets_in_txn;
 #[cfg(test)]
 pub(super) use self::speech_identity::canonical_speech_conversation_id;
@@ -136,7 +140,8 @@ pub(crate) use self::program_resume::{
 };
 pub(crate) use self::wait_delivery::wait_delivered_in_txn;
 pub(crate) use self::wait_holders::{
-    WaitReply, erase_settled_reply_of_erased_run_in_txn, wait_delivery_owners, wait_reply_in_txn,
+    WaitReply, erase_settled_reply_of_erased_run_in_txn, release_settled_for_caller_in_txn,
+    wait_delivery_owners, wait_reply_in_txn,
 };
 
 // The lift sweep's typed acceptance for this module's authored side

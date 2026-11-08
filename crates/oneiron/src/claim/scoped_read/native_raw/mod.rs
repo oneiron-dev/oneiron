@@ -95,6 +95,7 @@ impl<'a> NativeRawRead<'a> {
             None => self.lane.vault.scoped_read(self.lane.actor_key.clone()),
         };
         lane.with_claim_status(ClaimReadStatus::Surfaceable)
+            .with_read_filter(self.lane.read_filter.as_ref())
     }
 
     fn retrieval<T>(
