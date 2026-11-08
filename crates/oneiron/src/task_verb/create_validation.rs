@@ -556,8 +556,10 @@ pub(crate) fn completed_task_at_in_txn(
 }
 
 /// The due time of an open TASK (FIX 4749): `None` when the row is gone, is
-/// no typed TASK, has settled or carries no due time. A body no reader can
-/// decode reads as no due time, so one bad row never holds the tick feed.
+/// no typed TASK, has settled, was cancelled (its Cancelled authority fact,
+/// which leaves the body open; review #6784) or carries no due time. A body
+/// no reader can decode reads as no due time, so one bad row never holds the
+/// tick feed.
 pub(crate) fn open_task_due_at_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -568,9 +570,16 @@ pub(crate) fn open_task_due_at_in_txn(
         Err(Error::Record(_)) => return Ok(None),
         Err(error) => return Err(error),
     };
-    Ok(body
+    let Some(due_at) = body
         .filter(|body| body.terminal().is_none())
-        .and_then(|body| body.due_at))
+        .and_then(|body| body.due_at)
+    else {
+        return Ok(None);
+    };
+    if vault.task_authority_facts_in(txn, task_ref)?.cancelled {
+        return Ok(None);
+    }
+    Ok(Some(due_at))
 }
 
 /// The due time a stored TASK body ticks at (FIX 4749): an open, standard
