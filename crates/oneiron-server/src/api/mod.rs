@@ -156,6 +156,9 @@ pub(crate) use llm::MeshLlm;
 pub(crate) use llm::record_raw_response;
 mod mcp_gateway;
 mod memory;
+// FIX 1435: the direct native read routes cross the verb-hook boundary, and a
+// read that an ask stopped runs again through its own route.
+pub(crate) mod native_read_hooks;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
 // depth cost gate, the extractive answer for the model-free tiers, and the
 // citation gate over whatever a host composer returns.
