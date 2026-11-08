@@ -564,7 +564,7 @@ class Oneiron:
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
-        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None, query_affect: QueryAffect | None = None, token_budget: int | None = None, reader_agent_ref: str | None = None) -> MemoryPack: ...
+        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None, query_affect: QueryAffect | None = None, token_budget: int | None = None, reader_agent_ref: str | None = None, filter: Facade.ReadFilterInput | None = None) -> MemoryPack: ...
         @property
         def retrieval(self) -> "Oneiron._VaultRetrievalVerbs": ...
         @property
@@ -649,6 +649,8 @@ class Oneiron:
         def records(self) -> "Oneiron._VaultRecordsVerbs": ...
         @property
         def outbound_calls(self) -> "Oneiron._VaultOutboundCallsVerbs": ...
+        @property
+        def outbound(self) -> "Oneiron._VaultOutboundVerbs": ...
         @property
         def research(self) -> "Oneiron._VaultResearchVerbs": ...
         @property
@@ -1059,7 +1061,7 @@ class Oneiron:
             """Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
         def read_filtered(self, input: Facade.ClaimFilteredReadRequest) -> Facade.ScopedReadResult[Facade.ClaimView | None]:
             """Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
-        def history(self, input: Facade.ClaimRefRequest) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
+        def history(self, input: Facade.ClaimHistoryRequest) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
         def admit(self, input: Facade.AdmitImportedClaimInput) -> Facade.CommitReceipt:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
@@ -1817,6 +1819,8 @@ class Oneiron:
             """Starts a shared vault's transfer_ownership act: a live Owner hands the vault to another person."""
         def propose_remove_owner(self, spec: Facade.SharedRemoveOwnerRequest) -> Facade.PendingAuthorityAct:
             """Starts a shared vault's remove_owner act, with its export-first answer."""
+        def propose_add_owner(self, spec: Facade.SharedAddOwnerRequest) -> Facade.PendingAuthorityAct:
+            """Starts a shared vault's add_owner act: a live Owner adds another person as Owner."""
         def execute(self, spec: Facade.SharedActRequest) -> Facade.ActAnswer[Facade.SharedActExecuted]:
             """A live Owner runs a matured shared-vault act and gets its receipt."""
         def receipt(self, spec: Facade.SharedReceiptRequest) -> Facade.SharedActExecutionReceipt:
@@ -1841,6 +1845,8 @@ class Oneiron:
             """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
         @property
         def policy(self) -> "Oneiron._VaultSharedPolicyVerbs": ...
+        @property
+        def owner_change_wait(self) -> "Oneiron._VaultSharedOwnerChangeWaitVerbs": ...
     class _VaultSharedPolicyVerbs:
         def get(self, spec: Facade.SharedVaultRequest) -> Facade.SharedActPoliciesView:
             """A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds."""
@@ -1852,6 +1858,11 @@ class Oneiron:
             """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
         def changes(self, spec: Facade.SharedVaultRequest) -> list[Facade.SharedActPolicyChange]:
             """A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale."""
+    class _VaultSharedOwnerChangeWaitVerbs:
+        def set(self, spec: Facade.SharedOwnerChangeWaitSetRequest) -> int | None:
+            """One live Owner sets the shared vault's common owner-change wait in whole days, or null to remove it, and receives the effective wait in seconds."""
+        def get(self, spec: Facade.EmptyRequest | None = None) -> int | None:
+            """The shared vault's common owner-change wait in seconds, if one is set."""
     class _VaultOrgAdminVerbs:
         def configure(self, spec: Facade.OrgAdminConfigureRequest) -> Facade.OrgAdminConfigured:
             """The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured."""
@@ -1891,6 +1902,8 @@ class Oneiron:
         def coreference(self) -> "Oneiron._VaultFederationCoreferenceVerbs": ...
         @property
         def burst(self) -> "Oneiron._VaultFederationBurstVerbs": ...
+        def status(self, spec: Facade.EmptyRequest) -> Facade.FederationStatus:
+            """The owner reads this install's pact activation, consent epoch and local inactivity reason."""
         @property
         def connect(self) -> "Oneiron._VaultFederationConnectVerbs": ...
     class _VaultFederationCoreferenceVerbs:
@@ -2131,6 +2144,12 @@ class Oneiron:
     class _VaultOutboundCallsRequestVerbs:
         def erase(self, spec: Facade.OutboundCallRequestEraseRequest) -> Facade.OutboundCallRequestErased:
             """The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting."""
+    class _VaultOutboundVerbs:
+        @property
+        def uncertain_send(self) -> "Oneiron._VaultOutboundUncertainSendVerbs": ...
+    class _VaultOutboundUncertainSendVerbs:
+        def answer(self, spec: Facade.UncertainSendAnswer) -> Facade.UncertainSendAnswered:
+            """The owner answers the ask on a scheduled send that may have gone out and that the provider cannot confirm: send it once more, or leave it unsent."""
     class _VaultResearchVerbs:
         def create_child(self, spec: Facade.ResearchChildWire) -> Facade.ResearchChildReceipt:
             """The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."""
@@ -2270,11 +2289,21 @@ class Oneiron:
     class _VaultArchiveVerbs:
         @property
         def delete(self) -> "Oneiron._VaultArchiveDeleteVerbs": ...
+        @property
+        def attempt(self) -> "Oneiron._VaultArchiveAttemptVerbs": ...
     class _VaultArchiveDeleteVerbs:
         def preview(self, spec: Facade.ArchiveDeletePreviewRequest) -> Facade.ArchiveDeletePreviewView:
             """Previews explicit archived records under the caller's delete authority."""
         def confirm(self, spec: Facade.ArchiveDeleteConfirmRequest) -> Facade.ArchiveDeleteBatchResult:
             """Deletes explicit archived records under the caller's current delete authority and returns each receipt."""
+    class _VaultArchiveAttemptVerbs:
+        @property
+        def delete(self) -> "Oneiron._VaultArchiveAttemptDeleteVerbs": ...
+    class _VaultArchiveAttemptDeleteVerbs:
+        def preview(self, spec: Facade.AttemptArchiveDeletePreviewRequest) -> Facade.AttemptArchiveDeletePreviewView:
+            """Previews one cleanup-archived completed attempt under the caller's delete authority."""
+        def confirm(self, spec: Facade.AttemptArchiveDeleteConfirmRequest) -> Facade.AttemptArchiveDeleteReceiptView:
+            """Deletes the selected cleanup-archived completed attempt and returns its durable deletion receipt."""
     class _VaultUsageVerbs:
         @property
         def events(self) -> "Oneiron._VaultUsageEventsVerbs": ...
@@ -2778,6 +2807,8 @@ class Oneiron:
             """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."""
         def definitions(self, spec: Facade.CodeSnapshotDefinitionsRequest) -> Facade.CodeSnapshotDefinitionsView:
             """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
+        def neighbors(self, spec: Facade.CodeSnapshotNeighborsRequest) -> Facade.CodeSnapshotNeighborsView:
+            """Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes."""
     class _VaultCodeSecretsVerbs:
         def get(self, spec: Facade.CodeRepoRequest) -> Facade.CodeRepoSecretsView:
             """Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only."""
@@ -3030,6 +3061,8 @@ class Oneiron:
     class _VaultRepoSymbolsVerbs:
         def definitions(self, spec: Facade.LiveRunRequest[Facade.RepoSymbolsDefinitionsInput]) -> Facade.RepoSymbolsDefinitionsOutput:
             """Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads."""
+        def neighbors(self, spec: Facade.LiveRunRequest[Facade.RepoSymbolsNeighborsInput]) -> Facade.RepoSymbolsNeighborsOutput:
+            """Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes."""
         def declare(self, spec: Facade.LiveRunRequest[Facade.RepoSymbolsDeclareInput]) -> Facade.RepoSymbolsDeclareOutput:
             """Declares current symbols of the attached run's own work on paths its Grant edits, for its TASK; an overlap waits, never refused."""
         def renew(self, spec: Facade.LiveRunRequest[Facade.RepoSymbolsRenewInput]) -> Facade.RepoSymbolsRenewOutput:
@@ -3328,7 +3361,7 @@ class Oneiron:
             """Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding."""
     class _VaultModelPackVerbs:
         def revert(self, spec: Facade.ModelPackRevertRequest) -> Facade.ModelPackRevert:
-            """Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing."""
+            """Reverts a model pack change, its notice's one tap: pins the pack before it, installed or kept by a same-name update, while the change is the vault's last and that pack is served at its bytes; else answers why and changes nothing."""
     class _VaultVoicesVerbs:
         @property
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...
@@ -4057,6 +4090,8 @@ class Oneiron:
             """An agent forks a stored skill under its own identity, keeping its import ancestry."""
         def callables(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.CallableCardView]:
             """Every loadable callable helper skill and its call contract: what it takes and returns."""
+        def graph(self, spec: Facade.GraphSkillRunRequest) -> Facade.GraphSkillRunOutcome:
+            """Runs a saved graph workflow from this resident-owned skill on the attached leased run; answers stay proposals and partial stages remain visible."""
         def call(self, spec: Facade.LiveRunRequest[Facade.SkillCallInput]) -> Any:
             """Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately."""
     class _SelfDecisionsVerbs:

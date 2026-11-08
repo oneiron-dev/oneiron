@@ -323,16 +323,20 @@ pub(crate) fn capture_entity_revision(
 }
 
 /// Registers common document frontiers in the existing revision/index ledger.
-/// No second text document or editable record copy is created.
+/// No second text document or editable record copy is created. Returns the
+/// document's new live revision when this commit moves it from the one the
+/// ledger held, or when the ledger held none; `None` when it stays (FIX 2860).
 pub(crate) fn capture_entity_document(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
     doc: &LoroDoc,
     birth: bool,
-) -> Result<()> {
+) -> Result<Option<RevisionRef>> {
     let next = reference(id, &doc.oplog_frontiers().encode());
-    let mut current = state(store, txn, id)?.unwrap_or(RevisionState {
+    let prior = state(store, txn, id)?;
+    let moved = prior.as_ref().is_none_or(|held| held.live != next);
+    let mut current = prior.unwrap_or(RevisionState {
         live: next,
         indexed: next,
         changed_at_ms: unix_millis_at(std::time::SystemTime::now()),
@@ -409,7 +413,8 @@ pub(crate) fn capture_entity_document(
     current.live = next;
     current.has_doc = true;
     retain_frontier(store, txn, id, next, doc)?;
-    put_state(store, txn, id, &current)
+    put_state(store, txn, id, &current)?;
+    Ok(moved.then_some(next))
 }
 
 fn raw_for_revision(
