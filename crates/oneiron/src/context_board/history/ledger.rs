@@ -634,8 +634,8 @@ impl Vault {
                 return Err(BoardHistoryError::UnreadableDocument(*id));
             }
             // Admitted on its stored row: a file-plane ASSET's live row then
-            // reconstructs its body, not its manifest; an older revision
-            // keeps the manifest it was stored as.
+            // reconstructs its body, not its manifest, as does an older
+            // revision whose file its revisions keep (FIX 22091).
             let raw = self.materialized_revision_in_txn(&txn, id, raw)?;
             documents.insert(*id, raw[ENTITY_METADATA_HEADER_LEN..].to_vec());
         }

@@ -391,11 +391,12 @@ impl ScopedRead<'_> {
         };
         // The short-reference hash names the stored revision, so it is taken
         // before any live projection replaces the body. A file-plane ASSET's
-        // comes from its manifest, never from the manifest's own bytes.
+        // comes from its manifest, never from the manifest's own bytes; an
+        // older revision's from the file its revisions keep (FIX 22091).
         let content_hash =
-            crate::store::short_content_hash_in_txn(&self.vault.store, txn, id, &raw)?;
-        // A file-plane ASSET's live row serves its body, not its manifest;
-        // an older revision keeps the manifest it was stored as. It is
+            crate::store::revision_content_hash_in_txn(&self.vault.store, txn, id, &raw)?;
+        // A file-plane ASSET's live row serves its body, not its manifest,
+        // and so does an older revision whose file its revisions keep. It is
         // materialized while it is still the stored row, so the live
         // projection below reads the body, never the manifest (FIX 12149).
         let mut raw = self.vault.materialized_revision_in_txn(txn, id, raw)?;

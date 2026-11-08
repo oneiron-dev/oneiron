@@ -92,6 +92,9 @@ impl AgentDispatcher<'_> {
     /// active and approved, its instructions the runtime package the hub
     /// verified against the record.
     fn root_skill_pack(&self, skill: &EntityId) -> Result<LoadedSkillPack> {
+        // A carrier's body file stays on disk while this snapshot reads it
+        // (FIX 22091).
+        let _bodies = self.vault.pin_all_result_bodies();
         let txn = self.vault.store.env.read_txn()?;
         if !crate::vault::live_entity_row_in_txn(&self.vault.store, &txn, skill)?.is_live() {
             return Err(Error::EntityNotFound);

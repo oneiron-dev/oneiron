@@ -309,6 +309,9 @@ impl Vault {
     ) -> Result<PackInstallDisposition> {
         let disposition = loop {
             let (row, put, candidate, base, source) = {
+                // A carrier's body file stays on disk while this snapshot
+                // reads it (FIX 22091).
+                let _bodies = self.pin_all_result_bodies();
                 let txn = self.store.env.read_txn()?;
                 let (_, row) = self
                     .pack_hook_bindings_in_txn(&txn)?

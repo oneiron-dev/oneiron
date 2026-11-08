@@ -113,6 +113,9 @@ pub(crate) fn forked_skill_prose_links(
 
 /// `parent`'s record and the source files a fork of it copies.
 fn parent_text(vault: &Vault, parent: &EntityId) -> Result<(SkillRecord, Vec<HubFile>)> {
+    // A carrier's body file stays on disk while this snapshot reads it
+    // (FIX 22091).
+    let _bodies = vault.pin_all_result_bodies();
     let rtxn = vault.store.env.read_txn()?;
     let record = vault.read_skill_record_in_txn(&rtxn, parent)?;
     let files = vault

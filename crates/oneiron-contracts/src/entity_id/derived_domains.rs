@@ -348,6 +348,12 @@ pub const ASSET_BODY_FILE: &[u8] = b"oneiron/asset-body-file/v1";
 /// bytes) and its length (u64 big-endian).
 pub const ASSET_BODY_HELD: &[u8] = b"oneiron/asset-body-held/v1";
 
+/// The occurrence an ASSET's revisions keep a body file a later write
+/// superseded under (`store::asset_body`, FIX 22091): a revision read
+/// resolves it as an inline body's revision keeps its bytes. Parts: the
+/// ASSET, the file's BLAKE3 (32 bytes) and its length (u64 big-endian).
+pub const ASSET_BODY_REVISION: &[u8] = b"oneiron/asset-body-revision/v1";
+
 /// The owner one kept removal archive row's files are held under
 /// (`federation::shared_act::removal_file`, FIX 3679): a namespace of its own,
 /// so a release of one row reaches no other row's bodies, another member's
@@ -503,6 +509,7 @@ pub(crate) const ALL: [&[u8]; 67] = [
     FOREIGN_WORLD,
     ASSET_BODY_FILE,
     ASSET_BODY_HELD,
+    ASSET_BODY_REVISION,
     REMOVAL_ARCHIVE_OWNER,
     REPO_SECRET_MARK,
     VAD_ANNOTATION_CLAIM,

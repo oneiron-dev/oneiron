@@ -45,8 +45,8 @@ pub(super) fn apply_put_arm(
         hub_sync_imported,
     )?;
     let replicated = allow_maintenance && allow_reserved_predicate;
-    // FIX 3677: a long opaque local ASSET body goes to its file
-    // here, and the row keeps its manifest; a replicated or
+    // FIX 3677: a long local ASSET body the file plane holds goes to
+    // its file here, and the row keeps its manifest; a replicated or
     // replayed row is written as it came.
     put_options.storage.asset_file = state.asset_files.remove(&id);
     // The bytes the body file holds, read for this put's adapter checks
@@ -56,7 +56,7 @@ pub(super) fn apply_put_arm(
         && !replicated
         && !state.replay
         && let Some((manifest, file)) =
-            crate::store::file_put_body_in_txn(store, wtxn, entity_type, &data)?
+            crate::store::file_put_body_in_txn(store, wtxn, &id, entity_type, &data)?
     {
         file_body = Some(std::mem::replace(&mut data, Zeroizing::new(manifest)));
         put_options.storage.asset_file = Some(file);
