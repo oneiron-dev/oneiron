@@ -6433,6 +6433,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_devices_predecessor_name(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.devices.predecessor.name", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_origin_authority_get(
         &self,
         input: serde_json::Value,
