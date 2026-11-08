@@ -10,18 +10,20 @@
 //! tail seal one window in one SESSION, sized on the writer the flight was
 //! prepared on; the flight runs off the answer's path, its paid tries filed
 //! in the model-step family, its summary minted as the next epoch of the
-//! conversation's own lineage within that SESSION (FIX 5029) with a durable
-//! receipt keyed by the SUMMARY and the Dreamer's check declared in the same
-//! write. A flight that cannot run keeps the raw log and names why; it is
-//! never handed to the Dreamer or the plain house writer.
+//! conversation's own lineage within that SESSION (FIX 5029). The same write
+//! puts a durable receipt keyed by the SUMMARY, the accepted try's gate input
+//! for the check (`check_material`, FIX 5040) and the Dreamer's check
+//! declaration. A flight that cannot run keeps the raw log and names why; it
+//! is never handed to the Dreamer or the plain house writer.
 
 use serde::{Deserialize, Serialize};
 
 use super::driver::{ConversationBinding, WindowLog};
 use super::{
-    CompactHooks, CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
-    CompactionEvidence, CompactionExecution, CompactionGateFailure, CompactionGatePolicy,
-    CompactionOff, CompactionRefusal, CompactionRequest, CompactionSuppression, GatedCompaction,
+    CompactHooks, CompactionBackend, CompactionCheck, CompactionCheckMaterial,
+    CompactionCheckMaterialRef, CompactionDirective, CompactionDriver, CompactionEvidence,
+    CompactionExecution, CompactionGateFailure, CompactionGatePolicy, CompactionOff,
+    CompactionRefusal, CompactionRequest, CompactionSuppression, GatedCompaction,
     SelfCompactionUnavailable, compact_invocation, compaction_input_tokens, gate_compaction,
 };
 use crate::code_run::{ExecutorStorage, LiveCompactionFork};
@@ -36,9 +38,13 @@ mod standing;
 mod storage;
 mod window;
 
-pub use log::{ChatLog, ChatLogLine, read_action_pinned_log, read_chat_log};
+pub(crate) use log::chat_log_room;
+pub use log::{
+    ChatLog, ChatLogCut, ChatLogLine, read_action_chat_log, read_action_pinned_log, read_chat_log,
+    read_first_chat_log,
+};
 pub(crate) use order::validate_conversation_window_in_txn;
-pub(crate) use standing::{FoldedTurnSummary, folded_turn_summary_in};
+pub(crate) use standing::{FoldedTurnSummary, folded_turn_summary_in, summary_stands_in};
 pub(crate) use storage::{conversation_receipt_in, put_conversation_receipt_in_txn};
 use window::ChatLogWindow;
 
@@ -66,7 +72,8 @@ pub struct ConversationTurnSpan {
 /// from: the SESSION its turns were witnessed into, the conversation and the
 /// branch it read (a DAG conversation's HEAD), and the window's turns in
 /// order. The chat generation that sealed it is the paid calls' job, never
-/// evidence.
+/// evidence. A landed summary's evidence also names its check material,
+/// the gate input of its accepted try (FIX 5040).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationEvidence {
     pub session: EntityId,
@@ -74,6 +81,9 @@ pub struct ConversationEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<EntityId>,
     pub turns: Vec<ConversationTurnSpan>,
+    /// The check material's ref: `None` until its pass is accepted. Its
+    /// landing sets it, so each landed receipt names it.
+    pub check_material: Option<CompactionCheckMaterialRef>,
 }
 
 /// Why a conversation's self-written compaction did not fly at a
@@ -258,6 +268,7 @@ pub fn seal_conversation_flight<'a>(
         conversation: log.conversation,
         branch: log.branch,
         turns: window.spans,
+        check_material: None,
     };
     Ok(ConversationFlight {
         driver,
@@ -384,7 +395,8 @@ pub enum ConversationFlightOutcome {
 
 impl ConversationFlight<'_> {
     /// Runs the flight's passes on its frozen fork, files every paid try,
-    /// and lands an accepted summary with its receipt and its check.
+    /// and lands an accepted summary with its receipt, its check material
+    /// and its check.
     #[must_use]
     pub fn fly(self, vault: &Vault) -> ConversationFlightOutcome {
         let backend = std::sync::Arc::clone(self.driver.backend());
@@ -393,7 +405,7 @@ impl ConversationFlight<'_> {
             file_pass(vault, self.job, execution);
         }
         let outcome = match (pass, execution) {
-            (Pass::Accepted(gated), Some(mut execution)) => {
+            (Pass::Accepted(gated, material), Some(mut execution)) => {
                 execution.evidence = Some(CompactionEvidence::Conversation(self.evidence.clone()));
                 let (first, last) = (
                     self.request.turn_start,
@@ -402,10 +414,13 @@ impl ConversationFlight<'_> {
                         .last()
                         .map_or(self.request.turn_start, |message| message.turn),
                 );
-                match self
-                    .driver
-                    .integrate_conversation(vault, self.byline, *gated, execution)
-                {
+                match self.driver.integrate_conversation(
+                    vault,
+                    self.byline,
+                    *gated,
+                    execution,
+                    material.map(|material| *material),
+                ) {
                     Ok(plan) => {
                         let summary = plan.summary_id;
                         vault.post_compact_hooks(self.hooks, &plan, first, last);
@@ -420,7 +435,7 @@ impl ConversationFlight<'_> {
                     }
                 }
             }
-            (Pass::Accepted(_), None) => {
+            (Pass::Accepted(..), None) => {
                 self.driver.abandon();
                 ConversationFlightOutcome::Refused("no_writer_receipt".to_owned())
             }
@@ -438,9 +453,10 @@ impl ConversationFlight<'_> {
     }
 }
 
-/// How one pass's tries ended.
+/// How one pass's tries ended. An accepted pass keeps its try's check
+/// material, taken before the whole reply was discarded (FIX 5040).
 enum Pass {
-    Accepted(Box<GatedCompaction>),
+    Accepted(Box<GatedCompaction>, Option<Box<CompactionCheckMaterial>>),
     Rejected(CompactionGateFailure),
     Refused(CompactionRefusal),
 }
@@ -481,7 +497,11 @@ fn run_pass(
                         .accepted(gated.summary_text(), rejected)
                         .with_calls(calls)
                 });
-                return (Pass::Accepted(Box::new(gated)), execution);
+                let material = CompactionCheckMaterial::capture(request, &product, policy);
+                return (
+                    Pass::Accepted(Box::new(gated), material.map(Box::new)),
+                    execution,
+                );
             }
             Err(failure) => {
                 if let Some(execution) = execution
