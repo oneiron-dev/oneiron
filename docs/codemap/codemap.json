@@ -117547,7 +117547,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/esign/parse_lease/isolated.rs",
-     "purpose": "The geometry callers' input lease, region and isolated parse",
+     "purpose": "Geometry and ceremony-preview callers' input lease, region and isolated parse",
      "surface": {
       "crate-vis": 1
      }
