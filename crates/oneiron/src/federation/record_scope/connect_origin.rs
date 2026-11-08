@@ -452,6 +452,18 @@ pub(crate) fn import_connect_positions(
                 {
                     continue;
                 }
+                // The row must already sit in the signed foreign world here:
+                // its `InWorld` edge (a caption's, its sources') landed on this
+                // vault's copy of the world. A row whose edge is still
+                // deferred, because no WORLD row for that copy exists here yet,
+                // reads as base reality, and a stamp beside it would place a
+                // guest's row in base under the sender's facet (FIX 22223).
+                // Its position waits for a later Connect, once the edge lands.
+                if super::note_world::live_worlds_in(&vault.store, txn, *id, kind).axis()
+                    != scope.worlds
+                {
+                    continue;
+                }
                 if let Some(prior) = SCOPE_RECORD.get(&vault.store, txn, id)? {
                     if prior.version != 2
                         || prior.kind != kind
