@@ -65,7 +65,8 @@ pub(crate) use self::store::{
     insert_pending_in_txn, insert_suppressed_in_txn, keep_pinned_approval_in_txn,
     outbound_intent_ledger_record_accepts_masked, read_intent_for_attempt_in_txn,
     read_intent_record_in_txn, reconcile_connector_intent_in_txn, record_definite_non_delivery,
-    record_possible_delivery, record_provider_refusal, renew_admission_in_txn,
+    record_looked_up_non_delivery, record_possible_delivery, record_provider_refusal,
+    renew_admission_in_txn,
 };
 // DOOR-141 PR3b: whether an attempt's sends are settled, for a held program's resume;
 // FIX 7188: their abandon in the owner's Stop of that try; FIX 4747: the abandon of
