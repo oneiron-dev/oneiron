@@ -478,7 +478,7 @@ fn eligible_machine_history_from(
     // rows. Any absence, decode failure or mismatch runs today's loop.
     if let Some(settled) = super::super::history_seal::matching_gate_verdict(store, txn, target)? {
         if settled {
-            return Ok(projection);
+            return Ok((projection, carriers));
         }
         return Err(missing());
     }

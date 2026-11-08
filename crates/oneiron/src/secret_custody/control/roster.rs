@@ -75,13 +75,15 @@ struct Due {
 }
 
 /// Whether `permits` name `permit`'s machine under the very key it has.
-fn names<'a>(
-    permits: impl IntoIterator<Item = &'a CustodyRecipientPermit>,
-    permit: &CustodyRecipientPermit,
-) -> bool {
-    permits
-        .into_iter()
-        .any(|held| held.machine == permit.machine && held.encryption_key == permit.encryption_key)
+fn names<I>(permits: I, permit: &CustodyRecipientPermit) -> bool
+where
+    I: IntoIterator,
+    I::Item: std::borrow::Borrow<CustodyRecipientPermit>,
+{
+    permits.into_iter().any(|held| {
+        let held = std::borrow::Borrow::borrow(&held);
+        held.machine == permit.machine && held.encryption_key == permit.encryption_key
+    })
 }
 
 impl Vault {
