@@ -205,7 +205,7 @@ pub(crate) async fn vault_repo_symbols_neighbors(
         invocation,
         "vault.repo.symbols.neighbors",
         input,
-        |memory, binding, spec| memory.repo_symbols_neighbors_for_run(binding, spec),
+        |memory, binding, spec, _request| memory.repo_symbols_neighbors_for_run(binding, spec),
     )
     .await
 }
@@ -433,6 +433,8 @@ pub(crate) async fn vault_repo_proposal_submit(
 ) -> Listed<RepoProposalSubmitOutput> {
     let verb = "vault.repo.proposal_submit";
     let policy = OwnerProposalReviewPolicy::new(Arc::clone(&server.vault));
+    // The host witnesses the request against the vault this door serves.
+    let vault = Arc::clone(&server.vault);
     on_repo_run(
         server,
         auth,
@@ -448,13 +450,9 @@ pub(crate) async fn vault_repo_proposal_submit(
                 spec,
                 Some(&policy as &dyn RepoReviewPolicy),
                 |stamp| match request {
-                    Some(request) => binding.sources_from_host(
-                        memory.vault(),
-                        stamp,
-                        path,
-                        content_hash,
-                        &request,
-                    ),
+                    Some(request) => {
+                        binding.sources_from_host(&vault, stamp, path, content_hash, &request)
+                    }
                     None => Err(repo_provenance_unwitnessed()),
                 },
             )
