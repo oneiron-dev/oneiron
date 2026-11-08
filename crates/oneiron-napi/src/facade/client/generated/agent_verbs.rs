@@ -5710,6 +5710,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_shares_issue_view_link(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shares.issue_view_link", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_shares_revoke(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.shares.revoke", js_json(input))
@@ -6803,6 +6812,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.code.snapshots.ingest", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_snapshots_capture(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.snapshots.capture", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

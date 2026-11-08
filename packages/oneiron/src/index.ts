@@ -396,6 +396,16 @@ export class Oneiron {
   }
 
   /**
+   * Content-free hook notice beside the last facade call's reply. Typed
+   * results keep their shape. The next facade call clears it before sending;
+   * a cloned or vault-direct handle has none. Session-only calls may carry a
+   * notice without keeping a durable receipt.
+   */
+  lastHookNotice(): string | null {
+    return this.#client.lastHookNotice() ?? null
+  }
+
+  /**
    * The engine `[limits]` rows this client's own vault crossed, latest per
    * row: the row's key plus what it stood at and what the work measured,
    * both exact (`bigint`, never `number`). `null` on a remote, attached, or
@@ -2221,6 +2231,8 @@ export class Oneiron {
     shares: {
       /** The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels. */
       create: (input: Facade.ShareCreateRequest): Facade.ShareCreated => this.#call(() => this.#client.vaultSharesCreate(input) as Facade.ShareCreated),
+      /** Issues a holder-bound view-only pairing link for one admitted share's recipient. */
+      issue_view_link: (input: Facade.ShareViewLinkRequest): Facade.PairingLink => this.#call(() => this.#client.vaultSharesIssueViewLink(input) as Facade.PairingLink),
       revoke: (input: Facade.ShareRevokeRequest): Facade.ShareRevokeReceipt => this.#call(() => this.#client.vaultSharesRevoke(input) as Facade.ShareRevokeReceipt),
       view: (input: Facade.ShareViewRequest): Facade.ScopedReadResult<Facade.SharedBriefView | null> => this.#call(() => this.#client.vaultSharesView(input) as Facade.ScopedReadResult<Facade.SharedBriefView | null>),
     },
@@ -2398,7 +2410,7 @@ export class Oneiron {
         declare: (input: Facade.CodeSymbolsDeclareRequest): Facade.CodeSymbolsDeclared => this.#call(() => this.#client.vaultCodeSymbolsDeclare(input) as Facade.CodeSymbolsDeclared),
         /** Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only. */
         renew: (input: Facade.CodeSymbolsTaskRequest): Facade.CodeSymbolLeaseView => this.#call(() => this.#client.vaultCodeSymbolsRenew(input) as Facade.CodeSymbolLeaseView),
-        /** Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing. */
+        /** Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver. */
         release: (input: Facade.CodeSymbolsTaskRequest): Facade.CodeSymbolsReleased => this.#call(() => this.#client.vaultCodeSymbolsRelease(input) as Facade.CodeSymbolsReleased),
         /** Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language. */
         definitions: (input: Facade.CodeSnapshotDefinitionsRequest): Facade.CodeSnapshotDefinitionsView => this.#call(() => this.#client.vaultCodeSymbolsDefinitions(input) as Facade.CodeSnapshotDefinitionsView),
@@ -2570,6 +2582,8 @@ export class Oneiron {
       snapshots: {
         /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership. */
         ingest: (input: Facade.CodeSnapshotIngestRequest): Facade.CodeSnapshotView => this.#call(() => this.#client.vaultCodeSnapshotsIngest(input) as Facade.CodeSnapshotView),
+        /** Capture current files of a host folder as a custody-filtered snapshot with no Git commit witness. Owner only. Includes untracked and ignored files; Git metadata and linked or nested repositories stay opaque. */
+        capture: (input: Facade.CodeSnapshotCaptureRequest): Facade.CodeSnapshotView => this.#call(() => this.#client.vaultCodeSnapshotsCapture(input) as Facade.CodeSnapshotView),
         /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
         get: (input: Facade.CodeSnapshotRequest): Facade.CodeSnapshotView | null => this.#call(() => this.#client.vaultCodeSnapshotsGet(input) as Facade.CodeSnapshotView | null),
         /** Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only. */
@@ -2582,7 +2596,7 @@ export class Oneiron {
         stage: (input: Facade.MergeQueueBatchRequest): Facade.MergeQueueBatchView => this.#call(() => this.#client.vaultCodeMergeQueueStage(input) as Facade.MergeQueueBatchView),
         /** Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt. */
         observe: (input: Facade.MergeQueueObserveRequest): Facade.MergeQueueObservation => this.#call(() => this.#client.vaultCodeMergeQueueObserve(input) as Facade.MergeQueueObservation),
-        /** Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written. */
+        /** Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. The two batches are linked once; a retry returns the same batch. */
         requeue_survivors: (input: Facade.MergeQueueBatchRequest): Facade.MergeQueueRequeueView => this.#call(() => this.#client.vaultCodeMergeQueueRequeueSurvivors(input) as Facade.MergeQueueRequeueView),
         /** Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs the review it is held to and exact bytes and base; the owner proof approves nothing. */
         land_reviewed: (input: Facade.MergeQueueBatchRequest): Facade.MergeQueueBatchView => this.#call(() => this.#client.vaultCodeMergeQueueLandReviewed(input) as Facade.MergeQueueBatchView),
