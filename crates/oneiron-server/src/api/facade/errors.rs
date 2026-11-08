@@ -26,6 +26,7 @@ impl FacadeApiError {
                     resets_at: Vec::new(),
                     reason_codes: Vec::new(),
                     legal_hold: None,
+                    room_join_hold: None,
                     program_steps: Vec::new(),
                 },
                 narrowing: None,
@@ -209,6 +210,7 @@ impl From<MemoryError> for FacadeApiError {
                     resets_at: error.resets_at,
                     reason_codes: error.reason_codes,
                     legal_hold: error.legal_hold,
+                    room_join_hold: error.room_join_hold,
                     program_steps: Vec::new(),
                 },
                 narrowing: error.read_receipt,
@@ -224,6 +226,7 @@ impl From<MemoryError> for FacadeApiError {
 impl From<ApiError> for FacadeApiError {
     fn from(error: ApiError) -> Self {
         let legal_hold = error.legal_hold().cloned().map(Box::new);
+        let room_join_hold = error.room_join_hold().cloned().map(Box::new);
         let mut refusal = Self::new(
             error.status(),
             error.code().as_str(),
@@ -231,6 +234,7 @@ impl From<ApiError> for FacadeApiError {
             error.suggestions().to_vec(),
         );
         refusal.body.error.legal_hold = legal_hold;
+        refusal.body.error.room_join_hold = room_join_hold;
         refusal
     }
 }
@@ -307,6 +311,7 @@ impl FacadeApiError {
         replayed.resets_at = replayed_field(error, "resetsAt").unwrap_or_default();
         replayed.reason_codes = replayed_field(error, "reasonCodes").unwrap_or_default();
         replayed.legal_hold = replayed_field(error, "legal_hold").map(Box::new);
+        replayed.room_join_hold = replayed_field(error, "room_join_hold").map(Box::new);
         replayed.program_steps = replayed_field(error, "programSteps").unwrap_or_default();
         refusal.body.narrowing = replayed_field(body, "narrowing").map(Box::new);
         Some(refusal)
@@ -339,7 +344,21 @@ impl FacadeApiError {
         refusal.resets_at = error.resets_at;
         refusal.reason_codes = error.reason_codes;
         refusal.legal_hold = error.legal_hold;
+        refusal.room_join_hold = error.room_join_hold;
         refusal
+    }
+
+    /// The result a verb hook's `Completed` stop carries, beside the
+    /// invocation it ran under, for a door that releases a drained call's
+    /// saved result before it answers (FIX 1435). `None` for any other
+    /// refusal.
+    pub(crate) fn completed_hook_result(&mut self) -> Option<(&str, &mut serde_json::Value)> {
+        let oneiron::runtime_hooks::VerbHookStop::Completed { invocation, result } =
+            self.body.error.hook.as_deref_mut()?
+        else {
+            return None;
+        };
+        Some((invocation.as_str(), result))
     }
 }
 
@@ -356,7 +375,7 @@ impl IntoResponse for FacadeApiError {
 
 /// Every member a facade refusal's `error` states on the wire
 /// ([`FacadeErrorBody`], its wrong-root correction flattened in).
-const REPLAYED_ERROR_FIELDS: [&str; 14] = [
+const REPLAYED_ERROR_FIELDS: [&str; 15] = [
     "code",
     "message",
     "requestId",
@@ -370,6 +389,7 @@ const REPLAYED_ERROR_FIELDS: [&str; 14] = [
     "resetsAt",
     "reasonCodes",
     "legal_hold",
+    "room_join_hold",
     "programSteps",
 ];
 
