@@ -18045,6 +18045,46 @@ async fn vault_consent_create_auto_weave_grant(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_consent_create_nightly_link_grant(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.create_nightly_link_grant")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.create_nightly_link_grant", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.consent.create_nightly_link_grant",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_consent_create_nightly_link_grant(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_consent_registry(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -19578,7 +19618,7 @@ async fn vault_claims_review(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_unnarrowed_facets()?;
     facade_outside_room_turn(call, "vault.claims.review")?;
     let caller = facade_actor(server, auth)?;
     let value = input?;
@@ -19618,7 +19658,7 @@ async fn vault_claims_settle(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_unnarrowed_facets()?;
     facade_outside_room_turn(call, "vault.claims.settle")?;
     let caller = facade_actor(server, auth)?;
     let value = input?;
@@ -22160,6 +22200,40 @@ async fn vault_code_proposal_submit(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_code_proposal_rereview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.proposal_rereview")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.proposal_rereview", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.code.proposal_rereview", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_proposal_rereview(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_conflict_record(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -22242,6 +22316,41 @@ async fn vault_code_proposal_resolve(
     let mut hooks = facade_hooks_pre(server, call, "vault.code.proposal_resolve", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_code_proposal_resolve(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_proposal_resolve_rereview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.proposal_resolve_rereview")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.proposal_resolve_rereview", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.code.proposal_resolve_rereview", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_proposal_resolve_rereview(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -23545,6 +23654,40 @@ async fn vault_code_origin_publish_cancel(
         facade_hooks_pre(server, call, "vault.code.origin.publish.cancel", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_code_origin_publish_cancel(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_devices_predecessor_name(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.devices.predecessor.name")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.devices.predecessor.name", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.devices.predecessor.name", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_devices_predecessor_name(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -45792,6 +45935,14 @@ fn boxed_vault_consent_create_auto_weave_grant<'a>(
     Box::pin(vault_consent_create_auto_weave_grant(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_consent_create_nightly_link_grant<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_create_nightly_link_grant(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_consent_registry<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -46814,6 +46965,14 @@ fn boxed_vault_code_proposal_submit<'a>(
     Box::pin(vault_code_proposal_submit(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_code_proposal_rereview<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_proposal_rereview(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_code_conflict_record<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -46836,6 +46995,14 @@ fn boxed_vault_code_proposal_resolve<'a>(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> FacadeRowFuture<'a> {
     Box::pin(vault_code_proposal_resolve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_proposal_resolve_rereview<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_proposal_resolve_rereview(server, call, input))
 }
 #[inline(never)]
 fn boxed_vault_code_proposal_review<'a>(
@@ -47148,6 +47315,14 @@ fn boxed_vault_code_origin_publish_cancel<'a>(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> FacadeRowFuture<'a> {
     Box::pin(vault_code_origin_publish_cancel(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_devices_predecessor_name<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_devices_predecessor_name(server, call, input))
 }
 #[inline(never)]
 fn boxed_vault_code_origin_authority_get<'a>(
@@ -52807,6 +52982,9 @@ async fn call_verb_row(
         "vault.consent.create_auto_weave_grant" => {
             boxed_vault_consent_create_auto_weave_grant(server, call, input).await
         }
+        "vault.consent.create_nightly_link_grant" => {
+            boxed_vault_consent_create_nightly_link_grant(server, call, input).await
+        }
         "vault.consent.registry" => boxed_vault_consent_registry(server, call, input).await,
         "vault.consent.failure_signals_held" => {
             boxed_vault_consent_failure_signals_held(server, call, input).await
@@ -53030,10 +53208,16 @@ async fn call_verb_row(
         "vault.code.symbols.renew" => boxed_vault_code_symbols_renew(server, call, input).await,
         "vault.code.symbols.release" => boxed_vault_code_symbols_release(server, call, input).await,
         "vault.code.proposal_submit" => boxed_vault_code_proposal_submit(server, call, input).await,
+        "vault.code.proposal_rereview" => {
+            boxed_vault_code_proposal_rereview(server, call, input).await
+        }
         "vault.code.conflict_record" => boxed_vault_code_conflict_record(server, call, input).await,
         "vault.code.conflict_view" => boxed_vault_code_conflict_view(server, call, input).await,
         "vault.code.proposal_resolve" => {
             boxed_vault_code_proposal_resolve(server, call, input).await
+        }
+        "vault.code.proposal_resolve_rereview" => {
+            boxed_vault_code_proposal_resolve_rereview(server, call, input).await
         }
         "vault.code.proposal_review" => boxed_vault_code_proposal_review(server, call, input).await,
         "vault.code.proposal_settle" => boxed_vault_code_proposal_settle(server, call, input).await,
@@ -53105,6 +53289,9 @@ async fn call_verb_row(
         }
         "vault.code.origin.publish.cancel" => {
             boxed_vault_code_origin_publish_cancel(server, call, input).await
+        }
+        "vault.devices.predecessor.name" => {
+            boxed_vault_devices_predecessor_name(server, call, input).await
         }
         "vault.code.origin.authority.get" => {
             boxed_vault_code_origin_authority_get(server, call, input).await
