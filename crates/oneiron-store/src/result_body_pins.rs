@@ -38,12 +38,28 @@ pub struct PinCounts {
     pub search_credit: HashMap<([u8; 32], u64, u64), (u64, u64, u64)>,
     /// Insertion order of `search_credit` keys, oldest first.
     pub search_credit_order: VecDeque<([u8; 32], u64, u64)>,
-    /// Released bodies whose rows went at a write transaction a live read
-    /// snapshot predated (FIX 22101), by digest: the sealed instance their
-    /// key row named, and that transaction's id. Their files go once no
-    /// older reader is live. In memory only: a restart leaves them to the
+    /// Body files a write transaction found unnamed (FIX 22101), by digest,
+    /// then by file, to that transaction's id. A file goes once every live
+    /// read transaction is at least that id, so no snapshot that still
+    /// names it is left. A write that names a body holds a pin on it across
+    /// its commit, so a pin dropping forgets its digest's notes: the body
+    /// may be named again. In memory only: a restart leaves them to the
     /// orphan sweep.
-    pub released: HashMap<[u8; 32], (Option<[u8; 16]>, usize)>,
+    pub retiring: HashMap<[u8; 32], HashMap<RetiringFile, usize>>,
+}
+
+/// A body file the collector noted as unnamed (FIX 22101).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RetiringFile {
+    /// A released body whose rows went: its plain file and, in a sealed
+    /// vault, the instance its key row named, each with its line index.
+    Released(Option<[u8; 16]>),
+    /// One directory entry: a body file with its line index, or (`index`)
+    /// a line index whose body is gone.
+    Entry {
+        instance: Option<[u8; 16]>,
+        index: bool,
+    },
 }
 
 /// One queued line-index rebuild (FIX 1186b): the body's length from its
@@ -134,30 +150,81 @@ impl ResultBodyPins {
             .is_some_and(|&issued| issued == (offset, line, credit))
     }
 
-    /// Keeps the released body `digest`, sealed as `instance` when it was,
-    /// whose rows went at write transaction `released_at`, until no read
-    /// transaction older than that is live (FIX 22101).
-    pub fn defer_released(&self, digest: [u8; 32], instance: Option<[u8; 16]>, released_at: usize) {
-        lock(&self.counts)
-            .released
-            .insert(digest, (instance, released_at));
+    /// Whether a reader holds `digest`, or every body.
+    pub fn holds(&self, digest: &[u8; 32]) -> bool {
+        lock(&self.counts).holds(digest)
     }
 
-    /// Takes the deferred released bodies every live reader now sees
-    /// released: `oldest`, the oldest live read transaction's id, is none
-    /// or at least each one's release (FIX 22101).
-    pub fn take_due_released(&self, oldest: Option<usize>) -> Vec<([u8; 32], Option<[u8; 16]>)> {
-        let mut counts = lock(&self.counts);
-        let due: Vec<_> = counts
-            .released
+    /// Notes `file` of `digest` as unnamed by write transaction `since`
+    /// (FIX 22101). A file noted again keeps its first note: a note stands
+    /// only while no pin on its digest has dropped, so the file has stayed
+    /// unnamed since.
+    pub fn retire(&self, digest: [u8; 32], file: RetiringFile, since: usize) {
+        lock(&self.counts)
+            .retiring
+            .entry(digest)
+            .or_default()
+            .entry(file)
+            .or_insert(since);
+    }
+
+    /// Up to `limit` noted files `wanted` takes that no live reader can
+    /// still see named: `oldest`, the oldest live read transaction's id, is
+    /// none or at least each one's note (FIX 22101). They stay noted until
+    /// [`Self::remove_retiring`] or [`Self::forget_retiring`].
+    pub fn due_retiring(
+        &self,
+        oldest: Option<usize>,
+        limit: usize,
+        wanted: impl Fn(&[u8; 32], &RetiringFile) -> bool,
+    ) -> Vec<([u8; 32], RetiringFile, usize)> {
+        let counts = lock(&self.counts);
+        counts
+            .retiring
             .iter()
-            .filter(|(_, (_, released_at))| oldest.is_none_or(|oldest| oldest >= *released_at))
-            .map(|(digest, (instance, _))| (*digest, *instance))
-            .collect();
-        for (digest, _) in &due {
-            counts.released.remove(digest);
+            .flat_map(|(digest, files)| {
+                files
+                    .iter()
+                    .map(move |(file, since)| (*digest, *file, *since))
+            })
+            .filter(|(digest, file, since)| {
+                oldest.is_none_or(|oldest| oldest >= *since) && wanted(digest, file)
+            })
+            .take(limit)
+            .collect()
+    }
+
+    /// Runs `remove` and forgets the note when `file` of `digest` is still
+    /// noted as of `since` and no reader holds the digest, keeping new pins
+    /// out until it returns (FIX 22101). `None` otherwise: a file a reader
+    /// holds stays noted for a later pass, and one whose note a dropped pin
+    /// forgot is left to the orphan sweep.
+    pub fn remove_retiring<T>(
+        &self,
+        digest: &[u8; 32],
+        file: RetiringFile,
+        since: usize,
+        remove: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let mut counts = lock(&self.counts);
+        if counts.holds(digest) {
+            return None;
         }
-        due
+        if counts
+            .retiring
+            .get(digest)
+            .and_then(|files| files.get(&file))
+            != Some(&since)
+        {
+            return None;
+        }
+        forget_in(&mut counts, digest, file);
+        Some(remove())
+    }
+
+    /// Forgets the note on `file` of `digest`: a write names it again.
+    pub fn forget_retiring(&self, digest: &[u8; 32], file: RetiringFile) {
+        forget_in(&mut lock(&self.counts), digest, file);
     }
 
     /// Runs `remove` unless a reader holds `digest`, keeping new pins out
@@ -166,6 +233,18 @@ impl ResultBodyPins {
     pub fn unless_pinned<T>(&self, digest: &[u8; 32], remove: impl FnOnce() -> T) -> Option<T> {
         let counts = lock(&self.counts);
         (!counts.holds(digest)).then(remove)
+    }
+}
+
+/// Drops the note on `file` of `digest`, and the digest's entry once it
+/// notes nothing (FIX 22101).
+fn forget_in(counts: &mut PinCounts, digest: &[u8; 32], file: RetiringFile) {
+    let emptied = counts.retiring.get_mut(digest).is_some_and(|files| {
+        files.remove(&file);
+        files.is_empty()
+    });
+    if emptied {
+        counts.retiring.remove(digest);
     }
 }
 
@@ -188,8 +267,11 @@ impl ResultBodyPin {
 impl Drop for ResultBodyPin {
     fn drop(&mut self) {
         let mut counts = lock(&self.counts);
+        // A write that named the body held this pin across its commit, so
+        // the collector's notes on it no longer hold (FIX 22101).
         match self.digest {
             Some(digest) => {
+                counts.retiring.remove(&digest);
                 if let Entry::Occupied(mut held) = counts.bodies.entry(digest) {
                     let left = held.get().saturating_sub(1);
                     if left == 0 {
@@ -200,7 +282,10 @@ impl Drop for ResultBodyPin {
                     }
                 }
             }
-            None => counts.every = counts.every.saturating_sub(1),
+            None => {
+                counts.retiring.clear();
+                counts.every = counts.every.saturating_sub(1);
+            }
         }
     }
 }
