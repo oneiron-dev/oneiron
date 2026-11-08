@@ -20,8 +20,8 @@ use crate::frame::{read_chunk, read_reply, read_reply_header, read_stream_end, w
 use crate::peer::own_uid;
 use crate::send::push_wiped;
 use crate::{
-    BrokerError, CallHeader, ChildBroker, Failure, Isolation, Outcome, PROTOCOL_VERSION,
-    ReplyHeader,
+    BrokerError, CallHeader, ChildBroker, Failure, Isolation, MAX_STREAM, Outcome,
+    PROTOCOL_VERSION, ReplyHeader,
 };
 
 /// How the daemon reaches its broker, and who the broker must be.
@@ -153,7 +153,7 @@ pub struct BrokerReply {
 
 /// A reply as it arrives: its outcome first, then its body through
 /// [`Self::next`]. A buffered shape's body comes as one chunk; a streamed
-/// shape's ([`crate::Shape::streams`]) as many bounded chunks as it needs.
+/// shape's ([`crate::Shape::streams`]) as many, up to [`MAX_STREAM`] bytes.
 /// The frame's write and the whole reply must end within the client's reply
 /// timeout.
 #[derive(Debug)]
@@ -164,6 +164,7 @@ pub struct BrokerStream {
     /// A buffered shape's body, not yet handed out; `None` for a streamed
     /// shape.
     whole: Option<Zeroizing<Vec<u8>>>,
+    received: usize,
     /// How the body ended, once it has: clean (`None`) or cut.
     ended: Option<Option<Failure>>,
 }
@@ -220,7 +221,7 @@ impl BrokerConnection {
 
     /// Sends one call with its key, and waits for the reply's outcome; its
     /// body follows through [`BrokerStream::next`]. A body past
-    /// [`crate::MAX_BODY`] goes in chunks without a cumulative byte limit (FIX
+    /// [`crate::MAX_BODY`] goes in chunks, up to [`crate::MAX_STREAM`] bytes (FIX
     /// 1895). The daemon's copy of the key is wiped once the frame is
     /// written. A reply for another call or digest counts as lost.
     pub async fn open(
@@ -301,6 +302,7 @@ impl BrokerConnection {
             stream: self.stream,
             deadline,
             whole,
+            received: 0,
             ended: None,
         })
     }
@@ -332,6 +334,10 @@ impl BrokerStream {
             .map_err(|_| BrokerError::Lost)?
             .map_err(|_| BrokerError::Lost)?;
         if let Some(chunk) = chunk {
+            self.received += chunk.len();
+            if self.received > MAX_STREAM {
+                return Err(BrokerError::Lost);
+            }
             return Ok(StreamPart::Chunk(chunk));
         }
         let end = tokio::time::timeout_at(self.deadline, read_stream_end(&mut self.stream))

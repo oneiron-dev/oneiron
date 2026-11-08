@@ -503,7 +503,7 @@ pub(super) fn deterministic_claim_id(
     value: &Value,
     world: Option<EntityId>,
     facet: Option<EntityId>,
-    rel: Option<&crate::claim::RelationshipSet>,
+    rel: Option<&std::collections::BTreeSet<EntityId>>,
     project: EntityId,
     topic: Option<&[u8]>,
 ) -> Result<EntityId> {

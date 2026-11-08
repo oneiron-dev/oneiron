@@ -538,7 +538,7 @@ impl Memory<'_> {
                 candidate = candidate.with_relationships(Some(
                     refs.iter()
                         .map(|r| self.resolve_ref(r))
-                        .collect::<MemoryResult<crate::claim::RelationshipSet>>()?,
+                        .collect::<MemoryResult<std::collections::BTreeSet<_>>>()?,
                 ));
             }
             candidate = candidate.with_evidence(rmpv::Value::Map(vec![(
