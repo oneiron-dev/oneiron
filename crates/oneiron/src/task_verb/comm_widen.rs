@@ -25,7 +25,7 @@ use super::{ConsultPayloadRef, TaskAssignee};
 use crate::agent_dispatch::{
     CommReach, CommWidenDecision, CommWidenQuestion, CommWidenRecipient, CommWidenRequest,
     CommWidenState, comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn,
-    put_comm_widen_in,
+    effective_comm_in_txn, put_comm_widen_in,
 };
 use crate::agent_inbox_lens::{
     AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
@@ -413,7 +413,7 @@ impl Memory<'_> {
         let vault = self.vault();
         let now = vault.store.clock.now_recorded_at();
         let reserved = self.with_verified_actor_write_txn(|txn| {
-            let (run, _) = super::message_dispatch_in_txn(self, txn)?
+            let (run, input) = super::message_dispatch_in_txn(self, txn)?
                 .filter(|(attempt, _)| attempt.id == child)
                 .ok_or_else(|| {
                     invalid_state(
@@ -429,8 +429,10 @@ impl Memory<'_> {
             }
             let recipient = comm_widen_recipient_in_txn(vault, txn, &run)?;
             if record.request_mut(needed).is_none() {
+                let from = effective_comm_in_txn(vault, txn, child, &input)?;
                 record.requests.push(CommWidenRequest {
                     needed,
+                    from: Some(from),
                     recipient,
                     at: now,
                     question: None,
@@ -600,8 +602,10 @@ pub(super) fn consult_widening_in(
     Some(widening(child, approved, &request))
 }
 
-/// What `child`'s `request` asks: from the reach an earlier approval gave
-/// it, if any, to the reach it needs.
+/// What `child`'s `request` asks: from the reach it addressed with when it
+/// asked (its frozen dial or an earlier approval, FIX 10413) to the reach it
+/// needs. A request reserved before that reach was kept reads from the
+/// reach an earlier approval gave it, if any.
 fn widening(
     child: AttemptId,
     approved: Option<CommReach>,
@@ -609,7 +613,7 @@ fn widening(
 ) -> crate::context_board::ConsultWidening {
     crate::context_board::ConsultWidening {
         child: attempt_hex(child),
-        from: approved,
+        from: request.from.or(approved),
         to: request.needed,
     }
 }
@@ -666,6 +670,7 @@ impl Vault {
                     occurred_at: question.at,
                     receipt_ref: None,
                     payload_ref: Some(member.task),
+                    approval_digest: None,
                     concern: None,
                     diary_review: None,
                     sender: None,

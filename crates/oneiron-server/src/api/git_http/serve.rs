@@ -16,7 +16,9 @@ use axum::http::HeaderValue;
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_LENGTH;
 use axum::response::Response;
+use oneiron::EntityId;
 use oneiron::federation::GitPushCaller;
+use oneiron::origin::RepoPortableId;
 use oneiron::origin::residence::{
     ORIGIN_WRITER_ERASED_REFUSAL, OriginAuthority, OriginHostAuthority, OriginResidence,
 };
@@ -58,6 +60,7 @@ pub(super) async fn run_serve(
     body: Body,
     caller: Option<GitPushCaller>,
     read: smart_http::RepoGitReadContext,
+    push_selection: Option<(RepoPortableId, EntityId)>,
 ) -> Response {
     // A push runs under the lease this host holds over the repository, read
     // from the vault's own authority row and this install's machine, never
@@ -82,7 +85,7 @@ pub(super) async fn run_serve(
     };
     if request.is_push()
         && let Some(refused) =
-            super::gate::preflight(&server, &repo, &request, caller.as_ref()).await
+            super::gate::preflight(&server, &repo, &request, caller.as_ref(), push_selection).await
     {
         return refused;
     }
@@ -152,6 +155,7 @@ pub(super) async fn run_serve(
                 authority.as_ref(),
                 caller.as_ref(),
                 &read,
+                push_selection,
                 &mut reader,
                 &mut sink,
             ));
@@ -171,6 +175,7 @@ pub(super) async fn run_serve(
             authority.as_ref(),
             caller.as_ref(),
             &read,
+            push_selection,
             &mut reader,
             &mut holding,
         );
