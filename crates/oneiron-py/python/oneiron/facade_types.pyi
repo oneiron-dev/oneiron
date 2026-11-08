@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1336 facade rows, 4820 declarations.
-Inputs: 1265 of 1336 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1165 of 1336 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1339 facade rows, 4829 declarations.
+Inputs: 1268 of 1339 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1168 of 1339 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
@@ -12382,6 +12382,18 @@ class ShareCreated(TypedDict):
     created_at: int
     expires_at: NotRequired[int | None]
     travel: TravelChoice
+class ShareViewLinkRequest(TypedDict):
+    share_ref: str
+    actor_class: str
+    slip_lifetime_secs: int
+class PairingPinRef(TypedDict):
+    challenge: list[int]
+    digest: list[int]
+class PairingLink(TypedDict):
+    code: str
+    expires_at: int
+    pin: NotRequired[PairingPinRef | None]
+    comm: CommReach
 class ShareRevokeRequest(TypedDict):
     share_ref: str
 class ShareRevokeReceipt(TypedDict):
@@ -12633,12 +12645,37 @@ class ArtifactUnitsRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
     path: NotRequired[str | None]
+DocxHeaderFooterBand = Literal["default", "first", "even"]
+class DocxStoryScopeHeader(TypedDict):
+    kind: Literal["header"]
+    part_name: str
+    band: DocxHeaderFooterBand
+class DocxStoryScopeFooter(TypedDict):
+    kind: Literal["footer"]
+    part_name: str
+    band: DocxHeaderFooterBand
+class DocxStoryScopeFootnote(TypedDict):
+    kind: Literal["footnote"]
+    id: str
+class DocxStoryScopeEndnote(TypedDict):
+    kind: Literal["endnote"]
+    id: str
+class DocxStoryScopeComment(TypedDict):
+    kind: Literal["comment"]
+    id: str
+DocxStoryScope = DocxStoryScopeHeader | DocxStoryScopeFooter | DocxStoryScopeFootnote | DocxStoryScopeEndnote | DocxStoryScopeComment
 class AnnotationLocatorXlsx(TypedDict):
     format: Literal["xlsx"]
     sheet: str
     range: str
 class AnnotationLocatorDocx(TypedDict):
     format: Literal["docx"]
+    para_path: str
+    char_start: int
+    char_end: int
+class AnnotationLocatorDocxStory(TypedDict):
+    format: Literal["docx_story"]
+    scope: DocxStoryScope
     para_path: str
     char_start: int
     char_end: int
@@ -12662,7 +12699,7 @@ class AnnotationLocatorCode(TypedDict):
     file_hash: str
     char_start: int
     char_end: int
-AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx | AnnotationLocatorHtml | AnnotationLocatorText | AnnotationLocatorCode
+AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorDocxStory | AnnotationLocatorPptx | AnnotationLocatorHtml | AnnotationLocatorText | AnnotationLocatorCode
 class ArtifactUnitView(TypedDict):
     locator: AnnotationLocator
     quote: NotRequired[str | None]
@@ -12948,8 +12985,10 @@ class CodeProposalSubmitRequest(TypedDict):
     message: str
     op_provenance: CodeOpProvenance
     catalog: NotRequired[LensCatalog | None]
+    repair_of: NotRequired[EntityId | None]
 class CodeProposalSubmitted(TypedDict):
     proposal: EntityId
+    admission_receipt: EntityId
     repo: EntityId
     actor: EntityId
     session: EntityId
@@ -13030,6 +13069,11 @@ class RepoProposalSettlement(TypedDict):
     actor: NotRequired[EntityId | None]
     decision: RepoProposalDecision
     settled_at: int
+class CodeProposalReplacementView(TypedDict):
+    receipt: EntityId
+    source: EntityId
+    replacement: EntityId
+    replacement_base: str
 class CodeProposalSettlementView(TypedDict):
     proposal: EntityId
     status: RepoProposalStatus
@@ -13040,6 +13084,10 @@ class CodeProposalSettlementView(TypedDict):
     parents: list[EntityId]
     mutation_seq: NotRequired[int | None]
     resolution: NotRequired[EntityId | None]
+    admission_receipt: NotRequired[EntityId | None]
+    attempt_receipts: list[EntityId]
+    repair_of: NotRequired[CodeProposalReplacementView | None]
+    replaced_by: NotRequired[CodeProposalReplacementView | None]
 class CodeProposalSettleRequest(TypedDict):
     proposal: EntityId
     decision: RepoProposalDecision
@@ -13313,6 +13361,11 @@ class CodeWaitResolveRequest(TypedDict):
     word_ref: EntityId
 CodeWaitState = Literal["waiting", "settling", "settled", "consumed"]
 CodeWaitBrowserAction = TypedDict("CodeWaitBrowserAction", {"act": str, "class": str, "role": str, "name": str, "locator": str, "page": NotRequired[str | None], "press": str})
+class CodeConsentStandingOffer(TypedDict):
+    actor_ref: str
+    verb_class: str
+    selectors: list[str]
+    target: NotRequired[str | None]
 class CodeWaitAnswerView(TypedDict):
     answer: CodeWaitChoice
     word_ref: EntityId
@@ -13320,6 +13373,8 @@ class CodeWaitAnswerView(TypedDict):
     remembered_grant_ref: NotRequired[str | None]
     decision_ref: str
     answered_at_ms: int
+    standing_grant_ref: NotRequired[str | None]
+    standing_receipt_ref: NotRequired[str | None]
 CodeWaitSettleOutcome = Literal["delivered", "refused", "delivery_unknown"]
 class CodeWaitLedgerLinks(TypedDict):
     prior_ref: NotRequired[str | None]
@@ -13348,6 +13403,7 @@ class CodeWaitReceiptView(TypedDict):
     hold_reasons: list[str]
     ask_ref: NotRequired[EntityId | None]
     allowed_answers: list[CodeWaitChoice]
+    standing_offer: NotRequired[CodeConsentStandingOffer | None]
     answer: NotRequired[CodeWaitAnswerView | None]
     settlement: NotRequired[CodeWaitSettlementView | None]
     consumption: NotRequired[CodeWaitConsumptionView | None]
@@ -14332,6 +14388,9 @@ class CodeSnapshotView(TypedDict):
     files: list[CodeSnapshotFile]
     repository: NotRequired[EntityId | None]
     capture_receipt: NotRequired[str | None]
+class CodeSnapshotCaptureRequest(TypedDict):
+    project_id: str
+    local_folder: str
 class CodeSnapshotRequest(TypedDict):
     repo: EntityId
     snapshot: str
@@ -14408,6 +14467,9 @@ class MergeQueueBatchView(TypedDict):
     slow_verdict_ref: NotRequired[str | None]
     quarantine: NotRequired[Quarantine | None]
     selected_tests: AffectedTests
+    admission_receipt: NotRequired[EntityId | None]
+    completion_receipt: NotRequired[EntityId | None]
+    proposal_admission_receipts: list[EntityId]
 class MergeQueueBatchRequest(TypedDict):
     repo: EntityId
     batch_ref: str
@@ -14692,6 +14754,19 @@ class AgentVerbClassesConfigureRequest(TypedDict):
 class AgentVerbClassesReceipt(TypedDict):
     configuration: AgentVerbClassesView
     receipt_ref: str
+AgentTier = Literal["read", "propose", "full"]
+class OAuthAuthorizationAnswer(TypedDict):
+    request_ref: EntityId
+    allow: bool
+    tier: NotRequired[AgentTier | None]
+    world_ref: NotRequired[EntityId | None]
+class OAuthAuthorizationAnswered(TypedDict):
+    request_ref: EntityId
+    allowed: bool
+    agent: NotRequired[EntityId | None]
+    grant_ref: NotRequired[EntityId | None]
+    tier: NotRequired[AgentTier | None]
+    world_ref: NotRequired[EntityId | None]
 class GitPushRepo(TypedDict):
     repo: EntityId
     project: EntityId
@@ -14841,6 +14916,9 @@ class RepoQueueEntryView(TypedDict):
     expected_head: str
     landed_head: NotRequired[str | None]
     blockers: list[EntityId]
+    admission_receipt: NotRequired[EntityId | None]
+    completion_receipt: NotRequired[EntityId | None]
+    proposal_admission_receipts: list[EntityId]
 class RepoMergeQueueObserveOutput(TypedDict):
     work: EntityId
     repo: EntityId
@@ -14890,8 +14968,10 @@ class RepoProposalSubmitInput(TypedDict):
     content: list[int]
     message: str
     declaration: NotRequired[EntityId | None]
+    repair_of: NotRequired[EntityId | None]
 class RepoProposalSubmitOutput(TypedDict):
     proposal: EntityId
+    admission_receipt: EntityId
     work: EntityId
     path: str
     base_green: str
@@ -15674,6 +15754,7 @@ class ArtifactAskUnitsSheetRows(TypedDict):
 class ArtifactAskUnitsParagraphs(TypedDict):
     kind: Literal["paragraphs"]
     blocks: list[str]
+    scope: NotRequired[DocxStoryScope | None]
     author: str
     labels: SlideReviewLabels
 class ArtifactAskUnitsFolderItems(TypedDict):
@@ -16498,6 +16579,7 @@ class VersionReconciliation(TypedDict):
     kept_head: ArtifactVersionView
 class ParagraphJudgment(TypedDict):
     block: str
+    scope: NotRequired[DocxStoryScope | None]
     text_hash: str
     decision: TypedDecision
     answer_contract: AnswerContract
@@ -20343,12 +20425,14 @@ class VerbHookStopCompleted(TypedDict):
     status: Literal["completed"]
     invocation: str
     result: Any
+    hook_notice: NotRequired[bool | None]
 class VerbHookStopCompletedWithError(TypedDict):
     status: Literal["completed_with_error"]
     invocation: str
     code: str
     message: str
     receipt_ref: NotRequired[str | None]
+    hook_notice: NotRequired[bool | None]
 VerbHookStop = VerbHookStopSkipped | VerbHookStopPending | VerbHookStopHidden | VerbHookStopCompleted | VerbHookStopCompletedWithError
 class RoomJoinHold(TypedDict):
     room: EntityId
@@ -20677,25 +20761,6 @@ class DocxBlockView(TypedDict):
     text: str
     runs: list[DocxRun]
     cells: list[DocxCellView]
-DocxHeaderFooterBand = Literal["default", "first", "even"]
-class DocxStoryScopeHeader(TypedDict):
-    kind: Literal["header"]
-    part_name: str
-    band: DocxHeaderFooterBand
-class DocxStoryScopeFooter(TypedDict):
-    kind: Literal["footer"]
-    part_name: str
-    band: DocxHeaderFooterBand
-class DocxStoryScopeFootnote(TypedDict):
-    kind: Literal["footnote"]
-    id: str
-class DocxStoryScopeEndnote(TypedDict):
-    kind: Literal["endnote"]
-    id: str
-class DocxStoryScopeComment(TypedDict):
-    kind: Literal["comment"]
-    id: str
-DocxStoryScope = DocxStoryScopeHeader | DocxStoryScopeFooter | DocxStoryScopeFootnote | DocxStoryScopeEndnote | DocxStoryScopeComment
 class DocxStoryParagraphView(TypedDict):
     id: str
     locked: bool

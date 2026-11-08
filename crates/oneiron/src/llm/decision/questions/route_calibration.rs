@@ -82,9 +82,16 @@ fn group(
     key: RouteGroupKey,
     members: &[(&CalibrationPair, bool)],
 ) -> RouteCalibrationGroup {
-    let (fit, check): (Vec<_>, Vec<_>) = members.iter().partition(|(_, fit)| *fit);
-    let fit: Vec<&CalibrationPair> = fit.into_iter().map(|(pair, _)| *pair).collect();
-    let check: Vec<&CalibrationPair> = check.into_iter().map(|(pair, _)| *pair).collect();
+    let fit: Vec<&CalibrationPair> = members
+        .iter()
+        .filter(|(_, fit)| *fit)
+        .map(|(pair, _)| *pair)
+        .collect();
+    let check: Vec<&CalibrationPair> = members
+        .iter()
+        .filter(|(_, fit)| !*fit)
+        .map(|(pair, _)| *pair)
+        .collect();
     let raw = metrics::calibration(check.iter().copied().map(point));
     let outcome = if fit.len() < MIN_ROUTE_FIT_PAIRS {
         RouteFit::Refused {
