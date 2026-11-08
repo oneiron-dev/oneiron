@@ -64,6 +64,7 @@ impl PendingRow {
                 name,
                 media_type,
                 report,
+                ..
             } => serde_json::json!({
                 "name": name,
                 "media_type": media_type,

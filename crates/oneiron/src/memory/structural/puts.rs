@@ -166,6 +166,10 @@ impl Memory<'_> {
     /// later AgentRun output waits beside the live artifact as a proposal;
     /// its authorized Keep appends the version and its ledger claim.
     ///
+    /// The ledger claim is born at this surface's birth position, which its
+    /// host bound (`with_birth_position`, FIX 3171), never at a place the
+    /// caller names. A proposal keeps that position for its Keep.
+    ///
     /// Exempt from the hard-delete recreation refusal BY CONSTRUCTION: no
     /// caller-supplied id is written here — the ASSET id is content-derived
     /// inside the engine (module-private derivation) and the LEDGER claim
@@ -215,6 +219,7 @@ impl Memory<'_> {
                     self.write_actor(),
                     occurred,
                     learned_at.unwrap_or(occurred_at),
+                    self.birth_position(),
                     lane,
                 )
             })?)
