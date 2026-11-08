@@ -3318,6 +3318,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_sync_documents_copy_edit_review(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sync.documents.copy_edit.review", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sync_documents_copy_edit_settle(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sync.documents.copy_edit.settle", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_sync_retained_work_wait_set(
         &self,
         input: serde_json::Value,
@@ -4899,6 +4917,21 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_campaign_held(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.held", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_campaign_approve_once(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.approve_once", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_connectors_calls_approve_once(
         &self,
         input: serde_json::Value,
@@ -4938,6 +4971,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consent.create_auto_weave_grant", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_create_nightly_link_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.create_nightly_link_grant", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -6047,6 +6089,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_proposal_rereview(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.proposal_rereview", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_conflict_record(
         &self,
         input: serde_json::Value,
@@ -6071,6 +6122,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.code.proposal_resolve", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_proposal_resolve_rereview(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.proposal_resolve_rereview", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -6421,6 +6481,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.code.origin.publish.cancel", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_devices_predecessor_name(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.devices.predecessor.name", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -10887,6 +10956,15 @@ impl NativeClient {
     pub fn vault_notes_read(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.notes.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_read_indexed(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.read_indexed", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

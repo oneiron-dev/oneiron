@@ -3,6 +3,7 @@
 mod compaction;
 mod continuation;
 mod corrections;
+mod fold_answers;
 mod folds;
 mod lift;
 mod model_seat;
@@ -36,8 +37,12 @@ pub(crate) use self::compaction::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, epoch_execution_in,
 };
 pub(crate) use self::continuation::{
-    StoredRunContinuation, continuation_seed_body_in_txn, publish_continuation_output_in_txn,
-    put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,
+    InheritedCompaction, StartCompaction, StoredRunContinuation, continuation_seed_body_in_txn,
+    publish_continuation_output_in_txn, put_run_continuation_row_in_txn, run_continuation_in_txn,
+    seed_continuation_run,
+};
+pub(crate) use self::fold_answers::{
+    WithdrawnFoldAnswer, fold_answer_withdrawn, redact_fold_answers, retire_fold_answers_in_txn,
 };
 pub use self::read_worlds::ReadWorldUnknown;
 pub(crate) use self::read_worlds::{
@@ -69,7 +74,7 @@ pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::undecodable_step_capsule_in_txn;
 pub(crate) use self::replay_capsule::{
     ForkProvenance, ForkRows, actor_gone_in_txn, bind_capsule_answer, capsule_context_body,
-    capsule_request, capsule_route_prompt, capsule_start_body,
+    capsule_fold_words_withdrawn, capsule_request, capsule_route_prompt, capsule_start_body,
     contribution_pair_erase_candidates_in_txn, erase_capsule_actor_in_txn,
     erase_contribution_forks_in_txn, finalize_capsule, fork_execution_outputs, fork_response,
     fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule, put_unavailable,
@@ -83,7 +88,8 @@ pub(crate) use self::replay_capsule::{
 pub(crate) use self::replay_capsule::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
-    settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
+    settle_start_bodies_in_rows, start_piece_held_apart_in_txn, step_capsule_row,
+    step_start_body_row, step_start_content_pieces, step_start_owners_in_txn,
 };
 pub(crate) use self::response_erase::{
     actor_gone, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,

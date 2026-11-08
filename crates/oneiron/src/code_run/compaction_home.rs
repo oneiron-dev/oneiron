@@ -55,6 +55,8 @@ pub struct CompactionHostBinding {
     /// [`Self::with_placement_scenario`] sets it, from the host's own
     /// authenticated placement. `None` wears the PERSON baseline.
     scenario: Option<EntityId>,
+    /// The dispatch's frozen provenance, never a home-read ceiling.
+    caller_origin: crate::agent_dispatch::CallerOrigin,
 }
 
 impl CompactionHostBinding {
@@ -62,6 +64,20 @@ impl CompactionHostBinding {
     #[must_use]
     pub const fn actor(&self) -> WriteActor {
         self.actor
+    }
+
+    /// Records the frozen origin of the actual dispatch this flight runs.
+    /// This changes no read binding and is never used by an admission check.
+    #[must_use]
+    pub const fn with_caller_origin(mut self, origin: crate::agent_dispatch::CallerOrigin) -> Self {
+        self.caller_origin = origin;
+        self
+    }
+
+    /// The provenance this flight's producer supplied, not its read locality.
+    #[must_use]
+    pub const fn caller_origin(&self) -> crate::agent_dispatch::CallerOrigin {
+        self.caller_origin
     }
 
     /// Where the run's caller sits, as its host found it.
@@ -124,6 +140,7 @@ pub fn bind_compaction_caller(
         locality,
         read_proof,
         scenario: None,
+        caller_origin: crate::agent_dispatch::CallerOrigin::Unknown,
     }
 }
 
