@@ -154,9 +154,8 @@ pub(crate) async fn connect_sync_socket(
 /// The carrier one sync socket to `uri` rides: `dialer`'s stream when there
 /// is one, else TCP to the URI's host, `ws` only. A carrier that fails to
 /// dial falls back to TCP when the URL carries credentials by itself (FIX
-/// 3374). A home probe opens it alone (FIX 4748), so it judges the carrier
-/// the socket rides.
-pub(crate) async fn open_carrier(
+/// 3374).
+async fn open_carrier(
     uri: &tokio_tungstenite::tungstenite::http::Uri,
     dialer: Option<&dyn SyncDialer>,
 ) -> Result<SyncIo, WsError> {

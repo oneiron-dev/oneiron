@@ -680,6 +680,7 @@ impl Vault {
             code_consent_host: Default::default(),
             managed_owner_check: Default::default(),
             served_transports: Default::default(),
+            esign_page_inspector: Default::default(),
             xlsx_precision_recalc: Default::default(),
             coach_weave_digest_host: Default::default(),
             origin_mirror_wake: Default::default(),

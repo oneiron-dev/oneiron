@@ -39,6 +39,10 @@ pub struct VectorSearchRequest {
     pub limit: usize,
     #[serde(default)]
     pub lane: VectorSearchLane,
+    /// The caller's retrieval filter (FIX 3977): bound before candidate
+    /// generation, so it narrows every channel, seed and terminal read.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 impl VectorSearchRequest {
@@ -116,6 +120,15 @@ impl Memory<'_> {
         &self,
         input: &VectorSearchRequest,
     ) -> MemoryResult<ScopedReadResult<VectorSearchResult>> {
+        if let Some(filter) = &input.filter {
+            // Bind the caller's filter on this call's handle once, so every
+            // lane the search opens meets it (FIX 3977).
+            let bound = VectorSearchRequest {
+                filter: None,
+                ..input.clone()
+            };
+            return self.with_read_filter(Some(filter)).query_vector(&bound);
+        }
         input.validate()?;
         let mut limit = input.limit;
         let mut limit_clamped = false;
