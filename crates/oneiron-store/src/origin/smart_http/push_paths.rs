@@ -12,6 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
+use crate::git_wire::path_text::git_path_text;
 use crate::origin::git_ref_change::GitPushRefChange;
 use crate::origin::smart_http::paths::serve_failed;
 use oneiron_base::error::Result;
@@ -48,10 +49,14 @@ pub fn read_moves(mut bytes: &[u8]) -> Result<BTreeMap<MoveKey, BTreeSet<String>
             let names = body
                 .strip_suffix(b"\0")
                 .ok_or_else(|| serve_failed("door path record is not NUL-terminated"))?;
+            // A changed path outside UTF-8 keeps its exact bytes as a Git
+            // path's text (FIX 21326), so one such path no longer fails the
+            // whole push. No Grant path bound admits that text: its escape
+            // is a control char, so only an unbounded authority moves it.
             for name in names.split(|byte| *byte == 0) {
-                let name = std::str::from_utf8(name)
-                    .map_err(|_| serve_failed("a changed path is not UTF-8"))?;
-                paths.insert(name.to_owned());
+                let name = git_path_text(name)
+                    .map_err(|_| serve_failed("a changed path is not a Git path"))?;
+                paths.insert(name.into_owned());
             }
         }
         let old = (!old.bytes().all(|byte| byte == b'0')).then(|| old.to_owned());

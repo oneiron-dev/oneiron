@@ -118,13 +118,17 @@ pub(super) fn stage_put_projections(
         .scope_stamps
         .stamp_put(store, wtxn, fixed.id, fixed.entity_type, data, row_put)?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_PERSON {
-        super::super::super::person_substrate::ensure_person_substrate(
-            store,
-            wtxn,
-            fixed.id,
-            fixed.occurred,
-            fixed.learned_at,
-        )?;
+        if let Some(substrate) = fixed.prepared_person_substrate {
+            substrate.apply_at_person_projection(store, wtxn)?;
+        } else {
+            super::super::super::person_substrate::ensure_person_substrate(
+                store,
+                wtxn,
+                fixed.id,
+                fixed.occurred,
+                fixed.learned_at,
+            )?;
+        }
     }
     crate::agent_def::stage_birth_custody_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;
     crate::receipt::stage_receipt_archive_put(write, wtxn, &fixed.id, fixed.entity_type, data)?;

@@ -142,9 +142,9 @@ impl Vault {
         Ok(view_of(&row, ledger, false))
     }
 
-    /// The instrument a wait's original caller was admitted on, for the
-    /// host's own check before it drives the effect: the same slip, live now,
-    /// whose current scope meets the scope it was admitted under. `None` for
+    /// The original caller's active instrument: the admitted request's pair,
+    /// or its explicitly confirmed successor, for the host's strict check
+    /// before it drives the same effect. `None` for
     /// a caller no credential was bound for: its grant alone limits it.
     ///
     /// # Errors
@@ -157,7 +157,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let row =
             read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(Error::EntityNotFound)?;
-        Ok(row.binding.original.credential)
+        Ok(row.active_credential().cloned())
     }
 
     /// The view of one wait, with its receipts' links as the consent Gate
@@ -249,8 +249,9 @@ fn answer_in_txn(
     {
         return Err(Error::ConcurrentWrite("code consent wait target changed"));
     }
-    let remember_asking_lineage =
-        input.choice == CodeConsentChoice::ApproveAndStopAsking && input.remember_asking_lineage;
+    let remember_asking_lineage = input.choice == CodeConsentChoice::ApproveAndStopAsking
+        && row.binding.remember_offer.is_some()
+        && input.remember_asking_lineage;
     if let Some(first) = &row.answer {
         let same = first.choice == input.choice
             && first.word_ref == input.word_ref
@@ -294,6 +295,7 @@ fn answer_in_txn(
         });
     }
     let digest = EffectDigest::from_bytes(row.binding.effect_digest);
+    let mut standing_grant = None;
     let (decision, remembered, holder_attribution) = match admitted {
         CodeConsentAnswerer::Owner(_) => {
             let (decision, remembered) = match input.choice {
@@ -302,53 +304,75 @@ fn answer_in_txn(
                     (vault.approve_once_in_txn(txn, owner, digest)?, None)
                 }
                 CodeConsentChoice::ApproveAndStopAsking => {
-                    let offer =
-                        row.binding
-                            .remember_offer
-                            .clone()
-                            .ok_or(Error::ConcurrentWrite(
-                                "this code consent wait offers no stop asking",
+                    if let Some(offer) = row.binding.remember_offer.clone() {
+                        let call =
+                            row.binding
+                                .pending
+                                .connector_call()
+                                .ok_or(Error::ConcurrentWrite(
+                                    "this code consent wait binds no connector call",
+                                ))?;
+                        let key = crate::connector_key::read_key_for_pack_in_txn(
+                            vault,
+                            txn,
+                            &call.key_ref,
+                        )?
+                        .ok_or(Error::EntityNotFound)?;
+                        let remember_context =
+                            call.remember_context.ok_or(Error::ConcurrentWrite(
+                                "this code consent wait binds no remember context",
                             ))?;
-                    let call =
-                        row.binding
-                            .pending
-                            .connector_call()
-                            .ok_or(Error::ConcurrentWrite(
-                                "this code consent wait binds no connector call",
-                            ))?;
-                    let key =
-                        crate::connector_key::read_key_for_pack_in_txn(vault, txn, &call.key_ref)?
-                            .ok_or(Error::EntityNotFound)?;
-                    let remember_context = call.remember_context.ok_or(Error::ConcurrentWrite(
-                        "this code consent wait binds no remember context",
-                    ))?;
-                    if remember_asking_lineage && remember_context.lineage.is_none() {
-                        return Err(Error::InvalidConfig(
-                            "asking-lineage remember needs a delegation lineage".to_owned(),
-                        ));
+                        if remember_asking_lineage && remember_context.lineage.is_none() {
+                            return Err(Error::InvalidConfig(
+                                "asking-lineage remember needs a delegation lineage".to_owned(),
+                            ));
+                        }
+                        let scoped_call = crate::consent::tool_scope::ScopedMcpCallContext {
+                            server: call.server.clone(),
+                            tool: call.tool.clone(),
+                            resolved_endpoint: call.endpoint.clone(),
+                            payload_data_class: call.payload_data_class,
+                        };
+                        let (_, bound) =
+                            crate::connector_key::connector_tool_remember_bound_in_txn(
+                                &vault.store,
+                                txn,
+                                &call.key_ref,
+                                &key,
+                                &scoped_call,
+                                remember_context,
+                                remember_asking_lineage,
+                            )?
+                            .filter(|(settings_act, _)| *settings_act == offer.settings_act)
+                            .ok_or(Error::ConcurrentWrite("connector tool setting changed"))?;
+                        let remembered = vault.create_standing_grant_in_txn(txn, owner, bound)?;
+                        (
+                            vault.approve_once_in_txn(txn, owner, digest)?,
+                            remembered.grant_ref(),
+                        )
+                    } else {
+                        let offer =
+                            row.binding
+                                .standing_offer
+                                .as_ref()
+                                .ok_or(Error::ConcurrentWrite(
+                                    "this code consent wait offers no stop asking",
+                                ))?;
+                        if super::binding::binding_digest(&row.binding)?
+                            != row.binding.binding_digest
+                        {
+                            return Err(Error::ConcurrentWrite(
+                                "code consent standing offer changed",
+                            ));
+                        }
+                        let receipt =
+                            vault.create_standing_grant_in_txn(txn, owner, offer.bound()?)?;
+                        let grant_ref = receipt.grant_ref().ok_or(Error::InvariantViolation(
+                            "a standing grant creation returned no grant reference",
+                        ))?;
+                        standing_grant = Some((grant_ref, receipt.decision_id()));
+                        (vault.approve_once_in_txn(txn, owner, digest)?, None)
                     }
-                    let scoped_call = crate::consent::tool_scope::ScopedMcpCallContext {
-                        server: call.server.clone(),
-                        tool: call.tool.clone(),
-                        resolved_endpoint: call.endpoint.clone(),
-                        payload_data_class: call.payload_data_class,
-                    };
-                    let (_, bound) = crate::connector_key::connector_tool_remember_bound_in_txn(
-                        &vault.store,
-                        txn,
-                        &call.key_ref,
-                        &key,
-                        &scoped_call,
-                        remember_context,
-                        remember_asking_lineage,
-                    )?
-                    .filter(|(settings_act, _)| *settings_act == offer.settings_act)
-                    .ok_or(Error::ConcurrentWrite("connector tool setting changed"))?;
-                    let remembered = vault.create_standing_grant_in_txn(txn, owner, bound)?;
-                    (
-                        vault.approve_once_in_txn(txn, owner, digest)?,
-                        remembered.grant_ref(),
-                    )
                 }
             };
             (decision, remembered, None)
@@ -383,6 +407,7 @@ fn answer_in_txn(
             }),
         decision: decision.decision_id(),
         remembered,
+        standing_grant,
         policy_frontier: if let Some(attribution) = &holder_attribution {
             attribution.policy_frontier
         } else {
@@ -397,7 +422,7 @@ fn answer_in_txn(
     put_code_consent_wait_in_txn(vault, txn, &mut row)?;
     if input.choice == CodeConsentChoice::Deny {
         refuse_code_consent_wait_in_txn(vault, txn, input.wait_id, &[CODE_WAIT_DENIED])?;
-    } else if !original_authority_holds_in_txn(vault, txn, &row.binding) {
+    } else if !active_authority_holds_in_txn(vault, txn, &row) {
         refuse_code_consent_wait_in_txn(
             vault,
             txn,
@@ -471,7 +496,7 @@ pub(crate) fn prove_code_consent_holder_act_in_txn(
         refuse_code_consent_wait_in_txn(vault, txn, input.wait_id, &[CODE_WAIT_TARGET_CHANGED])?;
         return Ok(None);
     }
-    if !original_authority_holds_in_txn(vault, txn, &row.binding) {
+    if !active_authority_holds_in_txn(vault, txn, &row) {
         refuse_code_consent_wait_in_txn(
             vault,
             txn,
@@ -550,6 +575,16 @@ pub(crate) fn original_authority_holds_in_txn(
         })
 }
 
+/// Whether the original caller's active credential still stands at this
+/// snapshot: the original pair or its explicit, confirmed successor.
+pub(crate) fn active_authority_holds_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &CodeConsentWaitRow,
+) -> bool {
+    original_authority_holds_in_txn(vault, txn, &row.active_binding())
+}
+
 /// The code-bound approval wait `wait_id` admits its effect under, proved
 /// from its row in the admission writer: its binding digest, once the first
 /// answer approved and nothing settled it, with the frozen bytes the ones
@@ -576,7 +611,7 @@ pub(crate) fn code_consent_admission_in_txn(
     if row.binding.frozen_input_digest != *frozen_digest {
         return Err(Error::ConcurrentWrite("code consent target changed"));
     }
-    if !original_authority_holds_in_txn(vault, txn, &row.binding) {
+    if !active_authority_holds_in_txn(vault, txn, &row) {
         return Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
             "the original caller credential of this code consent wait no longer stands",
         )));
@@ -803,7 +838,9 @@ pub(crate) fn offered_choices(binding: &CodeConsentBinding) -> Vec<CodeConsentCh
     CodeConsentChoice::ALL
         .into_iter()
         .filter(|choice| {
-            *choice != CodeConsentChoice::ApproveAndStopAsking || binding.remember_offer.is_some()
+            *choice != CodeConsentChoice::ApproveAndStopAsking
+                || binding.remember_offer.is_some()
+                || binding.standing_offer.is_some()
         })
         .collect()
 }
@@ -819,6 +856,7 @@ fn view_of(
         wait_id: row.binding.wait_id,
         run_id: row.binding.run_id,
         state: row.state(),
+        revision: row.revision,
         verb: row.binding.verb_row.clone(),
         connector: call.map(|call| call.name.clone()).unwrap_or_default(),
         tool: call.map(|call| call.tool.clone()).unwrap_or_default(),
@@ -827,6 +865,7 @@ fn view_of(
         hold_reasons: row.binding.hold_reasons.clone(),
         ask: row.ask,
         options: offered_choices(&row.binding),
+        standing_offer: row.binding.standing_offer.clone(),
         sealed: row
             .checkpoint
             .as_ref()
@@ -837,6 +876,18 @@ fn view_of(
             .answer
             .as_ref()
             .map(|answer| format!("gate:{}", answer.decision.to_hex())),
+        standing_grant_ref: row.answer.as_ref().and_then(|answer| {
+            answer
+                .standing_grant
+                .as_ref()
+                .map(|(grant_ref, _)| grant_ref.clone())
+        }),
+        standing_receipt_ref: row.answer.as_ref().and_then(|answer| {
+            answer
+                .standing_grant
+                .as_ref()
+                .map(|(_, receipt)| format!("gate:{}", receipt.to_hex()))
+        }),
         outcome: row.settlement.as_ref().map(|settled| settled.outcome),
         settlement_receipt: row
             .settlement
@@ -860,13 +911,16 @@ fn view_of(
         consumed_at_ms: consumed.map(|consumed| consumed.consumed_at_ms),
         consumption_links: ledger.consumed,
         remember_asking_lineage: row.answer.as_ref().and_then(|answer| {
-            (answer.choice == CodeConsentChoice::ApproveAndStopAsking)
-                .then_some(answer.remember_asking_lineage)
+            (answer.choice == CodeConsentChoice::ApproveAndStopAsking
+                && row.binding.remember_offer.is_some())
+            .then_some(answer.remember_asking_lineage)
         }),
         remembered: row
             .answer
             .as_ref()
             .and_then(|answer| answer.remembered.clone()),
         already_answered,
+        rebind_proposal: row.rebind_proposal.clone(),
+        rebinds: row.rebinds.clone(),
     }
 }

@@ -361,14 +361,16 @@ impl ConsolidationExecutor<'_> {
         super::super::roles::bind_reasoning(step_ctx.vault, call.backend, &mut request)?;
         let step_hash = request.canonical_hash()?;
         let outcome = call_as_step(step_ctx, call.backend, self.guard, request).await;
-        let response = match outcome? {
-            StepOutcome::Finished { response, .. } => response,
+        let (response, binding) = match outcome? {
+            StepOutcome::Finished {
+                response, binding, ..
+            } => (response, binding),
             StepOutcome::Trapped { .. } => return Ok(None),
         };
         charges.record_terminal(
             step_ctx.vault,
-            step_ctx.attempt_id,
-            step_hash,
+            binding.attempt_id,
+            binding.step_hash,
             &response.usage,
         )?;
         let rules = failure_rules::load(step_ctx.vault)?;

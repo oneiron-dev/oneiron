@@ -18,6 +18,9 @@
 //! inside a write transaction.
 use std::sync::Arc;
 
+mod status;
+pub(crate) use status::connector_call_status;
+
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{Memory, MemoryError, MemoryResult};
 use oneiron::outbound_consent::{ConnectorCallRequest, ConnectorSource};
@@ -149,6 +152,7 @@ pub(super) fn narrowed_questions(
         questions,
         live_until_ms,
         reasons,
+        ..
     } = reply
     else {
         return (Ok(ActAnswer::details_on_device()), Some(Vec::new()));

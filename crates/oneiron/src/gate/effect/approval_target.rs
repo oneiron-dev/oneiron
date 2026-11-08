@@ -40,6 +40,7 @@ use crate::consent::approval_proof::PinnedApprovalFamily;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::gate::ExternalEffectGateInput;
 use crate::linear_sync::{LinearEffectRequest, MirroredTaskFields};
+use crate::outbound::OutboundRecipient;
 
 /// The BLAKE3 domain of the target pin.
 const APPROVE_ONCE_TARGET_DOMAIN: &[u8] = b"oneiron.external_effect.approve_once.target.v1";
@@ -89,11 +90,14 @@ pub(crate) enum ApprovalTarget {
     /// A message, media, reaction, edit, retraction, push, invite, call or
     /// connect request on a communications connector: the sending identity
     /// when one is bound, the original transport target (never the
-    /// counterparty alias the Gate also reads), the thread it replies on,
-    /// its content ref, and the send ref.
+    /// counterparty alias the Gate also reads), every recipient of a mail
+    /// message to several in its role and place (fix list row 17645; empty
+    /// for a send to its target alone, which pins as before), the thread it
+    /// replies on, its content ref, and the send ref.
     Communication {
         sender: Option<EntityId>,
         target: String,
+        recipients: Vec<OutboundRecipient>,
         thread_ref: Option<String>,
         content_ref: Option<String>,
         send_ref: String,
@@ -362,6 +366,17 @@ impl ApprovalTarget {
     /// `email`, a replace with a sender) pins as a communication too, by
     /// the producer's prepared classification (FIX 11869).
     pub(crate) fn for_outbound(facts: &OutboundSendFacts<'_>) -> Option<Self> {
+        Self::for_outbound_to(facts, &[])
+    }
+
+    /// [`Self::for_outbound`] for a send to `recipients`, every recipient of
+    /// one mail message to several (fix list row 17645): a communication
+    /// target pins each in its role and place, so the press names the whole
+    /// message and no subset of it. An empty list pins as `for_outbound`.
+    pub(crate) fn for_outbound_to(
+        facts: &OutboundSendFacts<'_>,
+        recipients: &[OutboundRecipient],
+    ) -> Option<Self> {
         let send_ref = facts.send_ref.to_owned();
         let content_ref = facts.content_ref.map(str::to_owned);
         let target = match facts.connector {
@@ -396,6 +411,7 @@ impl ApprovalTarget {
             _ => Self::Communication {
                 sender: facts.sender,
                 target: facts.target.to_owned(),
+                recipients: recipients.to_vec(),
                 thread_ref: facts.thread_ref.map(str::to_owned),
                 content_ref,
                 send_ref,
@@ -509,6 +525,7 @@ impl ApprovalTarget {
             Self::Communication {
                 sender,
                 target,
+                recipients,
                 thread_ref,
                 content_ref,
                 send_ref,
@@ -519,6 +536,16 @@ impl ApprovalTarget {
                 optional(&mut hasher, thread_ref.as_deref());
                 optional(&mut hasher, content_ref.as_deref());
                 field(&mut hasher, send_ref);
+                // A message to several pins each recipient after the send
+                // ref, counted; a send to its target alone pins as before.
+                if !recipients.is_empty() {
+                    field(&mut hasher, "recipients");
+                    hasher.update(&(recipients.len() as u64).to_le_bytes());
+                    for recipient in recipients {
+                        field(&mut hasher, recipient.role.as_str());
+                        field(&mut hasher, &recipient.address);
+                    }
+                }
             }
             Self::HttpBundle {
                 endpoint,

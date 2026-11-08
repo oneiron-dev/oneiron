@@ -14,12 +14,14 @@ mod held_copy;
 mod note_fork_upload;
 mod note_requests;
 pub(crate) mod note_state;
+mod owner_bodies;
 pub use super::selector::secret_projection::RepoCopyEditReview;
 pub(crate) use copy::judged_id_in_txn;
 pub(crate) use destination::text_withheld;
 pub use destination::{
     admit_document_destination_in_txn, document_frame_withheld, document_frame_withheld_for,
 };
+pub(crate) use entity::retire_journal_in_txn;
 pub(crate) mod storage;
 #[cfg(test)]
 mod tests;
@@ -441,6 +443,12 @@ impl EntityDocument {
                 .oplog_vv()
                 .encode());
         }
+        // FIX 2458: a typed body's peers send the operations its log lacks.
+        if let Some(vv) =
+            crate::typed_body::sync_frame::typed_body_vv_in_txn(&self.vault.store, &txn, &self.id)?
+        {
+            return Ok(vv.encode());
+        }
         Ok(entity::document_in(&self.vault, &txn, self.id)?
             .0
             .oplog_vv()
@@ -471,9 +479,11 @@ impl EntityDocument {
 
     /// Privileged embedding/authority import, without peer grant admission.
     /// STATE replaces, never merges a shallow copy. NOTE still refuses raw bytes.
-    /// Socket writes must use [`Self::import_from_peer`] instead.
+    /// Socket writes must use [`Self::import_from_peer`] instead. This door
+    /// alone carries the owner's authority to take a canonical restore's
+    /// successor in place of the text held here (FIX 3553).
     pub fn import(&self, kind: u8, bytes: &[u8]) -> Result<()> {
-        self.import_admitted(kind, bytes, |_| Ok(()))
+        self.import_admitted_as(kind, bytes, |_| Ok(()), true)
     }
 
     /// Append a peer update only if its grant and live ledger selector still
@@ -548,15 +558,29 @@ impl EntityDocument {
 
     /// The internal admitted importer: `admit` judges the text in the
     /// writer that lands it, which takes a STATE as well as an UPDATE
-    /// (FIX 8861). Its callers choose which kinds they let through.
+    /// (FIX 8861). Its callers choose which kinds they let through. A grant
+    /// to write text is no authority to replace history, so no successor is
+    /// taken here (FIX 3553).
     pub(super) fn import_admitted(
         &self,
         kind: u8,
         bytes: &[u8],
         admit: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
+        self.import_admitted_as(kind, bytes, admit, false)
+    }
+
+    /// [`Self::import_admitted`], where `takes_successor` names the owner's
+    /// authority to take a canonical restore's successor (FIX 3553).
+    fn import_admitted_as(
+        &self,
+        kind: u8,
+        bytes: &[u8],
+        admit: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+        takes_successor: bool,
+    ) -> Result<()> {
         self.refuse_raw_note()?;
-        self.import_record(kind, bytes, admit)?;
+        self.import_record(kind, bytes, admit, takes_successor)?;
         // The document now held can prove a `regenerates` link owed on its
         // entity (FIX 6204).
         super::bridge::wake_regenerates_after_document(&self.vault, &[self.id]);
@@ -605,21 +629,21 @@ impl EntityDocument {
         )
     }
 
-    /// The owner lane's export: NOTE documents only, under one owner admission
-    /// key and the owner export's refusals, judged for the machine the export
-    /// serves.
+    /// The owner lane's export: NOTE documents and typed bodies (FIX 2458),
+    /// under one owner admission key and the owner export's refusals, judged
+    /// for the machine the export serves.
     pub(crate) fn export_owner(
         &self,
         remote_vv: &[u8],
         withhold: super::window::Withhold<'_>,
     ) -> Result<Vec<u8>> {
-        if !self.is_note()? {
-            return Err(Error::sync_protocol(
-                SyncProtocolValidation::DocumentAdmissionDenied,
-            ));
-        }
+        let note = self.is_note()?;
         self.export_admitted(OWNER_ADMISSION_KEY, remote_vv, |txn| {
-            owner_note_admission_for(&self.vault, txn, self.id, withhold)
+            if note {
+                owner_note_admission_for(&self.vault, txn, self.id, withhold)
+            } else {
+                owner_bodies::owner_body_admission_for(&self.vault, txn, self.id, withhold)
+            }
         })
     }
 
@@ -645,6 +669,22 @@ impl EntityDocument {
         self.vault.with_write_txn_grouped(|txn| {
             eligible(&self.vault, txn, self.id)?;
             admit(txn)?;
+            // FIX 2458: a typed body rides as its frontiers and the
+            // operations the peer lacks, never as a state copy.
+            if let Some(payload) = crate::typed_body::sync_frame::typed_body_frame_in_txn(
+                &self.vault,
+                txn,
+                &self.id,
+                &peer,
+                &crate::entity_doc::office::OFFICE_BODY_OWNER,
+            )? {
+                let frame = encode_document(self.id, document_sub_tags::UPDATE, &payload)
+                    .into_result()
+                    .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))?;
+                // Its operations are not the served row, so the frame gives no
+                // cache-world evidence: provenance stays unknown.
+                return Ok((frame, None));
+            }
             let mut note_head = None;
             let (text, slot) = if self.vault.get_entity_type_in_txn(txn, &self.id)?
                 == Some(crate::registry::ENTITY_TYPE_NOTE)

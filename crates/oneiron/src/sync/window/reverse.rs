@@ -10,7 +10,7 @@ use super::loro_support::{
 use super::pack_sync;
 use super::quarantine::{self, QuarantineContainer};
 use super::types::WindowKey;
-use super::window_packing_excludes_entity;
+use super::window_packing_excludes_entity_with;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -235,6 +235,10 @@ fn reverse_rematerialize_scan(
         entities_in_range = kept;
     }
     let device_only = withhold.worlds(vault)?;
+    // One snapshot for the pass's source-audience verdicts, kept across its
+    // rows and edge ends (FIX 16254).
+    let lineage_txn = vault.store.env.read_txn()?;
+    let mut lineage = crate::source_audience::LineagePass::new(vault, &lineage_txn)?;
 
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
@@ -243,6 +247,7 @@ fn reverse_rematerialize_scan(
     let mut wrote_any = false;
     let mut mirror_sources = BTreeMap::new();
     let mut messages = Vec::new();
+    let mut typed_bodies = Vec::new();
     let mut code_rows = Vec::new();
     let entities_in_range_set: HashSet<EntityId> = entities_in_range.iter().copied().collect();
     let mut protected_tombstones = HashSet::new();
@@ -330,7 +335,7 @@ fn reverse_rematerialize_scan(
         let hex_id = id.to_hex();
 
         // Defer-sync egress door, before reading or packing the payload.
-        if window_packing_excludes_entity(vault, &device_only, id)? {
+        if window_packing_excludes_entity_with(vault, &mut lineage, &device_only, id)? {
             continue;
         }
 
@@ -538,6 +543,29 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            // FIX 2691: an office artifact's proposals ride beside it.
+            if window_key.world().is_none()
+                && EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+                    header.entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT
+                })
+                && map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::office_proposals::mirror_office_proposals(
+                    vault, doc, window_key, id,
+                )?
+            {
+                wrote_any = true;
+            }
+            // FIX 12470: a typed body's commit receipts ride beside it.
+            if window_key.world().is_none()
+                && map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::typed_body_rows::mirror_typed_body_rows(vault, doc, window_key, id)?
+            {
+                wrote_any = true;
+            }
+            // FIX 12470: and its forks, mirrored after this pass commits.
+            if window_key.world().is_none() && map_contains_binary(&entities_map, &hex_id) {
+                typed_bodies.push(*id);
+            }
             // FIX 853: a MESSAGE's document and its quote pins ride beside
             // it, mirrored after this pass commits.
             if window_key.world().is_none()
@@ -565,7 +593,7 @@ fn reverse_rematerialize_scan(
     // Only its edges reaching this world are packed below. Apply the same
     // locality and egress gates before adding it to the edge-only pass.
     for id in base_edge_sources {
-        if window_packing_excludes_entity(vault, &device_only, &id)?
+        if window_packing_excludes_entity_with(vault, &mut lineage, &device_only, &id)?
             || !local_claim_sync_allowed(vault, &id)?
             || local_entity_is_unsyncable(vault, &id)?
         {
@@ -596,7 +624,12 @@ fn reverse_rematerialize_scan(
             // map. Plain containment = skip on this branch; reason-aware
             // (skip iff HARD) once tombstone v2 lands in M4-06.
             if tombstones.contains(&edge.target)
-                || window_packing_excludes_entity(vault, &device_only, &edge.target)?
+                || window_packing_excludes_entity_with(
+                    vault,
+                    &mut lineage,
+                    &device_only,
+                    &edge.target,
+                )?
             {
                 continue;
             }
@@ -643,8 +676,18 @@ fn reverse_rematerialize_scan(
                 if super::types::entity_world(&source_raw)?.is_some()
                     || is_unsyncable_secret_custody(&source_raw)
                     || edge.kind == EdgeKind::Blocks
-                    || window_packing_excludes_entity(vault, &device_only, &source)?
-                    || window_packing_excludes_entity(vault, &device_only, target)?
+                    || window_packing_excludes_entity_with(
+                        vault,
+                        &mut lineage,
+                        &device_only,
+                        &source,
+                    )?
+                    || window_packing_excludes_entity_with(
+                        vault,
+                        &mut lineage,
+                        &device_only,
+                        target,
+                    )?
                     || !local_claim_sync_allowed(vault, &source)?
                     || !local_claim_sync_allowed(vault, target)?
                     || local_entity_is_unsyncable(vault, &source)?
@@ -694,6 +737,9 @@ fn reverse_rematerialize_scan(
         crate::sync::message_docs::mirror_message_document(vault, doc, id, window_key)?;
         crate::sync::document_pins::mirror_document_pins(vault, doc, id, window_key)?;
     }
+    // FIX 12470: each typed body fork commits on its own, a part to a
+    // commit.
+    crate::sync::typed_body_rows::mirror_typed_body_forks(vault, doc, window_key, &typed_bodies)?;
     crate::sync::repo_manifests::mirror_repo_manifests(vault, doc, &code_rows)?;
     Ok(count)
 }

@@ -71,6 +71,7 @@ use crate::server::SyncServer;
 
 mod owner;
 mod results;
+mod status;
 pub(crate) use owner::press_owner_consent;
 use owner::{owner_rules, spend_owner_consent, withdraw_owner_ask};
 pub(crate) use results::ConnectorResultInterest;
@@ -666,6 +667,7 @@ pub(crate) fn answer_connector_question(
                 questions,
                 live_until_ms,
             },
+            Vec::new(),
         ),
         WorkerEvent::Result(result) => ConnectorCallReply::project(
             &name,
@@ -754,6 +756,7 @@ fn owner_pending(claim: Claim<'_>, call_ref: EntityId) -> ConnectorCallReply {
             questions: claim.questions.clone(),
             live_until_ms: claim.live_until_ms,
         },
+        Vec::new(),
     )
     .noting(vec!["connector_answer_owner_pending".to_owned()])
 }

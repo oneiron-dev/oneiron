@@ -10,8 +10,8 @@ use crate::attempt_queue::encoding::{
 };
 use crate::attempt_queue::telemetry::emit_attempt_queue_cleanup_span;
 use crate::attempt_queue::types::{
-    AttemptId, AttemptQueueCleanupReport, AttemptQueueRetryReason, AttemptRecord, AttemptState,
-    CleanupAttemptLeases,
+    AttemptId, AttemptLeaseExpiry, AttemptQueueCleanupReport, AttemptQueueRetryReason,
+    AttemptRecord, AttemptState, CleanupAttemptLeases,
 };
 use crate::attempt_queue::validate::validate_cleanup_leases_input;
 use crate::error::Result;
@@ -118,6 +118,16 @@ impl AttemptQueue<'_> {
                         // a fresh recovery row would lose it. The expired
                         // generation's exhaust, its attached result and its
                         // recorded checkpoint, stays on the row it resumes.
+                        record.lease_expirations.push(AttemptLeaseExpiry {
+                            attempt_count: record.attempt_count,
+                            lease_owner: record
+                                .lease_owner
+                                .clone()
+                                .expect("decoded leased attempt has an owner"),
+                            lease_updated_at: record.updated_at,
+                            observed_at: input.now,
+                            lease_timeout_secs: input.lease_timeout_secs,
+                        });
                         record.state = AttemptState::Queued;
                         record.lease_owner = None;
                         record.scheduled_at = None;
