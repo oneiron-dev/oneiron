@@ -405,9 +405,12 @@ impl Vault {
     /// revert of the revert returns forward the same way. The caller judged
     /// it in this transaction first ([`Self::replaced_model_pack_in_txn`]).
     /// A model pack declares no predicates, kinds, skills, adapter or setup,
-    /// so its receipt is all an install of it writes. A revert is a new
-    /// install of the kept version: its receipt carries the time of the
-    /// revert, on the vault's clock, as its install time (FIX 22058).
+    /// so its receipt is all an install of it writes, but for the
+    /// first-party model catalog: its rows follow the version restored, as
+    /// an install activates them, the outgoing seed and source kept first
+    /// (review #6755). A revert is a new install of the kept version: its
+    /// receipt carries the time of the revert, on the vault's clock, as its
+    /// install time (FIX 22058).
     pub(crate) fn restore_replaced_model_pack_in_txn(
         &self,
         txn: &mut RwTxn<'_>,
@@ -420,8 +423,34 @@ impl Vault {
         let installed = admission::PACK_INSTALL
             .get(&self.store, txn, &key)?
             .ok_or_else(|| invalid("the model pack is not installed"))?;
+        let model_catalog = is_first_party_model_catalog(&replaced)?;
+        let (outgoing_catalog, outgoing_source) = if model_catalog {
+            (
+                crate::llm::registry::CatalogSeed::from_installed_pack_in_txn(self, txn).ok(),
+                Some(EntityId::from_hex(&installed.source_id)?),
+            )
+        } else {
+            (None, None)
+        };
         replaced.installed_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
         admission::PACK_INSTALL.put(&self.store, txn, &key, &replaced)?;
-        REPLACED.put(&self.store, txn, &key, &installed)
+        REPLACED.put(&self.store, txn, &key, &installed)?;
+        if model_catalog {
+            self.activate_installed_model_catalog_in_txn(
+                txn,
+                outgoing_catalog.as_ref(),
+                outgoing_source,
+            )?;
+        }
+        Ok(())
     }
+}
+
+/// Whether `receipt` installs the first-party model catalog: its name, from
+/// the default hub's model-catalog subtree. An install or a revert of it
+/// activates its rows for inference admission (review #6755).
+pub(super) fn is_first_party_model_catalog(receipt: &PackInstallReceipt) -> Result<bool> {
+    Ok(receipt.pack_name == crate::skill_hub::MODEL_PACK_NAME
+        && receipt.hub_id == crate::skill_hub::default_skill_hub_id()?.to_hex()
+        && receipt.hub_ref == crate::skill_hub::MODEL_PACK_SUBTREE)
 }
