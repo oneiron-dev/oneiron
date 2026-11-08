@@ -154,7 +154,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         // Deny aborts the caller's batch op before any claim-side write lands.
         let writing = envelope.map(|envelope| closing_actor.unwrap_or_else(|| envelope.actor()));
         input.foreign_agent_ceiling =
-            super::super::foreign_agent::resolve_writing(store, &*wtxn, writing)?;
+            crate::gate::foreign_agent::resolve_writing(store, &*wtxn, writing)?;
         let mut decision = match hard_denial {
             Some(reason_code) => GateDecision::deny(reason_code),
             None => evaluate_with_delegation_chain(store, &*wtxn, policy, &input, lineage, writing),
