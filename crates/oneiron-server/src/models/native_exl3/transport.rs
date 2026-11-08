@@ -49,8 +49,8 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use super::buffer::{InputRegion, Outbound};
 use super::session_ops::{
-    AppendSourceCheck, ControlSourceCheck, PrepareSourceCheck, PrepareSourceMiss, SnapshotSourceCheck,
-    SnapshotSourceMiss,
+    AppendSourceCheck, ControlSourceCheck, PrepareSourceCheck, PrepareSourceMiss,
+    SnapshotSourceCheck, SnapshotSourceMiss,
 };
 use super::wire::{self, Incoming, Outgoing};
 use super::worker_host::{self, NativeLaunch};
