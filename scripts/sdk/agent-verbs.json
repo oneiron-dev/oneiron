@@ -1150,7 +1150,8 @@
         "intent_key": "intent_key",
         "brief": "brief",
         "ttl": "ttl",
-        "parent_ref": "parent_ref"
+        "parent_ref": "parent_ref",
+        "due_at": "due_at"
       },
       "mcp_required_fields": [
         "spec"
@@ -6068,6 +6069,40 @@
       "openapi": true
     },
     {
+      "name": "vault.sync.documents.copy_edit.review",
+      "description": "The owner reviews the edit a retained document copy holds for one source document: why it is held, the masked text the copy submitted, and the revision to settle it under; the revision is a token, not authority.",
+      "input": "crate::task_verb::sdk::RepoCopyEditReviewRequest",
+      "output": "Option<crate::task_verb::sdk::RepoCopyEditReviewView>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.sync.documents.copy_edit.review\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": false,
+      "rust_feature": "sync",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sync.documents.copy_edit.settle",
+      "description": "The owner settles that held copy edit to an exact replacement text, under the revision they reviewed; a changed or settled edit answers stale. Answers the committed document frame, a local commit, not a delivery.",
+      "input": "crate::task_verb::sdk::RepoCopyEditSettleRequest",
+      "output": "crate::task_verb::sdk::RepoCopyEditSettleView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.sync.documents.copy_edit.settle\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": false,
+      "rust_feature": "sync",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.sync.retained_work.wait.set",
       "description": "The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait.",
       "input": "crate::task_verb::sdk::RetainedWorkWaitSetRequest",
@@ -8700,6 +8735,36 @@
       "openapi": true
     },
     {
+      "name": "vault.campaign.held",
+      "description": "The owner reviews the last-observed campaign enrollment holds and their queued redrives; a redrive is not a sent or completed call.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::campaign::enrollment::CampaignEnrollmentHeldCall>",
+      "call": "crate::task_verb::sdk::campaign_enrollment_held(memory.vault(), &memory.embedded_owner(\"vault.campaign.held\")?, _input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.campaign.approve_once",
+      "description": "The owner approves exactly one current campaign enrollment hold by its call ref and reviewed digest, queuing the original work without a standing grant or bypassing its ordinary send checks.",
+      "input": "CampaignEnrollmentApproveOnceRequest",
+      "output": "crate::consent::lifecycle::ConsentActReceipt",
+      "call": "crate::task_verb::sdk::approve_campaign_enrollment_once(memory.vault(), &memory.embedded_owner(\"vault.campaign.approve_once\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.connectors.calls.approve_once",
       "description": "The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent.",
       "input": "ConnectorCallApproveOnceRequest",
@@ -8766,6 +8831,21 @@
       "input": "crate::consent::lifecycle::AutoWeaveGrantRequest",
       "output": "crate::consent::lifecycle::ConsentActReceipt",
       "call": "crate::consent::lifecycle::mint_auto_weave_grant(memory.vault(), &memory.embedded_owner(\"vault.consent.create_auto_weave_grant\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.create_nightly_link_grant",
+      "description": "The owner lets this vault's Dreamer apply the SameAs links its nightly continuations propose; nothing is granted by default.",
+      "input": "crate::dreamer_consolidation::NightlyLinkGrantRequest",
+      "output": "crate::consent::lifecycle::ConsentActReceipt",
+      "call": "crate::dreamer_consolidation::mint_nightly_link_grant(memory.vault(), &memory.embedded_owner(\"vault.consent.create_nightly_link_grant\")?, input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -9458,33 +9538,27 @@
     },
     {
       "name": "vault.claims.review",
-      "description": "The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content.",
+      "description": "The owner or explicitly granted holder reviews one readable proposed claim: its content-bound review_id, opener and tray row. A native claim-review Grant grants no read access.",
       "input": "crate::memory::ClaimProposalReviewRequest",
       "output": "crate::memory::ClaimProposalReview",
-      "call": "memory.claim_review_as_owner(&memory.embedded_owner(\"vault.claims.review\")?, &input)?",
+      "call": "memory.claim_review(&input)?",
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Read",
-      "admission": {
-        "unrestricted_record_scope": true
-      },
       "section": false,
       "openapi": true
     },
     {
       "name": "vault.claims.settle",
-      "description": "The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused.",
+      "description": "The owner or explicitly granted holder approves or rejects exactly a reviewed proposed claim through the gate. Its Settlement names the actual person or Grant; owner-critical obligations still require owner proof.",
       "input": "crate::memory::ClaimSettleRequest",
       "output": "crate::memory::ClaimSettlement",
-      "call": "memory.claim_settle_as_owner(&memory.embedded_owner(\"vault.claims.settle\")?, &input)?",
+      "call": "memory.claim_settle(&input)?",
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
-      "admission": {
-        "unrestricted_record_scope": true
-      },
       "section": false,
       "openapi": true
     },
@@ -10752,6 +10826,21 @@
       "openapi": true
     },
     {
+      "name": "vault.code.proposal_rereview",
+      "description": "Submit a fresh Proposed review of verified redacted bytes from an approved file proposal. Owner only. The change supplies fresh attribution and policy; the engine fills content. The original stays unchanged; nothing lands.",
+      "input": "crate::memory::code_doors::CodeProposalRereviewRequest",
+      "output": "crate::memory::code_doors::CodeProposalSubmitted",
+      "call": "memory.code_proposal_rereview_as(&memory.embedded_owner(\"vault.code.proposal_rereview\")?, input.original, input.change)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.conflict_record",
       "description": "Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves.",
       "input": "crate::memory::code_doors::CodeConflictRecordRequest",
@@ -10787,6 +10876,21 @@
       "input": "crate::memory::code_doors::CodeProposalResolveRequest",
       "output": "crate::memory::code_doors::CodeProposalSubmitted",
       "call": "memory.code_proposal_resolve_as(&memory.embedded_owner(\"vault.code.proposal_resolve\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.proposal_resolve_rereview",
+      "description": "Submit a fresh Proposed review of verified redacted bytes from an approved conflict resolution. Owner only. Current conflict checks and fresh attribution stay; the engine fills content. The original stays unchanged; nothing lands.",
+      "input": "crate::memory::code_doors::CodeProposalResolveRereviewRequest",
+      "output": "crate::memory::code_doors::CodeProposalSubmitted",
+      "call": "memory.code_proposal_resolve_rereview_as(&memory.embedded_owner(\"vault.code.proposal_resolve_rereview\")?, input.original, input.change)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -11389,6 +11493,22 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.devices.predecessor.name",
+      "description": "Name a predecessor device key for this install under the owner's proof; pending predecessor sweeps run separately.",
+      "input": "crate::memory::device_succession::DevicePredecessor",
+      "output": "crate::memory::device_succession::DevicePredecessor",
+      "call": "memory.device_predecessor_name_as(&memory.embedded_owner(\"vault.devices.predecessor.name\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_precheck": true,
       "host_door_lists": true,
       "openapi": true
     },
@@ -12660,7 +12780,7 @@
       "description": "The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run.",
       "input": "crate::task_verb::sdk::WorkflowDispatchRequest",
       "output": "crate::task_verb::sdk::WorkflowRunView",
-      "call": "crate::task_verb::sdk::dispatch_workflow_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.dispatch\")?, input)?",
+      "call": "crate::task_verb::sdk::dispatch_workflow_as_with_origin(memory.vault(), &memory.embedded_owner(\"vault.workflows.dispatch\")?, input, memory.caller_origin())?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -20365,6 +20485,24 @@
       "openapi": true
     },
     {
+      "name": "vault.notes.read_indexed",
+      "description": "Reads the independently indexed NOTE text and stable edit anchors in the same scoped snapshot.",
+      "input": "crate::note::NoteIndexedReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>",
+      "call": "memory.read_indexed_note(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
       "name": "vault.notes.history",
       "description": "Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented.",
       "input": "crate::note::NoteAccessRequest",
@@ -21748,6 +21886,22 @@
       "host_door_lists": true,
       "host_door_precheck": false,
       "rust_feature": "sync",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.dreamer.follower.keyframe",
+      "description": "The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::DreamerFollowerKeyframeResult",
+      "call": "crate::task_verb::sdk::dreamer_follower_keyframe_as(memory.vault(), &memory.embedded_owner(\"vault.dreamer.follower.keyframe\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true

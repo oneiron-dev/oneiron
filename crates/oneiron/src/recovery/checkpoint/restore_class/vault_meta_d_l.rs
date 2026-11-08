@@ -179,6 +179,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::EDIT_DISTANCE_PROPOSAL_ARTIFACT, CONTENT),
     (&t::EDIT_DISTANCE_PROPOSAL_DOCUMENT, CONTENT),
     (&t::EDIT_DISTANCE_RESERVOIR_EXPORT, CONTENT),
+    (&t::EDIT_DISTANCE_ROUTING_OUTCOME, CONTENT),
+    (&t::EDIT_SETTLE_KEEP_LINK, CONTENT),
     (&t::EDIT_SETTLE_ORGAN_WAIT, LIVE),
     (&t::EDIT_SETTLE_PENDING_PROPOSAL, CONTENT),
     (&t::EDIT_SETTLE_STRANDED_PROPOSAL, CONTENT),
@@ -307,6 +309,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::HOOKS_RUN_INDEX, CONTENT),
     (&t::HOOKS_SETTLED, CONTENT),
     (&t::HOOKS_SETTLED_NEXT, CONTENT),
+    // FIX 4749: the watcher feeds, the due index and the tick feed restore
+    // with the TASKs and cursors they stand beside.
+    (&t::HOOKS_SURFACE_INBOUND, CONTENT),
+    (&t::HOOKS_SURFACE_INBOUND_NEXT, CONTENT),
+    (&t::HOOKS_TASK_DUE, CONTENT),
+    (&t::HOOKS_TICK, CONTENT),
+    (&t::HOOKS_TICK_NEXT, CONTENT),
     (&t::HOOKS_VERB_ASK, LIVE),
     (&t::HOOKS_VERB_ASK_WITNESS, LIVE),
     (&t::HOOKS_VERB_RUN, CONTENT),
