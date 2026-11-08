@@ -172,6 +172,20 @@ impl HostSelfDispatcher<'_> {
             }
             KeptWrite::Fresh(stopped) => stopped,
         };
+        // The action's own call, when its host holds its input's base64
+        // member as a file (FIX 22096): the door takes the file, and every
+        // row of the receipt keeps the whole input's digests.
+        let held = self
+            .action_blob
+            .clone()
+            .filter(|held| held.holds(call.verb, &call.input));
+        let row = |call: SelfAgentVerbCall, outcome: &SelfDispatchOutcome| {
+            let mut row = CodeRunBridgeCall::record(0, &SelfCall::AgentVerb(call), outcome, 0, 0)?;
+            if let Some(held) = &held {
+                row.request = held.request_value();
+            }
+            Ok::<_, Error>(row)
+        };
         let mut receipt = CodeRunReplayRecord::new(receipt_id, CodeRunDeterminism::new(0, [0; 32]));
         let mut generation =
             self.put_write_receipt(&receipt, stopped, program.as_ref(), false, site.run_id)?;
@@ -182,75 +196,64 @@ impl HostSelfDispatcher<'_> {
             Some(consent_site) => origin.with_code_consent(consent_site.clone()),
             None => origin,
         };
-        let mut outcome = match self.program_door_call(&**door, &call, &origin, invocation) {
-            // A held connector call parks before its receipt keeps it, so a
-            // resumed step parks on the same call again: on its code consent
-            // wait when one was bound to it, else on the call itself.
-            Ok(answer) => self.code_consent_answer(
-                consent_site.as_ref(),
-                call.verb,
-                worded(answered(answer), &**door),
-            )?,
-            Err(Error::VerbHook(stop)) if matches!(*stop, VerbHookStop::Hidden { .. }) => {
-                answered(Err(AgentVerbRefusal {
-                    hook_notice: None,
-                    code: VERB_HOOK_HIDDEN.to_owned(),
-                }))
-            }
-            // A skip or an ask stopped the write before it ran: the receipt
-            // keeps the stop's mark, and the stop goes to the dispatcher.
-            Err(Error::VerbHook(stop)) => {
-                receipt.bridge_calls.push(CodeRunBridgeCall::record(
-                    0,
-                    &SelfCall::AgentVerb(call),
-                    &never_ran_mark(VERB_HOOK_STOPPED),
-                    0,
-                    0,
-                )?);
-                self.storage
-                    .put_code_run_replay_record_if_generation_with_heal(
-                        &receipt,
-                        Some(generation),
-                        None,
-                    )?;
-                return Err(Error::VerbHook(stop));
-            }
-            // No provider answered: the receipt keeps the outage's mark, and
-            // the outage goes to the dispatcher, which parks the run on it.
-            Err(error @ Error::ProviderUnavailable { .. }) => {
-                receipt.bridge_calls.push(CodeRunBridgeCall::record(
-                    0,
-                    &SelfCall::AgentVerb(call),
-                    &never_ran_mark(PROVIDER_UNAVAILABLE),
-                    0,
-                    0,
-                )?);
-                self.storage
-                    .put_code_run_replay_record_if_generation_with_heal(
-                        &receipt,
-                        Some(generation),
-                        None,
-                    )?;
-                return Err(error);
-            }
-            Err(error @ Error::DurableStepTrapped) => {
-                receipt.bridge_calls.push(CodeRunBridgeCall::record(
-                    0,
-                    &SelfCall::AgentVerb(call),
-                    &never_ran_mark(MEDIA_STEP_TRAPPED),
-                    0,
-                    0,
-                )?);
-                self.storage
-                    .put_code_run_replay_record_if_generation_with_heal(
-                        &receipt,
-                        Some(generation),
-                        None,
-                    )?;
-                return Err(error);
-            }
-            Err(error) => return Err(error),
-        };
+        let mut outcome =
+            match self.program_door_call_held(&**door, &call, &origin, invocation, held.as_ref()) {
+                // A held connector call parks before its receipt keeps it, so a
+                // resumed step parks on the same call again: on its code consent
+                // wait when one was bound to it, else on the call itself.
+                Ok(answer) => self.code_consent_answer(
+                    consent_site.as_ref(),
+                    call.verb,
+                    worded(answered(answer), &**door),
+                )?,
+                Err(Error::VerbHook(stop)) if matches!(*stop, VerbHookStop::Hidden { .. }) => {
+                    answered(Err(AgentVerbRefusal {
+                        hook_notice: None,
+                        code: VERB_HOOK_HIDDEN.to_owned(),
+                    }))
+                }
+                // A skip or an ask stopped the write before it ran: the receipt
+                // keeps the stop's mark, and the stop goes to the dispatcher.
+                Err(Error::VerbHook(stop)) => {
+                    receipt
+                        .bridge_calls
+                        .push(row(call, &never_ran_mark(VERB_HOOK_STOPPED))?);
+                    self.storage
+                        .put_code_run_replay_record_if_generation_with_heal(
+                            &receipt,
+                            Some(generation),
+                            None,
+                        )?;
+                    return Err(Error::VerbHook(stop));
+                }
+                // No provider answered: the receipt keeps the outage's mark, and
+                // the outage goes to the dispatcher, which parks the run on it.
+                Err(error @ Error::ProviderUnavailable { .. }) => {
+                    receipt
+                        .bridge_calls
+                        .push(row(call, &never_ran_mark(PROVIDER_UNAVAILABLE))?);
+                    self.storage
+                        .put_code_run_replay_record_if_generation_with_heal(
+                            &receipt,
+                            Some(generation),
+                            None,
+                        )?;
+                    return Err(error);
+                }
+                Err(error @ Error::DurableStepTrapped) => {
+                    receipt
+                        .bridge_calls
+                        .push(row(call, &never_ran_mark(MEDIA_STEP_TRAPPED))?);
+                    self.storage
+                        .put_code_run_replay_record_if_generation_with_heal(
+                            &receipt,
+                            Some(generation),
+                            None,
+                        )?;
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
         // Only a delivered connector reply spills here. Holds already parked;
         // questions and self.use's outer envelope keep their existing paths.
         let published = match (&mut outcome, site.reply_publisher) {
@@ -273,13 +276,7 @@ impl HostSelfDispatcher<'_> {
                         output: card.clone(),
                         ..template.clone()
                     });
-                    let mut row = CodeRunBridgeCall::record(
-                        0,
-                        &SelfCall::AgentVerb(call.clone()),
-                        &answer,
-                        0,
-                        0,
-                    )?;
+                    let mut row = row(call.clone(), &answer)?;
                     reply.keep(&mut row.outcome)?;
                     receipt.bridge_calls.push(row);
                     self.put_write_receipt_in_txn(wtxn, &receipt, generation, program.as_ref())?;
@@ -300,13 +297,7 @@ impl HostSelfDispatcher<'_> {
                 &mut outcome,
             )?;
             // A receipt keeps its call's answer as its record's first row.
-            receipt.bridge_calls.push(CodeRunBridgeCall::record(
-                0,
-                &SelfCall::AgentVerb(call),
-                &outcome,
-                0,
-                0,
-            )?);
+            receipt.bridge_calls.push(row(call, &outcome)?);
             self.put_write_receipt(
                 &receipt,
                 Some(generation),

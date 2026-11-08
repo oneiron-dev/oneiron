@@ -435,6 +435,9 @@ mod ceiling_wire {
             .ok_or_else(|| serde::de::Error::custom("unknown action ceiling"))
     }
 }
+mod blob_input;
+pub(crate) use blob_input::held_request_form;
+pub use blob_input::{ActionBlobInput, HELD_MEMBER};
 mod build;
 mod execution;
 mod fold_hooks;

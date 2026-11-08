@@ -57,6 +57,12 @@ const ARTIFACT_BODY_LIMIT: usize = 96 * 1024 * 1024;
 /// One structured action argument's JSON bound (64 MiB, FIX 22074 E4).
 const ACTION_JSON_BYTES: u64 = oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES as u64;
 
+/// The most decoded bytes whose base64 is no longer than an entity ref's 32
+/// hex digits: an action's receipt captures the entity such a string names,
+/// so content this short keeps its string (FIX 22096, as FIX 22074's
+/// facade reader keeps it).
+const ENTITY_REF_DECODED_BYTES: u64 = 24;
+
 /// The length of `input` as one action argument once its content, `len`
 /// bytes decoded, is base64 in it again: the input's JSON with an empty
 /// content string, and the content's canonical base64, which JSON never
@@ -249,7 +255,9 @@ fn made_by_reader<'v>(
 }
 
 /// The streamed content's base64 again, for an input that runs as one
-/// action argument (FIX 22074 E4 = C; FIX 22096 streams it instead).
+/// action argument with its string (FIX 22074 E4 = C): content no longer
+/// than an entity ref, or a call in an anonymous off-record session. Its
+/// action holds any other content as a file (FIX 22096).
 fn encode_content(content: &streamed::StreamedBody<CreateArtifact>) -> Result<String, ApiError> {
     use std::io::Read as _;
     let (mut file, len) = content.content.file();
@@ -360,9 +368,12 @@ pub(super) async fn create(
         made_by,
     };
     // A credential bound to an action as this actor runs the row as that
-    // action when the whole input fits one action argument, as before: its
-    // content is base64 again for it (E4 = C). Any other create takes the
-    // row's door with the content's file.
+    // action when the whole input fits one action argument, as before. The
+    // action holds the content as its file (FIX 22096): it measures, seeds
+    // and records the whole input from the file, and its row reads it.
+    // Content no longer than an entity ref, and a call in an anonymous
+    // off-record session, are base64 again for the action (E4 = C). Any
+    // other create takes the row's door with the content's file.
     let bound = super::facade::action_routes::rest_action_bound(
         &server,
         &auth,
@@ -371,7 +382,36 @@ pub(super) async fn create(
         &input,
     )?
     .filter(|bound| bound.writes_as() == actor);
-    if bound.is_some() && action_input_len(&input, streamed.content.file().1) <= ACTION_JSON_BYTES {
+    let decoded_len = streamed.content.file().1;
+    let fits = action_input_len(&input, decoded_len) <= ACTION_JSON_BYTES;
+    let holds = fits
+        && decoded_len > ENTITY_REF_DECODED_BYTES
+        && !super::call_receipt::in_anonymous_session(
+            &server,
+            &headers,
+            super::call_receipt::request_principal(&auth),
+        );
+    if holds && let Some(bound) = bound {
+        let row = AgentVerb::VaultArtifactsCreate;
+        let head = serde_json::to_value(&input)
+            .map_err(|_| ApiError::internal_server_error("artifact input encoding failed"))?;
+        let held = blocking_read(move || {
+            oneiron::code_run::actions::ActionBlobInput::new(
+                row,
+                head,
+                streamed.content.into_file(),
+            )
+            .map_err(|_| ApiError::internal_server_error("artifact content read failed"))
+        })
+        .await?;
+        let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
+        let view = super::facade::action_routes::execute_facade_row_held(
+            &server, headers, extensions, bound, held, key,
+        )
+        .await?;
+        return Ok((StatusCode::CREATED, Json(view)));
+    }
+    if bound.is_some() && fits {
         let (streamed, content_base64) = blocking_read(move || {
             let text = encode_content(&streamed)?;
             Ok((streamed, text))
