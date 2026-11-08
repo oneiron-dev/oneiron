@@ -988,6 +988,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.repo.symbols.declare" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.symbols.renew" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.symbols.release" => a.spec.clone().ok_or_else(invalid),
+        "vault.repo.model.generate" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.proposal_submit" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.merge_queue.enqueue" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.checkout.bind" => a.spec.clone().ok_or_else(invalid),
@@ -4186,6 +4187,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.repo.symbols.release" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.repo.model.generate" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.repo.proposal_submit" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -5814,17 +5818,22 @@ pub(crate) async fn execute_agent_verb_input(
     // A custody row's value leaves the args before its hooks read them,
     // and rides to its door scoped, as an HTTP body's does (FIX 11665).
     let secret = crate::api::facade::lift_custody_secret(tool, &mut input);
+    // The drain's run of a held call runs as its turn in every poll of
+    // its row, its retry lookup included (FIX 19034).
     let listed = super::skill_execution::CALLER.scope(
         actor.clone(),
-        execute_agent_verb_listing(
-            server,
-            tool,
-            input,
+        super::mcp_drain_polls(
             actor,
-            run,
-            &producers,
-            served,
-            board_hooks,
+            execute_agent_verb_listing(
+                server,
+                tool,
+                input,
+                actor,
+                run,
+                &producers,
+                served,
+                board_hooks,
+            ),
         ),
     );
     let produced = crate::api::clock_ingress::scoped(
@@ -5931,6 +5940,22 @@ async fn execute_agent_verb_listing(
         actor,
         surface.memory(server, actor, producers),
     )?;
+    // A retry of a call its budget window paced meets the paced line here,
+    // before its hooks or its row run again: still held, or the saved answer
+    // of the drain's turn (FIX 19034).
+    if let Some((output, producers)) =
+        super::verb_hooks::mcp_row_paced_reply(server, tool, actor, &memory)?
+    {
+        // Released by the rows the saved answer was derived from (FIX 22259).
+        served.listed(producers);
+        return Ok((
+            output,
+            crate::mcp::McpPageSource::complete(1),
+            McpCarrierPolicy::Drain,
+            None,
+            None,
+        ));
+    }
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
     // Rule 5 (FIX 4445): a row one branch of whose engine call produces task
     // work takes its turn on the args its pre hooks left, as the served
@@ -7546,6 +7571,7 @@ async fn execute_agent_verb_row_on(
         "vault.repo.symbols.declare" => boxed_mcp_verb_row_vault_repo_symbols_declare(row).await,
         "vault.repo.symbols.renew" => boxed_mcp_verb_row_vault_repo_symbols_renew(row).await,
         "vault.repo.symbols.release" => boxed_mcp_verb_row_vault_repo_symbols_release(row).await,
+        "vault.repo.model.generate" => boxed_mcp_verb_row_vault_repo_model_generate(row).await,
         "vault.repo.proposal_submit" => boxed_mcp_verb_row_vault_repo_proposal_submit(row).await,
         "vault.repo.merge_queue.enqueue" => {
             boxed_mcp_verb_row_vault_repo_merge_queue_enqueue(row).await
@@ -50989,6 +51015,70 @@ async fn mcp_verb_row_vault_repo_symbols_release(row: McpVerbRow<'_>) -> McpVerb
     mcp_agent_verb_output(output, source)
 }
 #[inline(never)]
+fn boxed_mcp_verb_row_vault_repo_model_generate<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_repo_model_generate(row))
+}
+async fn mcp_verb_row_vault_repo_model_generate(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.repo.model.generate", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::RepoModelGenerateInput> =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_repo_model_generate(
+        server,
+        auth,
+        actor
+            .off_record_session
+            .as_deref()
+            .map(oneiron::EntityId::from_hex)
+            .transpose()
+            .map_err(|_| invalid())?,
+        (actor.actor_ref, actor.actor_class),
+        oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+            &memory,
+            "vault.repo.model.generate",
+        ),
+        input,
+    ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
 fn boxed_mcp_verb_row_vault_repo_proposal_submit<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
     Box::pin(mcp_verb_row_vault_repo_proposal_submit(row))
 }
@@ -53470,8 +53560,7 @@ async fn mcp_verb_row_can(row: McpVerbRow<'_>) -> McpVerbRowResult {
             "invalid typed agent-verb argument",
         )
     };
-    let input: oneiron::task_verb::sdk::TaskCanAskRequest =
-        serde_json::from_value(input).map_err(|_| invalid())?;
+    let input: oneiron::verbs::CanRequest = serde_json::from_value(input).map_err(|_| invalid())?;
     let output = oneiron::task_verb::sdk::can(&memory, input).map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)
@@ -68849,7 +68938,10 @@ async fn mcp_verb_row_vault_channel_identities_provision(row: McpVerbRow<'_>) ->
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
         crate::api::facade::host_doors::vault_channel_identities_provision(
-            server, auth, None, input,
+            server,
+            auth,
+            super::mcp_paced_call(actor, &memory),
+            input,
         ),
     )
     .await;
@@ -68903,7 +68995,12 @@ async fn mcp_verb_row_vault_channel_identities_bind(row: McpVerbRow<'_>) -> McpV
     let input: oneiron::memory::channel_doors::ChannelIdentityBindRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
-        crate::api::facade::host_doors::vault_channel_identities_bind(server, auth, None, input),
+        crate::api::facade::host_doors::vault_channel_identities_bind(
+            server,
+            auth,
+            super::mcp_paced_call(actor, &memory),
+            input,
+        ),
     )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -69009,7 +69106,12 @@ async fn mcp_verb_row_vault_channel_identities_rotate(row: McpVerbRow<'_>) -> Mc
     let input: oneiron::memory::channel_doors::ChannelIdentityRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
-        crate::api::facade::host_doors::vault_channel_identities_rotate(server, auth, None, input),
+        crate::api::facade::host_doors::vault_channel_identities_rotate(
+            server,
+            auth,
+            super::mcp_paced_call(actor, &memory),
+            input,
+        ),
     )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -69062,7 +69164,12 @@ async fn mcp_verb_row_vault_channel_identities_release(row: McpVerbRow<'_>) -> M
     let input: oneiron::memory::channel_doors::ChannelIdentityReleaseRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
-        crate::api::facade::host_doors::vault_channel_identities_release(server, auth, None, input),
+        crate::api::facade::host_doors::vault_channel_identities_release(
+            server,
+            auth,
+            super::mcp_paced_call(actor, &memory),
+            input,
+        ),
     )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -69118,7 +69225,10 @@ async fn mcp_verb_row_vault_channel_identities_route_inbound(
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
         crate::api::facade::host_doors::vault_channel_identities_route_inbound(
-            server, auth, None, input,
+            server,
+            auth,
+            super::mcp_paced_call(actor, &memory),
+            input,
         ),
     )
     .await;

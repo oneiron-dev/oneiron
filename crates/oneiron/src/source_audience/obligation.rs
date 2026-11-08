@@ -9,14 +9,15 @@
 //! holds a [`SourceAudienceBirth`] stamps it; every other door refuses it.
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::error::{Error, RecordError, Result};
+use crate::error::{ArtifactError, Error, RecordError, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN,
 };
 use crate::store::ManifestDbs;
 use crate::store::source_audience_obligation::{
-    SourceAudienceObligation, decode_source_audience_obligation,
+    SourceAudienceObligation, decode_source_audience_obligation, encode_source_audience_required,
 };
 use crate::{EntityId, Vault};
 
@@ -24,7 +25,7 @@ use super::{BIRTHS, POLICIES, SourceAudienceKind, SourceAudiencePolicy};
 
 /// The refusal of a write that carries the key no source landing stamped.
 const UNBORN_STAMP: &str = "source_audience_required is stamped by a source landing alone, on the \
-     CONVERSATION, TURN and MESSAGE rows it binds; no other write carries it";
+     CONVERSATION, TURN, MESSAGE, EVENT and BLOB_ARTIFACT rows it binds; no other write carries it";
 
 /// The refusal of a write that drops or changes a stored row's key.
 const KEPT_STAMP: &str = "a row stamped source_audience_required keeps it: a write neither drops \
@@ -59,6 +60,27 @@ impl SourceAudienceBirth {
             None => Err(Error::EntityNotFound),
         }
     }
+
+    /// `body`, the body the row `id` is staged with in `txn` under this
+    /// proof, stamped with the obligation, and the row marked born
+    /// ([`mark_birth_in_txn`]). The landing binds it in the same write
+    /// ([`super::bind_record_in_txn`]).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvariantViolation`] for a body that is not one unstamped
+    /// MessagePack map; storage failures.
+    pub(crate) fn stamp_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        body: &[u8],
+    ) -> Result<Vec<u8>> {
+        let stamped = encode_source_audience_required(body)?;
+        mark_birth_in_txn(vault, txn, self, id)?;
+        Ok(stamped)
+    }
 }
 
 /// The obligation the entity row `raw` states in its own body, whatever its
@@ -70,11 +92,17 @@ pub(crate) fn row_obligation(raw: &[u8]) -> SourceAudienceObligation {
     decode_source_audience_obligation(raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default())
 }
 
-/// Whether `entity_type` is a kind a source landing stamps and binds.
-const fn bound_kind(entity_type: u8) -> bool {
+/// Whether `entity_type` is a kind a source landing stamps and binds: a mail
+/// thread's CONVERSATION, TURNs and MESSAGEs, a calendar source's EVENTs, and
+/// the BLOB_ARTIFACT a mail attachment or a calendar resource is kept in.
+pub(super) const fn bound_kind(entity_type: u8) -> bool {
     matches!(
         entity_type,
-        ENTITY_TYPE_CONVERSATION | ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE
+        ENTITY_TYPE_CONVERSATION
+            | ENTITY_TYPE_TURN
+            | ENTITY_TYPE_MESSAGE
+            | ENTITY_TYPE_EVENT
+            | ENTITY_TYPE_BLOB_ARTIFACT
     )
 }
 
@@ -87,6 +115,9 @@ fn write_refusal(entity_type: u8, reason: &'static str) -> Error {
             RecordError::InvalidConversationBody(reason).into()
         }
         ENTITY_TYPE_CLAIM => Error::InvalidClaimBody(reason),
+        ENTITY_TYPE_BLOB_ARTIFACT => {
+            Error::Artifact(ArtifactError::InvalidBlobArtifactBody(reason))
+        }
         _ => Error::InvalidConfig(reason.to_owned()),
     }
 }
@@ -145,7 +176,7 @@ pub(crate) fn refuse_unbound_births_in(
 /// `txn`:
 ///
 /// - a body that names the key in any shape is refused, unless it is a
-///   valid stamp on a CONVERSATION, TURN or MESSAGE that a source landing
+///   valid stamp on a bound kind ([`bound_kind`]) that a source landing
 ///   marked born in this write, or a replicated put of the owner's own
 ///   import tier (`ImportTier::OwnDevice`, chosen by the authenticated
 ///   import context: a federated tier's put meets
@@ -271,8 +302,8 @@ pub(crate) fn unbound_obligation_in(
 }
 
 /// Whether a restored entity row `raw` states the obligation validly: not
-/// at all, or as a valid stamp on a CONVERSATION, TURN or MESSAGE. Its
-/// bytes are restored exactly as they are.
+/// at all, or as a valid stamp on a kind a source landing binds. Its bytes
+/// are restored exactly as they are.
 pub(crate) fn restorable_obligation(raw: &[u8]) -> bool {
     match row_obligation(raw) {
         SourceAudienceObligation::Absent => true,
@@ -284,8 +315,8 @@ pub(crate) fn restorable_obligation(raw: &[u8]) -> bool {
 }
 
 /// Whether a carried binding stands on `carried`, the entity row it binds
-/// as the same artifact carries it: a valid stamp on a CONVERSATION, TURN
-/// or MESSAGE, or a bodiless erase shell. A row the artifact does not
+/// as the same artifact carries it: a valid stamp on a kind a source
+/// landing binds, or a bodiless erase shell. A row the artifact does not
 /// carry is judged where it lands.
 pub(crate) fn binding_stands_on(carried: Option<&[u8]>) -> bool {
     carried.is_none_or(|raw| {
