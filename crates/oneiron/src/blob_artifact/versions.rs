@@ -497,6 +497,7 @@ impl Vault {
             made_by,
             true,
             false,
+            None,
             producer_position,
             crate::core_write::CoreWriteLaneRef::Unbound,
         )?;
@@ -577,6 +578,7 @@ impl Vault {
             None,
             false,
             true,
+            None,
             lane,
         )
     }
@@ -628,6 +630,7 @@ impl Vault {
             None,
             false,
             true,
+            None,
             crate::core_write::CoreWriteLaneRef::Unbound,
         )?;
         Ok((version, staged))
@@ -662,6 +665,7 @@ impl Vault {
             made_by,
             false,
             false,
+            None,
             crate::core_write::CoreWriteLaneRef::Unbound,
         )
     }

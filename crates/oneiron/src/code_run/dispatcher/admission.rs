@@ -98,6 +98,7 @@ impl HostSelfDispatcher<'_> {
         // read-world capture (FIX 6130), nor the skill bodies its producer
         // witnessed (FIX 3608).
         *self.hook_view.borrow_mut() = None;
+        *self.task_refusal_output.borrow_mut() = None;
         *self.skill_bodies.borrow_mut() = None;
         self.uncover_read_worlds();
         // A leased run's writes in this call are its own derivations (OF-540).

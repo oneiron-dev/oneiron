@@ -22,20 +22,13 @@ pub(super) struct LayoutRequest {
 /// Every field of every page is laid out, however many (Rule 5). The
 /// ceremony's preview calls it directly, never the editor's HTTP door.
 fn laid_out(request: LayoutRequest) -> Response {
-    let layouts: Result<Vec<_>, _> = request
-        .fields
-        .iter()
-        .map(|field| {
-            let page = request
-                .pages
-                .get(field.geometry.page.saturating_sub(1) as usize)
-                .ok_or(render::PdfPreparationError::InvalidGeometry)?;
-            render::layout_field(field, request.values.get(&field.id), *page)
-        })
-        .collect();
-    match layouts {
-        Ok(layouts) => {
-            Json(serde_json::json!({"pages":request.pages,"fields":layouts})).into_response()
+    match oneiron::blob_artifact::esign::layout_esign_preview(
+        &request.fields,
+        &request.values,
+        request.pages,
+    ) {
+        Ok(view) => {
+            Json(serde_json::json!({"pages":view.pages,"fields":view.fields})).into_response()
         }
         Err(_) => refused(),
     }

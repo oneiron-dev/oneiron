@@ -19,7 +19,10 @@ use std::collections::HashMap;
 use oneiron_docedit::{DocxAnchorBlock, docx_anchor_blocks};
 use serde::{Deserialize, Serialize};
 
-use super::anchor_text::{TextLimits, UnitFormat, anchor_text, find_text, html_blocks, remap_span};
+use super::anchor_text::{
+    TextLimits, UnitFormat, anchor_text, find_text, html_blocks, remap_span, text_quote_for_sight,
+    text_raw_span_byte_range,
+};
 use super::code_units::code_span_words_in_txn;
 use super::codec::{ThreadHead, decode_locator, encode_locator};
 use super::model::{AnnotationThread, Locator, ReanchorOutcome, ReanchorSummary};
@@ -585,6 +588,61 @@ impl Vault {
         Ok(offers)
     }
 
+    /// Whether a raw text span can participate in a masked reader's word
+    /// comparison. Persisted marks, not equality with filler bytes, decide
+    /// secrecy; their offsets include any BOM excluded from text coordinates.
+    fn text_annotation_span_visible_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+        locator: &Locator,
+        raw_bytes: &[u8],
+    ) -> Result<bool> {
+        let Locator::Text {
+            char_start,
+            char_end,
+        } = locator
+        else {
+            return Ok(true);
+        };
+        let Some(span) = text_raw_span_byte_range(raw_bytes, *char_start, *char_end) else {
+            return Ok(false);
+        };
+        let Some(record) = self.blob_artifact_version_metadata_in_txn(txn, artifact_id, version)?
+        else {
+            return Ok(false);
+        };
+        let mark =
+            crate::secret_custody::masked_file_in_txn(&self.store, txn, &record.content_hash)?;
+        if let Some(mark) = &mark {
+            if mark.members.iter().any(|member| !member.keys.is_empty())
+                || mark
+                    .keys
+                    .iter()
+                    .any(|key| key.start < span.end as u64 && (span.start as u64) < key.end)
+            {
+                return Ok(false);
+            }
+        }
+        let Some(sighted) = self.read_blob_artifact_version_sighted_in_txn(
+            txn,
+            artifact_id,
+            version,
+            crate::secret_custody::SecretSight::Masked,
+        )?
+        else {
+            return Ok(false);
+        };
+        if mark.is_none() {
+            // No persisted mark is not a clean-scan claim. The existing
+            // whole-body door still scans/withholds/rebuilds containers;
+            // only its verbatim stored copy exposes these raw coordinates.
+            return Ok(sighted.as_slice() == raw_bytes);
+        }
+        Ok(text_quote_for_sight(raw_bytes, &sighted, *char_start, *char_end).is_some())
+    }
+
     /// One-click reattach of an unattached comment at `locator` in `version`.
     /// Refused unless the words there read exactly as the comment's snapshot.
     /// On a code artifact `version` is `CODE_ANCHOR_VERSION`, and `locator`
@@ -597,6 +655,7 @@ impl Vault {
         thread_id: &EntityId,
         version: u64,
         locator: &Locator,
+        sight: crate::secret_custody::SecretSight,
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
@@ -629,6 +688,40 @@ impl Vault {
                     .read_blob_artifact_version_in_txn(wtxn, artifact_id, version)?
                     .ok_or(Error::EntityNotFound)?;
                 let limits = self.text_limits_in_txn(wtxn)?;
+                if sight == crate::secret_custody::SecretSight::Masked {
+                    let source_visible = match &thread.anchor.locator {
+                        Locator::Text { .. } => {
+                            match self.read_blob_artifact_version_in_txn(
+                                wtxn,
+                                artifact_id,
+                                thread.anchor.version,
+                            )? {
+                                Some(pinned) => self.text_annotation_span_visible_in_txn(
+                                    wtxn,
+                                    artifact_id,
+                                    thread.anchor.version,
+                                    &thread.anchor.locator,
+                                    &pinned,
+                                )?,
+                                None => false,
+                            }
+                        }
+                        _ => true,
+                    };
+                    if !source_visible
+                        || !self.text_annotation_span_visible_in_txn(
+                            wtxn,
+                            artifact_id,
+                            version,
+                            locator,
+                            &bytes,
+                        )?
+                    {
+                        return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                            "the words at that place are not the comment's words",
+                        )));
+                    }
+                }
                 // A resource refusal is the engine's error (FIX 10587), never a word mismatch.
                 anchor_text(&bytes, locator, &limits)?
             };

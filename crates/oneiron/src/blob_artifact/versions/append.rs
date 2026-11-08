@@ -93,7 +93,36 @@ impl Vault {
             made_by,
             false,
             true,
+            None,
             lane,
+        )
+    }
+
+    /// Only the actual verified SealJob producer can supply this write.
+    pub(in crate::blob_artifact) fn append_verified_seal_job_version_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        write: &super::super::esign::SealJobWrite<'_>,
+    ) -> Result<BlobArtifactVersion> {
+        let now = write.at();
+        self.append_blob_artifact_version_body_in_txn(
+            wtxn,
+            &write.artifact(),
+            VersionBody::Bytes(write.bytes()),
+            write.provenance(),
+            write.actor(),
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            None,
+            None,
+            None,
+            false,
+            true,
+            Some(write),
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )
     }
 
@@ -117,6 +146,7 @@ impl Vault {
         made_by: Option<&MadeBy>,
         preserve_made_by: bool,
         reanchor_html: bool,
+        seal_job: Option<&super::super::esign::SealJobWrite<'_>>,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactVersion> {
         self.append_blob_artifact_version_body_with_authority_in_txn(
@@ -132,6 +162,7 @@ impl Vault {
             made_by,
             preserve_made_by,
             reanchor_html,
+            seal_job,
             BirthPosition::default(),
             lane,
         )
@@ -156,6 +187,7 @@ impl Vault {
         made_by: Option<&MadeBy>,
         preserve_made_by: bool,
         reanchor_html: bool,
+        seal_job: Option<&super::super::esign::SealJobWrite<'_>>,
         producer_position: BirthPosition,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactVersion> {
@@ -166,6 +198,11 @@ impl Vault {
             }
         };
         validate_provenance(provenance)?;
+        if matches!(provenance, BlobVersionProvenance::SealJob { .. }) != seal_job.is_some() {
+            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                "SealJob Auto requires its verified native producer",
+            )));
+        }
         if let Some(stamp) = calc_engine {
             stamp.validate()?;
         }
@@ -208,6 +245,14 @@ impl Vault {
                 content_hash,
             )?,
         };
+        if seal_job.is_some()
+            && (read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?.is_some()
+                || read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?.is_some())
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                "SealJob output must be a fresh native target",
+            )));
+        }
         let placement =
             place_version_in_txn(&self.store, wtxn, artifact_id, fork_parent, &content_hash)?;
         let place = match placement {
@@ -217,6 +262,21 @@ impl Vault {
             }
             VersionPlacement::Next(place) => place,
         };
+        let seal_permit = seal_job
+            .map(|write| {
+                write.check_append(
+                    self,
+                    wtxn,
+                    artifact_id,
+                    &content_hash,
+                    provenance,
+                    actor,
+                    place.next_version,
+                    place.parent_version,
+                    fork_parent,
+                )
+            })
+            .transpose()?;
         let made_by = match made_by {
             Some(named) => {
                 validate_version_made_by_in_txn(self, wtxn, named)?;
@@ -244,6 +304,7 @@ impl Vault {
             claim_id,
             actor,
             learned_at,
+            seal_permit.as_ref(),
         )?;
         // Placed before it is signed, so the signature covers the position.
         let candidate = place_claim_at_producer_position(candidate, producer_position);
@@ -459,6 +520,7 @@ impl VersionEntry {
         claim_id: EntityId,
         actor: WriteActor,
         learned_at: u64,
+        seal_permit: Option<&super::super::esign::SealJobAutoPermit<'_>>,
     ) -> Result<Self> {
         let candidate = ClaimCandidate::new(
             BLOB_VERSION_CLAIM_PREDICATE,
@@ -474,11 +536,15 @@ impl VersionEntry {
             ),
             1.0,
         );
+        let mut write_provenance = write_provenance_value(provenance);
+        if let Some(permit) = seal_permit {
+            permit.stamp(&mut write_provenance);
+        }
         let envelope = WriteEnvelope::new(
             actor,
             provenance.claim_source(),
-            WriteProvenance::new(write_provenance_value(provenance))?,
-            provenance.approval_status(),
+            WriteProvenance::new(write_provenance)?,
+            seal_permit.map_or_else(|| provenance.approval_status(), |permit| permit.approval()),
         );
         let record = BlobArtifactVersion {
             version: place.next_version,
