@@ -18,7 +18,7 @@ use super::*;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::{RemovalExportCopy, SignedSharedActOutcome};
+use crate::federation::{RemovalExportFile, SignedSharedActOutcome};
 
 // The host's delivery of those archives to their removed holder, beside
 // these pull doors (FIX 3215, 3396).
@@ -268,7 +268,7 @@ impl Vault {
         request_timestamp: u64,
         signature: &[u8],
         request_nonce: &[u8],
-    ) -> Result<Vec<RemovalExportCopy>> {
+    ) -> Result<Vec<RemovalExportFile>> {
         let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let person =
@@ -311,7 +311,7 @@ impl Vault {
         signature: &[u8],
         request_nonce: &[u8],
         receipt_id: &str,
-    ) -> Result<Option<RemovalExportCopy>> {
+    ) -> Result<Option<RemovalExportFile>> {
         let receipt_id = EntityId::from_hex(receipt_id)?;
         let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
@@ -366,7 +366,7 @@ impl Vault {
         (person, receipt_id): (EntityId, Option<EntityId>),
         now: u64,
         bounds: Result<super::slip::TransferredBounds>,
-    ) -> Result<Vec<RemovalExportCopy>> {
+    ) -> Result<Vec<RemovalExportFile>> {
         let single_use = bounds
             .as_ref()
             .is_ok_and(super::slip::TransferredBounds::single_use);
