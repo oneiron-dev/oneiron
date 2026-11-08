@@ -140,9 +140,18 @@ impl OfferLadder {
     ) -> LlmResult<LlmResponse> {
         let sources = Some(sources);
         let deadline = self.host_wait();
-        self.generate_from(run, request, selector, &|| true, deadline, true, sources, None)
-            .await
-            .map(|(response, _)| response)
+        self.generate_from(
+            run,
+            request,
+            selector,
+            &|| true,
+            deadline,
+            true,
+            sources,
+            None,
+        )
+        .await
+        .map(|(response, _)| response)
     }
 
     /// [`Self::generate_within`]; once every rung has parked, a call whose
