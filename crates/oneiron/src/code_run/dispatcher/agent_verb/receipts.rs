@@ -38,6 +38,9 @@ pub(super) const PROVIDER_UNAVAILABLE: &str = "provider_unavailable";
 /// A media call's admission trapped before its physical effect ran.
 pub(super) const MEDIA_STEP_TRAPPED: &str = "media_step_trapped";
 
+/// The mark an erased row's identity starts with: no verb is named so.
+const ERASED_ROW_IDENTITY: &[u8] = b"erased\0";
+
 impl HostSelfDispatcher<'_> {
     /// The receipt of the step's write at `site`, keyed by the write's place
     /// in its step (the step's first position and how many writes the step
@@ -218,7 +221,15 @@ fn never_ran(row: &CodeRunBridgeCall) -> bool {
 }
 
 /// The identity of the verb call a receipt row recorded, if the row is one.
+/// A row an erase took the request words of keeps its request identity
+/// alone (FIX 6534): only another erased row of the same request meets it,
+/// never a live call's reading and never an absent one.
 pub(super) fn row_identity(row: &CodeRunBridgeCall) -> Option<Vec<u8>> {
+    if row.request_erased() {
+        let identity = row.request_identity().ok()?;
+        return (row.effect == SelfEffect::AgentVerb)
+            .then(|| [ERASED_ROW_IDENTITY, identity.as_slice()].concat());
+    }
     let (verb, input) = recorded_call(row)?;
     if crate::verb_catalog::CUSTODY_VALUE_ROWS.contains(&verb) {
         if !input.is_empty() {
@@ -268,10 +279,12 @@ fn answered_as_kept(kept: &CodeRunBridgeCall, made: &CodeRunBridgeCall) -> bool 
     }
 }
 
-/// Whether a recorded call is a verb write.
+/// Whether a recorded call is a verb write: by the catalog verb its row
+/// keeps, its request words kept or erased (FIX 6534), so an erase never
+/// moves a later write's place among the step's writes.
 pub(super) fn is_write(row: &&CodeRunBridgeCall) -> bool {
-    recorded_call(row)
-        .is_some_and(|(verb, _)| AgentVerb::from_name(verb).is_some_and(AgentVerb::writes))
+    row.recorded_verb()
+        .is_some_and(|verb| AgentVerb::from_name(verb).is_some_and(AgentVerb::writes))
 }
 
 /// The verb name and JSON input of a recorded verb call, if the row is one.
