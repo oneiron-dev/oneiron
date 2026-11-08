@@ -146,7 +146,7 @@ pub(super) async fn observed<T>(
         let (lookup, caller, verb) = (Arc::clone(server), actor.clone(), intent.verb.clone());
         let ended = crate::api::clock_ingress::run_blocking(move || {
             super::tasks_response::mcp_paced_lookup_memory(&lookup, &caller, invocation)
-                .ended_paced_verb_reply(&verb)
+                .ended_paced_verb_reply_listed(&verb)
         })
         .await
         .ok()
