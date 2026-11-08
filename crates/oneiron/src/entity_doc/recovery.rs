@@ -11,7 +11,7 @@ use super::forks::{
 };
 use super::pins::{CitationPin, ENTITY_DOC_PIN, ENTITY_DOC_PURGE_RECEIPT, PurgeReceipt};
 use super::side_keys::HexPair;
-use super::succession::{Restored, Succession, origin_version};
+use super::succession::{Succession, origin_version};
 use super::{EntityDoc, ForkStatus, SettleVerb, storage};
 use crate::error::{ArtifactError, Error};
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
@@ -78,7 +78,7 @@ pub(crate) fn capture(
     }
     let head = storage::head(&vault.store, txn, &entity)?;
     let doc = storage::load(&vault.store, txn, &head)?;
-    let origin = origin(&head, &doc)?;
+    let origin = origin(&head, &doc);
     Ok(Some(CanonicalEntityDocument {
         entity_id: bytes,
         document_id: raw(&head.document)?,
@@ -99,23 +99,20 @@ pub(crate) fn capture(
 }
 
 /// Where `doc`, under `head`, is captured (FIX 3553): its incarnation and
-/// version here, or, while it is unchanged since a canonical restore
-/// rebuilt it, the history that restore replaced, so its recapture is the
-/// snapshot it came from. None for an incarnation that is no id.
-fn origin(head: &storage::Head, doc: &EntityDoc) -> Result<Option<CanonicalDocumentOrigin>> {
+/// version here, so a restore of the capture names the history every peer
+/// holding this incarnation holds. A recovery's recapture names its rebuilt
+/// incarnation: an origin is never the value, and the recovery ladder
+/// compares values ([`crate::recovery`] `pad_equivalent`). None for an
+/// incarnation that is no id.
+fn origin(head: &storage::Head, doc: &EntityDoc) -> Option<CanonicalDocumentOrigin> {
     let version = doc.doc.oplog_vv();
-    if let Some(restored) = &head.restored
-        && VersionVector::decode(&restored.version).ok().as_ref() == Some(&version)
-    {
-        return restored.replaces.origin().map(Some);
-    }
-    Ok(EntityId::from_hex(&head.incarnation)
+    EntityId::from_hex(&head.incarnation)
         .ok()
         .filter(|id| id.to_hex() == head.incarnation)
         .map(|id| CanonicalDocumentOrigin {
             incarnation: *id.as_bytes(),
             version: origin_version(&version),
-        }))
+        })
 }
 
 /// The retained versions one capture names, one per version vector.
@@ -373,6 +370,7 @@ fn history(
                     .map(|reference| raw(reference))
                     .collect::<Result<_>>()?,
                 keep: fork.record.keep,
+                delta_receipt: fork.record.delta_receipt,
             })
         })
         .collect::<Result<_>>()?;
@@ -448,19 +446,14 @@ pub(crate) fn restore(
     let replaces = row.origin.as_ref().map(Succession::of).transpose()?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
+        owner_kind: storage::DocumentOwnerKind::Entity,
         incarnation: EntityId::now().to_hex(),
         document,
         field: field_of(row),
         generation: 0,
         pending: 0,
         birth_frontier: None,
-        restored: None,
-    };
-    let restored = |doc: &EntityDoc| {
-        replaces.clone().map(|replaces| Restored {
-            replaces,
-            version: doc.doc.oplog_vv().encode(),
-        })
+        succeeds: replaces.clone(),
     };
     let slot = DocumentSlot::from_hex(&head.document)?;
     match &row.history {
@@ -473,13 +466,11 @@ pub(crate) fn restore(
                 replaces.write(&doc.doc)?;
             }
             super::document::restate_birth(&doc.doc);
-            head.restored = restored(&doc);
             storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
             store.port_document_rows_delete(txn, slot, &[DocumentRow::ShallowSince])?;
         }
         Some(history) => {
             let (doc, frontiers) = replay(entity, row, history, replaces.as_ref())?;
-            head.restored = restored(&doc);
             storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
             if history.shallow {
                 store.port_document_shallow_since_put(
@@ -758,6 +749,7 @@ fn bind_rows(
                 .map(hex)
                 .collect::<Result<_>>()?,
             keep: fork.keep.clone(),
+            delta_receipt: fork.delta_receipt.clone(),
         };
         ENTITY_DOC_FORK.put(store, txn, &record.fork, &record)?;
         if let Some(output) = &fork.output {

@@ -5,10 +5,12 @@
 //! new host door fails to compile until it names its check there. A row
 //! whose table entry says `"host_door_precheck": false` checks nothing
 //! before its hooks; those rows:
+//! - `vault.commitments.ledger`
 //! - `self.focus.wakes`
 //! - `vault.shape.apply`
 //! - `vault.shape.groups`
 //! - `vault.shape.groups.resolve`
+//! - `vault.proactivity.digest.get`
 //! - `tasks.wave`
 //! - `vault.fanout.spawn`
 //! - `vault.budgets.resident_shares`
@@ -34,6 +36,8 @@
 //! - `vault.weave.admin.item.wrong`
 //! - `vault.step_up.totp.reset`
 //! - `vault.inbox.groups.resolve`
+//! - `vault.skill_hubs.clawhub.search`
+//! - `vault.skill_hubs.clawhub.import`
 //! - `vault.skills.proposal.settle`
 //! - `vault.skills.optimize.tradeoff_asks.resolve`
 //! - `vault.packs.sections.propose`
@@ -45,12 +49,16 @@
 //! - `vault.outbox.diverged.answer`
 //! - `vault.shared.deletion`
 //! - `vault.org_admin.powers`
+//! - `vault.sync.documents.copy_edit.review`
+//! - `vault.sync.documents.copy_edit.settle`
 //! - `vault.trusted_contacts.concern.deliver`
+//! - `vault.files.sources.exclude`
 //! - `vault.drafters.list_as`
 //! - `vault.drafters.revert_as`
 //! - `vault.roots.requests.cancel`
 //! - `vault.policy.outbound.decide`
 //! - `vault.policy.relay.decide`
+//! - `vault.connectors.replies.retry_failed`
 //! - `vault.secrets.lift_history`
 //! - `vault.settings.inference_defaults`
 //! - `vault.settings.inference_defaults.replace`
@@ -63,6 +71,7 @@
 //! - `self.secrets.renew`
 //! - `self.secrets.teardown`
 //! - `self.secrets.use`
+//! - `vault.shares.issue_view_link`
 //! - `vault.shares.revoke`
 //! - `vault.shares.view`
 //! - `vault.artifacts.live_preview.read`
@@ -74,11 +83,14 @@
 //! - `vault.code.checkout.publish`
 //! - `vault.code.checkout.settle`
 //! - `vault.code.checkout.teardown`
+//! - `vault.code.snapshots.capture`
+//! - `vault.code.symbols.neighbors`
 //! - `vault.connectors.read_grants.grant`
 //! - `vault.connectors.read_grants.revoke`
 //! - `vault.repo.snapshots.get`
 //! - `vault.repo.snapshots.read`
 //! - `vault.repo.symbols.definitions`
+//! - `vault.repo.symbols.neighbors`
 //! - `vault.repo.views.get`
 //! - `vault.repo.views.read`
 //! - `vault.repo.merge_queue.observe`
@@ -95,16 +107,23 @@
 //! - `vault.messages.react`
 //! - `vault.settings.web_connector`
 //! - `vault.settings.web_connector.replace`
+//! - `vault.settings.model_pack`
+//! - `vault.settings.model_pack.replace`
+//! - `vault.model_pack.revert`
 //! - `vault.connectors.web.usage`
+//! - `ai.streams.release`
 //! - `ai.anonymous_chat`
 //! - `vault.models.trials.resend_arm`
 //! - `ai.options`
 //! - `ai.ask_image`
 //! - `vault.graph.ask`
+//! - `self.skills.graph`
 //! - `vault.graph.admit`
 //! - `vault.questions.create`
 //! - `vault.questions.edit`
 //! - `vault.questions.pause`
+//! - `vault.questions.prepare`
+//! - `vault.questions.admit`
 //! - `vault.questions.backfill`
 //! - `vault.questions.read`
 //! - `vault.questions.outcome_windows`
@@ -115,6 +134,7 @@
 //! - `vault.questions.schedule`
 //! - `vault.decisions.asks.confirm_grant`
 //! - `connector.call`
+//! - `connector.call_status`
 //! - `vault.conversations.turns.create`
 //! - `vault.conversations.records.append`
 //! - `vault.batch`
@@ -142,6 +162,7 @@
 //! - `self.history`
 //! - `vault.sync.repo_manifests.conflict.review`
 //! - `vault.sync.repo_manifests.conflict.discard`
+//! - `vault.dreamer.follower.keyframe`
 //! - `connector.answer`
 //! - `self.browser.open`
 //! - `self.browser.observe`
@@ -381,6 +402,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultSharedProposeDelete,
     VaultSharedProposeTransfer,
     VaultSharedProposeRemoveOwner,
+    VaultSharedProposeAddOwner,
     VaultSharedExecute,
     VaultSharedReceipt,
     VaultSharedOutcomes,
@@ -394,6 +416,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultMembersLeave,
     VaultMembersInvitations,
     VaultMembersAccept,
+    VaultMembersAcceptWithCredential,
     VaultMembersDecline,
     VaultMembersWithdrawInvitation,
     VaultSharedObject,
@@ -408,6 +431,8 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultSharedPolicyAnswer,
     VaultSharedPolicyChange,
     VaultSharedPolicyChanges,
+    VaultSharedOwnerChangeWaitSet,
+    VaultSharedOwnerChangeWaitGet,
     VaultFederationCoreferenceLink,
     VaultFederationCoreferenceConfirm,
     VaultFederationCoreferenceShareConsent,
@@ -423,6 +448,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultFederationBurstReviewRelease,
     VaultFederationBurstReviewReject,
     VaultFederationBurstReplay,
+    VaultFederationStatus,
     VaultFederationConnectIdentity,
     VaultFederationConnectGrantsMint,
     VaultFederationConnectOffer,
@@ -488,6 +514,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultRecordsEraseConfirm,
     VaultRecordsEraseSweep,
     VaultOutboundCallsRequestErase,
+    VaultOutboundUncertainSendAnswer,
     VaultResearchCreateChild,
     VaultEvalsInventory,
     VaultEvalsCohortsSetup,
@@ -560,10 +587,13 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultPolicyOwnerConfigure,
     VaultPolicyOwnerRowChange,
     VaultConsentApproveOnce,
+    VaultCampaignHeld,
+    VaultCampaignApproveOnce,
     VaultConnectorsCallsApproveOnce,
     VaultConsentDeny,
     VaultConsentCreateStandingGrant,
     VaultConsentCreateAutoWeaveGrant,
+    VaultConsentCreateNightlyLinkGrant,
     VaultConsentRegistry,
     VaultConsentFailureSignalsHeld,
     VaultConsentRevoke,
@@ -626,7 +656,11 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultHooksReplay,
     VaultHooksRegenDue,
     VaultHooksRegenGet,
+    VaultHooksRegenHistory,
+    VaultHooksRegenRevert,
+    VaultHooksRegenRun,
     VaultHooksRegenAdopt,
+    VaultHooksRegenCancel,
     VaultArtifactsPublishApproval,
     VaultArtifactsPublish,
     VaultArtifactsRepoint,
@@ -643,17 +677,24 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCodeSymbolsRenew,
     VaultCodeSymbolsRelease,
     VaultCodeProposalSubmit,
+    VaultCodeProposalRereview,
     VaultCodeConflictRecord,
     VaultCodeConflictView,
     VaultCodeProposalResolve,
+    VaultCodeProposalResolveRereview,
     VaultCodeProposalReview,
     VaultCodeProposalSettle,
     VaultCodeProposalSettlement,
     VaultCodeOplog,
+    VaultCodeSecretsGet,
+    VaultCodeSecretsPropose,
     ExecuteCode,
     VaultCodeModelHealCount,
+    VaultCodeSessionModelHealCount,
     VaultCodeCorrections,
+    VaultCodeStepEvidence,
     VaultCodeTypeDiagnostics,
+    VaultCodeWaitsRebind,
     VaultCodeWaitsResolve,
     VaultCodeWaitsReceipt,
     VaultResultsStatus,
@@ -682,9 +723,14 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCodeOriginPublishApprove,
     VaultCodeOriginPublishExecute,
     VaultCodeOriginPublishCancel,
+    VaultDevicesPredecessorName,
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
+    VaultCodeSecretsPurgeRequest,
+    VaultCodeSecretsPurgeGet,
+    VaultCodeSecretsPurgeExecute,
+    VaultCodeCheckoutHolderBind,
     VaultCodeCheckoutBind,
     VaultCodeViewsMaterialize,
     VaultCodeViewsGet,
@@ -719,6 +765,9 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultAgentsDreamingSet,
     VaultAgentsGrantsMint,
     VaultAgentsGrantsRevoke,
+    VaultAgentsVerbClassesGet,
+    VaultAgentsVerbClassesConfigure,
+    VaultOauthAuthorizationAnswer,
     VaultRepoGitPushMint,
     VaultRepoGitPushRevoke,
     VaultRepoAnchorBind,
@@ -753,6 +802,8 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultSkillsPackReceipt,
     VaultSkillsOutcomesProject,
     VaultSkillsOutcomesGet,
+    VaultSettingsModelsResponsesStoreRead,
+    VaultSettingsModelsResponsesStoreSet,
     VaultModelsManifestRead,
     VaultModelsManifestReplace,
     VaultModelsOneironerBind,
@@ -912,6 +963,10 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCustodyMembersDrainCommit,
     VaultCustodyMembersDrainFolder,
     VaultCustodyMembersReenrol,
+    VaultMailPackInstall,
+    VaultMailReplyApprove,
+    VaultMailSourcesSync,
+    VaultMailSourcesSearch,
     VaultFilesSourcesConvert,
 }
 impl HostDoorRow {
@@ -1116,6 +1171,7 @@ impl HostDoorRow {
             "vault.shared.propose_delete" => Self::VaultSharedProposeDelete,
             "vault.shared.propose_transfer" => Self::VaultSharedProposeTransfer,
             "vault.shared.propose_remove_owner" => Self::VaultSharedProposeRemoveOwner,
+            "vault.shared.propose_add_owner" => Self::VaultSharedProposeAddOwner,
             "vault.shared.execute" => Self::VaultSharedExecute,
             "vault.shared.receipt" => Self::VaultSharedReceipt,
             "vault.shared.outcomes" => Self::VaultSharedOutcomes,
@@ -1129,6 +1185,7 @@ impl HostDoorRow {
             "vault.members.leave" => Self::VaultMembersLeave,
             "vault.members.invitations" => Self::VaultMembersInvitations,
             "vault.members.accept" => Self::VaultMembersAccept,
+            "vault.members.accept_with_credential" => Self::VaultMembersAcceptWithCredential,
             "vault.members.decline" => Self::VaultMembersDecline,
             "vault.members.withdraw_invitation" => Self::VaultMembersWithdrawInvitation,
             "vault.shared.object" => Self::VaultSharedObject,
@@ -1143,6 +1200,8 @@ impl HostDoorRow {
             "vault.shared.policy.answer" => Self::VaultSharedPolicyAnswer,
             "vault.shared.policy.change" => Self::VaultSharedPolicyChange,
             "vault.shared.policy.changes" => Self::VaultSharedPolicyChanges,
+            "vault.shared.owner_change_wait.set" => Self::VaultSharedOwnerChangeWaitSet,
+            "vault.shared.owner_change_wait.get" => Self::VaultSharedOwnerChangeWaitGet,
             "vault.federation.coreference.link" => Self::VaultFederationCoreferenceLink,
             "vault.federation.coreference.confirm" => Self::VaultFederationCoreferenceConfirm,
             "vault.federation.coreference.share_consent" => {
@@ -1160,6 +1219,7 @@ impl HostDoorRow {
             "vault.federation.burst.review.release" => Self::VaultFederationBurstReviewRelease,
             "vault.federation.burst.review.reject" => Self::VaultFederationBurstReviewReject,
             "vault.federation.burst.replay" => Self::VaultFederationBurstReplay,
+            "vault.federation.status" => Self::VaultFederationStatus,
             "vault.federation.connect.identity" => Self::VaultFederationConnectIdentity,
             "vault.federation.connect.grants.mint" => Self::VaultFederationConnectGrantsMint,
             "vault.federation.connect.offer" => Self::VaultFederationConnectOffer,
@@ -1231,6 +1291,7 @@ impl HostDoorRow {
             "vault.records.erase_confirm" => Self::VaultRecordsEraseConfirm,
             "vault.records.erase_sweep" => Self::VaultRecordsEraseSweep,
             "vault.outbound_calls.request.erase" => Self::VaultOutboundCallsRequestErase,
+            "vault.outbound.uncertain_send.answer" => Self::VaultOutboundUncertainSendAnswer,
             "vault.research.create_child" => Self::VaultResearchCreateChild,
             "vault.evals.inventory" => Self::VaultEvalsInventory,
             "vault.evals.cohorts.setup" => Self::VaultEvalsCohortsSetup,
@@ -1311,10 +1372,13 @@ impl HostDoorRow {
             "vault.policy.owner.configure" => Self::VaultPolicyOwnerConfigure,
             "vault.policy.owner.row.change" => Self::VaultPolicyOwnerRowChange,
             "vault.consent.approve_once" => Self::VaultConsentApproveOnce,
+            "vault.campaign.held" => Self::VaultCampaignHeld,
+            "vault.campaign.approve_once" => Self::VaultCampaignApproveOnce,
             "vault.connectors.calls.approve_once" => Self::VaultConnectorsCallsApproveOnce,
             "vault.consent.deny" => Self::VaultConsentDeny,
             "vault.consent.create_standing_grant" => Self::VaultConsentCreateStandingGrant,
             "vault.consent.create_auto_weave_grant" => Self::VaultConsentCreateAutoWeaveGrant,
+            "vault.consent.create_nightly_link_grant" => Self::VaultConsentCreateNightlyLinkGrant,
             "vault.consent.registry" => Self::VaultConsentRegistry,
             "vault.consent.failure_signals_held" => Self::VaultConsentFailureSignalsHeld,
             "vault.consent.revoke" => Self::VaultConsentRevoke,
@@ -1377,7 +1441,11 @@ impl HostDoorRow {
             "vault.hooks.replay" => Self::VaultHooksReplay,
             "vault.hooks.regen.due" => Self::VaultHooksRegenDue,
             "vault.hooks.regen.get" => Self::VaultHooksRegenGet,
+            "vault.hooks.regen.history" => Self::VaultHooksRegenHistory,
+            "vault.hooks.regen.revert" => Self::VaultHooksRegenRevert,
+            "vault.hooks.regen.run" => Self::VaultHooksRegenRun,
             "vault.hooks.regen.adopt" => Self::VaultHooksRegenAdopt,
+            "vault.hooks.regen.cancel" => Self::VaultHooksRegenCancel,
             "vault.artifacts.publish_approval" => Self::VaultArtifactsPublishApproval,
             "vault.artifacts.publish" => Self::VaultArtifactsPublish,
             "vault.artifacts.repoint" => Self::VaultArtifactsRepoint,
@@ -1398,17 +1466,24 @@ impl HostDoorRow {
             "vault.code.symbols.renew" => Self::VaultCodeSymbolsRenew,
             "vault.code.symbols.release" => Self::VaultCodeSymbolsRelease,
             "vault.code.proposal_submit" => Self::VaultCodeProposalSubmit,
+            "vault.code.proposal_rereview" => Self::VaultCodeProposalRereview,
             "vault.code.conflict_record" => Self::VaultCodeConflictRecord,
             "vault.code.conflict_view" => Self::VaultCodeConflictView,
             "vault.code.proposal_resolve" => Self::VaultCodeProposalResolve,
+            "vault.code.proposal_resolve_rereview" => Self::VaultCodeProposalResolveRereview,
             "vault.code.proposal_review" => Self::VaultCodeProposalReview,
             "vault.code.proposal_settle" => Self::VaultCodeProposalSettle,
             "vault.code.proposal_settlement" => Self::VaultCodeProposalSettlement,
             "vault.code.oplog" => Self::VaultCodeOplog,
+            "vault.code.secrets.get" => Self::VaultCodeSecretsGet,
+            "vault.code.secrets.propose" => Self::VaultCodeSecretsPropose,
             "execute_code" => Self::ExecuteCode,
             "vault.code.model_heal_count" => Self::VaultCodeModelHealCount,
+            "vault.code.session_model_heal_count" => Self::VaultCodeSessionModelHealCount,
             "vault.code.corrections" => Self::VaultCodeCorrections,
+            "vault.code.step_evidence" => Self::VaultCodeStepEvidence,
             "vault.code.type_diagnostics" => Self::VaultCodeTypeDiagnostics,
+            "vault.code.waits.rebind" => Self::VaultCodeWaitsRebind,
             "vault.code.waits.resolve" => Self::VaultCodeWaitsResolve,
             "vault.code.waits.receipt" => Self::VaultCodeWaitsReceipt,
             "vault.results.status" => Self::VaultResultsStatus,
@@ -1437,9 +1512,14 @@ impl HostDoorRow {
             "vault.code.origin.publish.approve" => Self::VaultCodeOriginPublishApprove,
             "vault.code.origin.publish.execute" => Self::VaultCodeOriginPublishExecute,
             "vault.code.origin.publish.cancel" => Self::VaultCodeOriginPublishCancel,
+            "vault.devices.predecessor.name" => Self::VaultDevicesPredecessorName,
             "vault.code.origin.authority.get" => Self::VaultCodeOriginAuthorityGet,
             "vault.code.origin.authority.set" => Self::VaultCodeOriginAuthoritySet,
             "vault.code.origin.publications" => Self::VaultCodeOriginPublications,
+            "vault.code.secrets.purge.request" => Self::VaultCodeSecretsPurgeRequest,
+            "vault.code.secrets.purge.get" => Self::VaultCodeSecretsPurgeGet,
+            "vault.code.secrets.purge.execute" => Self::VaultCodeSecretsPurgeExecute,
+            "vault.code.checkout.holder.bind" => Self::VaultCodeCheckoutHolderBind,
             "vault.code.checkout.bind" => Self::VaultCodeCheckoutBind,
             "vault.code.views.materialize" => Self::VaultCodeViewsMaterialize,
             "vault.code.views.get" => Self::VaultCodeViewsGet,
@@ -1474,6 +1554,9 @@ impl HostDoorRow {
             "vault.agents.dreaming.set" => Self::VaultAgentsDreamingSet,
             "vault.agents.grants.mint" => Self::VaultAgentsGrantsMint,
             "vault.agents.grants.revoke" => Self::VaultAgentsGrantsRevoke,
+            "vault.agents.verb_classes.get" => Self::VaultAgentsVerbClassesGet,
+            "vault.agents.verb_classes.configure" => Self::VaultAgentsVerbClassesConfigure,
+            "vault.oauth.authorization.answer" => Self::VaultOauthAuthorizationAnswer,
             "vault.repo.git_push.mint" => Self::VaultRepoGitPushMint,
             "vault.repo.git_push.revoke" => Self::VaultRepoGitPushRevoke,
             "vault.repo.anchor.bind" => Self::VaultRepoAnchorBind,
@@ -1508,6 +1591,12 @@ impl HostDoorRow {
             "vault.skills.pack_receipt" => Self::VaultSkillsPackReceipt,
             "vault.skills.outcomes.project" => Self::VaultSkillsOutcomesProject,
             "vault.skills.outcomes.get" => Self::VaultSkillsOutcomesGet,
+            "vault.settings.models.responses_store.read" => {
+                Self::VaultSettingsModelsResponsesStoreRead
+            }
+            "vault.settings.models.responses_store.set" => {
+                Self::VaultSettingsModelsResponsesStoreSet
+            }
             "vault.models.manifest.read" => Self::VaultModelsManifestRead,
             "vault.models.manifest.replace" => Self::VaultModelsManifestReplace,
             "vault.models.oneironer.bind" => Self::VaultModelsOneironerBind,
@@ -1671,6 +1760,10 @@ impl HostDoorRow {
             "vault.custody.members.drain.commit" => Self::VaultCustodyMembersDrainCommit,
             "vault.custody.members.drain.folder" => Self::VaultCustodyMembersDrainFolder,
             "vault.custody.members.reenrol" => Self::VaultCustodyMembersReenrol,
+            "vault.mail.pack.install" => Self::VaultMailPackInstall,
+            "vault.mail.reply.approve" => Self::VaultMailReplyApprove,
+            "vault.mail.sources.sync" => Self::VaultMailSourcesSync,
+            "vault.mail.sources.search" => Self::VaultMailSourcesSearch,
             "vault.files.sources.convert" => Self::VaultFilesSourcesConvert,
             _ => return None,
         })
@@ -1684,10 +1777,12 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
     HostDoorRow::from_verb(verb).is_some()
         || matches!(
             verb,
-            "self.focus.wakes"
+            "vault.commitments.ledger"
+                | "self.focus.wakes"
                 | "vault.shape.apply"
                 | "vault.shape.groups"
                 | "vault.shape.groups.resolve"
+                | "vault.proactivity.digest.get"
                 | "tasks.wave"
                 | "vault.fanout.spawn"
                 | "vault.budgets.resident_shares"
@@ -1714,6 +1809,8 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.weave.admin.item.wrong"
                 | "vault.step_up.totp.reset"
                 | "vault.inbox.groups.resolve"
+                | "vault.skill_hubs.clawhub.search"
+                | "vault.skill_hubs.clawhub.import"
                 | "vault.skills.proposal.settle"
                 | "vault.skills.optimize.tradeoff_asks.resolve"
                 | "vault.packs.sections.propose"
@@ -1725,12 +1822,16 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.outbox.diverged.answer"
                 | "vault.shared.deletion"
                 | "vault.org_admin.powers"
+                | "vault.sync.documents.copy_edit.review"
+                | "vault.sync.documents.copy_edit.settle"
                 | "vault.trusted_contacts.concern.deliver"
+                | "vault.files.sources.exclude"
                 | "vault.drafters.list_as"
                 | "vault.drafters.revert_as"
                 | "vault.roots.requests.cancel"
                 | "vault.policy.outbound.decide"
                 | "vault.policy.relay.decide"
+                | "vault.connectors.replies.retry_failed"
                 | "vault.secrets.lift_history"
                 | "vault.settings.inference_defaults"
                 | "vault.settings.inference_defaults.replace"
@@ -1743,6 +1844,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "self.secrets.renew"
                 | "self.secrets.teardown"
                 | "self.secrets.use"
+                | "vault.shares.issue_view_link"
                 | "vault.shares.revoke"
                 | "vault.shares.view"
                 | "vault.artifacts.live_preview.read"
@@ -1754,11 +1856,14 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.code.checkout.publish"
                 | "vault.code.checkout.settle"
                 | "vault.code.checkout.teardown"
+                | "vault.code.snapshots.capture"
+                | "vault.code.symbols.neighbors"
                 | "vault.connectors.read_grants.grant"
                 | "vault.connectors.read_grants.revoke"
                 | "vault.repo.snapshots.get"
                 | "vault.repo.snapshots.read"
                 | "vault.repo.symbols.definitions"
+                | "vault.repo.symbols.neighbors"
                 | "vault.repo.views.get"
                 | "vault.repo.views.read"
                 | "vault.repo.merge_queue.observe"
@@ -1775,15 +1880,22 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.messages.react"
                 | "vault.settings.web_connector"
                 | "vault.settings.web_connector.replace"
+                | "vault.settings.model_pack"
+                | "vault.settings.model_pack.replace"
+                | "vault.model_pack.revert"
                 | "vault.connectors.web.usage"
+                | "ai.streams.release"
                 | "vault.models.trials.resend_arm"
                 | "ai.options"
                 | "ai.ask_image"
                 | "vault.graph.ask"
+                | "self.skills.graph"
                 | "vault.graph.admit"
                 | "vault.questions.create"
                 | "vault.questions.edit"
                 | "vault.questions.pause"
+                | "vault.questions.prepare"
+                | "vault.questions.admit"
                 | "vault.questions.backfill"
                 | "vault.questions.read"
                 | "vault.questions.outcome_windows"
@@ -1794,6 +1906,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.questions.schedule"
                 | "vault.decisions.asks.confirm_grant"
                 | "connector.call"
+                | "connector.call_status"
                 | "vault.conversations.turns.create"
                 | "vault.conversations.records.append"
                 | "vault.batch"
@@ -1821,6 +1934,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "self.history"
                 | "vault.sync.repo_manifests.conflict.review"
                 | "vault.sync.repo_manifests.conflict.discard"
+                | "vault.dreamer.follower.keyframe"
                 | "connector.answer"
                 | "self.browser.open"
                 | "self.browser.observe"

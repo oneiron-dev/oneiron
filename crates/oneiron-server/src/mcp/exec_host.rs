@@ -274,6 +274,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         &self,
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
+        _caller: Option<(EntityId, Option<String>)>,
         _listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
@@ -288,6 +289,7 @@ pub trait McpCodeModeProvider: Send + Sync {
         _meter: BudgetGuard,
         _payer: Option<PayerPerson>,
         _lease: Option<LiveLeaseState>,
+        _caller: Option<(EntityId, Option<String>)>,
         _listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         None
@@ -524,6 +526,7 @@ pub type ReaderMeter = Arc<
             BudgetGuard,
             Option<PayerPerson>,
             Option<LiveLeaseState>,
+            Option<(EntityId, Option<String>)>,
             Vec<AgentModel>,
         ) -> Arc<dyn LlmBackend>
         + Send
@@ -667,6 +670,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             .as_ref()
             .map(|_| (request.actor.actor_ref, request.off_record_session.clone()));
         let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
+        let birth_position = request.actor.scope.birth_position();
         let verbs = Arc::clone(&request.verbs);
         let brief = request.brief.clone();
         // The gated run source is HOST-derived: the caller's handle is a label
@@ -687,14 +691,20 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             // The run spends under no scope, so its children spend on the
             // host's meter, as its own calls do, on a clock one window from
             // its first spawn.
-            let reader_seat = reader_seats.as_ref().map(|lent| {
-                lent.seat(
-                    request.run_id,
-                    None,
-                    request.actor.destination(),
-                    provider.reader_window_tokens(),
-                )
-            });
+            let reader_seat = reader_seats
+                .as_ref()
+                .map(|lent| {
+                    lent.seat(
+                        &oneiron::code_run::ReaderJobs::canonical(&vault),
+                        oneiron::code_run::ReaderActor::of(write_actor),
+                        request.run_id,
+                        None,
+                        request.actor.destination(),
+                        provider.reader_window_tokens(),
+                    )
+                })
+                .transpose()
+                .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?;
             // Past the bound the run waits its credential's turn. The permit
             // moves into the worker below, so a caller who hangs up frees
             // nothing its run still holds.
@@ -770,6 +780,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         verbs,
                         opener.as_ref(),
                         worlds,
+                        birth_position,
                         reader_seat,
                         seat.as_mut(),
                         git_door_base,
@@ -870,6 +881,7 @@ fn run_engine_native_code_mode(
     verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
     opener: Option<&oneiron::authority::VerifiedSlip>,
     worlds: Vec<EntityId>,
+    birth_position: oneiron::federation::record_scope::BirthPosition,
     reader_seat: Option<SpawnHostSeat>,
     compaction: Option<&mut RunCompaction>,
     git_door_base: Option<String>,
@@ -878,6 +890,7 @@ fn run_engine_native_code_mode(
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
         .with_agent_verb_door(verbs)
+        .with_birth_position(birth_position)
         .with_bound_run(config.run_id)
         .with_git_door_base(git_door_base);
     if let Some(opener) = opener {
@@ -1101,6 +1114,7 @@ pub(crate) fn enter_engine_native_run(
                 guard.clone(),
                 payer.clone(),
                 Some(scoped.clone()),
+                None,
                 listed.clone(),
             )
         });
@@ -1113,7 +1127,7 @@ pub(crate) fn enter_engine_native_run(
             .and_then(|planned| {
                 provider.planned_backend(guard.clone(), payer.clone(), planned, listed.clone())
             })
-            .or_else(|| provider.reader_backend(guard.clone(), payer, listed)),
+            .or_else(|| provider.reader_backend(guard.clone(), payer, None, listed)),
     };
     let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())

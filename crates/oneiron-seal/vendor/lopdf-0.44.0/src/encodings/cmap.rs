@@ -97,34 +97,36 @@ impl ToUnicodeCMap {
             }
         }
 
-        let mut rev_map = HashMap::new();
+        let mut rev_map: HashMap<Vec<u16>, Vec<ReverseCMapEntry>> = HashMap::new();
 
         for code_len_idx in 0..cmap.bf_ranges.len() {
             let code_len = (code_len_idx + 1) as u8;
             for (range, target) in cmap.bf_ranges[code_len_idx].iter() {
                 for src_code in range.clone() {
-                    let unicode_sequence: Option<Vec<u16>> = match target {
+                    let mut singleton_scratch = [0u16; 1];
+                    let unicode_sequence: Option<std::borrow::Cow<'_, [u16]>> = match target {
                         BfRangeTarget::UTF16CodePoint { offset } => {
-                            Some(vec![u32::wrapping_add(src_code, *offset) as u16])
+                            singleton_scratch[0] = u32::wrapping_add(src_code, *offset) as u16;
+                            Some(std::borrow::Cow::Borrowed(&singleton_scratch[..]))
                         }
                         BfRangeTarget::HexString(hex_str_vec) => {
                             // If the hex_str_vec itself is the target for a single src_code in a bfchar-like mapping
                             // or if it's a base for a bfrange where only the last element increments.
                             if src_code == *range.start() {
                                 // Simplified: assume direct mapping for start of range
-                                Some(hex_str_vec.clone())
+                                Some(std::borrow::Cow::Borrowed(hex_str_vec.as_slice()))
                             } else if hex_str_vec.len() == 1 {
                                 // For ranges like <01> <05> <0041>
-                                Some(vec![
-                                    hex_str_vec[0].wrapping_add((src_code - range.start()) as u16),
-                                ])
+                                singleton_scratch[0] =
+                                    hex_str_vec[0].wrapping_add((src_code - range.start()) as u16);
+                                Some(std::borrow::Cow::Borrowed(&singleton_scratch[..]))
                             } else if !hex_str_vec.is_empty() {
                                 // For ranges like <01> <05> [<0041> <0042> ...]
                                 let mut current_hex_str = hex_str_vec.clone();
                                 if let Some(last_val) = current_hex_str.last_mut() {
                                     *last_val =
                                         last_val.wrapping_add((src_code - range.start()) as u16);
-                                    Some(current_hex_str)
+                                    Some(std::borrow::Cow::Owned(current_hex_str))
                                 } else {
                                     None
                                 }
@@ -135,7 +137,7 @@ impl ToUnicodeCMap {
                         BfRangeTarget::ArrayOfHexStrings(array_of_hex_str) => {
                             let index = (src_code - range.start()) as usize;
                             if index < array_of_hex_str.len() {
-                                Some(array_of_hex_str[index].clone())
+                                Some(std::borrow::Cow::Borrowed(array_of_hex_str[index].as_slice()))
                             } else {
                                 None
                             }
@@ -145,13 +147,18 @@ impl ToUnicodeCMap {
                     if let Some(uni_seq) = unicode_sequence
                         && !uni_seq.is_empty()
                     {
-                        rev_map
-                            .entry(uni_seq)
-                            .or_insert_with(Vec::new)
-                            .push(ReverseCMapEntry {
-                                source_code: src_code,
-                                code_len,
-                            });
+                        let entry = ReverseCMapEntry {
+                            source_code: src_code,
+                            code_len,
+                        };
+                        if let Some(bucket) = rev_map.get_mut(uni_seq.as_ref()) {
+                            bucket.push(entry);
+                        } else {
+                            rev_map
+                                .entry(uni_seq.into_owned())
+                                .or_insert_with(Vec::new)
+                                .push(entry);
+                        }
                     }
                 }
             }
@@ -192,7 +199,7 @@ impl ToUnicodeCMap {
 
     pub fn get_or_replacement_char(&self, code: SourceCode, code_len: CodeLen) -> Vec<u16> {
         self.get(code, code_len)
-            .unwrap_or(vec![ToUnicodeCMap::REPLACEMENT_CHAR])
+            .unwrap_or_else(|| vec![ToUnicodeCMap::REPLACEMENT_CHAR])
     }
 
     pub fn put(

@@ -99,6 +99,8 @@ pub struct SyncServer {
     /// deck and slide render takes its turn here, round robin across the
     /// callers it is for, the host's own wakes behind them.
     pub(crate) renderer_turns: crate::admission::Admission<oneiron::EntityId>,
+    /// The context-pack input line, round robin across authenticated callers.
+    pub(crate) context_reads: crate::admission::Admission<String>,
     /// The operator's renderer scratch source, resolved once with shared disk claims.
     pub(crate) renderer_scratch: crate::slide_render::RendererScratch,
     /// OF-520 questions retrieval queries past `config.limits` raised.
@@ -108,15 +110,13 @@ pub struct SyncServer {
     /// Its presence says the vault is managed; the issuer inside is `None`
     /// where this install holds no issuer seed for it (FIX-LIST 3018).
     pub(crate) managed_issuer: Option<ManagedIssuer>,
-    /// The self-host root's issuer, loaded at construction from this
-    /// install's own issuer seed for the vault when a host secret is
-    /// configured (FIX-LIST 3018); `None` with no secret, on a relay, or
-    /// where this install holds no seed. Never the managed issuer.
+    /// The self-host root's issuer, loaded at construction from this install's own issuer seed for
+    /// the vault when a host secret is configured (FIX-LIST 3018); `None` with no secret, on a
+    /// relay, or where this install holds no seed. Never the managed issuer.
     pub(crate) host_root_issuer: Option<Arc<oneiron::authority::HostSlipIssuer>>,
     pub(crate) policy_doors: super::policy_doors::PolicyDoors,
-    /// Node-side account API key verifier (OF-448), installed by a host
-    /// that supplies the control-plane checker. `None`: account keys are
-    /// never admitted.
+    /// Node-side account API key verifier (OF-448), installed by a host that supplies the
+    /// control-plane checker. `None`: account keys are never admitted.
     pub(crate) account_keys: Option<Arc<crate::auth::account_key::AccountKeys>>,
     /// Per-vault usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
@@ -152,6 +152,7 @@ pub struct SyncServer {
     pub(crate) artifact_previews: super::ArtifactPreviews,
     pub(crate) live_voice: crate::voice_host::LiveVoiceSessions,
     pub(crate) asr_sessions: crate::api::AsrSessions,
+    pub(crate) meeting_imports: super::meeting_imports::MeetingImports,
     pub(crate) model_streams: crate::api::ModelStreams,
     /// Whole-vault exports kept for their callers to read (FIX 3676).
     pub(crate) export_transfers: crate::api::ExportTransfers,
@@ -460,10 +461,11 @@ impl SyncServer {
         meter: oneiron::BudgetGuard,
     ) -> Self {
         self.decision_read = Some((door, meter));
-        self.decisions = self
-            .decisions
-            .clone()
-            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
+        self.decisions = self.decisions.clone().with_house_read(
+            self.decision_read.as_ref(),
+            self.house_read_admission(),
+            &self.vault,
+        );
         self
     }
 
@@ -516,10 +518,11 @@ impl SyncServer {
             self.decision_read = Some((door, raw.meter().clone()));
         }
         // The house read fills the ladder's escalation rung.
-        self.decisions = self
-            .decisions
-            .clone()
-            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
+        self.decisions = self.decisions.clone().with_house_read(
+            self.decision_read.as_ref(),
+            self.house_read_admission(),
+            &self.vault,
+        );
         // A planned team's pattern skill runs on its generative seat.
         self.pattern_launch_runner = pattern_workflow::bind(Arc::clone(&self.vault), ai.clone());
         self.ai = ai;

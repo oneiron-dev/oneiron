@@ -544,6 +544,7 @@ impl Vault {
             hash_hex(blake3::hash(&file.bytes).as_bytes()),
             by,
             &oneiron_authority::share_travel::BornWith::new(),
+            Vec::new(),
         )
     }
 }

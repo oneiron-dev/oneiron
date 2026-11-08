@@ -8,7 +8,7 @@ import { credentialParts, McpClient, PublicHttpClient, PublicHttpError } from ".
 import type { JsonRpcReply, WireReply } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import type { FixtureCatalog } from "./support/fixtures.ts";
-import { BlockedDoor, defineFile, redactor, secretHex } from "./support/run.ts";
+import { BlockedDoor, assertFlowActive, defineFile, redactor, secretHex } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -981,6 +981,7 @@ suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async 
     // Fleet runtime git only: materialize the pinned local hub from fixture
     // bytes. No Git operation runs on the coordinator Mac for this draft.
     const git = async (args: string[], cwd: string): Promise<string> => {
+      assertFlowActive();
       const child = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr, code] = await Promise.all([
         new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
@@ -1319,6 +1320,7 @@ suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async 
     // All targets are local/synthetic: a vault-adjacent sentinel file, a
     // loopback sink, and the device-bound handle (never its value).
     const sinkHits: string[] = [];
+    assertFlowActive();
     const sink = Bun.serve({
       hostname: "127.0.0.1", port: 0,
       fetch: (request) => { sinkHits.push(request.url); return new Response("hooks05-sink"); },
@@ -1445,7 +1447,7 @@ suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async 
     });
     const pendingHex01 = hexId("31");
     const pendingHex02 = hexId("32");
-    const invocation01 = "hooks05-pending-01";
+    const invocation01 = "05000000000000000000000000000001";
     const stop01 = pendingOf(await callPending(pendingInput(pendingHex01, invocation01), invocation01), invocation01);
     expect(pendingOf(await callPending(pendingInput(pendingHex01, invocation01), invocation01, stop01.ask), invocation01))
       .toEqual(stop01);
@@ -1501,7 +1503,7 @@ suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async 
     // Revoke-then-answer ordering is the durable-pending oracle for the
     // REVOKED leg: the ask predates the revoke, the answer postdates the
     // restart, and current authority rechecks at resume.
-    const invocation02 = "hooks05-pending-02";
+    const invocation02 = "05000000000000000000000000000002";
     const stop02 = pendingOf(await callPending(pendingInput(pendingHex02, invocation02), invocation02), invocation02);
     await awaitPublic(
       async () => (await readForeignReceipts())

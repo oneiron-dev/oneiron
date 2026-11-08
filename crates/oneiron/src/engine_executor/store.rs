@@ -21,7 +21,7 @@ use crate::{Error, Result};
 use serde_json::json;
 use std::collections::BTreeSet;
 
-const SCRIPT_OUTPUT_DIR: &str = "executor/repl";
+pub(super) const SCRIPT_OUTPUT_DIR: &str = "executor/repl";
 
 pub(super) const CONFIG_OUTPUT_PATH: &str = "executor/repl/run.config.json";
 
@@ -337,7 +337,7 @@ impl StreamedOutputs {
         exec_run: EntityId,
         outcome: &JsCodeModeStepOutcome,
     ) -> Result<StepBodies> {
-        let (observation, console) = if outcome.done {
+        let (observation, mut console) = if outcome.done {
             (self.finish, self.console)
         } else {
             (self.console, None)
@@ -347,6 +347,14 @@ impl StreamedOutputs {
             None => storage.code_run_output_sink_for(exec_run)?,
         };
         observation.write(outcome.observation.as_bytes())?;
+        // A runtime that returned its finished step's console in the
+        // outcome instead of streaming it (FIX 6885): keep it where the
+        // streamed console would have gone.
+        if console.is_none() && !outcome.console.is_empty() {
+            let mut sink = storage.code_run_output_sink()?;
+            sink.write(outcome.console.as_bytes())?;
+            console = Some(sink);
+        }
         let mut files = self.files;
         for output in &outcome.outputs {
             let mut sink = storage.code_run_output_sink_for(exec_run)?;
@@ -796,7 +804,7 @@ pub(super) fn resumed_output_path(seq: u64, wait_id: EntityId) -> String {
 }
 
 /// The step and the wait (lower-case hex) a resumed reply's path names.
-pub(super) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
+pub(crate) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
     let rest = path.strip_prefix(SCRIPT_OUTPUT_DIR)?.strip_prefix('/')?;
     let (seq, rest) = rest.split_once(RESUMED_OUTPUT_INFIX)?;
     let wait = rest.strip_suffix(".json")?;
@@ -811,11 +819,11 @@ pub(super) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
     Some((seq.parse().ok()?, wait))
 }
 
-pub(super) fn script_output_path(seq: u64) -> String {
+pub(crate) fn script_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.generated.js")
 }
 
-pub(super) fn observation_output_path(seq: u64) -> String {
+pub(crate) fn observation_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.observation.txt")
 }
 
@@ -871,7 +879,7 @@ pub(super) fn is_terminal_output_path(path: &str) -> bool {
 }
 
 /// The step a terminal marker's path names.
-pub(super) fn terminal_output_seq(path: &str) -> Option<u64> {
+pub(crate) fn terminal_output_seq(path: &str) -> Option<u64> {
     let seq = path
         .strip_prefix(SCRIPT_OUTPUT_DIR)?
         .strip_prefix('/')?

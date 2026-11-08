@@ -58,7 +58,7 @@ impl HostSelfDispatcher<'_> {
                 let turn = std::sync::Arc::new(self.task_work_turn()?);
                 self.dispatch_tasks_wait(call, run_id, turn)
             }
-            SelfCall::TasksRefuse(call) => self.dispatch_tasks_refuse(call),
+            SelfCall::TasksRefuse(call) => self.dispatch_tasks_refuse(call, read_as),
             // The landing reads its refs under the key its door admitted it with.
             SelfCall::ConsultResult(call) => self.dispatch_consult_result(call, read_as),
             SelfCall::SkillsCall(_) => Ok(Self::dispatch_skills_call_unhosted()),
@@ -110,7 +110,7 @@ impl HostSelfDispatcher<'_> {
             SelfCall::WorkflowDispatch(call) => self.dispatch_workflow_bound(*call, read_as),
             // The run repo rows read on the lane their door admitted, under
             // the run's lease, at its executor site (FIX 6867).
-            SelfCall::Repo(call) => self.dispatch_repo(call, site, read_as),
+            SelfCall::Repo(call) => self.dispatch_repo(*call, site, read_as),
         }?;
         self.note_created_from_outcome(agent_verb, &outcome);
         Ok(outcome)

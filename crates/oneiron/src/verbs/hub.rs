@@ -223,6 +223,20 @@ pub struct HubHookReplay {
     /// The test did not replay this hook in full: no entry, or an entry's
     /// inputs are gone. The verdict still stands.
     pub unreplayed: bool,
+    /// Each golden input the pack declares for this verb hook, run once.
+    pub golden: Vec<HubHookGoldenRun>,
+}
+
+/// One golden input of a verb hook, as the qualification ran it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HubHookGoldenRun {
+    /// Its place in the hook's `golden.json`, from 0.
+    pub index: usize,
+    pub verb: String,
+    /// The hook's selector took the call, so its body ran.
+    pub ran: bool,
+    /// The body returned the expected outcome.
+    pub passed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -537,6 +551,16 @@ fn qualification_receipt(qualified: PackHookQualification) -> HubHookQualificati
                     .map(super::HookReplayRow::from)
                     .collect(),
                 unreplayed: replay.unreplayed,
+                golden: replay
+                    .golden
+                    .into_iter()
+                    .map(|run| HubHookGoldenRun {
+                        index: run.index,
+                        verb: run.verb,
+                        ran: run.result.is_some(),
+                        passed: run.passed,
+                    })
+                    .collect(),
             })
             .collect(),
     }
@@ -548,4 +572,50 @@ pub fn hub_hooks_qualify_embedded(
 ) -> MemoryResult<HubHookQualificationReceipt> {
     let _owner = memory.embedded_owner("vault.packs.hooks.qualify")?;
     super::host_only(memory, "vault.packs.hooks.qualify", input)
+}
+
+/// Queries the public ClawHub-compatible API on a configured HTTP hub's origin.
+/// Query metadata never grants trust or supplies a content hash for import.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClawHubSearchRequest {
+    pub hub: EntityId,
+    pub q: String,
+    pub limit: Option<i64>,
+    pub highlighted_only: Option<bool>,
+    pub non_suspicious_only: Option<bool>,
+    /// Defaults to the existing 2 MiB HTTP index budget; not sent upstream.
+    pub response_limit_bytes: Option<usize>,
+}
+
+pub fn skill_hub_clawhub_search_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &ClawHubSearchRequest,
+) -> MemoryResult<crate::skill_hub::ClawHubSearchReply> {
+    owner.revalidate(vault)?;
+    let hub = vault.skill_hub_record(&input.hub)?;
+    if hub.kind != SkillHubKind::HttpIndex {
+        return Err(crate::memory::MemoryError::bad_request(
+            "ClawHub search requires a configured HTTP hub",
+        ));
+    }
+    let adapter = crate::skill_hub::HttpEndpointSkillHubAdapter::new(input.hub, &hub.endpoint)?;
+    Ok(adapter.search_clawhub(
+        &input.q,
+        input.limit,
+        input.highlighted_only,
+        input.non_suspicious_only,
+        input.response_limit_bytes,
+    )?)
+}
+
+/// Explicit owner-selected import; the native door revalidates the proof before
+/// fetching and uses the normal publisher, fit, scan and import writer.
+pub fn skill_hub_clawhub_import_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &crate::skill_hub::ClawHubImportRequest,
+) -> MemoryResult<crate::skill_hub::ClawHubImportReply> {
+    Ok(vault.import_clawhub_skill(owner, input)?)
 }

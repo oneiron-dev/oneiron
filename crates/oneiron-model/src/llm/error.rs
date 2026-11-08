@@ -8,7 +8,7 @@ use super::media::MediaCallProgress;
 use super::{LlmCapability, ModelId};
 
 #[derive(
-    Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema,
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema,
 )]
 pub enum LlmError {
     #[error("retryable LLM error: {0}")]
@@ -311,6 +311,10 @@ pub enum FatalLlmError {
         /// The provider's structured error code, never inferred from its text.
         code: Option<String>,
     },
+    /// A provider's structured refusal because the input exceeds its context
+    /// window, with the same bounded provider message as other request errors.
+    #[error("context window exceeded: {message}")]
+    ContextWindowExceeded { message: String },
     #[error("authentication failed")]
     Auth,
     #[error("content filtered")]

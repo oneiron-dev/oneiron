@@ -32,7 +32,7 @@ use crate::error::{Error, Result, StoreError};
 use crate::store::Store;
 use crate::store::key_custody::{
     CustodyBinding, CustodyKind, CustodyPlan, CustodySecret, CustodySubject, EntryState,
-    Requirement, RetireCause, RetirementIntent, stage_retirement_in_txn,
+    Requirement, RetireCause, RetirementIntent, retirement_in_txn, stage_retirement_in_txn,
 };
 
 pub(crate) use self::erase::{FenceLookup, credential_erases_staged};
@@ -448,6 +448,33 @@ impl Store {
                 cause: RetireCause::Erase,
             },
         )
+    }
+
+    /// The highest ConnectorResume generation of `call_ref` custody holds or
+    /// held here, read in `txn` (FIX 16029): its newest entry or retirement
+    /// marker, an aborted writer's published entry included, or the
+    /// generation the retirement standing for it reaches, whichever is
+    /// higher. A round minted above it never reuses a generation a
+    /// retirement covers or a writer ever published. `None` when custody
+    /// holds none for it, there is no custody, or the vault is archived
+    /// (its custody is its replacement's, and nothing mints here).
+    ///
+    /// # Errors
+    /// Custody and storage faults.
+    pub(crate) fn connector_resume_high_water_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        call_ref: &EntityId,
+    ) -> Result<Option<u64>> {
+        if self.core.gate_custody_archived() {
+            return Ok(None);
+        }
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(None);
+        };
+        let subject = resume_subject(custody.binding(), call_ref)?;
+        let standing = retirement_in_txn(self, txn, &subject)?.map(|intent| intent.through);
+        Ok(custody.newest_generation(&subject)?.max(standing))
     }
 
     /// Carries out every staged connector resume key retirement (FIX 9157),

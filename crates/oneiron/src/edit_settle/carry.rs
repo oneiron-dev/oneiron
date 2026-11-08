@@ -44,8 +44,8 @@ use crate::edit_roundtrip::slides_review::{
 };
 use crate::edit_roundtrip::{
     ArtifactAsk, CellRef, CellValue, EditOp, EditProposal, FolderAsk, FolderItem, OfficeFormat,
-    ParagraphAsk, ParagraphJudgment, RangeRef, SheetAnswerBundle, SheetRowReads, SheetRowsAsk,
-    UnitDecider,
+    ParagraphAsk, ParagraphJudgment, RangeRef, SheetAnswerBundle, SheetRowReads, SheetRowSelection,
+    SheetRowsAsk, UnitDecider,
 };
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -98,6 +98,8 @@ pub enum WithdrawnUnit {
     },
     Paragraph {
         block: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<oneiron_docedit::docx_body::DocxStoryScope>,
     },
     FolderItem {
         file: EntityId,
@@ -154,6 +156,8 @@ pub enum ReaskShape {
     Paragraphs {
         author: String,
         labels: SlideReviewLabels,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<oneiron_docedit::docx_body::DocxStoryScope>,
     },
     Slides {
         author: PptxAuthor,
@@ -182,6 +186,10 @@ pub struct UnitWithdrawal {
     pub reask_refs: Vec<String>,
     /// A failed wake is tried again from here.
     pub retry_at: Option<u64>,
+    /// The delta receipt id the withdrawn proposal answered (FIX 11967):
+    /// the original PRIMARY stamp, forwarded on re-ask after its pending
+    /// row is gone. `None` when no amendment stood behind it.
+    pub delta_receipt: Option<String>,
 }
 
 /// A held answer proposal split against what it read now.
@@ -245,13 +253,17 @@ impl Vault {
         &self,
         artifact: &EntityId,
         held: &EditProposal,
-        split: Split,
+        mut split: Split,
         made_by: Option<&MadeBy>,
         consent: &SettleConsent,
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
+        delta_receipt: Option<&str>,
     ) -> Result<SettleSelectOutcome> {
+        // The PRIMARY stamp rides into the durable withdrawal, both paths
+        // (FIX 11967 P1): the pending row is gone when the wake re-asks.
+        split.withdrawal.delta_receipt = delta_receipt.map(str::to_owned);
         let withdrawal = (!split.withdrawal.answers.is_empty()).then_some(&split.withdrawal);
         match &split.carried {
             Some(carried) => self.settle_select_carried(
@@ -263,6 +275,7 @@ impl Vault {
                 occurred,
                 learned_at,
                 Some(withdrawal),
+                delta_receipt,
             ),
             None => self.settle_all_withdrawn(
                 artifact,
@@ -374,6 +387,16 @@ impl Vault {
         }
         row.observed.clone_from(&fresh.observed);
         row.observed_live.clone_from(&fresh.observed_live);
+        // First stamp wins (FIX 11967 P1): the original PRIMARY, never a
+        // later guess; an empty stamp fills from the fresh withdrawal, else
+        // the exact pending row in the same writer (pre-Keep cover).
+        if row.delta_receipt.is_none() {
+            if fresh.delta_receipt.is_some() {
+                row.delta_receipt.clone_from(&fresh.delta_receipt);
+            } else if let Some(pending) = PENDING.get(&self.store, wtxn, key)? {
+                row.delta_receipt.clone_from(&pending.delta_receipt);
+            }
+        }
         WITHDRAWALS.put(&self.store, wtxn, key, &row)?;
         Ok(())
     }
@@ -530,14 +553,15 @@ impl Vault {
         reask_ref: &str,
         read: Option<&[(EntityId, u64)]>,
     ) -> Result<Option<PendingProposalView>> {
-        let (asked, proposal, unit_receipts, read_rows, retire) = match reasked {
-            Reasked::Nothing => (false, None, Vec::new(), Vec::new(), true),
-            Reasked::Replay => (false, None, Vec::new(), Vec::new(), false),
+        let (asked, proposal, unit_receipts, read_rows, retire, next_sheet_row) = match reasked {
+            Reasked::Nothing => (false, None, Vec::new(), Vec::new(), true, None),
+            Reasked::Replay => (false, None, Vec::new(), Vec::new(), false, None),
             Reasked::Asked {
                 proposal,
                 units,
                 read_rows,
-            } => (true, proposal, units, read_rows, false),
+                next_sheet_row,
+            } => (true, proposal, units, read_rows, false, next_sheet_row),
         };
         // The carried envelope is admitted through the principal's own read,
         // inside the asking version's saved lane, as the fresh proposal waits
@@ -558,8 +582,28 @@ impl Vault {
             )?,
             _ => None,
         };
-        let units: Vec<&WithdrawnUnit> = wake.answers.iter().map(|answer| &answer.unit).collect();
+        // The sheet adapter visits this exact snapshot's selected rows in
+        // ascending order. Its compact cursor leaves the selected suffix
+        // unwoken; rows absent from the snapshot are never marked either.
+        let units: Vec<&WithdrawnUnit> = wake
+            .answers
+            .iter()
+            .filter(|answer| match (&answer.unit, next_sheet_row) {
+                (WithdrawnUnit::SheetRow { row }, Some(next)) => *row < next,
+                _ => true,
+            })
+            .map(|answer| &answer.unit)
+            .collect();
         self.with_write_txn(|wtxn| {
+            // The rework's stamp rides forward: the superseded row's when it
+            // still waits, else the durable withdrawal's original PRIMARY in
+            // the same writer (FIX 11967 P1); never a latest guess.
+            let pending = PENDING.get(&self.store, wtxn, key)?;
+            let current = WITHDRAWALS.get(&self.store, wtxn, key)?;
+            let forwarded = match pending {
+                Some(row) => row.delta_receipt,
+                None => current.as_ref().and_then(|row| row.delta_receipt.clone()),
+            };
             let proposed = match &proposal {
                 Some(proposal) => Some(self.retain_edit_proposal_with_reads_in_txn(
                     wtxn,
@@ -569,6 +613,7 @@ impl Vault {
                     lane.as_ref(),
                     (actor, now),
                     &read_rows,
+                    forwarded.as_deref(),
                 )?),
                 None => None,
             };
@@ -576,21 +621,19 @@ impl Vault {
                 crate::llm::decision::questions::record_standing_reask_in_txn(
                     self,
                     wtxn,
-                    &standing_reask(wake, read, &unit_receipts, now),
+                    &standing_reask(wake, read, &unit_receipts, now, next_sheet_row),
                     proposed.as_ref().map(|_| reask_ref),
                     None,
                 )?;
             }
-            let Some(mut row) = WITHDRAWALS.get(&self.store, wtxn, key)? else {
+            let Some(mut row) = current else {
                 return Ok(proposed);
             };
             // A replay marks nothing: its first ask already covered the
-            // evaluation. Any evaluation that ran — a real ask, or a
-            // terminal one with no unit left — retires this wake's own
-            // units. Only units present in this wake's snapshot are marked:
-            // newly appended units stay due for their own evaluation, and
-            // a later fresh wake covering them retires or asks them in turn,
-            // so no expired deadline can pump forever (FIX 9826).
+            // evaluation. A real ask retires only the selected units it
+            // completed; a terminal ask retires its whole snapshot. Newly
+            // appended units and an unfinished suffix remain due, and the
+            // next wake binds its own remaining set (FIX 9826, FIX 9817).
             if asked || retire {
                 for answer in &mut row.answers {
                     if answer.woken_at.is_none() && units.contains(&&answer.unit) {
@@ -681,6 +724,7 @@ enum Reasked {
         proposal: Option<EditProposal>,
         units: Vec<crate::llm::decision::questions::ArtifactUnitReceipt>,
         read_rows: Vec<EntityId>,
+        next_sheet_row: Option<u32>,
     },
 }
 
@@ -692,6 +736,7 @@ fn standing_reask<'a>(
     read: &'a [(EntityId, u64)],
     units: &'a [crate::llm::decision::questions::ArtifactUnitReceipt],
     now: u64,
+    next_sheet_row: Option<u32>,
 ) -> crate::llm::decision::questions::StandingReask<'a> {
     crate::llm::decision::questions::StandingReask {
         question: wake.question.id,
@@ -702,6 +747,7 @@ fn standing_reask<'a>(
         versions: read,
         asked_at: now,
         units,
+        next_sheet_row,
     }
 }
 

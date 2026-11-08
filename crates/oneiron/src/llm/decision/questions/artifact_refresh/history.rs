@@ -13,6 +13,7 @@ use super::super::store::owned_head;
 use super::unit_receipts::artifact_unit_receipts;
 use super::{ASKED, ArtifactAskRecord, ArtifactAskStanding, ArtifactAsked, Asking, baseline};
 use crate::edit_roundtrip::ArtifactAskRun;
+use crate::edit_roundtrip::SheetRowSelection;
 use crate::edit_settle::PendingProposalView;
 use crate::{EntityId, ErrorKind, Result, Vault};
 
@@ -28,7 +29,9 @@ impl Asking<'_> {
         artifact: EntityId,
         observed: Vec<(EntityId, u64)>,
         kind: &str,
-        ask: impl FnOnce(&str) -> Result<ArtifactAskRun>,
+        selection_ref: [u8; 32],
+        selected_rows: Option<SheetRowSelection>,
+        ask: impl FnOnce(&str, Option<&SheetRowSelection>) -> Result<ArtifactAskRun>,
     ) -> Result<Option<PendingProposalView>> {
         let vault = self.vault;
         // The live bodies it reads, pinned as the ask starts (FIX 2115).
@@ -48,7 +51,8 @@ impl Asking<'_> {
         );
         let event = |proposal_ref: Option<String>,
                      failed: Option<ErrorKind>,
-                     units: Vec<super::ArtifactUnitReceipt>| {
+                     units: Vec<super::ArtifactUnitReceipt>,
+                     next_sheet_row: Option<u32>| {
             ArtifactAskEvent {
                 ask_id,
                 artifact,
@@ -60,13 +64,28 @@ impl Asking<'_> {
                 parent_proposal_ref: None,
                 details_omitted: false,
                 units,
+                next_sheet_row,
             }
         };
-        let committed = ask(&reference).and_then(|run| {
+        let committed = ask(&reference, selected_rows.as_ref()).and_then(|run| {
+            let remaining_sheet_rows = match run.next_sheet_row {
+                Some(next) => {
+                    let mut selected = selected_rows
+                        .ok_or(crate::Error::InvariantViolation("partial sheet selection"))?;
+                    selected.trim_before(next);
+                    if selected.is_empty() {
+                        return Err(crate::Error::InvariantViolation(
+                            "empty partial sheet selection",
+                        ));
+                    }
+                    Some(selected)
+                }
+                None => None,
+            };
             vault.with_write_txn_grouped(|wtxn| {
                 let proposed = match &run.proposal {
                     Some(proposal) => Some(vault.retain_edit_proposal_in_txn(
-                        wtxn, &artifact, proposal, None, None, self.actor, self.now,
+                        wtxn, &artifact, proposal, None, None, self.actor, self.now, None,
                     )?),
                     None => None,
                 };
@@ -78,16 +97,25 @@ impl Asking<'_> {
                     proposal_ref: proposal_ref.clone(),
                     ask_id: Some(ask_id),
                     live: live.clone(),
+                    selection_ref: Some(selection_ref),
+                    remaining_sheet_rows,
                 };
+                // An unfinished selection is explicit in this same latest
+                // projection; it neither completes nor forgets the suffix.
                 ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)?;
                 let principal = self.record.principal;
-                let asked = event(proposal_ref, None, artifact_unit_receipts(&run));
+                let asked = event(
+                    proposal_ref,
+                    None,
+                    artifact_unit_receipts(&run),
+                    run.next_sheet_row,
+                );
                 append_artifact_ask_in_txn(vault, wtxn, self.question, principal, asked)?;
                 Ok(proposed)
             })
         });
         if let Err(error) = &committed {
-            let failed = event(None, Some(error.kind()), Vec::new());
+            let failed = event(None, Some(error.kind()), Vec::new(), None);
             let logged = vault.with_write_txn_grouped(|wtxn| {
                 let principal = self.record.principal;
                 append_artifact_ask_in_txn(vault, wtxn, self.question, principal, failed)
@@ -118,12 +146,16 @@ pub(in crate::llm::decision::questions) fn artifact_event_record(
         proposal_ref: event.proposal_ref.clone(),
         ask_id: Some(event.ask_id),
         live: Vec::new(),
+        // This stamp is only a history view, never a scheduling cursor.
+        selection_ref: None,
+        remaining_sheet_rows: None,
     };
     let mut record = ask_record(vault, event.artifact, &stamp, event.failed)?;
     record
         .parent_proposal_ref
         .clone_from(&event.parent_proposal_ref);
     record.units.clone_from(&event.units);
+    record.next_sheet_row = event.next_sheet_row;
     if event.details_omitted {
         record.details_omitted = true;
         if event.failed.is_none() {
@@ -164,6 +196,7 @@ fn ask_record(
         parent_proposal_ref: None,
         details_omitted: false,
         units: Vec::new(),
+        next_sheet_row: None,
     })
 }
 

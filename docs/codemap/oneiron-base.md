@@ -11,6 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `examples/tokenizer_count.rs` | src | s | — | — | Bench-only micro-bench (never part of production paths): the public default O200k context-pack token counter… |
 | `src/analyzer.rs` | src | s | 1 re-export | — | Multilingual analyzer subsystem |
 | `src/calendar_body_screen.rs` | src | s | 3 struct · 1 enum · 1 trait · 2 fn · 2 const | CalendarAdmissionRequest, CalendarBodyScreener, CalendarInboundBody, CalendarScreenVerdict, Screened | Optional inbound-body screen for imported calendar content (CAL-09) |
 | `src/config.rs` | src | m | 4 struct · 2 enum · 7 fn · 5 const · 2 mod · 1 re-export | HostingPrivacyPosture, TextAnalyzerConfig, TextIndexOptions, VaultDataKeyCustody, VaultPrivacyConfig, VectorEvidenceFloors | Portable runtime configuration moved down from the engine crate |
@@ -40,10 +41,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/posterior.rs` | src | s | 2 re-export | — | Shared Beta posterior bandit seam |
 | `src/registry.rs` | src | s | 1 mod · 10 re-export | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
 | `src/registry/pack_namespaces.rs` | src | s | 3 const | — | Stable pack provenance and structural-kind short-id namespaces |
-| `src/request_limits.rs` | src | s | 11 fn · 11 const | — | Request boundary limits and pure validators |
+| `src/request_limits.rs` | src | s | 10 fn · 10 const | — | Request boundary limits and pure validators |
 | `src/retrieval_quality.rs` | src | s | 1 re-export | — | Retrieval quality report vocabulary |
 | `src/skill_invocations.rs` | src | s | 2 struct · 4 fn | InvocationGuard, SkillInvocations | The callable skill invocations running in this vault (FIX 600), each with the token that stops it, so an… |
 | `src/step_cancellation.rs` | src | s | 1 struct · 6 fn · 1 const | StepCancellation | The cancellation of one code step (FIX 600): a flag its owner sets and its runtime reads, linked one way to… |
 | `src/tokenizer.rs` | src | s | 1 enum · 1 trait · 4 fn · 2 const | ContextPackTokenizer, PackTokenizer | — |
 | `src/unsubscribe_headers.rs` | src | s | 1 struct · 4 fn · 5 const | ListUnsubscribeTarget | Deterministic unsubscribe headers and their frozen outbound payload representation |
-| `src/work_line.rs` | src | L | 5 struct · 2 trait · 23 fn · 2 const | LineCrossing, LineObserver, LinePermit, LineShortage, TaskWorkTurn, WaitTimedOut, WorkLine | A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work… |
+| `src/work_line.rs` | src | L | 5 struct · 2 trait · 24 fn · 2 const | LineCrossing, LineObserver, LinePermit, LineShortage, TaskWorkTurn, WaitTimedOut, WorkLine | A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work… |

@@ -18,7 +18,11 @@ impl<'a> HostSelfDispatcher<'a> {
         binding: &crate::task_verb::HostBinding,
     ) -> crate::Result<Self> {
         let leased = binding.leased_record(vault)?;
-        Self::for_leased_agent_attempt(vault, actor, &leased)
+        let dispatcher = Self::for_leased_agent_attempt(vault, actor, &leased)?;
+        Ok(match binding.executor_run() {
+            Some(run) => dispatcher.with_bound_run(run),
+            None => dispatcher,
+        })
     }
 
     /// The write origin of a browser call admitted on this live run. Its
@@ -124,7 +128,7 @@ impl<'a> HostSelfDispatcher<'a> {
             .map(crate::skill_attribution::enter_run_writes);
         // The call holds its leased run's tool witness open (FIX 8521).
         let _tool = self.activity_tool();
-        match self.dispatch_tasks_refuse(input.into_call(crate::unix_seconds_now())?)? {
+        match self.dispatch_tasks_refuse(input.into_call(crate::unix_seconds_now())?, None)? {
             SelfDispatchOutcome::TaskRefusal(refusal) => Ok(TaskRefuseOutput {
                 task: refusal.task_ref,
                 level: refusal.level,
@@ -141,10 +145,10 @@ impl<'a> HostSelfDispatcher<'a> {
     /// The host door's `self.report_blocked`, under its admitted credential
     /// and hooks. The report is witnessed on the attached run through the
     /// same dispatch as code mode: the host stamps the next free speech
-    /// position of the run (its attempt is the run id, as the failure
-    /// ladder reads it) and the time, the receipt binds this run's own
-    /// attempt, and filing wakes the Coach's Issues job. The report arms
-    /// nothing: no authority, scope, self-clear or task completion.
+    /// position of the executor run and the time. A standalone dispatcher
+    /// without an executor binding keeps its attempt-based identity. The receipt
+    /// binds this run's own attempt, and filing wakes the Coach's Issues job.
+    /// The report arms nothing: no authority, scope, self-clear or task completion.
     pub fn report_blocked_from_host(
         &self,
         input: ReportBlockedInput,
@@ -159,7 +163,10 @@ impl<'a> HostSelfDispatcher<'a> {
         let parent = self.agent_parent.ok_or_else(|| {
             MemoryError::bad_request("a blocked report requires its acquired parent lease")
         })?;
-        let run_id = EntityId::from_bytes(*parent.as_bytes())?;
+        let run_id = match self.bound_run {
+            Some(run) => run,
+            None => EntityId::from_bytes(*parent.as_bytes())?,
+        };
         let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
             return Err(MemoryError::bad_request(
                 "a blocked report requires canonical live-run storage",

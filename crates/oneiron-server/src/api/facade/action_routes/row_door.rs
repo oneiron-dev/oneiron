@@ -22,7 +22,7 @@ use oneiron::runtime_hooks::VerbHookStop;
 use oneiron::skill_attribution::run_write_token_of_origin;
 use tower::ServiceExt;
 
-use super::super::host_doors::support::with_calling_run_writes;
+use super::super::host_doors::support::{with_calling_action_program, with_calling_run_writes};
 use super::super::{FacadeApiError, FacadeCallOutput};
 use crate::api::call_receipt::{
     self, CallStamp, HeldOuterAttempt, RECEIPT_REF_HEADER, attempt_collector,
@@ -75,6 +75,10 @@ pub(super) struct FacadeRowDoor {
     /// each row runs on a spawned task, and a live-run hold in it reaches the
     /// action's receipt only through this (FIX 8107).
     collector: Option<std::sync::mpsc::Sender<CallAttemptWitness>>,
+    /// The action call's admission observer, taken where the door is built
+    /// as its collector is: a row's wait in a line shows on the action's
+    /// admission receipt (FIX 4735).
+    observer: Option<Arc<dyn oneiron::work_line::LineObserver>>,
     /// The action's own live-run hold, as the hold witnessed it, once taken.
     outer: Mutex<Option<CallAttemptWitness>>,
 }
@@ -127,6 +131,7 @@ impl FacadeRowDoor {
             refused: Mutex::new(None),
             stamp: Mutex::new(CallStamp::Unrecorded),
             collector: attempt_collector(),
+            observer: crate::api::admission_observer(),
             outer: Mutex::new(None),
         }
     }
@@ -231,7 +236,10 @@ impl FacadeRowDoor {
             Err(RowRefusal { words, hook: None }) => {
                 let code = words.code.clone();
                 *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(words);
-                Ok(Err(AgentVerbRefusal { code }))
+                Ok(Err(AgentVerbRefusal {
+                    hook_notice: None,
+                    code,
+                }))
             }
         }
     }
@@ -241,7 +249,9 @@ impl FacadeRowDoor {
     /// Posts the row to its facade route. The step's invocation rides as
     /// `x-oneiron-invocation`, so the route's verb hooks fire once for it.
     /// Its writes are witnessed for the leased run `origin` seals (FIX
-    /// 10748), and its receipt names the action's hold (FIX 10938).
+    /// 10748), and its receipt names the action's hold (FIX 10938). A row
+    /// the credential's own call runs meets the route's destination release
+    /// before the run reads it (`released_value`, FIX 21054).
     fn post_row(
         &self,
         call: &SelfAgentVerbCall,
@@ -249,6 +259,7 @@ impl FacadeRowDoor {
         invocation: oneiron::runtime_hooks::InvocationId,
     ) -> RowAnswer {
         let refused = || AgentVerbRefusal {
+            hook_notice: None,
             code: MEMORY_CODE_INTERNAL.to_owned(),
         };
         let run_writes = run_write_token_of_origin(origin);
@@ -283,8 +294,15 @@ impl FacadeRowDoor {
                     (request_digest, inputs, attempt),
                     &answer,
                 );
+                // The run reads what the row's route would send: its answer
+                // judged for this caller's destination, beside its rows
+                // (FIX 21054).
                 let answer = answer
-                    .map(|answer| AgentVerbAnswer::new(answer.value, answer.rows))
+                    .map(|output| {
+                        let rows = output.rows.clone();
+                        let (_, sent) = super::super::released_value(&server, &auth, verb, output);
+                        AgentVerbAnswer::new(sent, rows)
+                    })
                     .map_err(|error| RowRefusal {
                         words: AgentVerbRefusalWords {
                             code: error.body.error.code,
@@ -296,9 +314,14 @@ impl FacadeRowDoor {
                     });
                 let _ = sender.send((stamp, answer));
             };
+            // An action program's row: a whole-vault export it calls
+            // follows the world settings (FIX 9591).
             self.runtime.spawn(with_attempt_collector(
                 self.collector.clone(),
-                with_calling_run_writes(run_writes, row),
+                crate::api::facade::with_admission_observer(
+                    self.observer.clone(),
+                    with_calling_run_writes(run_writes, with_calling_action_program(row)),
+                ),
             ));
             let Ok((stamp, answer)) = receiver.recv() else {
                 return Ok(Err(refused()));
@@ -339,7 +362,10 @@ impl FacadeRowDoor {
         };
         self.runtime.spawn(with_attempt_collector(
             self.collector.clone(),
-            with_calling_run_writes(run_writes, row),
+            crate::api::facade::with_admission_observer(
+                self.observer.clone(),
+                with_calling_run_writes(run_writes, with_calling_action_program(row)),
+            ),
         ));
         let Ok((stamp, answer)) = receiver.recv() else {
             return Ok(Err(refused()));
@@ -424,13 +450,19 @@ impl AgentVerbDoor for FacadeRowDoor {
             .chain(answer.observations.iter().flat_map(|seen| &seen.rows))
             .copied()
             .collect();
-        if !super::super::release::rows_still_admitted(vault, auth, &sources) {
+        if !super::super::release::rows_still_admitted(vault, auth, &sources, false) {
             return Err(oneiron::Error::EntityNotFound);
         }
         let destination = auth.destination();
         for seen in &answer.observations {
             let frame = serde_json::to_value(&seen.frame).unwrap_or(serde_json::Value::Null);
-            if super::super::release::known_denied_rows(vault, &destination, &seen.rows, &frame) {
+            if super::super::release::known_denied_rows(
+                vault,
+                &destination,
+                &seen.rows,
+                &frame,
+                false,
+            ) {
                 return Err(oneiron::Error::EntityNotFound);
             }
         }
@@ -443,6 +475,7 @@ impl AgentVerbDoor for FacadeRowDoor {
                 value: answer.output,
                 rows: answer.rows.clone(),
             },
+            false,
         );
         Ok(answer)
     }

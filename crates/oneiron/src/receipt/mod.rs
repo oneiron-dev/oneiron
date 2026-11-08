@@ -18,6 +18,7 @@ mod dispatch_observation;
 mod family;
 mod field_set;
 mod grant;
+mod graph_skill;
 mod guest_revoke;
 mod identity_kind;
 pub mod intent_id;
@@ -62,6 +63,7 @@ pub use self::decision_asks::{
     DecisionAskAnswerRequest, DecisionAskClimbRequest, DecisionAskConfirmGrantRequest,
 };
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
+pub(crate) use self::field_set::FIELD_ATTEMPT_CALLER;
 pub use self::field_set::{
     ContextReceiptFields, FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEARNING_DECIDED_BY,
     FIELD_LEARNING_PATTERN, FIELD_LEARNING_TEAM_REF, FIELD_LEASE_GENERATION,
@@ -72,6 +74,7 @@ pub use self::grant::{
     StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens,
     StandingOutboundGrantsLensQuery,
 };
+pub use self::graph_skill::{GraphSkillRunOutcome, GraphSkillRunRequest};
 pub use self::guest_revoke::{
     GuestCopyState, GuestDeletionRequestStatus, GuestPactStanding, GuestRevokeCourtesyTarget,
     GuestRevokeCourtesyTargetView, GuestRevokeDisclosure, GuestRevokeOutcome, GuestRevokeResponse,
@@ -101,12 +104,12 @@ pub use self::projection::{
 };
 pub use self::questions::{
     AI_VERDICT_DEADLINE_MS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined,
-    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage,
-    QuestionAnswersReply, QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest,
-    QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionOutcomes,
+    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAdmitRequest, QuestionAnswer,
+    QuestionAnswersPage, QuestionAnswersReply, QuestionAnswersRequest, QuestionBackfillRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionOutcomes,
     QuestionOutcomesProjectRequest, QuestionOutcomesProjected, QuestionOutcomesRequest,
-    QuestionPauseRequest, QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
-    QuestionScheduleRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionPrepareRequest, QuestionPrepared,
+    QuestionPreparedSource, QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
 };
 pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, receipt_creations_not_proven,
@@ -143,8 +146,8 @@ pub(crate) use self::ledgers::durable_send_receipts_lenient;
 #[cfg(test)]
 pub(crate) use self::ledgers::persist_send_receipt;
 pub(crate) use self::ledgers::{
-    SendReceiptOutcome, delivered_send_receipt_for_task, durable_send_receipts,
-    stamp_attempt_pack_receipt_in_txn,
+    SendReceiptOutcome, attempt_calling_principal_in_txn, delivered_send_receipt_for_task,
+    durable_send_receipts, erase_attempt_receipt_actor_in_txn, stamp_attempt_pack_receipt_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::ledgers::{

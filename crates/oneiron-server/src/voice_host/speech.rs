@@ -14,6 +14,14 @@
 //! A sentence that was not spoken, a safeguard that did not run, a queue
 //! that took nothing for 30 seconds and a brain event the session refused
 //! stop the generation (`StopReason::OutputFailed`).
+//!
+//! Each generation keeps a [`HeardLedger`] (FIX 4899): each sentence the TTS
+//! seam took, and where its audio falls in what the client was sent. The
+//! owner's drain, or its acknowledgement of a stop, names the samples the
+//! client played, and the ledger becomes the generation's `HeardPlayback`:
+//! the brain hears it, and the control seam carries it to the owner's
+//! client. A stop the client never acknowledges settles on the server's
+//! count when the next generation starts or the session ends.
 
 use std::collections::VecDeque;
 use std::future::Future;
@@ -28,8 +36,9 @@ use oneiron::llm::{BudgetGuard, LlmBackend, LlmStreamEvent, VoiceChunkPolicy, Vo
 use oneiron::policy_model::PolicyModelConfig;
 use oneiron::store::GateSystemNoticeRecord;
 use oneiron::voice_cascade::{
-    Brain, BrainEvent, CascadeControl, ControlEvent, GenerationEpoch, OutputStop, PcmFrame,
-    Safeguard, SafeguardRequest, SentenceEnforcement, TtsCommand, TtsSeamClient, TurnMemories,
+    Brain, BrainEvent, CascadeControl, ControlEvent, GenerationEpoch, HeardLedger, OutputStop,
+    PcmFrame, Safeguard, SafeguardRequest, SentenceEnforcement, SpeechAlignment, StopReason,
+    TtsCommand, TtsSeamClient, TurnMemories,
 };
 
 use super::media_bridge::MediaBridge;
@@ -100,6 +109,7 @@ pub enum VoicePlayout {
 pub struct PlayoutFrame {
     frame: PcmFrame,
     session: Weak<Mutex<SessionState>>,
+    phone: Option<Weak<super::phone::PhoneCallRead>>,
 }
 
 /// A packet's weak epoch fence, kept without copying its audio.
@@ -107,6 +117,7 @@ pub struct PlayoutFrame {
 pub(super) struct PlayoutGate {
     generation: GenerationEpoch,
     session: Weak<Mutex<SessionState>>,
+    phone: Option<Weak<super::phone::PhoneCallRead>>,
 }
 
 impl PlayoutGate {
@@ -117,7 +128,14 @@ impl PlayoutGate {
         let Ok(state) = session.lock() else {
             return false;
         };
-        state.core.accepts_pcm(self.generation)
+        let current = state.core.accepts_pcm(self.generation);
+        drop(state);
+        current
+            && self.phone.as_ref().is_none_or(|phone| {
+                phone
+                    .upgrade()
+                    .is_some_and(|phone| phone.accepts_output(self.generation))
+            })
     }
 }
 
@@ -137,6 +155,7 @@ impl PlayoutFrame {
         PlayoutGate {
             generation: self.frame.generation,
             session: self.session.clone(),
+            phone: self.phone.clone(),
         }
     }
 
@@ -172,6 +191,9 @@ pub(super) struct Speech {
     /// The brain's terminal, held behind those sentences, with its taint
     /// mark: a stop or an answer that ended without one.
     done_held: Option<(BrainEvent, bool)>,
+    /// What the generation queued to the client, sentence by sentence,
+    /// until its drain or its stop takes it (FIX 4899).
+    ledger: Option<HeardLedger>,
 }
 
 /// A sentence's verdict, or why it has none.
@@ -228,6 +250,12 @@ impl VoiceHost {
         bridge: &mut MediaBridge,
         outputs: &mut VoiceOutputs<B, T, C>,
     ) -> bool {
+        // The turn about to start hears what the person heard of the last
+        // one: a stop its client never acknowledged settles on the server's
+        // count (FIX 4899).
+        if let Some(ledger) = bridge.unacknowledged.take() {
+            settle_heard(ledger, None, outputs);
+        }
         if let Err(error) = outputs.tts.submit(TtsCommand::Start { generation }) {
             tracing::warn!(%error, "voice media: speech did not start");
             self.output_failed(generation, bridge, outputs);
@@ -243,6 +271,7 @@ impl VoiceHost {
             drained: false,
             held: VecDeque::new(),
             done_held: None,
+            ledger: Some(HeardLedger::new(self.session_ref.clone(), generation)),
         });
         true
     }
@@ -398,15 +427,30 @@ impl VoiceHost {
     }
 
     /// One sentence's audio: handed over only for the session's current
-    /// generation, and checked again when it is dequeued.
-    pub(super) fn spoken(&self, frame: PcmFrame, bridge: &mut MediaBridge) -> io::Result<()> {
+    /// generation, and checked again when it is dequeued. The heard ledger
+    /// keeps where `submission`'s audio falls in what the client is sent
+    /// (FIX 4899).
+    pub(super) fn spoken(
+        &self,
+        submission: u64,
+        frame: PcmFrame,
+        alignment: Option<SpeechAlignment>,
+        bridge: &mut MediaBridge,
+    ) -> io::Result<()> {
         if let Some(speech) = speech_mut(bridge, frame.generation) {
             speech.spoken = speech.spoken.saturating_add(1);
         }
         if let Some(frame) = self.filter_pcm(frame) {
+            if let Some(ledger) =
+                speech_mut(bridge, frame.generation).and_then(|speech| speech.ledger.as_mut())
+            {
+                let samples = u64::try_from(frame.samples.len()).unwrap_or(u64::MAX);
+                ledger.queued(submission, frame.sample_rate, samples, alignment);
+            }
             let frame = PlayoutFrame {
                 frame,
                 session: Arc::downgrade(&self.state),
+                phone: self.phone.as_ref().map(Arc::downgrade),
             };
             bridge.play(VoicePlayout::Pcm(frame))?;
         }
@@ -454,6 +498,13 @@ impl VoiceHost {
             undelivered |= outputs.control.submit(update.control).is_err();
         }
         for notice in notices {
+            if self
+                .phone
+                .as_ref()
+                .is_some_and(|phone| !phone.accepts_notice(generation, &notice))
+            {
+                continue;
+            }
             undelivered |= outputs.brain.notice(generation, &notice).is_err();
             undelivered |= outputs
                 .control
@@ -468,13 +519,24 @@ impl VoiceHost {
         }
     }
 
-    /// The owner's playout played all of `generation`'s audio. An early or
-    /// stale acknowledgement changes nothing.
-    pub(super) fn drained(&self, generation: GenerationEpoch, bridge: &mut MediaBridge) {
+    /// The owner's playout played all of `generation`'s audio. What the
+    /// person heard settles on the samples the client reports it played,
+    /// or on the server's count when it reports none (FIX 4899). An early
+    /// or stale acknowledgement changes nothing.
+    pub(super) fn drained<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+        &self,
+        generation: GenerationEpoch,
+        played_samples: Option<u64>,
+        bridge: &mut MediaBridge,
+        outputs: &mut VoiceOutputs<B, T, C>,
+    ) {
         let Some(speech) = speech_mut(bridge, generation).filter(|speech| speech.end_sent) else {
             return;
         };
         speech.drained = true;
+        if let Some(ledger) = speech.ledger.take() {
+            settle_heard(ledger, played_samples, outputs);
+        }
         self.finish(generation, bridge);
     }
 
@@ -533,6 +595,7 @@ impl VoiceHost {
             .and_then(|mut state| Ok(state.core.complete_sentence(generation, text)?));
         match work {
             Ok(Some(work)) => {
+                let text = work.text().to_owned();
                 let mut safeguard = HostSafeguard {
                     backend: self.backend(),
                     budget: self.budget(),
@@ -542,6 +605,10 @@ impl VoiceHost {
                 if work.dispatch(&mut outputs.tts, &mut safeguard).is_empty() {
                     if let Some(speech) = speech_mut(bridge, generation) {
                         speech.sent = speech.sent.saturating_add(1);
+                        // The seam took it as the generation's next submission.
+                        if let Some(ledger) = &mut speech.ledger {
+                            ledger.sentence(text);
+                        }
                     }
                     return true;
                 }
@@ -620,16 +687,30 @@ fn speech_mut(bridge: &mut MediaBridge, generation: GenerationEpoch) -> Option<&
 }
 
 /// Submits a stop to every output arm and drops the stopped generation's
-/// speech; a failed arm is logged.
+/// speech; a failed arm is logged. Its heard ledger waits for the client's
+/// acknowledgement of the stop (FIX 4899); an earlier stop still waiting
+/// settles on the server's count, and so does every ledger at the
+/// session's end, which no acknowledgement follows.
 pub(super) fn stopped<B: Brain, T: TtsSeamClient, C: CascadeControl>(
     stop: &OutputStop,
     bridge: &mut MediaBridge,
     outputs: &mut VoiceOutputs<B, T, C>,
 ) {
+    let mut ledger = None;
     if let Some(generation) = stop.generation
         && speech_mut(bridge, generation).is_some()
     {
-        bridge.speech = None;
+        ledger = bridge.speech.take().and_then(|speech| speech.ledger);
+    }
+    if let Some(ledger) = ledger
+        && let Some(earlier) = bridge.unacknowledged.replace(ledger)
+    {
+        settle_heard(earlier, None, outputs);
+    }
+    if stop.reason == StopReason::SessionEnd
+        && let Some(ledger) = bridge.unacknowledged.take()
+    {
+        settle_heard(ledger, None, outputs);
     }
     let errors = stop.dispatch(&mut outputs.brain, &mut outputs.tts, &mut outputs.control);
     if !errors.is_empty() {
@@ -637,5 +718,80 @@ pub(super) fn stopped<B: Brain, T: TtsSeamClient, C: CascadeControl>(
             count = errors.len(),
             "voice media: a stop arm was not delivered"
         );
+    }
+}
+
+/// Dispatches each stop the person's words made (FIX 4899): through the
+/// bridge's speech when the connection has one, straight to the output
+/// arms when it has none.
+pub(super) fn interrupted<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+    stops: Vec<OutputStop>,
+    bridge: Option<&mut MediaBridge>,
+    outputs: &mut VoiceOutputs<B, T, C>,
+) {
+    match bridge {
+        Some(bridge) => {
+            for stop in &stops {
+                stopped(stop, bridge, outputs);
+            }
+        }
+        None => {
+            for stop in &stops {
+                let errors =
+                    stop.dispatch(&mut outputs.brain, &mut outputs.tts, &mut outputs.control);
+                if !errors.is_empty() {
+                    tracing::warn!(
+                        count = errors.len(),
+                        "voice media: a stop arm was not delivered"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The client applied `generation`'s stop (FIX 4899): what the person heard
+/// settles on the samples it reports it played, or on the server's count
+/// when it reports none. A stale or repeated acknowledgement changes
+/// nothing.
+pub(super) fn stop_acknowledged<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+    generation: GenerationEpoch,
+    played_samples: Option<u64>,
+    bridge: &mut MediaBridge,
+    outputs: &mut VoiceOutputs<B, T, C>,
+) {
+    if bridge
+        .unacknowledged
+        .as_ref()
+        .is_some_and(|ledger| ledger.generation() == generation)
+        && let Some(ledger) = bridge.unacknowledged.take()
+    {
+        settle_heard(ledger, played_samples, outputs);
+    }
+}
+
+/// A generation's heard record, from its ledger and the client's played
+/// count (FIX 4899): the brain hears it beside the text it generated, and
+/// the control seam carries it to the owner's client. A failed arm is
+/// logged.
+fn settle_heard<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+    ledger: HeardLedger,
+    played_samples: Option<u64>,
+    outputs: &mut VoiceOutputs<B, T, C>,
+) {
+    let generation = ledger.generation();
+    let playback = ledger.playback(played_samples);
+    if let Err(error) = outputs.brain.heard(generation, &playback) {
+        tracing::warn!(%error, "voice media: the brain did not hear what was heard");
+    }
+    if outputs
+        .control
+        .submit(ControlEvent::Heard {
+            generation,
+            playback,
+        })
+        .is_err()
+    {
+        tracing::warn!("voice media: a turn's heard record was not delivered");
     }
 }

@@ -27,8 +27,8 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::task_verb::{
     AskAuthorityScope, ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason,
-    TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
-    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
+    TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason,
+    TaskAskSource, TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
 };
 use crate::write_envelope::WriteActor;
 
@@ -134,12 +134,17 @@ impl Memory<'_> {
         for asked in &record.asks {
             if asked.artifact == *artifact
                 && asked.forks == forks
-                && self.owns_task_ask_intent(
+                && (self.owns_task_ask_intent(
                     crate::task_verb::TaskAskHandle {
                         group_ref: asked.ask,
                     },
                     &intent_key,
-                )?
+                )? || self.owns_held_task_ask_intent(
+                    crate::task_verb::TaskAskHandle {
+                        group_ref: asked.ask,
+                    },
+                    &intent_key,
+                )?)
             {
                 return Ok(vault.record_office_proposal_ask(proposal, asked.clone())?);
             }
@@ -193,11 +198,11 @@ impl Memory<'_> {
         question.options = BTreeMap::from([
             (
                 TaskAskOptionId::new(ACCEPT)?,
-                "Accept: land these forks as you".to_owned(),
+                TaskAskOption::new("Accept: land these forks as you".to_owned()),
             ),
             (
                 TaskAskOptionId::new(REJECT)?,
-                "Reject: discard these forks as you".to_owned(),
+                TaskAskOption::new("Reject: discard these forks as you".to_owned()),
             ),
         ]);
         question.label = Some(format!(

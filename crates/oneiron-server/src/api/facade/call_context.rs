@@ -122,7 +122,8 @@ impl<'a> FacadeCall<'a> {
     /// act records: a linked machine its headers' machine proof verifies
     /// on this very request, or the caller the binding door admitted
     /// (`owner_routes::machine_routes::act_surface_admitted`, FIX 4625).
-    pub(super) fn http(
+    /// A direct native read route reads its call the same way (FIX 1435).
+    pub(crate) fn http(
         server: &SyncServer,
         auth: &'a CoreAuth,
         headers: &'a HeaderMap,
@@ -241,7 +242,7 @@ impl<'a> FacadeCall<'a> {
         }
     }
 
-    pub(super) const fn auth(&self) -> &'a CoreAuth {
+    pub(crate) const fn auth(&self) -> &'a CoreAuth {
         self.auth
     }
 
@@ -425,20 +426,34 @@ pub(crate) struct FacadeCallOutput {
     /// opens handles of its own and lists none, never an empty list standing
     /// in for an unknown one.
     pub(crate) rows: Option<Vec<EntityId>>,
+    /// A content-free caller notice, separate from the result's provenance.
+    pub(crate) hook_notice: bool,
 }
 
 impl FacadeCallOutput {
-    /// A result whose reads listed their rows in `producers`.
+    /// A result whose reads listed their rows in `producers`. A retry's
+    /// result that settlement's drain saved with no rows keeps them unknown,
+    /// `None`, never a fresh empty listing (FIX 21054).
     pub(super) fn listed(value: serde_json::Value, producers: &ProducerRows) -> Self {
         Self {
             value,
-            rows: Some(producers.take()),
+            rows: producers.take_listed(),
+            hook_notice: false,
         }
     }
 
     /// A result whose door lists none of its rows.
     pub(super) fn unlisted(value: serde_json::Value) -> Self {
-        Self { value, rows: None }
+        Self {
+            value,
+            rows: None,
+            hook_notice: false,
+        }
+    }
+
+    pub(super) fn with_hook_notice(mut self, hook_notice: bool) -> Self {
+        self.hook_notice = hook_notice;
+        self
     }
 }
 

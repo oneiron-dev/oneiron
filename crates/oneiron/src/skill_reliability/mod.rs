@@ -36,7 +36,8 @@ pub use self::floor::{
     check_reliability_floor_for_executor, set_skill_reliability_floor, skill_reliability_floor,
 };
 pub(crate) use self::ledger::{
-    attributed_outcome_receipts, attributed_outcome_results, attributed_outcomes_weighted,
+    attributed_outcome_receipts, attributed_outcome_results, attributed_outcome_results_sourced,
+    attributed_outcomes_weighted, attributed_outcomes_weighted_sourced,
     mark_displaced_outcome_in_txn, record_skill_settled_loss,
 };
 pub use self::ledger::{
@@ -53,16 +54,17 @@ pub use self::projector::{
 };
 pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior};
 pub(crate) use self::provenance::{
-    skill_reliability_prior_rows, skill_reliability_sources, skill_reliability_with_sources,
+    skill_reliability_prior_rows, skill_reliability_prior_sourced, skill_reliability_sources,
+    skill_reliability_with_sources,
 };
 pub use self::read::{
     ExecutorReliability, SkillReliabilityQuery, person_skill_fit, read_skill_reliability,
     rebuild_skill_confidence_cache, skill_executor_reliability, skill_reliability_posterior,
     skill_reliability_posterior_for_executor, skill_selection_score,
-    skill_selection_score_for_executor,
+    skill_selection_score_for_executor, validate_executor,
 };
 pub(crate) use self::read::{
-    selection_posterior_for_query_in_txn, skill_selection_score_from_posterior, validate_executor,
+    selection_posterior_for_query_in_txn, skill_selection_score_from_posterior,
 };
 pub use self::resident::rank_resident_skill_versions;
 pub(crate) use self::rule_outcome::{

@@ -12,6 +12,7 @@ mod ask;
 mod call_scope;
 mod chain;
 mod credential;
+mod golden;
 mod paced;
 mod plain_resume;
 mod record;
@@ -130,6 +131,8 @@ impl VerbCall {
     /// credential that carries no read) carries one that reads nothing
     /// ([`ScopedReadActorKey::read_nothing`]) while no hook may run on
     /// `verb`, so a hook bound meanwhile never reads on the actor's own lane.
+    /// A verified share-only renderer carries a read-nothing hook key even
+    /// when hooks run; its share credential stays confined to the renderer.
     ///
     /// # Errors
     ///
@@ -139,7 +142,7 @@ impl VerbCall {
         memory: &crate::Memory<'_>,
         verb: &str,
     ) -> MemoryResult<Option<ScopedReadActorKey>> {
-        match memory.read_key() {
+        match memory.verb_hook_read_key(verb) {
             Ok(key) => Ok(Some(key)),
             Err(error) if Self::may_run(memory.vault(), verb) => Err(error),
             Err(error) => ScopedReadActorKey::read_nothing(
@@ -245,7 +248,21 @@ impl Vault {
         class: HookActorClass,
         ask: EntityId,
     ) -> Result<VerbHookWaitStatus> {
-        ask::wait_status(self, invocation, verb, actor, class, ask)
+        ask::wait_status(self, invocation, verb, actor, class, ask, None)
+    }
+
+    /// Observes the same wait using the calling operation's held task-work
+    /// turn. Only the turn is shared; the ask still uses its saved author.
+    pub(crate) fn verb_hook_wait_status_on_turn(
+        &self,
+        invocation: InvocationId,
+        verb: &str,
+        actor: EntityId,
+        class: HookActorClass,
+        ask: EntityId,
+        turn: Option<Arc<TaskWorkTurn>>,
+    ) -> Result<VerbHookWaitStatus> {
+        ask::wait_status(self, invocation, verb, actor, class, ask, turn.as_ref())
     }
 
     /// The rows the result settlement's drain saved under `invocation` was

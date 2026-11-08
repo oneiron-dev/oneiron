@@ -40,28 +40,7 @@ impl Vault {
             ProposalBase::CurrentCheckout,
             None,
             None,
-            |txn| {
-                prepared.revalidate(self, txn)?;
-                Ok(Ok(()))
-            },
-        )?;
-        Ok(proposed.unwrap_or_else(|never| match never {}))
-    }
-
-    pub(crate) fn propose_repo_rereview_as_owner(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        repository: EntityId,
-        original: EntityId,
-        mut request: RepoMutationRequest,
-        review: RepoProposalReview,
-    ) -> Result<RepoProposal> {
-        let prepared = RereviewPrepared::new(self, original, &mut request)?;
-        let proposed = self.propose_repo_mutation_as_owner_checked::<std::convert::Infallible>(
-            owner,
-            repository,
-            request,
-            review,
+            None,
             |txn| {
                 prepared.revalidate(self, txn)?;
                 Ok(Ok(()))
@@ -80,7 +59,7 @@ impl Vault {
         check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoProposal, R>> {
         let prepared = RereviewPrepared::new(self, original, &mut request)?;
-        self.propose_repo_mutation_for_run(request, review, base, stamp, |txn| {
+        self.propose_repo_mutation_for_run(request, review, base, stamp, None, |txn| {
             if let Err(refused) = check(txn)? {
                 return Ok(Err(refused));
             }
@@ -90,14 +69,18 @@ impl Vault {
     }
 }
 
-struct RereviewPrepared {
+pub(in crate::repo_mutation::proposal) struct RereviewPrepared {
     original: EntityId,
     values: BoundValues,
     expected_source: Zeroizing<Vec<u8>>,
 }
 
 impl RereviewPrepared {
-    fn new(vault: &Vault, original: EntityId, request: &mut RepoMutationRequest) -> Result<Self> {
+    pub(in crate::repo_mutation::proposal) fn new(
+        vault: &Vault,
+        original: EntityId,
+        request: &mut RepoMutationRequest,
+    ) -> Result<Self> {
         let source = vault
             .repo_proposal(original)?
             .ok_or(Error::EntityNotFound)?;
@@ -174,7 +157,11 @@ impl RereviewPrepared {
         })
     }
 
-    fn revalidate(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+    pub(in crate::repo_mutation::proposal) fn revalidate(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<()> {
         let current = PROPOSAL
             .get(&vault.store, txn, &self.original)?
             .ok_or(Error::EntityNotFound)?;

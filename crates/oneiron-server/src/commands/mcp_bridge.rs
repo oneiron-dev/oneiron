@@ -45,7 +45,6 @@
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
-use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -58,8 +57,10 @@ use crate::cli::{McpArgs, McpSurface};
 mod bridge_auth;
 mod call_meta;
 mod link;
+mod wake;
 
 use call_meta::{ClientSession, with_invocation};
+use wake::WakePump;
 
 /// How many requests may be in flight at once. A client that sends more
 /// waits for the oldest to finish rather than spawning without bound; each
@@ -186,56 +187,6 @@ fn pending_answer_invocation(answer: &Value) -> Option<&str> {
         .filter(|id| oneiron::runtime_hooks::InvocationId::parse_hex(id).is_some())
 }
 
-/// Poll cadence and request bound for this small handoff, independent of
-/// the potentially much longer deadline of an agent's tool call.
-const WAKE_POLL_INTERVAL: Duration = Duration::from_secs(1);
-const WAKE_POLL_TIMEOUT: Duration = Duration::from_secs(8);
-
-struct WakePump(tokio::task::JoinHandle<()>);
-
-impl WakePump {
-    fn start(bridge: Arc<Bridge>, path: &Path) -> anyhow::Result<Self> {
-        let instance = crate::wake_adapters::Instance::load(path)?;
-        let runtime = tokio::runtime::Handle::try_current()?;
-        Ok(Self(runtime.spawn(async move {
-            let mut failed = false;
-            loop {
-                let polling = Arc::clone(&bridge);
-                let key = instance.key.clone();
-                let polled = tokio::task::spawn_blocking(move || polling.wakes(&key)).await;
-                match polled {
-                    Ok(Ok(delivery)) => {
-                        failed = false;
-                        instance.deliver(delivery, &bridge.named_env).await;
-                    }
-                    Ok(Err(refusal)) => {
-                        if !failed {
-                            eprintln!(
-                                "oneiron wake: {}",
-                                refusal.rpc_error(&Value::Null, &bridge.auth)
-                            );
-                        }
-                        failed = true;
-                    }
-                    Err(error) => {
-                        if !failed {
-                            eprintln!("oneiron wake poll did not finish: {error}");
-                        }
-                        failed = true;
-                    }
-                }
-                tokio::time::sleep(WAKE_POLL_INTERVAL).await;
-            }
-        })))
-    }
-}
-
-impl Drop for WakePump {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
 pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
     let bridge = Arc::new(Bridge::new(&args)?);
     let _wakes = args
@@ -289,8 +240,8 @@ pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
         in_flight.push(
             crate::engine_thread("mcp-bridge-call".into())
                 .spawn(move || {
-                    if let Some(answer) = bridge.answer(&line) {
-                        emit(&stdout, &answer);
+                    if let Some(answer) = bridge.answer(line) {
+                        emit_answer(&stdout, answer);
                     }
                 })
                 .expect("failed to spawn thread"),
@@ -307,6 +258,18 @@ fn emit(stdout: &Mutex<io::Stdout>, line: &str) {
     let mut stdout = stdout.lock().unwrap_or_else(PoisonError::into_inner);
     // A client that closed its end has gone; there is no one left to tell.
     let _ = writeln!(stdout, "{line}").and_then(|()| stdout.flush());
+}
+
+fn emit_answer(stdout: &Mutex<io::Stdout>, answer: Result<Value, String>) {
+    match answer {
+        Ok(answer) => {
+            let mut stdout = stdout.lock().unwrap_or_else(PoisonError::into_inner);
+            if serde_json::to_writer(&mut *stdout, &answer).is_ok() {
+                let _ = writeln!(stdout).and_then(|()| stdout.flush());
+            }
+        }
+        Err(refusal) => emit(stdout, &refusal),
+    }
 }
 
 /// One stdin line, read without holding more than [`MAX_FRAME_BYTES`] of it.
@@ -450,29 +413,29 @@ impl Bridge {
 
     /// One stdin line in, at most one stdout line out. A notification (no
     /// `id`) is forwarded and never answered, as JSON-RPC 2.0 requires.
-    fn answer(&self, line: &str) -> Option<String> {
-        let mut message: Value = match serde_json::from_str(line) {
+    fn answer(&self, line: String) -> Option<Result<Value, String>> {
+        let mut message: Value = match serde_json::from_str(&line) {
             Ok(message) => message,
             Err(error) => {
-                return Some(rpc_error(
+                return Some(Err(rpc_error(
                     &Value::Null,
                     -32700,
                     "parse_error",
                     &format!("the message is not JSON: {error}"),
                     None,
-                ));
+                )));
             }
         };
         // A batch, or anything but one object, is not a message this MCP
         // revision sends; answered here, it spends no holder proof.
         if !message.is_object() {
-            return Some(rpc_error(
+            return Some(Err(rpc_error(
                 &Value::Null,
                 -32600,
                 "invalid_request",
                 "send one JSON-RPC message object per line",
                 None,
-            ));
+            )));
         }
         // One deadline for the whole request, the endpoint probe included:
         // the called tool's own entry when `--tool-timeout-secs` names it,
@@ -490,7 +453,7 @@ impl Bridge {
                 .unwrap_or_else(mint_invocation)
         })
         .or_else(|| named.then(|| serde_json::to_vec(&message).ok()).flatten())
-        .unwrap_or_else(|| line.as_bytes().to_vec());
+        .unwrap_or_else(|| line.into_bytes());
         let sent = message
             .pointer("/params/_meta")
             .and_then(|meta| meta.get(INVOCATION_META))
@@ -508,11 +471,11 @@ impl Bridge {
                 if let Some(offered) = offered {
                     self.client_session.note_initialize(offered, &answer);
                 }
-                answer.to_string()
+                Ok(answer)
             }
             // No answer from the server is no proof the call finished, so
             // the memory keeps what it holds.
-            Err(refusal) => refusal.rpc_error(&id, &self.auth),
+            Err(refusal) => Err(refusal.rpc_error(&id, &self.auth)),
         })
     }
 
@@ -653,31 +616,6 @@ impl Bridge {
                 McpSurface::ToolFirst
             },
         )
-    }
-
-    /// One host instance's wake handoff, never forwarded to MCP stdout.
-    fn wakes(
-        &self,
-        instance_key: &str,
-    ) -> Result<crate::wake_adapters::board_stream::BoardDelivery, Refusal> {
-        let id = json!("oneiron-wake-adapter");
-        let body = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "oneiron/wakes",
-            "params": { "instance_key": instance_key },
-        });
-        let until = Instant::now() + self.deadline.min(WAKE_POLL_TIMEOUT);
-        // The wake poll's own cap is inside the global deadline; its error
-        // keeps naming that one, as before.
-        let answer = self
-            .post(body.to_string().into_bytes(), until, self.deadline, None)?
-            .answer_to(&id)?;
-        let Some(delivery) = answer.get("result").cloned() else {
-            return Err(Refusal::Refused(answer));
-        };
-        serde_json::from_value(delivery)
-            .map_err(|error| Refusal::Server(format!("invalid wake handoff: {error}"), answer))
     }
 
     fn post(

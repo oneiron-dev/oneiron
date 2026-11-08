@@ -10,12 +10,14 @@ mod board_layout;
 mod browser;
 mod calendar;
 mod campaign_archive;
+mod campaign_enrollment;
 mod campaign_split;
 mod catalog_fragment;
 mod comm_widen;
 mod connector;
 mod connector_call;
 mod connector_pack;
+mod connector_reply_retry;
 mod connector_slate;
 mod connector_slate_revision;
 mod connector_witness_read_grant;
@@ -35,6 +37,7 @@ mod federation;
 mod federation_burst;
 mod feedback;
 mod files;
+mod follower_keyframe;
 mod free_time_policy;
 mod git_push_grant;
 mod goal_optimize;
@@ -49,7 +52,10 @@ mod live_run;
 mod live_voice;
 mod mesh;
 mod model_manifest;
+mod model_pack;
+mod model_settings;
 mod note_history;
+mod oauth_authorization;
 mod off_record;
 mod off_record_rooms;
 mod off_record_runs;
@@ -61,6 +67,9 @@ mod proxy;
 mod receipts_page;
 mod record_erase;
 mod reply;
+// FIX 13274: the owner reviews and settles a retained document-copy edit.
+#[cfg(feature = "sync")]
+mod repo_copy_edit;
 #[cfg(feature = "sync")]
 mod repo_manifest_conflict;
 mod research;
@@ -93,6 +102,7 @@ mod support_grant;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
 mod trusted_contact;
+mod uncertain_send;
 mod voice_bank;
 mod weave;
 mod web_connector;
@@ -305,6 +315,17 @@ pub struct TaskCreateRequest {
     /// Milestone; absent is a root.
     #[serde(default)]
     pub parent_ref: Option<String>,
+    /// When the TASK falls due, Unix seconds (FIX 4749). A due TASK is a
+    /// watcher: it ticks once on `schedule.tick` after this time, and a hook
+    /// bound to that tick returns Nothing or Enqueue. A standard task, briefed
+    /// or not, carries one; absent is no tick.
+    #[serde(default)]
+    pub due_at: Option<u64>,
+    /// A watch TASK (FIX 22121): nothing realizes it at create; its `due_at`
+    /// tick runs its hooks and settles it Done. It needs `due_at`, and no
+    /// assignee or the Dreamer.
+    #[serde(default)]
+    pub watch: bool,
 }
 
 /// The create spec one `tasks.create` request names, owned by the
@@ -319,24 +340,17 @@ pub fn task_create_spec(
         .as_deref()
         .map(|reference| crate::memory::resolve_entity_ref(memory.vault(), reference))
         .transpose()?;
-    let spec = crate::task_verb::TaskCreateSpec::new(
+    let mut spec = crate::task_verb::TaskCreateSpec::new(
         crate::msgpack_value_from_json(&input.spec)?,
         input.label,
         Some(memory.actor()),
         Some(memory.vault().now_recorded_at()),
     );
-    let spec = match input.assignee {
-        Some(assignee) => spec.with_assignee(assignee),
-        None => spec,
-    };
-    let spec = match input.ttl {
-        Some(ttl) => spec.with_ttl(ttl),
-        None => spec,
-    };
-    let spec = match parent_ref {
-        Some(parent_ref) => spec.with_parent_ref(parent_ref),
-        None => spec,
-    };
+    spec.assignee = input.assignee;
+    spec.ttl = input.ttl;
+    spec.due_at = input.due_at;
+    spec.watch = input.watch;
+    spec.parent_ref = parent_ref;
     match (input.intent_key, input.brief) {
         (Some(intent_key), Some(brief)) => Ok(spec.with_brief(intent_key, brief)),
         (None, None) => Ok(spec),
@@ -440,6 +454,7 @@ pub use self::board_layout::*;
 pub use self::browser::*;
 pub use self::calendar::*;
 pub use self::campaign_archive::*;
+pub use self::campaign_enrollment::*;
 pub use self::campaign_split::*;
 pub use self::catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
@@ -448,6 +463,7 @@ pub use self::comm_widen::*;
 pub use self::connector::*;
 pub use self::connector_call::*;
 pub use self::connector_pack::*;
+pub use self::connector_reply_retry::*;
 pub use self::connector_slate::*;
 pub use self::connector_slate_revision::*;
 pub use self::connector_witness_read_grant::*;
@@ -467,6 +483,7 @@ pub use self::federation::*;
 pub use self::federation_burst::*;
 pub use self::feedback::*;
 pub use self::files::*;
+pub use self::follower_keyframe::*;
 pub use self::free_time_policy::*;
 pub use self::git_push_grant::*;
 pub use self::goal_optimize::*;
@@ -481,7 +498,10 @@ pub use self::live_run::*;
 pub use self::live_voice::*;
 pub use self::mesh::*;
 pub use self::model_manifest::*;
+pub use self::model_pack::*;
+pub use self::model_settings::*;
 pub use self::note_history::*;
+pub use self::oauth_authorization::*;
 pub use self::off_record::*;
 pub use self::off_record_rooms::*;
 pub use self::off_record_runs::*;
@@ -493,6 +513,8 @@ pub use self::proxy::*;
 pub use self::receipts_page::*;
 pub use self::record_erase::*;
 pub use self::reply::*;
+#[cfg(feature = "sync")]
+pub use self::repo_copy_edit::*;
 #[cfg(feature = "sync")]
 pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
@@ -523,6 +545,7 @@ pub use self::support_grant::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
 pub use self::trusted_contact::*;
+pub use self::uncertain_send::*;
 pub use self::voice_bank::*;
 pub use self::weave::*;
 pub use self::web_connector::*;
@@ -807,6 +830,7 @@ fn a_recall_the_engine_refuses_never_embeds_its_query() {
         format: format.map(str::to_owned),
         as_of: None,
         deadline_ms: None,
+        filter: None,
     };
     let call = |deadline_ms| RecallRequest {
         effort: Some(crate::memory::RecallEffort::Call),

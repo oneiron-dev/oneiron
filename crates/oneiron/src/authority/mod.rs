@@ -38,6 +38,7 @@ mod adopted_build;
 mod adopted_evidence;
 mod adopted_fold;
 mod agent_grant_act;
+mod agent_tier;
 mod agent_world_undo;
 mod ai_grant;
 mod ancestor_index;
@@ -119,6 +120,7 @@ mod machine_write;
 mod managed_owner_check;
 mod membership_execution;
 mod mesh_machine;
+mod oauth_server;
 mod observation_policy;
 mod op_apply;
 mod origin_cut;
@@ -215,8 +217,8 @@ pub use oneiron_authority::authority::{
 // The custody work body's own types (WILL L04 row 04), its permits in
 // pieces (FIX 11866) and its shared permit set (FIX 12281).
 pub use oneiron_authority::authority::{
-    CustodyChange, CustodyPermitPiece, CustodyPermitPieces, CustodyRecipientPermit,
-    CustodyRecipientPermits, CustodyRequestAuthority,
+    CustodyChange, CustodyPermitPiece, CustodyPermitPieces, CustodyPermitSet,
+    CustodyRecipientPermit, CustodyRecipientPermits, CustodyRequestAuthority,
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
@@ -236,6 +238,10 @@ pub use oneiron_authority::authority::{
 };
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
+mod federation_status;
+pub use federation_status::{
+    FederationPactInactiveReason, FederationPactStatusRow, FederationStatus,
+};
 
 // Re-exports reproduce the pre-split `crate::authority::` surface exactly: each
 // glob carries every item of its file at that item's own visibility, so `pub`
@@ -313,6 +319,7 @@ pub(crate) use home_candidacy::{
 pub(crate) use home_pick::{
     HomePickHead, HomePickState, election_home_pick_in_txn, home_pick_in_txn,
 };
+pub(crate) use host_action::StoredHostAction;
 pub use host_action::{HostActionAuthority, HostActionIdentity};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
@@ -340,6 +347,21 @@ pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_
 pub use mesh_machine::{
     MeshAlpnGrant, MeshBindingIdentity, MeshMachineAddress, MeshMachineAddressEnvelope,
     MeshMachineBinding,
+};
+// The vault as its own `/mcp`'s OAuth 2.1 authorization server (FIX 4902 slice B), and the
+// agent tiers it and `oneiron token agent` share.
+pub use agent_tier::AgentTier;
+pub use oauth_server::{
+    OAUTH_ACCESS_TOKEN_PREFIX, OAUTH_ACCESS_TTL_SECS, OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER,
+    OAUTH_CIMD_TTL_SECS, OAUTH_CLIENT_NAME_MAX_CHARS, OAUTH_CLIENTS_MAX, OAUTH_CODE_PREFIX,
+    OAUTH_CODE_TTL_SECS, OAUTH_DEFAULT_TIER, OAUTH_MATCH_CODE_LEN, OAUTH_PENDING_REQUESTS_MAX,
+    OAUTH_REDIRECT_URIS_MAX, OAUTH_REFRESH_TOKEN_PREFIX, OAUTH_REFRESH_TTL_SECS,
+    OAUTH_REQUEST_TTL_SECS, OAUTH_STATE_MAX_BYTES, OAUTH_URI_MAX_BYTES, OAuthAccess,
+    OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart,
+    OAuthAuthorizationStatus, OAuthClientRecord, OAuthClientRegistration, OAuthClientSource,
+    OAuthCodeExchange, OAuthRefresh, OAuthRegistrationRefusal, OAuthTokenRefusal, OAuthTokens,
+    oauth_client_id_is_metadata_url, oauth_code_challenge_admitted, oauth_redirect_uri_admitted,
+    oauth_requested_tier, oauth_scopes_supported,
 };
 pub use observation_policy::*;
 // The origin cut a repo manifest is written and judged by (FIX 15740).
@@ -444,7 +466,7 @@ pub(crate) use log_budget::with_authority_doors_open_for_test;
 pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };
-pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn};
+pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
 pub(crate) use past_grant_standing::preserved_topology_act_in_txn;
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
@@ -465,6 +487,8 @@ use readonly_fold::authority_log_rows_in_txn;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;
+#[cfg(feature = "sync")]
+pub(crate) use readonly_fold::is_history_incomplete;
 pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
@@ -481,7 +505,8 @@ use machine_profile::{
     merge_machine_maps,
 };
 pub(crate) use machine_write::{
-    evidence_without_machine_signature, machine_claim_needs_history, machine_claim_read_admitted,
+    evidence_without_machine_signature, machine_claim_needs_history,
+    machine_claim_needs_history_observing, machine_claim_read_admitted,
     machine_history_authority_descends, machine_history_authority_descends_with_image,
     machine_history_host_context, resign_machine_claim_after_mask_in_txn,
     verify_machine_claim_in_txn,

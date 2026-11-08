@@ -31,6 +31,9 @@ pub trait SelfDispatcher {
 pub struct AgentVerbAnswer {
     pub output: serde_json::Value,
     pub rows: Option<Vec<EntityId>>,
+    /// Caller notice from this call's verb hooks, already released by the door.
+    /// It stays beside the output and shares the answer's row provenance.
+    pub hook_notice: Option<serde_json::Value>,
     pub observations: Vec<RunObservation>,
     pub hooks: Vec<SessionHookDisposition>,
     /// Native handoff only. The write receipt keeps this in its output manifests.
@@ -45,6 +48,7 @@ impl AgentVerbAnswer {
         Self {
             output,
             rows,
+            hook_notice: None,
             observations: Vec::new(),
             hooks: Vec::new(),
             stored_output: None,
@@ -115,6 +119,8 @@ pub struct RunObservation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentVerbRefusal {
     pub code: String,
+    /// A supplied host-side hook notice; the guest still sees only the code.
+    pub hook_notice: Option<serde_json::Value>,
 }
 
 /// A verb-table row's refusal as its own route worded it (OF-181): the code,
@@ -179,6 +185,7 @@ pub trait AgentVerbDoor: Send + Sync {
         _invocation: crate::runtime_hooks::InvocationId,
     ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
         Ok(Err(AgentVerbRefusal {
+            hook_notice: None,
             code: REVEAL_REPLAY_UNSERVED.to_owned(),
         }))
     }
@@ -194,6 +201,18 @@ pub trait AgentVerbDoor: Send + Sync {
         &self,
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
+
+    /// Admits one speech call of the run (`effect` is `Speak`, `Think` or
+    /// `Express`, its trailing bubble included) with `destination`, where
+    /// the run's storage lands it. A door that rules on speech wherever it
+    /// lands admits it as [`Self::admit_run_call`] admits the bridge call.
+    fn admit_run_speech(
+        &self,
+        effect: SelfEffect,
+        _destination: RunSpeechDestination,
+    ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
+        self.admit_run_call(RunCall::Bridge(effect))
+    }
 
     /// The verified read key a host turn's hooks use, independently of the
     /// host's System write attribution. `None` is a typed no-read answer, not
@@ -224,6 +243,7 @@ pub trait AgentVerbDoor: Send + Sync {
         _verb: crate::task_verb::sdk::AgentVerb,
     ) -> std::result::Result<crate::claim::ScopedReadActorKey, AgentVerbRefusal> {
         Err(AgentVerbRefusal {
+            hook_notice: None,
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
         })
     }
@@ -241,6 +261,7 @@ pub trait AgentVerbDoor: Send + Sync {
         _verb: crate::task_verb::sdk::AgentVerb,
     ) -> std::result::Result<SessionWriteAdmission, AgentVerbRefusal> {
         Err(AgentVerbRefusal {
+            hook_notice: None,
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
         })
     }
@@ -315,6 +336,7 @@ pub trait AgentVerbDoor: Send + Sync {
         _invocation: crate::runtime_hooks::InvocationId,
     ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
         Ok(Err(AgentVerbRefusal {
+            hook_notice: None,
             code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
         }))
     }
@@ -330,4 +352,15 @@ pub enum RunCall {
     /// A read of the run's own recorded output: by its context reference, or
     /// a resumed write's kept answer, read back from its receipt.
     RecordedOutput,
+}
+
+/// Where a run's speech lands, as its storage writes it
+/// (`ExecutorStorage::speech_destination`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunSpeechDestination {
+    /// The run's own derived conversation on canonical storage
+    /// (`canonical_speech_conversation_id_for_run`): part of the run's record.
+    OwnRunConversation,
+    /// The room of the off-record session the run is bound to.
+    SessionRoom,
 }

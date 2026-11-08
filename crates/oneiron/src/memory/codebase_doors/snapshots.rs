@@ -8,8 +8,8 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 use crate::codebase::{
-    CodebaseFileEntry, CodebaseSnapshot, CodebaseSnapshotMount, RepoIngestConfig, RepoRef,
-    snapshot_asset_entity_id, validate_project_id,
+    CaptureRepository, CodebaseFileEntry, CodebaseSnapshot, CodebaseSnapshotMount,
+    RepoIngestConfig, RepoRef, snapshot_asset_entity_id, validate_project_id,
 };
 use crate::origin::secret_projection::reveal::RepoReadDoor;
 use crate::temporal::TimeRange;
@@ -23,7 +23,11 @@ impl Memory<'_> {
     /// `vault.code.snapshots.ingest`: one committed tree imported through the
     /// unchanged engine importer, which reads the commit tree (never the dirty
     /// checkout), applies custody in its final writer and extracts Rust
-    /// symbols. No repository is registered and no receipt is minted.
+    /// symbols. No repository is registered. An import that names no
+    /// repository commits a capture receipt with the snapshot. A capture that
+    /// names its registered repository (FIX 4299) belongs to that anchor: the
+    /// final writer judges the owner and the anchor again, and reads the
+    /// registered folder, never a caller's whitelist.
     pub fn code_snapshot_ingest_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -33,15 +37,80 @@ impl Memory<'_> {
         validate_project_id(&input.project_id)?;
         let folder = served_host_folder(&input.pointer.local_folder)?;
         let commit = pinned_commit(folder, &input.pointer.commit)?;
-        let config = RepoIngestConfig::new(folder, NO_EDITABLE_WHITELIST)?;
         let (occurred, learned_at) = self.codebase_import_time();
-        let imported = self.vault.ingest_local_repo_at_commit(
-            input.project_id,
-            &config,
-            &commit,
-            occurred,
-            learned_at,
-        )?;
+        let imported = match input.repository {
+            None => {
+                let config = RepoIngestConfig::new(folder, NO_EDITABLE_WHITELIST)?;
+                self.vault.ingest_local_repo_at_commit_as(
+                    owner,
+                    input.project_id,
+                    &config,
+                    &commit,
+                    occurred,
+                    learned_at,
+                )?
+            }
+            Some(anchor) => {
+                let project = EntityId::from_hex(&input.project_id).map_err(|_| {
+                    MemoryError::bad_request_with(
+                        "a capture of a registered repository names its PROJECT as project_id",
+                        &["Send the PROJECT (32 hex) vault.repo.anchor.bind returned."],
+                    )
+                })?;
+                let captured = self.vault.ingest_served_repo_as_owner(
+                    input.project_id,
+                    Path::new(folder),
+                    &commit,
+                    (occurred, learned_at),
+                    CaptureRepository {
+                        anchor,
+                        project: Some(project),
+                    },
+                    |txn| {
+                        owner.revalidate_in_txn(self.vault, txn)?;
+                        Ok(Ok::<(), std::convert::Infallible>(()))
+                    },
+                )?;
+                captured.unwrap_or_else(|never| match never {})
+            }
+        };
+        self.produced_from([imported.code_artifact_id]);
+        let mut view = snapshot_view(imported.code_artifact_id, &imported.snapshot);
+        view.capture_receipt = imported.capture_receipt_ref;
+        Ok(view)
+    }
+
+    /// `vault.code.snapshots.capture`: current folder files, including untracked
+    /// and ignored files, through the native custody-filtered snapshot writer.
+    /// Git metadata and linked/nested repositories stay opaque. The result has
+    /// no commit witness and grants no membership, edit policy or read rights.
+    pub fn code_snapshot_capture_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeSnapshotCaptureRequest,
+    ) -> MemoryResult<CodeSnapshotView> {
+        let actor = self.codebase_owner(owner)?;
+        validate_project_id(&input.project_id)?;
+        let folder = served_host_folder(&input.local_folder)?;
+        let imported = self
+            .vault
+            .capture_local_folder_as_owner(
+                input.project_id,
+                Path::new(folder),
+                self.codebase_import_time(),
+                owner,
+                actor,
+            )
+            .map_err(|error| match error {
+                crate::Error::Code(crate::error::CodeError::CodebaseCaptureMemoryRefused {
+                    ..
+                }) => MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    "not enough memory to capture this folder",
+                    &["Retry when host memory is available."],
+                ),
+                error => error.into(),
+            })?;
         self.produced_from([imported.code_artifact_id]);
         Ok(snapshot_view(imported.code_artifact_id, &imported.snapshot))
     }
@@ -263,6 +332,8 @@ fn snapshot_view(repo: EntityId, snapshot: &CodebaseSnapshot) -> CodeSnapshotVie
         snapshot: bytes_to_hex_lower(&snapshot.fork_hash),
         scope_key: bytes_to_hex_lower(&snapshot.scope_key),
         files: snapshot.files.iter().map(snapshot_file).collect(),
+        repository: snapshot.repository,
+        capture_receipt: None,
     }
 }
 

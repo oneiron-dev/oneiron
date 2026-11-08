@@ -644,10 +644,20 @@ pub(crate) fn skill_scan_verdict_heads_for_content_hash_in_store(
     rtxn: &heed::RoTxn<'_>,
     content_hash: SkillContentHash,
 ) -> Result<Vec<(EntityId, ClaimBody)>> {
+    skill_scan_verdict_heads_sourced_in_store(store, rtxn, content_hash).map(|(heads, _)| heads)
+}
+
+/// Scan heads beside the actual entity rows examined on the content anchor.
+pub(crate) fn skill_scan_verdict_heads_sourced_in_store(
+    store: &crate::store::Store,
+    rtxn: &heed::RoTxn<'_>,
+    content_hash: SkillContentHash,
+) -> Result<(Vec<(EntityId, ClaimBody)>, Vec<EntityId>)> {
     let hash_hex = content_hash.to_hex();
     let anchor = skill_content_anchor_entity_id(content_hash)?;
 
     let mut rows = Vec::new();
+    let mut sources = Vec::new();
     for entry in store.port_edges(
         rtxn,
         &anchor,
@@ -661,21 +671,71 @@ pub(crate) fn skill_scan_verdict_heads_for_content_hash_in_store(
             continue;
         };
 
-        if raw.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-            continue;
-        }
-        let body = crate::claim::decode_claim_body(&raw.body, true)?;
-        // Defense in depth: every row on this anchor is for `content_hash`
-        // by construction, but the exact-hash filter keeps discovery precise
-        // even against a truncation collision on the derived anchor id.
-        if body.predicate == PREDICATE_SKILL_SCAN_VERDICT
-            && body.lifecycle == ClaimLifecycleStatus::Active
-            && map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
-        {
+        sources.push(claim_id);
+        if let Some(body) = active_scan_verdict_row(raw.entity_type, &raw.body, &hash_hex)? {
             rows.push((claim_id, body));
         }
     }
-    Ok(rows)
+    Ok((rows, sources))
+}
+
+/// Whether an Active scanner receipt stands on canonical bytes: the rows
+/// [`skill_scan_verdicts_for_content_hash_in_store`] reads, by the same
+/// filter, stopping at the first verdict and reading each row in place. For
+/// a reader that asks only whether the bytes reached the hub door's scan
+/// ledger: a model pack's check, and the key its kept check is reused on
+/// (FIX 22119).
+pub(crate) fn skill_scan_verdict_stands_in_store(
+    store: &crate::store::Store,
+    rtxn: &heed::RoTxn<'_>,
+    content_hash: SkillContentHash,
+) -> Result<bool> {
+    let hash_hex = content_hash.to_hex();
+    let anchor = skill_content_anchor_entity_id(content_hash)?;
+    for entry in store.port_edges(
+        rtxn,
+        &anchor,
+        crate::ports::EdgeDirection::In,
+        Some(crate::edge::EdgeKind::ClaimOf),
+        None,
+    )? {
+        let claim_id = entry?.target;
+        let stands = store.port_entity_with_raw(rtxn, &claim_id, |raw| {
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            Ok(active_scan_verdict_row(
+                header.entity_type,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                &hash_hex,
+            )?
+            .is_some())
+        })?;
+        if stands == Some(true) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The scan verdict an entity row on a content anchor holds for the bytes
+/// `hash_hex` names: a CLAIM of the verdict predicate, Active, naming that
+/// hash; `None` for any other row.
+fn active_scan_verdict_row(
+    entity_type: u8,
+    body: &[u8],
+    hash_hex: &str,
+) -> Result<Option<ClaimBody>> {
+    if entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let body = crate::claim::decode_claim_body(body, true)?;
+    // Defense in depth: every row on this anchor is for `content_hash`
+    // by construction, but the exact-hash filter keeps discovery precise
+    // even against a truncation collision on the derived anchor id.
+    Ok((body.predicate == PREDICATE_SKILL_SCAN_VERDICT
+        && body.lifecycle == ClaimLifecycleStatus::Active
+        && map_text(&body.value, "contentHash") == Some(hash_hex))
+    .then_some(body))
 }
 
 fn validate_skill_scan_receipt(receipt: &SkillScanReceipt) -> Result<()> {

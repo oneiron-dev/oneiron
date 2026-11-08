@@ -31,6 +31,30 @@ mod validation;
 use self::replay::{ReplayIter, ReplayOps};
 use self::validation::mark_unapplied_preflight_decisions;
 
+/// Birth selection for the local agent-setup adapter after its real earlier
+/// Puts. Its batches use no mask, replay or ASSET_TEXT source binding.
+pub(crate) fn setup_birth_stamp_target(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    entity_type: u8,
+    data: &[u8],
+    mut preceding: impl Iterator<Item = EntityId>,
+) -> Result<Option<EntityId>> {
+    if preceding.any(|prior| prior == id) {
+        return Ok(None);
+    }
+    validation::birth_stamp_target(
+        store,
+        txn,
+        id,
+        entity_type,
+        false,
+        (None, None, false),
+        data,
+    )
+}
+
 /// Check the decode point while this replay op still owns its buffers. On
 /// pre-match errors no match arm takes ownership, so scrub here before return.
 fn prepare_replay_op(
@@ -169,6 +193,8 @@ struct BatchApplyState {
     refinement_admission: Option<crate::skill_hub::RefinementAdmissionProof>,
     birth_mask: Option<EntityId>,
     text_births: HashMap<EntityId, Vec<EntityId>>,
+    /// The ids this batch writes a `DerivedFrom` edge from (FIX 8741).
+    derived_from_edge_sources: BTreeSet<EntityId>,
     births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
     replicated_puts: BTreeSet<EntityId>,
@@ -351,6 +377,7 @@ pub(super) fn apply_ops_with_authority_beside(
     let mut project_edge_endpoints = BTreeSet::new();
     let mut touched_projects = BTreeSet::new();
     let local_chat_turns = super::leader_chat_admission::local_turns(&ops);
+    let derived_from_edge_sources = self::validation::derived_from_edge_sources(&ops);
     // ONE-1604-D1: shell-edge sources orphaned by a dominance eviction. Their
     // inducing type-76 rows are gone, so the full reconciler's
     // surviving-events derivation can no longer reach them. Non-empty here
@@ -389,6 +416,7 @@ pub(super) fn apply_ops_with_authority_beside(
         refinement_admission,
         birth_mask,
         text_births,
+        derived_from_edge_sources,
         births,
         asset_files,
         replicated_puts,
@@ -459,7 +487,7 @@ pub(super) fn apply_ops_with_authority_beside(
                     analyzer,
                     &mut *wtxn,
                     &mut state,
-                    &gate_mode,
+                    &mut gate_mode,
                     id,
                     entity_type,
                     occurred,

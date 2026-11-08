@@ -28,7 +28,7 @@ pub enum Destination {
 }
 
 /// The machine at the other end of a connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PeerMachine {
     /// A machine that proved, on this connection, the key it stands on here
     /// (the authority fold's machine proof key). The key stays with the proof:

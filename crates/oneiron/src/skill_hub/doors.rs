@@ -102,7 +102,7 @@ impl Vault {
                 hub_ref,
                 &package,
                 &inventory,
-                &super::osv::OsvDevClient,
+                super::osv::hub_advisory_query(adapter.kind()),
                 occurred,
                 learned_at,
             )?
@@ -144,7 +144,7 @@ impl Vault {
                 &package,
                 preferred_id,
                 &inventory,
-                &super::osv::OsvDevClient,
+                super::osv::hub_advisory_query(adapter.kind()),
                 occurred,
                 learned_at,
             )?
@@ -611,6 +611,7 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         )?;
         proposal.source = Some(ClaimSource::Imported);
+        proposal.scope_facet = self.default_facet_in_txn(&wtxn)?;
         self.put_reserved_claim_in_txn(&mut wtxn, &proposal_id, &proposal, occurred, learned_at)?;
         wtxn.commit()?;
         Ok(HubSyncDisposition::Proposed {

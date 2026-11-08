@@ -181,6 +181,11 @@ pub enum EngineScan {
     /// The records one private-thread walk reaches from one record: its
     /// places and the sources of its words.
     PrivateThreadAncestryRecords,
+    /// The records one room P7 decision's word-source walk judges from one
+    /// record: its messages, and every record and MESSAGE a summary it
+    /// copies came from (once withheld past four times the ancestor depth;
+    /// FIX 9787).
+    WordSourceRecords,
     /// One trusted policy manifest's room-policy rows, each fold.
     RoomPolicyRows,
     /// One trusted policy manifest's room-thread holder rows, each fold.
@@ -365,6 +370,8 @@ pub enum EngineScan {
     SyncPrefixRows,
     /// One source's withdrawn dependents, under its dependent-walk policy.
     DependentWalkRows,
+    /// The executed autoresearch roots one continuation sweep's page reads.
+    ResearchContinuationRoots,
 }
 
 /// Rows one engine scan reads past which it asks whether everything is

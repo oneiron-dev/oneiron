@@ -1,6 +1,8 @@
 //! What every loopback relay that sends Git's exchanges through the
 //! credential broker shares (ARCH-0069 OSH-3): an outside import's source
-//! relay (FIX 15702) and an exact publish's mirror relay (FIX 19083).
+//! relay (FIX 15702) and an origin mirror's relay (FIX 19083); the Git-LFS
+//! transport (`lfs_broker`, FIX 19876) shares its spool read, its codes and
+//! the isolation's receipt spelling.
 //!
 //! Each relay spools a request body to a private unnamed file, decoded from
 //! any gzip, so its digest and its send cover the identity bytes; takes its
@@ -22,9 +24,11 @@ use axum::http::header::{CONTENT_ENCODING, CONTENT_TYPE, HeaderValue};
 use axum::http::request::Parts;
 use axum::response::Response;
 use futures_util::StreamExt as _;
+use oneiron::llm::BrokerIsolation;
 use oneiron::origin::smart_http::{AtDiskFloor, SpillFloor};
 use oneiron_broker::{
-    BrokerError, GitReply, GitRequestDigest, GitTarget, Outcome, StreamPart, git_request_digest,
+    BrokerError, GitReply, GitRequestDigest, GitTarget, Isolation, Outcome, StreamPart,
+    git_request_digest,
 };
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
@@ -33,7 +37,7 @@ use super::gate::{header_value, text_response};
 use crate::machine::DiskFloor;
 
 /// How much of a spool one read takes as its digest is taken.
-const SPOOL_READ: usize = 64 << 10;
+pub(super) const SPOOL_READ: usize = 64 << 10;
 
 /// The first refusal code any exchange of one relay met, each code spelled
 /// with the relay's own prefix.
@@ -259,6 +263,14 @@ pub(super) fn broker_code(prefix: &str, error: BrokerError) -> String {
         BrokerError::Lost => format!("{prefix}_broker_lost"),
         BrokerError::Unreachable => format!("{prefix}_broker_unreachable"),
         BrokerError::Peer => format!("{prefix}_broker_peer_refused"),
+    }
+}
+
+/// The receipt spelling of the broker's isolation.
+pub(super) const fn broker_isolation(isolation: Isolation) -> BrokerIsolation {
+    match isolation {
+        Isolation::SeparateUser => BrokerIsolation::SeparateUser,
+        Isolation::SameUser => BrokerIsolation::SameUser,
     }
 }
 
