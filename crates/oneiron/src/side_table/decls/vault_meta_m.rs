@@ -44,6 +44,11 @@ side_tables! {
     /// scrubs that message's occurrence. Key: id16(row) + id16(source) + blake3 (32) of the
     /// provider id.
     MAIL_PACK_OCCURRENCE_ROW: VaultMeta b"mail_pack:occurrence_row:v1:" Named;
+    /// One drafted mail reply (FIX 15420): its thread, the message it
+    /// answers, its frozen send plan, its words and where it stands; an
+    /// actor's erase forgets its drafter. Key: id16(draft).
+    MAIL_PACK_REPLY_DRAFT: VaultMeta b"mail_pack:reply_draft:v1:" Named Authored
+        => crate::mail_pack::erase_reply_drafter_in_txn;
     /// One connected mail or calendar source: provider, kind, address, custody name, owner,
     /// audience and what it keeps (FIX 12559). Key: id16(source).
     MAIL_PACK_SOURCE: VaultMeta b"mail_pack:source:v1:" Named

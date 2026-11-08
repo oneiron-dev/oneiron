@@ -954,6 +954,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCustodyMembersDrainFolder,
     VaultCustodyMembersReenrol,
     VaultMailPackInstall,
+    VaultMailReplyApprove,
     VaultMailSourcesSync,
     VaultFilesSourcesConvert,
 }
@@ -1743,6 +1744,7 @@ impl HostDoorRow {
             "vault.custody.members.drain.folder" => Self::VaultCustodyMembersDrainFolder,
             "vault.custody.members.reenrol" => Self::VaultCustodyMembersReenrol,
             "vault.mail.pack.install" => Self::VaultMailPackInstall,
+            "vault.mail.reply.approve" => Self::VaultMailReplyApprove,
             "vault.mail.sources.sync" => Self::VaultMailSourcesSync,
             "vault.files.sources.convert" => Self::VaultFilesSourcesConvert,
             _ => return None,
