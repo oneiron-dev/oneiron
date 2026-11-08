@@ -116,6 +116,9 @@ pub(crate) struct CodeConsentCallSite {
     pub(crate) write_receipt_id: EntityId,
     /// BLAKE3 of the call's canonical identity (verb and sorted input).
     pub(crate) request_digest: [u8; 32],
+    /// The admitted MCP caller the run's host bound on it (FIX 4606), which
+    /// a wait minted here keeps; `None` for a run no MCP host bound one on.
+    pub(crate) origin: Option<crate::code_run::CodeConsentRunOrigin>,
 }
 
 /// The reason a wait settles with when its original caller's own credential

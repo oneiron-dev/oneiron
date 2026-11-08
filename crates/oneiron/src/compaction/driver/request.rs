@@ -140,6 +140,90 @@ impl CompactionRequest {
     }
 }
 
+/// A conversation's sealed request as its check keeps it (FIX 5040): every
+/// field of the request, with its job identity, its watermark and its
+/// conversation binding. [`Self::capture`] takes it from the sealed request
+/// and [`Self::sealed_request`] gives back exactly that request. No driver
+/// holds the request it gives back, so it is judged again and never lands.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoredCompactionRequest {
+    request_id: EntityId,
+    session_ref: EntityId,
+    conversation: EntityId,
+    branch: Option<EntityId>,
+    window: Vec<CompactionWindowMessage>,
+    summary_token_budget: u64,
+    turn_start: u64,
+    watermark_learned_at: u64,
+    watermark_turn_id: Option<EntityId>,
+    watermark_turn: Option<u64>,
+    pins: Vec<String>,
+    sources: Vec<EntityId>,
+    window_read_from_sources: bool,
+    note: Option<String>,
+}
+
+impl StoredCompactionRequest {
+    /// `request` as its check keeps it. `None` for a window that no
+    /// conversation binds: its summary declares no conversation check.
+    pub(crate) fn capture(request: &CompactionRequest) -> Option<Self> {
+        let WindowLog::Conversation(Some(binding)) = request.log else {
+            return None;
+        };
+        Some(Self {
+            request_id: request.request_id,
+            session_ref: request.session_ref,
+            conversation: binding.conversation,
+            branch: binding.branch,
+            window: request.window.clone(),
+            summary_token_budget: request.summary_token_budget,
+            turn_start: request.turn_start,
+            watermark_learned_at: request.watermark.learned_at,
+            watermark_turn_id: request.watermark.turn_id,
+            watermark_turn: request.watermark.turn,
+            pins: request.pins.clone(),
+            sources: request.sources.clone(),
+            window_read_from_sources: request.window_read_from_sources,
+            note: request.note.clone(),
+        })
+    }
+
+    /// The request's job identity.
+    pub(crate) const fn request_id(&self) -> EntityId {
+        self.request_id
+    }
+
+    /// Every record the window's text was read from.
+    pub(crate) fn sources(&self) -> &[EntityId] {
+        &self.sources
+    }
+
+    /// The sealed request, field for field.
+    pub(crate) fn sealed_request(&self) -> CompactionRequest {
+        CompactionRequest {
+            request_id: self.request_id,
+            session_ref: self.session_ref,
+            window: self.window.clone(),
+            summary_token_budget: self.summary_token_budget,
+            turn_start: self.turn_start,
+            watermark: CompactionWatermark {
+                learned_at: self.watermark_learned_at,
+                turn_id: self.watermark_turn_id,
+                turn: self.watermark_turn,
+            },
+            pins: self.pins.clone(),
+            sources: self.sources.clone(),
+            window_read_from_sources: self.window_read_from_sources,
+            note: self.note.clone(),
+            log: WindowLog::Conversation(Some(ConversationBinding {
+                conversation: self.conversation,
+                branch: self.branch,
+            })),
+        }
+    }
+}
+
 fn conversation_sources(
     vault: &Vault,
     window: &[CompactionWindowMessage],

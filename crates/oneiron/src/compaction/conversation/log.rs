@@ -20,20 +20,44 @@
 //! pins, its summaries' evidence and their words all meet the roster, each
 //! member's entry, each private thread and each live speaker, as the room's
 //! next turn would. A projection that refuses or holds stops the log.
+//!
+//! A queued Continue or Retry reads its own log cut at the turn it answers
+//! again (FIX 5027): the branch that leads to that turn, before the user turn
+//! it answers, so neither its reply nor any turn after it is a window's turn.
+//! A conversation's first turn, whose witness mints the conversation, reads
+//! its log once that turn is witnessed (FIX 5034): the history before it,
+//! proven empty on the ledger.
+//!
+//! A log is planned before its raw history is read (FIX 5032,
+//! [`read_plan`]): the turns a standing summary covers are read through its
+//! evidence and never hydrated; only the gaps between them and the turns
+//! after the last one are read raw. The raw-history cap, the threshold's
+//! count and the window are taken from those raw turns as before. The plan
+//! judges its summaries in its own snapshot; the raw pins, the window and
+//! the SESSION are read in the log's snapshot after it. Grant time is
+//! persisted before each one (FIX 6188).
+//!
+//! A turn action reads only the raw turns it is answered from (FIX 5032,
+//! [`action_selection`]): its TARGET turn, the user turn before it and the
+//! turns whose lines fill its history. No summary stands in there. A Retry's
+//! breakpoint seed pins those turns.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use super::ConversationTurnSpan;
-use super::standing::standing_words_in;
-use super::storage::{ConversationLandingReceipt, conversation_receipts_in};
 use super::window::{ChatLogWindow, pin, window};
-use crate::compaction::MAX_TRANSCRIPT_PAGE_TURNS;
 use crate::compaction::driver::ConversationBinding;
-use crate::conversation::{TurnActionAttempt, TurnActionContext, TurnActionLine};
+use crate::conversation::{TurnActionAttempt, TurnActionContext};
 use crate::memory::{Memory, RoomTurnHandle, TranscriptTurn, WitnessAuthor};
 use crate::tokenizer::count_context_pack_tokens;
 use crate::{EntityId, Error};
 use oneiron_contracts::memory::MemoryResult;
+
+mod action_selection;
+mod read_plan;
+
+pub(crate) use action_selection::select_action_turns;
+use read_plan::{PlannedTurn, plan_chat_log};
 
 /// One line of a self agent's model-facing chat log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +113,16 @@ pub(super) struct ReadTurn {
     pub(super) open: bool,
 }
 
+/// Where a queued Continue's or Retry's chat log ends (FIX 5027).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChatLogCut {
+    /// The assistant TURN the action answers again: a DAG log reads the
+    /// branch that leads to it, never whatever HEAD is now.
+    pub target: EntityId,
+    /// The user TURN `target` answers: the log holds the turns before it.
+    pub before: EntityId,
+}
+
 /// Reads `conversation`'s chat log as `memory`'s reader: at most
 /// `history_lines` raw messages after its summaries, the last
 /// `hot_turns` turns never in a window. When a room's audience reads the
@@ -105,70 +139,144 @@ pub fn read_chat_log(
     hot_turns: u64,
     history_lines: usize,
 ) -> MemoryResult<ChatLog> {
+    read_log(memory, conversation, None, hot_turns, history_lines)
+}
+
+/// [`read_chat_log`] for a queued Continue or Retry (FIX 5027): the log of
+/// the turns before `cut`'s user turn, on the branch that leads to the turn
+/// the action answers again, read as `memory` reads it, the last `hot_turns`
+/// never in a window. What the action's own flight compacts; the action's
+/// request stays the one its breakpoint kept.
+///
+/// # Errors
+///
+/// [`read_chat_log`]'s, and a cut whose user turn the reader does not read
+/// on that branch.
+pub fn read_action_chat_log(
+    memory: &Memory<'_>,
+    conversation: EntityId,
+    cut: ChatLogCut,
+    hot_turns: u64,
+) -> MemoryResult<ChatLog> {
+    read_log(memory, conversation, Some(cut), hot_turns, usize::MAX)
+}
+
+/// The log a conversation's first chat turn was assembled from (FIX 5034):
+/// none, proven on the ledger. Read as `memory` reads it once the user's
+/// turn was witnessed, the conversation holds that turn alone, its MESSAGE
+/// rows exactly `written`, and no summary. The log returned is the history
+/// before that turn: empty and pinned, on no branch and in no SESSION.
+/// `None` when the reader reads any other line or summary of the
+/// conversation, the turn it reads is not the one written, or its pin does
+/// not hold.
+///
+/// # Errors
+///
+/// [`read_chat_log`]'s.
+pub fn read_first_chat_log(
+    memory: &Memory<'_>,
+    conversation: EntityId,
+    written: &[EntityId],
+) -> MemoryResult<Option<ChatLog>> {
+    let read = read_log(memory, conversation, None, 0, usize::MAX)?;
+    let [span] = read.sources.as_slice() else {
+        return Ok(None);
+    };
+    let only_written = !written.is_empty()
+        && span.messages == written
+        && read
+            .message_ids
+            .iter()
+            .all(|id| id.is_some_and(|id| written.contains(&id)));
+    if !read.pinned || !read.summaries.is_empty() || !only_written {
+        return Ok(None);
+    }
+    Ok(Some(ChatLog {
+        conversation,
+        branch: None,
+        lines: Vec::new(),
+        message_ids: Vec::new(),
+        sources: Vec::new(),
+        summaries: Vec::new(),
+        pinned: true,
+        session: None,
+        uncompacted_tokens: 0,
+        room_projection: read.room_projection,
+        window: None,
+    }))
+}
+
+/// The held room handle `conversation`'s chat log is read through (FIX
+/// 5031): `Some` when a room's audience reads it (a roster or a live call),
+/// whose words reach the room's roster, so the read is held, each private
+/// thread met turn by turn, as a queued action's history is. `None` reads
+/// as `memory` itself.
+///
+/// # Errors
+///
+/// A room projection that refuses or holds, and storage errors.
+pub(crate) fn chat_log_room<'v>(
+    memory: &Memory<'v>,
+    conversation: EntityId,
+) -> MemoryResult<Option<RoomTurnHandle<'v>>> {
     let vault = memory.vault();
     let roomed = {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         let roster = crate::context_board::room_roster_in(vault, &txn, conversation)?;
         roster.is_some_and(|members| !members.is_empty()) || vault.room_has_live_call(conversation)
     };
-    // The words reach the room's roster, so the read is held, each private
-    // thread met turn by turn, as a queued action's history is.
-    let room = if roomed {
-        Some(memory.for_room_projection(conversation)?.held())
-    } else {
-        None
-    };
-    let memory = room.as_ref().map_or(memory, RoomTurnHandle::memory);
-    let (transcript, branch) = retained_turns(memory, conversation)?;
-    let turns = transcript
-        .iter()
-        .map(read_turn)
-        .collect::<MemoryResult<Vec<_>>>()?;
-    // The reader's whole key, with its credential's, locality's and room
-    // turn's ceilings, resolved before the snapshot: the room resolver opens
-    // its own. Raw pins, a summary's evidence and its words are read under it.
-    let scoped = vault.scoped_read(memory.read_key()?);
-    let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    let read: BTreeSet<EntityId> = turns.iter().map(|turn| turn.id).collect();
-    // Summaries whose turns the reader reads, every one, whose evidence
-    // still reads to its pins as this reader, and whose words stand.
-    let mut standing: Vec<(ConversationLandingReceipt, String)> = Vec::new();
-    let mut covering: BTreeMap<EntityId, usize> = BTreeMap::new();
-    for receipt in conversation_receipts_in(&vault.store, &txn, conversation)? {
-        let Some(evidence) = receipt.evidence() else {
-            continue;
-        };
-        if !evidence.turns.iter().all(|span| read.contains(&span.turn))
-            || evidence
-                .turns
-                .iter()
-                .any(|span| covering.contains_key(&span.turn))
-        {
-            continue;
-        }
-        let Some(text) = standing_words_in(&scoped, &txn, &receipt)? else {
-            continue;
-        };
-        for span in &evidence.turns {
-            covering.insert(span.turn, standing.len());
-        }
-        standing.push((receipt, text));
+    if !roomed {
+        return Ok(None);
     }
-    // The lines, summaries in place, then the raw cap.
+    Ok(Some(memory.for_room_projection(conversation)?.held()))
+}
+
+/// [`read_chat_log`], cut at `cut` when an action reads it.
+fn read_log(
+    memory: &Memory<'_>,
+    conversation: EntityId,
+    cut: Option<ChatLogCut>,
+    hot_turns: u64,
+    history_lines: usize,
+) -> MemoryResult<ChatLog> {
+    let vault = memory.vault();
+    let room = chat_log_room(memory, conversation)?;
+    let roomed = room.is_some();
+    let memory = room.as_ref().map_or(memory, RoomTurnHandle::memory);
+    // The reader's whole key, with its credential's, locality's and room
+    // turn's ceilings, resolved before any snapshot: the room resolver opens
+    // its own. The plan's evidence and words, and the raw pins, are read
+    // under it.
+    let scoped = vault.scoped_read(memory.read_key()?);
+    // FIX 6188: grant time is persisted before the snapshot, never inside it,
+    // so a grant that has expired is judged expired for these reads.
+    scoped.persist_grant_clock()?;
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    // FIX 5032: the summaries that stand, judged in this one snapshot that
+    // the raw pins, the window and the SESSION are read in too, and the raw
+    // turns read.
+    let plan = plan_chat_log(memory, &scoped, &txn, conversation, cut)?;
+    // The lines, summaries in place, then the raw cap. `raws` holds each raw
+    // turn read, in order.
+    let mut raws: Vec<&ReadTurn> = Vec::new();
     let mut entries: Vec<Entry> = Vec::new();
     let mut emitted = BTreeSet::new();
-    let mut last_covered = None;
-    for (index, turn) in turns.iter().enumerate() {
-        if let Some(&at) = covering.get(&turn.id) {
-            if emitted.insert(at) {
-                entries.push(Entry::Summary(at));
+    for turn in &plan.prefix {
+        let turn = match turn {
+            PlannedTurn::Covered { summary, .. } => {
+                if emitted.insert(*summary) {
+                    entries.push(Entry::Summary(*summary));
+                }
+                continue;
             }
-            last_covered = Some(index);
-            continue;
-        }
-        for line in 0..turn.lines.len() {
-            entries.push(Entry::Raw(index, line));
-        }
+            PlannedTurn::Raw(turn) => turn,
+        };
+        entries.extend((0..turn.lines.len()).map(|line| Entry::Raw(raws.len(), line)));
+        raws.push(turn);
+    }
+    for turn in &plan.suffix {
+        entries.extend((0..turn.lines.len()).map(|line| Entry::Raw(raws.len(), line)));
+        raws.push(turn);
     }
     let raw = entries
         .iter()
@@ -189,7 +297,7 @@ pub fn read_chat_log(
     for entry in &entries {
         match *entry {
             Entry::Summary(at) => {
-                let (receipt, text) = &standing[at];
+                let (receipt, text) = &plan.standing[at];
                 summaries.push(receipt.summary);
                 lines.push(ChatLogLine::Summary {
                     summary: receipt.summary,
@@ -199,7 +307,7 @@ pub fn read_chat_log(
                 message_ids.push(None);
             }
             Entry::Raw(index, line) => {
-                let (_, author, text) = &turns[index].lines[line];
+                let (id, author, text) = &raws[index].lines[line];
                 if !held.contains(&index) {
                     held.push(index);
                 }
@@ -207,44 +315,43 @@ pub fn read_chat_log(
                     author: *author,
                     text: text.clone(),
                 });
-                message_ids.push(Some(turns[index].lines[line].0));
+                message_ids.push(Some(*id));
             }
         }
     }
     let mut pinned = true;
     let mut sources = Vec::new();
     for &index in &held {
-        match pin(&scoped, &txn, &turns[index])? {
+        match pin(&scoped, &txn, raws[index])? {
             Some((span, _)) => sources.push(span),
             None => pinned = false,
         }
     }
-    let first_open = last_covered.map_or(0, |index| index + 1).min(turns.len());
-    let uncompacted_tokens = turns[first_open..]
+    // The turns after the last covered one are what the threshold counts and
+    // what the window may take, short of the hot tail.
+    let uncompacted_tokens = plan
+        .suffix
         .iter()
         .flat_map(|turn| &turn.lines)
         .map(|(_, _, text)| count_context_pack_tokens(text) as u64)
         .sum();
     let hot = usize::try_from(hot_turns).unwrap_or(usize::MAX);
-    let hot_start = turns.len().saturating_sub(hot);
     let window = window(
         &scoped,
         &txn,
         ConversationBinding {
             conversation,
-            branch,
+            branch: plan.branch,
         },
-        &turns[first_open.min(hot_start)..hot_start],
+        &plan.suffix[..plan.suffix.len().saturating_sub(hot)],
     )?;
-    let session = match turns.last() {
-        Some(turn) => {
-            crate::compaction::turn_session_membership_in_txn(&vault.store, &txn, &turn.id)?
-        }
+    let session = match plan.last_turn() {
+        Some(turn) => crate::compaction::turn_session_membership_in_txn(&vault.store, &txn, &turn)?,
         None => None,
     };
     Ok(ChatLog {
         conversation,
-        branch,
+        branch: plan.branch,
         lines,
         message_ids,
         sources,
@@ -262,38 +369,6 @@ pub fn read_chat_log(
 enum Entry {
     Summary(usize),
     Raw(usize, usize),
-}
-
-/// The conversation's retained turns as the reader reads them, and the
-/// branch read.
-fn retained_turns(
-    memory: &Memory<'_>,
-    conversation: EntityId,
-) -> MemoryResult<(Vec<TranscriptTurn>, Option<EntityId>)> {
-    let vault = memory.vault();
-    let dag = {
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        crate::conversation_dag::keeps_dag_topology(&vault.store, &txn, &conversation)?
-    };
-    if dag {
-        let Some(head) = vault.head(&conversation)? else {
-            return Ok((Vec::new(), None));
-        };
-        let page = memory.turn_action_branch_transcript(&conversation, &head)?;
-        return Ok((page.map(|page| page.turns).unwrap_or_default(), Some(head)));
-    }
-    let mut turns = Vec::new();
-    let mut after: Option<String> = None;
-    loop {
-        let page = memory
-            .conversation_transcript(&conversation, after.as_deref(), MAX_TRANSCRIPT_PAGE_TURNS)?
-            .value;
-        turns.extend(page.turns);
-        match page.next {
-            Some(next) => after = Some(next),
-            None => return Ok((turns, None)),
-        }
-    }
 }
 
 fn read_turn(turn: &TranscriptTurn) -> MemoryResult<ReadTurn> {
@@ -324,11 +399,13 @@ fn read_turn(turn: &TranscriptTurn) -> MemoryResult<ReadTurn> {
 /// action's user turn, capped to `history_lines` raw lines exactly as a turn
 /// action's history is, and required to equal `expected` (the context the
 /// action's call was assembled from) line for line before any pin is built.
-/// `None` keeps the cold path as it was: a room's audience, a target or user
-/// turn that no longer reads as admitted, any contributing racing edit,
-/// reorder or extra line, or any turn whose projection no longer pins. The
-/// log carries raw lines only, never HEAD, never summaries, never a window:
-/// it keeps a seed, it starts no flight.
+/// FIX 5032: it reads only TARGET, the user turn before it and the turns
+/// whose lines fill the capped history, backward from TARGET, never the
+/// whole branch. `None` keeps the cold path as it was: a room's audience, a
+/// target or user turn that no longer reads as admitted, any contributing
+/// racing edit, reorder or extra line, or any turn whose projection no
+/// longer pins. The log carries raw lines only, never HEAD, never summaries,
+/// never a window: it keeps a seed, it starts no flight.
 ///
 /// # Errors
 ///
@@ -341,7 +418,6 @@ pub fn read_action_pinned_log(
 ) -> MemoryResult<Option<ChatLog>> {
     let vault = memory.vault();
     let conversation = action.conversation;
-    let target = action.assistant_turn;
     {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         let roster = crate::context_board::room_roster_in(vault, &txn, conversation)?;
@@ -351,145 +427,45 @@ pub fn read_action_pinned_log(
             return Ok(None);
         }
     }
-    let dag = {
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        crate::conversation_dag::keeps_dag_topology(&vault.store, &txn, &conversation)?
-    };
-    // The turns strictly before TARGET on its branch, in order.
-    let target_hex = target.to_hex();
-    let mut turns: Vec<TranscriptTurn> = Vec::new();
-    let mut target_seen = false;
-    if dag {
-        let page = memory.turn_action_branch_transcript(&conversation, &target)?;
-        for turn in page.map(|page| page.turns).unwrap_or_default() {
-            if turn.id == target_hex {
-                target_seen = true;
-                break;
-            }
-            turns.push(turn);
-        }
-    } else {
-        let mut after: Option<String> = None;
-        'pages: loop {
-            let page = memory
-                .conversation_transcript(
-                    &conversation,
-                    after.as_deref(),
-                    MAX_TRANSCRIPT_PAGE_TURNS,
-                )?
-                .value;
-            for turn in page.turns {
-                if turn.id == target_hex {
-                    target_seen = true;
-                    break 'pages;
-                }
-                turns.push(turn);
-            }
-            match page.next {
-                Some(next) => after = Some(next),
-                None => break 'pages,
-            }
-        }
-    }
-    if !target_seen {
-        return Ok(None);
-    }
-    // Each turn's raw lines, exactly as `walk_to_turn` reads them.
-    let mut per_turn: Vec<Vec<TurnActionLine>> = Vec::new();
-    for turn in &turns {
-        let turn_source = EntityId::from_hex(&turn.id).ok();
-        per_turn.push(
-            turn.messages
-                .iter()
-                .filter_map(|message| {
-                    let author = WitnessAuthor::parse(&message.role)?;
-                    (author != WitnessAuthor::System && !message.text.is_empty()).then(|| {
-                        TurnActionLine {
-                            author,
-                            text: message.text.clone(),
-                            sources: turn_source
-                                .zip(EntityId::from_hex(&message.id).ok())
-                                .map(|(turn, message)| vec![turn, message]),
-                        }
-                    })
-                })
-                .collect(),
-        );
-    }
-    // The last turn holding a user line, required to be the action's own.
-    let Some(user_at) = per_turn
-        .iter()
-        .rposition(|lines| lines.iter().any(|line| line.author == WitnessAuthor::User))
+    let Some(selection) =
+        select_action_turns(memory, conversation, action.assistant_turn, history_lines)?
     else {
         return Ok(None);
     };
-    if turns[user_at].id != action.user_turn.to_hex() {
+    // The latest user turn before TARGET, required to be the action's own,
+    // with its exact text and sources and the exact capped history.
+    let Some(user) = selection.user.filter(|user| user.id == action.user_turn) else {
         return Ok(None);
-    }
-    let user_lines: Vec<&TurnActionLine> = per_turn[user_at]
-        .iter()
-        .filter(|line| line.author == WitnessAuthor::User)
-        .collect();
-    let user_text = user_lines
-        .iter()
-        .map(|line| line.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let mut user_sources: Option<Vec<EntityId>> = Some(Vec::new());
-    for line in &user_lines {
-        match (&mut user_sources, &line.sources) {
-            (Some(rows), Some(sources)) => rows.extend_from_slice(sources),
-            _ => {
-                user_sources = None;
-                break;
-            }
-        }
-    }
-    if user_text != expected.user_text || user_sources != expected.user_sources {
+    };
+    if user.text != expected.user_text
+        || user.sources != expected.user_sources
+        || user.history != expected.history
+    {
         return Ok(None);
-    }
-    // The complete capped history before the user turn, exactly as the walk caps it.
-    let mut history: Vec<TurnActionLine> = per_turn[..user_at].iter().flatten().cloned().collect();
-    if history.len() > history_lines {
-        history.drain(..history.len() - history_lines);
-    }
-    if history != expected.history {
-        return Ok(None);
-    }
-    // Which history turns the cap keeps lines of; the oldest may be partial.
-    let total: usize = per_turn[..user_at].iter().map(Vec::len).sum();
-    let skip = total.saturating_sub(history.len());
-    let mut held: Vec<usize> = Vec::new();
-    let mut at = 0;
-    for (index, lines) in per_turn[..user_at].iter().enumerate() {
-        for _ in lines {
-            if at >= skip && !held.contains(&index) {
-                held.push(index);
-            }
-            at += 1;
-        }
     }
     // The reader's whole key, as `read_chat_log` pins its turns (FIX 5031).
     let scoped = vault.scoped_read(memory.read_key()?);
+    // FIX 6188: grant time is persisted before the snapshot, never inside it,
+    // so a grant that has expired is judged expired for these reads.
+    scoped.persist_grant_clock()?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    // Each history turn the cap keeps lines of; the oldest may be partial.
     let mut sources = Vec::new();
-    for &index in &held {
-        let read = read_turn(&turns[index])?;
-        match pin(&scoped, &txn, &read)? {
+    for turn in &user.history_turns {
+        match pin(&scoped, &txn, &read_turn(turn)?)? {
             Some((span, _)) => sources.push(span),
             None => return Ok(None),
         }
     }
     // The user turn verifies too, but stays ephemeral: sources hold history only.
-    let user_read = read_turn(&turns[user_at])?;
-    if pin(&scoped, &txn, &user_read)?.is_none() {
+    if pin(&scoped, &txn, &read_turn(&user.turn)?)?.is_none() {
         return Ok(None);
     }
     let session =
         crate::compaction::turn_session_membership_in_txn(&vault.store, &txn, &action.user_turn)?;
     let mut lines = Vec::new();
     let mut message_ids = Vec::new();
-    for line in &history {
+    for line in &user.history {
         lines.push(ChatLogLine::Message {
             author: line.author,
             text: line.text.clone(),
@@ -502,7 +478,7 @@ pub fn read_action_pinned_log(
     }
     Ok(Some(ChatLog {
         conversation,
-        branch: dag.then_some(target),
+        branch: selection.branch,
         lines,
         message_ids,
         sources,

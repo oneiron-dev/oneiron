@@ -2,8 +2,8 @@
 
 mod execute_code;
 
-pub(super) use self::execute_code::enter_mcp_code_run;
 pub(crate) use self::execute_code::execute_mcp_execute_code;
+pub(super) use self::execute_code::resume_mcp_code_run;
 // `execute_code` reaches the gateway's names through this module.
 use super::{
     McpBoardOmissions, McpBoardState, McpCallContext, McpCarrierPolicy, McpGatewayError,
