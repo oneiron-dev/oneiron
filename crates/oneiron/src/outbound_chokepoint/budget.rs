@@ -134,10 +134,12 @@ pub(super) fn spend_price_in_txn(
     let Some(target) = governance.budget_target_mut() else {
         return Ok(None);
     };
-    Ok(
-        connector_key::governing_slate_in_txn(&vault.store, wtxn, &target.key)?
-            .and_then(|(_, slate)| slate.tool(tool).and_then(|row| row.price.clone())),
-    )
+    Ok(connector_key::tool_spend_price_in_txn(
+        &vault.store,
+        wtxn,
+        &target.key,
+        tool,
+    )?)
 }
 
 /// A preauthorized spend's reservation: the entries reserved, what they

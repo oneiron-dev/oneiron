@@ -4953,9 +4953,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "can",
-                crate::code_run::vault_read::request_schema::<
-                    crate::task_verb::sdk::TaskCanAskRequest,
-                >(),
+                crate::code_run::vault_read::request_schema::<crate::verbs::CanRequest>(),
             ),
             (
                 "peek",
@@ -27727,7 +27725,7 @@ fn validate_input_vault_artifacts_undo(value: &serde_json::Value) -> MemoryResul
 }
 #[inline(never)]
 fn validate_input_can(value: &serde_json::Value) -> MemoryResult<()> {
-    let _input: crate::task_verb::sdk::TaskCanAskRequest = decode(value.clone())?;
+    let _input: crate::verbs::CanRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -49623,9 +49621,9 @@ pub fn vault_artifacts_undo(
 }
 pub fn can(
     memory: &Memory<'_>,
-    input: crate::task_verb::sdk::TaskCanAskRequest,
-) -> MemoryResult<crate::task_verb::TaskAskPreflight> {
-    memory.tasks_can_ask(&input.ask)
+    input: crate::verbs::CanRequest,
+) -> MemoryResult<crate::memory::CanAnswer> {
+    memory.can(&input)
 }
 pub fn peek(
     memory: &Memory<'_>,

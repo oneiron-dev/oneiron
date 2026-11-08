@@ -7,6 +7,7 @@ use super::*;
 mod admission;
 mod enqueue;
 mod gate;
+mod preflight;
 mod replay;
 
 use self::admission::{admit_outbound_schedule, outbound_trigger};
