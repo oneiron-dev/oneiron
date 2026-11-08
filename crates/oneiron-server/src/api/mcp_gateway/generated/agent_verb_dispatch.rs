@@ -61119,10 +61119,27 @@ async fn mcp_verb_row_connector_call_status(row: McpVerbRow<'_>) -> McpVerbRowRe
             "invalid typed agent-verb argument",
         )
     };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("connector.call_status", &input)
+        .map_err(mcp_facade_error)?;
     let input: oneiron::task_verb::sdk::ConnectorCallStatusRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
-    let output =
-        oneiron::task_verb::sdk::connector_call_status(&memory, input).map_err(mcp_facade_error)?;
+    let (output, listed) = Box::pin(crate::api::facade::host_doors::connector_call_status(
+        server,
+        auth,
+        (actor.actor_ref, actor.actor_class),
+        oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+            &memory,
+            "connector.call_status",
+        ),
+        input,
+    ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)
 }
