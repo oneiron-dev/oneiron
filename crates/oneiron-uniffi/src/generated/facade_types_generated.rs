@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1350 facade rows, 4857 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1302.
+// UniFFI census: 1351 facade rows, 4859 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1303.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), DetachRemainderReason.WithdrawalFailed.kind (an enum with more than 256 variants (ErrorKind)), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -23909,6 +23909,10 @@ pub enum QuarantineContainer {
     Tombstones,
     #[serde(rename = "leases")]
     Leases,
+    #[serde(rename = "office_proposals")]
+    OfficeProposals,
+    #[serde(rename = "typed_body_rows")]
+    TypedBodyRows,
 }
 
 /// `oneiron::verbs::sync_quarantine::SyncHeldEditEvidence`.
@@ -25181,6 +25185,34 @@ pub struct GuestDocumentEnvelope {
         skip_serializing_if = "Option::is_none"
     )]
     pub travel_receipt: Option<GuestWindowTravelNote>,
+}
+
+/// `oneiron::verbs::connect_proposal::ConnectProposeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectProposeRequest {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "world_ref")]
+    pub world_ref: String,
+    #[serde(rename = "entity_ref")]
+    pub entity_ref: String,
+    #[serde(rename = "update")]
+    pub update: Vec<u8>,
+}
+
+/// `oneiron::verbs::connect_proposal::ConnectProposalLanded`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectProposalLanded {
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "entity_ref")]
+    pub entity_ref: String,
+    #[serde(rename = "proposed_at")]
+    pub proposed_at: u64,
 }
 
 /// `oneiron::verbs::guest_revoke::GuestRevokeRequest`.
