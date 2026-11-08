@@ -16,8 +16,9 @@ impl Memory<'_> {
     /// host origin, no machine signer), so no agent, daemon or extractor
     /// acting for the owner qualifies; the envelope's actor is this surface's
     /// own human actor and a live owner of the vault; the prior's
-    /// authenticated author is that same person; it is no want minted beside
-    /// a stated one; no destructive action is already parked on its id; it
+    /// authenticated author is that same person; the prior has landed (Auto
+    /// or Approved); it is no want minted beside a stated one; no action is
+    /// already parked on its id or on the prior's; it
     /// is no booking publication, whose owner confirms through its own door;
     /// and no manifest rule declares either predicate critical, so the
     /// critical confirmation stays where it is. The Gate still judges the
@@ -52,6 +53,16 @@ impl Memory<'_> {
         let Some(old) = self.vault.get_claim_in_txn(txn, &old_id)? else {
             return Ok(false);
         };
+        // Only a landed fact is corrected at once. A parked prior, such as a
+        // replacement still waiting on its own closure, keeps its proposal:
+        // closing it here would leave its own prior current beside this one.
+        if !matches!(
+            old.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) || self.vault.has_deferred_claim_in_txn(txn, &old_id)?
+        {
+            return Ok(false);
+        }
         let author =
             crate::batch::authenticated_claim_author_in_txn(&self.vault.store, txn, &old_id, &old)?;
         if author.map(WriteActor::entity_ref) != Some(actor.entity_ref()) {
