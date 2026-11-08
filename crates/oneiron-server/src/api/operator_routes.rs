@@ -7,6 +7,34 @@
 //! vault the account's owner, whom his supervisor attested for the one
 //! request, passes it too, as himself.
 //!
+//! The operator's admin commands (FIX 11432, Engine ruling A) are
+//! the host operations the root admin doors under `/v1/owner` already run
+//! (FIX 2222), each served here as no one: whoever passes [`operator`] runs
+//! it, and no owner proof, `CoreAuth` or person is made from either
+//! credential, nor is any owner door asked ([`operator_admin`]). A managed
+//! vault's operator gains none of them: its supervisor attests no caller
+//! here, and the operator's credential has no class there.
+//!
+//! - `GET /v1/operator/status`: the vault's status, as `GET /v1/owner/status`
+//!   answers it.
+//! - `GET /v1/operator/backups` lists the vault's backups; `POST
+//!   /v1/operator/backups` takes one now, under the host's backup lock and
+//!   its retention (`OwnerHost::take`), with no owner for its snapshot to
+//!   recheck, and none of a shared vault its Owners deleted.
+//! - `POST /v1/operator/backups/rehearse` rehearses one backup's restore in a
+//!   scratch copy beside the serving vault (`OwnerHost::rehearse`), as
+//!   `oneiron restore --rehearse` does, and changes nothing.
+//! - `POST /v1/operator/maintain` is the repair command a serving vault runs:
+//!   every housekeeping sweep now, on a pass the host holds, as `POST
+//!   /v1/owner/maintain` runs it. Lifting secrets is the owner's act and is
+//!   not here; the named repairs of `oneiron maintain` (vector graph, short
+//!   ids, text index, corrupt CLAIMs) run on a stopped vault only.
+//!
+//! A restore over the vault and a move have no route here. `oneiron restore`
+//! swaps a restored copy in while it holds the writer leases of both
+//! directories, so it runs on a stopped vault only, and a serving host holds
+//! its vault; no vault move between hosts is built.
+//!
 //! `POST /v1/operator/shared/recover-owner` is proof-of-control owner recovery
 //! (ARCH-0043, OF-163): a shared vault with no live Owner left takes the
 //! claimant as its Owner, on an authenticated recovery authorization the
@@ -26,22 +54,31 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::http::request::Parts;
 use axum::response::Json;
-use axum::routing::post;
+use axum::routing::{get, post};
 use oneiron::EntityId;
 use oneiron::authority::HostActionAuthority;
 use oneiron::federation::{OwnerRecoveryAuthorization, SharedActExecutionReceipt};
+use oneiron::housekeeping::HousekeepingReport;
 use serde::Deserialize;
 
+use super::body_spool::OwnerJsonBody;
 use super::facade::FacadeApiError;
+use super::owner_routes::{self, HostStatus, RehearseRequest};
 use super::scoped_auth::AdminCaller;
-use crate::error::ApiError;
+use crate::error::{ApiError, EnvelopedApiError};
+use crate::owner::backup;
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route(
-        "/v1/operator/shared/recover-owner",
-        post(recover_shared_owner),
-    )
+    Router::new()
+        .route(
+            "/v1/operator/shared/recover-owner",
+            post(recover_shared_owner),
+        )
+        .route("/v1/operator/status", get(status))
+        .route("/v1/operator/backups", get(list_backups).post(take_backup))
+        .route("/v1/operator/backups/rehearse", post(rehearse_backup))
+        .route("/v1/operator/maintain", post(maintain))
 }
 
 /// Who passes the host operator's door ([`operator`]).
@@ -85,6 +122,109 @@ fn operator(request: &Parts, server: &SyncServer) -> Result<OperatorCaller, ApiE
             .map_err(super::host_action::host_action_refusal),
         None => Err(ApiError::forbidden_scope("operator")),
     }
+}
+
+/// An operator admin command's answer, or its refusal in the `/v1`
+/// envelope.
+type OperatorReply<T> = Result<Json<T>, EnvelopedApiError>;
+
+/// The door of the operator's admin commands (FIX 11432): whoever passes
+/// [`operator`] runs `command` as no one. The root's host action is dropped
+/// unused, the operator's credential is never made an owner, a person or a
+/// `CoreAuth`, and no owner door is asked; the host operation behind the
+/// command takes no actor. Each admitted command is logged, with the slip id
+/// of an operator credential that ran it.
+fn operator_admin(
+    request: &Parts,
+    server: &SyncServer,
+    command: &'static str,
+) -> Result<(), ApiError> {
+    match operator(request, server)? {
+        OperatorCaller::Root(_) => {
+            tracing::info!(command, "the host's root ran an operator admin command");
+        }
+        OperatorCaller::Credential(credential) => tracing::info!(
+            command,
+            slip_id = %oneiron_vault_contract::hex(&credential.slip_id()),
+            "an operator credential ran an operator admin command"
+        ),
+    }
+    Ok(())
+}
+
+/// `GET /v1/operator/status`: the vault's status, as `GET /v1/owner/status`
+/// answers it.
+async fn status(parts: Parts, State(server): State<Arc<SyncServer>>) -> OperatorReply<HostStatus> {
+    operator_admin(&parts, &server, "status")?;
+    Ok(Json(owner_routes::host_status(server).await?))
+}
+
+/// `GET /v1/operator/backups`: the vault's backups, oldest first.
+async fn list_backups(
+    parts: Parts,
+    State(server): State<Arc<SyncServer>>,
+) -> OperatorReply<Vec<backup::BackupRecord>> {
+    operator_admin(&parts, &server, "backups.list")?;
+    let host = owner_routes::host(&server)?;
+    Ok(Json(
+        owner_routes::blocking(move || Ok(backup::list(&host.backups)?)).await?,
+    ))
+}
+
+/// `POST /v1/operator/backups`: one backup now, under the host's backup
+/// lock, its effective plan and its retention, as the schedule takes one.
+/// No owner asked, so its snapshot rechecks none.
+async fn take_backup(
+    parts: Parts,
+    State(server): State<Arc<SyncServer>>,
+) -> OperatorReply<backup::BackupOutcome> {
+    operator_admin(&parts, &server, "backups.take")?;
+    // A vault its Owners deleted keeps only the backups it had, until their
+    // retention ends (`served_after_deletion` still serves this door for
+    // status, listing and rehearsal): no new one is taken of it.
+    if !matches!(server.vault().shared_vault_deletion(), Ok(None)) {
+        return Err(ApiError::new(
+            "this shared vault was deleted",
+            crate::error::ApiErrorDetails::NotFound {
+                resource: "vault".to_owned(),
+                id: None,
+            },
+            ["Its Owners deleted it: its existing backups are kept until their retention ends, and no new one is taken.".to_owned()],
+        )
+        .into());
+    }
+    let host = owner_routes::host(&server)?;
+    Ok(Json(
+        owner_routes::blocking(move || host.take_unless_deleted(server.vault())).await?,
+    ))
+}
+
+/// `POST /v1/operator/backups/rehearse`: one listed backup, the newest by
+/// default, restored into a scratch copy beside the serving vault and
+/// checked, as `oneiron restore --rehearse` does; the vault is untouched.
+async fn rehearse_backup(
+    parts: Parts,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<RehearseRequest>,
+) -> OperatorReply<backup::Rehearsal> {
+    operator_admin(&parts, &server, "backups.rehearse")?;
+    let host = owner_routes::host(&server)?;
+    let request = payload.read(&server).await?;
+    let rehearsal =
+        owner_routes::blocking(move || host.rehearse(server.vault(), request.file.as_deref()))
+            .await?;
+    Ok(Json(rehearsal))
+}
+
+/// `POST /v1/operator/maintain`: every housekeeping sweep now, due or not,
+/// on a pass the host holds, as `POST /v1/owner/maintain` runs it without
+/// a secret lift.
+async fn maintain(
+    parts: Parts,
+    State(server): State<Arc<SyncServer>>,
+) -> OperatorReply<HousekeepingReport> {
+    operator_admin(&parts, &server, "maintain")?;
+    Ok(Json(owner_routes::housekeeping_pass(&server).await?))
 }
 
 /// Who answers for one owner recovery.
