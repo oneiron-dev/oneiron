@@ -325,6 +325,27 @@ pub(crate) struct PolicySignature {
     pub(crate) sig: String,
 }
 
+/// A native checker selected by an actor's own source-trust permit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NativeAutoChecker {
+    SealJob,
+}
+
+impl NativeAutoChecker {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::SealJob => "native.esign.seal",
+        }
+    }
+
+    pub(super) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "native.esign.seal" => Some(Self::SealJob),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct SourceTrustRow {
     pub(super) max_auto_sensitivity: Option<u8>,
@@ -344,6 +365,7 @@ pub(super) struct SourceTrustRow {
     /// auto-approves every unstamped claim of the class rather than the one
     /// engine writer it was authored for.
     pub(super) actor_ref: Option<EntityId>,
+    pub(super) auto_checker: Option<NativeAutoChecker>,
 }
 
 impl SourceTrustRow {
@@ -369,6 +391,7 @@ impl SourceTrustRow {
                 receipted: false,
                 warned: false,
                 actor_ref: None,
+                auto_checker: None,
             };
         }
 
@@ -382,6 +405,9 @@ impl SourceTrustRow {
             receipted: self.receipted && other.receipted,
             warned: self.warned && other.warned,
             actor_ref: self.actor_ref,
+            auto_checker: self
+                .auto_checker
+                .filter(|checker| other.auto_checker == Some(*checker)),
         }
     }
 }

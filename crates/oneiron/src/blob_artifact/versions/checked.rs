@@ -84,6 +84,7 @@ impl Vault {
             made_by,
             false,
             true,
+            None,
             producer_position,
             lane,
         )?;

@@ -1,10 +1,12 @@
-//! The one checked proposer (moved from `proposal.rs`, FIX 6867 G1 PR2b):
-//! the trusted and owner proposals take their base from the current
-//! checkout, a run's from the immutable commit its work is pinned at
-//! (PREMISE 3), and both are validated, kept under custody and written by
-//! the same code. No proposal lands a file here. Every changed path must be
-//! on the registered repository's retained whitelist, judged in the same
-//! final writer (FIX 4299, CODE-CUSTODY-01).
+//! The one checked proposer (moved from `proposal.rs`, FIX 6867 G1 PR2b).
+//! A trusted proposal takes its base from the current checkout. An owner
+//! proposal takes the tree of the exact commit its stored repository
+//! pointer names, read from the object store, not the live checkout (FIX
+//! 4367). A run's proposal takes the tree of the commit its work is pinned
+//! at (PREMISE 3). All are validated, kept under custody and written by the
+//! same code. No proposal lands a file here. Every changed path must be on
+//! the registered repository's retained whitelist, judged in the same final
+//! writer (FIX 4299, CODE-CUSTODY-01).
 
 use super::*;
 use crate::code_document::CodeOpProvenanceValidation;
@@ -13,11 +15,13 @@ use crate::repo_mutation::snapshot::RepoPinnedBase;
 
 /// Where a proposal's pre-action base comes from.
 pub(in crate::repo_mutation) enum ProposalBase {
-    /// The trusted and owner proposer: the live checkout, captured under the
-    /// repo lock, whose HEAD must be the request's pinned commit.
+    /// The trusted proposer: the live checkout, captured under the repo
+    /// lock, whose HEAD must be the request's pinned commit.
     CurrentCheckout,
-    /// A run's proposal: the tree of the commit its work is pinned at, read
-    /// from the object store; that commit must be the request's pin.
+    /// The tree of one immutable commit, read from the object store; that
+    /// commit must be the request's pin. A run's proposal takes the commit
+    /// its work is pinned at. An owner proposal takes the commit its stored
+    /// repository pointer names (FIX 4367), so HEAD may be ahead of it.
     Pinned(RepoPinnedBase),
 }
 
