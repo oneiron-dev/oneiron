@@ -258,8 +258,8 @@ impl PreparedSearch {
     /// starts at or after it: a slice past the first owns only the starts
     /// it holds); with no window, each row once. Rows are projected and
     /// expanded in their read order, so the first failing row's error is
-    /// the one returned. A series expands under `cursors`, which a page's
-    /// slices share.
+    /// the one returned. A series, timed or floating or all-day, expands
+    /// under `cursors`, which a page's slices share.
     fn matched(
         &self,
         window: Option<TimeRange>,
@@ -277,6 +277,25 @@ impl PreparedSearch {
                 continue;
             }
             if let Some(window) = window {
+                // A floating or all-day EVENT matches by its civil span and
+                // names its days or wall times, with no UTC instant (FIX 17869).
+                if let Some(named) = super::occurrences::civil_occurrences_named(
+                    row,
+                    window,
+                    &self.exceptions,
+                    &self.withheld,
+                    cursors,
+                )? {
+                    for (at, civil) in named {
+                        if intersects(at, window) && owned_from.is_none_or(|from| at.start >= from)
+                        {
+                            let mut occurrence = view.clone();
+                            occurrence.civil = Some(civil);
+                            matched.push((page_key(Some(at), row.id), occurrence));
+                        }
+                    }
+                    continue;
+                }
                 let occurrences = super::occurrences::occurrences(
                     row,
                     window,
@@ -345,6 +364,9 @@ fn project(row: &CalendarEventRow) -> Result<CalendarEventView> {
         end_utc: row.occurred.map(|at| at.end),
         calendar_systems: row.facts.systems().to_vec(),
         blocks_time: row.facts.blocks_time(),
+        civil: row.facts.civil_extent().and_then(|(start, _)| {
+            super::civil::civil_span(row.facts.civil_all_day(), start, row.facts.civil_duration())
+        }),
     })
 }
 

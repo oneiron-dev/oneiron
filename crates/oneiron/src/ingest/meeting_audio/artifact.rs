@@ -93,6 +93,21 @@ impl ProducedMeetingTranscript {
         Self::new(json, self.recording_id.clone())
     }
 
+    /// Describe the complete immutable artifact an authenticated host asks
+    /// the owner to import. This description alone grants no import consent.
+    pub fn bulk_import_binding(&self, vault_scope: &str) -> AudioResult<BulkImportBinding> {
+        if vault_scope.trim().is_empty() {
+            return Err(AudioError::BulkConsentMismatch);
+        }
+        Ok(BulkImportBinding {
+            vault_scope: vault_scope.to_owned(),
+            source_id: MEETING_TRANSCRIPT_SOURCE_ID.to_owned(),
+            recording_id: self.recording_id.clone(),
+            artifact_sha256: sha256(self.json.as_bytes()),
+            source_record_ids: self.source_record_ids.clone(),
+        })
+    }
+
     /// Approve the complete immutable artifact once, then hand it to the
     /// existing normalizer. No per-turn prompts or transcript-supplied grant.
     /// A host authorizer must authenticate the owner, resolve pending consent,
@@ -103,17 +118,7 @@ impl ProducedMeetingTranscript {
         &self,
         authorizer: &mut A,
     ) -> AudioResult<AuthorizedMeetingImport> {
-        let vault_scope = authorizer.vault_scope().to_owned();
-        if vault_scope.trim().is_empty() {
-            return Err(AudioError::BulkConsentMismatch);
-        }
-        let binding = BulkImportBinding {
-            vault_scope,
-            source_id: MEETING_TRANSCRIPT_SOURCE_ID.to_owned(),
-            recording_id: self.recording_id.clone(),
-            artifact_sha256: sha256(self.json.as_bytes()),
-            source_record_ids: self.source_record_ids.clone(),
-        };
+        let binding = self.bulk_import_binding(authorizer.vault_scope())?;
         let receipt = authorizer
             .authorize_import(&binding)?
             .ok_or(AudioError::BulkConsentRequired)?;
