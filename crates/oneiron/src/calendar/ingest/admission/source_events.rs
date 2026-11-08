@@ -121,9 +121,18 @@ impl PollAdmission<'_> {
         match self.vault.get_entity_type(&id)? {
             None => return Ok(false),
             Some(ENTITY_TYPE_EVENT) => {}
-            Some(_) => return Err(ingest("calendar source identity collides with another kind")),
+            Some(_) => {
+                return Err(ingest(
+                    "calendar source identity collides with another kind",
+                ));
+            }
         }
-        let txn = self.vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
         if crate::source_audience::binding_in(self.vault, &txn, &id)? != Some(source.audience) {
             return Err(ingest("calendar source EVENT is not bound to its source"));
         }

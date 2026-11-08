@@ -206,14 +206,24 @@ impl RecordedEventProjection {
                 None => projector_index_in_txn(vault, &*wtxn)?,
             };
             let projected = project_in_savepoint(
-                vault, wtxn, event_id, &mut index, admission, later_born_heads,
+                vault,
+                wtxn,
+                event_id,
+                &mut index,
+                admission,
+                later_born_heads,
             );
             self.index = Some(index);
             projected?
         } else {
             let mut unread = CommProjectorIndex::default();
             project_in_savepoint(
-                vault, wtxn, event_id, &mut unread, admission, later_born_heads,
+                vault,
+                wtxn,
+                event_id,
+                &mut unread,
+                admission,
+                later_born_heads,
             )?
         };
         self.written.extend(rows);
@@ -244,7 +254,12 @@ fn project_in_savepoint(
 ) -> CommResult<BTreeSet<EntityId>> {
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
     match project_event_in_txn(
-        vault, &mut savepoint, event_id, index, admission, later_born_heads,
+        vault,
+        &mut savepoint,
+        event_id,
+        index,
+        admission,
+        later_born_heads,
     ) {
         Ok(delta) => {
             savepoint.commit()?;
@@ -473,7 +488,12 @@ pub(super) fn project_event(
     // any other writer's (`CommProjectorIndex::begin_event_txn`).
     vault.try_with_write_txn(|wtxn| {
         let delta = project_event_in_txn(
-            vault, wtxn, event_id, index, &mut HeadAdmission::default(), None,
+            vault,
+            wtxn,
+            event_id,
+            index,
+            &mut HeadAdmission::default(),
+            None,
         )?;
         #[cfg(feature = "sync")]
         crate::batch::queue_committed_rows(vault, wtxn, delta.written_rows(event_id));
@@ -640,13 +660,19 @@ fn apply_projector_rule_in_txn(
                     id,
                     &value,
                     source_position.ok_or(CommError::InvalidRecord)?,
-                )? else {
+                )?
+                else {
                     return Ok(ProjectorIndexDelta::default());
                 };
                 id
             } else {
                 let (id, minted) = put_projected_comm_claim_in_txn(
-                    vault, wtxn, source_event_id, &value, occurred_at, admission,
+                    vault,
+                    wtxn,
+                    source_event_id,
+                    &value,
+                    occurred_at,
+                    admission,
                 )?;
                 if !minted {
                     return Ok(ProjectorIndexDelta::default());
