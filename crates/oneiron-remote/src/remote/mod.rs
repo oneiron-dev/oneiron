@@ -84,7 +84,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// query cross the in-process transport; nothing dials this.
 const IN_PROCESS_ORIGIN: &str = "http://localhost/";
 
-/// Total request timeout, sized for a 32 MiB blob round trip.
+/// Total request timeout for one ordinary call, a blob version's upload
+/// included.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// Full-vault exports can be much larger than one ordinary verb response.
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(30 * 60);

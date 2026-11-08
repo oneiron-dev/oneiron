@@ -204,12 +204,17 @@ impl Memory<'_> {
             start: occurred_at,
             end: occurred_at,
         };
-        let outcome = self.with_actor_content_write_txn(|content| {
+        // A landing version or a waiting proposal past the inline size goes
+        // to its body file under an instance minted before the writer opens;
+        // its hold outlives the commit (FIX 20812).
+        let mint = self.vault.asset_body_mint([bytes.len() as u64])?;
+        let (outcome, _hold) = self.with_actor_content_write_txn(|content| {
             Ok(content.update_artifact(artifact_id, |txn, lane| {
                 self.vault.append_blob_artifact_version_checked_in_txn(
                     txn,
                     &artifact_id,
                     bytes,
+                    mint.as_ref(),
                     &provenance,
                     self.write_actor(),
                     occurred,

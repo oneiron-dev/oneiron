@@ -2,7 +2,8 @@
 
 use super::NATIVE_OUTPUT_REPORT_MAX_BYTES;
 use super::{
-    DeckExportHold, NativeOutput, PendingBody, PendingProposalView, PendingRow, admission,
+    DeckExportHold, NativeOutput, PendingBody, PendingProposalView, PendingRow, StagedPendingBody,
+    admission,
 };
 use crate::Vault;
 use crate::blob_artifact::{
@@ -13,6 +14,7 @@ use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::federation::record_scope::BirthPosition;
+use crate::store::{BodyMint, StagedHold};
 use crate::write_envelope::WriteActor;
 use heed::RwTxn;
 
@@ -52,6 +54,9 @@ pub(super) fn validate_native_output(
     Ok(report)
 }
 
+/// The row `output` waits in. With `in_body_file` its bytes wait in the
+/// body file staged for them, which the writer that keeps the row names
+/// (FIX 20812), and the row holds none of them.
 /// The row a native output waits in. `producer_position` is frozen in its
 /// body as the producing run's host bound it (FIX 3171).
 #[expect(clippy::too_many_arguments)]
@@ -64,6 +69,7 @@ pub(super) fn native_output_pending_row(
     deck: Option<DeckExportHold>,
     report: String,
     delta_receipt: Option<&str>,
+    in_body_file: bool,
     producer_position: BirthPosition,
 ) -> PendingRow {
     PendingRow {
@@ -84,7 +90,12 @@ pub(super) fn native_output_pending_row(
         base_version: base.map(|(version, _)| version),
         base_content_hash: base.map(|(_, hash)| hash),
         explicit_fork: explicit_fork,
-        new_bytes: output.bytes.clone(),
+        new_bytes: if in_body_file {
+            Vec::new()
+        } else {
+            output.bytes.clone()
+        },
+        new_file: None,
         read_rows: Vec::new(),
         deck: deck,
         delta_receipt: delta_receipt.map(str::to_owned),
@@ -101,16 +112,22 @@ pub(super) fn native_output_pending_row(
 impl Vault {
     /// The direct append's default writer-only envelope needs no read lane
     /// or grant-clock preparation. All snapshots belong to the caller's writer.
+    /// An output past the inline size waits in its body file under an
+    /// instance from `mint`, which the caller took before its writer opened
+    /// and no landed version used; the file's hold comes back beside the
+    /// view, for the caller to keep until its writer commits (FIX 20812).
     /// The proposal keeps `producer_position` for its Keep (FIX 3171).
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn propose_direct_append_output_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         artifact_id: &EntityId,
         output: &NativeOutput,
+        mint: Option<&BodyMint>,
         (actor, retained_at): (WriteActor, u64),
         base_override: Option<(u64, [u8; 32])>,
         producer_position: BirthPosition,
-    ) -> Result<PendingProposalView> {
+    ) -> Result<(PendingProposalView, Option<StagedHold>)> {
         let body = self
             .get_blob_artifact_in_txn(wtxn, artifact_id)?
             .ok_or(Error::EntityNotFound)?;
@@ -118,6 +135,7 @@ impl Vault {
         let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
         let base =
             base_override.or_else(|| head.as_ref().map(|head| (head.version, head.content_hash)));
+        let staged = self.stage_pending_output_body(&output.bytes, mint)?;
         let row = native_output_pending_row(
             output,
             (
@@ -130,19 +148,22 @@ impl Vault {
             None,
             report,
             None,
+            staged.is_some(),
             producer_position,
         );
         // None cannot clock a lane. It still rejects an envelope naming
         // anything beyond its writer; no reader authority is invented here.
         let lane =
             admission::retention_lane(artifact_id, row.made_by.as_ref(), row.retained_by, None)?;
-        self.put_pending_with_content_write_grant_in_txn(
+        let view = self.put_pending_with_content_write_grant_in_txn(
             wtxn,
             artifact_id,
             &row,
+            staged.as_ref(),
             lane.as_ref(),
             actor,
-        )
+        )?;
+        Ok((view, staged.map(StagedPendingBody::into_hold)))
     }
 
     pub(super) fn put_pending_with_content_write_grant_in_txn(
@@ -150,6 +171,7 @@ impl Vault {
         wtxn: &mut RwTxn<'_>,
         artifact_id: &EntityId,
         row: &PendingRow,
+        staged: Option<&StagedPendingBody>,
         lane: Option<&ScopedRead<'_>>,
         actor: WriteActor,
     ) -> Result<PendingProposalView> {
@@ -157,7 +179,6 @@ impl Vault {
         if let (Some(lane), Some(made_by)) = (lane, &row.made_by) {
             admission::admit_made_by_in_txn(self, wtxn, lane, made_by, row.retained_by)?;
         }
-        self.put_pending_in_txn(wtxn, artifact_id, row)?;
-        Ok(row.view(*artifact_id))
+        self.put_pending_in_txn(wtxn, artifact_id, row, staged)
     }
 }

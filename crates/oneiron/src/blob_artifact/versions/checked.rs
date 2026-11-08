@@ -12,12 +12,26 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::federation::record_scope::BirthPosition;
 use crate::provenance::made_by::MadeBy;
+use crate::store::{BodyMint, StagedAssetBody, StagedHold};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use heed::RwTxn;
 
+/// What a checked append decided: the version it landed, or the fork base
+/// its proposal waits on; and the hold on a landed body file, kept until the
+/// writer has committed (FIX 20812).
+type CheckedAppend = (
+    Option<BlobArtifactVersion>,
+    Option<(u64, [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN])>,
+    Option<StagedHold>,
+);
+
 impl Vault {
-    /// Lands the append, or returns the fork base its proposal waits on.
+    /// Lands `bytes` as the next version, or decides they wait as a proposal.
+    /// A landing version past the asset plane's inline size goes to its body
+    /// file under `mint`, taken before `wtxn` opened, so its ASSET is a file
+    /// manifest rather than one value holding the bytes (FIX 20812); the
+    /// same bytes as the head land nothing new and stage nothing.
     /// A landed version's claim is born at `producer_position` (FIX 3171).
     #[expect(clippy::too_many_arguments)]
     pub(super) fn decide_blob_artifact_append_in_txn(
@@ -26,6 +40,7 @@ impl Vault {
         artifact_id: &EntityId,
         fork_parent: Option<u64>,
         bytes: &[u8],
+        mint: Option<&BodyMint>,
         provenance: &BlobVersionProvenance,
         made_by: Option<&MadeBy>,
         actor: WriteActor,
@@ -33,10 +48,7 @@ impl Vault {
         learned_at: u64,
         producer_position: BirthPosition,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
-    ) -> Result<(
-        Option<BlobArtifactVersion>,
-        Option<(u64, [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN])>,
-    )> {
+    ) -> Result<CheckedAppend> {
         let later = read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?.is_some();
         let content_hash = blake3::hash(bytes);
         let dedupe = fork_parent.is_none()
@@ -67,14 +79,20 @@ impl Vault {
                 }
                 None => None,
             };
-            return Ok((None, fork_base));
+            return Ok((None, fork_base, None));
         }
-        // The same append the made_by and parent doors make, with the
-        // producer's position.
+        let staged = if dedupe {
+            None
+        } else {
+            self.stage_version_slice_in_txn(wtxn, bytes, mint)?
+        };
+        let body = staged
+            .as_ref()
+            .map_or(VersionBody::Bytes(bytes), VersionBody::Staged);
         let version = self.append_blob_artifact_version_body_with_authority_in_txn(
             wtxn,
             artifact_id,
-            VersionBody::Bytes(bytes),
+            body,
             provenance,
             VersionAuthority::Actor(actor),
             occurred,
@@ -87,12 +105,15 @@ impl Vault {
             producer_position,
             lane,
         )?;
-        Ok((Some(version), None))
+        Ok((Some(version), None, staged.map(StagedAssetBody::into_hold)))
     }
 
     /// Memory's checked append on its existing content writer. This door has
     /// no caller-supplied made_by: its proposal names only its writer, and a
-    /// landed append uses the content writer's actual credential lane.
+    /// landed append uses the content writer's actual credential lane. The
+    /// hold on a body file, a landed version's or a waiting proposal's, comes
+    /// back beside the outcome: the caller took `mint` before its writer
+    /// opened and keeps the hold until it commits (FIX 20812).
     /// `producer_position` is the position the producing Memory's host bound
     /// (FIX 3171). A landed version's claim is born there. A proposal keeps
     /// it for Keep, so the claim is born at the producer's position, never
@@ -103,18 +124,20 @@ impl Vault {
         wtxn: &mut RwTxn<'_>,
         artifact_id: &EntityId,
         bytes: &[u8],
+        mint: Option<&BodyMint>,
         provenance: &BlobVersionProvenance,
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
         producer_position: BirthPosition,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
-    ) -> Result<BlobArtifactAppendOutcome> {
-        let (version, fork_base) = self.decide_blob_artifact_append_in_txn(
+    ) -> Result<(BlobArtifactAppendOutcome, Option<StagedHold>)> {
+        let (version, fork_base, hold) = self.decide_blob_artifact_append_in_txn(
             wtxn,
             artifact_id,
             None,
             bytes,
+            mint,
             provenance,
             None,
             actor,
@@ -124,7 +147,7 @@ impl Vault {
             lane,
         )?;
         if let Some(version) = version {
-            return Ok(BlobArtifactAppendOutcome::Landed(version));
+            return Ok((BlobArtifactAppendOutcome::Landed(version), hold));
         }
         let body = self
             .get_blob_artifact_in_txn(wtxn, artifact_id)?
@@ -134,11 +157,12 @@ impl Vault {
             wtxn,
             artifact_id,
             &output,
+            mint,
             (actor, learned_at),
             fork_base,
             producer_position,
         )
-        .map(BlobArtifactAppendOutcome::Proposed)
+        .map(|(proposal, hold)| (BlobArtifactAppendOutcome::Proposed(proposal), hold))
     }
 }
 

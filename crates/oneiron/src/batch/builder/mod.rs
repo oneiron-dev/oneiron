@@ -51,6 +51,9 @@ pub struct BatchBuilder<'a> {
     births: Vec<(EntityId, crate::store::row_birth::RowBirth)>,
     /// The body file each ASSET put queued as a manifest names (FIX 3677).
     asset_files: std::collections::HashMap<EntityId, crate::store::AssetBodyFacts>,
+    /// The bytes of each interpreted body file this batch puts, which the
+    /// door's secret scan and mask read in place of its manifest (FIX 22075).
+    asset_file_bodies: std::collections::HashMap<EntityId, Vec<u8>>,
     /// The rows `put_replicated` queued: replay's materialization provenance
     /// (FIX 7925), set by that door alone.
     replicated_puts: std::collections::BTreeSet<EntityId>,
@@ -124,6 +127,7 @@ impl<'a> BatchBuilder<'a> {
             text_births: std::collections::HashMap::new(),
             births: Vec::new(),
             asset_files: std::collections::HashMap::new(),
+            asset_file_bodies: std::collections::HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
             caller_envelopes: std::collections::HashMap::new(),
             prepared_person_substrate: None,
