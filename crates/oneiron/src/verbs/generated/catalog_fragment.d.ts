@@ -4749,7 +4749,7 @@ declare namespace Sdk {
   type MailComplianceSetRequest = { enabled: boolean; purpose: string };
   type MailComplianceEventKind = "enabled" | "disabled" | "search";
   type MailComplianceEventView = { sequence: number; kind: MailComplianceEventKind; by_ref?: string | null; at: number; purpose: string; query_digest?: string | null; result_count?: number | null };
-  type MailSyncStatusView = { source_ref: string; live: boolean; copy_done: boolean; landed: number; bodies: number; bodies_waiting: number; deleted_at_provider: number; last_step_at?: number | null; last_error?: string | null };
+  type MailSyncStatusView = { source_ref: string; live: boolean; copy_done: boolean; landed: number; bodies: number; bodies_waiting: number; deleted_at_provider: number; claim_rechecks_pending: number; claim_rechecks_checked: number; claim_rechecks_review_needed: number; claim_rechecks_obsolete: number; last_step_at?: number | null; last_error?: string | null };
   type MailMboxImportRequest = { source_ref: string; path: string; messages?: number | null };
   type MailMboxImportReport = { source_ref: string; landed: number; same: number; refused: number; refusal_reasons?: string[]; skipped: number; read_total: number; done: boolean };
   type MailSourceSyncRequest = { source_ref: string; bodies?: number | null };

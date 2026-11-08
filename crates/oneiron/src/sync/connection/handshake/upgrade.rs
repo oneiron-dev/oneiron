@@ -103,7 +103,14 @@ impl SyncConnection {
                 if client.peer_session.is_none() && crate::sync::carrier::upgrade_unauthorized(&e) {
                     let _ = event_tx.send(SyncEvent::UpgradeUnauthorized);
                 }
-                SessionFault::Remote(format!("WS connect failed: {e}"))
+                // A carrier this machine cannot set up for its URL is its
+                // own fault; any other failure is the far end's (FIX 22217).
+                let message = format!("WS connect failed: {e}");
+                if crate::sync::carrier::own_setup_fault(&e) {
+                    SessionFault::Local(message)
+                } else {
+                    SessionFault::Remote(message)
+                }
             })?;
         Ok((ws_stream, response, binding))
     }
