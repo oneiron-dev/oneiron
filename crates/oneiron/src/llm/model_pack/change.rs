@@ -86,6 +86,11 @@ pub enum ModelPackRevertBlock {
     NotInstalled,
     /// The pack before the change has retired: it is no longer served.
     Retired,
+    /// The hub ref the pack before the change came from is frozen to other
+    /// bytes, the newer version's, so its drift check refuses the version
+    /// the change recorded. The owner lifts the freeze or moves it to that
+    /// version, then reverts.
+    FrozenRefPinsNewer,
 }
 
 /// What a revert did.
@@ -227,7 +232,8 @@ impl Vault {
     /// change recorded, never another version of the same pack, and served
     /// today: installed, or else kept as the version a same-name update
     /// replaced, whose bytes pass an install's checks again
-    /// ([`Vault::replaced_model_pack_in_txn`]).
+    /// ([`Vault::replaced_model_pack_in_txn`]). A version held at those bytes
+    /// under a hub ref frozen to other bytes answers that freeze (FIX 22058).
     fn model_pack_revert_target_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -250,7 +256,18 @@ impl Vault {
             Some(installed) => RevertTarget::Installed(installed),
             None => match self.replaced_model_pack_in_txn(txn, &previous.pack)? {
                 Some(replaced) if previous.names(&replaced) => RevertTarget::Replaced(replaced),
-                _ => return Ok(Err(ModelPackRevertBlock::NotInstalled)),
+                _ => {
+                    let block = if self.model_pack_frozen_out_in_txn(
+                        txn,
+                        &previous.pack,
+                        &previous.content_hash,
+                    )? {
+                        ModelPackRevertBlock::FrozenRefPinsNewer
+                    } else {
+                        ModelPackRevertBlock::NotInstalled
+                    };
+                    return Ok(Err(block));
+                }
             },
         };
         if !target.pack().pack.is_served_on(self.model_pack_today()) {
@@ -280,8 +297,9 @@ impl Vault {
     /// the version it replaces is kept in turn, so the revert's own notice
     /// reverts it the same way (FIX 20192). A change a later one replaced,
     /// with no pack before it, or whose pack before it is neither installed
-    /// nor kept at its bytes, fails an install's checks or is not served,
-    /// answers why it cannot run now and changes nothing.
+    /// nor kept at its bytes, fails an install's checks (a frozen hub ref
+    /// that pins other bytes named apart) or is not served, answers why it
+    /// cannot run now and changes nothing.
     ///
     /// # Errors
     /// The owner proof; [`crate::Error::InvalidConfig`] for a blank change id.

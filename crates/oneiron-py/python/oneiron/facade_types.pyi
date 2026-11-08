@@ -17032,7 +17032,7 @@ class ModelPackSetting(TypedDict):
     installed: list[ModelPackView]
 class ModelPackRevertRequest(TypedDict):
     change_ref: str
-ModelPackRevertBlock = Literal["superseded", "no_previous_pack", "not_installed", "retired"]
+ModelPackRevertBlock = Literal["superseded", "no_previous_pack", "not_installed", "retired", "frozen_ref_pins_newer"]
 class ModelPackRevert(TypedDict):
     blocked: NotRequired[ModelPackRevertBlock | None]
     setting: ModelPackSetting
