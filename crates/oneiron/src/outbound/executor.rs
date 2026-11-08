@@ -36,6 +36,7 @@ use crate::outbound_intent_ledger::{
 };
 use crate::receipt::SendReceiptOutcome;
 
+mod alternative_route;
 mod phases;
 mod send_line;
 
@@ -237,8 +238,26 @@ impl Vault {
                     continue;
                 }
             };
-            let request =
+            let mut request =
                 connector_dispatch_request(task_ref, &task, &attempt, lease, now, drain_clock);
+            // FIX 11029: an ambient alternative admitted for this interrupt
+            // decides the route; the interrupt does not go after it.
+            match alternative_route::route_bound_alternative(
+                self,
+                sink,
+                &queue,
+                &attempt,
+                &task,
+                &mut request,
+                now,
+            )? {
+                alternative_route::RoutedAttempt::Interrupt => {}
+                alternative_route::RoutedAttempt::Went => {
+                    executed = executed.saturating_add(1);
+                    continue;
+                }
+                alternative_route::RoutedAttempt::Settled => continue,
+            }
             let receipt_id = request.receipt_id.clone();
             let result = match self.dispatch_outbound_intent_with_verified_actor(
                 request,

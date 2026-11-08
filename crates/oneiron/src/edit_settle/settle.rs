@@ -1,6 +1,7 @@
 //! Settle Vault transactions.
 
 use super::codec::{RECORD, settle_grant_bound, settlement_key_parts};
+use super::pending::LINK;
 use super::receipts::{
     already_settled, manifest_ref, settled_anchors_from_summary, settlement_receipt_record,
 };
@@ -56,6 +57,7 @@ impl Vault {
             actor,
             occurred,
             learned_at,
+            None,
         )
     }
 
@@ -73,6 +75,7 @@ impl Vault {
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
+        delta_receipt: Option<&str>,
     ) -> Result<SettleSelectOutcome> {
         self.settle_select_carried(
             artifact_id,
@@ -83,6 +86,7 @@ impl Vault {
             occurred,
             learned_at,
             None,
+            delta_receipt,
         )
     }
 
@@ -101,6 +105,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
         carry: Option<Option<&super::carry::UnitWithdrawal>>,
+        delta_receipt: Option<&str>,
     ) -> Result<SettleSelectOutcome> {
         let sheet = self.prepare_sheet_keep(artifact_id, proposal, made_by, carry.flatten())?;
         self.settle_select_prepared(
@@ -113,6 +118,7 @@ impl Vault {
             learned_at,
             carry,
             sheet.as_ref(),
+            delta_receipt,
         )
     }
 
@@ -128,6 +134,7 @@ impl Vault {
         learned_at: u64,
         carry: Option<Option<&super::carry::UnitWithdrawal>>,
         sheet: Option<&super::carry::SheetKeep>,
+        delta_receipt: Option<&str>,
     ) -> Result<SettleSelectOutcome> {
         let split = sheet.and_then(|sheet| sheet.split.as_ref());
         let proposal = split
@@ -494,6 +501,9 @@ impl Vault {
                     discarded_words: None,
                 };
                 RECORD.put(&self.store, wtxn, &key, &record)?;
+                if let Some(stamp) = delta_receipt {
+                    LINK.put(&self.store, wtxn, &key, &stamp.to_owned())?;
+                }
                 if let Some(Some(withdrawal)) = carry {
                     self.record_unit_withdrawal_in_txn(wtxn, &key, withdrawal)?;
                 }

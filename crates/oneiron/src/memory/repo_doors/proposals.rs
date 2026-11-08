@@ -267,6 +267,8 @@ impl Memory<'_> {
             content: input.content,
             message: input.message,
             declaration: input.declaration,
+            // A conflict resolution repairs no failed proposal.
+            repair_of: None,
         };
         self.repo_proposal_submit(binding, change, policy, sources, None, Some(conflict))
     }
