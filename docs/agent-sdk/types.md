@@ -3457,6 +3457,10 @@ class Oneiron:
         def execute(self, spec: Facade.RepoSecretPurgeIdRequest) -> Facade.RepoSecretPurgeReceipt:
             """Confirm one secret purge plan: move each ref to its masked copy through origin publication, release listed change owners, collect unreachable objects and file the receipt. No remote is pushed."""
     class _VaultCodeWaitsVerbs:
+        def rebind_prepare(self, spec: Facade.CodeWaitRebindPrepareRequest) -> Facade.CodeWaitRebindPrepared:
+            """Propose the original holder's actual successor credential for one admitted, unsettled code consent wait. Stores no active authorization; a separate owner rebind act must confirm it."""
+        def rebind(self, spec: Facade.CodeWaitRebindRequest) -> Facade.CodeWaitRebindReceipt:
+            """Explicitly authorize one exact holder-proposed successor as the independent authenticated owner. Only an admitted, unsettled wait continues under the same intent; its original answer, admission and delivery stay unchanged."""
         def resolve(self, spec: Facade.CodeWaitResolveRequest) -> Facade.CodeWaitReceiptView:
             """Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption."""
         def receipt(self, spec: Facade.CodeWaitReceiptRequest) -> Facade.CodeWaitReceiptView | None:
@@ -4214,6 +4218,8 @@ class Oneiron:
             """Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names."""
         def signature(self, spec: Facade.EsignSigningSignatureRequest) -> Facade.EsignSigningSignatureView:
             """Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes."""
+        def preview(self, spec: Facade.EsignSigningPreviewRequest) -> Facade.EsignSigningPreviewView:
+            """The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields."""
     class _VaultEsignSealVerbs:
         def get(self, spec: Facade.EsignSealGetRequest) -> Facade.EsignSealView:
             """Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error."""
@@ -4858,8 +4864,8 @@ class Oneiron:
             """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
         @property
         def answer(self) -> "Oneiron._TasksAnswerVerbs": ...
-        def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
-            """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
+        @property
+        def outcomes(self) -> "Oneiron._TasksOutcomesVerbs": ...
         def refuse(self, spec: Facade.LiveRunRequest[Facade.TaskRefuseInput]) -> Facade.TaskRefuseOutput:
             """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
     class _TasksAnswerVerbs:
@@ -4874,6 +4880,11 @@ class Oneiron:
             """The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it."""
         def status(self, intent_ref: Facade.EntityId) -> Facade.AskForwardReceipt:
             """Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result."""
+    class _TasksOutcomesVerbs:
+        def __call__(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
+            """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
+        def route_calibration(self, handle: Facade.TaskAskHandle) -> Facade.RouteCalibrationReport:
+            """Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only."""
     class _AiVerbs:
         @property
         def chat(self) -> "Oneiron._AiChatVerbs": ...

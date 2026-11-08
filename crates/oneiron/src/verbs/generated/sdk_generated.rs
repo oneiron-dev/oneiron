@@ -4002,6 +4002,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.waits.rebind_prepare",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_wait_doors::CodeWaitRebindPrepareRequest,
+                >(),
+            ),
+            (
+                "vault.code.waits.rebind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_wait_doors::CodeWaitRebindRequest,
+                >(),
+            ),
+            (
                 "vault.code.waits.resolve",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_wait_doors::CodeWaitResolveRequest,
@@ -4971,6 +4983,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "tasks.outcomes",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAskHandle>(),
+            ),
+            (
+                "tasks.outcomes.route_calibration",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAskHandle>(),
             ),
             (
@@ -6339,6 +6355,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.esign.signing.signature",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::esign::EsignSigningSignatureRequest,
+                >(),
+            ),
+            (
+                "vault.esign.signing.preview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningPreviewRequest,
                 >(),
             ),
             (
@@ -8286,6 +8308,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.corrections",
     "vault.code.step_evidence",
     "vault.code.type_diagnostics",
+    "vault.code.waits.rebind",
     "vault.code.waits.resolve",
     "vault.code.waits.receipt",
     "vault.results.status",
@@ -8530,6 +8553,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.esign.signing.pdf",
     "vault.esign.signing.image",
     "vault.esign.signing.signature",
+    "vault.esign.signing.preview",
     "vault.esign.seal.get",
     "vault.consolidation.status",
     "vault.consolidation.wake.status",
@@ -10312,6 +10336,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.type_diagnostics" => crate::code_run::vault_read::request_schema::<
             Option<crate::code_run::ProgramStepFeedbackRelease>,
         >(),
+        "vault.code.waits.rebind" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_wait_doors::CodeWaitRebindReceipt,
+        >(),
         "vault.code.waits.resolve" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_wait_doors::CodeWaitReceiptView,
         >(),
@@ -11061,6 +11088,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.esign.signing.signature" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::esign::EsignSigningSignatureView,
+        >(),
+        "vault.esign.signing.preview" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSigningPreviewView,
         >(),
         "vault.esign.seal.get" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::esign::EsignSealView,
@@ -16677,6 +16707,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.waits.rebind_prepare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.waits.rebind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.waits.resolve" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -17779,6 +17823,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "tasks.outcomes" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "tasks.outcomes.route_calibration" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19500,6 +19551,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.esign.signing.signature" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.signing.preview" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -22023,6 +22081,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.corrections" => validate_input_vault_code_corrections(value)?,
         "vault.code.step_evidence" => validate_input_vault_code_step_evidence(value)?,
         "vault.code.type_diagnostics" => validate_input_vault_code_type_diagnostics(value)?,
+        "vault.code.waits.rebind_prepare" => validate_input_vault_code_waits_rebind_prepare(value)?,
+        "vault.code.waits.rebind" => validate_input_vault_code_waits_rebind(value)?,
         "vault.code.waits.resolve" => validate_input_vault_code_waits_resolve(value)?,
         "vault.code.waits.receipt" => validate_input_vault_code_waits_receipt(value)?,
         "vault.results.status" => validate_input_vault_results_status(value)?,
@@ -22223,6 +22283,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.answer.forward" => validate_input_tasks_answer_forward(value)?,
         "tasks.answer.forward.status" => validate_input_tasks_answer_forward_status(value)?,
         "tasks.outcomes" => validate_input_tasks_outcomes(value)?,
+        "tasks.outcomes.route_calibration" => {
+            validate_input_tasks_outcomes_route_calibration(value)?
+        }
         "vault.rooms.list" => validate_input_vault_rooms_list(value)?,
         "vault.rooms.messages" => validate_input_vault_rooms_messages(value)?,
         "vault.rooms.participants" => validate_input_vault_rooms_participants(value)?,
@@ -22538,6 +22601,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.esign.signing.pdf" => validate_input_vault_esign_signing_pdf(value)?,
         "vault.esign.signing.image" => validate_input_vault_esign_signing_image(value)?,
         "vault.esign.signing.signature" => validate_input_vault_esign_signing_signature(value)?,
+        "vault.esign.signing.preview" => validate_input_vault_esign_signing_preview(value)?,
         "vault.esign.seal.get" => validate_input_vault_esign_seal_get(value)?,
         "vault.conversations.create" => validate_input_vault_conversations_create(value)?,
         "vault.conversations.turns.create" => {
@@ -26785,6 +26849,17 @@ fn validate_input_vault_code_type_diagnostics(value: &serde_json::Value) -> Memo
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_code_waits_rebind_prepare(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::code_wait_doors::CodeWaitRebindPrepareRequest =
+        decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_code_waits_rebind(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::code_wait_doors::CodeWaitRebindRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_code_waits_resolve(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::code_wait_doors::CodeWaitResolveRequest = decode(value.clone())?;
     Ok(())
@@ -27644,6 +27719,11 @@ fn validate_input_tasks_answer_forward_status(value: &serde_json::Value) -> Memo
 }
 #[inline(never)]
 fn validate_input_tasks_outcomes(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::TaskAskHandle = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_tasks_outcomes_route_calibration(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::TaskAskHandle = decode(value.clone())?;
     Ok(())
 }
@@ -29025,6 +29105,11 @@ fn validate_input_vault_esign_signing_image(value: &serde_json::Value) -> Memory
 #[inline(never)]
 fn validate_input_vault_esign_signing_signature(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::blob_artifact::esign::EsignSigningSignatureRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_esign_signing_preview(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::blob_artifact::esign::EsignSigningPreviewRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -31360,6 +31445,8 @@ pub fn invoke_with_notice(
         "vault.code.corrections" => invoke_vault_code_corrections(memory, value),
         "vault.code.step_evidence" => invoke_vault_code_step_evidence(memory, value),
         "vault.code.type_diagnostics" => invoke_vault_code_type_diagnostics(memory, value),
+        "vault.code.waits.rebind_prepare" => invoke_vault_code_waits_rebind_prepare(memory, value),
+        "vault.code.waits.rebind" => invoke_vault_code_waits_rebind(memory, value),
         "vault.code.waits.resolve" => invoke_vault_code_waits_resolve(memory, value),
         "vault.code.waits.receipt" => invoke_vault_code_waits_receipt(memory, value),
         "vault.results.status" => invoke_vault_results_status(memory, value),
@@ -31560,6 +31647,9 @@ pub fn invoke_with_notice(
         "tasks.answer.forward" => invoke_tasks_answer_forward(memory, value),
         "tasks.answer.forward.status" => invoke_tasks_answer_forward_status(memory, value),
         "tasks.outcomes" => invoke_tasks_outcomes(memory, value),
+        "tasks.outcomes.route_calibration" => {
+            invoke_tasks_outcomes_route_calibration(memory, value)
+        }
         "vault.rooms.list" => invoke_vault_rooms_list(memory, value),
         "vault.rooms.messages" => invoke_vault_rooms_messages(memory, value),
         "vault.rooms.participants" => invoke_vault_rooms_participants(memory, value),
@@ -31853,6 +31943,7 @@ pub fn invoke_with_notice(
         "vault.esign.signing.pdf" => invoke_vault_esign_signing_pdf(memory, value),
         "vault.esign.signing.image" => invoke_vault_esign_signing_image(memory, value),
         "vault.esign.signing.signature" => invoke_vault_esign_signing_signature(memory, value),
+        "vault.esign.signing.preview" => invoke_vault_esign_signing_preview(memory, value),
         "vault.esign.seal.get" => invoke_vault_esign_seal_get(memory, value),
         "vault.conversations.create" => invoke_vault_conversations_create(memory, value),
         "vault.conversations.turns.create" => {
@@ -37402,6 +37493,20 @@ fn invoke_vault_code_type_diagnostics(
     encode(vault_code_type_diagnostics(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_code_waits_rebind_prepare(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_waits_rebind_prepare(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_code_waits_rebind(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_waits_rebind(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_code_waits_resolve(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -38520,6 +38625,13 @@ fn invoke_tasks_outcomes(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(tasks_outcomes(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_tasks_outcomes_route_calibration(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(tasks_outcomes_route_calibration(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_rooms_list(
@@ -40234,6 +40346,13 @@ fn invoke_vault_esign_signing_signature(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_esign_signing_signature(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_esign_signing_preview(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_esign_signing_preview(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_esign_seal_get(
@@ -48136,6 +48255,18 @@ pub fn vault_code_type_diagnostics(
         input,
     )
 }
+pub fn vault_code_waits_rebind_prepare(
+    memory: &Memory<'_>,
+    input: crate::memory::code_wait_doors::CodeWaitRebindPrepareRequest,
+) -> MemoryResult<crate::memory::code_wait_doors::CodeWaitRebindPrepared> {
+    memory.code_wait_rebind_prepare(input)
+}
+pub fn vault_code_waits_rebind(
+    memory: &Memory<'_>,
+    input: crate::memory::code_wait_doors::CodeWaitRebindRequest,
+) -> MemoryResult<crate::memory::code_wait_doors::CodeWaitRebindReceipt> {
+    memory.code_wait_rebind_as(&memory.embedded_owner("vault.code.waits.rebind")?, input)
+}
 pub fn vault_code_waits_resolve(
     memory: &Memory<'_>,
     input: crate::memory::code_wait_doors::CodeWaitResolveRequest,
@@ -49496,6 +49627,12 @@ pub fn tasks_outcomes(
     input: crate::task_verb::TaskAskHandle,
 ) -> MemoryResult<Vec<crate::llm::decision::questions::CalibrationPair>> {
     memory.tasks_ask_outcomes(&input)
+}
+pub fn tasks_outcomes_route_calibration(
+    memory: &Memory<'_>,
+    input: crate::task_verb::TaskAskHandle,
+) -> MemoryResult<crate::llm::decision::questions::RouteCalibrationReport> {
+    memory.tasks_ask_route_calibration(&input)
 }
 pub fn vault_rooms_list(
     memory: &Memory<'_>,
@@ -51516,6 +51653,12 @@ pub fn vault_esign_signing_signature(
     input: crate::blob_artifact::esign::EsignSigningSignatureRequest,
 ) -> MemoryResult<crate::blob_artifact::esign::EsignSigningSignatureView> {
     memory.esign_signing_signature(&input)
+}
+pub fn vault_esign_signing_preview(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningPreviewRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSigningPreviewView> {
+    memory.esign_signing_preview(&input)
 }
 pub fn vault_esign_seal_get(
     memory: &Memory<'_>,
