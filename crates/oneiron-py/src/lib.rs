@@ -3391,6 +3391,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shared_propose_add_owner(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.propose_add_owner")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.shared.propose_add_owner", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_shared_execute(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.shared.execute")?;
         let output = py
@@ -3646,6 +3656,34 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.shared.policy.changes")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.shared.policy.changes", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_owner_change_wait_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.owner_change_wait.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.shared.owner_change_wait.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_owner_change_wait_get(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.owner_change_wait.get")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.shared.owner_change_wait.get", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }
