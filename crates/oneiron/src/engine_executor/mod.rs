@@ -21,6 +21,7 @@ mod host;
 mod program_entry;
 mod record;
 mod repl;
+mod run_position;
 mod self_brief;
 mod shadow_step;
 mod skill_call;
@@ -46,7 +47,10 @@ pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 #[cfg(test)]
 use self::record::step_state_hash;
 pub use self::record::{EnteredRun, entered_run};
-pub(crate) use self::record::{code_run_complete_in_txn, parked_wait_now};
+pub(crate) use self::record::{caller_task_in_txn, code_run_complete_in_txn, parked_wait_now};
+// FIX 4606: a canonical run's generation and parked wait, read outside its
+// entries.
+pub use self::run_position::{CodeRunPosition, code_run_position};
 // FIX 17594: the host's self-brief port a native run's requests carry.
 pub use self::self_brief::{
     BriefBoundary, BriefCandidateToken, BriefPrefix, FoldBoundary, SelfBriefPort,
