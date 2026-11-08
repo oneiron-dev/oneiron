@@ -559,6 +559,11 @@ impl Landing<'_> {
             let Some(mut occurrence) = OCCURRENCES.get(&vault.store, wtxn, key)? else {
                 return Ok(());
             };
+            // A message erased meanwhile stays forgotten: its fence is not
+            // given its attachments again.
+            if matches!(occurrence.presence, MailPresence::Forgotten { .. }) {
+                return Ok(());
+            }
             if occurrence.stage == MailStage::Body && occurrence.attachments == full.attachments {
                 return Ok(());
             }
