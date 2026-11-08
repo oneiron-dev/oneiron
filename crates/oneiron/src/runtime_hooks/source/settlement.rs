@@ -91,7 +91,7 @@ pub(crate) fn record_settlement_in_txn(
     SETTLED_NEXT.put(&vault.store, txn, &(), &position.0)
 }
 
-pub(in crate::runtime_hooks) fn prepare_settlement_in_txn(
+fn prepare_settlement_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     fact: SettledFact,
@@ -187,7 +187,7 @@ pub(super) fn settlements_after_in_txn(
     Ok(batch)
 }
 
-pub(in crate::runtime_hooks) fn settlement_fact_in_txn(
+fn settlement_fact_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     position: SettlementPosition,
