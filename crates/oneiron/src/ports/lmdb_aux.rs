@@ -174,8 +174,9 @@ fn list_changes(
 
 impl Vault {
     /// [`BlobStore::port_blob_get`] with file-plane and plain inline ASSET
-    /// bytes admitted before their output allocation. Record-head projection
-    /// keeps its read path; the guard rides through the same type/hash checks.
+    /// bytes admitted before their output allocation. UTF-8 record-head output
+    /// admits its final text conversion; native loading and other projections
+    /// keep their read path. The guard rides through the same type/hash checks.
     pub(crate) fn blob_get_with_body_admission<G, E>(
         &self,
         txn: &RoTxn<'_>,
