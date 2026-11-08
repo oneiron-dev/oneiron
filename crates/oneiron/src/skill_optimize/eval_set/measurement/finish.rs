@@ -4,13 +4,19 @@
 
 use std::collections::BTreeSet;
 
-use super::doors::{measurement_in_txn, put_in_txn};
+use super::doors::{canary_failure_divergence_tolerance, measurement_in_txn, put_in_txn};
 use super::statistics::{PairedScores, estimate};
-use super::{EvalMeasurement, MeasurementState, MeasurementUnavailable, ScoreDirection};
+use super::{
+    EvalLegRecord, EvalMeasurement, MeasurementState, MeasurementUnavailable, ScoreDirection,
+};
+use crate::EntityId;
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::receipt::{CALL_RECEIPT_REF_PREFIX, CallOutcome, CallReceipt};
+use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::eval_set::cohort::cohort_in_txn;
 use crate::skill_optimize::eval_set::{SufficiencyInput, sufficiency_card};
+use crate::store::Store;
 
 /// The axis a blind judge score measures: how well one response carries out
 /// its task by the judge's rubric and the case's labels (CALL).
@@ -67,13 +73,85 @@ fn paired(row: &EvalMeasurement) -> Vec<PairedScores<'_>> {
         .collect()
 }
 
+/// The call receipt ledger, read in place.
+const CALL_RECEIPTS: SideTable<EntityId, CallReceipt, Named> =
+    SideTable::new(&side_table::CALL_RECEIPT);
+
+/// The id a `call:<32hex>` leg receipt ref names; `None` for anything else.
+fn call_receipt_id(receipt_ref: &str) -> Option<EntityId> {
+    let hex = receipt_ref.strip_prefix(CALL_RECEIPT_REF_PREFIX)?;
+    if hex.len() != 32 {
+        return None;
+    }
+    EntityId::from_hex(hex).ok()
+}
+
+/// One arm's resolved calls and their failures. A leg with no number counts
+/// as one failed call; a leg whose receipt ref resolves counts its receipt's
+/// outcome. Legs with no ref, an unparsable ref or a missing receipt read
+/// unknown and stay out of both counts (FIX 10437).
+fn arm_calls(store: &Store, txn: &heed::RoTxn<'_>, legs: &[&EvalLegRecord]) -> Result<(u64, u64)> {
+    let mut calls = 0;
+    let mut failures = 0;
+    for leg in legs {
+        if leg.unavailable.is_some() {
+            calls += 1;
+            failures += 1;
+            continue;
+        }
+        let Some(receipt_ref) = leg.receipt.as_deref() else {
+            continue;
+        };
+        let Some(id) = call_receipt_id(receipt_ref) else {
+            continue;
+        };
+        let Some(receipt) = CALL_RECEIPTS.get(store, txn, &id)? else {
+            continue;
+        };
+        calls += 1;
+        if matches!(receipt.outcome, CallOutcome::Refused { .. }) {
+            failures += 1;
+        }
+    }
+    Ok((calls, failures))
+}
+
+/// Whether the candidate arm's call failure rate sits above the incumbent
+/// arm's past tolerance, from the legs' own receipts beside the axis. `None`
+/// while either arm has no resolved call, so the card keeps honest `NoCanary`
+/// (FIX 10437).
+fn canary_diverged(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    row: &EvalMeasurement,
+) -> Result<Option<bool>> {
+    let mut incumbent_legs = Vec::new();
+    let mut candidate_legs = Vec::new();
+    for case in &row.cases {
+        incumbent_legs.push(&case.incumbent);
+        incumbent_legs.push(&case.retest);
+        candidate_legs.push(&case.candidate);
+    }
+    let (incumbent_calls, incumbent_failures) = arm_calls(store, txn, &incumbent_legs)?;
+    let (candidate_calls, candidate_failures) = arm_calls(store, txn, &candidate_legs)?;
+    if incumbent_calls == 0 || candidate_calls == 0 {
+        return Ok(None);
+    }
+    let incumbent_rate = incumbent_failures as f64 / incumbent_calls as f64;
+    let candidate_rate = candidate_failures as f64 / candidate_calls as f64;
+    Ok(Some(
+        candidate_rate - incumbent_rate > canary_failure_divergence_tolerance(),
+    ))
+}
+
 impl Vault {
     /// Finish a claimed measurement once every member case is recorded with
     /// three scored legs: the family estimator runs over the whole matched
     /// set, and the sufficiency card is read once from its numbers and kept
     /// with the family summaries under the same digest. A set with any gap
-    /// settles Partial with its reasons and no card. No canary is measured
-    /// beside the axis, so the card reads unknown with `NoCanary`. A settled
+    /// settles Partial with its reasons and no card. The generic call-failure
+    /// canary is measured beside the axis from the legs' own receipts; arms
+    /// with no resolved call keep honest `NoCanary` (FIX 10437). A settled
     /// row is kept as it is.
     /// # Errors
     /// A missing measurement or cohort, or storage errors.
@@ -108,7 +186,7 @@ impl Vault {
                 set_changed: cohort.retired_at.is_some()
                     || cohort.membership_digest != row.request.membership_digest,
                 rubric_changed: cohort.rubric_revision != row.request.rubric_revision,
-                canary_diverged: None,
+                canary_diverged: canary_diverged(&self.store, &*txn, &row)?,
             };
             row.card = Some(sufficiency_card(input)?);
             row.families = found.families;
