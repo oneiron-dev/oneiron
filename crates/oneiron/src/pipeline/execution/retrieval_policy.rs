@@ -193,6 +193,9 @@ impl PipelineBuilder<'_> {
                             serde_json::to_value(&trace).map_err(|_| {
                                 Error::InvariantViolation("retrieval policy replay encode")
                             })?;
+                        if let Some(memory) = attempt.replay_inputs_memory.as_mut() {
+                            memory.track_config(inputs);
+                        }
                     }
                     return Ok((attempt, Some(trace)));
                 }

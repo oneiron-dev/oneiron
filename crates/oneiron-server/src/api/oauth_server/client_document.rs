@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::authority::{OAuthClientRecord, oauth_client_id_is_metadata_url};
-use oneiron::web_fetch::{HostedEgressGuard, build_single_hop_client};
+use oneiron::web_fetch::{HostedEgressGuard, hosted_dns_resolver};
 
 use crate::server::SyncServer;
 
@@ -76,7 +76,12 @@ fn fetch_client_document(url: &str, guard: Option<Arc<HostedEgressGuard>>) -> Op
     if parsed.scheme() != "https" {
         return None;
     }
-    let client = match guard {
+    let builder = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(CLIENT_DOCUMENT_TIMEOUT);
+    // A managed node's client resolves every name through the guard, as the web fetcher's does.
+    let builder = match guard {
         Some(guard) => {
             let literal = parsed
                 .host_str()
@@ -89,15 +94,11 @@ fn fetch_client_document(url: &str, guard: Option<Arc<HostedEgressGuard>>) -> Op
             if refused.is_some() {
                 return None;
             }
-            build_single_hop_client(guard).ok()?
+            builder.dns_resolver(hosted_dns_resolver(guard))
         }
-        None => reqwest::blocking::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(CLIENT_DOCUMENT_TIMEOUT)
-            .build()
-            .ok()?,
+        None => builder,
     };
+    let client = builder.build().ok()?;
     let response = client
         .get(parsed)
         .header(reqwest::header::ACCEPT, "application/json")

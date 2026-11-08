@@ -51,8 +51,7 @@ pub(crate) async fn execute_mcp_tool(
         McpValidatedToolArgs::Verb(verb) => {
             mcp_verb_gate(server, verb.tool, &verb.payload.arguments, actor)?;
         }
-        // Setup renders filtered board rows; execute_code persists its run
-        // at once, whatever the program does.
+        // Setup renders filtered board rows.
         McpValidatedToolArgs::Setup(_) => {
             mcp_credential_gate(
                 server,
@@ -61,7 +60,9 @@ pub(crate) async fn execute_mcp_tool(
                 McpCallEffect::Reads,
             )?;
         }
-        // A result read takes the credential its run was admitted on.
+        // execute_code enters its native session on any tier; each
+        // operation its run makes meets its own gate. A result read takes
+        // the session its run was admitted on.
         McpValidatedToolArgs::ExecuteCode(_) | McpValidatedToolArgs::ReadResult(_) => {
             mcp_execute_code_gate(server, actor)?;
         }
