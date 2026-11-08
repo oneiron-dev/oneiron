@@ -76,7 +76,7 @@ use serde::Deserialize;
 
 use super::coach_heal::{LEASE_OWNER, settle};
 use super::coach_health::coach_role;
-use super::code_fix::{HostModels, message};
+use super::code_fix::{HostModels, coach_model_call_principal, message};
 use crate::server::SyncServer;
 
 mod attribution_audits;
@@ -416,6 +416,7 @@ fn distill(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> oneiron::R
             .to_owned(),
         vault,
         owner: vault.ensure_embedded_owner_actor().ok(),
+        caller: coach_model_call_principal(vault, admitted, COACH_SKILL_DISTILL_FACET),
     };
     let drain = vault.run_coach_skill_distill(admitted, DISTILL_SESSIONS, &distiller)?;
     tracing::debug!(
@@ -437,6 +438,9 @@ struct HostDistiller<'a> {
     vault: &'a Vault,
     /// The vault's person, whom the core turn door names [`OWNER_SPEAKER`].
     owner: Option<EntityId>,
+    /// The executing attempt's actor, not a speaker in the sitting it reads.
+    /// The standing worker has no calling session.
+    caller: Option<EntityId>,
 }
 
 /// The actor a speaker label names in one sitting (FIX 2015), from what the
@@ -492,7 +496,12 @@ impl SessionActorDistiller for HostDistiller<'_> {
                 }
                 let text = utterance.text.as_deref().unwrap_or_default();
                 sitting_bytes = sitting_bytes.saturating_add(text.len());
-                said.push(serde_json::json!({ "speaker": utterance.speaker, "text": text }));
+                said.push(serde_json::json!({
+                    "speaker": utterance.speaker,
+                    "text": text,
+                    "import_source": turn.import_source,
+                    "source_speaker_label": turn.source_speaker_label,
+                }));
             }
             turns.push(said);
         }
@@ -517,13 +526,14 @@ impl SessionActorDistiller for HostDistiller<'_> {
         let rows = union_source_rows([brief.source_rows.as_deref(), Some(speaker_rows.as_slice())]);
         let text = self
             .models
-            .generate_sourced(
+            .generate_sourced_recorded(
                 self.models.coach(),
                 vec![
                     message(LlmMessageRole::System, self.wording.clone()),
                     message(LlmMessageRole::User, data.to_string()),
                 ],
                 rows,
+                self.caller,
             )?
             .ok_or_else(|| Error::InvalidConfig("no seat took the Coach's distill".into()))?;
         let wire = parse_notes(&text).ok_or_else(|| {

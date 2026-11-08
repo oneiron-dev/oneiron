@@ -316,6 +316,9 @@ pub struct McpVerbArguments {
     /// `tasks.create`'s due time (FIX 4749), decoded with the input.
     #[serde(default)]
     pub due_at: Option<Value>,
+    /// `tasks.create`'s watch flag (FIX 22121), decoded with the input.
+    #[serde(default)]
+    pub watch: Option<Value>,
     /// `describe`'s task highway handle (OF-220), decoded with the input.
     #[serde(default)]
     pub handle: Option<Value>,
@@ -325,7 +328,7 @@ pub struct McpVerbArguments {
 }
 
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 21] {
+    fn present_fields(&self) -> [(&'static str, bool); 22] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
@@ -346,6 +349,7 @@ impl McpVerbArguments {
             ("ttl", self.ttl.is_some()),
             ("parent_ref", self.parent_ref.is_some()),
             ("due_at", self.due_at.is_some()),
+            ("watch", self.watch.is_some()),
             ("handle", self.handle.is_some()),
             ("after", self.after.is_some()),
         ]
