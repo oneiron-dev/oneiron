@@ -231,9 +231,10 @@ impl Memory<'_> {
         occurred_at: u64,
         learned_at: Option<u64>,
     ) -> MemoryResult<BlobVersionAppendOutcome> {
-        let _ = self
-            .vault
-            .measure_limit(crate::limit_ask::EngineLimit::BlobContentBytes, content.len());
+        let _ = self.vault.measure_limit(
+            crate::limit_ask::EngineLimit::BlobContentBytes,
+            content.len(),
+        );
         let artifact_id = self.resolve_ref(artifact_ref)?;
         let provenance = match run_ref {
             Some(run_ref) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
