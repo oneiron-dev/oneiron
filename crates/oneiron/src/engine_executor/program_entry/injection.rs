@@ -13,7 +13,7 @@ use crate::code_run::{
 };
 
 const DIVERGED: &str = "the pinned source made another call where an earlier entry settled one";
-const NESTED_CALLABLE: &str = "a callable the pinned entry calls was still running when it parked: it cannot resume inside it";
+const NESTED_CALLABLE: &str = "a callable the pinned entry calls reached its wait or published outputs: it cannot resume inside it";
 const UNREADABLE: &str = "a settled call's row does not decode";
 const UNCONSUMED: &str = "the pinned source ended before every call an earlier entry settled";
 
@@ -39,8 +39,9 @@ pub(super) struct SettledCall {
 
 /// One callable a pinned entry's calls ran inside its pinned call (FIX
 /// 5878): its row, where its own calls end in the entry's rows (exclusive),
-/// and whether its body was still running when the entry stopped: it
-/// reached the entry's wait, or the bridge halted inside it.
+/// and whether a later entry cannot answer it from its row alone: its body
+/// reached the entry's wait (whether or not it then returned), the bridge
+/// halted inside it, or its own calls published outputs.
 #[derive(Debug, Clone, Copy)]
 pub(in crate::engine_executor) struct ProgramCallableSpan {
     pub(in crate::engine_executor) seq: u64,
