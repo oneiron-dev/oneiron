@@ -106,9 +106,11 @@ pub(in crate::code_run::storage) fn owned_body(
             StoredBody::File { .. } => BodyLocation::File,
         },
     };
+    let occurrence = ResultOccurrence::of(Some(owner), output)?.id();
     Ok(OwnedBody {
         owner,
-        occurrence: ResultOccurrence::of(Some(owner), output)?.id(),
+        occurrence,
+        mark_occurrence: occurrence,
         state: if output.complete {
             BodyState::Complete { body }
         } else {
@@ -121,32 +123,4 @@ pub(in crate::code_run::storage) fn owned_body(
             path: output.path.clone(),
         }),
     })
-}
-
-/// Whether a raw output put publishes `body`, its owner's descriptor of the
-/// bytes, over `prior`, the one that occurrence has now (FIX 7283): only
-/// where the owned publisher neither refuses nor lets other bytes go. A
-/// complete descriptor is final, so one naming other bytes would refuse the
-/// put; an incomplete one holding bytes would release them; a prior that
-/// does not read would fail it. There the put stays as it was, its row
-/// holding its body on its own with no descriptor (FIX 5399b), so no raw
-/// put that lands today is refused or costs another body its hold. A
-/// session row an on-record route writes in base asks it too (FIX 7363). A
-/// prior that differs only in its code-run origin is the same descriptor
-/// ([`OwnedBody::eq_ignoring_origin`], FIX 7365).
-///
-/// [`OwnedBody::eq_ignoring_origin`]: crate::provenance::body::OwnedBody::eq_ignoring_origin
-pub(in crate::code_run::storage) fn raw_put_publishes_descriptor(
-    prior: &Result<Option<crate::provenance::body::OwnedBody>>,
-    body: &crate::provenance::body::OwnedBody,
-) -> bool {
-    use crate::provenance::body::BodyState;
-    match prior {
-        Ok(None) => true,
-        Ok(Some(prior)) => {
-            prior.eq_ignoring_origin(body)
-                || matches!(prior.state, BodyState::Incomplete { retained: None })
-        }
-        Err(_) => false,
-    }
 }

@@ -153,6 +153,7 @@ impl Vault {
             &OwnedBody {
                 owner: removal_archive_owner(row)?,
                 occurrence,
+                mark_occurrence: occurrence,
                 state: BodyState::Complete {
                     body: staged.body.clone(),
                 },
