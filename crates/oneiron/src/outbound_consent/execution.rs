@@ -55,6 +55,15 @@ pub struct ScopedMcpDispatchResult {
     /// instant, Unix seconds (FIX 8686): it was not sent, recorded or
     /// charged, and goes again once its windows open.
     paced_until: Option<u64>,
+    /// FIX 4747 slice 5: the agent run that made the call no longer runs on
+    /// this machine, so the call's transport never started: nothing was
+    /// sent.
+    pub agent_run_stood_down: bool,
+    /// FIX 4747 slice 7: why the call's admission stopped it for its agent
+    /// run: its run stood down, an earlier executor of the run may have made
+    /// it, the owner left it, or its run's marks are full. Nothing was
+    /// recorded, charged or sent.
+    pub(crate) agent_run_effect: Option<crate::agent_dispatch::AgentRunEffectStop>,
 }
 
 impl ScopedMcpDispatchResult {
@@ -149,6 +158,8 @@ impl fmt::Debug for ScopedMcpDispatchResult {
             .field("budget_charge", &self.budget_charge)
             .field("budget_settlement_events", &self.budget_settlement_events)
             .field("paced_until", &self.paced_until)
+            .field("agent_run_stood_down", &self.agent_run_stood_down)
+            .field("agent_run_effect", &self.agent_run_effect)
             .finish()
     }
 }
@@ -173,6 +184,16 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
     #[cfg(not(test))]
     let freeze_event_baseline = ();
     let _ = grant;
+    // FIX 4747 slices 5, 7: the agent run try whose step makes the call, as
+    // its caller's binding named it, else a run whose claim fenced the
+    // call's own attempt.
+    let prepared_call = match prepared_call.agent_run() {
+        Some(_) => prepared_call,
+        None => {
+            let fenced = vault.agent_run_fence(attempt_id).map(|_| attempt_id);
+            prepared_call.for_agent_run(fenced)
+        }
+    };
     let call = prepared_call.call().clone();
     // FIX 6424 part 3: the gate input pins this prepared call.
     let gate = super::approval::scoped_mcp_pinned_gate_input(
@@ -219,7 +240,10 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         co_actor: None,
         exclusive_route: None,
     };
-    let mut transport = ScopedResultTransport::new(sender);
+    // FIX 4747 slices 5, 7: a call an agent run makes goes only while the
+    // run's machine holds the run.
+    let mut transport = ScopedResultTransport::new(sender)
+        .fenced(prepared_call.agent_run().map(|run| (vault, run)));
     let effect = crate::outbound_chokepoint::execute_outbound_effect(
         vault,
         authority,
@@ -288,15 +312,19 @@ pub(super) fn scoped_mcp_gate_input(
 /// run before transport and refuse or hold a call whose authority changed.
 /// A hold that names an approve-once digest (the tool's `always ask`, FIX
 /// 990) keeps the ask `payload`, the row's frozen bytes, was first held for.
+/// A row an agent run try `agent_run` admitted sends only while this machine
+/// holds that run (FIX 4747 slice 7).
 pub(super) fn resume_scoped_mcp_outbound_intent<S: OutboundResultSender>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
     intent_id: [u8; 32],
     payload: &[u8],
+    agent_run: Option<AttemptId>,
     now_ms: u64,
     sender: &mut S,
 ) -> std::result::Result<ScopedMcpDispatchResult, IntentLedgerError> {
-    let mut transport = ScopedResultTransport::new(sender);
+    let mut transport =
+        ScopedResultTransport::new(sender).fenced(agent_run.map(|run| (vault, run)));
     let effect = crate::outbound_chokepoint::execute_outbound_effect(
         vault,
         authority,
@@ -360,6 +388,8 @@ fn dispatch_result<S>(
         budget_charge: effect.budget_charge,
         budget_settlement_events: effect.budget_settlement_events,
         paced_until: effect.paced_until,
+        agent_run_stood_down: transport.agent_run_stood_down,
+        agent_run_effect: effect.agent_run_effect,
     }
 }
 
@@ -535,6 +565,11 @@ pub(super) struct ScopedResultTransport<'a, S> {
     /// The body the last authorized send returned, handed on to that send's
     /// own terminal bridge only (DOOR-141 PR2), never counted or logged.
     settled_body: Option<Vec<u8>>,
+    /// FIX 4747 slices 5, 7: the agent run try that makes the call, whose
+    /// holding is checked right before each transport call.
+    run_fence: Option<(&'a Vault, AttemptId)>,
+    /// The run fence stood a call down before its transport call.
+    pub(super) agent_run_stood_down: bool,
 }
 
 impl<'a, S> ScopedResultTransport<'a, S> {
@@ -546,7 +581,16 @@ impl<'a, S> ScopedResultTransport<'a, S> {
             scrubbed_result_fields: 0,
             checked_bytes: Vec::new(),
             settled_body: None,
+            run_fence: None,
+            agent_run_stood_down: false,
         }
+    }
+
+    /// This transport, its calls guarded by the holding of the agent run try
+    /// `fence` names (FIX 4747); `None` guards nothing.
+    pub(super) fn fenced(mut self, fence: Option<(&'a Vault, AttemptId)>) -> Self {
+        self.run_fence = fence;
+        self
     }
 }
 
@@ -554,6 +598,22 @@ impl<S: OutboundResultSender> crate::outbound_chokepoint::OutboundTransport
     for ScopedResultTransport<'_, S>
 {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
+        // FIX 4747 slices 5, 7: a stale agent run's call stands down before
+        // its transport call, as a connector send's fence stands it down:
+        // the fence its claim took while the run is on this host, else the
+        // run TASK's own lease (a held call a settler resumes).
+        if let Some((vault, run)) = self.run_fence
+            && !crate::agent_dispatch::agent_run_effect_permitted(vault, run)
+        {
+            self.agent_run_stood_down = true;
+            return OutboundSendOutcome::Failed(
+                crate::outbound_intent_ledger::OutboundSendFailure {
+                    kind: crate::outbound_intent_ledger::OutboundFailureKind::TransportNotStarted,
+                    code: None,
+                    secret: None,
+                },
+            );
+        }
         self.checked_bytes = call.payload().to_vec();
         let transport = self.inner.send(call);
         self.effectful_sends = self.effectful_sends.saturating_add(1);

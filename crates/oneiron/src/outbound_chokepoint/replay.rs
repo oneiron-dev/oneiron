@@ -901,6 +901,7 @@ fn settled_result(
         ask_consent: None,
         approval_actor: None,
         paced_until: None,
+        agent_run_effect: None,
     }
 }
 
@@ -940,6 +941,7 @@ pub(super) fn gate_rejection(
         ask_consent: None,
         approval_actor: None,
         paced_until: None,
+        agent_run_effect: None,
     }
 }
 
