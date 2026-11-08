@@ -11,6 +11,8 @@
 //! the lineage never shares an operation with the source (C1 of the s4
 //! soundness read). Its disclosure floor names the copy's stamp: a re-mask
 //! reaches every peer as state, never as history holding an older copy (C3).
+//! A lineage that moves advances the vault's document-mutation head in its
+//! writer (FIX 2860).
 //!
 //! **Inbound.** A peer's update sent under the copy id is imported on the
 //! lineage. The lineage's new text goes through the shipped visible diff
@@ -46,6 +48,7 @@ use crate::origin::secret_projection::types::REPO_OPAQUE_FILE_BYTES;
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreRead};
 use crate::secret_custody::KeyPlaces;
 use crate::sync::documents::storage;
+use crate::vault::entity_revision;
 
 /// The text root of an entity document.
 const BODY: &str = "body";
@@ -313,15 +316,37 @@ fn load_lineage(vault: &Vault, txn: &RoTxn<'_>, copy: EntityId) -> Result<LoroDo
     Ok(doc)
 }
 
+/// Stores `doc`, the copy lineage under `copy`. A lineage whose version
+/// vector differs from the one stored before this write advances the vault's
+/// document-mutation head in this writer, under its copy id (FIX 2860); no
+/// stored vector reads as the empty one, and one that does not decode counts
+/// as moved. A lineage at its stored version keeps the head. The source's own
+/// edit advances the head in the source's writer, not here.
 fn save_lineage(vault: &Vault, txn: &mut RwTxn<'_>, copy: EntityId, doc: &LoroDoc) -> Result<()> {
     let slot = DocumentSlot::of(copy);
+    let stored = vault
+        .store
+        .port_document_row(txn, slot, DocumentRow::StateVector)?;
     let bytes = doc
         .export(ExportMode::Snapshot)
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportSnapshot, e))?;
+    // The lineage's version after the export's implicit commit.
+    let version = doc.oplog_vv();
+    let moved = match stored.map(|stored| VersionVector::decode(&stored)) {
+        None => version != VersionVector::default(),
+        Some(Ok(stored)) => stored != version,
+        Some(Err(_)) => true,
+    };
+    let frontier = doc.oplog_frontiers();
     vault.store.port_document_snapshot_put(txn, slot, &bytes)?;
     vault
         .store
-        .port_document_state_vector_put(txn, slot, &doc.oplog_vv().encode())
+        .port_document_state_vector_put(txn, slot, &version.encode())?;
+    if !moved {
+        return Ok(());
+    }
+    let revision = entity_revision::copy_lineage_revision(&copy, &frontier);
+    entity_revision::advance_document_mutation_head_in_txn(&vault.store, txn, &copy, revision)
 }
 
 /// Bring `lineage`'s text to `copy` as the lineage author `author` names,

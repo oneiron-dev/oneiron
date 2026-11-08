@@ -413,8 +413,9 @@ side_tables! {
     /// early before a put rewrote its dependent. Key: id16 + u64be + id16.
     PORTS_DEPENDENT_WALK_SETTLED: VaultMeta b"ports:dependent_walk_settled:v1:" Raw;
     /// The vault's document-mutation head (FIX 2860): 16 bytes of BLAKE3 over the head before it,
-    /// the entity and the live revision of the newest committed document edit, read beside the
-    /// change log's head into an action's inputs. Key: ().
+    /// the entity and the live revision of the newest committed document edit (for a copy
+    /// lineage, its copy id and frontier revision), read beside the change log's head into an
+    /// action's inputs. Key: ().
     PORTS_DOCUMENT_MUTATION_HEAD: VaultMeta b"ports:document_mutation_head:v1" Raw;
     /// Local id allocator floor. Key: ().
     PORTS_ID_FLOOR: VaultMeta b"ports:id_floor:v1" Raw;
