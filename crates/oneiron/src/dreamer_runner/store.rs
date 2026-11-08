@@ -730,6 +730,28 @@ impl<'a> DreamerRunnerStore<'a> {
         judged: Option<crate::task_verb::RunnerDoneAnswer>,
         confession: Option<&crate::self_heal::audit::AttemptConfession>,
     ) -> Result<CompleteDreamerAttemptOutcome> {
+        self.complete_sealed_with_reported_confession(input, judged, confession, None)
+    }
+
+    /// Complete with explicit host-Done answers from the retained settling
+    /// receipt. Missing or unreadable answers keep the runner's confession.
+    pub fn complete_with_reported_confession(
+        &self,
+        input: CompleteDreamerAttempt,
+        judged: Option<crate::task_verb::RunnerDoneAnswer>,
+        confession: Option<&crate::self_heal::audit::AttemptConfession>,
+        context: Option<&crate::task_verb::HostDoneConfessionContext>,
+    ) -> Result<CompleteDreamerAttemptOutcome> {
+        self.complete_sealed_with_reported_confession(input, judged, confession, context)
+    }
+
+    fn complete_sealed_with_reported_confession(
+        &self,
+        input: CompleteDreamerAttempt,
+        judged: Option<crate::task_verb::RunnerDoneAnswer>,
+        confession: Option<&crate::self_heal::audit::AttemptConfession>,
+        context: Option<&crate::task_verb::HostDoneConfessionContext>,
+    ) -> Result<CompleteDreamerAttemptOutcome> {
         use crate::task_verb::highway_runner::RunnerSettle;
         self.ensure_terminal_transition_target(input.id)?;
         let attempt_id = input.id;
@@ -756,7 +778,26 @@ impl<'a> DreamerRunnerStore<'a> {
                 },
             )?;
             self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
-            if let Some(confession) = confession {
+            let reported = context.and_then(|context| {
+                let record = match &outcome {
+                    CompleteOutcome::Completed(record)
+                    | CompleteOutcome::AlreadyCompleted(record) => record,
+                };
+                match crate::task_verb::host_done_confession_in_txn(
+                    self.vault,
+                    wtxn,
+                    record,
+                    input.attempt_count,
+                    context,
+                ) {
+                    Ok(confession) => confession,
+                    Err(error) => {
+                        tracing::warn!(code = %error.code, "host Done confession does not read");
+                        None
+                    }
+                }
+            });
+            if let Some(confession) = reported.as_ref().or(confession) {
                 crate::dreamer_consolidation::seal_task_realize_confession_in_txn(
                     self.vault, wtxn, confession, input.now,
                 )?;
