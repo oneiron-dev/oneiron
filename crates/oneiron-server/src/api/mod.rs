@@ -156,6 +156,9 @@ pub(crate) use llm::MeshLlm;
 pub(crate) use llm::record_raw_response;
 mod mcp_gateway;
 mod memory;
+// FIX 1435: the direct native read routes cross the verb-hook boundary, and a
+// read that an ask stopped runs again through its own route.
+pub(crate) mod native_read_hooks;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
 // depth cost gate, the extractive answer for the model-free tiers, and the
 // citation gate over whatever a host composer returns.
@@ -234,8 +237,8 @@ pub(crate) use self::mcp_gateway::{
 pub(crate) use self::mcp_gateway::{
     McpCallContext, McpCodeRunContinuations, ReaderChildDoor, RunGuests, VerdictAsker,
     WorkflowPreflight, deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
-    execute_run_board_verb_in_session, mcp_gateway, mcp_stream_reads_task, mcp_stream_task_row,
-    mcp_tool_first_gateway, person_socket_admits, preflight_task_workflow,
+    execute_run_board_verb_in_session, mcp_gateway, mcp_method_not_allowed, mcp_stream_reads_task,
+    mcp_stream_task_row, mcp_tool_first_gateway, person_socket_admits, preflight_task_workflow,
     reenter_ready_mcp_code_runs, resolve_mcp_caller, ride_run_carrier, run_brief_people_budget,
     run_brief_pins, run_session_reads,
 };
@@ -304,6 +307,7 @@ pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
 /// listener.
 pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
     artifact_routes()
+        .merge(self::artifacts::backend_routes())
         .layer(axum::Extension(self::artifacts::ArtifactOnlyListener))
         .layer(middleware::from_fn_with_state(
             server.clone(),

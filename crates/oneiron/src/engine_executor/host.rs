@@ -10,6 +10,7 @@ mod readers;
 mod receipts;
 mod replay_context;
 mod results;
+mod skill_delivery;
 mod type_feedback;
 
 use super::cancel::StepCancellation;
@@ -26,13 +27,13 @@ use super::types::{
     StoreReceiptInput,
 };
 use crate::code_run::{
-    CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
-    CodeRunResultBinding, DelegatedSource, ExecutorCallSite, ExecutorStorage, GatedActorWrite,
-    ReaderFindingRef, ReaderJobKind, ReaderJobState, ResultFacet, ResultRead, ResultReply, RunCall,
-    SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect, SelfFailedResult,
-    SelfReaderReportCall, SelfReaderSpawnCall, SelfSkillCall, SelfSkillCallResult,
-    SelfSummarizeCall, StepContextCapture, SummarizeReply, agent_verb_rows_of, result_cannot,
-    result_card, result_refusal, scoped_child_read_refusal, self_call_inputs,
+    CapturedSkillDelivery, CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput,
+    CodeRunReplayRecord, CodeRunResultBinding, DelegatedSource, ExecutorCallSite, ExecutorStorage,
+    GatedActorWrite, ReaderFindingRef, ReaderJobKind, ReaderJobState, ResultFacet, ResultRead,
+    ResultReply, RunCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait,
+    SelfEffect, SelfFailedResult, SelfReaderReportCall, SelfReaderSpawnCall, SelfSkillCall,
+    SelfSkillCallResult, SelfSummarizeCall, StepContextCapture, SummarizeReply, agent_verb_rows_of,
+    result_cannot, result_card, result_refusal, scoped_child_read_refusal, self_call_inputs,
 };
 use crate::code_run::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -63,6 +64,7 @@ pub(super) struct RecordingJsHost<'a, 's> {
     determinism: CodeRunDeterminism,
     legibility: Option<ExecutorLegibility<'a>>,
     storage: Option<&'s ExecutorStorage<'a>>,
+    output_step: Option<u64>,
     /// The run's share of the result-memory pool, which a callable skill's
     /// answer check holds its buffers on (FIX 10149).
     result_share: Option<&'s crate::result_memory::ResultShare>,
@@ -99,6 +101,10 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// response it handed out, at the position of the row that answers it
     /// (FIX 6351), and what its result reads saw of reader state (FIX 6352).
     pub(super) context_capture: StepContextCapture,
+    /// The skill bodies the call this host answered last delivers to the
+    /// step's own program, held until the runtime hands its guest the reply
+    /// whole (FIX 3608, `skill_delivery`).
+    held_delivery: Vec<CapturedSkillDelivery>,
     pub(super) durable_wait: Option<SelfDurableWait>,
     /// First hard bridge failure (gate rejection or failed audited write).
     /// The guest received a typed `Denied`/`Failed` RESPONSE for it (budget
@@ -118,6 +124,7 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The run's executor, `provider/name@revision`, as the callable skills
     /// its program calls are credited to (OF-353).
     skill_executor: Option<String>,
+    summary_prompt_package: Option<std::path::PathBuf>,
     /// Callable skills this host is running now, each nested in the one
     /// before: a callable that calls another runs its step inside its own.
     callable_depth: u32,
@@ -139,8 +146,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
 /// Whether the gate an act takes over the run's results (a store, a fold, a
 /// summary, a spawn) counts the stored skills its callables loaded and the
 /// other runs' results they read, as each read's gate does (FIX 5460). Off:
-/// such an act runs as it did before those rows were counted.
-const ACT_GATES_COUNT_CALLABLE_ROWS: bool = false;
+/// such an act runs as it did before those rows were counted. A shadow arm's
+/// store reads its sources under the same gate (FIX 6352).
+pub(crate) const ACT_GATES_COUNT_CALLABLE_ROWS: bool = false;
 
 /// A result a reference names for this run: one of its own, the source a
 /// reader child reads in its parent's record, or a finding of one of the
@@ -153,6 +161,10 @@ struct ResolvedResult {
     /// The rows a read of it is withheld by beside the run's own, when it is
     /// not the run's: `Some(None)` when they are not known.
     rows: Option<Option<Vec<EntityId>>>,
+    /// The origins its descriptor froze when it is another run's, which a
+    /// read of it notes in this run's ledger (FIX 7084): `None` when they
+    /// are unknown, and for the run's own result.
+    origins: Option<crate::code_run::ResultOrigins>,
     /// The range of its body a read of it must stay inside, and reads by
     /// default, in the owner's offsets.
     within: Option<(u64, u64)>,
@@ -176,6 +188,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             determinism,
             legibility,
             storage: None,
+            output_step: None,
             result_share: None,
             recoverable: Vec::new(),
             streamed: StreamedOutputs::default(),
@@ -192,11 +205,13 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 gated_write,
                 run_id,
             )),
+            held_delivery: Vec::new(),
             durable_wait: None,
             hard_failure: None,
             left_a_gap: false,
             declined: None,
             skill_executor: None,
+            summary_prompt_package: None,
             callable_depth: 0,
             admitted_skill_seq: None,
             callable_rows: (Vec::new(), Some(Vec::new())),
@@ -205,10 +220,21 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         }
     }
 
+    /// Names the step whose runtime files the REPL will publish.
+    pub(super) fn with_file_output_step(mut self, seq: u64) -> Self {
+        self.output_step = Some(seq);
+        self
+    }
+
     /// Names the run's executor, as the callable skills its program calls
     /// are credited to (OF-353).
     pub(super) fn with_skill_executor(mut self, executor: &crate::ModelId) -> Self {
         self.skill_executor = Some(executor.as_str().to_owned());
+        self
+    }
+
+    pub(super) fn with_summary_prompt_package(mut self, root: &std::path::Path) -> Self {
+        self.summary_prompt_package = Some(root.to_owned());
         self
     }
 
@@ -324,11 +350,23 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         Some(self.gated_write.actor().entity_ref())
     }
 
+    /// The run's custody and PERSON values, as its output sweep reads them.
+    fn mask_guest_error(&self, body: &str) -> Result<String> {
+        match self.storage {
+            Some(storage) => crate::code_sandbox::guest_error::mask_run_known_values(
+                storage.code_run_known_source(self.run_id)?,
+                body,
+            ),
+            None => Ok(body.to_owned()),
+        }
+    }
+
     fn write_output(&mut self, stream: JsCodeModeStream<'_>, frame: &[u8]) -> Result<bool> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
-        self.streamed.write(storage, self.run_id, stream, frame)?;
+        self.streamed
+            .write(storage, self.run_id, self.output_step, stream, frame)?;
         self.gated_write.activity_streamed(frame);
         Ok(true)
     }
@@ -397,9 +435,16 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         let Some(storage) = self.storage else {
             return Ok(None);
         };
+        // A stored card stands for the reply: no skill body it holds reaches
+        // the guest (FIX 3608).
+        self.held_delivery.clear();
         let mut sink = storage.code_run_output_sink()?;
         write_json(&mut sink, reply)?;
         self.bind_stored(storage, sink, None).map(Some)
+    }
+
+    fn guest_reply_delivered(&mut self) {
+        self.deliver_held();
     }
 
     fn result_call(&mut self, call: JsResultCall) -> Result<serde_json::Value> {

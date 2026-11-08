@@ -6,7 +6,8 @@
 //! frozen actor, act, channel and brief. A failure-signal batch's proof binds
 //! the digest its lookup composed for that batch, recomposed the same way
 //! from its frozen endpoint, content ref and send ref (FIX 6679). Any other
-//! row carries none.
+//! row carries none. Pinned families carry their original Gate proof in a
+//! distinct field; their retry's current effect still proves its digest.
 
 use super::super::types::{IntentLedgerError, IntentLedgerRecord, IntentLedgerResult};
 
@@ -41,6 +42,24 @@ pub(super) fn validate_admitted_approval(
     {
         return Err(IntentLedgerError::InvalidRecord(
             "admitted approval binding mismatch",
+        ));
+    }
+    Ok(())
+}
+
+/// A pinned proof binds the original intent. Family/digest authority is
+/// checked against the actual current effect by the retry reader and Gate,
+/// not inferred from the row's connector or the marker's spent status.
+pub(super) fn validate_pinned_approval(record: &IntentLedgerRecord) -> IntentLedgerResult<()> {
+    let Some(approval) = record.pinned_approval else {
+        return Ok(());
+    };
+    if approval.proof.intent_id() != record.id
+        || record.admitted_approval.is_some()
+        || super::super::payload::payload_erased(record.payload())?
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "pinned approval binding mismatch",
         ));
     }
     Ok(())

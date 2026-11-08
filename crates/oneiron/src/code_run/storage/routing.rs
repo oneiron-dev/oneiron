@@ -30,6 +30,7 @@ use crate::secret_rotation::ArtifactTaintState;
 use crate::store::{BODY_KEYS, BodySink, body_key_row_in_txn};
 
 mod bodies;
+mod output_progress;
 mod replay;
 mod type_feedback;
 
@@ -610,6 +611,16 @@ impl<'a> ExecutorStorage<'a> {
                 actor,
                 assertions,
             ),
+        }
+    }
+
+    /// Where `witness_executor_message` lands the run's speech: on
+    /// canonical storage the run's own derived conversation, on session
+    /// storage the session's room. Its door admits the speech by it.
+    pub(crate) const fn speech_destination(&self) -> crate::code_run::RunSpeechDestination {
+        match self {
+            Self::Canonical(_) => crate::code_run::RunSpeechDestination::OwnRunConversation,
+            Self::Session(_) => crate::code_run::RunSpeechDestination::SessionRoom,
         }
     }
 

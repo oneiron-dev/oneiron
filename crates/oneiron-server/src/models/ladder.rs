@@ -285,6 +285,31 @@ impl OfferLadder {
         self
     }
 
+    /// A call-local copy of this ladder whose owner's fallbacks stay within
+    /// `ceiling` (FIX 5366, review #6390): a model pack's local-GPU pick
+    /// never falls back to a third party. A stricter ceiling this ladder
+    /// already has stays.
+    #[must_use]
+    pub(super) fn with_locality_ceiling(&self, ceiling: ModelLocality) -> Self {
+        let locality_ceiling = Some(
+            self.scope
+                .locality_ceiling
+                .map_or(ceiling, |own| own.min(ceiling)),
+        );
+        Self {
+            name: self.name.clone(),
+            rungs: self.rungs.clone(),
+            picked: self.picked,
+            rests: Arc::clone(&self.rests),
+            scope: SeatScope {
+                locality_ceiling,
+                ..self.scope
+            },
+            prefix: self.prefix.clone(),
+            listed: self.listed.clone(),
+        }
+    }
+
     /// This ladder with its rungs in the order `routes` names them (FIX
     /// 11768 seam for L05): [`WorldModelRoutes::order`] over each rung's
     /// [`LadderRung::offer_id`], the same route id the ladder's doors
@@ -524,6 +549,12 @@ impl OfferLadder {
         self.rungs.len()
     }
 
+    /// Each rung's host-bound offer, in ladder order: the access a vault's
+    /// model pack resolves against reads their payers (FIX 5366).
+    pub(crate) fn offer_bindings(&self) -> impl Iterator<Item = &OfferBinding> {
+        self.rungs.iter().map(|rung| &rung.offer.binding)
+    }
+
     /// Whether every rung a call on this ladder may reach is free keyless
     /// own-server work (FIX 10592): each rung's bound offer is `Payer::Local`
     /// on `OwnServer` with `KeyCustody::Keyless`. Any keyed, third-party or
@@ -596,8 +627,9 @@ impl OfferLadder {
     /// `locality` on this ladder, for the engine's inference admission: the
     /// supervised native attestation when the call's route is on device and
     /// this ladder sends only over supervised native channels
-    /// ([`Self::native_local`], I2-LOCAL); otherwise the advertised route,
-    /// with `keyless` as the calling door verified it.
+    /// ([`Self::native_local`], I2-LOCAL), `paid` when a rung of it is paid
+    /// work ([`Self::all_free_work`] false, FIX 18407); otherwise the
+    /// advertised route, with `keyless` as the calling door verified it.
     #[must_use]
     pub(crate) fn host_binding(
         &self,
@@ -606,7 +638,10 @@ impl OfferLadder {
         keyless: bool,
     ) -> HostInferenceBinding {
         if locality == ModelLocality::OnDevice && self.native_local() {
-            HostInferenceBinding::SupervisedNativeLocal { model }
+            HostInferenceBinding::SupervisedNativeLocal {
+                model,
+                paid: !self.all_free_work(),
+            }
         } else {
             HostInferenceBinding::Advertised {
                 model,

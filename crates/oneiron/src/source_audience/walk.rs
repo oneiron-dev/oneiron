@@ -174,8 +174,11 @@ pub(crate) fn lineage_held_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityI
 /// come from rows as a read takes them: every row it was written from, and,
 /// for a CLAIM, one of its supports, so a claim one free support carries
 /// travels as it reads (FIX 12559 follow-up); a restricted lane counts every
-/// support. Where the vault holds no policy only a row a source landed is
-/// withheld, by its own stamp.
+/// support. Where the vault holds no policy and no row a source landed was
+/// ever written here, only a row whose own bytes carry the source-audience
+/// obligation is withheld, by that stamp; where one was, the walk runs as
+/// everywhere, so a row whose words came from a landed row whose policy
+/// does not resolve here stays too (fix list row 16255).
 ///
 /// # Errors
 ///
@@ -194,13 +197,13 @@ pub(crate) fn withheld_by_lineage_in(
 /// row's ancestry holds for every later row of the pass that reaches it.
 /// The verdicts are kept by what the judge asks (the policy the asking row
 /// travels under, and whether every support counts), and only those that
-/// hold whatever row asks: each `false`, and each `true` no cycle assumed
-/// (see [`Judge::row_readable`]). A pass lives no longer than `txn`, so no
+/// hold whatever row asks: each settled verdict (see
+/// [`Judge::row_readable`]). A pass lives no longer than `txn`, so no
 /// verdict outlives the snapshot it was read in.
 pub(crate) struct LineagePass<'a, 't> {
     vault: &'a Vault,
     txn: &'a heed::RoTxn<'t>,
-    any_policy: bool,
+    needs_lineage: bool,
     /// [`lineage_held_in`] by row.
     held: BTreeMap<EntityId, bool>,
     /// The judge's verdicts by ask, then by row.
@@ -217,7 +220,7 @@ impl<'a, 't> LineagePass<'a, 't> {
         Ok(Self {
             vault,
             txn,
-            any_policy: super::any_policy_in(vault, txn)?,
+            needs_lineage: super::any_policy_in(vault, txn)? || super::any_landed_in(vault, txn)?,
             held: BTreeMap::new(),
             verdicts: BTreeMap::new(),
         })
@@ -267,7 +270,9 @@ impl<'a, 't> LineagePass<'a, 't> {
     ) -> Result<bool> {
         let (vault, txn) = (self.vault, self.txn);
         let dbs = vault.store.read();
-        if !self.any_policy {
+        if !self.needs_lineage {
+            // No row here came from a landed one: only the row's own stamp
+            // can hold it.
             return Ok(
                 crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, id)?
                     .is_some_and(|raw| source_marked(&raw)),
@@ -413,8 +418,9 @@ fn travel_closure_in(
 /// Whether every one of `viewers` reads the revision `raw` of `id` under
 /// the source audience: its own binding, and those of everything its words
 /// came from. `dbs` is the view the read walks (a session's composed view
-/// included); bindings and policies read base. A vault that holds no policy
-/// and holds no row back answers at once.
+/// included); bindings and policies read base. A vault that holds no
+/// policy, holds no row back and never had a row a source landed answers at
+/// once (fix list row 16255).
 pub(crate) fn readable_with_read_in(
     vault: &Vault,
     dbs: &crate::store::StoreRead<'_>,
@@ -423,9 +429,12 @@ pub(crate) fn readable_with_read_in(
     raw: &[u8],
     viewers: &[EntityId],
 ) -> Result<bool> {
-    if !super::any_policy_in(vault, txn)? && !super::any_held_in(vault, txn)? {
-        // No policy here, as on a replica the audience never reached: a row
-        // a source landed still reads to no one.
+    if !super::any_policy_in(vault, txn)?
+        && !super::any_held_in(vault, txn)?
+        && !super::any_landed_in(vault, txn)?
+    {
+        // No row here came from a landed one: only the row's own stamp can
+        // deny it.
         return Ok(!source_marked(raw));
     }
     let mut judge = Judge {
@@ -461,9 +470,8 @@ struct Judge<'a, 's, 't> {
     txn: &'a heed::RoTxn<'t>,
     ask: Ask<'a>,
     policies: BTreeMap<EntityId, bool>,
-    /// The verdicts that hold whatever row asks: each `false`, and each
-    /// `true` reached with no cycle assumed. A [`LineagePass`] keeps them
-    /// across its rows.
+    /// The settled verdicts that hold whatever row asks. A [`LineagePass`]
+    /// keeps them across its rows (see [`Judge::row_readable`]).
     rows: BTreeMap<EntityId, bool>,
 }
 
@@ -485,8 +493,12 @@ struct Frame {
     /// Whether the row last visited was a support.
     visiting_support: bool,
     decided: Option<bool>,
-    /// Whether a verdict it took rests on a cycle's assumption.
-    assumed: bool,
+    /// The lowest stack depth of a row still being judged that a verdict
+    /// this frame took read as `true` (fix list row 16255 review): its own
+    /// depth when none did.
+    low: usize,
+    /// How many frames this judgement had pushed when it pushed this one.
+    pushed_at: usize,
 }
 
 /// What a frame asks next.
@@ -505,13 +517,16 @@ impl Frame {
             next_support: 0,
             visiting_support: false,
             decided: None,
-            assumed: false,
+            low: usize::MAX,
+            pushed_at: 0,
         }
     }
 
     /// Takes the verdict on the row last visited: one of `every` that does
-    /// not read decides no; one support that reads decides yes.
-    fn take(&mut self, readable: bool) {
+    /// not read decides no; one support that reads decides yes. `low` is the
+    /// lowest depth of a row still being judged that the verdict read.
+    fn take(&mut self, readable: bool, low: usize) {
+        self.low = self.low.min(low);
         if self.visiting_support {
             if readable {
                 self.decided = Some(true);
@@ -554,70 +569,113 @@ impl Judge<'_, '_, '_> {
     /// 12559 follow-up). A row in progress reads as `true` to a cycle back
     /// to it: a cycle adds no restriction.
     ///
-    /// A `true` that rests on such an assumption (a row in progress, or a
-    /// `true` that itself rests on one) holds for this walk alone, and is
-    /// never kept in `rows`; every other verdict is (FIX 16254). A `false`
-    /// always holds: the assumption only ever reads a row as `true`, so the
-    /// real verdict could only be `false` too.
+    /// Only a settled verdict is memoised. A `false` is settled at once: a
+    /// row in progress read as `true` can only have made it more readable.
+    /// A `true` that read a row still in progress waits, conditional, until
+    /// every row it read has settled, and stands only if none of them was
+    /// denied: a denied row drops every conditional `true` reached while it
+    /// was being judged, which is judged again when next asked (fix list row
+    /// 16255 review). So a cycle never lends a row a `true` its other words
+    /// deny.
     fn row_readable(&mut self, id: EntityId, raw: Option<&[u8]>) -> Result<bool> {
         if let Some(known) = self.rows.get(&id) {
             return Ok(*known);
         }
-        // The rows this walk reads as `true` on an assumption: each in
-        // progress, and each decided `true` on one.
-        let mut assumed = BTreeSet::new();
-        let mut stack = match self.open(id, raw)? {
+        let mut root = match self.open(id, raw)? {
             Opened::Decided(verdict) => {
                 self.rows.insert(id, verdict);
                 return Ok(verdict);
             }
-            Opened::Waiting(frame) => {
-                assumed.insert(id);
-                vec![frame]
-            }
+            Opened::Waiting(frame) => frame,
         };
-        // The verdict on the row last visited, and whether it rests on an
-        // assumption.
-        let mut finished: Option<(bool, bool)> = None;
+        root.low = 0;
+        let mut stack = vec![root];
+        // The rows in progress, by their depth on the stack.
+        let mut in_progress = BTreeMap::from([(id, 0_usize)]);
+        // Each `true` not settled yet: the lowest depth it read, and how
+        // many frames had been pushed when it was reached.
+        let mut conditional: BTreeMap<EntityId, (usize, usize)> = BTreeMap::new();
+        let mut pushes = 0_usize;
+        let mut finished: Option<(bool, usize)> = None;
+        let mut verdict_of_root = true;
         while let Some(frame) = stack.last_mut() {
-            if let Some((readable, on_assumption)) = finished.take() {
-                frame.take(readable);
-                frame.assumed |= on_assumption;
+            if let Some((readable, low)) = finished.take() {
+                frame.take(readable, low);
             }
             match frame.next() {
                 Step::Done(verdict) => {
-                    let done = frame.id;
-                    let on_assumption = verdict && frame.assumed;
-                    stack.pop();
-                    if !on_assumption {
-                        assumed.remove(&done);
-                        self.rows.insert(done, verdict);
+                    let Some(done) = stack.pop() else {
+                        break;
+                    };
+                    let depth = stack.len();
+                    in_progress.remove(&done.id);
+                    if done.low < depth && verdict {
+                        // It read a row below it still in progress: so does
+                        // every `true` that read it.
+                        for (low, _) in conditional.values_mut() {
+                            if *low >= depth {
+                                *low = done.low;
+                            }
+                        }
+                        conditional.insert(done.id, (done.low, pushes));
+                        finished = Some((true, done.low));
+                        continue;
                     }
-                    finished = Some((verdict, on_assumption));
+                    self.rows.insert(done.id, verdict);
+                    if !verdict {
+                        // Every `true` reached while it was being judged may
+                        // have read it in progress: each is judged again
+                        // when it is next asked.
+                        conditional.retain(|_, (_, reached)| *reached < done.pushed_at);
+                    } else if done.low >= depth {
+                        // Every row it read has settled, none denied: so
+                        // does each `true` that read it.
+                        let settled: Vec<EntityId> = conditional
+                            .iter()
+                            .filter(|&(_, (low, _))| *low >= depth)
+                            .map(|(row, _)| *row)
+                            .collect();
+                        for row in settled {
+                            conditional.remove(&row);
+                            self.rows.insert(row, true);
+                        }
+                    }
+                    finished = Some((verdict, usize::MAX));
+                    if stack.is_empty() {
+                        verdict_of_root = verdict;
+                    }
                 }
                 Step::Visit(source) => {
                     if let Some(known) = self.rows.get(&source) {
-                        finished = Some((*known, false));
+                        finished = Some((*known, usize::MAX));
                         continue;
                     }
-                    if assumed.contains(&source) {
-                        finished = Some((true, true));
+                    if let Some(&depth) = in_progress.get(&source) {
+                        finished = Some((true, depth));
+                        continue;
+                    }
+                    if let Some(&(low, _)) = conditional.get(&source) {
+                        finished = Some((true, low));
                         continue;
                     }
                     match self.open(source, None)? {
                         Opened::Decided(verdict) => {
                             self.rows.insert(source, verdict);
-                            finished = Some((verdict, false));
+                            finished = Some((verdict, usize::MAX));
                         }
-                        Opened::Waiting(frame) => {
-                            assumed.insert(source);
+                        Opened::Waiting(mut frame) => {
+                            let depth = stack.len();
+                            pushes += 1;
+                            frame.low = depth;
+                            frame.pushed_at = pushes;
+                            in_progress.insert(source, depth);
                             stack.push(frame);
                         }
                     }
                 }
             }
         }
-        Ok(finished.is_none_or(|(verdict, _)| verdict))
+        Ok(verdict_of_root)
     }
 
     /// What the row `id` needs: its own binding's verdict, its own bytes
