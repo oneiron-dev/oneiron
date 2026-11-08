@@ -21,12 +21,11 @@ use crate::write_envelope::WriteActor;
 
 /// How [`Vault::admit_code_edit_in_txn`] admits a replacement: at the edit's
 /// landing, minting a custody record for each new secret, or as that
-/// admission's plan alone, for a replay that proves the landing and writes
-/// nothing (FIX 21363).
-#[derive(Clone, Copy)]
+/// admission's plan alone against the given known values, for a proof of
+/// the landing that writes nothing (FIX 21363).
 pub(super) enum EditAdmission {
     Land,
-    Plan,
+    Plan(std::sync::Arc<crate::store::known_value_index::KnownValues>),
 }
 
 impl Vault {
@@ -51,7 +50,7 @@ impl Vault {
         // (FIX 21363).
         let custody = match &admitted {
             Some(admitted) => {
-                super::replay::landing_custody_in_txn(&self.store, wtxn, &admitted.replacement)?
+                self.landing_custody_in_txn(wtxn, &session.document_id, edit, admitted)?
             }
             None => Vec::new(),
         };
@@ -184,8 +183,8 @@ impl Vault {
     /// handle. `None` when the replacement is unchanged: the switch is off, it
     /// holds no hit, or a hit it holds is one no span places, which the
     /// whole-file read still judges as before. A [`EditAdmission::Plan`]
-    /// gives the handles of values custody already holds and mints and writes
-    /// nothing; a secret that needs a new record refuses there.
+    /// gives the handles of the values its matcher holds and mints and writes
+    /// nothing; any other secret refuses there.
     pub(super) fn admit_code_edit_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -216,11 +215,12 @@ impl Vault {
                 &mut [(place.as_str(), Part::Text(&mut *replacement))],
                 &mut Lifted::default(),
             )?,
-            EditAdmission::Plan => plan_parts_in_txn(
+            EditAdmission::Plan(known) => plan_parts_in_txn(
                 self,
                 wtxn,
                 origin,
                 &mut [(place.as_str(), Part::Text(&mut *replacement))],
+                known,
             )?,
         };
         Ok(changed.then(|| CodeFileEdit {

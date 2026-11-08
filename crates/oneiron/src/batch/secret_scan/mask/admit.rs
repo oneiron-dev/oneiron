@@ -72,17 +72,18 @@ pub(crate) fn admit_parts_in_txn(
 
 /// [`admit_parts_in_txn`] as its plan alone (FIX 21363), for a replay that
 /// proves an earlier admission stored what it offers again: the parts take
-/// the handles of the values custody already holds, as that admission gave
-/// them, and nothing is minted or written. A secret that needs a new record
-/// refuses with the door's reason. Returns whether a part changed.
+/// the handles of the values `known` holds, and nothing is minted or
+/// written. A secret `known` does not hold refuses with the door's reason.
+/// Returns whether a part changed.
 pub(crate) fn plan_parts_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
     record: EntityId,
     parts: &mut [(&str, Part<'_>)],
+    known: Arc<KnownValues>,
 ) -> Result<bool> {
     admit_copy(record, parts, |origins, copy| {
-        plan_seeded_parts(vault, wtxn, origins, copy)
+        plan_seeded_parts(vault, wtxn, origins, copy, known)
     })
 }
 
