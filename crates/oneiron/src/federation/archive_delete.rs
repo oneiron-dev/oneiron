@@ -295,19 +295,8 @@ fn owned_by(
             .task_standing_in(txn, record.id)?
             .is_some_and(|standing| standing.owner == person)),
         ENTITY_TYPE_NOTE => {
-            #[cfg(feature = "sync")]
-            let resolved = crate::entity_doc::resolve_record_body(
-                &vault.store,
-                txn,
-                &record.id,
-                &record.body,
-            )?;
-            #[cfg(feature = "sync")]
-            let bytes = resolved.as_slice();
-            #[cfg(not(feature = "sync"))]
-            let bytes = record.body.as_slice();
             Ok(
-                crate::note::decode_note_body_in_txn(&vault.store, txn, bytes)?
+                crate::note::decode_note_core_in_txn(&vault.store, txn, &record.body)?
                     .author_ref
                     .is(person),
             )
