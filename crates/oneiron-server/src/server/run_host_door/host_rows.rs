@@ -28,6 +28,8 @@ pub(super) fn host_row(
     input: Value,
     line: Option<&RunAdmission>,
     attempt: Option<&str>,
+    origin: &oneiron::memory::HostWriteOrigin,
+    run_id: Option<EntityId>,
     media_step: Option<&RunMediaStep>,
     evidence: &mut Option<Vec<EntityId>>,
 ) -> MemoryResult<Value> {
@@ -74,6 +76,16 @@ pub(super) fn host_row(
                 None,
             )?)
         }
+        AgentVerb::SelfSkillsGraph => super::graph_skill::run(
+            server,
+            actor,
+            origin,
+            run_id,
+            line,
+            input,
+            evidence,
+            memory.proof_backed_read_key()?,
+        ),
         AgentVerb::VaultGraphAsk => {
             let request: GraphAskRequest = decode(input)?;
             request.validate()?;

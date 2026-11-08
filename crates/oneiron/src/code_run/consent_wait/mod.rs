@@ -155,6 +155,8 @@ pub enum ConnectorCallReply {
         live_until_ms: u64,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         reasons: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        budget_steering: Vec<String>,
     },
 }
 
@@ -254,8 +256,11 @@ impl ConnectorCallReply {
                 reasons,
             },
             ConnectorCallOutcome::AwaitingInput {
-                call_ref, input, ..
-            } => Self::awaiting_input(name, tool, call_ref, input),
+                call_ref,
+                input,
+                budget_steering,
+                ..
+            } => Self::awaiting_input(name, tool, call_ref, input, budget_steering),
         }
     }
 
@@ -268,6 +273,7 @@ impl ConnectorCallReply {
         tool: &str,
         call_ref: EntityId,
         input: ConnectorAwaitingInput,
+        budget_steering: Vec<String>,
     ) -> Self {
         // A live round always asks something; none here means a reply read
         // from the call's row, which keeps no questions' text.
@@ -284,6 +290,7 @@ impl ConnectorCallReply {
             questions: input.questions,
             live_until_ms: input.live_until_ms,
             reasons,
+            budget_steering,
         }
     }
 

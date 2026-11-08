@@ -145,7 +145,8 @@ pub(crate) use self::constants::{
     POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY,
 };
 pub(crate) use self::constants::{
-    POLICY_SCHEMA_VERSION, POLICY_SHARED_ACT_POLICIES_KEY, SCOPED_READ_EFFECTOR_CORE_READ,
+    POLICY_OWNER_CHANGE_WAIT_SECS_KEY, POLICY_SCHEMA_VERSION, POLICY_SHARED_ACT_POLICIES_KEY,
+    SCOPED_READ_EFFECTOR_CORE_READ,
 };
 #[cfg(test)]
 pub(crate) use self::decision::gate_metric_emission_count_for_test;
