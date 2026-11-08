@@ -28,6 +28,10 @@ pub struct MemorySearchInput {
     pub query: String,
     #[schemars(range(max = "u32::MAX"))]
     pub limit: Option<u32>,
+    /// The caller's retrieval filter (FIX 3977): it only narrows what the
+    /// run's reader key admits.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 /// `vault.claims.put`: one claim candidate through the run's gate.

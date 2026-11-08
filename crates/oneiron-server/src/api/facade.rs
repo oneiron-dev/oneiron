@@ -30,6 +30,7 @@ mod affect_doors;
 mod ag_ui_file_doors;
 mod agent_definition_doors;
 mod agent_grant_doors;
+mod agent_verb_class_doors;
 #[path = "facade/generated/agent_verbs.rs"]
 mod agent_verbs;
 mod aging_doors;
@@ -171,6 +172,8 @@ mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
 pub(super) mod role_picks;
+// FIX 13274: the owner reviews and settles a retained document-copy edit.
+mod repo_copy_edit_doors;
 mod root_request_doors;
 mod run_read_doors;
 mod run_review_doors;

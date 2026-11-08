@@ -25,6 +25,8 @@ mod attenuation;
 mod brief;
 pub mod budget_doors;
 mod budget_hold;
+mod caller_origin;
+pub use caller_origin::CallerOrigin;
 mod codec;
 mod comm;
 pub(crate) use self::comm::{
@@ -141,8 +143,8 @@ pub use self::spend_calibration::{
 };
 pub(crate) use self::spend_lease::payer_binds_in_txn;
 pub use self::spend_record::{
-    ChildSpend, SpendCalibrationSample, SpendPayer, SpendRead, SpendRefused, SpendScope,
-    SpendScopeId, SpendSettlement, SpendSignal, SpendState,
+    ChildSpend, GrantSpendBinding, SpendCalibrationSample, SpendPayer, SpendRead, SpendRefused,
+    SpendScope, SpendScopeId, SpendSettlement, SpendSignal, SpendState,
 };
 
 pub use self::budget_hold::{

@@ -178,9 +178,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         });
     }
     let mut wtxn = vault.store.env.write_txn()?;
+    // The owner the proof names, revalidated under this writer: the Pending
+    // row keeps it, and every later send of the row rechecks it (FIX 11591).
+    let mut authorizing_owner = None;
     if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command {
         if let Some(owner) = &prepared.owner_proof {
-            owner.revalidate_in_txn(vault, &wtxn)?;
+            authorizing_owner = Some(owner.revalidate_in_txn(vault, &wtxn)?);
         }
         if let Some((actor, actor_class)) = prepared.verified_actor {
             if vault.port_tombstone_is_deleted(&wtxn, &actor)? {
@@ -552,7 +555,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         wtxn.commit().map_err(Error::from)?;
         return Ok(gate_rejection(intent_id, decision_id, decision));
     }
-    let (budget_accounting, budget_charge, exhausted) = charge_once(
+    let (budget_accounting, mut budget_charge, exhausted) = charge_once(
         vault,
         &mut wtxn,
         &mut governance,
@@ -672,6 +675,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     );
     request.authorization_binding = authorization_binding;
     request.resolved_endpoint = prepared.resolved_endpoint;
+    request = request.with_authorizing_owner(authorizing_owner);
     if let Some(capability) = capability_provenance {
         request = request.with_capability_provenance(capability);
     }
@@ -709,6 +713,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         payload_context.recipient,
     )?;
     reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved, spend_basis)?;
+    if let Some(charge) = budget_charge.as_mut() {
+        charge.refresh_read_in_txn(&vault.store, &wtxn, vault.store.clock.now_recorded_at())?;
+    }
     // The wait's admission commits with the spend, the decision and the
     // Pending row, or not at all.
     if let Some((wait_id, _)) = code_wait {
