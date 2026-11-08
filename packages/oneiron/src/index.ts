@@ -2467,6 +2467,10 @@ export class Oneiron {
       /** Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref. */
       type_diagnostics: (input: Facade.CodeRunTypeDiagnosticsRequest): Facade.ProgramStepFeedbackRelease | null => this.#call(() => this.#client.vaultCodeTypeDiagnostics(input) as Facade.ProgramStepFeedbackRelease | null),
       waits: {
+        /** Propose the original holder's actual successor credential for one admitted, unsettled code consent wait. Stores no active authorization; a separate owner rebind act must confirm it. */
+        rebind_prepare: (input: Facade.CodeWaitRebindPrepareRequest): Facade.CodeWaitRebindPrepared => this.#call(() => this.#client.vaultCodeWaitsRebindPrepare(input) as Facade.CodeWaitRebindPrepared),
+        /** Explicitly authorize one exact holder-proposed successor as the independent authenticated owner. Only an admitted, unsettled wait continues under the same intent; its original answer, admission and delivery stay unchanged. */
+        rebind: (input: Facade.CodeWaitRebindRequest): Facade.CodeWaitRebindReceipt => this.#call(() => this.#client.vaultCodeWaitsRebind(input) as Facade.CodeWaitRebindReceipt),
         /** Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption. */
         resolve: (input: Facade.CodeWaitResolveRequest): Facade.CodeWaitReceiptView => this.#call(() => this.#client.vaultCodeWaitsResolve(input) as Facade.CodeWaitReceiptView),
         /** Read a code consent wait as its authenticated owner or current policy-admitted power holder: effect, answer, settlement and replay-consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait. */
@@ -3219,6 +3223,8 @@ export class Oneiron {
         image: (input: Facade.EsignSigningImageRequest): Facade.EsignSigningImageView => this.#call(() => this.#client.vaultEsignSigningImage(input) as Facade.EsignSigningImageView),
         /** Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes. */
         signature: (input: Facade.EsignSigningSignatureRequest): Facade.EsignSigningSignatureView => this.#call(() => this.#client.vaultEsignSigningSignature(input) as Facade.EsignSigningSignatureView),
+        /** The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields. */
+        preview: (input: Facade.EsignSigningPreviewRequest): Facade.EsignSigningPreviewView => this.#call(() => this.#client.vaultEsignSigningPreview(input) as Facade.EsignSigningPreviewView),
       },
       seal: {
         /** Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error. */
@@ -3838,7 +3844,10 @@ export class Oneiron {
       }),
     }),
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
-    outcomes: (handle: TaskAskHandle): Facade.CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as Facade.CalibrationPair[]),
+    outcomes: Object.assign((handle: TaskAskHandle): Facade.CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as Facade.CalibrationPair[]), {
+      /** Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only. */
+      route_calibration: (handle: TaskAskHandle): Facade.RouteCalibrationReport => this.#call(() => this.#client.tasksOutcomesRouteCalibration(handle) as Facade.RouteCalibrationReport),
+    }),
     /** Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay. */
     refuse: (input: Facade.LiveRunRequest<Facade.TaskRefuseInput>): Facade.TaskRefuseOutput => this.#call(() => this.#client.tasksRefuse(input) as Facade.TaskRefuseOutput),
   }
