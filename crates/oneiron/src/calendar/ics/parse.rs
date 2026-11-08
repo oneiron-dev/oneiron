@@ -115,16 +115,51 @@ pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
 const BEGIN_VCALENDAR: &str = "BEGIN:VCALENDAR";
 const END_VCALENDAR: &str = "END:VCALENDAR";
 
+/// The longest calendar zone name a VCALENDAR's `X-WR-TIMEZONE` gives.
+const MAX_CALENDAR_ZONE_BYTES: usize = 64;
+
 /// The zone a VCALENDAR names its own (`X-WR-TIMEZONE`, under any
-/// spelling), which places its all-day days (fix list row 17868); `None`
-/// when it names none.
+/// spelling), which places its all-day days (fix list row 17868), when it
+/// is a plain zone name: ASCII letters, digits, spaces and `/_+-.`, at most
+/// 64 bytes. So the name can head a rendered resource again as it is.
+/// `None` when it names none, or anything else.
 fn calendar_timezone<'c>(calendar: &'c icalendar::parser::Component<'_>) -> Option<&'c str> {
     calendar
         .properties
         .iter()
         .find(|prop| prop.name.as_str().eq_ignore_ascii_case("X-WR-TIMEZONE"))
         .map(|prop| prop.val.as_str().trim())
-        .filter(|zone| !zone.is_empty())
+        .filter(|zone| {
+            !zone.is_empty()
+                && zone.len() <= MAX_CALENDAR_ZONE_BYTES
+                && zone
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"/_+-. ".contains(&byte))
+        })
+}
+
+/// The zone the VCALENDAR in `input` that carries the VEVENT `uid` names
+/// its own (`X-WR-TIMEZONE`), the zone [`parse_ics_feed`] gives that
+/// calendar's all-day events (fix list row 17868); `None` when that
+/// calendar names none, no calendar carries `uid`, or `input` does not
+/// parse. A feed of several calendars gives each event its own calendar's.
+pub(crate) fn ics_calendar_timezone(input: &[u8], uid: &str) -> Option<String> {
+    let text = std::str::from_utf8(input).ok()?;
+    let unfolded = icalendar::parser::unfold(text);
+    let roots = icalendar::parser::read_components(&unfolded).ok()?;
+    roots
+        .iter()
+        .filter(|root| is_named(root, "VCALENDAR"))
+        .find(|calendar| {
+            calendar.components.iter().any(|component| {
+                is_named(component, "VEVENT")
+                    && component
+                        .find_prop("UID")
+                        .is_some_and(|prop| prop.val.as_str() == uid)
+            })
+        })
+        .and_then(calendar_timezone)
+        .map(str::to_owned)
 }
 
 /// Whether `component` is named `name` under any ASCII spelling (RFC 5545
