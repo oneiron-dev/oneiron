@@ -581,6 +581,8 @@ fn rebuilt_pass(
             });
             if !gap_has_field {
                 out.extend_from_slice(&bytes[gap_start..gap_end]);
+                // Emitted raw: an identity source for the second pass (review #6779 R2).
+                emitted_sources.push(gap_start..gap_end);
             }
         }
         let rendered = if same_count && index == 0 {
