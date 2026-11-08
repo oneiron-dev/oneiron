@@ -25,10 +25,15 @@
 //! communication (FIX 6606, a provider rail), and the owner's one press is
 //! minted for exactly that send's digest. A group address, more than one
 //! recipient and attachments are refused, not dropped.
+//!
+//! Each new revision asks the mailbox's person in their inbox (fix list
+//! row 17644, `reply_ask`); the Ask clears when that revision is
+//! approved, discarded or drafted again.
 
 use serde::{Deserialize, Serialize};
 
 use super::inbox::sources_by_audience_in;
+use super::reply_ask::{clear_reply_ask_in_txn, raise_reply_ask_in_txn};
 use super::reply_mime::{REPLY_MESSAGE_REF_PREFIX, ReplyDraft, ReplyMessage};
 use super::reply_send::{ReplySink, ReplyTransport};
 use super::source::{MailProvider, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
@@ -629,6 +634,8 @@ impl Memory<'_> {
             (source, row, messages, prior)
         };
         let route = reply_route(&row)?;
+        // The mailbox's own person approves it, so they are asked.
+        let asked = row.owner.filter(|person| *person != actor);
         let (parent_turn, parent) = parent_of(&messages, parent_turn)?;
         if let Some(prior) = &prior {
             if prior.state != MailReplyDraftState::Proposed {
@@ -693,8 +700,17 @@ impl Memory<'_> {
                     "the draft changed while it was redrafted".to_owned(),
                 ));
             }
-            DRAFTS.put(&vault.store, txn, &id, &row)
+            DRAFTS.put(&vault.store, txn, &id, &row)?;
+            // The revision it replaces is no longer asked; this one is.
+            if let Some(prior) = &prior {
+                clear_reply_ask_in_txn(vault, txn, &id, prior.revision)?;
+            }
+            if let Some(person) = asked {
+                raise_reply_ask_in_txn(vault, txn, &id, row.revision, person)?;
+            }
+            Ok(())
         })?;
+        vault.store.notify_notification_updates();
         // The revision it replaces never sends: its kept plan goes with its
         // words (fix list row 17646).
         if let Some(prior) = &prior {
@@ -766,8 +782,10 @@ impl Memory<'_> {
             row.state = MailReplyDraftState::Discarded;
             row.updated_at = crate::unix_seconds_now();
             DRAFTS.put(&vault.store, txn, &id, &row)?;
+            clear_reply_ask_in_txn(vault, txn, &id, row.revision)?;
             Ok(row)
         })?;
+        vault.store.notify_notification_updates();
         // A discarded draft never sends: its kept plan goes with its words
         // (fix list row 17646).
         forget_kept_plan(vault, &row);
@@ -785,11 +803,14 @@ impl Memory<'_> {
 }
 
 impl Vault {
-    /// The owner approves one revision of a drafted reply from their own
-    /// mailbox, and it sends (FIX 15420). The approve-once proof for exactly
-    /// that revision's frozen plan is minted with the draft's approval in one
-    /// writer; then the common recorded dispatcher sends it through the
-    /// mailbox's delegated identity, threaded on the provider. Approving it
+    /// A mailbox's own person approves one revision of a drafted reply from
+    /// that mailbox, and it sends (FIX 15420). `owner` is that person's own
+    /// proof, the vault's owner or a member (fix list row 17644 follow-up):
+    /// the door acts only on their own mailbox, and the proof lends no owner
+    /// authority. The approve-once proof for exactly that revision's frozen
+    /// plan is minted with the draft's approval in one writer; then the
+    /// common recorded dispatcher sends it the way the mailbox sends,
+    /// threaded on the provider. Approving it
     /// again after a held, failed or interrupted dispatch dispatches it
     /// again, and the ledger replays what it recorded rather than sending
     /// twice.
@@ -797,7 +818,7 @@ impl Vault {
     /// # Errors
     ///
     /// The draft unknown, discarded, sent, of another revision or of a
-    /// mailbox not the owner's; the mailbox unable to send; the dispatch
+    /// mailbox not the caller's; the mailbox unable to send; the dispatch
     /// refused.
     pub fn approve_mail_reply(
         &self,
@@ -806,7 +827,9 @@ impl Vault {
     ) -> MemoryResult<MailReplyDraftView> {
         let id = EntityId::from_hex(&input.draft_ref)?;
         let unknown = || MemoryError::not_found("no reply draft by that ref");
-        let actor = owner.revalidate(self)?;
+        // The mailbox's own person, owner of the vault or not: the door
+        // acts only on their own mailbox's reply.
+        let actor = owner.revalidate_person(self)?;
         let (row, source) = {
             let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
             super::pack::require_pack_active_in(self, &txn)?;
@@ -887,7 +910,7 @@ impl Vault {
         let row = self.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
             // Every press, a retry too, proves the owner again in the writer
             // that acts, and finds the mailbox still theirs.
-            if owner.revalidate_in_txn(self, txn)? != actor
+            if owner.revalidate_person_in_txn(self, txn)? != actor
                 || SOURCES
                     .get(&self.store, txn, &row.source)?
                     .and_then(|source| source.owner)
@@ -912,14 +935,17 @@ impl Vault {
                 ));
             }
             if held.approved_at.is_none() {
-                self.approve_once_in_txn(txn, owner, digest)?;
+                self.approve_once_as_person_in_txn(txn, owner, digest)?;
                 held.approved_at = Some(now);
                 held.state = MailReplyDraftState::Approved;
                 held.updated_at = now;
                 DRAFTS.put(&self.store, txn, &id, &held)?;
+                // The press answers the revision's Ask.
+                clear_reply_ask_in_txn(self, txn, &id, held.revision)?;
             }
             Ok(held)
         })?;
+        self.store.notify_notification_updates();
         let answer = match dispatcher {
             ReplyDispatcher::Gmail { adapter, identity } => {
                 let wire = HttpGmailSendWire::new()?;
@@ -964,6 +990,31 @@ impl Vault {
         }
         Ok(view(id, &row))
     }
+}
+
+/// Whether revision `revision` of the draft `draft` still waits for
+/// `person`'s approval: it is the draft's current revision, proposed, and
+/// its mailbox is `person`'s own. Its Ask's taps stand only while it does.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn reply_awaits_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    draft: &EntityId,
+    revision: u64,
+    person: EntityId,
+) -> Result<bool> {
+    let Some(row) = DRAFTS.get(&vault.store, txn, draft)? else {
+        return Ok(false);
+    };
+    if row.revision != revision || row.state != MailReplyDraftState::Proposed {
+        return Ok(false);
+    }
+    Ok(SOURCES
+        .get(&vault.store, txn, &row.source)?
+        .is_some_and(|source| source.owner == Some(person)))
 }
 
 /// Forgets `actor` as the drafter of every draft, in `txn` (an actor's
