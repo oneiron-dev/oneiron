@@ -292,17 +292,31 @@ impl<'a> HostSelfDispatcher<'a> {
         )
     }
 
-    /// Whether `record` holds the program's pinned callable finished: a
+    /// Whether `record` holds the program's pinned callable finished: an
+    /// entry's own root call, the first row of a step checkpoint's calls, a
     /// `self.skills.call` of the pinned SKILL that returned its result. A
-    /// run no program binds holds none.
+    /// call of that SKILL nested inside an entry is not its root: its result
+    /// never finishes the program (FIX 5878). A run no program binds holds
+    /// none.
     pub(crate) fn pinned_entry_finished(&self, record: &CodeRunReplayRecord) -> bool {
         let Some(program) = &self.program else {
             return false;
         };
-        record.bridge_calls.iter().any(|row| {
-            row.effect == SelfEffect::SkillsCall
+        record.step_checkpoints.iter().any(|checkpoint| {
+            let Some(range) = checkpoint.bridge_range() else {
+                return false;
+            };
+            let Some(root) = record
+                .bridge_calls
+                .get(range.start)
+                .filter(|_| !range.is_empty())
+            else {
+                return false;
+            };
+            root.seq == range.start as u64
+                && root.effect == SelfEffect::SkillsCall
                 && matches!(
-                    decode_self_dispatch_outcome(&row.outcome),
+                    decode_self_dispatch_outcome(&root.outcome),
                     Ok(SelfDispatchOutcome::SkillCall(result)) if result.skill == program.skill
                 )
         })
