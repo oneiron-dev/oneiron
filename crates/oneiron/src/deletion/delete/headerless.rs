@@ -144,6 +144,12 @@ impl Vault {
         // The custody revokes the actor sweeps make reach the owner's other
         // machines under the act the delete carries out (FIX 11883).
         let owner_act = gate.and_then(GatedDeletion::owner_act);
+        let pending_cloud_revokes = if reason.active_store_hard_purge_v1() {
+            self.cloud_registration_revokes_before_local_erase(&wtxn, id)
+        } else {
+            Default::default()
+        };
+        let mut effects = crate::deletion::ErasureEffects::default();
         reserve_topology_delete_in_txn(
             &self.store,
             &mut wtxn,
@@ -181,8 +187,12 @@ impl Vault {
             // in the rows that record it, so the purge's actor sweep runs,
             // marker or not (FIX 5737). Its code runs' replies retire first,
             // as the provenance door's erase retires them, read before the
-            // sweep releases them (FIX 5718).
+            // sweep releases them (FIX 5718). Before them, the code-run
+            // outputs it sourced and the kept step starts it owns retire, as
+            // that door retires them (FIX 20329).
             if reason.active_store_hard_purge_v1() {
+                #[cfg(unix)]
+                crate::code_run::retire_sourced_code_outputs_in_txn(&self.store, &mut wtxn, id)?;
                 #[cfg(unix)]
                 crate::code_run::retire_actor_responses_in_txn(&self.store, &mut wtxn, id)?;
                 // So do the responses its stamps named, as the provenance
@@ -193,10 +203,10 @@ impl Vault {
                     crate::store::erase_sync_response_owner_in_txn(&self.store, &mut wtxn, id)?;
                     crate::store::erase_response_owner_in_txn(&self.store, &mut wtxn, id)?;
                 }
-                crate::deletion::actor_fields::erase_actor_fields_in_txn(
+                effects.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
                     crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id),
                     owner_act,
-                )?;
+                )?);
             }
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()
@@ -220,6 +230,12 @@ impl Vault {
                 false,
             )?;
             wtxn.commit()?;
+            effects.committed(self);
+            pending_cloud_revokes.publish();
+            // Hard reasons only: only they wrote the marker above.
+            if reason.active_store_hard_purge_v1() {
+                self.notify_local_delete_materialized(&[*id]);
+            }
             return Ok(DeleteEntityOutcome {
                 existed: false,
                 receipt_id: None,
@@ -236,7 +252,7 @@ impl Vault {
         } else {
             std::collections::BTreeSet::new()
         };
-        let (existed, citing) = self.purge_entity_active_store_in_txn(
+        let (existed, citing, purged_cancelled) = self.purge_entity_active_store_in_txn(
             &mut wtxn,
             id,
             Some(&tombstone.request_id),
@@ -244,6 +260,7 @@ impl Vault {
             owner_act,
         )?;
         affected.extend(citing);
+        effects.extend(purged_cancelled);
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
         self.append_deletion_gate_decision_in_purge_txn(
@@ -274,9 +291,19 @@ impl Vault {
                 &marker_key,
                 &tombstone.encode().to_vec(),
             )?;
+            crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id)
+                .erase_planned_pack_revision()?;
+            crate::store::centroid_evidence::erase_centroid_source_as_in_txn(
+                crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id),
+            )?;
+            let mut erase = crate::deletion::ActorErasureWriter::new(self, &mut wtxn, *id);
+            crate::feedback::erase_handoff_as_in_txn(&mut erase)?;
+            crate::attempt_queue::erase_feedback_triage_as_in_txn(&mut erase)?;
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;
+            effects.committed(self);
+            pending_cloud_revokes.publish();
             self.notify_local_delete_materialized(&affected);
             if crdt_persisted {
                 self.finish_published_topology_delete(&window_label, id, &tombstone)?;
@@ -313,6 +340,8 @@ impl Vault {
             HardEraseSweepExtras::default(),
         )?;
         wtxn.commit()?;
+        effects.committed(self);
+        pending_cloud_revokes.publish();
         self.notify_local_delete_materialized(&affected);
         if crdt_persisted {
             self.finish_published_topology_delete(&window_label, id, &tombstone)?;

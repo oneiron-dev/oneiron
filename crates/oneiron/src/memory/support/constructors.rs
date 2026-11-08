@@ -22,6 +22,7 @@ impl Vault {
             session_key: None,
             machine_signer: None,
             read_proof: None,
+            phone_reads: Vec::new(),
             host_action: None,
             room_turn: None,
             host_origin: None,
@@ -33,12 +34,15 @@ impl Vault {
             owner_surface: crate::authority::ActSurface::ThisInstall,
             host_slip_issuer: None,
             invocation: None,
+            drain_permit: None,
             hook_ask: None,
             invocation_slip: None,
             transport_invocation: false,
+            signing_request_transport: None,
             task_grant: None,
             kept_requester: None,
             origin_conversation: None,
+            caller_origin: None,
             task_host: None,
             task_decisions: None,
             off_record_session: None,
@@ -50,6 +54,7 @@ impl Vault {
             task_work_turn: None,
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
+            read_filter: None,
         }
     }
 
@@ -76,6 +81,7 @@ impl Vault {
             session_key: None,
             machine_signer: Some((public_key, sign)),
             read_proof: None,
+            phone_reads: Vec::new(),
             host_action: None,
             room_turn: None,
             host_origin: None,
@@ -87,12 +93,15 @@ impl Vault {
             owner_surface: crate::authority::ActSurface::ThisInstall,
             host_slip_issuer: None,
             invocation: None,
+            drain_permit: None,
             hook_ask: None,
             invocation_slip: None,
             transport_invocation: false,
+            signing_request_transport: None,
             task_grant: None,
             kept_requester: None,
             origin_conversation: None,
+            caller_origin: None,
             task_host: None,
             task_decisions: None,
             off_record_session: None,
@@ -104,6 +113,7 @@ impl Vault {
             task_work_turn: None,
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
+            read_filter: None,
         }
     }
 }
@@ -136,6 +146,7 @@ impl<'v> Memory<'v> {
                 session_key: self.session_key,
                 machine_signer: self.machine_signer,
                 read_proof: self.read_proof.clone(),
+                phone_reads: self.phone_reads.clone(),
                 host_action: self.host_action.clone(),
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
@@ -150,12 +161,15 @@ impl<'v> Memory<'v> {
                 host_slip_issuer: None,
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
+                drain_permit: self.drain_permit.clone(),
                 hook_ask: self.hook_ask,
                 invocation_slip: self.invocation_slip.clone(),
                 transport_invocation: self.transport_invocation,
+                signing_request_transport: self.signing_request_transport.clone(),
                 task_grant: self.task_grant,
                 kept_requester: self.kept_requester.clone(),
                 origin_conversation: self.origin_conversation,
+                caller_origin: self.caller_origin,
                 task_host: self.task_host.clone(),
                 task_decisions: self.task_decisions.clone(),
                 off_record_session: self.off_record_session.clone(),
@@ -168,6 +182,8 @@ impl<'v> Memory<'v> {
                 // A call's import transport never crosses into a turn.
                 external_git_source_host: None,
                 repo_tool_recipient: self.repo_tool_recipient.clone(),
+                // The caller's own filter narrows the turn's reads too.
+                read_filter: self.read_filter.clone(),
             },
         })
     }

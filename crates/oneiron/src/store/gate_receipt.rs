@@ -3,7 +3,7 @@
 use crate::store::receipt_row::{
     FIELD_BUNDLE_REF, FIELD_GRANT_REF, ReceiptKind, ReceiptRecord, hex_lower,
 };
-use crate::store::{GateDecisionRecord, GateSystemNoticeRecord};
+use crate::store::{GateDecisionRecord, GateLoopFamily, GateLoopSource, GateSystemNoticeRecord};
 use std::collections::BTreeMap;
 
 pub(crate) const SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY: &str = "third_party";
@@ -56,6 +56,10 @@ pub(crate) fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecor
         }
     }
 
+    fields.extend(crate::codebase::code_snapshot_capture_receipt_fields(
+        record,
+    ));
+
     let mut policy_trace = record.reason_codes.clone();
     policy_trace.extend(record.receipt_reasons.clone());
     policy_trace.extend(
@@ -75,10 +79,26 @@ pub(crate) fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecor
             .or_else(|| Some(record.actor_class.clone())),
         on_behalf_of: None,
         outcome: record.outcome.clone(),
-        job_ref: None,
+        job_ref: record
+            .context
+            .links
+            .iter()
+            .filter(|link| {
+                link.family == GateLoopFamily::Action && link.source == GateLoopSource::Runner
+            })
+            .find_map(|link| link.attempt)
+            .map(|attempt| hex_lower(&attempt)),
         trigger_ref: record
             .claim_id
-            .map(|id| format!("claim:{}", hex_lower(&id)))
+            .map(|id| {
+                let prefix =
+                    if record.content_kind == crate::codebase::CODE_SNAPSHOT_CAPTURE_CONTENT_KIND {
+                        "entity"
+                    } else {
+                        "claim"
+                    };
+                format!("{prefix}:{}", hex_lower(&id))
+            })
             .or_else(|| {
                 // A bundle-level row (no claim id) opens its dreamer run: the
                 // RS3 door on the bundle receipt reopens the inbox group.

@@ -40,11 +40,12 @@ pub(super) async fn execute(
 pub(super) async fn execute_stamped(
     server: &Arc<SyncServer>,
     headers: HeaderMap,
-    extensions: Extensions,
+    mut extensions: Extensions,
     bound: ActionBound,
     credential: Option<CoreAuth>,
     call: AgentActionCall,
 ) -> (Result<ActionDispatch, FacadeApiError>, CallStamp) {
+    let pre_hooked_fold = extensions.remove::<oneiron::code_run::actions::PreHookedFold>();
     let ActionBound {
         actor, class, key, ..
     } = &bound;
@@ -69,8 +70,11 @@ pub(super) async fn execute_stamped(
         extensions,
         bound,
         credential,
-        move |executor, vault, writer, binding| {
-            executor.execute_call(vault, writer, &principal, &call, binding)
+        move |executor, vault, writer, binding| match pre_hooked_fold {
+            Some(pre) => {
+                executor.execute_pre_hooked_fold(vault, writer, &principal, &call, binding, pre)
+            }
+            None => executor.execute_call(vault, writer, &principal, &call, binding),
         },
     )
     .await
@@ -128,6 +132,7 @@ where
         + 'static,
 {
     let ActionBound {
+        replay_auth,
         actor,
         class,
         key,
@@ -136,7 +141,12 @@ where
         live_run,
     } = bound;
     let door = Arc::new(FacadeRowDoor::new(
-        server, headers, extensions, key, credential,
+        server,
+        headers,
+        extensions,
+        key,
+        credential,
+        replay_auth,
     ));
     let bound = Unbound {
         actor,
@@ -225,6 +235,7 @@ where
             owner_surface: surface,
             live_run: held.as_ref().map(HeldLiveRun::proof),
             planner,
+            slip_issuer: held.as_ref().and_then(|_| host.host_issuer()),
         };
         run(executor, &vault, WriteActor::new(actor, class), binding)
     })
@@ -245,8 +256,7 @@ async fn off_the_hook_pool<R: Send + 'static>(
 ) -> Result<R, FacadeApiError> {
     let runtime = tokio::runtime::Handle::current();
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    std::thread::Builder::new()
-        .name("oneiron-action".to_owned())
+    crate::engine_thread("oneiron-action".to_owned())
         .spawn(move || {
             let _entered = runtime.enter();
             let _ = sender.send(driver());

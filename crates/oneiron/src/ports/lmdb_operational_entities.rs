@@ -74,6 +74,7 @@ impl EntityStoreMaintenance for Store {
     }
     fn port_entity_document_pointer_put(
         &self,
+        write: &crate::secret_custody::CustodyWrite<'_>,
         txn: &mut RwTxn<'_>,
         id: &EntityId,
         body: &[u8],
@@ -84,9 +85,16 @@ impl EntityStoreMaintenance for Store {
                 "a document pointer body carries exactly one entity_doc_ref",
             ));
         }
+        // Fix list row 16256: the pointer body states the source-audience
+        // obligation exactly as the row it replaces does in this write.
+        if !crate::source_audience::keeps_row_obligation(&stored, body) {
+            return Err(Error::InvariantViolation(
+                "a document pointer body keeps the row's source_audience_required as it stands",
+            ));
+        }
         // A pointer body is no epoch: what an epoch summary's words carried
         // stays on its record (Sol round 23).
-        super::keep_worlds_of_unmade_epoch_in_txn(self, txn, id, entity_type, body)?;
+        super::keep_worlds_of_unmade_epoch_in_txn(write, txn, id, entity_type, body)?;
         let mut payload = stored[..ENTITY_METADATA_HEADER_LEN].to_vec();
         payload.extend_from_slice(body);
         self.entities.put(txn, id.as_bytes(), &payload)
@@ -201,6 +209,7 @@ impl EntityStoreMaintenance for Store {
                 end: learned_at,
             },
             learned_at,
+            row_version: 0,
             body: body.to_vec(),
         };
         self.entities.put(txn, id.as_bytes(), &row.encode())?;

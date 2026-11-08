@@ -6,23 +6,20 @@ mod path;
 mod workspace;
 
 pub use budget::ProgramBudget;
-pub use path::{
-    MAX_PATH_COMPONENT_BYTES, MAX_PATH_COMPONENTS, MAX_WORKSPACE_PATH_BYTES, WORKSPACE_ROOT,
-    WorkspacePath,
-};
+pub use path::{MAX_PATH_COMPONENT_BYTES, MAX_WORKSPACE_PATH_BYTES, WORKSPACE_ROOT, WorkspacePath};
 pub use workspace::{OutputReservation, WorkspaceShape};
+
+/// The streaming snapshot host/guest wire. Hosts and guests must match exactly.
+pub const GUEST_PROTOCOL_VERSION: u32 = 3;
 
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_COMPONENT_BYTES: usize = 64 * 1024 * 1024;
-pub const MAX_REQUESTS: usize = 16_384;
 pub const MAX_FILE_BYTES: usize = 1024 * 1024;
 /// One frame of a streamed proposed file. Its JSON byte-array encoding (at
 /// most four bytes a byte) fits one [`MAX_FRAME_BYTES`] frame; the file itself
 /// has no size bound.
 pub const MAX_CHUNK_BYTES: usize = 1024 * 1024;
 pub const MAX_WORKSPACE_BYTES: usize = 16 * 1024 * 1024;
-pub const MAX_WORKSPACE_FILES: usize = 8192;
-pub const MAX_WORKSPACE_DIRECTORIES: usize = 8192;
 pub const MAX_PROGRAM_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

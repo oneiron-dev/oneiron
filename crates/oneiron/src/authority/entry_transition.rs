@@ -142,6 +142,8 @@ pub(super) fn fold_entry_state(
             refused_grant_travel: BTreeSet::new(),
             checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState::default(),
             home_pick: super::home_pick::HomePickChoiceState::default(),
+            origin_cut: super::origin_cut::OriginCutChoiceState::default(),
+            device_succession: super::device_succession::DeviceSuccessionChoiceState::default(),
             conversation_training:
                 super::conversation_training::ConversationTrainingChoiceState::default(),
             conversation_training_vault:
@@ -261,6 +263,38 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // So is the owner's origin cut, on the same register, one frontier per
+    // repository portable id (FIX 15740).
+    if let AuthorityOp::OriginCut(cut) = &entry.op {
+        if let Err(issue) = super::origin_cut::apply_origin_cut(
+            &mut state,
+            entry,
+            cut,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is the owner's naming of a device key's successor, one frontier per
+    // predecessor (client id, device key) (FIX 11135).
+    if let AuthorityOp::DeviceSuccession(succession) = &entry.op {
+        if let Err(issue) = super::device_succession::apply_device_succession(
+            &mut state,
+            entry,
+            succession,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     // So is a person's own conversation training opt-out, on the same
     // register, one frontier per PERSON (FIX 4489, FIX 5502).
     if let AuthorityOp::ConversationTrainingSet(set) = &entry.op {
@@ -298,6 +332,21 @@ pub(super) fn fold_entry_state(
     if let AuthorityOp::AgentGrantAct(record) = &entry.op {
         if let Err(issue) = super::agent_grant_act::apply_agent_grant_act(
             &state,
+            entry,
+            record,
+            hash,
+            (context.pin, context.machine_standing),
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is a membership change's record no host issuer signed, which
+    // withdraws the slips of each Grant it names (FIX 12335).
+    if let AuthorityOp::MembershipExecution(record) = &entry.op {
+        if let Err(issue) = super::membership_execution::apply_membership_execution(
+            &mut state,
             entry,
             record,
             hash,
@@ -489,6 +538,7 @@ pub(super) fn fold_entry_state(
             | AuthorityOp::SlipRevoke { .. }
             | AuthorityOp::SlipConsume { .. }
             | AuthorityOp::SlipGrantRevoke { .. }
+            | AuthorityOp::RemovalArchiveConsume { .. }
     ) {
         // A consent cosigner cannot launder an agent primary into a mint issuer.
         if !roster_has_live_owner(&state.roster, &signer) || state.slips.apply(entry, hash).is_err()
@@ -617,6 +667,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::SlipRevoke { .. }
         | AuthorityOp::SlipConsume { .. }
         | AuthorityOp::SlipGrantRevoke { .. }
+        | AuthorityOp::RemovalArchiveConsume { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::CriticalWriteConfirm(_)
         | AuthorityOp::FederationLifecycle(_)
@@ -633,6 +684,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::GrantTravelSet(_)
         | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::HomeNodePick(_)
+        | AuthorityOp::OriginCut(_)
+        | AuthorityOp::DeviceSuccession(_)
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
@@ -644,6 +697,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::OwnerWorkCancel(_)
         | AuthorityOp::ExportSupplementImported(_)
         | AuthorityOp::CustodyPermitPiece(_)
-        | AuthorityOp::FrontierJoin(_) => false,
+        | AuthorityOp::FrontierJoin(_)
+        | AuthorityOp::MembershipExecution(_) => false,
     }
 }

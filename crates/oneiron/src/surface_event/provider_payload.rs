@@ -8,7 +8,7 @@
 //! by [`surface_event_run_id`], never by the provider id as it arrived.
 
 use super::surface_event_run_id;
-use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+use crate::blob_artifact::{BlobArtifactBody, BlobArtifactVersion, BlobVersionProvenance};
 use crate::entity_id::derived_domains::{
     SURFACE_PROVIDER_EVENT_BLOB, SURFACE_PROVIDER_INBOUND_ACTOR,
 };
@@ -18,6 +18,25 @@ use crate::{EntityId, TimeRange, Vault, WriteActor};
 
 /// Every provider event ref starts with this: `blob:<artifact hex>@<version>`.
 pub const PROVIDER_EVENT_REF_PREFIX: &str = "blob:";
+
+/// The exact version returned by the native provider-event archive writer.
+/// This receipt cannot be reconstructed from a payload ref or claim value.
+pub struct ProviderEventArchiveReceipt {
+    pub(crate) channel: String,
+    pub(crate) artifact_id: EntityId,
+    pub(crate) version: BlobArtifactVersion,
+}
+
+impl ProviderEventArchiveReceipt {
+    /// The unchanged ref carried by a surface event.
+    pub fn payload_ref(&self) -> String {
+        format!(
+            "{PROVIDER_EVENT_REF_PREFIX}{}@{}",
+            self.artifact_id.to_hex(),
+            self.version.version
+        )
+    }
+}
 
 impl Vault {
     /// Archives one verified provider event's body and returns the
@@ -29,6 +48,20 @@ impl Vault {
         body: &[u8],
         now: u64,
     ) -> Result<String> {
+        Ok(self
+            .archive_provider_event_with_receipt(channel, provider_event_id, body, now)?
+            .payload_ref())
+    }
+
+    /// Archives a verified provider event and retains the writer's exact
+    /// artifact version, without deriving ownership from caller metadata.
+    pub fn archive_provider_event_with_receipt(
+        &self,
+        channel: &str,
+        provider_event_id: &str,
+        body: &[u8],
+        now: u64,
+    ) -> Result<ProviderEventArchiveReceipt> {
         let artifact_id = EntityId::derive(
             SURFACE_PROVIDER_EVENT_BLOB,
             &[channel.as_bytes(), provider_event_id.as_bytes()],
@@ -60,17 +93,26 @@ impl Vault {
             at,
             now,
         )?;
-        Ok(format!(
-            "{PROVIDER_EVENT_REF_PREFIX}{}@{}",
-            artifact_id.to_hex(),
-            version.version
-        ))
+        Ok(ProviderEventArchiveReceipt {
+            channel: channel.to_owned(),
+            artifact_id,
+            version,
+        })
     }
 
     /// The provider event body a `payload_ref` from
     /// [`Self::archive_provider_event`] names; `None` for any other ref or a
     /// body the vault no longer holds.
     pub fn read_provider_event(&self, payload_ref: &str) -> Result<Option<Vec<u8>>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.read_provider_event_in_txn(&rtxn, payload_ref)
+    }
+
+    pub(crate) fn read_provider_event_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        payload_ref: &str,
+    ) -> Result<Option<Vec<u8>>> {
         let Some((artifact, version)) = payload_ref
             .strip_prefix(PROVIDER_EVENT_REF_PREFIX)
             .and_then(|rest| rest.split_once('@'))
@@ -80,7 +122,7 @@ impl Vault {
         let (Ok(artifact_id), Ok(version)) = (EntityId::from_hex(artifact), version.parse()) else {
             return Ok(None);
         };
-        self.read_blob_artifact_version(&artifact_id, version)
+        self.read_blob_artifact_version_in_txn(rtxn, &artifact_id, version)
     }
 
     /// The message text a provider event's archived body carries: Slack's
@@ -96,12 +138,22 @@ impl Vault {
         channel: &str,
         payload_ref: &str,
     ) -> Result<Option<String>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.read_provider_event_text_in_txn(&rtxn, channel, payload_ref)
+    }
+
+    pub(crate) fn read_provider_event_text_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        channel: &str,
+        payload_ref: &str,
+    ) -> Result<Option<String>> {
         let pointer = match channel {
             crate::channel_identity_provider::SLACK_CHANNEL => "/event/text",
             crate::channel_identity_provider::LINE_CHANNEL => "/event/message/text",
             _ => return Ok(None),
         };
-        let Some(body) = self.read_provider_event(payload_ref)? else {
+        let Some(body) = self.read_provider_event_in_txn(rtxn, payload_ref)? else {
             return Ok(None);
         };
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(&body) else {

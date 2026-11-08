@@ -65,7 +65,7 @@ impl ToUnicodeCMap {
                     }
                 }
                 CMapSection::BfRange(range_mappings) => {
-                    for ((start, end, code_len), dst_vec) in range_mappings {
+                    for ((start, end, code_len), mut dst_vec) in range_mappings {
                         if end < start {
                             return Err(UnicodeCMapError::InvalidCodeRange);
                         }
@@ -78,40 +78,55 @@ impl ToUnicodeCMap {
                                     offset: u32::wrapping_sub(dst_vec[0][0] as u32, start),
                                 },
                             ),
-                            1 => cmap.put(start, end, code_len, BfRangeTarget::HexString(dst_vec[0].clone())),
+                            1 => cmap.put(
+                                start,
+                                end,
+                                code_len,
+                                BfRangeTarget::HexString(std::mem::take(&mut dst_vec[0])),
+                            ),
                             0 => return Err(UnicodeCMapError::InvalidCodeRange),
-                            _ => cmap.put(start, end, code_len, BfRangeTarget::ArrayOfHexStrings(dst_vec.clone())),
+                            _ => cmap.put(
+                                start,
+                                end,
+                                code_len,
+                                BfRangeTarget::ArrayOfHexStrings(dst_vec),
+                            ),
                         }
                     }
                 }
             }
         }
 
-        let mut rev_map = HashMap::new();
+        let mut rev_map: HashMap<Vec<u16>, Vec<ReverseCMapEntry>> = HashMap::new();
 
         for code_len_idx in 0..cmap.bf_ranges.len() {
             let code_len = (code_len_idx + 1) as u8;
             for (range, target) in cmap.bf_ranges[code_len_idx].iter() {
                 for src_code in range.clone() {
-                    let unicode_sequence: Option<Vec<u16>> = match target {
+                    let mut singleton_scratch = [0u16; 1];
+                    let unicode_sequence: Option<std::borrow::Cow<'_, [u16]>> = match target {
                         BfRangeTarget::UTF16CodePoint { offset } => {
-                            Some(vec![u32::wrapping_add(src_code, *offset) as u16])
+                            singleton_scratch[0] = u32::wrapping_add(src_code, *offset) as u16;
+                            Some(std::borrow::Cow::Borrowed(&singleton_scratch[..]))
                         }
                         BfRangeTarget::HexString(hex_str_vec) => {
                             // If the hex_str_vec itself is the target for a single src_code in a bfchar-like mapping
                             // or if it's a base for a bfrange where only the last element increments.
                             if src_code == *range.start() {
                                 // Simplified: assume direct mapping for start of range
-                                Some(hex_str_vec.clone())
+                                Some(std::borrow::Cow::Borrowed(hex_str_vec.as_slice()))
                             } else if hex_str_vec.len() == 1 {
                                 // For ranges like <01> <05> <0041>
-                                Some(vec![hex_str_vec[0].wrapping_add((src_code - range.start()) as u16)])
+                                singleton_scratch[0] =
+                                    hex_str_vec[0].wrapping_add((src_code - range.start()) as u16);
+                                Some(std::borrow::Cow::Borrowed(&singleton_scratch[..]))
                             } else if !hex_str_vec.is_empty() {
                                 // For ranges like <01> <05> [<0041> <0042> ...]
                                 let mut current_hex_str = hex_str_vec.clone();
                                 if let Some(last_val) = current_hex_str.last_mut() {
-                                    *last_val = last_val.wrapping_add((src_code - range.start()) as u16);
-                                    Some(current_hex_str)
+                                    *last_val =
+                                        last_val.wrapping_add((src_code - range.start()) as u16);
+                                    Some(std::borrow::Cow::Owned(current_hex_str))
                                 } else {
                                     None
                                 }
@@ -122,7 +137,7 @@ impl ToUnicodeCMap {
                         BfRangeTarget::ArrayOfHexStrings(array_of_hex_str) => {
                             let index = (src_code - range.start()) as usize;
                             if index < array_of_hex_str.len() {
-                                Some(array_of_hex_str[index].clone())
+                                Some(std::borrow::Cow::Borrowed(array_of_hex_str[index].as_slice()))
                             } else {
                                 None
                             }
@@ -132,10 +147,18 @@ impl ToUnicodeCMap {
                     if let Some(uni_seq) = unicode_sequence
                         && !uni_seq.is_empty()
                     {
-                        rev_map.entry(uni_seq).or_insert_with(Vec::new).push(ReverseCMapEntry {
+                        let entry = ReverseCMapEntry {
                             source_code: src_code,
                             code_len,
-                        });
+                        };
+                        if let Some(bucket) = rev_map.get_mut(uni_seq.as_ref()) {
+                            bucket.push(entry);
+                        } else {
+                            rev_map
+                                .entry(uni_seq.into_owned())
+                                .or_insert_with(Vec::new)
+                                .push(entry);
+                        }
                     }
                 }
             }
@@ -154,30 +177,38 @@ impl ToUnicodeCMap {
 
         let bf_ranges_map = &self.bf_ranges[(code_len - 1) as usize];
 
-        bf_ranges_map.get_key_value(&code).map(|(range, value)| match value {
-            HexString(vec) => {
-                let mut ret_vec = vec.clone();
-                *(ret_vec.last_mut().unwrap()) += (code - range.start()) as u16;
-                ret_vec
-            }
-            UTF16CodePoint { offset } => vec![u32::wrapping_add(code, *offset) as u16],
-            ArrayOfHexStrings(vec_of_strings) => {
-                let idx = (code - range.start()) as usize;
-                if idx < vec_of_strings.len() {
-                    vec_of_strings[idx].clone()
-                } else {
-                    vec![ToUnicodeCMap::REPLACEMENT_CHAR]
+        bf_ranges_map
+            .get_key_value(&code)
+            .map(|(range, value)| match value {
+                HexString(vec) => {
+                    let mut ret_vec = vec.clone();
+                    *(ret_vec.last_mut().unwrap()) += (code - range.start()) as u16;
+                    ret_vec
                 }
-            }
-        })
+                UTF16CodePoint { offset } => vec![u32::wrapping_add(code, *offset) as u16],
+                ArrayOfHexStrings(vec_of_strings) => {
+                    let idx = (code - range.start()) as usize;
+                    if idx < vec_of_strings.len() {
+                        vec_of_strings[idx].clone()
+                    } else {
+                        vec![ToUnicodeCMap::REPLACEMENT_CHAR]
+                    }
+                }
+            })
     }
 
     pub fn get_or_replacement_char(&self, code: SourceCode, code_len: CodeLen) -> Vec<u16> {
         self.get(code, code_len)
-            .unwrap_or(vec![ToUnicodeCMap::REPLACEMENT_CHAR])
+            .unwrap_or_else(|| vec![ToUnicodeCMap::REPLACEMENT_CHAR])
     }
 
-    pub fn put(&mut self, src_code_lo: SourceCode, src_code_hi: SourceCode, code_len: CodeLen, target: BfRangeTarget) {
+    pub fn put(
+        &mut self,
+        src_code_lo: SourceCode,
+        src_code_hi: SourceCode,
+        code_len: CodeLen,
+        target: BfRangeTarget,
+    ) {
         if code_len > 4 || code_len == 0 {
             error!("Code lenght should be between l and 4 bytes, got {code_len}, ignoring");
             return;
@@ -198,7 +229,10 @@ impl ToUnicodeCMap {
 
     /// Gets the source code(s) for a given Unicode sequence.
     /// Prioritizes shorter byte sequences if multiple mappings exist.
-    pub fn get_source_codes_for_unicode(&self, unicode_sequence: &[u16]) -> Option<&[ReverseCMapEntry]> {
+    pub fn get_source_codes_for_unicode(
+        &self,
+        unicode_sequence: &[u16],
+    ) -> Option<&[ReverseCMapEntry]> {
         if let Some(map) = &self.reverse_map {
             // TODO: Add prioritization logic if needed (e.g., prefer shorter code_len)
             map.get(unicode_sequence).map(|v| v.as_slice())
@@ -274,8 +308,17 @@ mod tests {
         assert_eq!(cmap.get(0x11, 2), Some(vec![0x0042]));
 
         // Out-of-bounds lookups return replacement char instead of panicking
-        assert_eq!(cmap.get(0x12, 2), Some(vec![ToUnicodeCMap::REPLACEMENT_CHAR]));
-        assert_eq!(cmap.get(0x13, 2), Some(vec![ToUnicodeCMap::REPLACEMENT_CHAR]));
-        assert_eq!(cmap.get(0x14, 2), Some(vec![ToUnicodeCMap::REPLACEMENT_CHAR]));
+        assert_eq!(
+            cmap.get(0x12, 2),
+            Some(vec![ToUnicodeCMap::REPLACEMENT_CHAR])
+        );
+        assert_eq!(
+            cmap.get(0x13, 2),
+            Some(vec![ToUnicodeCMap::REPLACEMENT_CHAR])
+        );
+        assert_eq!(
+            cmap.get(0x14, 2),
+            Some(vec![ToUnicodeCMap::REPLACEMENT_CHAR])
+        );
     }
 }

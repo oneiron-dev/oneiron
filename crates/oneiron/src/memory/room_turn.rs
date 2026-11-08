@@ -48,6 +48,13 @@ impl<'v> RoomTurnHandle<'v> {
             .room
     }
 
+    /// The credential reference a hook's ask can retain for this turn's
+    /// original door, under the same checks as [`Memory::verb_ask_credential`].
+    #[must_use]
+    pub fn verb_ask_credential(&self) -> Option<crate::runtime_hooks::verb::VerbAskCredential> {
+        self.memory.verb_ask_credential()
+    }
+
     /// The Scope this turn reads inside now.
     pub fn scope(&self) -> MemoryResult<oneiron_authority::federation::Scope> {
         self.memory.room_read_scope(self.room())
@@ -235,6 +242,7 @@ impl<'v> Memory<'v> {
                 session_key: self.session_key,
                 machine_signer: self.machine_signer,
                 read_proof: self.read_proof.clone(),
+                phone_reads: self.phone_reads.clone(),
                 host_action: self.host_action.clone(),
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
@@ -247,12 +255,15 @@ impl<'v> Memory<'v> {
                 owner_surface: crate::authority::ActSurface::ThisInstall,
                 host_slip_issuer: None,
                 invocation: self.invocation,
+                drain_permit: self.drain_permit.clone(),
                 hook_ask: self.hook_ask,
                 invocation_slip: self.invocation_slip.clone(),
                 transport_invocation: self.transport_invocation,
+                signing_request_transport: self.signing_request_transport.clone(),
                 task_grant: self.task_grant,
                 kept_requester: self.kept_requester.clone(),
                 origin_conversation: self.origin_conversation,
+                caller_origin: self.caller_origin,
                 task_host: None,
                 task_decisions: self.task_decisions.clone(),
                 off_record_session: self.off_record_session.clone(),
@@ -264,6 +275,7 @@ impl<'v> Memory<'v> {
                 task_work_turn: self.task_work_turn.clone(),
                 external_git_source_host: None,
                 repo_tool_recipient: self.repo_tool_recipient.clone(),
+                read_filter: self.read_filter.clone(),
             },
         })
     }

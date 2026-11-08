@@ -24,24 +24,26 @@ pub(crate) const MEMORY_RUN_VERBS: [RunVerb; 4] = [
 
 /// The run rows that act on their caller's live agent run and read nothing
 /// else of it: the attempt, its lease and its actor, for the leader's rows
-/// the planner the host lends beside the lease, and for the fold rows the
-/// run's own log, at the step boundary its host serializes the action with
+/// the planner or slip issuer the host lends beside the lease, and for the
+/// fold rows the run's own log, at the step boundary its host serializes the action with
 /// (OF-181). A host serves them as actions only under that run's lease.
 /// `tasks.consult.result` lands as the run's actor, under its door's read
 /// lane, and `self.workflows.dispatch_bound` binds a TASK as that actor,
 /// under its lease and its door's read lane. `self.skills.call`,
 /// `self.spawn`, `summarize` and `tasks.wait` need the running sandbox (its
 /// bridge, its results, its park). None of those is here.
-pub(crate) const LIVE_RUN_VERBS: [RunVerb; 14] = [
+pub(crate) const LIVE_RUN_VERBS: [RunVerb; 16] = [
     RunVerb::TasksConsultResult,
     RunVerb::TasksRefuse,
     RunVerb::SelfReportBlocked,
     RunVerb::SelfAgentsSpawn,
     RunVerb::SelfTeamStart,
     RunVerb::SelfTeamRecord,
+    RunVerb::SelfTeamVote,
     RunVerb::SelfTeamSubmit,
     RunVerb::SelfLeaderAdvice,
     RunVerb::SelfLeaderPattern,
+    RunVerb::SelfLeaderSplit,
     RunVerb::SelfFold,
     RunVerb::SelfCompact,
     RunVerb::SelfUnfold,
@@ -57,10 +59,13 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
     Ok(match verb {
         RunVerb::VaultSearch => {
             let args: MemorySearchInput = decode(input)?;
-            SelfCall::MemorySearch(SelfMemorySearchCall::new(
-                args.query,
-                args.limit.map_or(20, |limit| limit as usize),
-            ))
+            SelfCall::MemorySearch(
+                SelfMemorySearchCall::new(
+                    args.query,
+                    args.limit.map_or(20, |limit| limit as usize),
+                )
+                .with_read_filter(args.filter),
+            )
         }
         RunVerb::VaultClaimsPut => {
             let args: MemoryClaimInput = decode(input)?;
@@ -111,6 +116,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
                 from: args.from,
                 through: args.through,
                 note: args.note,
+                kind: args.kind,
             })
         }
         RunVerb::SelfCompact => {
@@ -192,12 +198,14 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
                 group: args.group,
                 defer: args.defer.unwrap_or(false),
                 bound: None,
+                recipe: None,
             }))
         }
         RunVerb::SelfTeamStart => SelfCall::Team(crate::team::SelfTeamCall::Start(decode(input)?)),
         RunVerb::SelfTeamRecord => {
             SelfCall::Team(crate::team::SelfTeamCall::Record(decode(input)?))
         }
+        RunVerb::SelfTeamVote => SelfCall::Team(crate::team::SelfTeamCall::Vote(decode(input)?)),
         RunVerb::SelfTeamSubmit => SelfCall::TeamSubmit(decode(input)?),
         RunVerb::TasksWait => {
             let input: crate::code_run::TaskWaitInput = decode(input)?;
@@ -235,6 +243,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         verb @ (RunVerb::SelfCodeSnapshotsGet
         | RunVerb::SelfCodeSnapshotsRead
         | RunVerb::SelfCodeSymbolsDefinitions
+        | RunVerb::SelfCodeSymbolsNeighbors
         | RunVerb::SelfCodeViewsGet
         | RunVerb::SelfCodeViewsRead
         | RunVerb::SelfCodeMergeQueueObserve
@@ -244,12 +253,13 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         | RunVerb::SelfCodeSymbolsRenew
         | RunVerb::SelfCodeSymbolsRelease
         | RunVerb::SelfCodeProposalSubmit
+        | RunVerb::SelfCodeProposalResolve
         | RunVerb::SelfCodeMergeQueueEnqueue
         | RunVerb::SelfCodeCheckoutBind
-        | RunVerb::SelfCodeExport) => SelfCall::Repo(
+        | RunVerb::SelfCodeExport) => SelfCall::Repo(Box::new(
             super::RepoRunCall::decode(verb, input)?
                 .ok_or_else(|| failure("invalid typed component arguments"))?,
-        ),
+        )),
     })
 }
 

@@ -6,9 +6,9 @@
 //! fork's parent that is not its NOTE's current head, proven the NOTE's
 //! original or reached from it by an actual chain of Switch receipts of the
 //! same NOTE, each link proven by its receipt's previous head AND head. A
-//! value is carried once per (note, head), as its text and title only: a
-//! value that is not the head claims no authority. Nothing else stands in:
-//! no current head, no other stored document, no guessed text.
+//! value is carried once per (note, head), as its text and editable fields
+//! only: a value that is not the head claims no authority. Nothing else
+//! stands in: no current head, no other stored document, no guessed text.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -117,8 +117,8 @@ pub(in crate::recovery) fn carried(snapshot: &CanonicalSnapshot) -> Result<BTree
     )
 }
 
-/// Captures each value of `needed` for `note`: its text and title as the
-/// retained head's own document holds them
+/// Captures each value of `needed` for `note`: its text and editable fields
+/// as the retained head's own document holds them
 /// ([`crate::note::documents::load_retained_head`]), measured as NOTE
 /// births are. A value not here is left out: the fork's own check then
 /// answers for it, as before.

@@ -283,6 +283,14 @@ pub struct WeaveRecipeExecutor<E, R> {
 impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
     for WeaveRecipeExecutor<E, R>
 {
+    fn runs_coach_host_jobs(&self) -> bool {
+        self.inner.runs_coach_host_jobs()
+    }
+
+    fn runs_coach_heals(&self) -> bool {
+        self.inner.runs_coach_heals()
+    }
+
     async fn execute_partition_window<'w>(
         &mut self,
         window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
@@ -313,7 +321,7 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
             if cached_result(vault, &txn, attempt, &pin, actor, &id)? {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: 0,
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             }
         }
@@ -425,7 +433,7 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
         )?;
         Ok(DreamerAttemptExecution::Completed {
             completed_units: 0,
-            step_hashes: Vec::new(),
+            step_bindings: Vec::new(),
         })
     }
 }

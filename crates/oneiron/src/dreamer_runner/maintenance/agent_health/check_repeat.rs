@@ -106,7 +106,7 @@ pub(super) fn check_repeat_findings(
             continue;
         };
         let live = matches!(record.state, AttemptState::Leased | AttemptState::Paused);
-        if !live && !(settled(record.state) && record.updated_at >= since) {
+        if !live && !(settled(record.state) && record.settled_at.is_some_and(|at| at >= since)) {
             continue;
         }
         let Some(attempt) = entity(record.id) else {
@@ -184,9 +184,14 @@ pub(super) fn check_repeat_findings(
                     .step_checkpoints
                     .iter()
                     .find(|checkpoint| checkpoint.seq == seq)
-                    .map_or(record.updated_at, |checkpoint| {
-                        checkpoint.created_at_ms / 1000
-                    });
+                    .map(|checkpoint| checkpoint.created_at_ms / 1000)
+                    .or_else(|| {
+                        if live {
+                            Some(record.updated_at)
+                        } else {
+                            record.settled_at
+                        }
+                    })?;
                 Some((at, report))
             })
             .collect();
@@ -327,11 +332,14 @@ fn finding(
         task,
         attempt,
         generation,
+        source_rows: None,
         evidence,
         window,
         actual: count as i64,
         dial: fails as i64,
         measured: count as i64,
+        exact_dial: None,
+        exact_measured: None,
         counter: Vec::new(),
         confession: None,
         blocked: false,

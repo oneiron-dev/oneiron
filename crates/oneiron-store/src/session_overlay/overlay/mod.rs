@@ -10,9 +10,12 @@ use self::segment::TxnSegment;
 
 pub mod held;
 pub mod lifecycle;
+mod publication;
 pub mod repo_projection;
 pub mod retained;
 pub mod retire;
+pub mod retire_selected;
+mod retrieval_erase;
 pub mod rows;
 pub mod segment;
 
@@ -31,6 +34,7 @@ pub fn txn_segment_installed() -> bool {
 pub(super) use self::held::PlanCharge;
 pub(super) use self::lifecycle::Lease;
 pub use self::lifecycle::SessionOverlay;
+pub use self::retrieval_erase::RecordMetaRows;
 pub use self::segment::TxnSegmentGuard;
 
 #[cfg(test)]

@@ -83,6 +83,9 @@ pub enum ManagedError {
         cause: Option<&'static str>,
     },
 
+    #[error("credential broker configuration: {reason}")]
+    InvalidBrokerConfig { reason: String },
+
     #[error("--artifact-http-socket must be an absolute path")]
     RelativeArtifactSocket,
 
@@ -202,6 +205,11 @@ pub struct ManagedArgs {
     pub derivation_owner: DerivationOwner,
     pub organization_owner: Option<DerivationOwner>,
     pub member_vault: bool,
+    /// Explicit operator declaration from `--privacy-posture`; supervision
+    /// and delivered custody alone do not mean cloud hosting.
+    pub privacy_posture: oneiron::HostingPrivacyPosture,
+    /// Per-vault enterprise/advanced capability from managed operator argv.
+    pub allow_host_checkpoint_opt_out: bool,
     pub data_dir: PathBuf,
     pub http_socket: PathBuf,
     pub ctl_socket: PathBuf,
@@ -215,6 +223,13 @@ pub struct ManagedArgs {
     /// start the supervisor hands one. In a vault VM only the bootstrap's,
     /// beside its anchor handoff (`vm_anchor`).
     pub custody_anchor_credentials_fd: Option<RawFd>,
+    /// The supervisor-pinned public recipient for checkpoint host-order
+    /// members, on a separate pipe; no recipient never vetoes a start.
+    pub checkpoint_host_holds_recipient_fd: Option<RawFd>,
+
+    /// The optional native HOST listener descriptor and kernel UID. Startup
+    /// takes and clears this pair before any managed watcher clones argv.
+    pub(crate) host_legal: Option<(RawFd, u32)>,
     /// A vault VM's custody anchor handoff from its bootstrap (FIX 6517):
     /// the URL its host bound and the socket that reaches it.
     pub(crate) vm_anchor: Option<VmAnchorHandoff>,
@@ -222,6 +237,11 @@ pub struct ManagedArgs {
     pub start_mode: ManagedStartMode,
     /// The process is a Firecracker vault VM's engine (`--vsock-guest`).
     pub vsock_guest: bool,
+    /// The bootstrap admitted this start's outbox companion beside the engine
+    /// (`--vm-outbox-companion-admitted`): only `oneiron-vm-init` passes it,
+    /// only with a companion it admitted, so presence is the proof. Hidden
+    /// bootstrap plumbing, never operator policy.
+    pub vm_outbox_companion_admitted: bool,
     /// Where this install keeps its this-device-only key slots, a place the
     /// supervisor chose. Without it managed mode installs no keystore, and
     /// serves on with that facility named missing in its readiness unless
@@ -244,6 +264,16 @@ pub struct ManagedArgs {
     /// supervisor gave the vault one. The origin answers on the vault's
     /// internal authority alone, bound to `vault_name` (FIX 6716).
     pub artifact_socket: Option<PathBuf>,
+    /// The supervisor's fixed per-vault native preview ingress socket
+    /// (`--preview-socket`), only supplied for an explicitly configured domain.
+    pub preview_socket: Option<PathBuf>,
+    /// The supervisor's credential broker binding, validated by the same
+    /// rules as `[models.broker]`; absent keeps the same-user default.
+    pub broker: Option<crate::config::models::BrokerConfig>,
+    /// The explicit per-vault host allocation (`--host-memory-bytes`,
+    /// `--host-cpu-millis`), as the operator supplied it; absent is
+    /// unbounded per field. Reported through the managed host, not enforced.
+    pub host_limits: oneiron_vault_contract::host::HostLimits,
     /// The owner's settings file (`--settings-file`), in the server's own
     /// config schema (`managed::settings`).
     pub settings_file: Option<PathBuf>,

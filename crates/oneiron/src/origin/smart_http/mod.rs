@@ -81,13 +81,13 @@
 //! `credential_door.rs` are consumed read-only; this module owns neither.
 
 mod advertise;
-mod bounds;
+use oneiron_store::origin::smart_http::bounds;
 mod cgi_finish;
 mod door;
 mod door_window;
 mod evidence;
 mod exchange_idle;
-mod held;
+use oneiron_store::origin::smart_http::held;
 mod hooks;
 mod intent;
 mod intent_erase;
@@ -102,7 +102,7 @@ mod push_paths;
 pub(crate) mod push_projection;
 mod read_projection;
 mod recipient_serve;
-mod retained_reasons;
+use oneiron_store::origin::smart_http::retained_reasons;
 pub(in crate::origin) mod secret_marks;
 mod serve;
 mod serve_cmd;
@@ -132,7 +132,7 @@ pub use self::paths::{
     validate_repo_name,
 };
 pub use self::push_admission::{admit_receive_pack, serve_bounded_as};
-pub(crate) use self::recipient_serve::store_holds_readable_marks_in_txn;
+pub(crate) use self::recipient_serve::store_may_need_masked_copy_in_txn;
 pub use self::recipient_serve::{RepoGitReadContext, serve_bounded_for_recipient};
 pub use self::secret_marks::ReceiveSecretMarks;
 pub use self::serve::{

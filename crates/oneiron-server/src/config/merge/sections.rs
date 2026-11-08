@@ -64,6 +64,7 @@ impl EnvConfig {
         values.oauth_issuer = lookup("ONEIRON_OAUTH_ISSUER");
         values.oauth_jwks_uri = lookup("ONEIRON_OAUTH_JWKS_URI");
         values.oauth_resource_indicator = lookup("ONEIRON_OAUTH_RESOURCE_INDICATOR");
+        values.git_door_base = lookup("ONEIRON_GIT_DOOR_BASE");
         values.kit_bundle_public_urls = lookup_list(&mut lookup, "ONEIRON_KIT_BUNDLE_PUBLIC_URLS");
         values.allow_unauthenticated =
             lookup_bool(&mut lookup, "ONEIRON_INSECURE_ALLOW_UNAUTHENTICATED")?;
@@ -91,8 +92,6 @@ impl EnvConfig {
             lookup_parse(&mut lookup, "ONEIRON_MAX_WINDOWS_PER_CONNECTION")?;
         values.max_messages_per_sec = lookup_parse(&mut lookup, "ONEIRON_MAX_MESSAGES_PER_SEC")?;
         values.ephemeral_timeout_ms = lookup_parse(&mut lookup, "ONEIRON_EPHEMERAL_TIMEOUT_MS")?;
-        values.max_ephemeral_payload_bytes =
-            lookup_parse(&mut lookup, "ONEIRON_MAX_EPHEMERAL_PAYLOAD_BYTES")?;
         values.max_ephemeral_snapshot_bytes =
             lookup_parse(&mut lookup, "ONEIRON_MAX_EPHEMERAL_SNAPSHOT_BYTES")?;
         values.max_entity_blob = lookup_parse(&mut lookup, "ONEIRON_MAX_ENTITY_BLOB")?;
@@ -167,6 +166,14 @@ impl PartialServeConfig {
         if let Some(value) = self.oauth_resource_indicator {
             resolved.oauth_resource_indicator = Some(value);
         }
+        if let Some(value) = self.git_door_base {
+            if oneiron::git_wire::validate_checkout_door(&value).is_err() {
+                anyhow::bail!(
+                    "git_door_base must be the host's Git door: https://<host>/git, or http on loopback"
+                );
+            }
+            resolved.git_door_base = Some(value);
+        }
         if let Some(value) = self.kit_bundle_public_urls {
             resolved.kit_bundle_public_urls = normalize_list(value);
         }
@@ -236,9 +243,6 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.ephemeral_timeout_ms {
             resolved.ephemeral_timeout_ms = value;
-        }
-        if let Some(value) = self.max_ephemeral_payload_bytes {
-            resolved.max_ephemeral_payload_bytes = value;
         }
         if let Some(value) = self.max_ephemeral_snapshot_bytes {
             resolved.max_ephemeral_snapshot_bytes = value;
@@ -312,6 +316,9 @@ impl PartialServeConfig {
         if let Some(value) = self.desktop {
             resolved.desktop = Some(value);
         }
+        if let Some(value) = self.artifact_backend {
+            resolved.artifact_backend = Some(value);
+        }
         if let Some(value) = self.merge_queue {
             resolved.merge_queue = Some(value);
         }
@@ -320,6 +327,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.channel_endpoints {
             resolved.channel_endpoints = value;
+        }
+        if let Some(value) = self.apns {
+            resolved.apns = value;
         }
         if let Some(value) = self.linear {
             resolved.linear = Some(value);
@@ -332,6 +342,16 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.device_sync {
             resolved.device_sync = Some(value);
+        }
+        if let Some(value) = self.shared_env {
+            resolved.shared_env = value
+                .into_iter()
+                .map(|mut spec| {
+                    spec.path = expand_home(spec.path);
+                    spec.credential_file = expand_home(spec.credential_file);
+                    spec
+                })
+                .collect();
         }
         if let Some(value) = self.connectors {
             resolved.connectors = value;

@@ -181,6 +181,7 @@ pub enum ErrorKind {
     ShareCreatePaced,
     FamilyRequiresAutoGrant,
     ActorLacksClaimAuthority,
+    GuestClaimWithheld,
     GateConsentStale,
     MaintenanceKindNotWritable,
     StructuralKindZoneViolation,
@@ -220,6 +221,10 @@ pub enum ErrorKind {
     RetrievalStageCut,
     /// No provider answered a model call that may be sent again later.
     ProviderUnavailable,
+    /// A durable step's committed trap already parked its attempt.
+    DurableStepTrapped,
+    /// An agent run's executor lease moved to another machine (FIX 4747).
+    AgentRunExecutorMoved,
     /// A refusal that names its bound; its message is the whole answer.
     Refused,
     /// A legal order binding the host keeps the record, or keeps it from
@@ -512,6 +517,15 @@ pub enum Error {
     /// so the run parks on the outage rather than its guest handling it.
     #[error("no provider answered; retry in {retry_after} s")]
     ProviderUnavailable { retry_after: u64 },
+    /// The caller's durable step committed its trap and parked its attempt.
+    /// Native execution must unwind without completing or failing that attempt.
+    #[error("the durable step is parked behind its trap")]
+    DurableStepTrapped,
+    /// The agent run's TASK names another machine, or another generation,
+    /// as its executor (FIX 4747): this machine's executor stands down, and
+    /// the write or effect that met it is not kept.
+    #[error("the agent run's executor moved to another machine; this one stands down")]
+    AgentRunExecutorMoved,
     /// A refusal that names its bound: what the caller funds, configures or
     /// changes before asking again. Its message is caller-safe and is the
     /// whole answer.
@@ -689,6 +703,8 @@ impl Error {
             Self::UpstreamToolFailure { .. } => ErrorKind::UpstreamToolFailure,
             Self::RetrievalStageCut => ErrorKind::RetrievalStageCut,
             Self::ProviderUnavailable { .. } => ErrorKind::ProviderUnavailable,
+            Self::DurableStepTrapped => ErrorKind::DurableStepTrapped,
+            Self::AgentRunExecutorMoved => ErrorKind::AgentRunExecutorMoved,
             Self::Refused(_) => ErrorKind::Refused,
             Self::LegalHold(_) => ErrorKind::LegalHold,
             Self::HostActionRequiresSupportGrant => ErrorKind::HostActionRequiresSupportGrant,

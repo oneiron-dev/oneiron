@@ -2,6 +2,8 @@
 //! and the release of one response version its last step claim let go of
 //! (FIX 6225).
 
+use std::collections::BTreeSet;
+
 use heed::{RoTxn, RwTxn};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -14,7 +16,8 @@ use crate::store::ppr_cache_invalidation as ppr;
 use super::holders::artifact_hashes;
 use super::references::{
     claimed_hash_rows_exist, fence_released_asset, forget_claimed_hashes,
-    forget_released_pair_in_txn, held_by_live_artifact, retained_claim_names,
+    forget_claimed_hashes_except_in_txn, forget_released_pair_in_txn, held_by_live_artifact,
+    retained_claim_names,
 };
 use super::store_keys::{ASSET_REF, BLOB_ARTIFACT_CONTENT_HASH_LEN};
 use super::versions::{HEAD, VERSIONS, blob_artifact_asset_entity_id};
@@ -52,27 +55,109 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
+    deindex: &dyn Fn(
+        &mut heed::RwTxn<'_>,
+        &EntityId,
+    ) -> crate::error::Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> Result<BlobArtifactLifecycleCleanup> {
     crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, id)?;
     crate::artifact_hosting::remove_blob_pointers_in_txn(store, wtxn, id)?;
+    crate::edit_settle::purge_artifact_retention_in_txn(store, wtxn, id)?;
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
     let hashes = artifact_hashes(store, wtxn, id)?;
     let keys = VERSIONS.scan_keys(store, wtxn, id.as_bytes())?;
-    forget_claimed_hashes(store, wtxn, id)?;
-    HEAD.delete(store, wtxn, id)?;
+    let mut kept_versions = BTreeSet::new();
+    let mut kept_hashes = BTreeSet::new();
+    for key in &keys {
+        if let Some(version) = VERSIONS.get_lenient(store, wtxn, key)?
+            && crate::channel_identity_provider::line_chat_archive_keeps_version_in_txn(
+                store,
+                wtxn,
+                id,
+                version.version,
+                &version.content_hash,
+                &version.claim_id,
+            )?
+        {
+            kept_versions.insert(*key);
+            kept_hashes.insert(version.content_hash);
+        }
+    }
+    if kept_versions.is_empty() {
+        forget_claimed_hashes(store, wtxn, id)?;
+        HEAD.delete(store, wtxn, id)?;
+    } else {
+        forget_claimed_hashes_except_in_txn(store, wtxn, id, &kept_hashes)?;
+    }
     for key in keys {
+        if kept_versions.contains(&key) {
+            continue;
+        }
         if let Some(version) = VERSIONS.get_lenient(store, wtxn, &key)? {
             super::born_from::unindex_version_in_txn(store, wtxn, id, &version)?;
         }
         VERSIONS.delete(store, wtxn, &key)?;
     }
+    if !kept_versions.is_empty() {
+        let survivor = VERSIONS
+            .iter_rev_from(store, wtxn, id.as_bytes())?
+            .next()
+            .transpose()?;
+        if let Some((_, head)) = survivor {
+            HEAD.put(store, wtxn, id, &head)?;
+        }
+    }
     for content_hash in hashes {
+        if kept_hashes.contains(&content_hash) {
+            continue;
+        }
         ASSET_REF.delete(store, wtxn, &(content_hash, *id))?;
-        release_unheld_bytes(store, wtxn, &content_hash, id, &mut cleanup)?;
+        release_unheld_bytes(store, wtxn, &content_hash, id, &mut cleanup, deindex)?;
     }
     cleanup.neighbors.sort_unstable();
     cleanup.neighbors.dedup();
     Ok(cleanup)
+}
+
+/// The owner's discard of a world copy (FIX 14534, Engine 11-06 08:34 call
+/// 4 = A): `id`'s version chain and head, which carry its export names,
+/// media types and provenance, its claimed-hash pairs and its `asset_ref`
+/// holds on their bytes go. Local only: no deletion fence, no deindex of a
+/// byte carrier, no pointer, publication or serving change. A carrier ASSET
+/// is a member of its own: the tear takes it with its world's rows, and one
+/// another holder needs keeps its row. Its version numbering (`highwater`)
+/// and born-from rows stay as identifier-only history; a born-from listing
+/// joins live versions only.
+pub(crate) fn discard_local_copy_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, wtxn, id)?;
+    let hashes = artifact_hashes(store, wtxn, id)?;
+    forget_claimed_hashes(store, wtxn, id)?;
+    HEAD.delete(store, wtxn, id)?;
+    for key in VERSIONS.scan_keys(store, wtxn, id.as_bytes())? {
+        VERSIONS.delete(store, wtxn, &key)?;
+    }
+    for content_hash in hashes {
+        ASSET_REF.delete(store, wtxn, &(content_hash, *id))?;
+    }
+    Ok(())
+}
+
+/// The owner's discard of a world copy takes the hold the reference ASSET
+/// `reference` has on the bytes under `content_hash` (FIX 14534): its
+/// `asset_ref` row goes, and nothing else. The bytes' carrier is a member of
+/// its own.
+pub(crate) fn discard_asset_reference_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    reference: &EntityId,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+) -> Result<()> {
+    ASSET_REF.delete(store, wtxn, &(*content_hash, *reference))?;
+    Ok(())
 }
 
 /// Releases the bytes under `content_hash` once `artifact` lets go of them, unless an
@@ -85,6 +170,10 @@ fn release_unheld_bytes(
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
     artifact: &EntityId,
     cleanup: &mut BlobArtifactLifecycleCleanup,
+    deindex: &dyn Fn(
+        &mut heed::RwTxn<'_>,
+        &EntityId,
+    ) -> crate::error::Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> Result<()> {
     let still_referenced = ASSET_REF
         .iter_from(store, wtxn, content_hash)?
@@ -105,8 +194,7 @@ fn release_unheld_bytes(
         None => fence_released_asset(store, wtxn, &asset_id),
         Some(Some(ENTITY_TYPE_ASSET)) => {
             fence_released_asset(store, wtxn, &asset_id)?;
-            let (_existed, had_vector, had_graph_mutation, neighbors) =
-                crate::batch::deindex_entity(store, wtxn, &asset_id)?;
+            let (_existed, had_vector, had_graph_mutation, neighbors) = deindex(wtxn, &asset_id)?;
             ppr::invalidate_ppr_for_delete(store, wtxn, &asset_id, &neighbors)?;
             cleanup.had_vector |= had_vector;
             cleanup.had_graph_mutation |= had_graph_mutation;
@@ -125,9 +213,13 @@ pub(super) fn release_bytes_of_deleted_artifact(
     wtxn: &mut RwTxn<'_>,
     artifact: &EntityId,
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+    deindex: &dyn Fn(
+        &mut heed::RwTxn<'_>,
+        &EntityId,
+    ) -> crate::error::Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> Result<()> {
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
-    release_unheld_bytes(store, wtxn, content_hash, artifact, &mut cleanup)?;
+    release_unheld_bytes(store, wtxn, content_hash, artifact, &mut cleanup, deindex)?;
     if cleanup.had_graph_mutation {
         crate::store::graph_version::increment_graph_version(store, wtxn)?;
     }
@@ -147,11 +239,15 @@ pub(crate) fn release_asset_reference_in_txn(
     wtxn: &mut RwTxn<'_>,
     reference: &EntityId,
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+    deindex: &dyn Fn(
+        &mut heed::RwTxn<'_>,
+        &EntityId,
+    ) -> crate::error::Result<(bool, bool, bool, Vec<EntityId>)>,
 ) -> Result<()> {
     if !ASSET_REF.delete(store, wtxn, &(*content_hash, *reference))? {
         return Ok(());
     }
-    release_bytes_of_deleted_artifact(store, wtxn, reference, content_hash)
+    release_bytes_of_deleted_artifact(store, wtxn, reference, content_hash, deindex)
 }
 
 /// Holds the bytes under `content_hash` again for the ASSET that just landed
@@ -189,12 +285,69 @@ pub(crate) fn hold_asset_reference_in_txn(
 ///
 /// Storage errors.
 pub(crate) fn release_response_version_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     artifact: &EntityId,
     version: u64,
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 ) -> Result<()> {
+    release_version_in_txn(write, wtxn, artifact, version, content_hash, true)
+}
+
+/// Releases a native provider archive's privately captured version. The
+/// ledger claim must still be the exact captured claim. Unlike a fresh
+/// response artifact, a provider archive has a deterministic id: its empty
+/// metadata row stays, so a later native append can use the high-water
+/// number without colliding with a permanent artifact tombstone.
+pub(crate) fn release_archive_version_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+    version: u64,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+    version_claim: &EntityId,
+) -> Result<()> {
+    if !archive_version_stands_in_txn(
+        write.store,
+        wtxn,
+        artifact,
+        version,
+        content_hash,
+        version_claim,
+    )? {
+        return Ok(());
+    }
+    release_version_in_txn(write, wtxn, artifact, version, content_hash, false)
+}
+
+/// Whether the immutable local archive version still names the exact
+/// ledger claim captured by its native producer. HEAD is irrelevant.
+pub(crate) fn archive_version_stands_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+    version: u64,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+    version_claim: &EntityId,
+) -> Result<bool> {
+    Ok(VERSIONS
+        .get(store, txn, &(*artifact, version))?
+        .is_some_and(|record| {
+            record.version == version
+                && record.content_hash == *content_hash
+                && record.claim_id == *version_claim
+        }))
+}
+
+fn release_version_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+    version: u64,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+    remove_empty_artifact: bool,
+) -> Result<()> {
+    let store = write.store;
     let Some(record) = VERSIONS.get(store, wtxn, &(*artifact, version))? else {
         return Ok(());
     };
@@ -226,12 +379,19 @@ pub(crate) fn release_response_version_in_txn(
             }
         }
     }
-    tear_in_txn(store, wtxn, &record.claim_id, &mut cleanup)?;
+    tear_in_txn(write, wtxn, &record.claim_id, &mut cleanup)?;
     crate::artifact_hosting::retire_released_version_in_txn(store, wtxn, artifact, version)?;
     if !chain_holds(store, wtxn, artifact, content_hash)? {
         ASSET_REF.delete(store, wtxn, &(*content_hash, *artifact))?;
         if forget_released_pair_in_txn(store, wtxn, artifact, content_hash)? {
-            release_unheld_bytes(store, wtxn, content_hash, artifact, &mut cleanup)?;
+            release_unheld_bytes(
+                store,
+                wtxn,
+                content_hash,
+                artifact,
+                &mut cleanup,
+                &|txn, id| crate::batch::deindex_entity(write, txn, id),
+            )?;
         }
     }
     let emptied = VERSIONS
@@ -241,8 +401,8 @@ pub(crate) fn release_response_version_in_txn(
         .is_none()
         && !claimed_hash_rows_exist(store, wtxn, artifact)?
         && !retained_claim_names(store, wtxn, artifact, None)?;
-    if emptied {
-        tear_in_txn(store, wtxn, artifact, &mut cleanup)?;
+    if remove_empty_artifact && emptied {
+        tear_in_txn(write, wtxn, artifact, &mut cleanup)?;
     }
     if cleanup.had_graph_mutation {
         crate::store::graph_version::increment_graph_version(store, wtxn)?;
@@ -295,14 +455,15 @@ fn chain_holds(
 /// rode, takes the copies peers hold. Neither id is minted again: a
 /// response artifact's is fresh, and HIGHWATER keeps a version's number.
 fn tear_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     cleanup: &mut BlobArtifactLifecycleCleanup,
 ) -> Result<()> {
+    let store = write.store;
     let raw = crate::ports::EntityStoreRead::port_entity_raw(store, &*wtxn, id)?;
     let (_existed, had_vector, had_graph_mutation, neighbors) =
-        crate::batch::deindex_entity_with_machine_history(store, wtxn, id)?;
+        crate::batch::deindex_entity_with_machine_history(write, wtxn, id)?;
     ppr::invalidate_ppr_for_delete(store, wtxn, id, &neighbors)?;
     cleanup.had_vector |= had_vector;
     cleanup.had_graph_mutation |= had_graph_mutation;

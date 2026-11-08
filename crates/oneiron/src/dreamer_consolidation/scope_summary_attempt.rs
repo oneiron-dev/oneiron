@@ -43,6 +43,10 @@ mod arc_chunks;
 mod arc_claims;
 mod arc_compose;
 mod arc_evidence;
+mod arc_open_apply;
+mod arc_open_backend;
+mod arc_open_questions;
+mod arc_open_runtime;
 mod arc_output;
 mod arc_part_merge;
 mod arc_reduce;
@@ -51,8 +55,11 @@ mod arc_synopsis;
 mod arc_turns;
 mod chunks;
 mod durable_labels;
+mod host;
 mod output;
 mod window;
+
+use window::summary_input;
 
 pub(crate) use arc_evidence::arc_evidence_in_txn;
 
@@ -70,41 +77,18 @@ pub struct ScopeSummaryExecutor<'a, E> {
     /// The tokens one call's input may fill on `model`, as the host counts
     /// them (FIX 7509 P7b); `None` reads the vault's own row for the model.
     window_tokens: Option<u64>,
-}
-
-impl<'a, E> ScopeSummaryExecutor<'a, E> {
-    #[must_use]
-    pub fn new(
-        inner: E,
-        backend: &'a dyn LlmBackend,
-        guard: &'a BudgetGuard,
-        actor: WriteActor,
-        model: ModelId,
-        inference: HostInferenceContext<'a>,
-        instruction: Option<&'a str>,
-    ) -> Self {
-        Self {
-            inner,
-            backend,
-            guard,
-            actor,
-            model,
-            inference,
-            instruction,
-            window_tokens: None,
-        }
-    }
-
-    /// The tokens one call's input may fill on the model, lent by the host
-    /// (FIX 7509 P7b): a sitting too big for one call pages its TURNs to it.
-    #[must_use]
-    pub fn with_window_tokens(mut self, window_tokens: Option<u64>) -> Self {
-        self.window_tokens = window_tokens;
-        self
-    }
+    arc_decisions: Option<(super::executor::ConsolidationDecisions, super::RoleBackends)>,
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ScopeSummaryExecutor<'_, E> {
+    fn runs_coach_host_jobs(&self) -> bool {
+        self.inner.runs_coach_host_jobs()
+    }
+
+    fn runs_coach_heals(&self) -> bool {
+        self.inner.runs_coach_heals()
+    }
+
     async fn execute_partition_window<'w>(
         &mut self,
         window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
@@ -146,7 +130,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         if ctx.vault.composed_scope_summary_landed(attempt_id)? {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         // A queued summary for a conversation excluded after it was requested
@@ -214,7 +198,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         {
             return Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
-                step_hashes: Vec::new(),
+                step_bindings: Vec::new(),
             });
         }
         let Some(first) = evidence.covers.first().copied() else {
@@ -223,7 +207,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             if plan.session.is_some() {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: 0,
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             }
             return Err(invalid_consolidation("summary scope has no text"));
@@ -245,13 +229,21 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         // A sitting too big for one call on its model's known window pages
         // its TURNs (FIX 7509 P7b, Rule 5); one that fits, or whose window
         // is unknown, is the one call below, byte for byte.
-        if labels.is_some()
-            && let Some(window) = self.session_window(ctx.vault)
+        let session_window = labels.as_ref().and_then(|_| self.session_window(ctx.vault));
+        if let Some(window) = session_window
             && window::framed_tokens(instruction, &summary_input(&plan, &evidence.text)?, &schema)?
                 > window
         {
             return self
-                .compose_pages(attempt, ctx, &plan, &evidence, instruction, window)
+                .compose_pages(
+                    attempt,
+                    ctx,
+                    &plan,
+                    &evidence,
+                    instruction,
+                    window,
+                    StepChargeTally::default(),
+                )
                 .await;
         }
         let params = serde_json::to_vec(&(instruction, self.model.as_str(), &schema))
@@ -271,7 +263,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Ok(true) => {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: 0,
-                    step_hashes: Vec::new(),
+                    step_bindings: Vec::new(),
                 });
             }
             Ok(false) => {}
@@ -325,11 +317,17 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         .await
         {
             Ok(StepOutcome::Finished {
-                response, memoized, ..
+                response,
+                memoized,
+                binding,
+                ..
             }) => {
-                if let Err(error) =
-                    charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
-                {
+                if let Err(error) = charges.record_terminal(
+                    ctx.vault,
+                    binding.attempt_id,
+                    binding.step_hash,
+                    &response.usage,
+                ) {
                     if !memoized {
                         charges.record_usage(&response.usage);
                     }
@@ -378,7 +376,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 {
                     charges.record_usage(usage);
                 }
-                ctx.note_spend_before_error(charges.units, &charges.step_hashes);
+                if window::correction_overflow(&other)
+                    && let Some(window) = session_window.and_then(window::smaller_window)
+                {
+                    return self
+                        .compose_pages(attempt, ctx, &plan, &evidence, instruction, window, charges)
+                        .await;
+                }
+                ctx.note_spend_before_error(charges.units, &charges.step_bindings);
                 return Ok(DreamerAttemptExecution::Park {
                     reason: other.to_string(),
                     cause: DreamerParkCause::of_step(&other),
@@ -422,7 +427,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         {
             Ok(_) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             }),
             Err(Error::ConcurrentWrite(_)) => Ok(compose_again(&charges, ctx.now_ms)),
             // A source demoted while the model wrote waits for its promotion,
@@ -430,7 +435,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Err(error) if waits_on_residency(&error) => Ok(residency_deferral(
                 ctx.now_ms,
                 charges.units,
-                charges.step_hashes.clone(),
+                charges.step_bindings.clone(),
             )),
             // A refusal at the landing door (the requester's gate, a landing
             // turn gone) is this declaration's end; the paid call still settles.
@@ -455,6 +460,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             .selected_locality()
             .ok_or_else(|| Error::InvalidConfig("summary host binding needs locality".into()))?;
         let keyless = self.inference.selected_keyless();
+        let paid = self.inference.selected_paid();
         let request = LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
@@ -476,6 +482,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 response_format: ResponseFormat::Json { schema },
                 locality,
                 host_keyless: keyless,
+                host_paid: paid,
             }
             .with_purpose_defaults(),
             messages: vec![
@@ -507,18 +514,6 @@ impl<E> ScopeSummaryExecutor<'_, E> {
     }
 }
 
-/// The input one summary call reads: the declaration's purpose, the editor's
-/// `keep`, the body it revises and the `records`, as one JSON object.
-fn summary_input(plan: &ScopeSummaryPlan, records: &str) -> Result<String> {
-    serde_json::to_string(&serde_json::json!({
-        "purpose": plan.purpose,
-        "keep": plan.keep,
-        "editor_text": plan.editor_text,
-        "records": records,
-    }))
-    .map_err(|_| invalid_consolidation("summary input encoding"))
-}
-
 /// How long a declaration whose scope moved waits before it composes again.
 const SCOPE_DRIFT_RETRY_SECS: u64 = 60;
 
@@ -530,7 +525,7 @@ fn compose_again(charges: &StepChargeTally, now_ms: u64) -> DreamerAttemptExecut
         retry_at: now_ms
             .div_ceil(1_000)
             .saturating_add(SCOPE_DRIFT_RETRY_SECS),
-        step_hashes: charges.step_hashes.clone(),
+        step_bindings: charges.step_bindings.clone(),
     }
 }
 

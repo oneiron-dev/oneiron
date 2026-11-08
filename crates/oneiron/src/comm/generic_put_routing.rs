@@ -19,6 +19,7 @@ use super::claims::{
 };
 use super::consent::OPT_OUT_REASON_STOP;
 use super::descriptor::claim_class_descriptor_in_txn;
+use super::head_admission::{HeadAdmission, ProjectedHeadAdmission};
 use super::projector::{RecordedEventProjection, put_source_event_in_txn};
 use super::records::CommEventKind;
 use crate::Vault;
@@ -50,22 +51,24 @@ enum CommPutRoute {
 }
 
 /// The source event a routed put records on its party, for the projector.
-struct CommSourceEvent {
-    party_ref: EntityId,
-    kind: CommEventKind,
-    channel_class: Option<String>,
+pub(super) struct CommSourceEvent {
+    pub(super) party_ref: EntityId,
+    pub(super) kind: CommEventKind,
+    pub(super) channel_class: Option<String>,
     thread_ref: Option<String>,
-    occurred_at: u64,
+    pub(super) occurred_at: u64,
 }
 
 impl CommSourceEvent {
     /// Records this event in `wtxn` and projects it there through
     /// `projection`, which notes the event and the heads its rule writes.
-    fn record_in_txn(
+    pub(super) fn record_in_txn(
         &self,
         vault: &Vault,
         wtxn: &mut heed::RwTxn<'_>,
         projection: &mut RecordedEventProjection,
+        admission: &mut HeadAdmission<'_>,
+        later_born_heads: Option<&BTreeSet<EntityId>>,
     ) -> Result<()> {
         let event_id = put_source_event_in_txn(
             vault,
@@ -78,7 +81,14 @@ impl CommSourceEvent {
         )
         .map_err(source_event_error)?;
         projection
-            .project_in_txn(vault, wtxn, event_id, self.kind)
+            .project_in_txn(
+                vault,
+                wtxn,
+                event_id,
+                self.kind,
+                admission,
+                later_born_heads,
+            )
             .map_err(source_event_error)
     }
 }
@@ -116,12 +126,18 @@ pub fn route_projector_only_comm_put_in_txn(
         return Ok(false);
     }
     let data = encode_claim_body(body)?;
-    match comm_put_route_in_txn(vault, wtxn, id, &body.predicate, &data)? {
+    match comm_put_route_in_txn(vault, wtxn, id, &body.predicate, &data, false)? {
         CommPutRoute::Door => Ok(false),
         CommPutRoute::Projector(event) => {
             if let Some(event) = event {
                 let mut projection = RecordedEventProjection::default();
-                event.record_in_txn(vault, wtxn, &mut projection)?;
+                event.record_in_txn(
+                    vault,
+                    wtxn,
+                    &mut projection,
+                    &mut HeadAdmission::default(),
+                    None,
+                )?;
                 // The source event and the rows its projection wrote go to
                 // the live-window mirror when the caller's write commits.
                 #[cfg(feature = "sync")]
@@ -139,9 +155,20 @@ pub fn route_projector_only_comm_put_in_txn(
 /// of its ops for the projector: the source events they record, in op order.
 pub(crate) struct RoutedBatchPuts {
     events: Vec<CommSourceEvent>,
+    inputs: Vec<(EntityId, ClaimBody)>,
+    born_touches: super::born_touch::DeferredBornTouches,
 }
 
 impl RoutedBatchPuts {
+    pub(crate) fn take_born_touches(&mut self) -> super::born_touch::DeferredBornTouches {
+        std::mem::take(&mut self.born_touches)
+    }
+
+    /// Original validated CLAIM bodies, including source-only routed acts.
+    pub(crate) fn inputs(&self) -> &[(EntityId, ClaimBody)] {
+        &self.inputs
+    }
+
     /// Records each routed put's source event in `wtxn` and projects it
     /// there, in op order against one pass index; an event the projector's
     /// pass would leave waiting stays pending for that pass. Returns the ids
@@ -154,9 +181,23 @@ impl RoutedBatchPuts {
         vault: &Vault,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> Result<BTreeSet<EntityId>> {
+        self.record_with_admission_in_txn(vault, wtxn, None)
+    }
+
+    /// A bound batch keeps its existing actor/read checks on actual heads.
+    pub(crate) fn record_with_admission_in_txn(
+        self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+        admission: Option<&mut dyn ProjectedHeadAdmission>,
+    ) -> Result<BTreeSet<EntityId>> {
+        let mut admission = match admission {
+            Some(bound) => HeadAdmission::bound(bound),
+            None => HeadAdmission::default(),
+        };
         let mut projection = RecordedEventProjection::default();
         for event in &self.events {
-            event.record_in_txn(vault, wtxn, &mut projection)?;
+            event.record_in_txn(vault, wtxn, &mut projection, &mut admission, None)?;
         }
         Ok(projection.into_written())
     }
@@ -200,6 +241,27 @@ pub(crate) fn take_projector_only_batch_puts_in_txn(
     txn: &heed::RoTxn<'_>,
     ops: &mut Vec<BatchOp>,
 ) -> Result<Option<RoutedBatchPuts>> {
+    take_batch_puts_in_txn(vault, txn, ops, None)
+}
+
+/// Bound born touches keep their native row write and defer projection until
+/// that row and birth are staged. Other births and noncanonical scope keep the
+/// ordinary raw path.
+pub(crate) fn take_projector_only_batch_puts_preserving_births_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    ops: &mut Vec<BatchOp>,
+    births: &[(EntityId, crate::provenance::birth::RowBirth)],
+) -> Result<Option<RoutedBatchPuts>> {
+    take_batch_puts_in_txn(vault, txn, ops, Some(births))
+}
+
+fn take_batch_puts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    ops: &mut Vec<BatchOp>,
+    bound_births: Option<&[(EntityId, crate::provenance::birth::RowBirth)]>,
+) -> Result<Option<RoutedBatchPuts>> {
     let candidates: Vec<(usize, String)> = ops
         .iter()
         .enumerate()
@@ -228,27 +290,69 @@ pub(crate) fn take_projector_only_batch_puts_in_txn(
     for op in ops.iter() {
         note_named_ids(op, |id| *mentions.entry(id).or_default() += 1);
     }
-    let mut events = Vec::new();
+    let mut inputs = Vec::new();
     let mut routed = BTreeSet::new();
+    let mut born_touches = super::born_touch::DeferredBornTouches::default();
     for (index, predicate) in candidates {
         let BatchOp::Put { id, data, .. } = &ops[index] else {
             continue;
         };
-        if mentions.get(id) != Some(&1) {
+        let birth = bound_births.and_then(|births| {
+            births
+                .iter()
+                .find(|(row, _)| row == id)
+                .map(|(_, birth)| birth)
+        });
+        if mentions.get(id) != Some(&1)
+            || (birth.is_some() && predicate != PREDICATE_COMM_LAST_TOUCH)
+        {
             continue;
         }
         if let CommPutRoute::Projector(event) =
-            comm_put_route_in_txn(vault, txn, id, &predicate, data)?
+            comm_put_route_in_txn(vault, txn, id, &predicate, data, birth.is_some())?
         {
-            events.extend(event);
+            let body = crate::claim::validate_claim_body_and_decode_in_txn(
+                &vault.store,
+                txn,
+                data,
+                false,
+            )?;
+            if bound_births.is_some() {
+                let projected = CommClaim::from_claim_body(&body)?.value.claim_body()?;
+                let same_world = body.world.unwrap_or_else(crate::claim::base_world_id)
+                    == projected.world.unwrap_or_else(crate::claim::base_world_id);
+                let scoped_born_touch = birth.is_some() && predicate == PREDICATE_COMM_LAST_TOUCH;
+                if (!same_world && !scoped_born_touch)
+                    || !super::scoped_touch::same_touch_context_except_world(&body, &projected)
+                {
+                    continue;
+                }
+            }
+            if let Some(birth) = birth {
+                if let Some(event) = event
+                    && event.kind == CommEventKind::TouchAsserted
+                {
+                    born_touches.push(*id, data, birth, event);
+                }
+                continue;
+            }
+            inputs.push((*id, body));
+            if let Some(event) = event {
+                born_touches.push_routed(event);
+            }
             routed.insert(*id);
         }
     }
-    if routed.is_empty() {
+    if routed.is_empty() && born_touches.is_empty() {
         return Ok(None);
     }
+    let (events, born_touches) = born_touches.split_prefix_events();
     ops.retain(|op| !leaves_with_routed_put(op, &routed));
-    Ok(Some(RoutedBatchPuts { events }))
+    Ok(Some(RoutedBatchPuts {
+        events,
+        inputs,
+        born_touches,
+    }))
 }
 
 /// Where one generic put of `data`, a body of the routed class `predicate`,
@@ -260,6 +364,7 @@ fn comm_put_route_in_txn(
     id: &EntityId,
     predicate: &str,
     data: &[u8],
+    preserve_original: bool,
 ) -> Result<CommPutRoute> {
     if !claim_class_descriptor_in_txn(&vault.store, txn, predicate)?
         .is_some_and(|descriptor| descriptor.projector_only)
@@ -267,7 +372,8 @@ fn comm_put_route_in_txn(
         return Ok(CommPutRoute::Door);
     }
     let body = crate::claim::validate_claim_body_and_decode_in_txn(&vault.store, txn, data, false)?;
-    if let Some(resident) = vault.store.port_entity_record(txn, id)?
+    if !preserve_original
+        && let Some(resident) = vault.store.port_entity_record(txn, id)?
         && resident.entity_type == ENTITY_TYPE_CLAIM
         && resident.body == data[..]
     {
@@ -341,7 +447,7 @@ fn comm_put_route_in_txn(
     }
 }
 
-fn source_event_error(error: CommError) -> Error {
+pub(super) fn source_event_error(error: CommError) -> Error {
     match error {
         CommError::Engine(error) => error,
         _ => Error::InvalidClaimBody("comm source event refused"),

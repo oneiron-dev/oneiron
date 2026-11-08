@@ -36,7 +36,7 @@
 //! projection reads back through the same checks as any archive. Row order
 //! is kept.
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, BufReader, Cursor, Read, Write};
+use std::io::{BufRead, BufReader, Read, Seek, Write};
 
 use serde_json::Value;
 
@@ -46,11 +46,12 @@ use super::bundle_validation::{agent_omission_reason, provenance_subject_key};
 use super::{
     AgentBundleOmission, ArchiveRecordFile, ArchiveRecordKind, ArchiveSideRow,
     BundleOmissionReason, ExportBundleOmission, ExportEdge, ExportEntity, ExportImportRefusal,
-    VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest, archive_file_path,
+    ExportRowBirth, VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest, archive_file_path,
 };
 use crate::batch::export::agent_knowledge_format::KnowledgeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::provenance::birth::WithheldKey;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::serialize::ExportBodyFile;
 use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body};
@@ -115,9 +116,11 @@ const FILE_DESCRIPTOR_FIELDS: &[(ArchiveRecordKind, &[&str])] = &[
 /// The fields naming the record a member's row is of, as the export writer
 /// writes them: an entity's `id`, a skill bundle's `entity.id`, an edge's two
 /// ends, a pack source's and an agent bundle's `entity_id`, a derivation
-/// envelope's claim `id`, a run's `run_id`, a custody record's `id` and an
-/// epoch floor's `session`. A side row is not listed: it goes with the record
-/// its table reads from it, judged with its group ([`project_side_rows`]).
+/// envelope's claim `id`, a run's `run_id`, a custody record's `id`, a row
+/// birth's born row `id` (REVIEW-4378 P1: the birth follows its row, never
+/// the facet text it also names), and an epoch floor's `session`. A side row
+/// is not listed: it goes with the record its table reads from it, judged
+/// with its group ([`project_side_rows`]).
 const ROW_IDENTITY_FIELDS: &[(ArchiveRecordKind, &[&str])] = &[
     (ArchiveRecordKind::Entity, &["id"]),
     (ArchiveRecordKind::Claim, &["id"]),
@@ -129,6 +132,7 @@ const ROW_IDENTITY_FIELDS: &[(ArchiveRecordKind, &[&str])] = &[
     (ArchiveRecordKind::DerivationEnvelope, &["id"]),
     (ArchiveRecordKind::Run, &["run_id"]),
     (ArchiveRecordKind::SecretCustody, &["id"]),
+    (ArchiveRecordKind::RowBirth, &["id"]),
     (ArchiveRecordKind::EpochFloor, &["session"]),
 ];
 
@@ -142,13 +146,17 @@ enum RowFate {
 }
 
 /// The archive `archive`, cut from the records `archived`, holding only what
-/// `kept` (a subset of them) leaves it, as this module says.
-pub(crate) fn project_stored_archive(
-    archive: &[u8],
+/// `kept` (a subset of them) leaves it, as this module says, written into
+/// `sink` from its current position and returned with it. Neither archive is
+/// held whole (FIX 21529): the stored one is read member by member where it
+/// lies, and the projection is written through as it is built.
+pub(crate) fn project_stored_archive<R: Read + Seek, W: Write + Seek>(
+    archive: R,
     archived: &BTreeSet<EntityId>,
     kept: &BTreeSet<EntityId>,
-) -> Result<Vec<u8>> {
-    let mut source = zip::ZipArchive::new(Cursor::new(archive)).map_err(|_| invalid())?;
+    sink: W,
+) -> Result<W> {
+    let mut source = zip::ZipArchive::new(archive).map_err(|_| invalid())?;
     let mut manifest: WholeVaultDocumentManifest = {
         let mut member = source
             .by_name(VAULT_ARCHIVE_MANIFEST_PATH)
@@ -272,22 +280,41 @@ pub(crate) fn project_stored_archive(
             members[at][row].0 = serde_json::to_vec(&rebuilt).map_err(|_| invalid())?;
         }
     }
-    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let mut out = zip::ZipWriter::new(sink);
     let options = zip::write::FileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .large_file(true);
+    // Blind-review P1: one fresh key for every surviving birth this
+    // projection writes. A kept birth naming a dropped row must leave that
+    // ref as a handle, never a raw id, as a fresh export of the kept set
+    // masks it (the transfer and the erase cut share this path).
+    let mut birth_key: Option<WithheldKey> = None;
     let mut bodies = Vec::with_capacity(members.len());
     for (record, rows) in manifest.records.iter_mut().zip(members) {
         let mut body = Vec::new();
         let mut count = 0_u64;
         for (line, fate) in rows {
+            let birth_row = matches!(fate, RowFate::Keep);
             let stays = match fate {
                 RowFate::Keep => true,
                 RowFate::Drop => false,
                 RowFate::ByFiles(files) => files.iter().any(|file| referenced.contains(file)),
             };
             if stays {
-                body.extend_from_slice(&line);
+                if record.kind == ArchiveRecordKind::RowBirth && birth_row {
+                    let key = birth_key.get_or_insert_with(WithheldKey::for_export);
+                    let carried: ExportRowBirth =
+                        serde_json::from_slice(&line).map_err(|_| invalid())?;
+                    let birth = carried.birth.masked(|row| kept.contains(row), key);
+                    let line = serde_json::to_vec(&ExportRowBirth {
+                        id: carried.id,
+                        birth,
+                    })
+                    .map_err(|_| invalid())?;
+                    body.extend_from_slice(&line);
+                } else {
+                    body.extend_from_slice(&line);
+                }
                 body.push(b'\n');
                 count += 1;
             }
@@ -317,13 +344,13 @@ pub(crate) fn project_stored_archive(
             .map_err(|_| invalid())?;
         std::io::copy(&mut member, &mut out)?;
     }
-    Ok(out.finish().map_err(|_| invalid())?.into_inner())
+    out.finish().map_err(|_| invalid())
 }
 
 /// The archive file `file` names, read whole and checked against its length
 /// and BLAKE3.
-fn archived_file(
-    source: &mut zip::ZipArchive<Cursor<&[u8]>>,
+fn archived_file<R: Read + Seek>(
+    source: &mut zip::ZipArchive<R>,
     file: &ExportBodyFile,
 ) -> Result<Vec<u8>> {
     let mut member = source

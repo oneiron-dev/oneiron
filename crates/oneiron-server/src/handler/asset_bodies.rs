@@ -69,6 +69,9 @@ pub(super) async fn handle(
             )?);
             Ok::<_, TransportError>(out)
         });
+        if matches!(&followed, Followed::Live(_)) {
+            bodies.retry_own_device_positions(&manager);
+        }
         (bodies, frames, followed)
     })
     .await
@@ -110,6 +113,9 @@ pub(super) fn poll(
             )
         },
     );
+    if matches!(&followed, Followed::Live(_)) {
+        bodies.retry_own_device_positions(&server.reassert_manager);
+    }
     hold_used(state, followed);
     match polled {
         Ok(frames) => {
@@ -207,6 +213,7 @@ fn with_peer<T>(
         materializer: manager.materializer(),
         window: &window,
         windows: &windows,
+        home: None,
     })
 }
 

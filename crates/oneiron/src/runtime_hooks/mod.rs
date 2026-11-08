@@ -1,7 +1,8 @@
 //! Runtime hooks (ARCH-0080). Slice 1: fact hooks that run after a write
 //! commits, on their own runner. Slice 2 (`verb`): verb hooks inside a call.
 //!
-//! The runner follows the claim changelog and the settlement feed through
+//! The runner follows the claim changelog, the settlement feed, the tick
+//! feed of due TASKs and the inbound surface-event feed (FIX 4749) through
 //! typed per-binding cursors. Rust filters each fact, under the hook's own
 //! grant, before any sandbox starts. Each run is keyed by its derivation
 //! envelope: its memo row, local outcomes, Hook receipt, saved intents and
@@ -44,7 +45,7 @@ pub use outcome::{
     BlockRequest, EnqueuedDreamer, EnqueuedTask, HookOutcome, ProposedClaim, ProposedEdge,
     ProposedNote,
 };
-pub use read::grant_view::hook_evidence_views;
+pub use read::grant_view::{hook_evidence_views, hook_pull_image};
 pub(crate) use regen::note_bound_hook_in_txn;
 pub use regen::{
     HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookRegenFailure,
@@ -65,14 +66,16 @@ pub(crate) use scope::HookScope;
 pub(crate) use source::record_settlement_in_txn;
 pub(crate) use source::record_timeout_demotion_in_txn;
 pub use source::{
-    ClaimChangelogPosition, FactKind, FactPosition, FactPositionHex, FactSource, SettledFact,
-    SettledOutcome, SettlementKind, SettlementPosition,
+    ClaimChangelogPosition, FactKind, FactPosition, FactPositionHex, FactSource, SchedulePosition,
+    SettledFact, SettledOutcome, SettlementKind, SettlementPosition, SurfaceInboundPosition,
 };
+pub(crate) use source::{index_task_due_in_txn, record_surface_inbound_in_txn};
 pub(crate) use store::{
     hook_receipts, hook_run_read_rows, scrub_hook_source_in_txn, sync_binding_cursor_in_txn,
 };
 pub use verb::{
-    InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookPreSnapshot, VerbHookStop, hook_class,
+    InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookPreSnapshot,
+    VerbHookStop, hook_class,
 };
 pub(crate) use verb::{VerbResume, verb_ask_settled_in_txn};
 

@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError, RwLock};
 
+use oneiron::llm::model_pack::AccessSnapshot;
 use oneiron::{LlmCatalogEntry, ModelId, ModelLocality};
 
 use super::ladder::OfferLadder;
@@ -29,6 +30,11 @@ pub struct ModelRouter {
     aliases: BTreeMap<String, ModelId>,
     /// Each chat model's catalog entry, as the owner's other nodes see it.
     entries: BTreeMap<ModelId, LlmCatalogEntry>,
+    /// The on-device view of each configured model or seat a managed worker
+    /// this server supervises serves over its native channel (I2-LOCAL): the
+    /// ladder a call routed on device takes, which never sends anywhere
+    /// else. Its default route, in `routes`, keeps every other transport.
+    on_device: BTreeMap<ModelId, Arc<OfferLadder>>,
 }
 
 impl ModelRouter {
@@ -39,6 +45,33 @@ impl ModelRouter {
         ladder: Arc<OfferLadder>,
     ) {
         self.routes.insert(model, (locality, ladder));
+    }
+
+    /// Records `ladder` as `model`'s on-device view: a ladder that sends
+    /// only over supervised native channels ([`OfferLadder::native_local`]).
+    /// Any other ladder is left out, so this view never names a transport
+    /// that can leave the device.
+    pub(super) fn insert_on_device(&mut self, model: ModelId, ladder: Arc<OfferLadder>) {
+        if ladder.native_local() {
+            self.on_device.insert(model, ladder);
+        }
+    }
+
+    /// Where `model` runs and the ladder that serves it for a call routed at
+    /// `route` (I2-LOCAL): on device, its on-device view when it has one;
+    /// at any other route, or with no such view, [`Self::served`]. The
+    /// caller still compares the locality with the route it asked for.
+    pub(crate) fn served_at(
+        &self,
+        model: &ModelId,
+        route: ModelLocality,
+    ) -> Option<(ModelLocality, Arc<OfferLadder>)> {
+        if route == ModelLocality::OnDevice
+            && let Some(ladder) = self.on_device.get(model)
+        {
+            return Some((ModelLocality::OnDevice, Arc::clone(ladder)));
+        }
+        self.served(model)
     }
 
     /// Records `model`, served alone by its own id, as a chat model of
@@ -119,6 +152,33 @@ impl ModelRouter {
                 .map(|(model, (locality, _))| (model.clone(), *locality)),
         );
         served
+    }
+
+    /// The access this router's offers hold now, each with the models it
+    /// serves by their own id, configured or mesh-discovered, as
+    /// [`Self::served`] finds them, and on device, as [`Self::served_at`]
+    /// finds them there (FIX 5366): what a vault's model pack picks a role's
+    /// variant from. A local GPU is held only by an on-device view's offers
+    /// ([`oneiron::llm::model_pack::model_pack_access_for`]). Read from the
+    /// host-bound offers alone; nothing is probed. A seat's rungs, reached
+    /// only through the seat, are left out.
+    pub fn access_snapshot(&self) -> AccessSnapshot {
+        let mut snapshot = AccessSnapshot::new();
+        let discovered = self.discovered();
+        let ladders = self
+            .routes
+            .iter()
+            .chain(discovered.iter())
+            .map(|(model, (_, ladder))| (model, ladder))
+            .chain(self.on_device.iter());
+        for (model, ladder) in ladders {
+            for offer in ladder.offer_bindings() {
+                if offer.model == *model {
+                    snapshot.insert_offer(offer);
+                }
+            }
+        }
+        snapshot
     }
 
     /// Each model the last mesh catalog refresh found, with the machine id

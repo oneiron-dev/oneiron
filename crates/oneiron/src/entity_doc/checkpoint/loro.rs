@@ -9,10 +9,13 @@
 //! actor did not open reads as no one, never as an actor some binding of its
 //! peer names (Engine R2).
 //!
-//! A fork snapshot is a group of its own. A shallow one, as the live writer
-//! keeps every one, stays under the vault-wide seal (Engine R3), and so does
-//! a pending fork's: its record goes when its opener does not open, so its
-//! snapshot is never kept without it (Engine and lead pick).
+//! A fork snapshot is a group of its own, shallow as the live writer keeps
+//! every one. A shallow one that names no one, in its birth, its kept
+//! commits or any state, is its own no-one form and is kept as stored (FIX
+//! 6442); one that names an actor stays under the vault-wide seal (Engine
+//! R3), and so does a pending fork's whose record is not beside it: that
+//! record goes when its opener does not open, so its snapshot is never kept
+//! without it (Engine and lead pick).
 
 use ::loro::{ContainerID, ContainerType, JsonOp, JsonOpContent, LoroValue};
 
@@ -24,7 +27,7 @@ use super::{hex_id, message_receipts};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::checkpoint_payload::loro::{
-    self as shared, LoroActorCodec, OpenedRow, SHALLOW, Split, SplitRow, SplitValue,
+    self as shared, LoroActorCodec, OpenedRow, Split, SplitRow, SplitValue,
 };
 use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OwnerRef, RoundTripPolicy, TypedRow, Unresolved,
@@ -47,9 +50,9 @@ const NOT_A_STAMP: &str = "an entity document commit message that is no engine s
 const BIRTH_UNREAD: &str = "an entity document birth that does not spell back";
 /// An operation outside the entity document's body and metadata.
 const OUTSIDE_SCHEMA: &str = "an entity document operation outside its body and metadata";
-/// A pending fork's snapshot, whose record goes when its opener does not
-/// open.
-const PENDING_FORK: &str = "a pending fork's snapshot, whose record goes with its opener";
+/// A pending fork's snapshot whose record did not split beside it: their
+/// restore could not drop the two together when the opener does not open.
+const PENDING_FORK: &str = "a pending fork's snapshot, whose record is not beside it";
 
 /// The entity document's actor carriers.
 struct EntityDocActors;
@@ -182,13 +185,17 @@ pub(crate) fn join(rows: &[OpenedRow<'_>]) -> Result<Vec<Vec<u8>>> {
     Ok(shared::join_loro(rows, &EntityDocActors)?.rows)
 }
 
-/// Refuses `bytes` unless it is a full entity document snapshot whose birth
-/// names `owner`, when an owner is given.
+/// Refuses `bytes` unless it is an entity document snapshot a split keeps
+/// whose birth names `owner`, when an owner is given: a full one, or a
+/// shallow one that names no one (FIX 6442).
 pub(super) fn check_snapshot(bytes: &[u8], owner: Option<&EntityId>) -> Result<()> {
     let doc = EntityDoc::from_snapshot(bytes)?;
     let owned = owner.is_none_or(|owner| doc.birth().entity == owner.to_hex());
-    if doc.doc.is_shallow() || !owned {
+    if !owned {
         return Err(rows::bad_part());
+    }
+    if doc.doc.is_shallow() {
+        shared::shallow_names_no_one(bytes, &EntityDocActors).map_err(|_| rows::bad_part())?;
     }
     Ok(())
 }
@@ -202,18 +209,24 @@ pub(super) fn check_update(bytes: &[u8]) -> Result<()> {
     }
 }
 
-/// One fork snapshot, under its fork's entity: a settled fork's full
-/// history splits as a group of its own; a shallow one and a pending fork's
-/// stay under the vault-wide seal, named with that entity.
+/// One fork snapshot, under its fork's entity: it splits as a group of its
+/// own, a pending fork's only when its record split beside it (`beside`), so
+/// their restore drops both together when the opener does not open (FIX
+/// 6443). A shallow one splits only when it names no one, as its own no-one
+/// form (FIX 6442). One that names an actor, and a pending fork's whose
+/// record is not beside it, stay under the vault-wide seal, named with that
+/// entity.
 pub(super) fn capture_fork_snapshot(
     out: &mut Captured,
     entity: EntityId,
     status: ForkStatus,
     base: &[u8],
+    beside: bool,
     row: TypedRow<String, Vec<u8>>,
 ) {
     let owner = OwnerRef::entity(&entity);
-    let shape = fork_shape(&row.bytes, &entity, status, base);
+    let apart = status == ForkStatus::Pending && !beside;
+    let shape = fork_shape(&row.bytes, &entity, apart, base);
     let outcome = shape.and_then(|()| split(&[row.bytes.as_slice()], FORK_ROUND_TRIP));
     match outcome.map(|mut split| split.pop()) {
         Ok(Some(split)) => shared::place(out, owner, row.at, split),
@@ -222,20 +235,18 @@ pub(super) fn capture_fork_snapshot(
     }
 }
 
-/// Whether a fork snapshot is one full history a split takes: not a shallow
-/// one, not a pending fork's, and one whose birth names the fork's entity
-/// and whose history holds the fork's base.
+/// Whether a fork snapshot is one document a split takes: not a pending
+/// fork's whose record is not beside it (`apart`), and one whose birth names
+/// the fork's entity and whose history holds the fork's base. The split
+/// itself takes a shallow one only when it names no one.
 fn fork_shape(
     snapshot: &[u8],
     entity: &EntityId,
-    status: ForkStatus,
+    apart: bool,
     base: &[u8],
 ) -> std::result::Result<(), Unresolved> {
     let doc = EntityDoc::from_snapshot(snapshot).map_err(|_| Unresolved::Undecodable)?;
-    if doc.doc.is_shallow() {
-        return Err(Unresolved::ActorSplit(SHALLOW));
-    }
-    if status == ForkStatus::Pending {
+    if apart {
         return Err(Unresolved::ActorSplit(PENDING_FORK));
     }
     if doc.birth().entity != entity.to_hex() {

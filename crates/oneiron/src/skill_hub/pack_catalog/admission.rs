@@ -390,9 +390,7 @@ impl Vault {
         let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
         // The first-party model catalog activates its rows for inference
         // admission here; rows the prior pack shipped follow the update.
-        let model_catalog = receipt.pack_name == crate::skill_hub::MODEL_PACK_NAME
-            && receipt.hub_id == crate::skill_hub::default_skill_hub_id()?.to_hex()
-            && receipt.hub_ref == crate::skill_hub::MODEL_PACK_SUBTREE;
+        let model_catalog = super::model_pack::is_first_party_model_catalog(&receipt)?;
         let prior_catalog = if model_catalog && prior.is_some() {
             crate::llm::registry::CatalogSeed::from_installed_pack_in_txn(self, txn).ok()
         } else {
@@ -417,12 +415,35 @@ impl Vault {
             PACK_PREDICATE.put(&self.store, txn, predicate, &source.manifest.name)?;
         }
         PACK_CANDIDATE.delete(&self.store, txn, &candidate_key(&source))?;
+        // A model pack on either side of the install may change the pack the
+        // vault follows: a model pack installed, or one replaced by a pack
+        // of another kind under the same name (review #6390).
+        let model_pack_touched = receipt.kind == PackKind::Model
+            || prior
+                .as_ref()
+                .is_some_and(|old| old.kind == PackKind::Model);
+        let model_pack_before = if model_pack_touched {
+            self.model_pack_in_effect_in_txn(txn)?
+        } else {
+            None
+        };
         PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
         if model_catalog {
             self.activate_installed_model_catalog_in_txn(
                 txn,
                 prior_catalog.as_ref(),
                 prior_source,
+            )?;
+        }
+        // A model pack's install, or its replacement by another kind, may
+        // change the pack the vault follows; the version it replaced is kept
+        // for the revert the owner is told of (FIX 5367, 5369, 20192).
+        if model_pack_touched {
+            self.keep_replaced_model_pack_in_txn(txn, prior.as_ref(), &receipt)?;
+            self.note_active_model_pack_in_txn(
+                txn,
+                model_pack_before,
+                crate::llm::model_pack::ModelPackChangeCause::Install,
             )?;
         }
         if let Some(old) = prior
@@ -444,23 +465,33 @@ impl Vault {
                 .map(|old_source| old_source.manifest.version)
                 .unwrap_or_default();
             let from_predicates = old.predicates.into_iter().collect();
-            crate::saved_query::repair_saved_queries_after_pack_move_in_txn(
-                self,
-                txn,
-                &crate::skill_hub::pack_catalog::predicate_rewrites::PackMove {
-                    pack: &source.manifest.name,
-                    from_version: &from_version,
-                    to_version: &source.manifest.version,
-                    from_source: &old.content_hash,
-                    to_source: &receipt.content_hash,
-                    from_predicates: &from_predicates,
-                    to_predicates: &source.manifest.predicates,
-                    shipped: source
-                        .manifest
-                        .migration_from(&from_version, &old.content_hash),
-                },
-                self.now_recorded_at(),
-            )?;
+            let moved = crate::skill_hub::pack_catalog::predicate_rewrites::PackMove {
+                pack: &source.manifest.name,
+                from_version: &from_version,
+                to_version: &source.manifest.version,
+                from_source: &old.content_hash,
+                to_source: &receipt.content_hash,
+                from_predicates: &from_predicates,
+                to_predicates: &source.manifest.predicates,
+                shipped: source
+                    .manifest
+                    .migration_from(&from_version, &old.content_hash),
+            };
+            self.store
+                .record_hooks
+                .repair_saved_queries_after_pack_move_in_txn(
+                    self,
+                    txn,
+                    moved.pack,
+                    moved.from_version,
+                    moved.to_version,
+                    moved.from_source,
+                    moved.to_source,
+                    moved.from_predicates,
+                    moved.to_predicates,
+                    moved.shipped,
+                    self.now_recorded_at(),
+                )?;
         }
         Ok(PackInstallDisposition::Installed(Box::new(receipt)))
     }

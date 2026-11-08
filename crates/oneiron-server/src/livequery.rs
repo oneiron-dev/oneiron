@@ -16,11 +16,14 @@ use crate::api::call_receipt::{self, CallStamp};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::protocol::{ProtocolError, TAG_RPC, TAG_SUB};
 
+pub(crate) mod ask_option_link;
 mod budget;
 mod error;
 mod history;
 mod residence;
-pub(crate) use residence::{ResidenceIndexCache, ResidenceTouchStage};
+pub(crate) use residence::{
+    ResidenceIndexCache, ResidenceTouchStage, ResidenceWorkCall, ResidenceWorkState,
+};
 mod routing;
 mod rpc;
 pub(crate) use rpc::SocketCallContext;
@@ -154,6 +157,9 @@ pub(crate) struct RpcReply {
     frames: Vec<Vec<u8>>,
     /// `None` for a refusal, which carries no rows.
     rows: Option<Option<Vec<oneiron::EntityId>>>,
+    /// A forwarded search's reply to a caller off the carrying device
+    /// (FIX 11991): its send judges the rows for an unknown destination too.
+    off_carrier: bool,
 }
 
 impl RpcReply {
@@ -193,15 +199,15 @@ impl RpcReply {
         let mut masked = None;
         let packed = result.and_then(|(value, rows)| {
             masked = oneiron::task_verb::sdk::masked_reveal_reply(&call.method, &value);
-            wire::packed(&value)
-                .map(|bytes| (bytes, rows))
+            wire::prepare_result(value)
+                .map(|prepared| (prepared, rows))
                 .map_err(|_| too_large())
         });
         let (outcome, result_digest, served) = match &packed {
-            Ok((bytes, rows)) => (
+            Ok((prepared, rows)) => (
                 oneiron::receipt::CallOutcome::Ok,
                 Some(masked.as_ref().map_or_else(
-                    || oneiron::receipt::call_bytes_digest(bytes),
+                    || prepared.digest.clone(),
                     oneiron::receipt::call_json_digest,
                 )),
                 rows.iter()
@@ -251,21 +257,24 @@ impl RpcReply {
             },
         );
         let (frames, rows) = match packed {
-            Ok((bytes, rows)) => match wire::result_chunks(request_id, &bytes, &stamp) {
-                Ok(frames) => (frames, Some(rows)),
-                Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
-            },
+            Ok((prepared, rows)) => {
+                match wire::prepared_result_chunks(request_id, prepared, &stamp) {
+                    Ok(frames) => (frames, Some(rows)),
+                    Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
+                }
+            }
             Err(error) => (rpc_error(request_id, error, &stamp)?, None),
         };
         Ok(Self {
             request_id,
             frames,
             rows,
+            off_carrier: false,
         })
     }
 
-    /// [`Self::answer`] for a call no bound credential carries: a home
-    /// handoff call on a socket that bound no actor (FIX 6458). Its receipt
+    /// [`Self::answer`] for a machine-only home handoff or exact pad call
+    /// on a socket that bound no actor. Its receipt
     /// is the connection's, as a ping's is, with the call's outcome and
     /// digests.
     fn answer_unbound(
@@ -276,15 +285,12 @@ impl RpcReply {
     ) -> Result<Self, ProtocolError> {
         let too_large = || AppError::bad_request("RPC result byte limit exceeded", None);
         let packed = result.and_then(|(value, rows)| {
-            wire::packed(&value)
-                .map(|bytes| (bytes, rows))
+            wire::prepare_result(value)
+                .map(|prepared| (prepared, rows))
                 .map_err(|_| too_large())
         });
         let (outcome, result_digest) = match &packed {
-            Ok((bytes, _)) => (
-                oneiron::receipt::CallOutcome::Ok,
-                oneiron::receipt::call_bytes_digest(bytes),
-            ),
+            Ok((prepared, _)) => (oneiron::receipt::CallOutcome::Ok, prepared.digest.clone()),
             Err(error) => (
                 oneiron::receipt::CallOutcome::Refused {
                     code: error.code().to_owned(),
@@ -300,16 +306,19 @@ impl RpcReply {
             Some(result_digest),
         );
         let (frames, rows) = match packed {
-            Ok((bytes, rows)) => match wire::result_chunks(request_id, &bytes, &stamp) {
-                Ok(frames) => (frames, Some(rows)),
-                Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
-            },
+            Ok((prepared, rows)) => {
+                match wire::prepared_result_chunks(request_id, prepared, &stamp) {
+                    Ok(frames) => (frames, Some(rows)),
+                    Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
+                }
+            }
             Err(error) => (rpc_error(request_id, error, &stamp)?, None),
         };
         Ok(Self {
             request_id,
             frames,
             rows,
+            off_carrier: false,
         })
     }
 
@@ -319,9 +328,45 @@ impl RpcReply {
         let Some(rows) = self.rows else {
             return self.frames;
         };
+        let incarnation = if self.off_carrier {
+            routing::OFF_CARRIER_RPC_INCARNATION
+        } else {
+            0
+        };
         self.frames
             .into_iter()
-            .map(|frame| routing::wrap(conn, self.request_id, 0, rows.as_deref(), frame))
+            .map(|frame| routing::wrap(conn, self.request_id, incarnation, rows.as_deref(), frame))
+            .collect()
+    }
+
+    /// This reply, released as a forwarded search's to a caller off the
+    /// carrying device when `off_carrier` (FIX 11991).
+    pub(crate) fn released_off_carrier(mut self, off_carrier: bool) -> Self {
+        self.off_carrier = off_carrier;
+        self
+    }
+}
+
+impl RpcReply {
+    pub(crate) fn queued_for_machine(self, conn: u32, own_machine_only: bool) -> Vec<Vec<u8>> {
+        if !own_machine_only {
+            return self.queued(conn);
+        }
+        let Some(rows) = self.rows else {
+            return self.frames;
+        };
+        self.frames
+            .into_iter()
+            .map(|frame| {
+                // Request incarnations are otherwise zero. Subscriptions use TAG_SUB.
+                routing::wrap(
+                    conn,
+                    self.request_id,
+                    routing::OWN_MACHINE_RPC_INCARNATION,
+                    rows.as_deref(),
+                    frame,
+                )
+            })
             .collect()
     }
 }
@@ -398,13 +443,13 @@ pub(crate) fn residence_rpc(
     )
 }
 
-/// FIX 6458: whether `method` is one of the home handoff's own calls, the
-/// only ones a socket that bound no actor makes.
+/// Whether `method` is a home handoff or exact pad call that a socket may
+/// make with its machine proof and no bound actor.
 pub(crate) fn machine_handoff_method(method: &str) -> bool {
     residence::machine_method(method)
 }
 
-/// FIX 6458: one home handoff call on a socket that bound no actor. Its
+/// One machine-only residence call on a socket that bound no actor. Its
 /// owner-grade upgrade's machine, `peer`, judged again now, is the caller;
 /// the reply carries its rows to the send door, and its receipt is the
 /// connection's ([`RpcReply::answer_unbound`]).
@@ -416,6 +461,26 @@ pub(crate) fn machine_handoff_rpc(
     let call = RpcCall::of(&request);
     let result = residence::run_machine(server, peer, &request.method, request.params);
     RpcReply::answer_unbound(server, call, request.request_id, result)
+}
+
+/// The refusal of a residence call on a socket this machine serves as a peer
+/// of another machine of its vault while their home is down (FIX 4748): the
+/// residence lane is the home's, and a peer serves state only. Its receipt
+/// is the connection's ([`RpcReply::answer_unbound`]).
+pub(crate) fn peer_refused_rpc(
+    server: &crate::server::SyncServer,
+    request: RpcRequest,
+) -> Result<RpcReply, ProtocolError> {
+    let call = RpcCall::of(&request);
+    RpcReply::answer_unbound(
+        server,
+        call,
+        request.request_id,
+        Err(AppError::forbidden(
+            "a peer serves no residence call while the home is down: they are the home's",
+            ["Ask the home once it answers again."],
+        )),
+    )
 }
 
 #[cfg(test)]
@@ -501,9 +566,9 @@ fn facade_limit(requested: Option<usize>, default: usize) -> Result<usize, AppEr
     Ok(limit)
 }
 
-/// A count a receipt or pending-consent subscription asks for, or `default`
-/// (FIX 8859): read in scoped pages ([`scoped_pages`]), so no count past the
-/// list page is refused.
+/// A positive subscription count, or `default`, without the facade's list-page
+/// ceiling. Receipts and pending-consent read in scoped pages ([`scoped_pages`])
+/// (FIX 8859).
 fn facade_count(requested: Option<usize>, default: usize) -> Result<usize, AppError> {
     let limit = requested.unwrap_or(default);
     if limit == 0 {

@@ -8,16 +8,15 @@ use crate::claim::ScopedRead;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::PolicyManifestResolution;
+use crate::ports::ReadRow;
 use crate::ports::ScopedReadResult;
-use crate::ports::{PointRead, ReadRow};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::sandbox_import::SandboxLinkedImport;
 use oneiron_contracts::claim::ScopedReadReceipt;
 
 use super::model::{
-    GRAPH_FS_HOST_IMPORTS, GRAPH_FS_MAX_PAGE_ENTRIES, GRAPH_FS_MAX_SCAN_ROWS,
-    GRAPH_FS_PROJECTION_VERSION, GraphFsEntry, GraphFsFile, GraphFsMount, GraphFsOptions,
-    GraphFsPage, GraphFsResolver,
+    GRAPH_FS_HOST_IMPORTS, GRAPH_FS_MAX_SCAN_ROWS, GRAPH_FS_PROJECTION_VERSION, GraphFsEntry,
+    GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
 };
 
 use super::coreutils::{claim_matches_world_in, read_grant_matches_actor};
@@ -166,6 +165,52 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             ["claims", claim] | ["claims", "by-id", claim] => Ok(self
                 .read_claim_file(&normalized, &parse_entity_id(claim)?)?
                 .into()),
+            // Every claim leaf a listing names reads where it is listed
+            // (FIX 7973), kept only while it is still a member there.
+            ["entities", entity, "claims", claim] => {
+                let subject = parse_entity_id(entity)?;
+                if !self.scoped_read.is_entity_readable(&subject)? {
+                    return Ok(GraphFsFileRead {
+                        value: None,
+                        receipt: None,
+                    });
+                }
+                let claim = parse_entity_id(claim)?;
+                let store = &self.scoped_read.vault().store;
+                Ok(self
+                    .read_listed_claim_file(&normalized, &claim, |_| {
+                        let rtxn = store.env.read_txn()?;
+                        Ok(crate::ports::EdgeStoreRead::port_edge_get(
+                            store,
+                            &rtxn,
+                            &claim,
+                            crate::edge::EdgeKind::ClaimOf,
+                            &subject,
+                        )?
+                        .is_some())
+                    })?
+                    .into())
+            }
+            ["worlds", world, "claims", claim] => {
+                let world = parse_world_scope(world)?;
+                let claim = parse_entity_id(claim)?;
+                let store = &self.scoped_read.vault().store;
+                Ok(self
+                    .read_listed_claim_file(&normalized, &claim, |_| {
+                        let rtxn = store.env.read_txn()?;
+                        claim_matches_world_in(store, &rtxn, &claim, world)
+                    })?
+                    .into())
+            }
+            ["claims", "by-time", day, claim] => {
+                let day = parse_day_shard(day)?;
+                let claim = parse_entity_id(claim)?;
+                Ok(self
+                    .read_listed_claim_file(&normalized, &claim, |row| {
+                        Ok(row.learned_at / 86_400 == day)
+                    })?
+                    .into())
+            }
             ["entities", entity, "body"] => {
                 let id = parse_entity_id(entity)?;
                 let mount = self.options.mount;
@@ -204,32 +249,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 
     pub fn read_link(&self, path: &str) -> Result<Option<String>> {
-        let normalized = normalize_path(path)?;
-        let components = path_components(&normalized)?;
-        if self.snapshot.is_some() {
-            return Ok(None);
-        }
-        let [component] = components.as_slice() else {
-            return Ok(None);
-        };
-        let Some(claim_hex) = component
-            .strip_prefix("[[claim:")
-            .and_then(|rest| rest.strip_suffix("]]"))
-        else {
-            return Ok(None);
-        };
-        let claim_id = parse_entity_id(claim_hex)?;
-        if self
-            .scoped_read
-            .read(&[PointRead::id(claim_id)], None)?
-            .single()
-            .value
-            .is_some()
-        {
-            Ok(Some(format!("/claims/{}", claim_id.to_hex())))
-        } else {
-            Ok(None)
-        }
+        Ok(self.read_link_with_receipt(path)?.value)
     }
 
     pub(super) fn entity_type_in(
@@ -256,13 +276,45 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         path: &str,
         claim_id: &EntityId,
     ) -> Result<ScopedReadResult<Option<GraphFsFile>>> {
+        self.read_listed_claim_file(path, claim_id, |_| Ok(true))
+    }
+
+    /// [`Self::read_claim_file`] for a leaf a listing names under its parent
+    /// (FIX 7973): read through the same scoped claim read, then kept only
+    /// while `member` holds for the row the reader was admitted to. A claim
+    /// the reader may not read is never judged, so the answer says nothing of
+    /// its membership; one no longer listed there reads as no file.
+    fn read_listed_claim_file(
+        &self,
+        path: &str,
+        claim_id: &EntityId,
+        member: impl FnOnce(&ReadRow) -> Result<bool>,
+    ) -> Result<ScopedReadResult<Option<GraphFsFile>>> {
         let ScopedReadResult { value, receipt } = self.file_row(*claim_id)?;
-        let Some(ReadRow {
-            entity_type: ENTITY_TYPE_CLAIM,
+        let Some(
+            row @ ReadRow {
+                entity_type: ENTITY_TYPE_CLAIM,
+                body: Some(_),
+                ..
+            },
+        ) = value
+        else {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt,
+            });
+        };
+        if !member(&row)? {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt,
+            });
+        }
+        let ReadRow {
             learned_at,
             body: Some(body),
             ..
-        }) = value
+        } = row
         else {
             return Ok(ScopedReadResult {
                 value: None,
@@ -316,7 +368,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             if !after.is_empty() && entry.name.as_str() <= after {
                 continue;
             }
-            if !builder.try_push(entry.clone()) {
+            let after = entry.name.clone();
+            if !builder.try_push_after(entry.clone(), after) {
                 next_cursor = builder.last_entry_name();
                 break;
             }
@@ -327,9 +380,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     /// The vault's worlds this reader may walk into, base first, then each
     /// WORLD row by id ([`Self::world_visible`]), all judged in one snapshot.
     /// A manifest grant never lists a world of its own: it only says where a
-    /// reader other than the owner may read. A page can end inside a run of
-    /// worlds this reader may not see, so its cursor is sealed and names none
-    /// of them. A reader that could read no row in that snapshot (a dead
+    /// reader other than the owner may read. Only visible worlds count
+    /// toward a page, and its sealed cursor resumes after the last listed
+    /// world. A reader that could read no row in that snapshot (a dead
     /// credential, one that reads nothing, or a peer of either) lists
     /// nothing, not even a cursor that would say how many worlds it passed
     /// over.
@@ -347,36 +400,35 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut builder = PageBuilder::new(path, self.options);
         if after.is_none()
             && self.world_visible(&rtxn, &policy, None)?
-            && !builder.try_push(GraphFsEntry::directory("base"))
+            && !builder.try_push_after(
+                GraphFsEntry::directory("base"),
+                scope.seal(&WorldPosition(None)),
+            )
         {
             return Ok(builder.finish(None));
         }
 
         let after = after.and_then(|position| position.0);
-        let rows = self
-            .scoped_read
-            .vault()
-            .store
-            .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_WORLD, after)?
-            .take(GRAPH_FS_MAX_PAGE_ENTRIES.saturating_add(1))
-            .collect::<Result<Vec<_>>>()?;
-        let has_more_rows = rows.len() > GRAPH_FS_MAX_PAGE_ENTRIES;
+        let rows = self.scoped_read.vault().store.port_entity_ids_by_type(
+            &rtxn,
+            ENTITY_TYPE_WORLD,
+            after,
+        )?;
         let mut next_cursor = None;
-        let (mut last_listed, mut last_scanned) = (after, after);
-        for id in rows.into_iter().take(GRAPH_FS_MAX_PAGE_ENTRIES) {
-            if self.world_visible(&rtxn, &policy, Some(id))? {
-                if !builder.try_push(GraphFsEntry::directory(id.to_hex())) {
-                    next_cursor = builder
-                        .last_entry_name()
-                        .map(|_| scope.seal(&WorldPosition(last_listed)));
-                    break;
-                }
-                last_listed = Some(id);
+        let mut last_listed = after;
+        for entry in rows {
+            let id = entry?;
+            if !self.world_visible(&rtxn, &policy, Some(id))? {
+                continue;
             }
-            last_scanned = Some(id);
-        }
-        if next_cursor.is_none() && has_more_rows {
-            next_cursor = Some(scope.seal(&WorldPosition(last_scanned)));
+            let entry = GraphFsEntry::directory(id.to_hex());
+            if !builder.try_push_after(entry, scope.seal(&WorldPosition(Some(id)))) {
+                next_cursor = builder
+                    .last_entry_name()
+                    .map(|_| scope.seal(&WorldPosition(last_listed)));
+                break;
+            }
+            last_listed = Some(id);
         }
         Ok(builder.finish(next_cursor))
     }
@@ -434,7 +486,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 continue;
             }
             let entry = GraphFsEntry::directory(cursor.id.to_hex());
-            if !builder.try_push(entry) {
+            if !builder.try_push_after(entry, scope.seal(&cursor)) {
                 next_cursor = builder
                     .last_temporal_cursor()
                     .map(|cursor| scope.seal(&cursor));
@@ -488,7 +540,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 continue;
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
-            if !builder.try_push(entry) {
+            if !builder.try_push_after(entry, scope.seal(&temporal)) {
                 next_cursor = builder
                     .last_temporal_cursor()
                     .map(|cursor| scope.seal(&cursor));
@@ -543,7 +595,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             let name = format!("{}-{}", edge.kind as u8, edge.target.to_hex());
             let entry = GraphFsEntry::symlink(name, format!("/entities/{}", edge.target.to_hex()));
-            if !builder.try_push(entry) {
+            if !builder.try_push_after(entry, scope.seal(&cursor)) {
                 next_cursor = last_emitted.map(|cursor| scope.seal(&cursor));
                 break;
             }
@@ -556,7 +608,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         self.listdir_claim_days_with_scan_cap(path, cursor, GRAPH_FS_MAX_SCAN_ROWS)
     }
 
-    /// The days that hold a row this reader may read, oldest first.
+    /// The days that hold a CLAIM this reader may read, oldest first.
     pub(super) fn listdir_claim_days_with_scan_cap(
         &self,
         path: &str,
@@ -598,14 +650,17 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 &rtxn,
                 &policy,
                 &temporal.id,
-            ))? {
+            ))? || self.entity_type_in(&rtxn, &temporal.id)? != Some(ENTITY_TYPE_CLAIM)
+            {
                 continue;
             }
             let day = day_of(temporal);
             if listed.is_some_and(|listed| day <= listed) {
                 continue;
             }
-            if !builder.try_push(GraphFsEntry::directory(format_day_shard(day))) {
+            // After this day: past its first row, the rest of the day listed.
+            let after = scope.seal(&resume(Some(temporal), Some(day)));
+            if !builder.try_push_after(GraphFsEntry::directory(format_day_shard(day)), after) {
                 // Resumes before this row, the first of a day not listed yet.
                 next_cursor = Some(scope.seal(&resume(scanned_before, listed)));
                 break;
@@ -658,11 +713,12 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 &rtxn,
                 &policy,
                 &temporal.id,
-            ))? {
+            ))? || self.entity_type_in(&rtxn, &temporal.id)? != Some(ENTITY_TYPE_CLAIM)
+            {
                 continue;
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
-            if !builder.try_push(entry) {
+            if !builder.try_push_after(entry, scope.seal(&temporal)) {
                 next_cursor = builder
                     .last_temporal_cursor()
                     .map(|cursor| scope.seal(&cursor));
@@ -737,6 +793,7 @@ pub(super) fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {
         next_cursor: None,
         byte_count: 0,
         read_receipt: None,
+        entry_cursors: Vec::new(),
     }
 }
 

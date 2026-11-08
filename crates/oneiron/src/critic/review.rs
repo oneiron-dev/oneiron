@@ -17,8 +17,9 @@ pub(crate) use outcomes::rewrite_outcome_artifact_ids_in_txn;
 pub use outcomes::{record_review_outcome, recurring_findings};
 use persistence::*;
 pub(crate) use persistence::{
-    DeclaredCritique, critique_review_refs_in_txn, declared_critiques_in_txn,
-    erase_review_session_in_txn, rewrite_verdict_artifact_ids_in_txn, trusted_review_in_txn,
+    DeclaredCritique, critic_review_result_accepts_masked, critique_review_refs_in_txn,
+    declared_critiques_in_txn, erase_review_session_in_txn, rewrite_verdict_artifact_ids_in_txn,
+    trusted_review_in_txn,
 };
 pub use questions::{
     REVIEW_DIAL, ReviewDecisions, ReviewFinding, ReviewNote, ReviewNotes, ReviewWording,
@@ -93,7 +94,8 @@ pub struct ReviewResult {
     pub verdict_claim: EntityId,
     pub triage: CritiqueTriage,
     pub artifacts: Vec<CritiqueArtifact>,
-    /// One receipt per typed question asked; empty when the review replays from its cache.
+    /// One receipt per typed question asked; a replay from the cache gives back the first
+    /// ask's (FIX 9780), and a review cached before they were kept gives none.
     pub receipts: Vec<DecisionReceipt>,
     /// The launched run the stored review is declared for, the first one
     /// declared; `None` when none is recorded.
@@ -148,9 +150,13 @@ pub fn review_artifact(
     {
         return Err(invalid_critic_config("claim review target is not a claim"));
     }
+    // Fair admission for complete catalogs: past the bound, work waits its
+    // turn; it is never refused for count (FIX 8173).
+    let _turn = vault.admit_task_work_blocking(request.actor.entity_ref());
+    let review_key = review_identity_hash(request, catalog, &decisions.wording)?;
     {
         let txn = vault.store.env.read_txn()?;
-        if let Some(result) = cached_review(vault, &txn, request)? {
+        if let Some(result) = cached_review(vault, &txn, &review_key)? {
             drop(txn);
             let result = keep_declared_spawn(vault, request, result);
             preserve_overruled(vault, &result, request.at)?;
@@ -178,7 +184,7 @@ pub fn review_artifact(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let (artifacts, receipts) = decisions.review(&inputs, request.at)?;
+    let (artifacts, receipts) = decisions.review(&inputs, &review_key, request.at)?;
     let reliabilities = read_reliabilities(vault, &artifacts)?;
     let mut triage = triage_critiques(catalog, &artifacts, &reliabilities)?;
     triage.findings =
@@ -186,8 +192,7 @@ pub fn review_artifact(
     triage.auto_resolved =
         super::findings::verdict_confidence(&artifacts, &reliabilities, triage.verdict)
             >= request.auto_resolve_threshold;
-    let mut result = persist_review(vault, request, &triage, &artifacts)?;
-    result.receipts = receipts;
+    let result = persist_review(vault, request, &review_key, &triage, &artifacts, &receipts)?;
     let result = keep_declared_spawn(vault, request, result);
     preserve_overruled(vault, &result, request.at)?;
     Ok(result)

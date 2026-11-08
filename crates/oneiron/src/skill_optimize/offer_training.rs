@@ -9,10 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     EvalSeat, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferIntent, OfferModelPin,
-    training_offer,
+    SwitchOwner, training_offer,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::bytes_to_hex_lower;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::training_choice::TrainingAuthorizationSource;
 use crate::training_pack::{TrainingDeclarationPin, TrainingPlan};
@@ -37,7 +36,9 @@ pub struct OfferTrainingHandoff {
     pub offer_digest: String,
     pub run: EntityId,
     pub spec_blake3: [u8; 32],
-    pub owner: EntityId,
+    /// Who authorized the run, or no one once that actor was erased
+    /// (FIX 20774).
+    pub owner: SwitchOwner,
     pub at: u64,
 }
 
@@ -54,30 +55,17 @@ fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.into())
 }
 
-/// A plan is for the offer's seat, from its base: the starting checkpoint's
-/// model, and its first file's hash when the offer pins one, as the offer
-/// derives it. An offer trains its seat's role, never a question head.
-fn plan_matches(seat: &EvalSeat, base: &OfferModelPin, plan: &TrainingPlan) -> Result<()> {
+/// A plan is for the offer's seat: it trains its seat's role, never a
+/// question head. The offer base is a suggestion only (FIX 8207); the
+/// owner's explicit checkpoint pins the run through its prepared spec.
+fn plan_matches(seat: &EvalSeat, _base: &OfferModelPin, plan: &TrainingPlan) -> Result<()> {
     if plan.target.question().is_some() {
         return Err(invalid(
             "a training offer's run trains its seat's role, not a question head",
         ));
     }
-    let first = plan
-        .starting_checkpoint
-        .files
-        .first()
-        .map(|file| bytes_to_hex_lower(&file.content.blake3));
-    if plan.seat != *seat
-        || plan.starting_checkpoint.model.as_str() != base.model
-        || base
-            .content_hash
-            .as_ref()
-            .is_some_and(|hash| first.as_ref() != Some(hash))
-    {
-        return Err(invalid(
-            "the prepared run is not for the offer's seat and base model",
-        ));
+    if plan.seat != *seat {
+        return Err(invalid("the prepared run is not for the offer's seat"));
     }
     Ok(())
 }
@@ -118,12 +106,13 @@ pub fn settle_training_offer(
 
 /// Hands a train approval's prepared run off in `txn`: the owner's
 /// authorization pins the exact choice and queues the run for the host, the
-/// run is for the intent's seat and base, and the offer keeps that one run.
-/// The same run and spec again return the stored handoff.
+/// run is for the intent's seat from the owner's explicit checkpoint (the
+/// offer base is a suggestion only, FIX 8207), and the offer keeps that one
+/// run. The same run and spec again return the stored handoff.
 /// # Errors
 /// An answer with no Train intent, another run already handed off for the
 /// offer, a spec, declaration or run state the authorization refuses, a run
-/// for another seat or base, or storage errors.
+/// for another seat, or storage errors.
 pub(super) fn hand_off_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -160,7 +149,7 @@ pub(super) fn hand_off_in_txn(
         offer_digest: answer.offer_digest.clone(),
         run: run.id,
         spec_blake3: run.spec_blake3,
-        owner: actor,
+        owner: SwitchOwner::Actor(actor),
         at,
     };
     HANDOFF.put(&vault.store, txn, &answer.offer, &handoff)?;
@@ -187,11 +176,12 @@ pub fn authorize_offer_training(
     })
 }
 
-/// Whether `plan` is for a Train offer's seat and base: the owner prepares
-/// the offer's run before the yes that authorizes it.
+/// Whether `plan` is for a Train offer's seat: the owner prepares the
+/// offer's run from their explicit checkpoint before the yes that
+/// authorizes it (the offer base is a suggestion only, FIX 8207).
 /// # Errors
-/// An unknown offer, a stock offer, a plan for another seat or base, or
-/// storage errors.
+/// An unknown offer, a stock offer, a plan for another seat, or storage
+/// errors.
 pub fn check_offer_training_plan(
     vault: &Vault,
     offer: &EntityId,
@@ -202,6 +192,33 @@ pub fn check_offer_training_plan(
         return Err(invalid("a stock offer trains no run"));
     };
     plan_matches(&row.seat, base, plan)
+}
+
+/// Erasing `actor` from the training handoffs (FIX 20774): each handoff it
+/// authorized keeps its offer, digest, run, spec and time, and names no one.
+/// The run it started stays handed off. One-way, in the erase's own
+/// transaction, rewriting only the handoffs that named it. An id whose entity
+/// is no actor scans nothing.
+/// # Errors
+/// Storage errors, or a handoff row that cannot be read.
+pub(crate) fn erase_offer_training_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut handoffs = Vec::new();
+    for (offer, mut handoff) in HANDOFF.scan(&vault.store, wtxn)? {
+        if handoff.owner.forget(*actor) {
+            handoffs.push((offer, handoff));
+        }
+    }
+    for (offer, handoff) in handoffs {
+        HANDOFF.put(&vault.store, wtxn, &offer, &handoff)?;
+    }
+    Ok(())
 }
 
 /// The run an approved Train offer handed off, if any.

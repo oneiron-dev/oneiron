@@ -1,3 +1,6 @@
+//! Session write routing: which store a session write lands in per mode.
+//! Entry [`SessionWriteRoute`]; consulted by the `overlay` lifecycle on every write.
+//! Owned by `session_overlay`; off-record writes stage in the overlay, never durable.
 use std::sync::Arc;
 
 use oneiron_contracts::error::{Error, Result};
@@ -81,6 +84,20 @@ impl SessionWriteRoute {
                 generation: self.mode_generation,
             },
         ))
+    }
+
+    /// Inside a base writer, holds the overlay's publication permit until
+    /// committed reader-ledger keys retire from this sealed mode's view.
+    pub fn install_base_row_retirement(
+        &self,
+    ) -> Result<super::overlay::segment::BaseRowRetirementGuard> {
+        if self.target != RouteTarget::Base {
+            return Err(Error::InvariantViolation(
+                "overlay row retirement requires a base write route",
+            ));
+        }
+        self.overlay
+            .install_base_row_retirement(self.mode_generation)
     }
 
     /// Refuses an operation that requires retained content or audit evidence.

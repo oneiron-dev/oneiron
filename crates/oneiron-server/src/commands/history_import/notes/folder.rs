@@ -34,6 +34,7 @@ use crate::commands::api::{normalized_base, signed_binding};
 use crate::commands::local_servers;
 use crate::config::{ServeConfig, resolve_serve_config};
 use crate::files_intake::{canonical_folder, rescanned};
+use oneiron_vault_contract::BINDING_HEADER;
 
 /// One live folder call's whole request/response deadline. Large scans get
 /// room; a stalled running serve still ends the CLI instead of holding it forever.
@@ -96,8 +97,8 @@ impl HeldServer {
         let url = format!("{}{path}", self.base);
         let secret = self.secret.clone();
         std::thread::scope(|scope| {
-            scope
-                .spawn(move || -> anyhow::Result<Value> {
+            crate::engine_thread("history-import-folder".into())
+                .spawn_scoped(scope, move || -> anyhow::Result<Value> {
                     let client = reqwest::blocking::Client::builder()
                         // The bearer and holder proof stay off every environment proxy.
                         .no_proxy()
@@ -109,7 +110,7 @@ impl HeldServer {
                         request = request.bearer_auth(secret.as_str());
                     }
                     if let Some(binding) = &binding {
-                        request = request.header("x-oneiron-binding", binding.as_str());
+                        request = request.header(BINDING_HEADER, binding.as_str());
                     }
                     if let Some(body) = body {
                         request = request
@@ -130,6 +131,7 @@ impl HeldServer {
                     serde_json::from_str(&text)
                         .map_err(|_| anyhow::anyhow!("{url} answered {status} with no JSON"))
                 })
+                .expect("failed to spawn thread")
                 .join()
                 .map_err(|_| anyhow::anyhow!("the call to {path} stopped"))?
         })

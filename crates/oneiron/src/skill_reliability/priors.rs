@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::learning::evidence::ensure_cell_in_txn;
 use crate::learning::prior::PRIOR;
 use crate::learning::project::window_in_txn;
-use crate::learning::read::read_learning_in_txn;
+use crate::learning::read::{read_learning_in_txn, stored_prior_from_read_in_txn};
 use crate::learning::{LearningCell, LearningRead};
 use crate::receipt::task_type_ref::TypeRef;
 
@@ -59,18 +59,26 @@ pub(super) fn provenance_prior_in_txn(
 
 /// Capture the borrowed/provenance starting point before the first own run.
 /// Later evidence keeps that same prior; an explicit swap/seed may replace it
-/// through the shared learning door.
+/// through the shared learning door. A hard-deleted subject captures nothing.
 pub(super) fn ensure_prior_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     cell: &LearningCell,
     parents: &[TypeRef],
 ) -> Result<()> {
+    if vault.local_hard_delete_marker_exists_in_txn(txn, &cell.subject)? {
+        tracing::warn!(
+            subject = %cell.subject.to_hex(),
+            "a reliability prior was not captured: its subject was hard-deleted"
+        );
+        return Ok(());
+    }
     let digest = cell.digest();
     if PRIOR.contains(&vault.store, txn, &digest)? {
         return Ok(());
     }
-    let prior = read_cell_in_txn(vault, txn, cell, parents)?.estimate.prior;
+    let read = read_cell_in_txn(vault, txn, cell, parents)?;
+    let prior = stored_prior_from_read_in_txn(vault, txn, &read)?;
     ensure_cell_in_txn(vault, txn, cell, EstimateForm::Beta)?;
     PRIOR.put(&vault.store, txn, &digest, &prior)
 }

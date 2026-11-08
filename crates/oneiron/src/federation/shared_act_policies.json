@@ -50,11 +50,24 @@
       "max_payload_bytes": 1048576,
       "precedence": "holder_may_narrow"
     },
-    "transfer_ownership": {
-      "wait_secs": 604800,
-      "objector_roles": [
+    "add_owner": {
+      "wait_secs": 0,
+      "objector_roles": [],
+      "initiator_roles": [
         "owner"
       ],
+      "policy_editor_roles": [
+        "owner"
+      ],
+      "required_verb": "admin",
+      "starter_may_object": true,
+      "max_act_name_bytes": 128,
+      "max_payload_bytes": 1048576,
+      "precedence": "holder_may_narrow"
+    },
+    "transfer_ownership": {
+      "wait_secs": 0,
+      "objector_roles": [],
       "initiator_roles": [
         "owner"
       ],
@@ -68,10 +81,8 @@
       "precedence": "holder_may_narrow"
     },
     "remove_owner": {
-      "wait_secs": 604800,
-      "objector_roles": [
-        "owner"
-      ],
+      "wait_secs": 0,
+      "objector_roles": [],
       "initiator_roles": [
         "owner"
       ],

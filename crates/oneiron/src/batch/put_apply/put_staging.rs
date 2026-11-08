@@ -42,6 +42,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     entity_type: u8,
     occurred: TimeRange,
     learned_at: u64,
+    row_version: u64,
     data: &[u8],
 ) -> Result<()> {
     if entity_type == crate::registry::ENTITY_TYPE_NOTE && !data.is_empty() {
@@ -59,6 +60,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     payload.0.extend_from_slice(&occurred.start.to_be_bytes());
     payload.0.extend_from_slice(&occurred.end.to_be_bytes());
     payload.0.extend_from_slice(&learned_at.to_be_bytes());
+    payload.0.extend_from_slice(&row_version.to_be_bytes());
     payload.0.extend_from_slice(data);
     crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload.0)?;
     store.port_stage_entity_row(wtxn, id, &payload.0)?;
@@ -430,17 +432,18 @@ pub(super) fn validate_domain_carriers(
 /// A local write also pins the typed citations it adds (FIX 904); a
 /// replicated row carries its citations as written.
 pub(super) fn stage_claim_projection(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
     body: Option<&crate::write_envelope::claim_body::ClaimBody>,
     replicated: bool,
 ) -> Result<()> {
+    let store = write.store;
     if let Some(body) = body {
         if !replicated {
             crate::entity_doc::retain_fresh_claim_citations_in_txn(store, wtxn, &id, body)?;
         }
-        crate::store::claim_projection::maintain_claim_projection_index(store, wtxn, id, body)?;
+        crate::store::claim_projection::maintain_claim_projection_index(write, wtxn, id, body)?;
         crate::claim::history_store::maintain_machine_history_index(store, wtxn, id, body)?;
     }
     Ok(())
@@ -590,6 +593,11 @@ pub(super) fn stage_task_and_turn(
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
         if body_changed {
             crate::store::linear_task_revision::note_task_write(store, wtxn, id, data)?;
+            // FIX 4749: the watcher due index follows every TASK body that
+            // lands, a peer's synced copy too, so the vault's home ticks it
+            // wherever the TASK was made.
+            let due_at = crate::task_verb::watcher_due_at(data)?;
+            crate::runtime_hooks::index_task_due_in_txn(store, wtxn, id, due_at)?;
         }
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {

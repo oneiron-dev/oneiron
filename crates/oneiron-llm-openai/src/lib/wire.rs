@@ -2,7 +2,7 @@
 
 use super::{
     OpenAiCompatConfig, OpenAiCompatHttpRequest, OpenAiProviderOptions,
-    backend::validate_capabilities,
+    backend::{DEFAULT_CHAT_ENDPOINT_PATH, validate_capabilities},
 };
 use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort, is_solo, limit};
 use oneiron::{
@@ -26,6 +26,12 @@ const PREFILL_WIRE_KEY: &str = "prefill_wire";
 /// assistant message only when it carries `"prefix": true` (DeepSeek,
 /// Mistral).
 const PREFILL_WIRE_PREFIX: &str = "prefix";
+/// The catalog row metadata key that selects the chat endpoint path (FIX
+/// 11467).
+const CHAT_PATH_KEY: &str = "chat_path";
+/// [`CHAT_PATH_KEY`]'s value for a row served under unversioned
+/// `/chat/completions`.
+const CHAT_PATH_UNVERSIONED: &str = "unversioned";
 
 pub fn build_openai_chat_request(
     config: &OpenAiCompatConfig,
@@ -78,9 +84,11 @@ pub fn build_openai_chat_request(
         }
         // An own server (llama.cpp, vLLM, an exllamav3 server) also reads the
         // level through its chat template, and llama.cpp reads the thinking
-        // budget per request. A hosted API takes the effort alone and refuses
-        // fields it does not know, so it is sent neither.
-        if request.envelope.locality == ModelLocality::OwnServer {
+        // budget per request, as does the same server reached on this device
+        // over its supervised native channel (I2-LOCAL). A hosted API takes
+        // the effort alone and refuses fields it does not know, so it is sent
+        // neither.
+        if request.envelope.locality != ModelLocality::ThirdParty {
             let mut kwargs = match body.remove("chat_template_kwargs") {
                 Some(JsonValue::Object(kwargs)) => kwargs,
                 Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
@@ -160,9 +168,25 @@ pub fn build_openai_chat_request(
         );
     }
 
+    // A row that opts into the unversioned chat path sends
+    // `/chat/completions` while the host keeps the default path; any
+    // explicit non-default path wins, and any other row keeps the old
+    // default.
+    let path = if catalog
+        .metadata
+        .get(CHAT_PATH_KEY)
+        .and_then(JsonValue::as_str)
+        == Some(CHAT_PATH_UNVERSIONED)
+        && config.endpoint_path == DEFAULT_CHAT_ENDPOINT_PATH
+    {
+        "/chat/completions".to_owned()
+    } else {
+        config.endpoint_path.clone()
+    };
+
     Ok(OpenAiCompatHttpRequest {
         method: "POST",
-        path: config.endpoint_path.clone(),
+        path,
         headers: BTreeMap::from([("content-type".to_owned(), "application/json".to_owned())]),
         body: JsonValue::Object(body),
         host_segments: request.host_segments.clone(),
@@ -318,6 +342,7 @@ fn openai_message(message: &LlmMessage, reasoning_history: bool) -> JsonValue {
                 call_id,
                 name,
                 input,
+                ..
             } => {
                 tool_calls.push(json!({
                     "id": call_id,
@@ -419,10 +444,15 @@ fn parse_openai_tool_call(call: &JsonValue) -> Option<ContentPart> {
         call_id,
         name,
         input,
+        signature: None,
     })
 }
 
-pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
+/// The usage an OpenAI chat reply's `usage` object reports: prompt tokens,
+/// of them the cached, and completion tokens, of them the reasoning. A
+/// relayed reply's own body is read through it too (FIX 15702).
+#[must_use]
+pub fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
     let prompt_tokens = u64_field(usage, "prompt_tokens");
     let completion_tokens = u64_field(usage, "completion_tokens");
     let cached_tokens = usage
@@ -431,7 +461,7 @@ pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
     let reasoning_tokens = usage
         .get("completion_tokens_details")
         .map_or(0, |details| u64_field(details, "reasoning_tokens"));
-    LlmUsage {
+    let mut measured = LlmUsage {
         input: LlmInputUsage {
             total: prompt_tokens,
             cache_read: cached_tokens,
@@ -444,7 +474,12 @@ pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
         },
         raw_provider: usage.clone(),
         call_metadata: None,
-    }
+    };
+    measured.set_provider_token_measurement(oneiron::llm::ProviderTokenMeasurement {
+        input: usage.get("prompt_tokens").and_then(JsonValue::as_u64),
+        output: usage.get("completion_tokens").and_then(JsonValue::as_u64),
+    });
+    measured
 }
 
 /// The finish of a reply whose provider reported none.
@@ -482,9 +517,26 @@ pub fn classify_openai_status(
         408 | 504 => RetryableLlmError::Timeout.into(),
         500..=599 => RetryableLlmError::ServerError.into(),
         401 | 403 => FatalLlmError::Auth.into(),
+        400 if body.pointer("/error/code").and_then(JsonValue::as_str)
+            == Some("context_length_exceeded") =>
+        {
+            FatalLlmError::ContextWindowExceeded {
+                message: refusal_message(body).unwrap_or_default(),
+            }
+            .into()
+        }
         400 => refusal_message(body).map_or_else(
             || FatalLlmError::InvalidRequest.into(),
-            |message| FatalLlmError::InvalidRequestDetail { message }.into(),
+            |message| {
+                FatalLlmError::InvalidRequestDetail {
+                    message,
+                    code: body
+                        .pointer("/error/code")
+                        .and_then(JsonValue::as_str)
+                        .map(str::to_owned),
+                }
+                .into()
+            },
         ),
         404 | 409 | 413 | 422 => FatalLlmError::InvalidRequest.into(),
         _ if status >= 500 => RetryableLlmError::ServerError.into(),

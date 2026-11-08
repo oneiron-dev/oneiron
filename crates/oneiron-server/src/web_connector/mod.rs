@@ -1,5 +1,5 @@
 //! The served half of the built-in `web` connector (FIX 11598, CONN-1 A):
-//! every `connector.call` that names `web` lands here from
+//! every `connector.call` that selects builtin `web` lands here from
 //! [`crate::api::connector_call_listing_as`], before the MCP driver.
 //!
 //! One call reads the vault's switch ([`WebConnectorSetting`]) and takes the
@@ -91,9 +91,6 @@ pub(crate) fn call_listing(
         (WebCall::Search(_), None) => Err(ProviderError::message("no provider key")),
     };
     drop(key);
-    if let Some(permit) = charge {
-        charge::settle(permit, answer.is_ok());
-    }
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let (reply, usage) = match answer {
         Ok(answer) => {
@@ -141,6 +138,9 @@ pub(crate) fn call_listing(
             (delivered(tool, output, true), usage)
         }
     };
+    if let Some(permit) = charge {
+        charge::settle(server, permit, &usage);
+    }
     record(server, &usage);
     Ok((reply, None))
 }
@@ -165,6 +165,7 @@ fn forward_to_hub(
 ) -> MemoryResult<(ConnectorCallReply, Option<Vec<EntityId>>)> {
     let request = ConnectorCallRequest {
         name: connector.to_owned(),
+        source: Some(oneiron::outbound_consent::ConnectorSource::Catalog),
         ..input
     };
     let at_ms = now_ms();

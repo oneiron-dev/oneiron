@@ -2,6 +2,7 @@
 
 use heed::{RoTxn, RwTxn};
 
+use crate::deletion::TombstoneReason;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
@@ -64,12 +65,14 @@ impl Store {
         record: &GateDecisionRecord,
         target: &[u8; 16],
         tombstone_reason: u8,
+        authority_act: Option<[u8; 16]>,
     ) -> Result<()> {
         let pending = PendingDeletionGateDecisionRecord {
             version: PENDING_DELETION_GATE_DECISION_VERSION,
             target: *target,
             tombstone_reason,
             decision: record.clone(),
+            authority_act,
         };
         vet_pending_deletion_gate_decision_record(&pending)?;
         let sidecar_exists =
@@ -121,7 +124,8 @@ impl Store {
     }
 
     /// Appends a staged deletion authority record to the real Gate
-    /// ledger and removes its recovery sidecar atomically with TXN3.
+    /// ledger and removes its recovery sidecar atomically with TXN3. Returns
+    /// the original act binding for that writer to finish beside its receipt.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn append_pending_deletion_gate_decision_in_txn(
         &self,
@@ -129,7 +133,7 @@ impl Store {
         request_id: GateDecisionId,
         target: &[u8; 16],
         tombstone_reason: u8,
-    ) -> Result<Option<GateDecisionRecord>> {
+    ) -> Result<Option<(GateDecisionRecord, Option<[u8; 16]>)>> {
         let Some(required) = DELETE_REQUIRED.get(self, &*wtxn, &request_id)? else {
             return Ok(None);
         };
@@ -148,7 +152,7 @@ impl Store {
         self.append_gate_decision_in_txn(wtxn, &pending.decision)?;
         PENDING_DELETION.delete(self, wtxn, &request_id)?;
         DELETE_REQUIRED.delete(self, wtxn, &request_id)?;
-        Ok(Some(pending.decision))
+        Ok(Some((pending.decision, pending.authority_act)))
     }
 
     /// Discards a staged recovery sidecar when a later ownership probe proves
@@ -221,7 +225,7 @@ fn decode_deletion_gate_required(raw: &[u8]) -> Result<([u8; 16], u8)> {
     let raw: [u8; 18] = raw
         .try_into()
         .map_err(|_| Error::CorruptedIndex("deletion gate required marker"))?;
-    if raw[0] != PENDING_DELETION_GATE_DECISION_VERSION || !matches!(raw[1], 1..=4) {
+    if raw[0] != PENDING_DELETION_GATE_DECISION_VERSION || !known_tombstone_reason(raw[1]) {
         return Err(Error::CorruptedIndex("deletion gate required marker"));
     }
     let mut target = [0_u8; 16];
@@ -229,12 +233,20 @@ fn decode_deletion_gate_required(raw: &[u8]) -> Result<([u8; 16], u8)> {
     Ok((target, raw[1]))
 }
 
+/// Whether `byte` is a tombstone reason the wire table names (FIX 21827):
+/// an owner's erase stages wire byte 6 ([`TombstoneReason::OwnerErase`]), and
+/// a cleanup archive byte 5. The reserved byte 0 and every byte above the
+/// table stay refused, as the tombstone decoder refuses them.
+fn known_tombstone_reason(byte: u8) -> bool {
+    TombstoneReason::from_wire_byte(byte).is_some()
+}
+
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
 fn vet_pending_deletion_gate_decision_record(
     record: &PendingDeletionGateDecisionRecord,
 ) -> Result<()> {
     if record.version != PENDING_DELETION_GATE_DECISION_VERSION
-        || !matches!(record.tombstone_reason, 1..=4)
+        || !known_tombstone_reason(record.tombstone_reason)
         || record.decision.content_kind != "deletion"
     {
         return Err(Error::CorruptedIndex("pending deletion gate decision"));

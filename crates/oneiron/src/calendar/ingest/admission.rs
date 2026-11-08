@@ -4,14 +4,15 @@ mod continuation;
 mod import_claim;
 mod preflight;
 mod recurrence;
+mod source_events;
 use super::ingest;
 #[cfg(test)]
 use super::poll::IcsFeedPollConfig;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
-    CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
-    CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
-    PREDICATE_CALENDAR_STATUS, decode_status_value,
+    CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportSource,
+    CalendarPassportValue, CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_ORIGIN,
+    PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS, decode_status_value,
 };
 use crate::calendar::ics::ParsedVEvent;
 use crate::calendar::passport::{
@@ -31,9 +32,11 @@ pub use continuation::{
     ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload,
     run_ics_property_continuation,
 };
-pub(in crate::calendar) use import_claim::admit_calendar_import_claim;
 pub(crate) use import_claim::ensure_ics_import_actor;
 pub use import_claim::ics_import_actor_id;
+pub(in crate::calendar) use import_claim::{
+    admit_calendar_import_claim, admit_calendar_import_claim_in_txn,
+};
 use import_claim::{admit_calendar_import_claim_screened, imported_screen};
 
 #[cfg(test)]
@@ -50,6 +53,7 @@ pub(super) struct PollAdmission<'a> {
     pub(crate) preserve_direction: bool,
     pub(crate) now: u64,
     pub(crate) blob_ref: &'a str,
+    pub(crate) source: Option<CalendarPassportSource>,
     pub(crate) verdict_fold: VerdictFold,
     /// The events whose property admissions passed one pass's count, each
     /// queued a continuation once the feed is applied (FIX 11997, FIX
@@ -78,6 +82,10 @@ impl PollAdmission<'_> {
 
     fn apply_event(&mut self, event: &ParsedVEvent) -> Result<(), CalendarError> {
         self.preflight_event(event)?;
+        // A pack calendar source's EVENTs are its own (FIX 12559).
+        if let Some(source) = source_events::pack_source(self.vault, self.system)? {
+            return self.apply_source_event(event, source);
+        }
         if let Some(original) = event.properties.recurrence_id_utc {
             return self.apply_exception(event, original);
         }
@@ -144,7 +152,7 @@ impl PollAdmission<'_> {
     fn sweep_resource(
         &mut self,
         feed: &super::ics::ParsedIcsFeed,
-        only_uid: Option<&str>,
+        only_uids: Option<&std::collections::BTreeSet<&str>>,
         absence_basis: CalendarStatusBasis,
     ) -> Result<(), CalendarError> {
         let present: std::collections::BTreeSet<_> = feed
@@ -156,13 +164,14 @@ impl PollAdmission<'_> {
             let passports = live_passports_for_event(self.vault, &event_ref)?;
             let instance = self.exception_start(event_ref)?;
             if !passports.iter().any(|(_, value)| {
-                value.system == self.system && only_uid.is_none_or(|uid| value.uid == uid)
+                value.system == self.system
+                    && only_uids.is_none_or(|uids| uids.contains(value.uid.as_str()))
             }) {
                 continue;
             }
             for (_, value) in &passports {
                 let reports = value.system == self.system
-                    && only_uid.is_none_or(|uid| value.uid == uid)
+                    && only_uids.is_none_or(|uids| uids.contains(value.uid.as_str()))
                     && value.direction.is_inbound_bearing()
                     && value.presence == CalendarPassportPresence::Live
                     && !present.contains(&(value.uid.as_str(), instance));
@@ -221,10 +230,20 @@ impl PollAdmission<'_> {
                     self.vault.stage_calendar_event(
                         txn,
                         &input,
+                        None,
                         self.event_occurred(event),
                         WriteActor::new(actor, crate::EdgeActorClass::System),
                         id,
                         self.now,
+                    )?;
+                    // A pack calendar source's EVENT is bound to the source's
+                    // audience in its birth commit (FIX 12559); a no-op for
+                    // any other system.
+                    crate::mail_pack::bind_calendar_source_row_in_txn(
+                        self.vault,
+                        txn,
+                        self.system,
+                        &id,
                     )?;
                     Ok(id)
                 });
@@ -539,6 +558,7 @@ impl PollAdmission<'_> {
             uid: event.uid.clone(),
             last_sequence: event.sequence,
             content_hash: event.content_hash,
+            source: self.source,
             direction,
             last_seen_at: self.now,
             presence,
@@ -581,6 +601,7 @@ fn connector_admission<'a>(
         safeguard_enabled: false,
         now,
         blob_ref: source,
+        source: None,
         verdict_fold: VerdictFold::default(),
         continuations: None,
     }
@@ -604,6 +625,7 @@ pub(in crate::calendar) fn preflight_connector_feed(
 pub(in crate::calendar) struct ConnectorAdmissionSource<'a> {
     pub(in crate::calendar) record: &'a str,
     pub(in crate::calendar) source_version: Option<&'a str>,
+    pub(in crate::calendar) source: Option<CalendarPassportSource>,
 }
 
 impl<'a> From<&'a str> for ConnectorAdmissionSource<'a> {
@@ -613,6 +635,7 @@ impl<'a> From<&'a str> for ConnectorAdmissionSource<'a> {
         Self {
             record,
             source_version: None,
+            source: None,
         }
     }
 }
@@ -629,6 +652,7 @@ pub(in crate::calendar) fn admit_connector_event<'a>(
 ) -> Result<(), CalendarError> {
     let source = source.into();
     let mut admission = connector_admission(vault, system, source.record, now);
+    admission.source = source.source;
     let Some(source_version) = source.source_version else {
         return admission.apply_event(event);
     };
@@ -646,7 +670,24 @@ pub(in crate::calendar) fn sweep_connector_resource(
 ) -> Result<(), CalendarError> {
     connector_admission(vault, system, source, now).sweep_resource(
         feed,
-        Some(uid),
+        Some(&std::collections::BTreeSet::from([uid])),
+        CalendarStatusBasis::ImportedAbsence,
+    )
+}
+
+/// Marks every UID in `uids` absent for `system` in one EVENT scan: each of
+/// its live inbound passports there, master and instances, as an omitted
+/// feed item does.
+pub(in crate::calendar) fn sweep_connector_uids(
+    vault: &Vault,
+    system: &str,
+    source: &str,
+    uids: &std::collections::BTreeSet<&str>,
+    now: u64,
+) -> Result<(), CalendarError> {
+    connector_admission(vault, system, source, now).sweep_resource(
+        &super::ics::ParsedIcsFeed { events: Vec::new() },
+        Some(uids),
         CalendarStatusBasis::ImportedAbsence,
     )
 }
@@ -661,7 +702,7 @@ pub(in crate::calendar) fn delete_connector_resource(
 ) -> Result<(), CalendarError> {
     connector_admission(vault, system, source, now).sweep_resource(
         &super::ics::ParsedIcsFeed { events: Vec::new() },
-        Some(uid),
+        Some(&std::collections::BTreeSet::from([uid])),
         CalendarStatusBasis::ImportedCancel,
     )
 }

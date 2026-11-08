@@ -61,6 +61,7 @@ pub use capability::EsignCapability;
 pub(crate) use capability::recipient_capability_unrevoked_in;
 pub use ceremony::{
     ESIGN_SEAL_ATTEMPT_KIND, SigningAction, SigningCaller, SigningOutcome, SigningPage,
+    SigningSealedItem,
 };
 pub use principals::{SigningAutonomy, SigningPrincipal};
 pub(crate) use principals::{automated_outbound_allowed, automated_signing_allowed};
@@ -82,14 +83,18 @@ pub use seal_run::EsignSealRun;
 mod sealer;
 pub use sealer::{
     EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError,
-    EsignSignatureRevision, EsignVerdict, SealDegrade, SealProfile, SealVerdict,
+    EsignSignatureRevision, EsignVerdict, SealActiveContentFacts, SealDegrade, SealDegradeReason,
+    SealProfile, SealProfileEvidence, SealVerdict,
 };
+mod page_inspector;
+pub use page_inspector::EsignPageInspector;
 mod signature_revision;
 pub use signature_revision::SEAL_CONTENTS_LADDER;
 
 mod reseal;
 
 mod public_read;
+pub use public_read::EsignLeasedReadError;
 
 mod artifact_actor;
 pub(crate) use artifact_actor::actor as artifact_machine;

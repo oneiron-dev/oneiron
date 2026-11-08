@@ -3,6 +3,7 @@ use super::{DeletionMarker, DeletionState, TombstoneStoreRead, WindowAddress, Wi
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::{EntityId, Vault, error::Result, store::ManifestDbs};
 use heed::RoTxn;
+use std::collections::BTreeSet;
 
 /// The `sync_state` table of one deletion family; each is keyed by the row id.
 fn marker_table(marker: DeletionMarker) -> SideTable<HexId, Vec<u8>, Raw> {
@@ -71,6 +72,44 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
     ) -> Result<bool> {
         marker_table(marker).contains(self, txn, &HexId(*id))
     }
+}
+
+/// Every hard-delete marker id in this transaction, including marker-only erasures.
+pub(crate) fn hard_erased_ids_in_txn(
+    dbs: &impl ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut ids = BTreeSet::new();
+    for row in marker_table(DeletionMarker::HardDelete).iter_raw_from(dbs, rtxn, &[])? {
+        let (key, _) = row?;
+        // A key that spells no id names no actor.
+        if let Some(id) = std::str::from_utf8(&key)
+            .ok()
+            .and_then(|hex| EntityId::from_hex(hex).ok())
+        {
+            ids.insert(id);
+        }
+    }
+    Ok(ids)
+}
+
+/// Whether an existing, readable row proves that `id` is not an actor.
+pub(crate) fn names_no_actor_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if let Some(raw) = super::EntityStoreRead::port_entity_raw(dbs, txn, id)?
+        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
+    {
+        return Ok(!matches!(
+            header.entity_type,
+            crate::registry::ENTITY_TYPE_PERSON
+                | crate::registry::ENTITY_TYPE_MACHINE
+                | crate::registry::ENTITY_TYPE_AGENT_DEF
+        ));
+    }
+    Ok(false)
 }
 
 /// The row's deletion state as `dbs` reads it in `txn`: its archive marker,
@@ -252,6 +291,33 @@ pub(crate) fn removed_in_txn(
             },
     )
 }
+/// Whether an owner is gone in `txn`: row removal other than an archive,
+/// hard deletion, or identity soft deletion. Callers keep their own policy
+/// for a marker read error.
+pub(crate) fn owner_gone_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    owner: &EntityId,
+) -> Result<bool> {
+    Ok(removed_in_txn(dbs, txn, owner)?
+        || dbs.port_deletion_marked(txn, DeletionMarker::HardDelete, owner)?
+        || dbs.port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, owner)?)
+}
+
+/// Whether an owner's hard erasure is complete in `txn` (FIX 6591): it
+/// holds the hard-delete marker, which the erase's own writer puts beside
+/// the purge and the retirement. A removed row, or a pending `df:` or `pt:`
+/// fence, without that marker is not hard-erased: the delete it stands for
+/// may still apply, and its retirement has not run. A marker read error is
+/// returned to the caller.
+pub(crate) fn owner_hard_erased_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    owner: &EntityId,
+) -> Result<bool> {
+    dbs.port_deletion_marked(txn, DeletionMarker::HardDelete, owner)
+}
+
 impl TombstoneStoreRead for Vault {
     fn port_tombstone_records<'a>(
         &self,

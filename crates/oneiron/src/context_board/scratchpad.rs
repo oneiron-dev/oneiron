@@ -29,6 +29,8 @@ use crate::side_table::{self, Named, SideKey, SideTable};
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
+mod run_lifecycle;
+
 /// The registered NOTE kind every pad is born as.
 const PAD_KIND: &str = "scratchpad";
 
@@ -114,6 +116,8 @@ struct PadRow {
     actor: [u8; 16],
     session: String,
     pad: [u8; 16],
+    /// Only the session pointer owns a run's close; archival pad rows carry None.
+    close_run: Option<[u8; 16]>,
 }
 
 /// An optional line mark (ARCH-0032 #scratchpad-marks). After the seal the
@@ -437,6 +441,7 @@ fn seal_pad_in_txn(
 ) -> crate::error::Result<()> {
     if !crate::ports::TombstoneStore::port_tombstone_is_deleted(vault, txn, &pad)? {
         crate::note::seal_note_in_txn(vault, txn, pad, actor)?;
+        vault.queue_note_document_update_in_txn(txn, pad);
     }
     Ok(())
 }
@@ -506,6 +511,19 @@ impl Memory<'_> {
         Ok(Some((pad, sealed)))
     }
 
+    /// The NOTE of this session's live pad, the pad
+    /// [`Self::scratchpad_board_section`] projects, read through the actor's
+    /// own scoped read, which admits a pad to its exact author only. `None`
+    /// when the session has no pad, its pad is sealed, or the read withholds
+    /// it. It never opens, appends to or seals a pad.
+    pub fn scratchpad_ref(&self, session: &str) -> MemoryResult<Option<EntityId>> {
+        validate_session(session)?;
+        let Some((pad, false)) = self.scratchpad_pointer(session)? else {
+            return Ok(None);
+        };
+        Ok(self.pad_markdown(pad)?.map(|_| pad))
+    }
+
     /// Appends one line to this session's live pad. The session's first line
     /// births a new `scratchpad` NOTE: a new pad per run (`dr:P16`), each
     /// session's or fork's its own, so another session's pad, live or not,
@@ -540,13 +558,25 @@ impl Memory<'_> {
                 .note_program_document(pad)?
                 .ok_or_else(corrupt_pad)?;
             let end = doc.anchor(doc.text().chars().count())?;
-            let outcome = self.edit_note(
-                &pad.to_hex(),
-                &NoteProgramEdit::InsertAfter {
-                    anchor: end,
-                    text: line,
-                },
-            )?;
+            let note = pad;
+            let edit = NoteProgramEdit::InsertAfter {
+                anchor: end,
+                text: line,
+            };
+            let actor = self.write_actor();
+            let outcome = self.with_actor_content_write_txn_as(actor, |content| {
+                content.update_note(note, |txn, lane| {
+                    let outcome = self
+                        .vault()
+                        .edit_note_in_txn(txn, note, &edit, actor, lane)?;
+                    if matches!(outcome, NoteProgramEditOutcome::Edited { .. }) {
+                        run_lifecycle::observe_append_in_txn(self, txn, session, pad)?;
+                    }
+                    Ok(outcome)
+                })
+            })?;
+            #[cfg(feature = "sync")]
+            self.vault().notify_note_document(note);
             if !matches!(outcome, NoteProgramEditOutcome::Edited { .. }) {
                 return Err(MemoryError::new(
                     MEMORY_CODE_INVALID_STATE,
@@ -562,10 +592,11 @@ impl Memory<'_> {
         }
         let pad = EntityId::from_hex(&self.create_note(PAD_KIND, &line)?.id_hex)?;
         let actor = self.actor();
-        let row = PadRow {
+        let mut row = PadRow {
             actor: *actor.as_bytes(),
             session: session.to_owned(),
             pad: *pad.as_bytes(),
+            close_run: None,
         };
         let sealed_prior = self.with_verified_actor_write_txn(|txn| {
             let store = &self.vault().store;
@@ -575,6 +606,7 @@ impl Memory<'_> {
             // pad is sealed.
             let prior = seal_session_pad_in_txn(self.vault(), txn, actor, session)?;
             PAD.put(store, txn, &PadKey::Pad { pad }, &row)?;
+            row.close_run = self.bound_code_run().map(|run| *run.as_bytes());
             let session = PadKey::Session {
                 actor,
                 session: session.to_owned(),

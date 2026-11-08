@@ -10,6 +10,7 @@ use crate::claim::ClaimBody;
 use crate::context_pack::EmptyReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::query_expansion::{
     CompletionCandidate, CompletionRequest, EvidenceVerdict, HydeRequest, ground_query,
     normalized_subqueries,
@@ -41,6 +42,7 @@ impl PipelineBuilder<'_> {
             return Ok(PipelineOutput {
                 embedding_matches: HashMap::new(),
                 vector_completed: false,
+                text_exhausted: false,
                 revisions: HashMap::new(),
                 words_bound: Default::default(),
                 // No channel ran: an authority refusal is not a cache failure.
@@ -53,6 +55,7 @@ impl PipelineBuilder<'_> {
                 pending_vectors: Vec::new(),
                 claims_suppressed: 0,
                 read_suppressed: 0,
+                read_suppressed_candidates: Default::default(),
                 cosine_ghosts_dampened: 0,
                 disclosure_clamped: Vec::new(),
                 total_in_scope: 0,
@@ -64,11 +67,11 @@ impl PipelineBuilder<'_> {
                 critical: Default::default(),
             });
         }
-        self.claim_aging_profiles =
-            crate::gate::policy_manifest_doors::claim_aging_profiles_for_run(self.vault)?;
-        if let Some(weights) =
-            crate::gate::policy_manifest_doors::retrieval_weights_for_run(self.vault)?
-        {
+        let aging = crate::gate::policy_manifest_doors::claim_aging_profiles_for_run(self.vault)?;
+        self.claim_aging_profiles = aging.profiles;
+        let weights_view =
+            crate::gate::policy_manifest_doors::retrieval_weights_for_run(self.vault)?;
+        if let Some(weights) = weights_view.as_ref().map(|view| view.weights) {
             if !self.affect_policy_overridden {
                 self.affect_policy.emotion_weight = weights.affect;
                 self.affect_policy.arousal_stretch = weights.arousal;
@@ -76,6 +79,21 @@ impl PipelineBuilder<'_> {
             self.ppr_vad_alpha = weights.vad;
             self.ppr_community.beta = weights.community;
         }
+        // FIX 7315: the run's policy witness is the pair its two actual typed
+        // reads agreed on, byte-exact, weights present. Independent original
+        // snapshots stay independent: any absence or mismatch keeps both None.
+        let (policy_manifest_ref, policy_manifest_body_hash) = match &weights_view {
+            Some(weights)
+                if weights.manifest_ref == aging.manifest_ref
+                    && weights.body_hash == aging.body_hash =>
+            {
+                (
+                    Some(weights.manifest_ref.clone()),
+                    Some(weights.body_hash.clone()),
+                )
+            }
+            _ => (None, None),
+        };
         if self.ppr_search.is_some() || self.ppr_expand.is_some() {
             crate::config::validate_ppr_vad_alpha(self.ppr_vad_alpha)?;
         }
@@ -178,7 +196,7 @@ impl PipelineBuilder<'_> {
             }
         };
 
-        let hyde_expansion = match self.hyde.as_ref() {
+        let hyde_request = match self.hyde.as_ref() {
             None => None,
             Some(_) if self.deadline_reached() => None,
             Some((expander, grounding, options)) => {
@@ -189,12 +207,48 @@ impl PipelineBuilder<'_> {
                     ));
                 };
                 let query = ground_query(template, grounding)?;
-                let expansion = expander.expand(&HydeRequest {
-                    query,
-                    max_subqueries: crate::query_expansion::HYDE_MAX_SUBQUERIES,
-                })?;
+                Some((
+                    expander,
+                    HydeRequest {
+                        query,
+                        max_subqueries: crate::query_expansion::HYDE_MAX_SUBQUERIES,
+                    },
+                ))
+            }
+        };
+
+        // Measure the resolved channel inputs once, before expansion or
+        // scoring. Outer recall and binding doors do not measure again.
+        if let Some((query, _)) = self.text_search.as_ref() {
+            self.vault.measure_limit(
+                crate::limit_ask::EngineLimit::RecallQueryBytes,
+                query.len() as u64,
+            );
+        }
+        if let Some(codes) = self.phonetic_search.as_ref() {
+            for query in codes {
+                self.vault.measure_limit(
+                    crate::limit_ask::EngineLimit::RecallQueryBytes,
+                    query.len() as u64,
+                );
+            }
+        }
+        // The one final count this execution serves, measured after every
+        // applicable validation and before any paid expansion or scoring.
+        // Best effort: the run serves its rows either way.
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::RequestedResultRows, self.result_limit as u64);
+        // FIX 4451 (L05 YES 11:05): capture the expander id from the SAME
+        // expander whose expansion actually ran, in the arm that ran it. A
+        // configured-but-unused expander (deadline-skipped, unvalidated, or
+        // errored) leaves None: never inferred from configuration.
+        let (hyde_expansion, query_expander_id) = match hyde_request {
+            None => (None, None),
+            Some((expander, request)) => {
+                let expansion = expander.expand(&request)?;
                 crate::query_expansion::validate_hyde_expansion(self.vault, &expansion)?;
-                Some(expansion)
+                (Some(expansion), Some(expander.id().to_owned()))
             }
         };
 
@@ -237,6 +291,7 @@ impl PipelineBuilder<'_> {
             return Ok(PipelineOutput {
                 embedding_matches: HashMap::new(),
                 vector_completed: dense_completed(&attempt.diagnostics),
+                text_exhausted: attempt.text_exhausted,
                 revisions: HashMap::new(),
                 words_bound: Default::default(),
                 retrieval_quality: classify_retrieval_quality(&attempt.diagnostics),
@@ -248,6 +303,7 @@ impl PipelineBuilder<'_> {
                 pending_vectors: Vec::new(),
                 claims_suppressed: 0,
                 read_suppressed: 0,
+                read_suppressed_candidates: Default::default(),
                 cosine_ghosts_dampened: 0,
                 disclosure_clamped: Vec::new(),
                 total_in_scope: 0,
@@ -259,6 +315,7 @@ impl PipelineBuilder<'_> {
                 critical: Default::default(),
             });
         }
+        let mut text_exhausted = attempt.text_exhausted;
         let mut temporal_report = attempt.temporal_report;
         let mut diagnostics = attempt.diagnostics;
         let mut ppr_expand_executed = attempt.ppr_expand_executed;
@@ -270,6 +327,7 @@ impl PipelineBuilder<'_> {
         let mut pending_vectors = attempt.pending_vectors;
         let mut claim_gate = attempt.claim_gate;
         let mut read_suppressed = attempt.read_suppressed;
+        let mut read_suppressed_candidates = attempt.read_suppressed_candidates;
         let deferred_ppr_cache_writes = attempt.deferred_ppr_cache_writes;
         let mut cosine_ghosts_dampened = attempt.cosine_ghosts_dampened;
         let mut disclosure_clamped = attempt.disclosure_clamped;
@@ -281,6 +339,7 @@ impl PipelineBuilder<'_> {
         let mut access_factors = attempt.access_factors;
         let mut rerank_merged_components = attempt.rerank_merged_components;
         let mut retrieval_trace = attempt.retrieval_trace;
+        let mut replay_inputs_memory = attempt.replay_inputs_memory;
         let mut replay_inputs = attempt.replay_inputs;
         let mut critical = attempt.critical;
 
@@ -343,6 +402,7 @@ impl PipelineBuilder<'_> {
                 self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
+                text_exhausted = retry.text_exhausted;
                 temporal_report = retry.temporal_report;
                 scores = retry.scores;
                 cited_messages = retry.cited_messages;
@@ -352,6 +412,7 @@ impl PipelineBuilder<'_> {
                 pending_vectors = retry.pending_vectors;
                 claim_gate = retry.claim_gate;
                 read_suppressed = retry.read_suppressed;
+                read_suppressed_candidates = retry.read_suppressed_candidates;
                 cosine_ghosts_dampened = retry.cosine_ghosts_dampened;
                 disclosure_clamped = retry.disclosure_clamped;
                 total_in_scope = retry.total_in_scope;
@@ -363,6 +424,7 @@ impl PipelineBuilder<'_> {
                 rerank_merged_components = retry.rerank_merged_components;
                 retrieval_trace = retry.retrieval_trace;
                 replay_inputs = retry.replay_inputs;
+                replay_inputs_memory = retry.replay_inputs_memory;
                 critical = retry.critical;
                 ppr_expand_executed = retry.ppr_expand_executed;
                 claim_bodies.clear();
@@ -425,6 +487,9 @@ impl PipelineBuilder<'_> {
             if let Some(inputs) = replay_inputs.as_mut() {
                 inputs.config["retrieval_policy"] = serde_json::to_value(&*policy)
                     .map_err(|_| Error::InvariantViolation("retrieval policy replay encode"))?;
+                if let Some(memory) = replay_inputs_memory.as_mut() {
+                    memory.track_config(inputs);
+                }
             }
             if let Some(trace) = retrieval_trace.as_mut() {
                 use sha2::{Digest, Sha256};
@@ -506,10 +571,17 @@ impl PipelineBuilder<'_> {
             )
             .with_context(self.retrieval_state.clone(), self.retrieval_turn)
             .with_trace(retrieval_trace)
-            .with_quality(&retrieval_quality);
+            .with_quality(&retrieval_quality)
+            .with_query_expander_id(query_expander_id);
             let mut run_record = run_record;
+            run_record.reranker_id = rerank_merged_components
+                .as_ref()
+                .and(self.rerank.as_ref())
+                .map(|(reranker, _)| reranker.id().to_owned());
             run_record.policy_trace = policy_trace;
             run_record.replay_inputs = replay_inputs;
+            run_record.policy_manifest_ref = policy_manifest_ref;
+            run_record.policy_manifest_body_hash = policy_manifest_body_hash;
             // ONE-1728 K10: a retrieval issued inside a room registers through the
             // room's door, which writes under the route the run captured — into
             // the room's overlay `VaultMeta` while it is off record (so the base
@@ -523,7 +595,10 @@ impl PipelineBuilder<'_> {
                 None if provisional => self
                     .vault
                     .store
-                    .record_context_pack_provisional_retrieval_run(&run_record),
+                    .record_context_pack_provisional_retrieval_run(
+                        &run_record,
+                        self.media_search.memory(),
+                    ),
                 None => self.vault.store.record_retrieval_run(&run_record),
             };
             match write_result {
@@ -561,6 +636,7 @@ impl PipelineBuilder<'_> {
         Ok(PipelineOutput {
             embedding_matches,
             vector_completed: dense_completed(&diagnostics),
+            text_exhausted,
             revisions,
             words_bound,
             retrieval_quality,
@@ -572,6 +648,7 @@ impl PipelineBuilder<'_> {
             pending_vectors,
             claims_suppressed,
             read_suppressed,
+            read_suppressed_candidates,
             cosine_ghosts_dampened,
             disclosure_clamped,
             total_in_scope,

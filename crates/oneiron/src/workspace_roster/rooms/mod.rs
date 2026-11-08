@@ -26,6 +26,7 @@ mod participants;
 mod participation;
 mod private_threads;
 mod replica;
+mod speaking;
 #[cfg(test)]
 mod tests;
 mod thread_delete;
@@ -36,6 +37,7 @@ mod thread_reads;
 mod upkeep;
 mod upkeep_voice;
 mod upkeep_voice_guard;
+mod wake;
 mod witness;
 use super::ProjectRoom;
 use crate::error::{Error, Result};
@@ -127,6 +129,7 @@ pub(crate) use replica::{
     replicated_turn_in,
 };
 use serde::{Deserialize, Serialize};
+pub use speaking::{ROOM_SPEAKING_TURNS, RoomSpeakingClaim};
 use std::collections::BTreeSet;
 pub(crate) use thread_delete::private_root_of_room_in;
 pub use thread_delete::{PrivateThreadDeleteReceipt, PrivateThreadDeleteRequest};
@@ -142,6 +145,7 @@ pub(crate) use upkeep::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
 pub use upkeep_voice::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
 };
+pub use wake::{ROOM_WAKE_ATTEMPT_KIND, RoomWake, RoomWakeTurn, StagedRoomWake};
 pub(crate) use witness::{RoomRegenerationPermit, admit_witness, erase_turn_actor_in_txn};
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
@@ -467,6 +471,27 @@ impl Vault {
                 .map(|id| EntityId::from_hex(id))
                 .collect(),
             None => self.members_in_txn(txn, room),
+        }
+    }
+
+    /// [`Self::room_audience_members_in_txn`] in the order the room's
+    /// owning record holds them (FIX 10567): a project home room's
+    /// validated effective seats, an ordinary Conversation's ledger members
+    /// as its typed body lists them
+    /// ([`Self::members_in_record_order_in_txn`]). The same members, never
+    /// sorted: a caller that binary-searches them sorts its own copy.
+    pub(crate) fn room_audience_members_in_record_order_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        room: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        match project_room_of(self, txn, room)? {
+            Some(room) => room
+                .member_ids
+                .iter()
+                .map(|id| EntityId::from_hex(id))
+                .collect(),
+            None => self.members_in_record_order_in_txn(txn, room),
         }
     }
 

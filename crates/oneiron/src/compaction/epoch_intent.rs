@@ -96,7 +96,7 @@ pub(super) fn epoch_birth(
     let window = request
         .window
         .iter()
-        .filter(|_| request.log == WindowLog::Conversation)
+        .filter(|_| matches!(request.log, WindowLog::Conversation(_)))
         .flat_map(|message| [message.message_id, message.turn_id]);
     let mut seen = std::collections::BTreeSet::new();
     let inputs: Vec<EntityId> = std::iter::once(intent)
@@ -187,6 +187,7 @@ pub(super) fn intent_ops(
             entity_type: ENTITY_TYPE_NOTE,
             occurred: TimeRange { start: at, end: at },
             learned_at: at,
+            row_version: None,
             data: body,
             allow_maintenance: false,
             allow_reserved_predicate: false,

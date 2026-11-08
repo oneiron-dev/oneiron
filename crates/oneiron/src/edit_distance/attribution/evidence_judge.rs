@@ -13,13 +13,13 @@ use super::taxonomy::{
 };
 use crate::Vault;
 use crate::actor_claims::require_actor_entity;
-use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, amendment_delta};
-use crate::edit_distance::{RetainedProposal, retained_proposal};
+use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, EndpointRef, amendment_delta};
+use crate::edit_distance::{RetainedProposal, TextRead, retained_proposal};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill_attribution::{
     AttributionDecisions, AttributionJudgment, AttributionLane, EditHunk, JudgeTrace,
-    UnclearAttribution, delete_unclear_in_txn, draw_proposal_sequence_in_txn,
+    UnclearAttribution, UnclearContext, delete_unclear_in_txn, draw_proposal_sequence_in_txn,
     ground_attempt_receipt, mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor_sourced,
     withdraw_edit_proposal_in_txn,
 };
@@ -332,6 +332,55 @@ fn recorded_window(vault: &Vault, delta: &AmendmentDelta) -> Option<RetainedProp
     }
 }
 
+/// The retained endpoint texts `delta` measured, when it measured a
+/// reconstructed re-diff (FIX 12715): the final end's artifact (the
+/// settlement's own row) beside both ends' texts, read through the delta's
+/// own refs — the refs' stated purpose. `None` for every other lane, for a
+/// Δ whose refs name no retained row, and when a row or text does not
+/// read — those hunks carry no ranges, as before.
+fn reconstructed_ends(vault: &Vault, delta: &AmendmentDelta) -> Option<(EntityId, String, String)> {
+    if delta.source != DeltaSource::Reconstructed {
+        return None;
+    }
+    let proposed_artifact = delta.proposed_ref.proposal_artifact()?;
+    let final_artifact = delta.final_ref.proposal_artifact()?;
+    let proposed_row = match retained_proposal(vault, proposed_artifact) {
+        Ok(Some(row)) => row,
+        Ok(None) => return None,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a judgment's reconstructed proposed end does not read; its hunks carry no ranges"
+            );
+            return None;
+        }
+    };
+    let TextRead::Text(proposed_text) = proposed_row.end_text(&delta.proposed_ref) else {
+        return None;
+    };
+    if proposed_artifact == final_artifact {
+        let TextRead::Text(final_text) = proposed_row.end_text(&delta.final_ref) else {
+            return None;
+        };
+        return Some((final_artifact.entity_id(), proposed_text, final_text));
+    }
+    let final_row = match retained_proposal(vault, final_artifact) {
+        Ok(Some(row)) => row,
+        Ok(None) => return None,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a judgment's reconstructed final end does not read; its hunks carry no ranges"
+            );
+            return None;
+        }
+    };
+    let TextRead::Text(final_text) = final_row.end_text(&delta.final_ref) else {
+        return None;
+    };
+    Some((final_artifact.entity_id(), proposed_text, final_text))
+}
+
 /// Persists one judged split for `receipt_id`: the judgment row, its
 /// preference note, unclear row and discovery proposal land in one write
 /// transaction. Shared by the judge tiers and the verdict door above.
@@ -380,20 +429,36 @@ fn persist_amendment_split(
         at: evidence.at,
         hunks: {
             // Located once per judgment: every hunk's ranges name changes of
-            // this window (FIX 11344).
+            // this window (FIX 11344), or the reconstructed endpoints' line
+            // positions (FIX 12715).
             let recorded = recorded_window(vault, delta);
+            let reconstructed = if recorded.is_none() {
+                reconstructed_ends(vault, delta)
+            } else {
+                None
+            };
             hunks
                 .iter()
                 .zip(&split.hunks)
                 .map(|(hunk, class)| HunkLabel {
                     class: *class,
-                    ranges: recorded.as_ref().map_or(Vec::new(), |artifact| {
+                    ranges: if let Some(artifact) = recorded.as_ref() {
                         crate::edit_distance::miner::hunk_substitution_ranges(
                             artifact,
                             hunk.before,
                             hunk.after,
                         )
-                    }),
+                    } else if let Some((artifact, before, after)) = reconstructed.as_ref() {
+                        crate::edit_distance::miner::reconstructed_hunk_ranges(
+                            *artifact,
+                            before,
+                            after,
+                            hunk.before,
+                            hunk.after,
+                        )
+                    } else {
+                        Vec::new()
+                    },
                 })
                 .collect()
         },
@@ -420,11 +485,29 @@ fn persist_amendment_split(
         share: preference_share,
         at: judgment.at,
     });
+    // The notes freeze the context they were written in (FIX 7824): the
+    // judgment's own routing facts, and the two documents whose hunks the
+    // judge read; their world is read in the writer (FIX 22064).
     let unclear_row = (!split.unclear.is_empty()).then(|| UnclearAttribution {
         lane: AttributionLane::Amendment,
         reference: receipt_id.to_owned(),
         evidence_receipts: judgment.evidence_receipts.clone(),
         notes: split.unclear.clone(),
+        context: UnclearContext {
+            actor: judgment.actor,
+            skill: judgment.skill,
+            scope: Some(judgment.scope.clone()),
+            project: judgment.project,
+            world: None,
+            type_ref: judgment.type_ref.clone(),
+            attempt_receipt: judgment.attempt_receipt.clone(),
+            judge_revision: judgment.judge.clone(),
+            judge_model: judgment.judge_model.clone(),
+            sources: [&delta.proposed_ref, &delta.final_ref]
+                .into_iter()
+                .filter_map(EndpointRef::entity)
+                .collect(),
+        },
         at: judgment.at,
     });
 
@@ -454,7 +537,11 @@ fn persist_amendment_split(
             }
         }
         match unclear_row.as_ref() {
-            Some(row) => put_unclear_in_txn(vault, wtxn, row)?,
+            Some(row) => {
+                let mut row = row.clone();
+                row.context.world = amended_world_in_txn(vault, wtxn, &row.context)?;
+                put_unclear_in_txn(vault, wtxn, &row)?;
+            }
             None => {
                 delete_unclear_in_txn(vault, wtxn, AttributionLane::Amendment, &receipt_id_owned)?;
             }
@@ -462,6 +549,34 @@ fn persist_amendment_split(
         Ok(())
     })?;
     Ok(Some(judgment))
+}
+
+/// The one world the amended documents stand in (FIX 22064): each source row
+/// the judge read, by the world its record proves, base reality explicit.
+/// Sources in no row this vault proves a world for (a retained proposal text)
+/// leave it to the grounded attempt's run world. Two worlds, or none
+/// proved, is `None`.
+fn amended_world_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    context: &UnclearContext,
+) -> Result<Option<EntityId>> {
+    let mut worlds = std::collections::BTreeSet::new();
+    for source in &context.sources {
+        if let Some(world) = vault.record_world_in_txn(txn, source)? {
+            worlds.insert(world.unwrap_or_else(crate::claim::base_world_id));
+        }
+    }
+    if worlds.is_empty()
+        && let Some(receipt) = context.attempt_receipt.as_deref()
+    {
+        return crate::skill_attribution::outcome_world_in_txn(vault, txn, receipt);
+    }
+    let mut worlds = worlds.into_iter();
+    Ok(match (worlds.next(), worlds.next()) {
+        (Some(world), None) => Some(world),
+        _ => None,
+    })
 }
 
 /// The stored row of `judgment`; the discovery proposal's sequence is settled

@@ -54,7 +54,9 @@ use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use serde::Deserialize;
 
 use self::execution::{execute, execute_stamped, run_bound, run_bound_stamped};
-use super::{FacadeApiError, facade_actor, facade_input, facade_json, owner_authorship};
+use super::{
+    FacadeApiError, FacadeCallOutput, facade_actor, facade_input, facade_json, owner_authorship,
+};
 use crate::actions::SharedActionExecutor;
 use crate::api::call_receipt::CallStamp;
 use crate::api::owner_routes::machine_routes::act_surface_admitted;
@@ -112,14 +114,15 @@ async fn invoke(
         Err(refused) => return refused.into_response(),
     };
     let (answer, stamp) = invoke_action(&server, &auth, headers, extensions, verb, request).await;
-    let mut response = answer.map(Json).into_response();
+    let mut response = answer.map(|output| Json(output.value)).into_response();
     stamp.stamp_header(&mut response);
     response
 }
 
 /// Runs action `verb` of the app's table under `auth`, as `request` names
-/// it, and answers its outcome and read receipt, beside what its verb-table
-/// row's reply stated of its call receipt (FIX 5275). Its verb-table rows
+/// it, and answers its outcome, private dependency rows and read receipt,
+/// beside what its verb-table row's reply stated of its call receipt (FIX
+/// 5275). Its verb-table rows
 /// run through their own routes under `headers` and `extensions`, the
 /// caller's own request and connection. `POST /v1/core/actions/{verb}` and
 /// MCP's `invoke_action` tool both run an action here: one scope check, one
@@ -131,16 +134,34 @@ pub(crate) async fn invoke_action(
     extensions: Extensions,
     verb: String,
     request: ActionRequest,
-) -> (Result<serde_json::Value, FacadeApiError>, CallStamp) {
+) -> (Result<FacadeCallOutput, FacadeApiError>, CallStamp) {
     let (dispatch, stamp) =
         invoke_action_stamped(server, auth, headers, extensions, None, verb, request).await;
-    let answer = dispatch.and_then(|dispatch| {
-        Ok(serde_json::json!({
-            "outcome": dispatch.outcome_value().map_err(engine)?,
-            "readReceipt": dispatch.read_receipt,
-        }))
+    let answer = dispatch.and_then(|mut dispatch| {
+        let rows = take_action_rows(&mut dispatch);
+        Ok(FacadeCallOutput {
+            value: serde_json::json!({
+                "outcome": dispatch.outcome_value().map_err(engine)?,
+                "readReceipt": dispatch.read_receipt,
+            }),
+            rows,
+        })
     });
     (answer, stamp)
+}
+
+/// Separates the producer's new private carry from an already-recorded
+/// dispatch's public copy. The value, observations and durable record stay
+/// unchanged.
+pub(super) fn take_action_rows(dispatch: &mut ActionDispatch) -> Option<Vec<EntityId>> {
+    match &mut dispatch.outcome {
+        SelfDispatchOutcome::AgentVerb(answer) => {
+            let rows = answer.released_rows();
+            answer.rows = None;
+            rows
+        }
+        _ => None,
+    }
 }
 
 /// The same action admission and execution, retaining the typed outcome for
@@ -274,6 +295,9 @@ pub(super) fn require_action_scope(auth: &CoreAuth, verb: &str) -> Result<(), Fa
 /// read key at the caller's locality, and the owner's proof when the
 /// credential carries one.
 pub(crate) struct ActionBound {
+    /// The credential the action came in on, which a replayed answer is
+    /// released for again (FIX 8158).
+    replay_auth: CoreAuth,
     actor: EntityId,
     class: EdgeActorClass,
     key: oneiron::claim::ScopedReadActorKey,
@@ -326,6 +350,7 @@ pub(crate) fn action_bound(
             }
         };
     Ok(Some(ActionBound {
+        replay_auth: auth.clone(),
         actor,
         class,
         key,

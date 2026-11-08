@@ -33,6 +33,7 @@ use crate::write_envelope::claim_body::ClaimBody;
 mod admission;
 mod audit;
 mod authority;
+mod captured;
 mod claim;
 mod dispatch;
 mod old_record;
@@ -41,11 +42,11 @@ mod rewrite;
 
 // One door stages every effect of a put inside its write transaction.
 pub(in crate::batch) fn apply_put(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     request: PutRequest<'_>,
 ) -> Result<AppliedPut> {
-    apply_put_beside(store, wtxn, request, None, None)
+    apply_put_beside(write, wtxn, request, None, None)
 }
 
 /// [`apply_put`] for a put whose batch carries other authority rows
@@ -54,13 +55,27 @@ pub(in crate::batch) fn apply_put(
 /// the witness check with `own_device`, the lane the ingest door gave it
 /// when one of the owner's own machines sent it (FIX 9600).
 pub(in crate::batch) fn apply_put_beside<'a>(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,
     request: PutRequest<'a>,
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
     own_device: Option<&'a VerifiedOwnDeviceLane>,
 ) -> Result<AppliedPut> {
-    let data = request.row.data;
+    prepare_put_beside(write, wtxn, request, authority_beside, own_device)?.apply(write, wtxn)
+}
+
+// This preparation runs the native P1-P4 writes and callbacks. Its result is
+// consumed immediately in the same writer; it is not a read-only preview.
+fn prepare_put_beside<'a>(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut RwTxn<'_>,
+    request: PutRequest<'a>,
+    authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
+    own_device: Option<&'a VerifiedOwnDeviceLane>,
+) -> Result<captured::CapturedPut<'a>> {
+    let store = write.store;
+    let original_data = request.row.data;
+    let data = original_data;
     let admission::Admission {
         fixed,
         mut owners,
@@ -94,7 +109,7 @@ pub(in crate::batch) fn apply_put_beside<'a>(
         authority_first_seen_key,
         escalated_skill_body,
     } = rewrite::rewrite_put_body(
-        store,
+        write,
         wtxn,
         data,
         &fixed,
@@ -107,13 +122,7 @@ pub(in crate::batch) fn apply_put_beside<'a>(
     let data = owners.escalated_skill_body.as_deref().unwrap_or(data);
     let data = owners.task_body_without_streaks.as_deref().unwrap_or(data);
     let data = owners.pad_stored_body.as_deref().unwrap_or(data);
-    let old_record::OldRecord {
-        body_changed,
-        consolidation_dirty,
-        stored_before,
-        previous_skill_record,
-        optimizer_birth_marker,
-    } = old_record::apply_old_record(
+    let old_record = old_record::apply_old_record(
         store,
         wtxn,
         data,
@@ -121,35 +130,19 @@ pub(in crate::batch) fn apply_put_beside<'a>(
         &dispatch,
         &mut portable_agent_source,
     )?;
-    audit::audit_and_stage_body(
-        store,
-        wtxn,
-        data,
-        &fixed,
-        &dispatch,
-        body_changed,
-        &previous_skill_record,
-        audit::StagedMarkers {
-            hub_origin_marker,
-            optimizer_birth_marker,
-            agent_id_pin,
-        },
-    )?;
-    projections::stage_put_projections(
-        store,
-        wtxn,
-        data,
-        &fixed,
-        &dispatch,
-        &revision,
-        body_changed,
-        consolidation_dirty,
-        stored_before,
-        &previous_skill_record,
+    Ok(captured::CapturedPut {
+        original_data,
+        fixed,
+        owners,
+        dispatch,
+        revision,
+        old_record,
+        hub_origin_marker,
+        agent_id_pin,
         short_id_plan,
         authority_first_seen_key,
         evicted_shell_sources,
         project_revisions,
         portable_agent_source,
-    )
+    })
 }

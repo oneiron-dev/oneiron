@@ -42,17 +42,15 @@ impl CalendarRangeDto {
 
 /// One calendar selector.
 ///
-/// `system` is accepted and deliberately ignored until CAL-02 (ONE-1784) lands
-/// the passport index: 1791 precedes 1784 in the frontier, so filtering on a
-/// selector that has no index yet would silently empty every result. An empty
-/// selector slice likewise means "every calendar EVENT visible under the
-/// caller's existing read scope".
+/// A named `system` matches an EVENT's calendar passport. Selectors are
+/// combined with OR. An empty selector slice, or a selector without a system,
+/// means every calendar EVENT visible under the caller's existing read scope.
 #[derive(
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(deny_unknown_fields)]
 pub struct CalendarSel {
-    /// Calendar system key (e.g. a passport `system`); ignored on this baseline.
+    /// Calendar passport system key; `None` matches every calendar.
     #[serde(default)]
     pub system: Option<String>,
 }
@@ -81,22 +79,22 @@ pub struct CalendarEventView {
 }
 
 /// `calendar.read` request.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarReadRequest {
     /// Hex EVENT entity id.
     pub event_ref: String,
+    /// The caller's retrieval filter (FIX 3977): it narrows the EVENT and
+    /// what the read serves of it, beside the scope selectors.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 /// `calendar.search` request.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarSearchRequest {
-    /// Calendar selectors; see [`CalendarSel`] for the deferred-selection rule.
+    /// Calendar selectors; see [`CalendarSel`] for passport matching.
     pub calendars: Vec<CalendarSel>,
     /// Inclusive UTC window; `None` means unbounded.
     pub range: Option<CalendarRangeDto>,
@@ -104,4 +102,8 @@ pub struct CalendarSearchRequest {
     pub text: Option<String>,
     /// Maximum rows returned, clamped to [`MAX_CALENDAR_SEARCH_LIMIT`].
     pub limit: u32,
+    /// The caller's retrieval filter (FIX 3977): it narrows every EVENT the
+    /// search reads, conjoined with the calendar, window and name selectors.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }

@@ -30,6 +30,10 @@ impl fmt::Debug for ServeArgs {
             .field("restore_result_fd", &self.restore_result_fd)
             .field("vsock_guest", &self.vsock_guest)
             .field("vm_restore_revision", &self.vm_restore_revision)
+            .field(
+                "checkpoint_host_holds_recipient_fd",
+                &self.checkpoint_host_holds_recipient_fd,
+            )
             .field("vm_anchor_revision", &self.vm_anchor_revision)
             .field("vm_anchor_url", &redacted_secret(&self.vm_anchor_url))
             .field("vm_anchor_socket", &self.vm_anchor_socket)
@@ -42,6 +46,7 @@ impl fmt::Debug for ServeArgs {
             .field("escrow_outbox_dir", &self.escrow_outbox_dir)
             .field("maximum_tier", &self.maximum_tier)
             .field("artifact_http_socket", &self.artifact_http_socket)
+            .field("preview_socket", &self.preview_socket)
             .field("settings_file", &self.settings_file)
             .field("voice_socket", &self.voice_socket)
             .field("seal_key_file", &self.seal_key_file)
@@ -82,6 +87,7 @@ impl fmt::Debug for ServeArgs {
             .field("artifact_domains", &self.artifact_domains)
             .field("artifact_vault_name", &self.artifact_vault_name)
             .field("kit_bundle_public_urls", &self.kit_bundle_public_urls)
+            .field("git_door_base", &self.git_door_base)
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field(
                 "insecure_allow_unauthenticated",
@@ -110,10 +116,6 @@ impl fmt::Debug for ServeArgs {
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
-            .field(
-                "max_ephemeral_payload_bytes",
-                &self.max_ephemeral_payload_bytes,
-            )
             .field(
                 "max_ephemeral_snapshot_bytes",
                 &self.max_ephemeral_snapshot_bytes,

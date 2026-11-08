@@ -1,5 +1,6 @@
 //! The seat pick as typed decisions through the host's ladder, and the note seam beside it.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{SeatCandidate, SeatTask, invalid};
+use crate::agent_dispatch::MeasuredRate;
 use crate::llm::decision::catalogue::SEAT_PICK;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionQuestion, HeldLadder,
@@ -56,6 +58,7 @@ pub trait SeatNotes: Send + Sync {
 ///
 /// A provider reads the task and the eligible candidates as the call's bounded state; no
 /// evidence id names them.
+#[derive(Clone)]
 pub struct SeatDecisions {
     pub ladder: HeldLadder,
     pub principal: EntityId,
@@ -70,6 +73,16 @@ pub struct SeatDecisions {
 }
 
 impl SeatDecisions {
+    /// This pick made for `principal`, on the same ladder, dial, bands, wording, budget
+    /// and notes (FIX 4543): a dispatched agent's wake picks its seat in its own voice.
+    #[must_use]
+    pub fn for_principal(&self, principal: EntityId) -> Self {
+        Self {
+            principal,
+            ..self.clone()
+        }
+    }
+
     /// Which candidate the seat pins, then, unless the holder fixed the effort or the
     /// model has one rung, which of its allowed efforts it runs at, under `deadline`, the
     /// clock its caller already runs on (FIX 7507): both questions share it, so a birth
@@ -86,6 +99,7 @@ impl SeatDecisions {
         &self,
         task: &SeatTask,
         candidates: &[SeatCandidate],
+        learned: &BTreeMap<ModelId, MeasuredRate>,
         deadline: &RetrievalDeadline,
     ) -> Result<(usize, Option<ReasoningEffort>, SeatPickReadings)> {
         let ladder = self.ladder.ladder();
@@ -94,7 +108,7 @@ impl SeatDecisions {
                 read,
                 self.principal,
                 &[],
-                &bounded_state(task, asked, chosen),
+                &bounded_state(task, asked, chosen, learned),
                 self.dial,
                 &self.bands,
                 Reversibility::ReversibleRead,
@@ -176,7 +190,12 @@ fn effort_label(effort: ReasoningEffort) -> Result<String> {
 
 /// The task and every candidate, with the effort question's chosen model. The task text
 /// and the description lines are cut shorter, halving, until the whole fits.
-fn bounded_state(task: &SeatTask, candidates: &[SeatCandidate], chosen: Option<&ModelId>) -> Value {
+fn bounded_state(
+    task: &SeatTask,
+    candidates: &[SeatCandidate],
+    chosen: Option<&ModelId>,
+    learned: &BTreeMap<ModelId, MeasuredRate>,
+) -> Value {
     let longest = candidates
         .iter()
         .flat_map(|candidate| &candidate.description)
@@ -193,7 +212,7 @@ fn bounded_state(task: &SeatTask, candidates: &[SeatCandidate], chosen: Option<&
                     .iter()
                     .map(|line| json!({"source": line.source, "text": cut_text(&line.text, cut)}))
                     .collect();
-                json!({
+                let mut row = json!({
                     "model": candidate.model,
                     "wire": candidate.wire,
                     "locality": candidate.locality,
@@ -201,7 +220,15 @@ fn bounded_state(task: &SeatTask, candidates: &[SeatCandidate], chosen: Option<&
                     "reasoning": candidate.reasoning,
                     "default_effort": candidate.default_effort,
                     "allowed_efforts": candidate.allowed_efforts,
-                })
+                });
+                // These cells measure models, not effort rungs. The effort
+                // question keeps its original state.
+                if chosen.is_none()
+                    && let Some(rate) = learned.get(&candidate.model)
+                {
+                    row["learned"] = json!(rate);
+                }
+                row
             })
             .collect();
         json!({

@@ -21,9 +21,10 @@ use super::export_value::{ExportBody, ExportBodyFile, ExportValue, attaches_as_f
 use crate::Vault;
 use crate::batch::export::{
     ArchiveRecordKind, ArchiveSecretCustody, ArchiveSideWithheld, ArchiveSideWithheldReason,
-    ExportAdapterDescriptor, ExportCut, ExportDerivationEnvelope, ExportDiaryHold, ExportDiaryRead,
-    ExportEdge, ExportEmbeddingSetup, ExportEntity, ExportEpochFloor, ExportManifest, ExportPack,
-    ExportPackSource, ExportReaderFold, ExportResultBody, ExportRun, ExportRunOutput,
+    ExportAdapterDescriptor, ExportCut, ExportDerivationEnvelope, ExportDeterminism,
+    ExportDiaryHold, ExportDiaryRead, ExportEdge, ExportEmbeddingSetup, ExportEntity,
+    ExportEpochFloor, ExportManifest, ExportPack, ExportPackSource, ExportReaderFold,
+    ExportResultBody, ExportRowBirth, ExportRun, ExportRunBinding, ExportRunOutput,
     ExportSkillBundle, ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotEntityBody,
     ExportSnapshotRun, ExportSourceVault, FileSpool, OmissionLedger, RecordSpool, SideRowBytes,
     VAULT_ARCHIVE_FORMAT, VAULT_OKF_FORMAT, WHOLE_VAULT_DOCUMENT_VERSION,
@@ -31,6 +32,7 @@ use crate::batch::export::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::provenance::birth::{RowBirth, WithheldKey};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL,
 };
@@ -80,6 +82,11 @@ pub(crate) struct DocumentWriter<'v> {
     /// Each result body's row by digest, nulled and with its file detached.
     bodies: BTreeMap<String, Value>,
     side_withheld: Vec<ArchiveSideWithheld>,
+    /// Every entity id this writer carried, and each carried row's birth
+    /// (FIX 1178): a birth is masked against the carried set only at
+    /// `finish`, when that set and the unlogged diaries are final.
+    carried_ids: BTreeSet<EntityId>,
+    row_births: BTreeMap<EntityId, RowBirth>,
 }
 
 impl<'v> DocumentWriter<'v> {
@@ -111,6 +118,8 @@ impl<'v> DocumentWriter<'v> {
             birth_bodies: BTreeMap::new(),
             bodies: BTreeMap::new(),
             side_withheld: Vec::new(),
+            carried_ids: BTreeSet::new(),
+            row_births: BTreeMap::new(),
         };
         for adapter in adapters {
             writer.push_nulled(
@@ -125,6 +134,10 @@ impl<'v> DocumentWriter<'v> {
     /// One live entity: its row, and the derivation index, source package
     /// or pack source it carries.
     pub(crate) fn entity(&mut self, raw: ExportSnapshotEntity<'_>) -> Result<()> {
+        self.carried_ids.insert(raw.id);
+        if let Some(birth) = raw.birth {
+            self.row_births.insert(raw.id, birth);
+        }
         let entity_type = raw.header.entity_type;
         // OF-222: a stored file an ASSET body is goes beside the document
         // once, by digest, as it is stored; its row carries the descriptor
@@ -245,6 +258,20 @@ impl<'v> DocumentWriter<'v> {
     pub(crate) fn run(&mut self, run: ExportSnapshotRun) -> Result<()> {
         let hex = crate::entity_id::bytes_to_hex_lower;
         let row = ExportRun {
+            bindings: run
+                .bindings
+                .into_iter()
+                .map(|(binding, withheld)| ExportRunBinding {
+                    name: binding.name,
+                    path: binding.path,
+                    handle: withheld.is_none().then_some(binding.handle),
+                    withheld: withheld.map(str::to_owned),
+                })
+                .collect(),
+            determinism: run.determinism.map(|determinism| ExportDeterminism {
+                frozen_unix_ms: determinism.frozen_unix_ms,
+                rng_seed: hex(&determinism.rng_seed),
+            }),
             receipts: run
                 .receipts
                 .iter()
@@ -258,6 +285,7 @@ impl<'v> DocumentWriter<'v> {
                 })
                 .collect(),
             run_id: run.run_id.to_hex(),
+            birth_world: run.birth_world.map(|world| world.to_hex()),
             outputs: run
                 .outputs
                 .into_iter()
@@ -299,14 +327,21 @@ impl<'v> DocumentWriter<'v> {
         let withheld = match body.body {
             Err(reason) => Some(reason),
             Ok(reader) => {
-                let files = &mut self.files;
-                let staged = files.stage(body.bytes, |out| reader.copy_checked(out))?;
-                let found = files.scan_staged(&staged, |spooled| {
-                    crate::batch::secret_scan::scan_file_content_from("", spooled)
-                })?;
+                let mut staged = self
+                    .files
+                    .stage(body.bytes, |out| reader.copy_checked(out))?;
+                let found = match staged
+                    .scan(|spooled| crate::batch::secret_scan::scan_file_content_from("", spooled))
+                {
+                    Ok(found) => found,
+                    Err(error) => {
+                        staged.discard()?;
+                        return Err(error);
+                    }
+                };
                 match found {
                     Some(_) => {
-                        files.discard_staged(staged)?;
+                        staged.discard()?;
                         Some("credential")
                     }
                     None => {
@@ -322,7 +357,17 @@ impl<'v> DocumentWriter<'v> {
             content: None,
             withheld: withheld.map(str::to_owned),
         };
-        let mut row = nulled(&row, "", 3)?;
+        // FIX 7239: a failed scan or nulling cuts the staged copy off again
+        // before the error returns, so no unindexed body outlives it.
+        let mut row = match nulled(&row, "", 3) {
+            Ok(row) => row,
+            Err(error) => {
+                if let Some(staged) = clean {
+                    staged.discard()?;
+                }
+                return Err(error);
+            }
+        };
         let mut keep = None;
         if let Some(fields) = row.as_object_mut() {
             let content = fields.get_mut("content").map(Value::take);
@@ -346,8 +391,8 @@ impl<'v> DocumentWriter<'v> {
         }
         if let Some(staged) = clean {
             match keep {
-                Some(named) => self.files.commit_staged(named, staged)?,
-                None => self.files.discard_staged(staged)?,
+                Some(named) => staged.commit(named)?,
+                None => staged.discard()?,
             }
         }
         self.bodies.insert(hex, row);
@@ -468,6 +513,32 @@ impl<'v> DocumentWriter<'v> {
                 self.groups.insert(path.to_owned(), kept);
             }
         }
+        // FIX 1178: each carried row's birth leaves with the archive, naming
+        // only the rows this archive carries (an unlogged diary's birth
+        // leaves with its row above). One key per export, as the scoped
+        // export masks. A birth the credential pass would change stays
+        // home: its row ships birthless, as it did before, rather than
+        // under a nulled envelope no import could read back.
+        if self.cut == ExportCut::Archive {
+            let key = WithheldKey::for_export();
+            for (id, birth) in std::mem::take(&mut self.row_births) {
+                if tail.unlogged.contains(&id) {
+                    continue;
+                }
+                let birth = birth.masked(
+                    |row| self.carried_ids.contains(row) && !tail.unlogged.contains(row),
+                    &key,
+                );
+                let value = serde_json::to_value(ExportRowBirth {
+                    id: id.to_hex(),
+                    birth,
+                })
+                .map_err(|_| encode_failed())?;
+                if null_document_member("", &value, 2) == value {
+                    self.push(ArchiveRecordKind::RowBirth, &value)?;
+                }
+            }
+        }
         let (import_refusals, import_omissions, bundle_omissions) = self.ledger.finish();
         let storage = tail.storage.with_serializer_nulling();
         let manifest = WholeVaultDocumentManifest {
@@ -536,6 +607,7 @@ impl<'v> DocumentWriter<'v> {
                 sources: tail.sources,
                 thread_roots: Default::default(),
                 holder_requests: Vec::new(),
+                notices: Vec::new(),
             },
         ))
     }

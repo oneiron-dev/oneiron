@@ -7,7 +7,7 @@
 //! unreadable required record answers `None`. No read matches a push,
 //! reviews, initializes a queue, refreshes a check or exports. Lists are
 //! deduplicated and sorted by stable id; documents by path.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::workbench_types::{
     CodeForkDocumentView, CodeForkGetRequest, CodeForkView, CodeIngressRef,
@@ -23,7 +23,7 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::git_wire::GitWire;
 use crate::memory::merge_queue_doors::MergeQueuePointersView;
 use crate::ports::{EdgeDirection, EdgeStore};
-use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
+use crate::registry::{ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_TASK};
 use crate::store::{code_import_manifest::CodeImportManifest, code_revision_record::CodeRevision};
 
 /// A served repository as the reads resolve it: its anchor, its stored
@@ -217,7 +217,10 @@ impl Memory<'_> {
 
     /// `vault.code.forks.get`: one durable revision fork whose base is a
     /// tested revision of this repository's object store, with the
-    /// documents its received candidate names, if any.
+    /// documents its received candidate names, if any, and the TASKs its own
+    /// operations worked under or served (FIX 7536): the TASK each kept
+    /// receipt's provenance names as its activity or intent, from the same
+    /// receipts the documents are earned from, each one the caller reads.
     pub fn code_fork_get_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -255,6 +258,8 @@ impl Memory<'_> {
             task_refs: Vec::new(),
             ingress: None,
         };
+        let mut candidate_fork = false;
+        let mut tasks = BTreeSet::new();
         for (provenance, row) in self.vault.received_code_ingress_rows(&served.store)? {
             let Some(candidate) = &row.candidate else {
                 continue;
@@ -266,6 +271,7 @@ impl Memory<'_> {
             else {
                 continue;
             };
+            candidate_fork = true;
             if self.workbench_readable(provenance)? {
                 view.ingress = Some(CodeIngressRef {
                     provenance,
@@ -276,14 +282,17 @@ impl Memory<'_> {
                 view.proposal_refs.push(resolved.proposal_id);
             }
             for file in &resolved.files {
-                let landed = match file.document_operation {
+                let receipt = match file.document_operation {
                     Some(operation) => self
                         .vault
                         .code_file_edit_receipt(operation)?
-                        .filter(|receipt| receipt.session_id == fork.fork_session_id)
-                        .map(|receipt| receipt.after),
+                        .filter(|receipt| receipt.session_id == fork.fork_session_id),
                     None => None,
                 };
+                if let Some(receipt) = &receipt {
+                    tasks.extend(operation_tasks(&receipt.provenance));
+                }
+                let landed = receipt.map(|receipt| receipt.after);
                 let document_id = landed
                     .as_ref()
                     .or(file.base_frontier.as_ref())
@@ -299,6 +308,81 @@ impl Memory<'_> {
                 });
             }
             view.revision_refs = self.workbench_sealed_with(&served, candidate.candidate)?;
+        }
+        if !candidate_fork {
+            let repos: BTreeSet<_> = base
+                .file_frontiers
+                .values()
+                .map(|frontier| frontier.repo.as_str())
+                .collect();
+            let mut documents: BTreeMap<_, _> = base
+                .file_frontiers
+                .iter()
+                .map(|(id, frontier)| {
+                    (
+                        *id,
+                        CodeForkDocumentView {
+                            document_id: Some(bytes_to_hex_lower(id)),
+                            path: frontier.path.clone(),
+                            base: Some(frontier.clone()),
+                            landed: None,
+                            target: None,
+                            metadata_edit: None,
+                            proposal_ref: None,
+                        },
+                    )
+                })
+                .collect();
+            let receipts = {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::Error::from)?;
+                self.origin_owner_in_txn(owner, &txn)?;
+                self.vault
+                    .code_document_receipts_for_session_in_txn(&txn, fork.fork_session_id)?
+            };
+            let mut sequences = BTreeMap::new();
+            for receipt in receipts {
+                // One session can edit several repositories; the tested base
+                // supplies this fork's proven document namespaces.
+                if !repos.contains(receipt.after.repo.as_str()) {
+                    continue;
+                }
+                tasks.extend(operation_tasks(&receipt.provenance));
+                if sequences
+                    .get(&receipt.document_id)
+                    .is_some_and(|sequence| *sequence >= receipt.sequence)
+                {
+                    continue;
+                }
+                sequences.insert(receipt.document_id, receipt.sequence);
+                let document =
+                    documents
+                        .entry(receipt.document_id)
+                        .or_insert_with(|| CodeForkDocumentView {
+                            document_id: Some(bytes_to_hex_lower(&receipt.document_id)),
+                            path: receipt.after.path.clone(),
+                            base: None,
+                            landed: None,
+                            target: None,
+                            metadata_edit: None,
+                            proposal_ref: None,
+                        });
+                document.path.clone_from(&receipt.after.path);
+                document.landed = Some(receipt.after);
+                document.metadata_edit = receipt.metadata_edit;
+            }
+            view.documents = documents.into_values().collect();
+        }
+        for task in tasks {
+            if self.vault.get_entity_type(&task)? == Some(ENTITY_TYPE_TASK)
+                && self.workbench_readable(task)?
+            {
+                view.task_refs.push(task);
+            }
         }
         view.documents.sort_by(|left, right| {
             (&left.path, &left.document_id).cmp(&(&right.path, &right.document_id))
@@ -435,4 +519,14 @@ fn served_name(folder: &str) -> String {
         .and_then(|name| name.to_str())
         .unwrap_or_default();
     name.strip_suffix(".git").unwrap_or(name).to_owned()
+}
+
+/// The entities one operation's provenance names as the work it ran under
+/// or the intent it served; a run's edit names its TASK as its activity.
+fn operation_tasks(
+    provenance: &crate::store::code_document_receipt::CodeOpProvenance,
+) -> impl Iterator<Item = EntityId> {
+    [provenance.activity, provenance.intent]
+        .into_iter()
+        .flatten()
 }

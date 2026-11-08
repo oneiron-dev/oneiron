@@ -9,6 +9,7 @@
 //! a framing failure.
 
 use super::{
+    admitted,
     decode::{self, LoadError},
     last_startxref,
     lex::{Kind, LexError, PdfLexer, Token, stream_delimiter},
@@ -38,6 +39,7 @@ impl From<LexError> for RevisionAnalysisError {
     fn from(err: LexError) -> Self {
         match err {
             LexError::Malformed => Self::Framing,
+            LexError::Memory(refusal) => Self::Memory(refusal),
         }
     }
 }
@@ -64,22 +66,39 @@ pub(crate) struct RevisionFacts {
     pub(crate) revisions: Vec<RevisionFact>,
 }
 impl RevisionFacts {
-    pub(crate) fn ends(&self) -> Vec<usize> {
-        self.revisions.iter().map(|r| r.byte_end).collect()
+    pub(crate) fn ends(
+        &self,
+        limits: &SealResourceLimits,
+    ) -> Result<Vec<usize>, SealMemoryRefusal> {
+        let mut ends = admitted::vec(limits, self.revisions.len())?;
+        ends.extend(self.revisions.iter().map(|r| r.byte_end));
+        Ok(ends)
     }
-    pub(crate) fn has_duplicates(&self) -> bool {
-        self.revisions.iter().any(|r| {
+    pub(crate) fn has_duplicates(
+        &self,
+        limits: &SealResourceLimits,
+    ) -> Result<bool, SealMemoryRefusal> {
+        for revision in &self.revisions {
+            admitted::btree::<ObjectId, ()>(limits, revision.definitions.len())?;
             let mut ids = BTreeSet::new();
-            r.definitions.iter().any(|d| !ids.insert(d.id))
-        })
+            if revision.definitions.iter().any(|d| !ids.insert(d.id)) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
     /// A renewal must list EVERY raw object once, at the indexed position.
-    pub(crate) fn accounts_for(&self, index: usize, changed: &BTreeSet<ObjectId>) -> bool {
+    pub(crate) fn accounts_for(
+        &self,
+        limits: &SealResourceLimits,
+        index: usize,
+        changed: &BTreeSet<ObjectId>,
+    ) -> Result<bool, SealMemoryRefusal> {
         let Some(rev) = self.revisions.get(index) else {
-            return false;
+            return Ok(false);
         };
         let Some(prior) = index.checked_sub(1).and_then(|i| self.revisions.get(i)) else {
-            return false;
+            return Ok(false);
         };
         if rev.prev_xref != Some(prior.xref_offset)
             || std::mem::discriminant(&rev.xref_style) != std::mem::discriminant(&prior.xref_style)
@@ -87,15 +106,16 @@ impl RevisionFacts {
             || rev.trailer.get(b"ID").ok() != prior.trailer.get(b"ID").ok()
             || rev.trailer.get(b"Info").ok() != prior.trailer.get(b"Info").ok()
         {
-            return false;
+            return Ok(false);
         }
+        admitted::btree::<ObjectId, ()>(limits, rev.definitions.len())?;
         let mut ids = BTreeSet::new();
         for definition in &rev.definitions {
             if !definition.indexed && !definition.xref_role {
-                return false;
+                return Ok(false);
             }
             if !ids.insert(definition.id) {
-                return false;
+                return Ok(false);
             }
         }
         for def in &rev.definitions {
@@ -103,7 +123,7 @@ impl RevisionFacts {
                 ids.remove(&def.id);
             }
         }
-        ids == *changed
+        Ok(ids == *changed)
     }
 }
 
@@ -143,7 +163,7 @@ fn stream_span(
     // The header is lexed whole however many tokens it holds; they are
     // counted, on a failed read too.
     let mut lex = PdfLexer::new(bytes, object_start);
-    let length = declared_length(bytes, &mut lex, &header, object_start, doc, id);
+    let length = declared_length(bytes, &mut lex, &header, object_start, doc, id, limits);
     limits
         .observed
         .note(Counter::StreamHeaderTokens, lex.work());
@@ -176,6 +196,7 @@ fn declared_length(
     object_start: usize,
     doc: &Document,
     id: ObjectId,
+    limits: &SealResourceLimits,
 ) -> Result<usize, RevisionAnalysisError> {
     let mut length = None;
     while let Some(t) = lex.next()? {
@@ -221,7 +242,8 @@ fn declared_length(
                     .and_then(|t| std::str::from_utf8(t.value).ok()?.parse::<u16>().ok())
                     .ok_or(RevisionAnalysisError::UnresolvedStream)?;
                 let num = u32::try_from(n).map_err(|_| RevisionAnalysisError::UnresolvedStream)?;
-                let value = walk::resolve_id(doc, (num, generation))
+                let value = walk::resolve_id(doc, (num, generation), limits)
+                    .map_err(RevisionAnalysisError::Memory)?
                     .and_then(|o| o.as_i64().ok())
                     .and_then(|v| usize::try_from(v).ok())
                     .ok_or(RevisionAnalysisError::UnresolvedStream)?;
@@ -271,13 +293,18 @@ fn definitions(
             let (id, begin, span) = current.take().ok_or(RevisionAnalysisError::Framing)?;
             let indexed = matches!(doc.reference_table.get(id.0), Some(XrefEntry::Normal{offset,generation})
                 if *offset as usize == begin && *generation == id.1);
-            out.push(ObjectDefinition {
-                id,
-                byte_span: begin..t.span.end,
-                stream_span: span,
-                indexed,
-                xref_role: begin == xref_offset,
-            });
+            admitted::push(
+                limits,
+                &mut out,
+                ObjectDefinition {
+                    id,
+                    byte_span: begin..t.span.end,
+                    stream_span: span,
+                    indexed,
+                    xref_role: begin == xref_offset,
+                },
+            )
+            .map_err(RevisionAnalysisError::Memory)?;
             first = None;
             second = None;
             continue;
@@ -341,8 +368,9 @@ pub(crate) fn analyze(
     let mut prefix_work = 0usize;
     // Tokens and reconciliation steps this whole analysis took.
     let mut work = 0usize;
-    let mut revisions: Vec<RevisionFact> = Vec::with_capacity(ends.len());
-    for end in ends {
+    let mut revisions: Vec<RevisionFact> =
+        admitted::vec(limits, ends.len()).map_err(RevisionAnalysisError::Memory)?;
+    for end in ends.iter().copied() {
         prefix_work = prefix_work.saturating_add(end);
         limits.observed.note(Counter::PrefixBytes, prefix_work);
         let _revision_pass = limits.memory.pass();
@@ -359,12 +387,6 @@ pub(crate) fn analyze(
             .map(|prior: &RevisionFact| prior.xref_offset);
         let (definitions, lexed) =
             definitions(&bytes[..end], previous_end, end, &doc, xref_offset, limits)?;
-        // The facts keep the definitions: charged to the operation as they
-        // are built (FIX 8452).
-        limits
-            .memory
-            .admit::<ObjectDefinition>(definitions.capacity())
-            .map_err(RevisionAnalysisError::Memory)?;
         work = work.saturating_add(lexed);
         if definitions.iter().any(|d| {
             d.byte_span.start >= d.byte_span.end
@@ -375,14 +397,7 @@ pub(crate) fn analyze(
         // Index exact raw identities and offsets ONCE. Preserve duplicate
         // counts in the facts, then reconcile each normal xref entry in
         // O(log N) rather than walking every definition for every entry.
-        // The index is held on the operation's ledger before it is built
-        // and given back when it drops, before the next revision's
-        // (FIX 12260).
-        let _raw_held = limits
-            .memory
-            .hold(held_bytes::btree::<(ObjectId, usize), usize>(
-                definitions.len(),
-            ))
+        admitted::btree::<(ObjectId, usize), usize>(limits, definitions.len())
             .map_err(RevisionAnalysisError::Memory)?;
         let mut raw = BTreeMap::<(ObjectId, usize), usize>::new();
         for definition in &definitions {
@@ -403,21 +418,24 @@ pub(crate) fn analyze(
                 }
             }
         }
-        // The facts' copy of the trailer, charged before it is made, as the
-        // definitions are (FIX 12260).
-        limits
-            .memory
-            .admit::<u8>(held_bytes::dictionary(&doc.trailer))
-            .map_err(RevisionAnalysisError::Memory)?;
-        revisions.push(RevisionFact {
-            byte_end: end,
-            xref_offset,
-            prev_xref,
-            xref_style: doc.reference_table.cross_reference_type,
-            // A copy: the snapshot's own trailer goes with its pass.
-            trailer: doc.trailer.clone(),
-            definitions,
-        });
+        // The parsed trailer belongs to this revision's parse pass. Keep an
+        // independently admitted copy, so ending the pass cannot return the
+        // retained graph's credit while the facts still own it.
+        admitted::dictionary(limits, &doc.trailer).map_err(RevisionAnalysisError::Memory)?;
+        let trailer = doc.trailer.clone();
+        admitted::push(
+            limits,
+            &mut revisions,
+            RevisionFact {
+                byte_end: end,
+                xref_offset,
+                prev_xref,
+                xref_style: doc.reference_table.cross_reference_type,
+                trailer,
+                definitions,
+            },
+        )
+        .map_err(RevisionAnalysisError::Memory)?;
         previous_end = end;
     }
     Ok(RevisionFacts { revisions })

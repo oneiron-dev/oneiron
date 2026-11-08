@@ -171,7 +171,7 @@ impl Memory<'_> {
             .map(|refs| {
                 refs.iter()
                     .map(|r| self.resolve_ref(r))
-                    .collect::<MemoryResult<std::collections::BTreeSet<EntityId>>>()
+                    .collect::<MemoryResult<crate::claim::RelationshipSet>>()
             })
             .transpose()?;
         let scope_rmpv = input.scope.as_ref().map(json_to_rmpv);
@@ -185,10 +185,9 @@ impl Memory<'_> {
             relationship: relationship.clone(),
         };
         // OF-023: a want derived from behaviour is minted beside the stated
-        // one, never over it. Only the replacing doors (commit, upsert) take
-        // this path; the seed and proposal doors replace nothing.
-        let beside_stated =
-            auto_supersede && crate::claim::is_observed_preference(Some(source), &input.predicate);
+        // one, never over it. The peer scan is independent of replacement:
+        // seed/propose replace nothing but still collect stated peers.
+        let beside_stated = crate::claim::is_observed_preference(Some(source), &input.predicate);
 
         // ADVISORY only (ONE-1936): this lookup runs outside the transaction,
         // so the prior it names may already be closed by the time the write

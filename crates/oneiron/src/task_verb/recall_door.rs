@@ -84,9 +84,8 @@ pub fn recall_unembedded(
 /// reranked by the host's reranker, whose scores apply only to the block
 /// they scored (see [`crate::memory::RecallRerankHost`]).
 ///
-/// A limit past [`MAX_SEARCH_LIMIT`](crate::memory::caps::MAX_SEARCH_LIMIT)
-/// is served at it, and every pack the door answers with, a cut one
-/// included, says so in `retrieval_meta.limit_clamped`.
+/// The whole requested limit is served: `retrieval_meta.limit_clamped`
+/// stays false on every pack the door answers with, a cut one included.
 pub fn recall_at_door(
     memory: &Memory<'_>,
     input: RecallRequest,
@@ -115,39 +114,21 @@ pub fn recall_at_door(
 /// before any list runs, and is the door's answer (FIX 2160).
 pub fn recall_at_door_seeded(
     memory: &Memory<'_>,
-    mut input: RecallRequest,
+    input: RecallRequest,
     embed: impl FnOnce(&str) -> MemoryResult<RecallQueryVectors>,
     door: &RecallDoor<'_>,
 ) -> MemoryResult<crate::memory::MemoryPack> {
     // Every stage of this recall shares the deletion states it reads in one
     // committed snapshot (L15 recall speed).
     let _deletion_memo = crate::ports::deletion_memo_scope();
-    let (limit, clamped) =
-        crate::memory::caps::clamp_search_limit(input.limit.unwrap_or(VAULT_RECALL_LIMIT_DEFAULT));
-    if !clamped {
-        return recall_within_ceiling(memory, input, embed, door);
-    }
-    input.limit = Some(limit);
-    let stamp = |mut pack: crate::memory::MemoryPack| {
-        pack.retrieval_meta.limit_clamped = true;
-        pack
-    };
-    let on_cut = door
-        .on_cut
-        .map(|on_cut| move |pack: crate::memory::MemoryPack| on_cut(stamp(pack)));
-    let stamped = RecallDoor {
-        hyde: door.hyde,
-        arrived: door.arrived,
-        on_cut: on_cut
-            .as_ref()
-            .map(|on_cut| on_cut as &(dyn Fn(crate::memory::MemoryPack) + Sync)),
-        rerank: door.rerank,
-    };
-    recall_within_ceiling(memory, input, embed, &stamped).map(stamp)
+    // The caller's own filter binds this recall's handle once (FIX 3977):
+    // its cut, ready, paid and final packs and every lane they read meet it.
+    let memory = memory.with_read_filter(input.filter.as_ref());
+    recall_with_whole_limit(&memory, input, embed, door)
 }
 
-/// [`recall_at_door`] for a limit at or under the ceiling.
-fn recall_within_ceiling(
+/// [`recall_at_door`] for the whole requested limit.
+fn recall_with_whole_limit(
     memory: &Memory<'_>,
     input: RecallRequest,
     embed: impl FnOnce(&str) -> MemoryResult<RecallQueryVectors>,
@@ -161,7 +142,6 @@ fn recall_within_ceiling(
     )?;
     let scope = input.scope.clone().unwrap_or_default();
     let limit = input.limit.unwrap_or(VAULT_RECALL_LIMIT_DEFAULT);
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(limit)?;
     // Refused before the query embeds, as every free check is.
     let query_affect = input
@@ -234,7 +214,14 @@ fn recall_within_ceiling(
     }
     let vectors = embed(&input.query)?;
     let embedding = vectors.text_index.as_deref();
+    let mut media_memory = crate::host_memory::MachineMemory::process().empty_lease();
     let media = vectors.media_seeds();
+    media_memory.materialized(
+        0,
+        (media.capacity() as u64).saturating_mul(std::mem::size_of::<
+            crate::retrieval_depth::RecallMediaSeed<'_>,
+        >() as u64),
+    );
     // Keep admitted evidence ready while the optional host expansion waits.
     if effort.requires_rerank()
         && door.hyde.is_some()

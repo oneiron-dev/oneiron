@@ -43,8 +43,11 @@ pub enum VerifyFindingCode {
     InvalidByteRange,
     InvalidUnsignedGap,
     InvalidCms,
+    UnsupportedSignatureHandler,
     InvalidSignedAttributes,
+    #[serde(rename = "HASH_FAILURE")]
     DigestMismatch,
+    #[serde(rename = "SIG_CRYPTO_FAILURE")]
     SignatureMismatch,
     CertificateBindingMismatch,
     CertificatePathInvalid,
@@ -52,6 +55,8 @@ pub enum VerifyFindingCode {
     TrustRootUnavailable,
     TrustCheckNotRun,
     ValidationMaterialInvalid,
+    ValidationMaterialUnavailable,
+    RevocationStatusUnknown,
     DocumentTimestampInvalid,
     ModificationNotAllowed,
     NoSignature,
@@ -70,6 +75,32 @@ pub enum Coverage {
     EntireRevision,
     EntireFile,
 }
+
+/// An unsigned byte range beyond the signature's required `/Contents` exclusion.
+/// Offsets are half-open: `start` is included and `end` is excluded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UncoveredByteRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// Coverage of a proven structural revision, excluding the signature value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RevisionCoverage {
+    WholeRevision {
+        revision: usize,
+        byte_end: u64,
+    },
+    Partial {
+        revision: usize,
+        byte_end: u64,
+        /// A valid two-span signature starts at zero and excludes only
+        /// `/Contents`, so any additional unsigned bytes form one tail.
+        uncovered: [UncoveredByteRange; 1],
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SignatureKind {
@@ -132,6 +163,8 @@ pub struct SignatureReport {
     pub kind: SignatureKind,
     pub byte_range: ByteRangeEvidence,
     pub coverage: Coverage,
+    /// `None` when the byte range or structural revision cannot be established.
+    pub revision_coverage: Option<RevisionCoverage>,
     pub digest: Option<SignedRangeDigest>,
     pub profile: Option<PadesProfile>,
     pub integrity: VerifyVerdict,
@@ -144,10 +177,19 @@ impl SignatureReport {
         rollup(self.checks.iter().copied())
     }
 }
+/// Resolved action subtypes found anywhere in the parsed PDF object graph.
+/// These observations do not change verification or certify the PDF as safe.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActiveContentFacts {
+    pub javascript: bool,
+    pub launch: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct VerifyReport {
     /// Storage identifier only. A lawful archival append changes this hash.
     pub artifact_sha256: Sha256Digest,
+    pub active_content: ActiveContentFacts,
     pub revisions: Vec<RevisionReport>,
     pub signatures: Vec<SignatureReport>,
     pub modifications: Modifications,
@@ -159,10 +201,11 @@ pub struct VerifyReport {
 // serialization and never persisted as independently writable state.
 impl Serialize for VerifyReport {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut report = serializer.serialize_struct("VerifyReport", 8)?;
+        let mut report = serializer.serialize_struct("VerifyReport", 9)?;
         report.serialize_field("verdict", &self.verdict())?;
         report.serialize_field("reasons", &self.reasons())?;
         report.serialize_field("artifact_sha256", &self.artifact_sha256)?;
+        report.serialize_field("active_content", &self.active_content)?;
         report.serialize_field("revisions", &self.revisions)?;
         report.serialize_field("signatures", &self.signatures)?;
         report.serialize_field("modifications", &self.modifications)?;

@@ -19,12 +19,16 @@
 //! past it (FIX 5619, Rule 5): its size never refuses it, only the disk's
 //! floor ([`verify_held`]).
 
+mod widen;
+
+pub(super) use widen::verify_widen;
+
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
 
 use axum::body::{Body, BodyDataStream, Bytes};
 use axum::extract::Request;
 use axum::http::StatusCode;
-use axum::http::header::CONTENT_LENGTH;
+use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, UPGRADE};
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
@@ -35,7 +39,7 @@ use oneiron_vault_contract::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::ledger::WakeLedger;
-use super::state_serve::{ManagedOwnerHolder, owner_attestation_refused};
+use super::state_serve::{ManagedOwnerHolder, McpLifecycleObservation, owner_attestation_refused};
 use crate::server::SyncServer;
 
 /// The most of a staged body read at once, as it is hashed and as it is
@@ -84,7 +88,8 @@ pub(super) async fn verify_staged(
 /// past it, is staged as [`verify_staged`] stages a streaming route's, with
 /// no ceiling of its own: only the disk's floor ends it, and the route's own
 /// body limit still holds once it is replayed. The answers are
-/// [`verify_staged`]'s, and a body that failed is 400.
+/// [`verify_staged`]'s, including the same configured per-piece transfer idle
+/// limit while the body is held in memory. A body that failed is 400.
 pub(super) async fn verify_held(
     server: &SyncServer,
     ledger: &WakeLedger,
@@ -103,15 +108,16 @@ pub(super) async fn verify_held(
     });
     if fits {
         loop {
-            match pieces.next().await {
-                None => return verify_in_memory(ledger, assertion, holder, parts, held),
-                Some(Ok(piece)) => {
+            match tokio::time::timeout(server.transfers.idle, pieces.next()).await {
+                Ok(None) => return verify_in_memory(ledger, assertion, holder, parts, held),
+                Ok(Some(Ok(piece))) => {
                     held.extend_from_slice(&piece);
                     if held.len() > HELD_BODY_BYTES {
                         break;
                     }
                 }
-                Some(Err(_)) => return Err(body_failed()),
+                Ok(Some(Err(_))) => return Err(body_failed()),
+                Err(_) => return Err(body_stalled()),
             }
         }
     }
@@ -157,9 +163,84 @@ fn verify_in_memory(
     if !verified {
         return Err(owner_attestation_refused(parts.uri.path()));
     }
+    let lifecycle_observation = mcp_lifecycle_observation(&parts, &body);
     let mut request = Request::from_parts(parts, Body::from(body));
     request.extensions_mut().insert(ManagedOwnerHolder(holder));
+    if lifecycle_observation {
+        request.extensions_mut().insert(McpLifecycleObservation);
+    }
     Ok(request)
+}
+
+/// Classifies already-held bytes without changing their later validation or dispatch.
+fn mcp_lifecycle_observation(parts: &Parts, body: &[u8]) -> bool {
+    if parts.method != axum::http::Method::POST
+        || parts.headers.contains_key(UPGRADE)
+        || parts.headers.contains_key(CONTENT_ENCODING)
+    {
+        return false;
+    }
+    let mode = if parts.uri.path() == crate::cli::McpSurface::Primary.path() {
+        crate::mcp::McpSurfaceMode::Primary
+    } else if parts.uri.path() == crate::cli::McpSurface::ToolFirst.path() {
+        crate::mcp::McpSurfaceMode::ToolFirst
+    } else {
+        return false;
+    };
+    #[derive(serde::Deserialize)]
+    struct Call<'a> {
+        #[serde(borrow)]
+        jsonrpc: &'a str,
+        #[serde(borrow)]
+        method: &'a str,
+        #[serde(borrow)]
+        params: Params<'a>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Params<'a> {
+        #[serde(borrow)]
+        name: &'a str,
+    }
+    let Ok(call) = serde_json::from_slice::<Call<'_>>(body) else {
+        return false;
+    };
+    if call.jsonrpc != "2.0" || call.method != "tools/call" {
+        return false;
+    }
+    let Some(tool) = crate::mcp::try_registered_surface(mode)
+        .ok()
+        .and_then(|surface| surface.resolve(call.params.name))
+    else {
+        return false;
+    };
+    match tool {
+        crate::mcp::McpEndpointTool::Verb(_) => {
+            crate::api::is_slim_lifecycle_observation(tool.name())
+        }
+        crate::mcp::McpEndpointTool::InvokeAction => {
+            #[derive(serde::Deserialize)]
+            struct ActionCall<'a> {
+                #[serde(borrow)]
+                params: ActionParams<'a>,
+            }
+            #[derive(serde::Deserialize)]
+            struct ActionParams<'a> {
+                #[serde(borrow)]
+                arguments: ActionArguments<'a>,
+            }
+            #[derive(serde::Deserialize)]
+            struct ActionArguments<'a> {
+                #[serde(borrow)]
+                verb: &'a str,
+            }
+            serde_json::from_slice::<ActionCall<'_>>(body)
+                .ok()
+                .is_some_and(|action| {
+                    crate::api::is_slim_lifecycle_observation(action.params.arguments.verb)
+                })
+        }
+        _ => false,
+    }
 }
 
 /// Verifies `assertion` over the request `parts` head with its body of
@@ -231,13 +312,7 @@ async fn spool_body(
             Ok(Some(Ok(piece))) => piece,
             Ok(None) => break,
             Ok(Some(Err(_))) => return Err(body_failed()),
-            Err(_) => {
-                return Err((
-                    StatusCode::REQUEST_TIMEOUT,
-                    "the request body stalled past the transfer idle limit",
-                )
-                    .into_response());
-            }
+            Err(_) => return Err(body_stalled()),
         };
         let size = u64::try_from(piece.len()).unwrap_or(u64::MAX);
         let landed = length.saturating_add(size);
@@ -299,6 +374,15 @@ fn replay(spool: std::fs::File) -> Body {
         })
     });
     Body::from_stream(pieces)
+}
+
+/// The answer to a body whose next piece missed the configured transfer idle limit.
+fn body_stalled() -> Response {
+    (
+        StatusCode::REQUEST_TIMEOUT,
+        "the request body stalled past the transfer idle limit",
+    )
+        .into_response()
 }
 
 /// The answer to a request body that failed on its way in.

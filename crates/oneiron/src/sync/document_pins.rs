@@ -43,130 +43,23 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::RoTxn;
 use loro::event::MapDelta;
 use loro::{CommitOptions, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
-use serde::{Deserialize, Serialize};
 
 use super::bridge::BRIDGE_ORIGIN;
 use super::carrier_parts::{
-    PART_BYTES, Parts, admit_part, is_part_key, join_parts, split_parts, unreferenced_parts,
-    write_parts,
+    PART_BYTES, admit_part, is_part_key, split_parts, unreferenced_parts, write_parts,
 };
 use super::loro_support::{map_contains_binary, map_delete, map_get_bytes, map_insert_bytes};
 use super::types::WindowKey;
 use crate::Vault;
 use crate::entity_doc::{CitationPin, DocActor, PinMerge};
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::{Error, Result};
+use crate::entity_id::EntityId;
+use crate::error::Result;
+use crate::room_codec::document_pins::{
+    Carried, PartedPin, carried_pin, carrier_key, decode_carried, decode_pin, key_ids, refused,
+};
 
 /// The base window root map that carries document quote pins.
 pub(crate) const DOCUMENT_PINS_MAP: &str = "document_pins";
-
-fn refused(reason: &'static str) -> Error {
-    Error::InvalidConfig(format!("document pin refused: {reason}"))
-}
-
-/// Decodes a pin's bytes, with the message it quotes and the record that
-/// cites it. A pin has one spelling, so equal pins ride under one key.
-fn decode_pin(bytes: &[u8]) -> Result<(CitationPin, EntityId, EntityId)> {
-    let pin: CitationPin = rmp_serde::from_slice(bytes).map_err(|_| refused("not a pin"))?;
-    if rmp_serde::to_vec_named(&pin).ok().as_deref() != Some(bytes) {
-        return Err(refused("not in its one spelling"));
-    }
-    let (message, citation) = pin
-        .carried_ids()
-        .ok_or_else(|| refused("not a whole pin"))?;
-    Ok((pin, message, citation))
-}
-
-/// What a pin key holds: the pin, when it fits in a part, or the manifest of
-/// its parts.
-enum Carried {
-    Whole(CitationPin, EntityId, EntityId),
-    Parted(PartedPin),
-}
-
-/// The manifest of a pin larger than a part (FIX 4789): the parts of the
-/// pin naming no one, and the actor it names, so no part names anyone and
-/// the actor is rewritten here alone.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PartedPin {
-    parts: Parts,
-    actor: DocActor,
-}
-
-/// Decodes the value under a pin key, in its one spelling.
-fn decode_carried(bytes: &[u8]) -> Result<Carried> {
-    if bytes.len() <= PART_BYTES
-        && let Ok((pin, message, citation)) = decode_pin(bytes)
-    {
-        return Ok(Carried::Whole(pin, message, citation));
-    }
-    let parted: PartedPin = rmp_serde::from_slice(bytes).map_err(|_| refused("not a pin"))?;
-    if rmp_serde::to_vec_named(&parted).ok().as_deref() != Some(bytes)
-        || !parted.parts.well_formed()
-    {
-        return Err(refused("not a pin's parts"));
-    }
-    Ok(Carried::Parted(parted))
-}
-
-/// The key `pin`, of `message` cited by `citation`, rides under: the two
-/// ids, then the digest of its one spelling naming no one, so the pin and
-/// its erased twin ride under one key (FIX 4247).
-fn carrier_key(message: EntityId, citation: EntityId, pin: &CitationPin) -> Result<String> {
-    let bytes =
-        rmp_serde::to_vec_named(&pin.actor_erased()).map_err(|_| refused("does not encode"))?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.document_pins.v1");
-    hasher.update(&bytes);
-    Ok(format!(
-        "{}/{}/{}",
-        message.to_hex(),
-        citation.to_hex(),
-        bytes_to_hex_lower(&hasher.finalize().as_bytes()[..16])
-    ))
-}
-
-/// The message and citation a pin key names, when it is one's spelling.
-fn key_ids(map_key: &str) -> Option<(EntityId, EntityId)> {
-    let named = |hex: &str| EntityId::from_hex(hex).ok().filter(|id| id.to_hex() == hex);
-    let mut segments = map_key.split('/');
-    let message = named(segments.next()?)?;
-    let citation = named(segments.next()?)?;
-    let digest = segments.next()?;
-    let digest_spelled = digest.len() == 32
-        && digest
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-    (segments.next().is_none() && digest_spelled).then_some((message, citation))
-}
-
-/// The pin under `map_key`, joined from `map`'s parts when it rides in
-/// them; `Ok(None)` while a part has not landed.
-fn carried_pin(map: &LoroMap, map_key: &str, bytes: &[u8]) -> Result<Option<CitationPin>> {
-    let (pin, message, citation) = match decode_carried(bytes)? {
-        Carried::Whole(pin, message, citation) => (pin, message, citation),
-        Carried::Parted(parted) => {
-            let Some(whole) = join_parts(map, &parted.parts) else {
-                return Ok(None);
-            };
-            let (mut pin, message, citation) = decode_pin(&whole)?;
-            if pin.actor != DocActor::Erased {
-                return Err(refused("a part names an actor"));
-            }
-            pin.actor = parted.actor;
-            // A pin that fits in a part rides whole: one spelling per pin.
-            if !rmp_serde::to_vec_named(&pin).is_ok_and(|bytes| bytes.len() > PART_BYTES) {
-                return Err(refused("not a pin's parts"));
-            }
-            (pin, message, citation)
-        }
-    };
-    if carrier_key(message, citation, &pin)? != map_key {
-        return Err(refused("filed under another key"));
-    }
-    Ok(Some(pin))
-}
 
 /// Admits one insert into a window's `document_pins` map: a whole pin or a
 /// pin's manifest of a base window, filed under its own key, or a part.
@@ -447,23 +340,41 @@ fn holds_document_pin_map(doc: &LoroDoc) -> bool {
     matches!(doc.get_value(), LoroValue::Map(roots) if roots.contains_key(DOCUMENT_PINS_MAP))
 }
 
-/// Merges each carried pin into this vault's in one write. A pin whose
-/// parts have not all landed waits for them.
-fn merge_pins(vault: &Vault, map: &LoroMap, window: &str, rows: Vec<(String, Vec<u8>)>) {
-    let mut carried = Vec::new();
-    for (map_key, bytes) in rows {
-        match carried_pin(map, &map_key, &bytes) {
-            Ok(Some(pin)) => carried.push((map_key, pin)),
-            Ok(None) => tracing::debug!(window, key = %map_key, "document pin waits for its parts"),
-            Err(_) => tracing::warn!(window, key = %map_key, "document pin malformed; left out"),
+/// Carried quote pins decoded and joined before opening their writer.
+pub(super) struct PinBatch {
+    carried: Vec<(String, CitationPin)>,
+}
+
+impl PinBatch {
+    pub(super) fn prepare(map: &LoroMap, window: &str, rows: Vec<(String, Vec<u8>)>) -> Self {
+        let mut carried = Vec::new();
+        for (map_key, bytes) in rows {
+            match carried_pin(map, &map_key, &bytes) {
+                Ok(Some(pin)) => carried.push((map_key, pin)),
+                Ok(None) => {
+                    tracing::debug!(window, key = %map_key, "document pin waits for its parts")
+                }
+                Err(_) => {
+                    tracing::warn!(window, key = %map_key, "document pin malformed; left out")
+                }
+            }
         }
+        Self { carried }
     }
-    if carried.is_empty() {
-        return;
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.carried.is_empty()
     }
-    let outcome = vault.with_write_txn_grouped(|wtxn| {
+
+    pub(super) fn stage_in_txn(
+        &self,
+        vault: &Vault,
+        window: &str,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<usize> {
+        let Self { carried } = self;
         let mut merged = 0_usize;
-        for (map_key, pin) in &carried {
+        for (map_key, pin) in carried {
             match vault.merge_replicated_quote_pin_in_txn(wtxn, pin)? {
                 PinMerge::Written => merged += 1,
                 PinMerge::Held => {}
@@ -481,7 +392,17 @@ fn merge_pins(vault: &Vault, map: &LoroMap, window: &str, rows: Vec<(String, Vec
             }
         }
         Ok(merged)
-    });
+    }
+}
+
+/// Merges each carried pin into this vault's in one write. A pin whose
+/// parts have not all landed waits for them.
+fn merge_pins(vault: &Vault, map: &LoroMap, window: &str, rows: Vec<(String, Vec<u8>)>) {
+    let staged = PinBatch::prepare(map, window, rows);
+    if staged.is_empty() {
+        return;
+    }
+    let outcome = vault.with_write_txn_grouped(|wtxn| staged.stage_in_txn(vault, window, wtxn));
     match outcome {
         Ok(merged) if merged > 0 => tracing::debug!(window, merged, "document pins merged"),
         Ok(_) => {}

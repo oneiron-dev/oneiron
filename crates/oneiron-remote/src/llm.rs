@@ -1,4 +1,5 @@
 //! Own-server raw LLM transport over the SDK's single authenticated HTTP client.
+mod response;
 use crate::remote::RemoteClient;
 use futures_core::Stream;
 use oneiron::llm::BudgetDenied;
@@ -96,7 +97,7 @@ impl OwnServerTransport for RemoteLlmClient {
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         let remote = self.remote.clone();
         let lease = lease.clone();
-        let (send, receive) = futures_channel::mpsc::unbounded();
+        let (send, receive) = tokio::sync::mpsc::channel(1);
         let (cancel, cancelled) = tokio::sync::oneshot::channel::<()>();
         std::thread::spawn(move || {
             let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -105,7 +106,7 @@ impl OwnServerTransport for RemoteLlmClient {
             {
                 Ok(runtime) => runtime,
                 Err(_) => {
-                    let _ = send.unbounded_send(Err(RetryableLlmError::StreamCut.into()));
+                    let _ = send.try_send(Err(RetryableLlmError::StreamCut.into()));
                     return;
                 }
             };
@@ -113,7 +114,9 @@ impl OwnServerTransport for RemoteLlmClient {
                 tokio::select! {
                     _ = cancelled => {},
                     result = read_stream(&remote, &request, &lease, &send) => {
-                        if let Err(error) = result { let _ = send.unbounded_send(Err(error)); }
+                        if let Err(error) = result {
+                            let _ = send.send(Err(error)).await;
+                        }
                     }
                 }
             });
@@ -126,13 +129,13 @@ impl OwnServerTransport for RemoteLlmClient {
 }
 
 struct CancellableStream {
-    receive: futures_channel::mpsc::UnboundedReceiver<oneiron::LlmResult<LlmStreamEvent>>,
+    receive: tokio::sync::mpsc::Receiver<oneiron::LlmResult<LlmStreamEvent>>,
     _cancel: tokio::sync::oneshot::Sender<()>,
 }
 impl Stream for CancellableStream {
     type Item = oneiron::LlmResult<LlmStreamEvent>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.receive).poll_next(cx)
+        self.receive.poll_recv(cx)
     }
 }
 async fn read_generate(
@@ -140,50 +143,46 @@ async fn read_generate(
     request: &LlmRequest,
     lease: &BudgetLease,
 ) -> oneiron::LlmResult<oneiron::LlmResponse> {
-    let mut response = remote.llm_post(request, lease).await?;
+    let response = remote.llm_post(request, lease).await?;
     let status = response.status();
     let limit = if status.is_success() {
         32 * 1024 * 1024
     } else {
         65_536
     };
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|e| {
-        if e.is_timeout() {
-            RetryableLlmError::Timeout
-        } else {
-            RetryableLlmError::StreamCut
-        }
-    })? {
-        if bytes.len().saturating_add(chunk.len()) > limit {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
     if !status.is_success() {
         return Err(classify_status(
             status.as_u16(),
-            &serde_json::from_slice(&bytes).unwrap_or_default(),
+            &response::read_json(response, limit)
+                .await?
+                .unwrap_or_default(),
         ));
     }
-    serde_json::from_slice(&bytes).map_err(|_| FatalLlmError::InvalidRequest.into())
+    response::read_json(response, limit)
+        .await?
+        .map_err(|_| FatalLlmError::InvalidRequest.into())
 }
 
 async fn read_stream(
     remote: &RemoteClient,
     request: &LlmRequest,
     lease: &BudgetLease,
-    send: &futures_channel::mpsc::UnboundedSender<oneiron::LlmResult<LlmStreamEvent>>,
+    send: &tokio::sync::mpsc::Sender<oneiron::LlmResult<LlmStreamEvent>>,
 ) -> oneiron::LlmResult<()> {
     let mut response = remote.llm_stream(request, lease).await?;
     let status = response.status();
-    let limit = if status.is_success() {
-        32 * 1024 * 1024
-    } else {
-        65_536
-    };
-    let mut total = 0;
-    let mut buffer = Vec::new();
+    if !status.is_success() {
+        return Err(classify_status(
+            status.as_u16(),
+            &response::read_json(response, 65_536)
+                .await?
+                .unwrap_or_default(),
+        ));
+    }
+    let limit = 32 * 1024 * 1024;
+    let mut frame_bytes = 0usize;
+    let mut whitespace = true;
+    let (mut send_frame, mut decoded_frame) = response::decoder();
     while let Some(chunk) = response.chunk().await.map_err(|e| {
         if e.is_timeout() {
             RetryableLlmError::Timeout
@@ -191,38 +190,41 @@ async fn read_stream(
             RetryableLlmError::StreamCut
         }
     })? {
-        total += chunk.len();
-        if total > limit {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        buffer.extend_from_slice(&chunk);
-        if !status.is_success() {
-            continue;
-        }
-        while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
-            let line: Vec<_> = buffer.drain(..=end).collect();
-            if line.iter().all(u8::is_ascii_whitespace) {
+        let mut offset = 0;
+        for piece in chunk.split_inclusive(|b| *b == b'\n') {
+            frame_bytes = frame_bytes.saturating_add(piece.len());
+            if frame_bytes > limit {
+                return Err(FatalLlmError::InvalidRequest.into());
+            }
+            whitespace &= piece.iter().all(u8::is_ascii_whitespace);
+            let end = offset + piece.len();
+            let _ = send_frame.send(chunk.slice(offset..end)).await;
+            offset = end;
+            if !piece.ends_with(b"\n") {
                 continue;
             }
-            let value: serde_json::Value =
-                serde_json::from_slice(&line).map_err(|_| FatalLlmError::InvalidRequest)?;
-            if let Some(error) = value.pointer("/error/llm") {
-                return Err(serde_json::from_value(error.clone())
-                    .map_err(|_| FatalLlmError::InvalidRequest)?);
+            drop(send_frame);
+            let decoded = decoded_frame
+                .await
+                .map_err(|_| RetryableLlmError::StreamCut)?;
+            if !whitespace {
+                let value: serde_json::Value =
+                    decoded.map_err(|_| FatalLlmError::InvalidRequest)?;
+                if let Some(error) = value.pointer("/error/llm") {
+                    return Err(serde_json::from_value(error.clone())
+                        .map_err(|_| FatalLlmError::InvalidRequest)?);
+                }
+                let event: LlmStreamEvent =
+                    serde_json::from_value(value).map_err(|_| FatalLlmError::InvalidRequest)?;
+                let done = matches!(event, LlmStreamEvent::Done { .. });
+                if send.send(Ok(event)).await.is_err() || done {
+                    return Ok(());
+                }
             }
-            let event: LlmStreamEvent =
-                serde_json::from_value(value).map_err(|_| FatalLlmError::InvalidRequest)?;
-            let done = matches!(event, LlmStreamEvent::Done { .. });
-            if send.unbounded_send(Ok(event)).is_err() || done {
-                return Ok(());
-            }
+            frame_bytes = 0;
+            whitespace = true;
+            (send_frame, decoded_frame) = response::decoder();
         }
-    }
-    if !status.is_success() {
-        return Err(classify_status(
-            status.as_u16(),
-            &serde_json::from_slice(&buffer).unwrap_or_default(),
-        ));
     }
     Err(RetryableLlmError::StreamCut.into())
 }

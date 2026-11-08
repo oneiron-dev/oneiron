@@ -16,7 +16,9 @@ pub(crate) fn record_external_effect_policy(
         grant_ref,
         approve_once,
         approval_context,
+        ask_consent: _,
         matched_grant,
+        recipient_grants,
         envelope_reservation,
         envelope_wait,
         budget_target: _,
@@ -92,10 +94,12 @@ pub(crate) fn record_external_effect_policy(
         }
     }
     crate::off_record::FloorWrites::new(store).append_egress_gate_decision(wtxn, &candidate)?;
-    if decision.outcome() == GateOutcome::Allow
-        && let Some((grant_id, grant)) = matched_grant
-    {
-        touch_standing_outbound_grant_in_txn(store, wtxn, &grant_id, grant, created_at)?;
+    if decision.outcome() == GateOutcome::Allow {
+        // Fix list row 17645: and each grant that released another recipient
+        // of the same message.
+        for (grant_id, grant) in matched_grant.into_iter().chain(recipient_grants) {
+            touch_standing_outbound_grant_in_txn(store, wtxn, &grant_id, grant, created_at)?;
+        }
     }
     if decision.outcome() == GateOutcome::Allow
         && approval_context != ApprovalContext::Observe
@@ -170,6 +174,7 @@ pub(crate) fn record_held_external_effect_policy(
     )?;
     governance.approve_once = None;
     governance.matched_grant = None;
+    governance.recipient_grants.clear();
     governance.envelope_reservation = None;
     governance.envelope_wait = None;
     record_external_effect_policy(store, wtxn, governance)

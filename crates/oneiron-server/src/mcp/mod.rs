@@ -17,7 +17,9 @@ mod live_lease_backend;
 mod quickjs_provider;
 mod run_seats;
 #[cfg(feature = "code-sandbox-wasmtime")]
-pub use self::quickjs_provider::{McpQuickJsProvider, checked_in_quickjs_runtime};
+pub use self::quickjs_provider::{
+    McpQuickJsProvider, checked_in_quickjs_runtime, checked_in_quickjs_runtime_with_wall,
+};
 pub mod oauth_client;
 mod paging;
 pub mod qualification;
@@ -55,13 +57,14 @@ pub use self::endpoint_schema::{
 };
 pub use self::exec_host::{
     CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest,
-    McpCodeModeProvider, McpEngineNativeCodeHost, PlannedMeter, PlannedModel, PlannedRoute,
-    ReaderMeter, RunCompactionSeat, bind_mcp_code_execution_host, mcp_code_execution_host,
-    mcp_code_run_id, mcp_scoped_identity_id,
+    McpCodeModeProvider, McpCodeRunSelfBrief, McpEngineNativeCodeHost, PlannedMeter, PlannedModel,
+    PlannedRoute, ReaderMeter, RunCompactionSeat, RunProfiledCompactionSeat,
+    bind_mcp_code_execution_host, mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
 };
 pub(crate) use self::exec_host::{
-    EngineRunError, ModelCallBackend, OffRecordRunSession, ScopeMeter, enter_engine_native_run,
-    off_record_run_id, run_read_worlds, run_seat, task_engine_run_seat, task_run_seat,
+    EngineRunError, ModelCallBackend, ModelListBackend, OffRecordRunSession, ScopeMeter,
+    enter_engine_native_run, off_record_run_id, run_read_worlds, run_seat, task_engine_run_seat,
+    task_run_seat,
 };
 pub(crate) use self::live_lease_backend::{LiveLeaseBackend, LiveLeaseRunner};
 pub use self::paging::{
@@ -73,7 +76,7 @@ pub(crate) use self::paging::{McpPageCursorState, McpPageSnapshot};
 pub use self::registry::McpConnectorActorRegistry;
 pub(crate) use self::results::mcp_stamp_call_receipt;
 pub use self::results::{
-    McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError,
+    McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError, McpSetupSelfBrief,
     mcp_effective_scope_label, mcp_effective_scope_value, mcp_recovery_suggestions,
     mcp_setup_payload, mcp_verb_board_section,
 };
@@ -91,7 +94,6 @@ pub use self::tool_catalog::{
     MCP_BOOK_OPERATIONS, MCP_SERVER_NAME, MCP_TOOL_ARGS_SCHEMA_VERSION, McpToolValidationError,
     McpValidatedToolArgs,
 };
-
 #[cfg(test)]
 mod tests;
 

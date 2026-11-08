@@ -242,6 +242,7 @@ pub(crate) fn write_provider_prior_in_txn(
     body.evidence = Some(Value::from(evidence));
     body.valid_from = Some(now);
     body.source = Some(ClaimSource::Observed);
+    body.scope_facet = vault.default_facet_in_txn(wtxn)?;
     vault.put_reserved_claim_in_txn(
         wtxn,
         &claim_id,
@@ -284,6 +285,7 @@ fn mint_enriched_entity_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Res
             entity_type: ENTITY_TYPE_PERSON,
             occurred: TimeRange { start: 0, end: 0 },
             learned_at: mutation_recorded_at,
+            row_version: None,
             data: body,
             allow_maintenance: false,
             allow_reserved_predicate: false,

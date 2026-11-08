@@ -23,19 +23,27 @@
 //! It wakes on the vault's post-commit attempt signal and once at start. An
 //! attempt claimed a second time was cut off when the process stopped under
 //! it: it is failed and never run again, so its reply stays as saved until
-//! someone asks again.
+//! someone asks again. The one exception is an action its host hook asked
+//! about first (FIX 1765): it waits, held, for the answer, and once the ask
+//! no longer waits the same attempt runs again and crosses the same saved
+//! hook call, which decides. Held actions are looked at again on each wake
+//! and on the workflows' slow recheck.
 //!
 //! [`CONTINUE_INSTRUCTION`]: crate::api::ai::chat::CONTINUE_INSTRUCTION
 use std::sync::{Arc, Weak};
 
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::attempt_queue::{
-    AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, FailAttempt,
-    ManifestEntry,
+    AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
+    FailAttempt, ManifestEntry,
 };
 use oneiron::claim::CallerLocality;
-use oneiron::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt, TurnActionAuthority};
+use oneiron::conversation::{
+    TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionAuthority,
+    turn_action_hook_parent, turn_action_resumed_from_hook,
+};
 use oneiron::memory::{Memory, MessageWriteMode, WitnessAuthor};
+use oneiron::runtime_hooks::{InvocationId, VerbHookStop};
 use oneiron::{EntityId, LlmMessage, LlmMessageRole, Vault, WriteActor};
 use tokio::sync::{broadcast, watch};
 
@@ -44,8 +52,9 @@ use super::payer_funding::room_launch_funding;
 use super::resident_craft::{craft_withdrawn, place_craft, snapshot_craft_scoped};
 use crate::api::ai::chat::{
     ActionSession, Answer, AnswerRefused, ChatReuse, ReplyAssertionCollector, TurnCredential,
-    after_turn, begin_answer, keepalive_every, live_fork_unavailable, reuse_chat_breakpoint,
-    text_message, turn_generate_pre,
+    TurnSources, after_turn, begin_sourced_answer_with_fallback, keepalive_every,
+    live_fork_unavailable, reuse_chat_breakpoint, text_message, turn_generate_pre,
+    turn_generate_pre_retained,
 };
 use crate::api::{action_board, freeze_chat_context, record_action_answer};
 use crate::server::{SyncServer, blocking};
@@ -78,9 +87,9 @@ fn run(vault: &Arc<Vault>, ai: &AiHandle, server: Option<Weak<SyncServer>>) {
     let ai = ai.clone();
     let mut stopped = ai.turns.stop_signal();
     tokio::spawn(async move {
-        let Some(mut signals) = vault
+        let Some((mut signals, mut held)) = vault
             .upgrade()
-            .map(|vault| AttemptQueue::new(&vault).subscribe())
+            .map(|vault| (AttemptQueue::new(&vault).subscribe(), held_at_start(&vault)))
         else {
             return;
         };
@@ -93,7 +102,12 @@ fn run(vault: &Arc<Vault>, ai: &AiHandle, server: Option<Weak<SyncServer>>) {
                     break;
                 };
                 let result = act(&vault, &ai, server.as_ref(), &attempt).await;
-                settle(&vault, &attempt, result);
+                if settle(&vault, &attempt, result) && !held.contains(&attempt.id) {
+                    held.push(attempt.id);
+                }
+            }
+            if let Some(vault) = vault.upgrade() {
+                recheck_held(&vault, &mut held);
             }
             tokio::select! {
                 biased;
@@ -103,6 +117,7 @@ fn run(vault: &Arc<Vault>, ai: &AiHandle, server: Option<Weak<SyncServer>>) {
                         return;
                     }
                 }
+                () = tokio::time::sleep(super::workflows::WAITING_RECHECK), if !held.is_empty() => {}
             }
             // Drain the burst our own commits (and any concurrent ones) caused.
             while let Ok(()) | Err(broadcast::error::TryRecvError::Lagged(_)) = signals.try_recv() {
@@ -114,6 +129,40 @@ fn run(vault: &Arc<Vault>, ai: &AiHandle, server: Option<Weak<SyncServer>>) {
 /// Whether shutdown asked the worker to stop; the borrow ends here.
 fn stopping(stopped: &watch::Receiver<bool>) -> bool {
     *stopped.borrow()
+}
+
+/// The actions held on their host hook when the worker starts: a stop left
+/// them waiting (FIX 1765).
+fn held_at_start(vault: &Vault) -> Vec<AttemptId> {
+    blocking(|| vault.held_turn_action_hooks()).unwrap_or_else(|error| {
+        tracing::warn!(kind = ?error.kind(), "held turn actions were not read");
+        Vec::new()
+    })
+}
+
+/// Resumes each held action whose ask no longer waits, so the next claim
+/// runs it again; keeps the ones that still wait, and any not read now.
+fn recheck_held(vault: &Vault, held: &mut Vec<AttemptId>) {
+    let now = vault.now_recorded_at();
+    held.retain(|id| match blocking(|| vault.resume_turn_action_hook(*id, now)) {
+        Ok(waits) => waits,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), attempt = ?id, "a held turn action was not looked at again");
+            true
+        }
+    });
+}
+
+/// How a claimed action's run here ended, short of a refusal.
+enum Acted {
+    /// The reply was saved, complete or not.
+    Saved,
+    /// Its host hook asked first (FIX 1765): the hook call that asked, and
+    /// its ask.
+    Asked {
+        invocation: InvocationId,
+        ask: EntityId,
+    },
 }
 
 fn claim(vault: &Vault) -> Option<AttemptRecord> {
@@ -136,16 +185,17 @@ fn claim(vault: &Vault) -> Option<AttemptRecord> {
     }
 }
 
-/// Runs one claimed action to its reply's terminal. `Ok` once the reply is
-/// saved, complete or not; the reason it did not run or was not saved
-/// otherwise. `server`, the host's own once bound, reads its fresh board.
+/// Runs one claimed action to its reply's terminal. [`Acted::Saved`] once
+/// the reply is saved, complete or not; [`Acted::Asked`] when its host hook
+/// asked first; the reason it did not run or was not saved otherwise.
+/// `server`, the host's own once bound, reads its fresh board.
 async fn act(
     vault: &Arc<Vault>,
     ai: &AiHandle,
     server: Option<&Weak<SyncServer>>,
     attempt: &AttemptRecord,
-) -> Result<(), String> {
-    if attempt.attempt_count > 1 {
+) -> Result<Acted, String> {
+    if attempt.attempt_count > 1 && !turn_action_resumed_from_hook(attempt) {
         return Err("cut off when the process stopped; not run again".into());
     }
     let action = TurnActionAttempt::decode(attempt).map_err(|error| error.to_string())?;
@@ -168,6 +218,8 @@ async fn act(
     let place = blocking(|| vault.turn_room_work(action.assistant_turn))
         .map_err(|error| error.to_string())?;
     let (room, branch) = place.map_or((action.conversation, None), |work| (work.room, work.branch));
+    let model_call_no_record_at_arrival =
+        crate::api::ai::chat::model_call_keeps_no_record(vault, actor, None, Some(room), None);
     let funding = blocking(|| room_launch_funding(vault, room, branch, context.agent, actor))
         .map_err(|fault| fault.to_string())?;
     let seat = ai
@@ -177,6 +229,32 @@ async fn act(
     // FIX 4465 D: a self agent's kept prefix, read before its context is
     // spent below; the action takes it only once its own call is admitted.
     let reuse = blocking(|| reuse_chat_breakpoint(ai, vault, &action, &context));
+    let action_log = if action.action == TurnAction::Retry
+        && !matches!(&reuse, ChatReuse::Reused(_))
+        && ai.chat_self_mode(vault, context.agent).is_some()
+    {
+        blocking(|| {
+            let reader = action_reader(vault, &action)?;
+            match oneiron::compaction::read_action_pinned_log(
+                &reader,
+                &action,
+                &context,
+                settings.history_turns,
+            ) {
+                Ok(log) => log,
+                Err(_) => {
+                    tracing::info!(
+                        reason = "action_target_log_unread",
+                        "a turn action's target log was not read; its reply keeps no breakpoint"
+                    );
+                    None
+                }
+            }
+        })
+    } else {
+        None
+    };
+    let mut action_craft = Vec::new();
     // The agent must still pass the dispatch predicate, as chat's does.
     let instructions = AgentDispatcher::new(vault)
         .dispatchable_definition(&AgentDispatchTarget::Custom(context.agent))
@@ -197,6 +275,8 @@ async fn act(
     // which shows and stamps the craft it captured, today's call is stamped
     // only if it answers. One layout, the vault's or else the host's, places
     // it (FIX 6676).
+    let mut today_sources = TurnSources::of_agent(context.agent);
+    today_sources.add(context.user_sources.as_deref());
     let layout = ai.prompt_layout();
     let lead = messages.len();
     let at = vault.now_recorded_at();
@@ -205,17 +285,27 @@ async fn act(
             .and_then(|reader| snapshot_craft_scoped(vault, &reader, &context.agent, at, layout))
     });
     let (shown, mut today_craft) = if matches!(reuse, ChatReuse::Reused(_)) {
-        craft.map(|craft| (craft.message, craft.entries)).unzip()
+        craft
+            .map(|craft| {
+                today_sources.craft(&craft.entries);
+                (craft.message, craft.entries)
+            })
+            .unzip()
     } else {
         let mut shown = None;
         if let Some(craft) = craft
             && stamp_craft(vault, attempt, context.agent, &craft.entries)
         {
+            today_sources.craft(&craft.entries);
+            if action_log.is_some() {
+                action_craft = craft.entries.clone();
+            }
             shown = Some(craft.message);
         }
         (shown, None)
     };
     for line in context.history {
+        today_sources.add(line.sources.as_deref());
         let role = if line.author == WitnessAuthor::User {
             LlmMessageRole::User
         } else {
@@ -224,10 +314,11 @@ async fn act(
         messages.push(text_message(role, line.text));
     }
     // FIX 6920: the board the action reads, hydrated once, as its
-    // requester's kept slip reads now. It rides as one request-only User
-    // right before the user turn the reply answers, so a Continue's saved
-    // reply and its suffix stay after it; the witness and the log never
-    // hold it.
+    // requester's kept slip reads now. It rides in two parts (I1 = C, FIX
+    // 14677): its state part as one request-only User right before the user
+    // turn the reply answers, its query part and the opener as one right
+    // after it, so a Continue's saved reply and its suffix stay after both;
+    // the witness and the log never hold it.
     let board = match server.and_then(Weak::upgrade) {
         Some(server) => {
             action_board(
@@ -242,7 +333,6 @@ async fn act(
         }
         None => None,
     };
-    let answers = messages.len();
     messages.push(text_message(LlmMessageRole::User, context.user_text));
     // FIX 6676: the craft joins once the restored history and the user's
     // turn are in, where the session layout places it, and before any saved
@@ -251,11 +341,25 @@ async fn act(
     if let Some(craft) = shown {
         place_craft(&mut messages, lead, craft, layout);
     }
+    let action_messages = action_log.as_ref().map(|_| messages.clone());
+    let answers = messages.len() - 1;
+    if action.action == TurnAction::Continue && !context.saved.is_empty() {
+        today_sources.add(Some(&[action.assistant_turn, action.message]));
+    }
     let text = ActionText {
         saved: context.saved,
         answers,
+        opener: crate::api::ai::chat::turn_opener(settings.turn_opener, vault),
     };
-    let (admitted, board_context) = admit_action(vault, ai, &seat, &action, text, messages, board)?;
+    let (admitted, board_context, board_rows) =
+        admit_action(vault, ai, &seat, &action, text, messages, board)?;
+    if let Some(rows) = &board_rows {
+        today_sources.add(Some(rows));
+    }
+    // The requester's board rode today's call, so the conversation's next
+    // turn reads one too: a published successor gets its tail prepared.
+    let board_rode = board_rows.is_some();
+    let today_sources = today_sources.rows();
     // FIX 7145: what the admitted board showed, frozen against the call it
     // rides in.
     let board_context =
@@ -265,7 +369,7 @@ async fn act(
     // captured craft names a note erased, revised or no longer supported
     // since is never sent again (FIX 8985): the action runs as it always
     // did, on today's craft, stamped before it is sent.
-    let (admitted, today, breakpoint, action_session) = match reuse {
+    let (admitted, today, mut breakpoint, action_session, sources) = match reuse {
         ChatReuse::Reused(reused) => {
             let captured = &reused.craft;
             match blocking(|| craft_withdrawn(vault, captured)) {
@@ -282,6 +386,7 @@ async fn act(
                         Some(admitted),
                         Some(reused.breakpoint),
                         action_session,
+                        reused.sources,
                     )
                 }
                 Some(reason) => {
@@ -289,17 +394,33 @@ async fn act(
                     if let Some(entries) = today_craft.take() {
                         stamp_craft(vault, attempt, context.agent, &entries);
                     }
-                    (admitted, None, None, None)
+                    (admitted, None, None, None, today_sources.clone())
                 }
             }
         }
         ChatReuse::Unavailable(reason) => {
             live_fork_unavailable(reason);
-            (admitted, None, None, None)
+            (admitted, None, None, None, today_sources.clone())
         }
-        ChatReuse::Today => (admitted, None, None, None),
+        ChatReuse::Today => (admitted, None, None, None, today_sources.clone()),
     };
     let prefix_reused = breakpoint.is_some();
+    if breakpoint.is_none()
+        && today.is_none()
+        && board_rows.is_none()
+        && let (Some(log), Some(messages)) = (action_log, action_messages)
+    {
+        breakpoint = crate::api::ai::chat::action_breakpoint(
+            ai,
+            vault,
+            &action,
+            context.agent,
+            log,
+            action_craft,
+            &messages,
+            &admitted,
+        );
+    }
     let keepalive = keepalive_every(
         vault
             .message_stream_policy()
@@ -307,23 +428,43 @@ async fn act(
             .idle_timeout_ms,
     );
     // `host.turn.generate`'s pre chain runs once the reply is admitted and
-    // before its stream opens: a skip, or an ask, ends the turn with its
-    // reason. Its post chain runs once the reply's producer ends.
-    // A queued action carries no credential: its hooks read as its actor.
-    // Its room is the conversation the action's context resolved.
-    let generating = turn_generate_pre(
-        vault,
-        actor,
-        None,
-        None,
-        &action.conversation.to_hex(),
-        Some(action.conversation),
-        None,
-    )
-    .map_err(|error| error.to_string())?
-    .map_err(|stop| stop.to_string())?;
+    // before its stream opens: a skip ends the action with its reason, and
+    // an ask holds it for the answer (FIX 1765). Its post chain runs once the
+    // reply's producer ends. A queued action carries no credential: its hooks
+    // read as its actor. Its room is the conversation the action's context
+    // resolved. Its call derives from the attempt, so the same attempt run
+    // again finds the call that asked and the answer; run again, it needs
+    // that saved call, and one that is gone ends it as a skip.
+    let parent = turn_action_hook_parent(attempt);
+    let room_ref = action.conversation.to_hex();
+    let pre = if turn_action_resumed_from_hook(attempt) {
+        turn_generate_pre_retained(vault, actor, parent, &room_ref, Some(action.conversation))
+    } else {
+        turn_generate_pre(
+            vault,
+            actor,
+            Some(parent),
+            None,
+            &room_ref,
+            Some(action.conversation),
+            None,
+        )
+    };
+    let generating = match pre.map_err(|error| error.to_string())? {
+        Ok(generating) => generating,
+        Err(VerbHookStop::Pending { invocation, ask }) => {
+            return match (
+                InvocationId::parse_hex(&invocation),
+                EntityId::from_hex(&ask),
+            ) {
+                (Some(invocation), Ok(ask)) => Ok(Acted::Asked { invocation, ask }),
+                _ => Err(VerbHookStop::Pending { invocation, ask }.to_string()),
+            };
+        }
+        Err(stop) => return Err(stop.to_string()),
+    };
     let open = answer_open(vault, &action);
-    let answering = begin_answer(
+    let answering = begin_sourced_answer_with_fallback(
         ai,
         Answer {
             vault: Arc::clone(vault),
@@ -336,6 +477,9 @@ async fn act(
             payer: WriteActor::new(actor, class),
             funding,
             budget_units: settings.turn_budget_units,
+            model_call_caller: actor,
+            model_call_room: Some(room),
+            model_call_no_record_at_arrival,
             credential: TurnCredential::Action {
                 action: Box::new(action),
                 vault: Arc::clone(vault),
@@ -349,6 +493,8 @@ async fn act(
             // earlier reply's (FIX 3416).
             assertions: ReplyAssertionCollector::default(),
         },
+        sources,
+        today_sources,
     )
     .map_err(|refusal| match refusal {
         AnswerRefused::WaitedOut(reason)
@@ -369,7 +515,10 @@ async fn act(
         None => answering,
     };
     let answering = match action_session {
-        Some(session) => session.commit_on_answer(answering),
+        Some(session) => session.commit_on_answer(
+            answering,
+            server.filter(|_| board_rode).and_then(Weak::upgrade),
+        ),
         None => answering,
     };
     drop(answering.subscription);
@@ -389,7 +538,7 @@ async fn act(
     if outcome.saved.is_none() {
         return Err("the reply was not recorded".into());
     }
-    Ok(())
+    Ok(Acted::Saved)
 }
 
 /// The reader a queued `action`'s craft and session metadata use (FIX 9464,
@@ -450,8 +599,9 @@ fn stamp_craft(
     }
 }
 
-/// Completes or fails the attempt; either is terminal.
-fn settle(vault: &Vault, attempt: &AttemptRecord, result: Result<(), String>) {
+/// Completes or fails the attempt, either terminal, or holds it on its host
+/// hook's ask (FIX 1765). Whether it is held.
+fn settle(vault: &Vault, attempt: &AttemptRecord, result: Result<Acted, String>) -> bool {
     let queue = AttemptQueue::new(vault);
     let now = vault.now_recorded_at();
     let fail = |reason: String| {
@@ -464,7 +614,22 @@ fn settle(vault: &Vault, attempt: &AttemptRecord, result: Result<(), String>) {
         })
     };
     let settled = match result {
-        Ok(()) => queue
+        Ok(Acted::Asked { invocation, ask }) => {
+            match vault.hold_turn_action_for_hook(attempt, LEASE_OWNER, invocation, ask, now) {
+                Ok(()) => return true,
+                // One that cannot wait fails as an ask always did.
+                Err(_) => fail(
+                    VerbHookStop::Pending {
+                        invocation: invocation.to_hex(),
+                        ask: ask.to_hex(),
+                    }
+                    .to_string(),
+                )
+                .or_else(|_| fail(FAILED.to_owned()))
+                .map(drop),
+            }
+        }
+        Ok(Acted::Saved) => queue
             .complete(CompleteAttempt {
                 id: attempt.id,
                 lease_owner: LEASE_OWNER.to_owned(),
@@ -479,4 +644,5 @@ fn settle(vault: &Vault, attempt: &AttemptRecord, result: Result<(), String>) {
     if let Err(error) = settled {
         tracing::warn!(kind = ?error.kind(), attempt = ?attempt.id, "turn action was not settled");
     }
+    false
 }

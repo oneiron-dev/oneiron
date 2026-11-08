@@ -16,11 +16,14 @@ use std::time::{Duration, Instant};
 
 // Bind, listen and accept on a brokered socket: guest-loopback listeners.
 mod loopback;
+// getsockopt and setsockopt on a brokered socket (FIX 6784, FIX 6787).
+mod options;
+// A brokered socket sent over a native Unix socket keeps its entry while it
+// waits in the queue (FIX 6185).
+mod unix_rights;
 
 struct Pending {
     request: Vec<u8>,
-    /// The descriptor that follows the request's frame, sent again with it.
-    fd: Option<Arc<OwnedFd>>,
     sender: mpsc::Sender<wire::Reply>,
 }
 struct Bridge {
@@ -31,17 +34,17 @@ struct Bridge {
     /// holds it alone, so no socket the supervisor is still creating can be
     /// missing from a scan (FIX 5978).
     sockets: RwLock<()>,
-    /// Whether a socket was brokered: until then there is nothing to scan.
+    /// Whether a socket was brokered: until then there is nothing to scan,
+    /// and a native send continues to the kernel. It is set before the
+    /// supervisor completes the guest's socket() (FIX 6185), so no send of
+    /// that socket finds it unset.
     brokered: AtomicBool,
+    /// The brokered sockets queued on native Unix sockets: each inventory
+    /// reports them as held (FIX 6185).
+    rights: unix_rights::Rights,
 }
 impl Bridge {
     fn call(&self, id: u64, op: wire::Operation) -> io::Result<wire::Reply> {
-        self.carry(id, op, None)
-    }
-
-    /// A call whose frame is followed by `fd` (SCM_RIGHTS), when it has one,
-    /// on its first send and on every replay.
-    fn carry(&self, id: u64, op: wire::Operation, fd: Option<OwnedFd>) -> io::Result<wire::Reply> {
         let notification = id;
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let mut bytes = Vec::new();
@@ -54,7 +57,6 @@ impl Bridge {
             }),
         )?;
         let (sender, rx) = mpsc::channel();
-        let fd = fd.map(Arc::new);
         self.pending
             .lock()
             .map_err(|_| io::Error::other("fence state poisoned"))?
@@ -62,7 +64,6 @@ impl Bridge {
                 id,
                 Pending {
                     request: bytes.clone(),
-                    fd: fd.clone(),
                     sender,
                 },
             );
@@ -74,11 +75,15 @@ impl Bridge {
         {
             use std::io::Write;
             let _ = writer.write_all(&bytes);
-            if let Some(fd) = &fd {
-                let _ = wire::send_fd(writer, fd.as_raw_fd());
-            }
         }
-        rx.recv().map_err(io::Error::other)
+        let reply = rx.recv().map_err(io::Error::other)?;
+        if reply.errno == libc::EAGAIN
+            && let Some(floor) = reply.floor.as_deref().and_then(crate::known_floor)
+        {
+            use std::io::Write;
+            let _ = writeln!(io::stderr().lock(), "oneiron fence: {floor}");
+        }
+        Ok(reply)
     }
 
     /// Sends one complete scan, in chunks, while the bridge is connected. A
@@ -118,7 +123,8 @@ impl Bridge {
 
 /// Takes the guest's socket inventory every [`socket_lifetime::SOCKET_INVENTORY_EVERY`]
 /// once a socket was brokered, and sends each complete one to the supervisor
-/// (FIX 5978). An incomplete scan is not sent; the next one tries again.
+/// (FIX 5978), with every transfer hold (FIX 6185). An incomplete scan is
+/// not sent; the next one tries again.
 fn inventory(bridge: &Bridge, launcher: u32) {
     let mut generation = 0_u64;
     loop {
@@ -129,9 +135,12 @@ fn inventory(bridge: &Bridge, launcher: u32) {
         let Ok(_alone) = bridge.sockets.write() else {
             return;
         };
-        let Ok(inodes) = socket_lifetime::collect_guest_socket_inodes(launcher) else {
+        let Ok(mut inodes) = socket_lifetime::collect_guest_socket_inodes(launcher) else {
             continue;
         };
+        if bridge.rights.extend_held(&mut inodes).is_err() {
+            continue;
+        }
         generation += 1;
         let _ = bridge.send_inventory(generation, &inodes);
     }
@@ -206,6 +215,7 @@ pub fn launch(
         pending: Mutex::new(HashMap::new()),
         sockets: RwLock::new(()),
         brokered: AtomicBool::new(false),
+        rights: unix_rights::Rights::new()?,
     });
     let stream = connect(socket, &hello, &listener)?;
     *bridge
@@ -215,6 +225,8 @@ pub fn launch(
     let monitor_bridge = Arc::clone(&bridge);
     let inventory_bridge = Arc::clone(&bridge);
     std::thread::spawn(move || inventory(&inventory_bridge, std::process::id()));
+    let rights_bridge = Arc::clone(&bridge);
+    std::thread::spawn(move || rights_bridge.rights.watch());
     let socket = socket.to_owned();
     let listener = Arc::new(listener);
     let monitor_listener = Arc::clone(&listener);
@@ -361,9 +373,6 @@ fn monitor(
                         if let Some(writer) = writer.as_mut() {
                             for request in pending.values() {
                                 let _ = writer.write_all(&request.request);
-                                if let Some(fd) = &request.fd {
-                                    let _ = wire::send_fd(writer, fd.as_raw_fd());
-                                }
                             }
                         }
                     }
@@ -518,6 +527,7 @@ fn dispatch(listener: &OwnedFd, bridge: &Bridge, n: linux::Notification) -> io::
         if matches!(family, libc::AF_UNIX | libc::AF_NETLINK) {
             return linux::respond(fd, n.id, 0, 0, linux::CONTINUE);
         }
+        bridge.brokered.store(true, Ordering::Release);
         let reply = {
             let _shared = bridge
                 .sockets
@@ -529,12 +539,12 @@ fn dispatch(listener: &OwnedFd, bridge: &Bridge, n: linux::Notification) -> io::
                     family,
                     kind: a[1] as i32,
                     protocol: a[2] as i32,
+                    ipv6_only: family == libc::AF_INET6 && options::default_ipv6_only(),
                 },
             )?
         };
         // The successful socket syscall was completed by the host's ADDFD.
         return if reply.errno == 0 {
-            bridge.brokered.store(true, Ordering::Release);
             Ok(())
         } else {
             linux::respond(fd, n.id, 0, reply.errno, 0)
@@ -544,8 +554,10 @@ fn dispatch(listener: &OwnedFd, bridge: &Bridge, n: linux::Notification) -> io::
         return linux::respond(fd, n.id, 0, 0, linux::CONTINUE);
     };
     let describe = bridge.call(n.id, wire::Operation::Describe { socket })?;
+    // A native socket's call continues, unless it may carry a brokered
+    // socket in its control messages (FIX 6185).
     if describe.errno == libc::ENOENT {
-        return linux::respond(fd, n.id, 0, 0, linux::CONTINUE);
+        return unix_rights::dispatch(listener, bridge, n);
     }
     if describe.errno != 0 {
         return linux::respond(fd, n.id, 0, describe.errno, 0);
@@ -573,27 +585,11 @@ fn dispatch(listener: &OwnedFd, bridge: &Bridge, n: linux::Notification) -> io::
         }
         reply
     } else if nr == libc::SYS_setsockopt || nr == libc::SYS_getsockopt {
-        if a[1] as i32 == libc::SOL_SOCKET && a[2] as i32 != libc::SO_DOMAIN {
-            return linux::respond(fd, n.id, 0, 0, linux::CONTINUE);
-        }
-        if nr == libc::SYS_getsockopt {
-            let value = if a[2] as i32 == libc::SO_DOMAIN {
-                describe.bytes.first().copied().unwrap_or(2) as i32
-            } else {
-                0_i32
-            };
-            linux::valid(fd, n.id)?;
-            let size: u32 = load(n.pid, a[4])?;
-            if size < 4 {
-                return linux::respond(fd, n.id, 0, libc::EINVAL, 0);
-            }
-            store(n.pid, a[3], value)?;
-            store(n.pid, a[4], 4_u32)?;
-        }
-        wire::Reply {
-            id: n.id,
-            ..Default::default()
-        }
+        let family = describe
+            .bytes
+            .first()
+            .map_or(libc::AF_INET, |family| i32::from(*family));
+        return options::dispatch(listener, bridge, n, socket, family);
     } else if !datagram {
         return linux::respond(fd, n.id, 0, 0, linux::CONTINUE);
     } else if nr == libc::SYS_sendto {

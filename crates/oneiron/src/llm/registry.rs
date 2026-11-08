@@ -1,7 +1,7 @@
 //! Vault-persisted, priced model catalogs. Scores are evidence, never routing authority.
 mod backend;
 mod description;
-pub use backend::{ModelBackendPin, ModelCostReceipt, PricedModelBackend};
+pub use backend::{ModelBackendPin, ModelCostReceipt, PricedModelBackend, catalog_usage_cost};
 mod installed_pack;
 pub use crate::store::model_description_rows::ModelWireFormat;
 pub use crate::store::model_score_diff::ModelScoreDiff;
@@ -11,6 +11,7 @@ pub(crate) use source_erase::erase_registry_source_in_txn;
 mod stale_mark;
 mod stored_rows;
 use stored_rows::StoredRows;
+pub(crate) use stored_rows::llm_registry_row_accepts_masked;
 
 use super::{LlmCatalogEntry, ModelId};
 use crate::entity_id::EntityId;

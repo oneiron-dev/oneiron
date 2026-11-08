@@ -11,9 +11,9 @@ use crate::error::{Error, GateError, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::task_verb::{
-    ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOptionId,
-    TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource, TaskAskSpec,
-    TaskAskStatus, TaskAskTarget, TaskAskWord,
+    ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption,
+    TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
+    TaskAskSpec, TaskAskStatus, TaskAskTarget, TaskAskWord,
 };
 
 use super::super::consent::{
@@ -117,7 +117,10 @@ impl Memory<'_> {
         question.revision = revision;
         let mut options = BTreeMap::new();
         for (id, _, label) in LIVE_EDIT_OPTIONS {
-            options.insert(TaskAskOptionId::new(id)?, label.to_owned());
+            options.insert(
+                TaskAskOptionId::new(id)?,
+                TaskAskOption::new(label.to_owned()),
+            );
         }
         question.options = options;
         question.label = Some(format!(
@@ -143,6 +146,43 @@ impl Memory<'_> {
             })?;
         }
         Ok(receipt)
+    }
+
+    /// The already-bound ask for this editor, artifact and current owner set.
+    /// Used when a new blob-head claim makes the original ask spec fail replay.
+    pub(crate) fn existing_live_edit_ask_group(
+        &self,
+        artifact: &EntityId,
+        editor: &EntityId,
+    ) -> MemoryResult<Option<EntityId>> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .existing_live_edit_ask_group(artifact, editor);
+        }
+        let vault = self.vault();
+        let txn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)?;
+        let mut owners = crate::policy_model::owners_in_txn(vault, &txn)?;
+        if owners.is_empty() {
+            return Ok(None);
+        }
+        owners.sort();
+        let route = LiveEditRoute {
+            artifact: *artifact,
+            editor: *editor,
+            revision: live_edit_revision(artifact, editor, &owners),
+            owners,
+        };
+        for (group, bound) in LIVE_EDIT_GROUPS.scan(&vault.store, &txn)? {
+            if bound == route {
+                return Ok(Some(group));
+            }
+        }
+        Ok(None)
     }
 
     /// Where the live-edit ask `ask` stands (FIX 596): pending while open,

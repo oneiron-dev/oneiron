@@ -34,6 +34,10 @@ impl SyncClient {
                 "full-window bulk transfer on federation lane",
             ));
         }
+        // A peer serves none of the home's relays (FIX 4748).
+        if self.peer_session.is_some() && crate::sync::peer_route::peer_ignores_frame(tag) {
+            return Ok(Vec::new());
+        }
         let payload = &data[1..];
         let mut responses = Vec::new();
 
@@ -49,13 +53,19 @@ impl SyncClient {
             }
             transport::TAG_RPC if self.config.note_session.is_some() => {
                 super::note_session::accept_bind_reply(payload)?;
-                self.note_session_bound = true;
+                // A peer bound the socket's actor only: the NOTE authority is
+                // the home, so a peer session's NOTE lane stays unbound (FIX
+                // 4748).
+                self.note_session_bound = self.peer_session.is_none();
             }
             transport::TAG_ASSET_BODY_WANT..=transport::TAG_ASSET_BODY_RECEIPT => {
                 responses.extend(self.handle_asset_body_frame(tag, payload)?);
             }
             transport::TAG_LEAF_KEY_REQUEST..=transport::TAG_LEAF_KEY_FAILURE => {
                 responses.extend(self.handle_leaf_key_frame(tag, payload)?);
+            }
+            transport::TAG_SEALED_UPDATE => {
+                responses.extend(self.handle_sealed_update_frame(payload)?);
             }
             transport::TAG_DOCUMENT => {
                 responses.extend(self.handle_document_frame(transport::decode_document(payload)?)?);
@@ -197,6 +207,7 @@ impl SyncClient {
         } else {
             responses.extend(self.owner_note_requests()?);
         }
+        self.consume_landed_ask_intents(tag);
         Ok(responses)
     }
 

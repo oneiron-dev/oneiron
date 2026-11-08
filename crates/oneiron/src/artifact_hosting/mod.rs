@@ -31,13 +31,16 @@ use crate::store::policy_record::{ExternalEffectPolicyRisk, GateActor};
 use crate::store::receipt_row::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::write_envelope::WriteActor;
 
+mod backend_principal;
 /// The KS7 getter of the hosting rows, under each blob artifact (FIX 10436).
 pub(crate) mod checkpoint;
+pub use backend_principal::ArtifactBackendPairing;
 /// Typed requests and replies for publication and live-preview host doors.
 pub mod door_types;
 mod pointer_rows;
 /// Lease-bound live process previews, separate from pinned artifact pointers.
-pub mod preview;
+pub use oneiron_store::artifact_hosting::preview;
+mod cooperative;
 mod publication_sync;
 mod serving;
 // The serving descriptor of a published blob version (FIX 1195).

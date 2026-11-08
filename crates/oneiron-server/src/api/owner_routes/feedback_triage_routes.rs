@@ -10,7 +10,9 @@
 //! `/v1/owner/feedback/delivery` sits beside it: the owner runs the Coach's
 //! publisher delivery of content-free issue signatures now (OF-420, FIX
 //! 739), reads one issue's delivery, and binds a publisher to this server's
-//! feedback destination. Nothing here sends a report's text.
+//! feedback destination. An explicit retry prepares a new logical send only
+//! after the ledger proves the old one was not delivered. Nothing here sends
+//! a report's text.
 
 use std::sync::Arc;
 
@@ -20,9 +22,10 @@ use axum::response::Json;
 use axum::routing::{get, post, put};
 use oneiron::feedback::{
     FeedbackTriageBinding, FeedbackTriageBindingRequest, FeedbackTriageRun,
-    FeedbackTriageRunRequest, FeedbackTriageStatus, FeedbackTriageStatusRequest, ReportDeliveryRun,
-    ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest,
-    ReportPublisherBinding, ReportPublisherBindingRequest, ReportPublisherEndpoint,
+    FeedbackTriageRunRequest, FeedbackTriageStatus, FeedbackTriageStatusRequest,
+    ReportDeliveryRecord, ReportDeliveryRetryRequest, ReportDeliveryRun, ReportDeliveryRunRequest,
+    ReportDeliveryStatus, ReportDeliveryStatusRequest, ReportPublisherBinding,
+    ReportPublisherBindingRequest, ReportPublisherEndpoint,
 };
 
 use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
@@ -83,6 +86,16 @@ pub(super) fn owner_table() -> OwnerTable {
                 shape: None,
             },
             post(delivery_run),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/feedback/delivery/retry",
+                summary: "Prepares a new logical send of one issue's same content-free signature (`issue_ref`, `expected_send_ref`) only after the outbound ledger proves the selected send was not delivered. Uses the current publisher binding; keeps the old send and receipt intact. Repeating the same request returns its successor without another send. Answers the delivery record; run delivery to send it under the normal admission and participation checks.",
+                row: None,
+                shape: None,
+            },
+            post(delivery_retry),
         ),
         (
             OwnerRoute {
@@ -151,8 +164,8 @@ async fn status(
     Ok(Json(status))
 }
 
-/// `GET /v1/owner/feedback/triage/binding`: the skill the triage runs, with
-/// the revision a change names as `seen`.
+/// `GET /v1/owner/feedback/triage/binding`: the skill and intake scheduling
+/// policy, with the revision a change names as `seen`.
 async fn binding(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -165,9 +178,10 @@ async fn binding(
     Ok(Json(binding))
 }
 
-/// `PUT /v1/owner/feedback/triage/binding` with `{skill, seen}`: binds the
-/// skill (null unbinds) at the revision the owner read; a binding that
-/// moved since is refused and nothing changes.
+/// `PUT /v1/owner/feedback/triage/binding` with
+/// `{skill, enqueue_on_intake, seen}`: sets the skill (null unbinds) and
+/// intake policy at the revision the owner read; a moved binding is refused
+/// and nothing changes.
 async fn set_binding(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -201,6 +215,24 @@ async fn delivery_run(
     })
     .await?;
     Ok(Json(run))
+}
+
+/// `POST /v1/owner/feedback/delivery/retry`: prepares one new logical send;
+/// the ordinary delivery run performs the send under its normal checks.
+async fn delivery_retry(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<ReportDeliveryRetryRequest>,
+) -> OwnerReply<ReportDeliveryRecord> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let delivery = blocking(move || -> OwnerResult<ReportDeliveryRecord> {
+        Ok(server
+            .vault()
+            .retry_report_signature_send(&owner, &request)?)
+    })
+    .await?;
+    Ok(Json(delivery))
 }
 
 /// `GET /v1/owner/feedback/delivery/status?issue_ref=<32 hex>`: one issue's

@@ -389,8 +389,11 @@ pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> R
         // or pending-tombstone replay completes it under its own fail-closed
         // handling. Failing the open would wedge the vault instead.
         let mut wtxn = vault.store.env.write_txn()?;
+        let mut effects = crate::deletion::ErasureEffects::default();
         let completed = match vault.apply_replayed_tombstone_in_txn(&mut wtxn, &entity, &raw) {
-            Ok(_) => wtxn.commit(),
+            Ok((_, _, actual_cancelled)) => wtxn.commit().map(|()| {
+                effects = actual_cancelled;
+            }),
             Err(error) => {
                 drop(wtxn);
                 tracing::warn!(
@@ -404,6 +407,7 @@ pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> R
         // A hold's refusal is logged now this item's writer has ended.
         vault.store.flush_legal_hold_refusals_settled();
         completed?;
+        effects.committed(vault);
     }
     Ok(())
 }
@@ -473,7 +477,6 @@ fn matching_recovery_tombstone_in_txn(
     }
     Ok(matched)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

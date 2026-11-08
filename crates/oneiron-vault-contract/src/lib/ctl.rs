@@ -13,7 +13,7 @@ use super::slim_control::{SlimResidency, SlimStatusWire, UnslimWire};
 use super::wake::validate_wake_fields;
 use super::{
     IdleReapWire, LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReportHead,
-    ManagedBackupFacts, valid_owner_signing_challenge,
+    ManagedBackupFacts, UsageExportCursor, UsageExportPage, valid_owner_signing_challenge,
 };
 
 /// How a managed vault came up, as every `Ping` reports it.
@@ -211,6 +211,13 @@ pub enum CtlRequest {
         #[serde(flatten)]
         request: LedgerPulledRequest,
     },
+    /// Appended last (LC191311): one original usage event's JSON, paged by
+    /// `cursor` ([`CtlResponse::UsageExport`]). A read that writes nothing,
+    /// so a vault frozen for reap answers it and stays frozen.
+    UsageExport {
+        #[serde(default)]
+        cursor: Option<UsageExportCursor>,
+    },
 }
 
 impl CtlRequest {
@@ -250,7 +257,8 @@ impl CtlRequest {
             | CtlRequest::SlimStatus
             | CtlRequest::Unslim
             | CtlRequest::RestoreStatus { .. }
-            | CtlRequest::PrepareIdleReap => {}
+            | CtlRequest::PrepareIdleReap
+            | CtlRequest::UsageExport { .. } => {}
         }
         Ok(())
     }
@@ -451,6 +459,40 @@ pub enum LegalHoldsNotProven {
     ReadFailed,
 }
 
+/// How a vault VM's outbox companion answered the engine's last completed
+/// probe (FIX 11073), as `Ping` reports it beside `vm_outbox_revision`.
+/// `Up` carries the revision that probe reported; `Down` that it answered
+/// nothing. Neither says the companion is healthy now, and `Down` is not
+/// proof its process ended. Until a probe completes, `Ping` carries none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum VmOutboxCompanionState {
+    /// The probe reported the carrier's wire revision.
+    Up { revision: u32 },
+    /// The probe answered nothing: the companion never came up, it ended,
+    /// or its endpoint went.
+    Down,
+}
+
+impl From<Option<u32>> for VmOutboxCompanionState {
+    fn from(revision: Option<u32>) -> Self {
+        revision.map_or(Self::Down, |revision| Self::Up { revision })
+    }
+}
+
+/// Requires `Ping.vm_outbox_companion`'s key: serde reads a missing `Option`
+/// field as `None` unless its deserializer says otherwise, so this delegates
+/// to `Option`'s own read, which takes an explicit `null` as unobserved but
+/// no longer takes a missing key.
+fn deserialize_vm_outbox_companion<'de, D>(
+    deserializer: D,
+) -> Result<Option<VmOutboxCompanionState>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<VmOutboxCompanionState>::deserialize(deserializer)
+}
+
 /// Untagged: variant selection is structural, tried in declaration order.
 /// INVARIANT: each variant's required-field set must stay disjoint from every
 /// variant above it, and new variants are appended last — otherwise a
@@ -498,7 +540,10 @@ pub enum CtlResponse {
     /// ([`VM_OUTBOX_WIRE_REVISION`](crate::vm_outbox::VM_OUTBOX_WIRE_REVISION),
     /// FIX 5235), sent only when its storage, its companion and its
     /// attachment to the carrier port are all in place; a node's process
-    /// vault sends none. `relay_delete_revision` is that of the relay locker
+    /// vault sends none. `vm_outbox_companion` is how that companion answered
+    /// the engine's last completed probe ([`VmOutboxCompanionState`], FIX
+    /// 11073): `null` until one completes, never a claim it is healthy now.
+    /// `relay_delete_revision` is that of the relay locker
     /// delete the engine executes
     /// ([`RELAY_DELETE_REVISION`](crate::relay_delete::RELAY_DELETE_REVISION),
     /// FIX 6826), and `engine_instance` this process's boot: 16 random bytes
@@ -551,6 +596,8 @@ pub enum CtlResponse {
             deserialize_with = "super::version::observed_revision"
         )]
         vm_outbox_revision: Option<u32>,
+        #[serde(deserialize_with = "deserialize_vm_outbox_companion")]
+        vm_outbox_companion: Option<VmOutboxCompanionState>,
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
@@ -710,6 +757,12 @@ pub enum CtlResponse {
     /// above, and it carries no `ok`.
     LedgerPage {
         ledger_page: LedgerPage,
+    },
+    /// Appended last (LC191311): the answer to [`CtlRequest::UsageExport`].
+    /// Its one required field {usage_export} is disjoint from every variant
+    /// above, and it carries no `ok`.
+    UsageExport {
+        usage_export: UsageExportPage,
     },
 }
 

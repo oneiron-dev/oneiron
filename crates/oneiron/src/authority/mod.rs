@@ -44,6 +44,7 @@ mod ancestor_index;
 mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
+mod ask_forward_holder;
 mod backup_signer_delegation;
 mod carried_act;
 mod causal_write;
@@ -67,9 +68,11 @@ mod conversation_training;
 mod conversation_training_vault;
 mod critical_confirm_door;
 mod current_scope;
+mod device_succession;
 mod engine_machine;
 mod entry_transition;
 mod entry_transition_predicates;
+mod explicit_revocation;
 mod export_act;
 mod export_secret_work;
 mod first_seen_clock;
@@ -100,6 +103,7 @@ mod ingest_observation;
 mod install_fold;
 mod invitee_slip;
 mod invocation_slip;
+mod leave_notice_continuity;
 mod left_notices;
 mod local_host_root;
 mod local_open;
@@ -113,9 +117,11 @@ mod machine_profile;
 mod machine_standing;
 mod machine_write;
 mod managed_owner_check;
+mod membership_execution;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
+mod origin_cut;
 mod owner_act;
 mod owner_choice;
 mod owner_key_enrollment;
@@ -123,14 +129,19 @@ mod owner_key_enrollment_door;
 mod owner_project_slip;
 mod owner_roots;
 mod owner_work;
+mod owner_work_diagnostics;
+mod pact_openings;
+mod past_grant_standing;
 mod pinned_root;
 mod policy_setting_choice;
 mod principal_standing;
 mod readonly_fold;
 mod recover_many;
+mod recovery;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
+mod seat_child_slip;
 mod sequence_ancestry;
 mod sequence_observation;
 mod slip;
@@ -140,6 +151,7 @@ mod slip_replay;
 mod slip_state;
 mod slip_vault;
 mod stale_roster;
+mod step_up;
 pub(crate) mod store_order;
 mod support_admission;
 mod support_grant;
@@ -181,16 +193,17 @@ pub use oneiron_authority::authority::{
     FEDERATION_SCOPE_COMMIT_DOMAIN, FederationGrantActivation, FederationLifecycleAction,
     FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
     FederationPactState, FederationPactStatus, FoldedDevice, GENESIS_FRAGILE_FLAG,
-    GenesisRecoveryStep, GrantTravelSet, MACHINE_ENCRYPTION_KEY_LEN,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MAX_PACT_SCOPE_BYTES, MachineDeviceClass,
-    MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole, ModelOrder,
-    OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
+    GenesisRecoveryStep, GrantTravelSet, LeaveNoticeDelegation, LeaveNoticeDelegationPurpose,
+    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MAX_PACT_SCOPE_BYTES,
+    MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
+    ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
     OwnerRootRecord, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
     OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
     RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
-    ResidenceResultStatus, RootChange, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
-    SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, SupportRepair,
+    ResidenceResultStatus, RootChange, SEAT_CLAIM_LEASE_OWNER_MAX_BYTES, SEAT_MODEL_CHANNEL,
+    SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS, SealedCopies, SeatClaimSlipBinding,
+    SlipClaims, SlipMintAction, SupportDelegation, SupportRepair, TrustedContactSlipBinding,
     WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
     authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
     authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
@@ -223,6 +236,10 @@ pub use oneiron_authority::authority::{
 };
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
+mod federation_status;
+pub use federation_status::{
+    FederationPactInactiveReason, FederationPactStatusRow, FederationStatus,
+};
 
 // Re-exports reproduce the pre-split `crate::authority::` surface exactly: each
 // glob carries every item of its file at that item's own visibility, so `pub`
@@ -300,11 +317,17 @@ pub(crate) use home_candidacy::{
 pub(crate) use home_pick::{
     HomePickHead, HomePickState, election_home_pick_in_txn, home_pick_in_txn,
 };
-pub use host_action::HostActionAuthority;
+pub(crate) use host_action::StoredHostAction;
+pub use host_action::{HostActionAuthority, HostActionIdentity};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
-pub use local_host_root::{LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace};
+pub use leave_notice_continuity::LeaveNoticeContinuity;
+#[cfg(feature = "sync")]
+pub(crate) use leave_notice_continuity::{LeaveNoticeDelegationRows, NoticeSignerStanding};
+pub use local_host_root::{
+    HostIssuerSeedSlot, LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace,
+};
 pub use local_open::LocalOpenProfile;
 pub use log_budget::{
     AUTHORITY_LOG_SIGNER_COUNT_ADVISORY, AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER,
@@ -324,6 +347,8 @@ pub use mesh_machine::{
     MeshMachineBinding,
 };
 pub use observation_policy::*;
+// The origin cut a repo manifest is written and judged by (FIX 15740).
+pub(crate) use origin_cut::OriginCutStanding;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
 pub(crate) use owner_act::{
     GrantStanding, authority_refusal_as, authority_refused, grant_omission, grant_standing_in_txn,
@@ -339,6 +364,7 @@ pub use recover_many::{
     VaultRecovered, VaultRecoveryOutcome, VaultRecoveryProof, VaultRecoveryStep, recover_vaults,
 };
 pub use slip::*;
+pub(crate) use slip_pairing::PendingInvitationLink;
 pub use slip_pairing::{
     PairingDescriptor, PairingLink, PairingPinRef, PairingPrincipal, PairingRedeemed,
     format_pairing_link, format_pinned_pairing_link, machine_possession_transcript,
@@ -356,12 +382,24 @@ pub use slip_vault::{
     ConnectOffer, ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
     HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer, ScopeOpeningKey,
 };
+pub use step_up::{
+    EnrolledPasskey, EnrolledTotp, PasskeyAssertion, PasskeyDescriptor, PasskeyRegistration,
+    STEP_UP_CHALLENGE_STALE, STEP_UP_CHALLENGE_TTL_SECS, STEP_UP_NO_PASSKEY, STEP_UP_NOT_HOLDER,
+    STEP_UP_REFUSED, STEP_UP_REQUIRED, StepUpCeremony, StepUpChallenge, StepUpDone, StepUpFactor,
+    StepUpPasskeysReset, StepUpPasskeysResetRequest, StepUpTotpReset, StepUpTotpResetRequest,
+    TotpCode, TotpEnrollment, WeaveAdminDigestRequest, WeaveAdminItemWrongRequest,
+    WeaveAdminLensRequest, WeaveAdminLinkWrongRequest, WeaveAdminReportRequest,
+};
+pub(crate) use step_up::{
+    erase_step_up_challenges_actor_in_txn, erase_step_up_passkeys_actor_in_txn,
+    erase_step_up_records_actor_in_txn, erase_step_up_totp_actor_in_txn,
+};
 pub use support_grant::{
     SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantMinted, SupportGrantQuery, SupportGrantRequest,
     SupportGrantRevoked, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
 };
 pub use task_actor::AdmittedTaskGrant;
-pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
+pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb, TaskGrantStanding};
 pub use valid_entries::{EntryHashSet, ValidEntries};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{
@@ -386,8 +424,9 @@ pub(crate) use adopted_fold::proven_residence_result_parents_in_txn;
 pub(crate) use agent_grant_act::{AgentGrantAct, AgentGrantActRef};
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
 pub(crate) use checkpoint_adopt::{
-    adopted_authority_checkpoint_in_txn, adopted_checkpoint_id_in_txn, adopted_image_row_key,
-    adopted_pin_row_key,
+    AdoptedImageCacheEntry, adopted_authority_checkpoint_in_txn, adopted_checkpoint_id_in_txn,
+    adopted_image_row_key, adopted_pin_row_key, cached_adopted_authority_checkpoint_in_txn,
+    cached_adopted_evidence_in_txn,
 };
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
@@ -402,7 +441,7 @@ pub(crate) use handover_evidence::HandoverEvidence;
 pub(crate) use history_admission::{
     RowsBeside, preflight_authority_rows_beside_in_txn, preflight_authority_rows_in_txn,
 };
-pub(crate) use host_action::{HostActionGuard, HostActionIdentity, host_action_refused};
+pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;
 #[cfg(test)]
@@ -410,7 +449,9 @@ pub(crate) use log_budget::with_authority_doors_open_for_test;
 pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };
-pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn};
+pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn};
+pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
+pub(crate) use past_grant_standing::preserved_topology_act_in_txn;
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
 pub(crate) use pinned_root::{
     end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,
@@ -426,9 +467,11 @@ pub(crate) use principal_standing::{
 };
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
-use readonly_fold::authority_view_readonly_for_store_in_txn;
+pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;
+#[cfg(feature = "sync")]
+pub(crate) use readonly_fold::is_history_incomplete;
 pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
@@ -445,9 +488,11 @@ use machine_profile::{
     merge_machine_maps,
 };
 pub(crate) use machine_write::{
-    evidence_without_machine_signature, machine_claim_needs_history, machine_claim_read_admitted,
-    machine_history_authority_descends, machine_history_host_context,
-    resign_machine_claim_after_mask_in_txn, verify_machine_claim_in_txn,
+    evidence_without_machine_signature, machine_claim_needs_history,
+    machine_claim_needs_history_observing, machine_claim_read_admitted,
+    machine_history_authority_descends, machine_history_authority_descends_with_image,
+    machine_history_host_context, resign_machine_claim_after_mask_in_txn,
+    verify_machine_claim_in_txn,
 };
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;

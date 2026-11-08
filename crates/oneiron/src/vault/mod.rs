@@ -9,14 +9,14 @@ mod edges;
 mod entities;
 pub(crate) mod entity_refs;
 pub(crate) mod entity_revision;
-pub(crate) mod entity_view;
-pub(crate) mod speculative_passes;
 #[cfg(feature = "sync")]
 pub(crate) use entity_revision::EntityRevisionChange;
 pub use entity_revision::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,
 };
+pub(crate) use oneiron_store::vault::entity_view;
+pub(crate) use oneiron_store::vault::speculative_passes;
 mod identity;
 mod open;
 mod places;
@@ -30,6 +30,7 @@ mod reader_table;
 mod response_bodies;
 mod retrieval_trace_key;
 mod search_retrieval;
+mod tagging_arm;
 mod transactions;
 mod vector_evidence;
 
@@ -78,7 +79,15 @@ pub(crate) use self::vector_evidence::NoMatchFloors;
 pub struct Vault {
     /// Live seat prefixes are vault-owned, never process-global.
     pub(crate) model_seats: std::sync::Mutex<crate::llm::seat::SeatPool>,
+    /// Each installed model pack's last full check, beside the install
+    /// receipt, frozen pin and source liveness it read (FIX 20043): a role
+    /// call reuses it while those match the store. In memory only.
+    pub(crate) admitted_model_packs: crate::skill_hub::pack_catalog::AdmittedModelPacks,
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
+    /// Exact HOST live-session orders, independent of a failed capture socket.
+    /// In memory only; never tenant hold state, source bytes or private keys.
+    #[cfg(unix)]
+    pub(crate) host_legal_captures: crate::deletion::HostLegalCaptures,
     /// The rows over live work this vault holds open, and the host's door
     /// for their crossings ([`Vault::set_live_rows`]).
     pub(crate) live_rows: crate::live_rows::LiveRowsCell,
@@ -116,6 +125,10 @@ pub struct Vault {
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
+    /// The late tagging arming first-run setup installs after open: read
+    /// beside the open config by [`Vault::tagging_marker_config`]. In memory
+    /// only: a reopened vault arms from its config again.
+    tagging_arm: std::sync::OnceLock<crate::config::tagging::TaggingMarkerConfig>,
     /// Where vector evidence starts now: the configured floors until the host
     /// sets others ([`Vault::set_vector_evidence`]), and any it set for one
     /// kind of item in one embedding space ([`Vault::set_vector_evidence_for`]).
@@ -132,6 +145,12 @@ pub struct Vault {
     retrieval_trace_key: self::retrieval_trace_key::RetrievalTraceKey,
     // Declared after Store: LMDB closes before process ownership is released.
     writer_lease: Option<VaultWriterLease>,
+    /// T1 `self.use` operations the host registered, by operation name: the
+    /// second table beside `SECRET_USE_OPERATIONS` (FIX 2616). Empty until
+    /// the server registers its callbacks; unknown names refuse as unknown.
+    pub(crate) secret_use_t1_operations: std::sync::Mutex<
+        std::collections::HashMap<String, crate::secret_custody::SecretUseT1Operation>,
+    >,
     /// The page-seal mirror read the last settle fused with its file
     /// identity, consumed by the next ready check instead of a second
     /// under-lease mirror read (FIX 12272). Set only by the settle's write
@@ -161,10 +180,13 @@ pub struct Vault {
     /// The claim VAD payment worker's wake and the claims the write door
     /// handed it (FIX 11702). In memory only: the debt rows are the debt.
     pub(crate) claim_vad_payment: crate::store::claim_vad_payment::ClaimVadPayment,
+    /// Volatile revoke work from committed local cloud-registration erases.
+    pub(crate) cloud_registration_erase_revokes: crate::secret_custody::EraseRevokes,
     /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
-    /// state mutex and nothing else: the fixed-order drop transaction and the
-    /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
-    /// outbound callback, no timer handle and no second connection owner.
+    /// state mutex, the live-wait list with its id counter, the outbound-wait
+    /// host callback and the owner shed line: the fixed-order drop transaction
+    /// and the lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It
+    /// adds no timer handle and no second connection owner.
     pub(crate) slim: crate::slim::SlimController,
     /// One in-process idle policy timer per open vault, released on wrapper drop.
     pub(crate) wake_policy_timer_owned: std::sync::atomic::AtomicBool,
@@ -192,6 +214,17 @@ pub struct Vault {
     /// sweep safety and must defer.
     #[cfg(feature = "sync")]
     pub(crate) live_window_manager_attached: std::sync::atomic::AtomicBool,
+    /// FIX 4747: this process released its executor leases as it closes,
+    /// its connector sends' (`release_send_executor_leases`) and its agent
+    /// runs' (`release_agent_run_leases`); from then on it takes, renews and
+    /// reaps none of either, so a pass still running before the workers stop
+    /// cannot undo the release, until a new serve run over the same open
+    /// vault resumes them (`resume_executor_leases`). In memory only.
+    pub(crate) executor_leases_released: std::sync::atomic::AtomicBool,
+    /// FIX 4747 slice 5: the fence each agent run on this process's host
+    /// took at its claim, by attempt: what the run's step commits and
+    /// outbound effects meet. In memory only, never persisted.
+    pub(crate) agent_run_fences: std::sync::Mutex<crate::agent_dispatch::AgentRunFences>,
     /// This device's home search, lent by its own sync connection
     /// ([`crate::sync::HomeSearch`], OF-534). A `Weak`, so a dropped
     /// connection routes nothing; the slot keeps the mode that connection
@@ -205,10 +238,10 @@ pub struct Vault {
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
         std::sync::RwLock<Option<std::sync::Arc<dyn crate::origin::lfs::LfsReadRoom>>>,
-    /// The floor a host lends its guests' network work
-    /// ([`Vault::lend_host_net_floor`]); none until it lends one.
-    pub(crate) host_net_floor:
-        std::sync::OnceLock<std::sync::Arc<dyn oneiron_container::HostNetFloor>>,
+    /// The floor its guests' network work charges: the one its serving host
+    /// attached ([`Vault::attach_host_net_floor`]), else the process's
+    /// descriptor line (FIX 6299).
+    pub(crate) host_net_floor: std::sync::Arc<crate::code_sandbox::egress::VaultHostFloor>,
     /// The measured disk floor a host lends its guests' proposal spools
     /// ([`Vault::lend_proposal_spool`], FIX 7650); none until it lends one.
     pub(crate) proposal_spool:
@@ -245,6 +278,18 @@ pub struct Vault {
     /// ([`Vault::install_served_transports`]). In memory only.
     pub(crate) served_transports:
         std::sync::OnceLock<std::sync::Arc<crate::outbound::ServedTransports>>,
+    /// The host's isolated inspection of e-sign original PDFs, reached before
+    /// a field save's or a sign act's writer (FIX 9609,
+    /// [`Vault::install_esign_page_inspector`]). In memory only.
+    pub(crate) esign_page_inspector: std::sync::Mutex<
+        Option<std::sync::Arc<dyn crate::blob_artifact::esign::EsignPageInspector>>,
+    >,
+    /// The served host's precision recalculator (LibreOffice headless) for
+    /// the workbooks the native formula engine refuses (FIX 2462), installed
+    /// by [`Vault::install_xlsx_precision_recalc`]. In memory only; with none,
+    /// a refused workbook is marked to recalculate when it is opened.
+    pub(crate) xlsx_precision_recalc:
+        std::sync::Mutex<Option<std::sync::Arc<crate::office_body::XlsxPrecisionRecalc>>>,
     /// A host Coach serving this vault drafts its digest settings steps (FIX
     /// 5609, 6165, 7211; [`Vault::set_coach_weave_digest_host_ready`]): when
     /// its last round completed and its own expected round interval, `None`
@@ -255,6 +300,17 @@ pub struct Vault {
     /// green landing starts a full-auto pass at once. In memory only and
     /// never shared across vaults; each lifecycle tick repairs a missed one.
     pub(crate) origin_mirror_wake: crate::origin::OriginMirrorWake,
+    /// The relayed ask intents that landed for asks this vault admitted and
+    /// wait for their consumption (FIX 7494). In memory only: it drops with
+    /// the vault, and the next open reads the stored intents again.
+    pub(crate) ask_forward_arrivals: std::sync::Mutex<crate::task_verb::AskForwardArrivals>,
+    /// The served host's transport an origin mirror's git goes through, its
+    /// credential broker installing the credential (FIX 19083),
+    /// installed once per open vault
+    /// ([`Vault::install_origin_git_transport`]). None on an embedded vault,
+    /// which keeps the direct path. In memory only.
+    pub(crate) origin_git_transport:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::origin::git_transport::OriginGitTransport>>,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
@@ -268,6 +324,15 @@ pub struct Vault {
 impl Drop for Vault {
     fn drop(&mut self) {
         self.store.finish_detached_writes(Some(&*self));
+    }
+}
+
+impl Vault {
+    /// The embedding width this vault opened with: its configured vector
+    /// dimensions, read where a host measures the opened vault. Read-only:
+    /// the width is fixed when the vault opens.
+    pub fn embedding_dimensions(&self) -> usize {
+        self.config.dimensions
     }
 }
 

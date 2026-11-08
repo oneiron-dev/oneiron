@@ -17,8 +17,12 @@ use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+mod body;
+mod body_admission;
+pub(crate) use body_admission::resolve_record_body_with_utf8_admission;
 mod history;
 mod repo_index;
+pub(crate) use body::body_with_document;
 pub(crate) use history::{record_bodies_at_in_txn, record_body_history_in_txn};
 pub(crate) use repo_index::reindex_repo_document_in_txn;
 
@@ -44,6 +48,10 @@ pub(super) struct Head {
     /// (FIX 8942); `None` for a document carried from another machine,
     /// rebuilt or born of anything else.
     pub birth_frontier: Option<Vec<u8>>,
+    /// What a canonical restore left here (FIX 3553); `None` for a document
+    /// no restore rebuilt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restored: Option<super::succession::Restored>,
 }
 
 /// Pointer from an entity to its owning document, plus generation/pending
@@ -98,7 +106,7 @@ pub(super) fn load(
 ) -> Result<EntityDoc> {
     let slot = DocumentSlot::from_hex(&h.document)?;
     let bytes = store
-        .port_document_row(txn, slot, DocumentRow::Snapshot)?
+        .port_document_row_borrowed(txn, slot, DocumentRow::Snapshot)?
         .ok_or(Error::CorruptedIndex("entity document snapshot missing"))?;
     let doc = EntityDoc::from_snapshot(&bytes)?;
     if doc.birth().entity != h.entity {
@@ -106,7 +114,7 @@ pub(super) fn load(
     }
     // Strictly replay snapshot then updates. Fixed-width keys preserve order.
     let mut count = 0_u64;
-    for update in store.port_document_updates(txn, slot)? {
+    for update in store.port_document_updates_borrowed(txn, slot)? {
         let status = doc
             .doc
             .import(&update.bytes)
@@ -221,7 +229,7 @@ pub(super) fn persist_scanned(
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
     // The stamp tokens its new changes name, for the hold check (FIX 11965).
     super::token_uses::record_token_uses_in_txn(store, txn, entity, doc, before)?;
-    crate::vault::entity_revision::capture_entity_document(store, txn, entity, &doc.doc, birth)?;
+    history::capture_document_revision_in_txn(store, txn, entity, h, doc, birth)?;
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::embed::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
@@ -402,10 +410,17 @@ impl Vault {
                 born.as_ref().map(|birth| &birth.made_by),
             )?;
             super::forks::bind_actor(self, txn, &doc, birth_actor, header.occurred_start)?;
+            if header.entity_type == crate::registry::ENTITY_TYPE_SKILL {
+                crate::vault::entity_revision::ensure_document(self, txn, entity)?;
+            }
             // The immutable envelope, type/time indexes and other body fields do
             // not change. The only replaced bytes are text -> head pointer.
-            self.store
-                .port_entity_document_pointer_put(txn, entity, &pointer)?;
+            self.store.port_entity_document_pointer_put(
+                &crate::secret_custody::CustodyWrite::of(self),
+                txn,
+                entity,
+                &pointer,
+            )?;
             self.store.scope_stamps.restamp_document_pointer(
                 &self.store,
                 txn,
@@ -432,6 +447,7 @@ impl Vault {
                 generation: 0,
                 pending: 0,
                 birth_frontier: Some(doc.frontier()),
+                restored: None,
             };
             persist(self, txn, entity, &mut h, &doc, None)?;
             // A MESSAGE's quotes taken of its atomic text are pinned at the
@@ -600,11 +616,12 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId
 }
 
 pub(super) fn move_pointer(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     entity: &EntityId,
     document: &str,
 ) -> Result<()> {
+    let store = write.store;
     let raw = store
         .port_entity_raw(txn, entity)?
         .ok_or(Error::EntityNotFound)?;
@@ -632,7 +649,7 @@ pub(super) fn move_pointer(
         &raw[ENTITY_METADATA_HEADER_LEN..],
         &body,
     )?;
-    store.port_entity_document_pointer_put(txn, entity, &body)
+    store.port_entity_document_pointer_put(write, txn, entity, &body)
 }
 
 /// Removes a document's snapshot, state vectors and pending updates.
@@ -680,6 +697,43 @@ pub(crate) fn record_head_bytes(
     ENTITY_DOC_HEAD.get_bytes(store, txn, &HexId(*entity))
 }
 
+/// A record's exact stored document head row (full key and bytes) and the
+/// document slot it names, read in `txn`; `None` without a head. For a
+/// legal-clone copy of the stored rows (LEGAL-HOLD-USE = B as a clone): the
+/// bytes are copied as stored, never re-encoded.
+pub(crate) fn record_head_row_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Option<(Vec<u8>, Vec<u8>, DocumentSlot)>> {
+    let key = HexId(*entity);
+    let Some(bytes) = ENTITY_DOC_HEAD.get_bytes(store, txn, &key)? else {
+        return Ok(None);
+    };
+    let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &key)? else {
+        return Err(Error::CorruptedIndex("entity document head"));
+    };
+    let slot = DocumentSlot::from_hex(&h.document)?;
+    Ok(Some((ENTITY_DOC_HEAD.key_bytes(&key), bytes, slot)))
+}
+
+/// The full key of `entity`'s document head row.
+pub(crate) fn record_head_key(entity: &EntityId) -> Vec<u8> {
+    ENTITY_DOC_HEAD.key_bytes(&HexId(*entity))
+}
+
+/// The document slot an exact stored head row of `entity` names, decoded
+/// from its bytes as [`record_head_row_in_txn`] decodes them; for a
+/// legal-clone read of a head a checkpoint carries. A head that names
+/// another entity, or does not decode, is corrupt.
+pub(crate) fn record_head_slot(entity: &EntityId, bytes: &[u8]) -> Result<DocumentSlot> {
+    let head = ENTITY_DOC_HEAD.decode_value(bytes)?;
+    if head.entity != entity.to_hex() {
+        return Err(Error::CorruptedIndex("entity document head"));
+    }
+    DocumentSlot::from_hex(&head.document)
+}
+
 /// Read-only view for existing typed record readers; the durable row retains
 /// only the pointer and immutable fields, never a second copy of the text.
 pub(crate) fn resolve_record_body(
@@ -694,6 +748,22 @@ pub(crate) fn resolve_record_body(
     require_live(store, txn, entity)?;
     let doc = load(store, txn, &h)?;
     body_with_document(&h.field, body, &doc)
+}
+
+/// The exact resolved output length without allocating its text or output bytes.
+/// Loading the document and decoding its pointer and metadata still allocate.
+pub(crate) fn resolve_record_body_len(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    body: &[u8],
+) -> Result<u64> {
+    let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? else {
+        return Ok(body.len() as u64);
+    };
+    require_live(store, txn, entity)?;
+    let doc = load(store, txn, &h)?;
+    body::body_len_with_document(&h.field, body, &doc)
 }
 
 /// The common document, not a second revision-owned text document.
@@ -736,46 +806,4 @@ pub(crate) fn record_body_at(
     }
     let version = doc.fork(frontier)?;
     body_with_document(&h.field, body, &version)
-}
-
-/// A typed read projection of the body and metadata at one document version.
-pub(super) fn body_with_document(
-    field: &TextField,
-    body: &[u8],
-    doc: &EntityDoc,
-) -> Result<Vec<u8>> {
-    match field {
-        TextField::Utf8Body => Ok(doc.text().into_bytes()),
-        TextField::MapField(field) => {
-            let value = rmpv::decode::read_value(&mut std::io::Cursor::new(body))
-                .map_err(|_| Error::CorruptedIndex("document pointer row"))?;
-            let rmpv::Value::Map(mut fields) = value else {
-                return Err(Error::CorruptedIndex("document pointer row"));
-            };
-            fields.retain(|(key, _)| {
-                key.as_str() != Some("entity_doc_ref")
-                    && key.as_str() != Some(field.as_str())
-                    && !key.as_str().is_some_and(super::metadata::is_metadata_field)
-            });
-            fields.push((
-                rmpv::Value::from(field.as_str()),
-                rmpv::Value::from(doc.text()),
-            ));
-            let record_fields = doc.record_fields()?;
-            for (key, value) in doc.metadata()? {
-                if key == *field {
-                    return Err(Error::CorruptedIndex(
-                        "body field duplicated in document metadata",
-                    ));
-                }
-                if record_fields.contains(&key) {
-                    fields.push((rmpv::Value::from(key), value));
-                }
-            }
-            let mut out = Vec::new();
-            rmpv::encode::write_value(&mut out, &rmpv::Value::Map(fields))
-                .map_err(|_| invalid("document view encoding"))?;
-            Ok(out)
-        }
-    }
 }

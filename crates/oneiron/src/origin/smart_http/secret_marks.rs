@@ -17,9 +17,9 @@
 //!
 //! Where a blob was seen is never more than the door knows. A tip record
 //! names the move it was diffed for, so its marks name every proposed ref
-//! making that move, and its path when the raw diff printed the path as it
-//! is. A history record names no ref and no exact path: the quarantine saw
-//! it.
+//! making that move, and its exact UTF-8 path decoded from the hook's TIP
+//! record. A history record names no ref and no exact path: the quarantine
+//! saw it.
 
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -33,7 +33,7 @@ use crate::Vault;
 use crate::batch::secret_scan::{RetainedRepoBlobPlan, plan_retained_repo_blob};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::GitOid;
+use crate::git_wire::{GitOid, git_path_string};
 use crate::receive_scan::{PushedBlob, ReceiveBlobKind, ReceiveScanHit};
 use crate::store::known_value_index::KnownSource;
 
@@ -222,14 +222,14 @@ impl<'a> ReceiveSecretMarksBuilder<'a> {
         };
         let blob_oid = GitOid::parse_hex(blob.oid.to_ascii_lowercase())?;
         let path = match seen {
-            ReceiveSeen::RefMove { .. } => exact_tip_path(&blob.path),
+            ReceiveSeen::RefMove { .. } => exact_tip_path(&blob.path)?,
             ReceiveSeen::Quarantine => None,
         };
         for hit in hits {
             let plan = match &spool.known {
                 Some(source) => source.pass(|known| {
                     plan_retained_repo_blob(
-                        &blob.path,
+                        blob.path_bytes(),
                         &blob.content,
                         known,
                         hit.reason,
@@ -237,7 +237,7 @@ impl<'a> ReceiveSecretMarksBuilder<'a> {
                     )
                 })??,
                 None => plan_retained_repo_blob(
-                    &blob.path,
+                    blob.path_bytes(),
                     &blob.content,
                     None,
                     hit.reason,
@@ -294,11 +294,13 @@ impl<'a> ReceiveSecretMarksBuilder<'a> {
     }
 }
 
-/// A tip record's path label, when it is exactly the path: the hook's raw
-/// diff quotes every path it cannot print as it is (`"..."`, escaped), and
-/// a quoted label is never taken for the path it stands for.
-fn exact_tip_path(label: &str) -> Option<String> {
-    (!label.starts_with('"')).then(|| label.to_owned())
+/// A TIP record's exact path as a Git path's text (FIX 21326): a path
+/// outside UTF-8 keeps its exact bytes in the text the snapshot and tree
+/// walks give it, so a mark places on the file a remediation reads. History
+/// labels, and decoded bytes no Git path holds (a NUL), supply none.
+fn exact_tip_path(label: &str) -> Result<Option<String>> {
+    let path = super::door_window::decode_tip_path(label)?;
+    Ok(git_path_string(path).ok())
 }
 
 /// The place `reason` takes among `reasons`, added once.

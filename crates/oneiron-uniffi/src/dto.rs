@@ -135,6 +135,8 @@ pub struct QuoteSpan {
 /// Receipt for one witnessed turn.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WitnessReceipt {
+    /// Actual native TURN identity, not a vault record ref.
+    pub turn_id: String,
     /// Turn short ref.
     pub turn_short_id: String,
     /// Message short refs, in input order.
@@ -336,6 +338,12 @@ pub struct ClaimView {
     pub world_ref: Option<String>,
     /// Scope map, when present.
     pub scope: Option<WireJson>,
+    /// Explicit stored four-axis claim position.
+    pub claim_scope: crate::ClaimScope,
+    /// Host-stamped provenance, with unreadable input refs withheld.
+    pub made_by: Option<crate::MadeBy>,
+    /// Typed claim record ref, when available.
+    pub claim: Option<crate::RecordRef>,
     /// Validity window start (Unix seconds).
     pub valid_from: Option<i64>,
     /// Validity window end (Unix seconds).
@@ -432,7 +440,7 @@ pub struct FacadeReceipt {
 // ── entities and graph ──────────────────────────────────────────────────
 
 /// Typed read-back view of one entity.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct EntityView {
     /// 32-hex entity id.
     pub id_hex: String,
@@ -448,6 +456,8 @@ pub struct EntityView {
     pub learned_at: i64,
     /// Entity body, when decodable.
     pub body: Option<WireJson>,
+    /// Host-stamped provenance, with unreadable input refs withheld.
+    pub made_by: Option<crate::MadeBy>,
 }
 
 /// One lexical index field for a structural put.
@@ -702,6 +712,16 @@ pub struct BlobVersionView {
     /// Unix seconds.
     pub created_at: i64,
 }
+/// A checked append's landed version or complete retained proposal.
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+pub enum BlobVersionAppendOutcome {
+    Landed {
+        view: BlobVersionView,
+    },
+    Proposed {
+        proposal: crate::PendingProposalView,
+    },
+}
 
 // ── recall ──────────────────────────────────────────────────────────────
 
@@ -789,6 +809,10 @@ pub struct MemoryStaleStamp {
 /// One memory pack item.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MemoryItem {
+    /// The ASSET id for a media or text asset hit.
+    pub asset_ref: Option<String>,
+    /// Raw per-kind evidence from each exact space, before fusion.
+    pub embedding_matches: Vec<crate::EmbeddingMatchEvidence>,
     /// Short ref, hydratable through `vault.hydrate`; never revision-qualified.
     pub short_id: String,
     /// The revision the item was read at; `short_id@source_revision_ref` hydrates it.

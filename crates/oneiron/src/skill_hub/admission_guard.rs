@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 
 use super::HubPackage;
 use super::package_codec::invalid;
-use crate::agent_dispatch::team_shape_skill;
 use crate::side_table::{self, Raw, SideTable, StagedRow};
 use crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE;
 use crate::task_type::{TaskTypeTree, TreeScope};
@@ -193,6 +192,7 @@ impl crate::Vault {
                 entity_type: crate::registry::ENTITY_TYPE_SKILL,
                 occurred,
                 learned_at,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
@@ -235,7 +235,7 @@ impl crate::Vault {
             ));
         }
         let staged = self.read_skill_record_in_txn(txn, fork)?;
-        let Some(head) = team_shape_head_in_txn(self, txn)?
+        let Some(head) = crate::agent_dispatch::team_shape_skill_in_force_in_txn(self, txn, None)?
             .filter(|head| staged.forked_from == Some(*head))
             .filter(|_| staged.lifecycle_status == SkillLifecycle::Candidate)
         else {
@@ -330,7 +330,10 @@ impl crate::Vault {
         let project_ref = project.to_hex();
         let in_force =
             crate::agent_dispatch::team_shape_skill_in_force_in_txn(self, txn, Some(project))?;
-        if in_force != Some(*incumbent) || team_shape_head_in_txn(self, txn)? == Some(*incumbent) {
+        if in_force != Some(*incumbent)
+            || crate::agent_dispatch::team_shape_skill_in_force_in_txn(self, txn, None)?
+                == Some(*incumbent)
+        {
             return Err(invalid(
                 "a project tree revision revises the project's own tree in force",
             ));
@@ -394,42 +397,6 @@ fn tree_scoped_to(package: &HubPackage, project_ref: &str) -> bool {
                 TreeScope::Project { project_ref: Some(scope), .. } if scope == project_ref
             )
         })
-}
-
-/// The vault team-shape skill's newest admitted revision in `txn`, read as
-/// the tree loader reads it: the bootstrap skill's supersession chain,
-/// followed forward to its last loadable revision.
-fn team_shape_head_in_txn(vault: &crate::Vault, txn: &heed::RoTxn<'_>) -> Result<Option<EntityId>> {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut cursor = team_shape_skill()?;
-    let mut head = None;
-    while seen.insert(cursor) {
-        let Some(record) = vault.get_skill_record_in_txn(txn, &cursor)? else {
-            break;
-        };
-        if crate::skill::skill_loadable(&record) {
-            head = Some(cursor);
-        }
-        let mut next = None;
-        for peer in crate::ports::EdgeStoreRead::port_edge_peers(
-            &vault.store,
-            txn,
-            &cursor,
-            crate::ports::EdgeDirection::In,
-            crate::edge::EdgeKind::Supersedes,
-        )? {
-            let peer = peer?;
-            if !seen.contains(&peer) {
-                next = Some(peer);
-                break;
-            }
-        }
-        match next {
-            Some(next) => cursor = next,
-            None => break,
-        }
-    }
-    Ok(head)
 }
 
 /// Whether `fork`'s package is `head`'s with only the task-type tree and

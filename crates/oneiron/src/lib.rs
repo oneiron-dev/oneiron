@@ -37,6 +37,7 @@ pub mod edge {
 mod edge_regeneration;
 pub mod entity_id;
 pub use oneiron_base::error;
+pub use oneiron_base::host_descriptors;
 pub mod host_memory;
 pub mod housekeeping;
 pub(crate) mod identity;
@@ -55,6 +56,7 @@ pub mod registry {
     //! `oneiron_base::registry`; the vault-backed pack byte map stays here.
     pub use oneiron_base::registry::*;
 
+    pub mod export;
     pub mod pack_byte_map;
 
     // Only the `#[cfg(test)]` type-registry suite names this door.
@@ -130,6 +132,7 @@ pub use oneiron_base::tokenizer;
 pub mod actor_claims;
 pub mod affect;
 pub mod claim;
+pub mod clipboard;
 pub mod companion;
 pub mod corpus;
 pub use oneiron_base::extraction_eval;
@@ -146,11 +149,13 @@ pub mod consent;
 pub mod consent_graduation;
 pub mod federation;
 pub(crate) mod gate;
+pub use gate::code_consent_settlement;
 pub use gate::policy_manifest_doors;
 pub mod policy_model;
 pub mod receipt;
 pub mod share;
 pub mod share_travel;
+pub mod source_audience;
 pub mod workspace_roster;
 // World privacy P6b: per-world keys, the recovery root and the machine secret.
 pub mod world_keys;
@@ -184,6 +189,7 @@ pub mod guest_document_share;
 pub mod habit;
 pub mod human_task;
 pub mod linear_sync;
+pub mod mail_pack;
 pub mod task_authority;
 pub mod task_type;
 pub mod task_verb;
@@ -243,6 +249,7 @@ pub mod learning_setting;
 pub mod learning_setting_choice;
 pub mod learning_setting_doors;
 pub mod own_rate;
+pub mod phone_line;
 pub mod policy_setting_doors;
 pub use oneiron_base::posterior;
 pub mod skill;
@@ -253,6 +260,8 @@ pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
 pub mod training_pack;
+// FIX 12569: each vault's own nightly drafter: versions, bindings, policy, erase.
+pub mod drafter;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
 pub mod vault_cleanup;
 // ARCH-0070 vault shape as code: the seed, plan and apply over the setup plane.

@@ -15,7 +15,7 @@
 //! ([`super::broker_media`]).
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::llm::{BrokerIsolation, CacheDigest, SingleRouteBackend};
@@ -30,6 +30,10 @@ use oneiron_broker::{
 use oneiron_llm_anthropic::{
     AnthropicMessagesConfig, build_anthropic_messages_request, classify_anthropic_status,
     parse_anthropic_messages_response,
+};
+use oneiron_llm_gemini::{
+    build_request as build_gemini_chat_request, classify_status as classify_gemini_status,
+    parse_response as parse_gemini_chat_response,
 };
 use oneiron_llm_openai::{
     OpenAiCompatConfig, build_openai_chat_request, classify_openai_status,
@@ -99,6 +103,7 @@ impl KeyDoor for VaultKeyDoor {
 enum Wire {
     OpenAi(OpenAiCompatConfig),
     Anthropic(AnthropicMessagesConfig),
+    Gemini,
 }
 
 /// One `key_secret` provider's backend: its wire adapter's request builder,
@@ -202,7 +207,7 @@ pub(super) fn broker_backend(
         .ok_or_else(|| anyhow::anyhow!("this server has no vault custody door"))?;
     let client = site.client(Duration::from_secs(provider.timeout_secs) + REPLY_MARGIN)?;
     let url = reqwest::Url::parse(&provider.base_url)?;
-    let prefix = url.path().trim_end_matches('/').to_owned();
+    let mut prefix = url.path().trim_end_matches('/').to_owned();
     let catalog: BTreeMap<ModelId, LlmCatalogEntry> = catalog
         .into_iter()
         .map(|mut entry| {
@@ -224,7 +229,12 @@ pub(super) fn broker_backend(
         ProviderKind::Cartesia | ProviderKind::Elevenlabs | ProviderKind::Voxcpm2 => {
             anyhow::bail!("a speech provider sends no model call")
         }
-        ProviderKind::Gemini => anyhow::bail!("a gemini provider sends media calls only"),
+        ProviderKind::Gemini => {
+            // The adapter owns the versioned paths: the base is the API's origin.
+            prefix = prefix.strip_suffix("/v1beta").unwrap_or(&prefix).to_owned();
+            drop(rows);
+            Wire::Gemini
+        }
         ProviderKind::Soniox => anyhow::bail!("a soniox provider hears live audio only"),
     };
     Ok(BrokerBackend {
@@ -246,6 +256,30 @@ pub(super) fn broker_backend(
 }
 
 impl BrokerBackend {
+    pub(super) fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    pub(super) fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    pub(super) fn headers(&self) -> &BTreeMap<String, String> {
+        &self.headers
+    }
+
+    pub(super) fn client(&self) -> &BrokerClient {
+        &self.client
+    }
+
+    pub(super) fn keys(&self) -> &Arc<dyn KeyDoor> {
+        &self.keys
+    }
+
+    pub(super) fn secret(&self) -> &str {
+        &self.secret
+    }
+
     /// The call frame's header and the exact body bytes it carries, checked
     /// as the broker will check them. `call` is the broker's call id; the
     /// digest does not cover it.
@@ -261,14 +295,34 @@ impl BrokerBackend {
         let (shape, path, wire_headers, mut body) = match &self.wire {
             Wire::OpenAi(config) => {
                 let wire = build_openai_chat_request(config, request, false)?;
-                (Shape::OpenAiChat, wire.path, wire.headers, wire.body)
+                let shape = if wire.path == "/chat/completions" {
+                    Shape::OpenAiChatUnversioned
+                } else {
+                    Shape::OpenAiChat
+                };
+                (shape, wire.path, wire.headers, wire.body)
             }
             Wire::Anthropic(config) => {
                 let wire = build_anthropic_messages_request(config, request, false)?;
                 (Shape::AnthropicMessages, wire.path, wire.headers, wire.body)
             }
+            Wire::Gemini => {
+                let entry = self
+                    .catalog
+                    .get(&request.model)
+                    .ok_or(FatalLlmError::InvalidRequest)?;
+                let wire = build_gemini_chat_request(entry, request, false)?;
+                (Shape::GeminiGenerate, wire.path, BTreeMap::new(), wire.body)
+            }
         };
-        self.cap.apply(&mut body);
+        match &self.wire {
+            Wire::Gemini => {
+                if let Some(generation) = body.get_mut("generationConfig") {
+                    self.cap.apply(generation);
+                }
+            }
+            Wire::OpenAi(_) | Wire::Anthropic(_) => self.cap.apply(&mut body),
+        }
         super::openai::send_format(self.response_format, &mut body);
         let wire_model = self
             .catalog
@@ -305,8 +359,36 @@ impl BrokerBackend {
         &self,
         header: &CallHeader,
         body: &[u8],
+        lease: &BudgetLease,
+        release: oneiron::llm::DispatchRelease<'_>,
     ) -> LlmResult<oneiron_broker::BrokerReply> {
-        call_with_key(&self.client, &self.keys, &self.secret, header, body).await
+        if !lease.has_dispatch_release() {
+            return call_with_key_released(
+                &self.client,
+                &self.keys,
+                &self.secret,
+                header,
+                body,
+                Some(release),
+                None,
+            )
+            .await;
+        }
+        let gated = || {
+            lease.check_dispatch_release()?;
+            release()?;
+            Ok::<(), LlmError>(())
+        };
+        call_with_key_released(
+            &self.client,
+            &self.keys,
+            &self.secret,
+            header,
+            body,
+            Some(&gated),
+            Some(lease),
+        )
+        .await
     }
 
     /// The provider's answer as the adapter reads it, its model labelled as
@@ -323,6 +405,7 @@ impl BrokerBackend {
         wire_model: &str,
         model: &ModelId,
         execution: Option<&CacheDigest>,
+        mut inference: Option<&mut super::openai::InferenceUsage>,
     ) -> LlmResult<LlmResponse> {
         let (status, headers) = answered(outcome)?;
         let parsed = serde_json::from_slice::<JsonValue>(body);
@@ -332,9 +415,23 @@ impl BrokerBackend {
                 .map(|(name, value)| (name.to_ascii_lowercase(), value))
                 .collect();
             let body = parsed.unwrap_or(JsonValue::Null);
+            if let (Wire::OpenAi(_), Some(inference)) = (&self.wire, inference.as_deref_mut()) {
+                let mut observed = body.clone();
+                // As on the plain transport, an error does not establish
+                // an answering alias; only native carried measurements do.
+                super::openai::carry_sent_reply_evidence(
+                    status,
+                    &mut observed,
+                    Some(wire_model),
+                    None,
+                    execution,
+                );
+                inference.record(&mut observed, true);
+            }
             return Err(match &self.wire {
                 Wire::OpenAi(_) => classify_openai_status(status, &headers, &body),
                 Wire::Anthropic(_) => classify_anthropic_status(status, &headers, &body),
+                Wire::Gemini => classify_gemini_status(status, &body),
             });
         }
         let mut body = parsed.map_err(|_| LlmError::from(RetryableLlmError::ServerError))?;
@@ -351,13 +448,26 @@ impl BrokerBackend {
                     answering.as_ref(),
                     execution,
                 );
+                if let Some(inference) = inference.as_deref_mut() {
+                    // A reply that later fails strict parsing still keeps
+                    // the native work its body actually reported.
+                    inference.record(&mut body, true);
+                }
                 let mut answer = parse_openai_chat_response(&body)?;
                 answer.usage.bind_inference_model(model);
+                if let Some(inference) = inference {
+                    inference.finish(None);
+                }
                 Ok(answer)
             }
             Wire::Anthropic(_) => {
                 super::anthropic::carry_served_model(&mut body);
                 parse_anthropic_messages_response(&body)
+            }
+            Wire::Gemini => {
+                let mut answer = parse_gemini_chat_response(body)?;
+                answer.usage.bind_inference_model(model);
+                Ok(answer)
             }
         }
     }
@@ -376,8 +486,8 @@ pub(super) async fn call_with_key(
     call_with_key_released(client, keys, secret, header, body, None, None).await
 }
 
-/// [`call_with_key`] with the caller's release invoked after connection and
-/// key retrieval, immediately before the broker sends the bytes.
+/// [`call_with_key`] with the caller's original release after key retrieval,
+/// then before each physical broker HTTP write, including a gzip/plain resend.
 pub(super) async fn call_with_key_released(
     client: &BrokerClient,
     keys: &Arc<dyn KeyDoor>,
@@ -387,6 +497,94 @@ pub(super) async fn call_with_key_released(
     release: Option<oneiron::llm::DispatchRelease<'_>>,
     lease: Option<&BudgetLease>,
 ) -> LlmResult<oneiron_broker::BrokerReply> {
+    let (connection, key) = connect_with_key_released(client, keys, secret, None, None).await?;
+    if let Some(release) = release {
+        release()?;
+        let before_send = || {
+            release()?;
+            if let Some(lease) = lease {
+                lease.begin_physical_attempt();
+            }
+            Ok::<(), LlmError>(())
+        };
+        return connection
+            .call_released(header, body, key, &before_send)
+            .await
+            .map_err(|error| match error {
+                oneiron_broker::DispatchError::Broker(error) => broker_error(error),
+                oneiron_broker::DispatchError::Release(error) => error,
+            });
+    }
+    if let Some(lease) = lease {
+        lease.begin_physical_attempt();
+    }
+    connection
+        .call(header, body, key)
+        .await
+        .map_err(broker_error)
+}
+
+/// Opens the same released broker call, leaving its reply for the caller's
+/// incremental reader. Connection, key custody and release share the buffered
+/// call's exact prelude.
+pub(super) async fn open_with_key_released(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    release: Option<oneiron::llm::DispatchRelease<'_>>,
+    lease: Option<&BudgetLease>,
+) -> LlmResult<oneiron_broker::BrokerStream> {
+    let (connection, key) = connect_with_key_released(client, keys, secret, release, lease).await?;
+    connection
+        .open(header, body, key)
+        .await
+        .map_err(broker_error)
+}
+
+async fn connect_with_key_released(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    release: Option<oneiron::llm::DispatchRelease<'_>>,
+    lease: Option<&BudgetLease>,
+) -> LlmResult<(oneiron_broker::BrokerConnection, Zeroizing<Vec<u8>>)> {
+    let connection = client.connect().await.map_err(broker_error)?;
+    let keys = Arc::clone(keys);
+    let secret = secret.to_owned();
+    let key = tokio::task::spawn_blocking(move || keys.read(&secret))
+        .await
+        .map_err(|_| LlmError::from(FatalLlmError::Auth))?
+        .map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door refused a provider key"
+            );
+            LlmError::from(FatalLlmError::Auth)
+        })?;
+    if let Some(release) = release {
+        release()?;
+    }
+    if let Some(lease) = lease {
+        lease.begin_physical_attempt();
+    }
+    Ok((connection, key))
+}
+
+/// Opens one streaming call with its key read at the door, leaving the reply
+/// stream to the caller. Nothing reads the key before the broker is reached.
+/// The caller's `release`, when given, runs after the key is read,
+/// immediately before the broker sends, as [`call_with_key_released`]'s.
+pub(super) async fn open_with_key(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    release: Option<oneiron::llm::DispatchRelease<'_>>,
+    lease: Option<&BudgetLease>,
+) -> LlmResult<oneiron_broker::BrokerStream> {
     let connection = client.connect().await.map_err(broker_error)?;
     let keys = Arc::clone(keys);
     let secret = secret.to_owned();
@@ -407,9 +605,82 @@ pub(super) async fn call_with_key_released(
         lease.begin_physical_attempt();
     }
     connection
-        .call(header, body, key)
+        .open(header, body, key)
         .await
         .map_err(broker_error)
+}
+
+/// Opens one Responses call with its whole turn for a same-socket full retry.
+pub(super) async fn open_with_whole(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    whole: &[u8],
+) -> LlmResult<oneiron_broker::BrokerStream> {
+    header
+        .check_responses(body, whole)
+        .map_err(|reason| broker_error(oneiron_broker::BrokerError::Refused(reason)))?;
+    let connection = client.connect().await.map_err(broker_error)?;
+    let keys = Arc::clone(keys);
+    let secret = secret.to_owned();
+    let key = tokio::task::spawn_blocking(move || keys.read(&secret))
+        .await
+        .map_err(|_| LlmError::from(FatalLlmError::Auth))?
+        .map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door refused a provider key"
+            );
+            LlmError::from(FatalLlmError::Auth)
+        })?;
+    connection
+        .open_with_whole(header, body, whole, key)
+        .await
+        .map_err(broker_error)
+}
+
+/// Opens a released Responses call without moving the caller's authority into
+/// the broker. The same lease checks each physical create, including a whole retry.
+pub(super) async fn open_with_whole_released(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+    whole: &[u8],
+    lease: &BudgetLease,
+) -> LlmResult<oneiron_broker::BrokerStream> {
+    header
+        .check_responses(body, whole)
+        .map_err(|reason| broker_error(oneiron_broker::BrokerError::Refused(reason)))?;
+    let connection = client.connect().await.map_err(broker_error)?;
+    let keys = Arc::clone(keys);
+    let secret = secret.to_owned();
+    let key = tokio::task::spawn_blocking(move || keys.read(&secret))
+        .await
+        .map_err(|_| LlmError::from(FatalLlmError::Auth))?
+        .map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door refused a provider key"
+            );
+            LlmError::from(FatalLlmError::Auth)
+        })?;
+    lease.check_dispatch_release()?;
+    let release = || {
+        lease.check_dispatch_release()?;
+        lease.begin_physical_attempt();
+        Ok::<(), LlmError>(())
+    };
+    connection
+        .open_with_whole_released(header, body, whole, key, &release)
+        .await
+        .map_err(|error| match error {
+            oneiron_broker::DispatchError::Broker(error) => broker_error(error),
+            oneiron_broker::DispatchError::Release(error) => error,
+        })
 }
 
 /// The provider's status and headers when it answered, or the error a call
@@ -456,7 +727,7 @@ fn no_streaming(model: &ModelId) -> LlmError {
     .into()
 }
 
-fn broker_error(error: BrokerError) -> LlmError {
+pub(crate) fn broker_error(error: BrokerError) -> LlmError {
     match error {
         // Nothing was written: no key read, no send.
         BrokerError::Unreachable => RetryableLlmError::StreamCut.into(),
@@ -521,13 +792,28 @@ impl LlmBackend for BrokerBackend {
             let execution = serde_json::from_slice::<JsonValue>(&body)
                 .ok()
                 .and_then(|sent| execution_mode(&sent));
-            let reply = self.send(&header, &body).await?;
+            let inference = Mutex::new(None);
+            let observe = matches!(&self.wire, Wire::OpenAi(_));
+            let release = || {
+                if observe {
+                    *inference.lock().unwrap_or_else(PoisonError::into_inner) = Some(
+                        super::openai::InferenceUsage::new(lease, Some(request.model.clone())),
+                    );
+                }
+                Ok(())
+            };
+            let reply = self.send(&header, &body, lease, &release).await?;
+            let mut inference = inference
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
             self.answer(
                 reply.outcome,
                 &reply.body,
                 &header.wire_model,
                 &request.model,
                 execution.as_ref(),
+                inference.as_mut(),
             )
         })
     }

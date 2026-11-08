@@ -29,7 +29,10 @@ use crate::batch::{BatchOp, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{FederationGrantScope, decode_federation_grant_body};
+use crate::federation::{
+    DetachOutcome, DetachRemainder, DetachRemainderReason, FederationGrantScope,
+    SharedMemberDeparture, decode_federation_grant_body,
+};
 use crate::receipt::{GuestDeletionRequestStatus, GuestRevokeCourtesyTarget, GuestRevokeOutcome};
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::side_table::{self, Named, SideTable};
@@ -79,8 +82,10 @@ impl Vault {
     /// Mints the capability slip of one Ask or active Connect guest (OF-232; canon names no
     /// issuance door, Engine ruling 2026-10-17): the vault owner's act, under
     /// the host's `issuer`, for the live, unwithdrawn guest FEDERATION_GRANT
-    /// `grant_ref`. The slip's signed claims name that grant, carry its
-    /// scope, hold for its member, and bind the public key the guest
+    /// `grant_ref`, judged live whatever its verbs, so a propose-only Connect
+    /// guest gets a slip that proposes and never reads (FIX 8734). The slip's
+    /// signed claims name that grant, carry its scope, hold for its member,
+    /// and bind the public key the guest
     /// generated on their own device: the one their ask carried into the
     /// grant (FIX-LIST 1978), else the owner's `holder_key`; with neither,
     /// the mint refuses. No private key is delivered anywhere. It lives until `expires_at`, and withdrawing the grant
@@ -112,7 +117,7 @@ impl Vault {
         let grant = decode_federation_grant_body(&body)?;
         require_guest_purpose_in_txn(self, &txn, grant_ref, &grant)?;
         let now = self.instant_in_txn(&txn)?.secs();
-        if !grant.confers_at(now) || expires_at <= now {
+        if !grant.is_live_at(now) || expires_at <= now {
             return Err(invalid_authority());
         }
         let holder_key = grant
@@ -147,6 +152,8 @@ impl Vault {
             invitation_ref: None,
             delegation: None,
             comm,
+            trusted_contact: None,
+            seat_claim: None,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
         txn.commit()?;
@@ -155,8 +162,10 @@ impl Vault {
 
     /// A grant-bound slip (OF-232) stands only while its grant does: the
     /// FEDERATION_GRANT its claims name is live, not withdrawn, still an Ask or active Connect
-    /// guest's grant for the slip's holder, and confers at `now`; or it is
-    /// the holder's own-device grant (FIX 3134), live and conferring. An Ask
+    /// guest's grant for the slip's holder, and live at `now` whatever its
+    /// verbs (FIX 8734: each door judges the slip's verb); or it is
+    /// the holder's own-device grant (FIX 3134), live and conferring; or an
+    /// ordinary live shared-vault membership grant (FIX 12441). An Ask
     /// guest's slip also stays inside the grant's current disclosure (FIX
     /// 7928). A slip that names no grant passes. Every slip door reads this
     /// beside the fold's revocation check.
@@ -173,6 +182,12 @@ impl Vault {
         if self.own_device_grant_stands_in_txn(txn, grant_ref, &claims.holder_ref, now)? {
             return Ok(());
         }
+        if self
+            .current_member_slip_scope_in_txn(txn, claims)?
+            .is_some()
+        {
+            return Ok(());
+        }
         let grant = self.live_guest_grant_in_txn(txn, grant_ref, &claims.holder_ref, now)?;
         if !super::current_scope::ask_bounds_hold(&grant, claims) {
             return Err(invalid_authority());
@@ -180,9 +195,82 @@ impl Vault {
         Ok(())
     }
 
+    /// The current full Scope of an ordinary membership-bound slip. Delegates
+    /// keep their existing parent/issuer path; own-device and guest grants keep
+    /// their existing admission. Only the exact signed grant is read.
+    pub(super) fn current_member_slip_scope_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+    ) -> Result<Option<oneiron_authority::federation::Scope>> {
+        let Some(grant_ref) = claims.grant_ref.as_deref() else {
+            return Ok(None);
+        };
+        let grant_ref = EntityId::from_hex(grant_ref).map_err(|_| invalid_authority())?;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = live_entity_row_in_txn(&self.store, txn, &grant_ref)?
+        else {
+            return Ok(None);
+        };
+        let grant = decode_federation_grant_body(&body)?;
+        if !matches!(grant.scope, FederationGrantScope::Vault { .. })
+            || grant.role == crate::federation::FederationGrantRole::Delegate
+            || crate::federation::is_own_device_grant(&grant)
+        {
+            return Ok(None);
+        }
+        if grant.member_ref.to_hex() != claims.holder_ref
+            || super::grant_known_withdrawn_in_txn(&self.store, txn, grant_ref)
+            || WITHDRAWN.get(&self.store, txn, &grant_ref)?.is_some()
+            || !grant.confers_at(self.instant_in_txn(txn)?.secs())
+            || live_entity_row_in_txn(&self.store, txn, &grant.member_ref)?.live_type()
+                != Some(crate::registry::ENTITY_TYPE_PERSON)
+        {
+            return Err(invalid_authority());
+        }
+        let mut scope = grant.authority_scope;
+        if let oneiron_authority::federation::ScopeAxis::Some(verbs) = &mut scope.verbs
+            && (verbs.contains("read") || verbs.contains("core:read"))
+        {
+            verbs.insert("read".to_owned());
+            verbs.insert("core:read".to_owned());
+        }
+        Ok(Some(scope))
+    }
+
+    /// A Boolean recheck cannot replace a cached proof's Scope. Refuse a
+    /// membership proof that still carries any authority its grant removed.
+    pub(super) fn member_slip_scope_is_current_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+    ) -> Result<bool> {
+        Ok(self
+            .current_member_slip_scope_in_txn(txn, claims)?
+            .is_none_or(|current| claims.scope.is_narrowing_of(&current)))
+    }
+
+    /// Rebuild a proof-backed read key from the current membership bound in
+    /// its own snapshot, without changing the authenticated token or caveats.
+    pub(crate) fn member_bounded_slip_view_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        verified: VerifiedSlip,
+    ) -> Result<VerifiedSlip> {
+        Ok(
+            match self.current_member_slip_scope_in_txn(txn, verified.claims())? {
+                Some(current) => verified.meet_scope(&current),
+                None => verified,
+            },
+        )
+    }
+
     /// An Ask or active Connect guest's FEDERATION_GRANT `grant_ref` still stands for `member`
     /// (PERSON hex): live, not withdrawn, a guest grant whose member it
-    /// is, and conferring at `now`. A grant-bound slip and a guest's task-verb
+    /// is, and live at `now` ([`crate::federation::FederationGrant::is_live_at`],
+    /// no verb asked, FIX 8734). A grant-bound slip and a guest's task-verb
     /// proof (OF-220) both read it.
     pub(super) fn require_live_guest_grant_in_txn(
         &self,
@@ -215,7 +303,7 @@ impl Vault {
         };
         let grant = decode_federation_grant_body(&body)?;
         require_guest_purpose_in_txn(self, txn, grant_ref, &grant)?;
-        if grant.member_ref.to_hex() != member || !grant.confers_at(now) {
+        if grant.member_ref.to_hex() != member || !grant.is_live_at(now) {
             return Err(invalid_authority());
         }
         Ok(grant)
@@ -297,6 +385,24 @@ impl Vault {
     ) -> Result<GuestRevokeOutcome> {
         owner.revalidate_in_txn(self, txn)?;
         require_host(&*self.authority_view_readonly_in_txn(txn)?, issuer)?;
+        self.revoke_guest_grant_effect_in_txn(txn, issuer, grant_ref)
+    }
+
+    /// The guest-grant withdrawal effect (FIX 12555): the repeat answer, the
+    /// live-row and guest-purpose checks, then the unchanged withdrawal — the
+    /// pact disconnects, scope-key retirement, slip revokes, signed grant
+    /// revoke, grant withdrawal, row delete and withdrawal row. Private to
+    /// this module: the owner's revoke above and a genuine membership leave's
+    /// detach below are its only callers, and both re-prove the host in the
+    /// effect's own writer. A pending Connect-proposal cleanup landing beside
+    /// this effect belongs inside it, after the withdrawal row.
+    fn revoke_guest_grant_effect_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        grant_ref: EntityId,
+    ) -> Result<GuestRevokeOutcome> {
+        require_host(&*self.authority_view_readonly_in_txn(txn)?, issuer)?;
         if let Some(done) = WITHDRAWN.get(&self.store, txn, &grant_ref)? {
             let fold = self.authority_view_readonly_in_txn(txn)?;
             return Ok(GuestRevokeOutcome {
@@ -340,7 +446,14 @@ impl Vault {
         // fold and every checkpoint image carry it, so a slip another replica
         // minted under the grant and merges later is tombstoned there too
         // (FIX 1978).
-        self.append_slip_op_in_txn(txn, issuer, AuthorityOp::SlipGrantRevoke { grant_ref })?;
+        self.append_slip_op_in_txn(
+            txn,
+            issuer,
+            AuthorityOp::SlipGrantRevoke {
+                grant_ref,
+                membership_receipt: None,
+            },
+        )?;
         // The withdrawal stays known here and reaches its peers, in this
         // writer (FIX-LIST 5107, 10772).
         super::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;
@@ -371,6 +484,94 @@ impl Vault {
             deletion_request: GuestDeletionRequestStatus::NotRequested,
             courtesy_targets: ended_pact_targets(&fold, grant_ref),
         })
+    }
+
+    /// Withdraws, in the departure's own writer, every live unwithdrawn
+    /// Connect guest grant the genuine leave releases (FIX 12555): the exact
+    /// binding match, inert and expired grants included, so no outstanding
+    /// offer activates after the leave. Each grant withdraws in its own
+    /// nested savepoint: one the fold refuses rolls back alone and is listed
+    /// truthfully, and the membership still progresses. With no issuer, every
+    /// bound grant is listed as refused for it. A scan failure is the
+    /// parent's storage error and propagates; no failure is ever reported as
+    /// a withdrawal.
+    pub(crate) fn detach_owner_connect_grants_in_txn(
+        &self,
+        issuer: Option<&HostSlipIssuer>,
+        departure: SharedMemberDeparture<'_, '_>,
+    ) -> Result<DetachOutcome> {
+        let (txn, vault_id, leaver) = departure.into_parts();
+        let bound = self.live_bound_connect_grants_in_txn(txn, vault_id, leaver)?;
+        if bound.is_empty() {
+            return Ok(DetachOutcome::none());
+        }
+        let mut withdrawn = Vec::new();
+        let mut revoked_slips = Vec::new();
+        let mut remaining = Vec::new();
+        for grant_ref in bound {
+            let Some(issuer) = issuer else {
+                remaining.push(DetachRemainder {
+                    grant: grant_ref.to_hex(),
+                    reason: DetachRemainderReason::NoIssuer,
+                });
+                continue;
+            };
+            let mut savepoint = self.store.env.nested_write_txn(txn)?;
+            match self.revoke_guest_grant_effect_in_txn(&mut savepoint, issuer, grant_ref) {
+                Ok(outcome) => {
+                    savepoint.commit()?;
+                    withdrawn.push(grant_ref);
+                    revoked_slips.extend(outcome.revoked_slips);
+                }
+                Err(error) => remaining.push(DetachRemainder {
+                    grant: grant_ref.to_hex(),
+                    reason: DetachRemainderReason::WithdrawalFailed { kind: error.kind() },
+                }),
+            }
+        }
+        Ok(DetachOutcome::collected(
+            withdrawn,
+            revoked_slips,
+            remaining,
+        ))
+    }
+
+    /// The live, unwithdrawn Connect guest grants `leaver`'s genuine leave of
+    /// shared vault `vault_id` releases (FIX 12555): the one selection policy
+    /// over the owner's local binding, unchanged shared property bytes. Every
+    /// grant is read; one whose body does not decode is no bound grant here.
+    fn live_bound_connect_grants_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        leaver: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let mut grants = Vec::new();
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            txn,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = id?;
+            if WITHDRAWN.get(&self.store, txn, &id)?.is_some() {
+                continue;
+            }
+            let LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+                body,
+            } = live_entity_row_in_txn(&self.store, txn, &id)?
+            else {
+                continue;
+            };
+            let Ok(grant) = decode_federation_grant_body(&body) else {
+                continue;
+            };
+            if grant.detaches_on_member_leave(vault_id, leaver) {
+                grants.push(id);
+            }
+        }
+        Ok(grants)
     }
 
     /// The live, unwithdrawn Connect guest grants whose member is `person`

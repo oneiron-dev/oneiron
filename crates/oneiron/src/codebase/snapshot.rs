@@ -35,17 +35,38 @@ impl CodebaseSnapshotMount<'_> {
         &self.snapshot
     }
 
+    /// Whether this mount's custody report reads `path` as absent.
+    #[must_use]
+    pub(crate) fn is_withheld(&self, path: &str) -> bool {
+        self.withheld.contains(path)
+    }
+
     #[must_use]
     pub const fn is_read_only(&self) -> bool {
         true
     }
 
+    /// The paths this mount reads, omitting custody-withheld files.
     pub fn list_files(&self) -> Vec<&str> {
         self.snapshot
             .files
             .iter()
+            .filter(|entry| !self.is_withheld(&entry.path))
             .map(|entry| entry.path.as_str())
             .collect()
+    }
+
+    /// An entry the mount can read, respecting the existing custody withholding.
+    /// This returns metadata only; it neither reads bytes nor grants a read.
+    pub(crate) fn visible_file_entry(&self, path: &str) -> Option<&CodebaseFileEntry> {
+        if self.withheld.contains(path) {
+            return None;
+        }
+        self.snapshot
+            .files
+            .binary_search_by(|entry| entry.path.as_str().cmp(path))
+            .ok()
+            .map(|index| &self.snapshot.files[index])
     }
 
     pub fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {

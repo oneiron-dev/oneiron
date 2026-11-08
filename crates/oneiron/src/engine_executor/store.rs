@@ -1,5 +1,12 @@
 //! Output envelope and path helpers for the routed raw-output store.
 
+mod agent_verb;
+mod reply_evidence;
+mod script_context;
+pub(crate) use agent_verb::{store_agent_verb_write_answer, write_receipt_result_output_path};
+pub(super) use script_context::load_script_context;
+pub(crate) use script_context::mask_known_text;
+
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome, JsCodeModeStream};
 use crate::code_run::{
@@ -14,7 +21,7 @@ use crate::{Error, Result};
 use serde_json::json;
 use std::collections::BTreeSet;
 
-const SCRIPT_OUTPUT_DIR: &str = "executor/repl";
+pub(super) const SCRIPT_OUTPUT_DIR: &str = "executor/repl";
 
 pub(super) const CONFIG_OUTPUT_PATH: &str = "executor/repl/run.config.json";
 
@@ -79,18 +86,24 @@ pub(super) fn bind_published_output(
     digest_bindings.push((name, output.handle.clone()));
 }
 
-/// A step's model reply as the provider gave it, kept apart from the program
-/// healed out of it: untrusted evidence, never executed. It streams into its
-/// body as it is encoded.
+/// A step's model reply, kept apart from the program healed out of it:
+/// untrusted evidence, never executed. PERSON and custody matches share the
+/// original encoding, so neither substitution changes the other's context.
 pub(super) fn record_reply_evidence(
     storage: &ExecutorStorage<'_>,
     record: &mut CodeRunReplayRecord,
     seq: u64,
     reply: &crate::LlmMessage,
 ) -> EngineExecutorResult<()> {
-    let mut sink = storage.code_run_output_sink()?;
-    write_json(&mut sink, reply)?;
-    publish_output(storage, record, reply_output_path(seq), sink).map(drop)
+    if let Some(bytes) = reply_evidence::for_run_bytes(storage, record.run_id, reply)? {
+        let mut sink = storage.code_run_script_sink()?;
+        sink.write(bytes.as_slice())?;
+        publish_output(storage, record, reply_output_path(seq), sink).map(drop)
+    } else {
+        let mut sink = storage.code_run_output_sink()?;
+        write_json(&mut sink, reply)?;
+        publish_output(storage, record, reply_output_path(seq), sink).map(drop)
+    }
 }
 
 /// Encodes `value` as JSON straight into a body sink, never whole first.
@@ -229,6 +242,9 @@ pub(crate) fn result_handle_json(owner: EntityId, output: &CodeRunRawOutput) -> 
     if let Some(occurrence) = occurrence.as_ref() {
         card["ref"] = json!(format!("occurrence:{}", occurrence.id().to_hex()));
     }
+    if let Some(step_start) = output.producing_step_start {
+        card["producing_step_start"] = json!(step_start);
+    }
     card
 }
 
@@ -259,6 +275,8 @@ impl StreamedOutputs {
     pub(super) fn write(
         &mut self,
         storage: &ExecutorStorage<'_>,
+        exec_run: EntityId,
+        step_seq: Option<u64>,
         stream: JsCodeModeStream<'_>,
         frame: &[u8],
     ) -> Result<()> {
@@ -280,8 +298,14 @@ impl StreamedOutputs {
                 let at = match self.files.iter().position(|(held, _)| held == path) {
                     Some(at) => at,
                     None => {
+                        if let Some(seq) = step_seq {
+                            storage.begin_code_run_output(
+                                exec_run,
+                                &runtime_output_path(seq, self.files.len(), path),
+                            )?;
+                        }
                         self.files
-                            .push((path.to_owned(), storage.code_run_output_sink()?));
+                            .push((path.to_owned(), storage.code_run_output_sink_for(exec_run)?));
                         self.files.len() - 1
                     }
                 };
@@ -289,7 +313,7 @@ impl StreamedOutputs {
             }
         };
         if sink.is_none() {
-            *sink = Some(storage.code_run_output_sink()?);
+            *sink = Some(storage.code_run_output_sink_for(exec_run)?);
         }
         match sink {
             Some(sink) => sink.write(frame),
@@ -310,21 +334,30 @@ impl StreamedOutputs {
     pub(super) fn into_step_bodies(
         self,
         storage: &ExecutorStorage<'_>,
+        exec_run: EntityId,
         outcome: &JsCodeModeStepOutcome,
     ) -> Result<StepBodies> {
-        let (observation, console) = if outcome.done {
+        let (observation, mut console) = if outcome.done {
             (self.finish, self.console)
         } else {
             (self.console, None)
         };
         let mut observation = match observation {
             Some(sink) => sink,
-            None => storage.code_run_output_sink()?,
+            None => storage.code_run_output_sink_for(exec_run)?,
         };
         observation.write(outcome.observation.as_bytes())?;
+        // A runtime that returned its finished step's console in the
+        // outcome instead of streaming it (FIX 6885): keep it where the
+        // streamed console would have gone.
+        if console.is_none() && !outcome.console.is_empty() {
+            let mut sink = storage.code_run_output_sink()?;
+            sink.write(outcome.console.as_bytes())?;
+            console = Some(sink);
+        }
         let mut files = self.files;
         for output in &outcome.outputs {
-            let mut sink = storage.code_run_output_sink()?;
+            let mut sink = storage.code_run_output_sink_for(exec_run)?;
             sink.write(&output.bytes)?;
             files.push((output.path.clone(), sink));
         }
@@ -530,6 +563,38 @@ pub(super) fn load_observation_window(
         crate::entity_id::bytes_to_hex_lower(&output.raw_blake3),
         output.raw_len,
     ))
+}
+
+/// Bytes two windows of [`scan_output_windows`] share, so a read path or an
+/// id that straddles a window's end is whole in the next one.
+const OUTPUT_SCAN_OVERLAP_BYTES: usize = 1024;
+
+/// Hands `each` the whole of one clean output, window by window, each read
+/// by range and at most [`COMPACTION_OBSERVATION_WINDOW_BYTES`] long, the
+/// windows overlapping by [`OUTPUT_SCAN_OVERLAP_BYTES`]. A body that is not
+/// clean hands nothing: its refs never reach the model.
+pub(super) fn scan_output_windows(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    output: &CodeRunRawOutput,
+    mut each: impl FnMut(&str),
+) -> Result<()> {
+    if !clean_for_context(storage, Some(record.run_id), output)? {
+        return Ok(());
+    }
+    let step = (COMPACTION_OBSERVATION_WINDOW_BYTES - OUTPUT_SCAN_OVERLAP_BYTES) as u64;
+    let mut offset = 0_u64;
+    loop {
+        let window = storage
+            .read_code_run_raw_output_range(output, offset, COMPACTION_OBSERVATION_WINDOW_BYTES)?
+            .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+        each(&String::from_utf8_lossy(&window));
+        let end = offset.saturating_add(window.len() as u64);
+        if window.is_empty() || end >= output.raw_len {
+            return Ok(());
+        }
+        offset = offset.saturating_add(step);
+    }
 }
 
 /// Bytes of a finish answer a run's implicit bubble says (FIX 365). Past
@@ -739,7 +804,7 @@ pub(super) fn resumed_output_path(seq: u64, wait_id: EntityId) -> String {
 }
 
 /// The step and the wait (lower-case hex) a resumed reply's path names.
-pub(super) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
+pub(crate) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
     let rest = path.strip_prefix(SCRIPT_OUTPUT_DIR)?.strip_prefix('/')?;
     let (seq, rest) = rest.split_once(RESUMED_OUTPUT_INFIX)?;
     let wait = rest.strip_suffix(".json")?;
@@ -754,11 +819,11 @@ pub(super) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
     Some((seq.parse().ok()?, wait))
 }
 
-pub(super) fn script_output_path(seq: u64) -> String {
+pub(crate) fn script_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.generated.js")
 }
 
-pub(super) fn observation_output_path(seq: u64) -> String {
+pub(crate) fn observation_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.observation.txt")
 }
 
@@ -814,7 +879,7 @@ pub(super) fn is_terminal_output_path(path: &str) -> bool {
 }
 
 /// The step a terminal marker's path names.
-pub(super) fn terminal_output_seq(path: &str) -> Option<u64> {
+pub(crate) fn terminal_output_seq(path: &str) -> Option<u64> {
     let seq = path
         .strip_prefix(SCRIPT_OUTPUT_DIR)?
         .strip_prefix('/')?

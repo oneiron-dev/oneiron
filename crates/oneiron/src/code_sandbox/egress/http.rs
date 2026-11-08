@@ -236,7 +236,7 @@ fn deliver(
     let headers = response
         .headers()
         .iter()
-        .filter_map(|(k, v)| v.to_str().ok().map(|v| (k.to_string(), v.to_owned())))
+        .map(|(k, v)| (k.to_string(), v.as_bytes().to_vec()))
         .filter(|(k, _)| {
             !matches!(
                 k.as_str(),
@@ -281,6 +281,6 @@ fn deliver(
         url: url.to_string(),
         status,
         headers,
-        body: bytes,
+        body: bytes.into(),
     })
 }

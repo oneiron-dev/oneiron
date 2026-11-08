@@ -286,7 +286,8 @@ impl Once {
 /// Whether `entry` is an op that leaves the fate of every row folded into
 /// `merged` (the merge of every surviving state) as it was, given the confirms
 /// already in the log (which it joins): an agent enrollment, a fresh binding,
-/// a slip mint or consume, a critical-write confirm, a fresh federation
+/// a slip mint or consume (a removal-archive consume among them, FIX 11862),
+/// a critical-write confirm, a fresh federation
 /// confirm, a world settings edit (it judges only its own world's edits, FIX
 /// 4535), a grant travel choice (only its own grant's choices), a checkpoint
 /// policy choice or a home pick (each only the vault's choices of its kind),
@@ -330,11 +331,14 @@ pub(in crate::authority) fn admits_past(
         }
         AuthorityOp::SlipMint(_)
         | AuthorityOp::SlipConsume { .. }
+        | AuthorityOp::RemovalArchiveConsume { .. }
         | AuthorityOp::CriticalWriteConfirm(_)
         | AuthorityOp::WorldPrivacy(_)
         | AuthorityOp::GrantTravelSet(_)
         | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::HomeNodePick(_)
+        | AuthorityOp::OriginCut(_)
+        | AuthorityOp::DeviceSuccession(_)
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)

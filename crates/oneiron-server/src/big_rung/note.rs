@@ -47,6 +47,7 @@ impl BigModel {
                 response_format: ResponseFormat::Text,
                 locality: route.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, system.to_owned()),
@@ -66,7 +67,8 @@ impl BigModel {
                 crate::decision_verdict::rung_payer(),
             )
             .sourced(sources);
-        let deadline = CallDeadline::caller_in(budget);
+        let deadline =
+            CallDeadline::caller_with_wait_cap(budget, ladder.cooling_wait_budget(budget));
         let response = self
             .runtime
             .block_on(async {
