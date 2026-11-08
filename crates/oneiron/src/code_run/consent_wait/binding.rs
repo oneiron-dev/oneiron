@@ -12,6 +12,7 @@ use crate::runtime_hooks::verb::VerbAskCredentialSource;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::task_verb::sdk::AgentVerb;
 
+use super::resume::CodeConsentRunOrigin;
 use super::types::{
     CODE_CONSENT_SCHEMA_VERSION, CodeConsentAdmission, CodeConsentBinding, CodeConsentCallSite,
     CodeConsentCheckpoint, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentQuestion,
@@ -218,6 +219,9 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         question,
         policy_frontier,
         created_at_ms: super::settle::now_ms(),
+        // The admitted MCP caller its host bound on the run (FIX 4606):
+        // sealed with the wait by the parked step's commit.
+        origin: draft.site.origin,
     };
     binding.binding_digest = binding_digest(&binding)?;
     let Some(effect_digest) = approval_digest(&binding.binding_digest) else {
@@ -232,6 +236,7 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         admission: None,
         settlement: None,
         consumption: None,
+        resume_refusal: None,
         revision: 0,
     };
     put_code_consent_wait_in_txn(vault, txn, &mut row)?;
@@ -241,8 +246,11 @@ pub(crate) fn mint_code_consent_wait_in_txn(
 /// The binding digest: BLAKE3 over the stable call site, the request and
 /// frozen digests, the frozen owner audience, the original caller's instrument
 /// and the pending effect. It names no effect digest, ask, time, checkpoint or receipt, so nothing
-/// computed from it later feeds back into it.
+/// computed from it later feeds back into it. It covers the admitted MCP
+/// caller's origin too (FIX 4606), so the seal binds the caller a re-entry
+/// is made for.
 pub(super) fn binding_digest(binding: &CodeConsentBinding) -> Result<[u8; 32]> {
+    let origin = binding.origin.as_ref().map(CodeConsentRunOrigin::digest);
     let mut hasher = blake3::Hasher::new();
     let mut field = |bytes: &[u8]| {
         hasher.update(&(bytes.len() as u64).to_le_bytes());
@@ -389,6 +397,8 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> Result<[u8; 32]> {
     if let Some(offer) = &binding.remember_offer {
         field(offer.settings_act.as_bytes());
     }
+    field(&[u8::from(origin.is_some())]);
+    field(origin.as_ref().map_or(&[][..], |origin| &origin[..]));
     Ok(*hasher.finalize().as_bytes())
 }
 
