@@ -218,8 +218,8 @@ pub(crate) fn authored_vault_meta() -> impl Iterator<Item = &'static SideTableDe
 
 /// The scrub of every table whose entry names one, in catalog order: an actor's erase runs
 /// them all (FIX 3520).
-pub(crate) fn actor_scrubs() -> impl Iterator<Item = ActorScrub> {
-    PARTS.into_iter().flatten().filter_map(|decl| decl.actor)
+pub(crate) fn actor_scrubs() -> impl Iterator<Item = (&'static SideTableDecl, ActorScrub)> {
+    declared().filter_map(|decl| decl.actor.map(|scrub| (decl, scrub)))
 }
 
 /// The declared table whose prefix `key` falls under, in `db`, or `None` when

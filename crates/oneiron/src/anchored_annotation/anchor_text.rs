@@ -22,7 +22,7 @@ use crate::edit_roundtrip::{CellRef, OfficeFormat};
 mod text;
 mod xlsx;
 
-pub(super) use text::TextReanchor;
+pub(super) use text::{TextReanchor, decoded, remap_text_span, text_span, text_units};
 use xlsx::{find_in_sheets, xlsx_range_text};
 
 /// Paragraphs joined in a shape's text.
@@ -91,7 +91,8 @@ const HTML_LEAF_CONTAINERS: &[&str] = &[
 const HTML_IGNORED_SUBTREES: &[&str] = &["script", "style", "template", "noscript"];
 
 /// The text under `locator` in `bytes`, or `Ok(None)` when the spot cannot
-/// be read. A resource refusal is the engine's error (FIX 10587).
+/// be read. A code locator's `bytes` are the file it names. A resource
+/// refusal is the engine's error (FIX 10587).
 pub(super) fn anchor_text(
     bytes: &[u8],
     locator: &Locator,
@@ -167,6 +168,11 @@ pub(super) fn anchor_text(
         Locator::Text {
             char_start,
             char_end,
+        }
+        | Locator::Code {
+            char_start,
+            char_end,
+            ..
         } => Ok(text::text_span(bytes, *char_start, *char_end)),
     }
 }

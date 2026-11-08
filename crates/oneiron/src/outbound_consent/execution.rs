@@ -368,7 +368,9 @@ fn resumed_decision(effect: &OutboundEffectResult) -> ScopedMcpConsentDecision {
         Some(IntentEscalationReason::ConnectorRevoked) => {
             ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::ConnectorKeyRevoked)
         }
-        Some(IntentEscalationReason::BindingInvalid) => {
+        // A grant that no longer stands escalates as the invalid grant it
+        // was reported as before FIX 11591 named it.
+        Some(IntentEscalationReason::BindingInvalid | IntentEscalationReason::GrantNotStanding) => {
             ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::InvalidGrant)
         }
         Some(IntentEscalationReason::ConnectorSlateNeverAllow) => {
@@ -458,8 +460,10 @@ fn scoped_decision_after_effect(
         .escalation
         .as_ref()
         .is_some_and(|escalation| {
-            escalation.reason
-                == crate::outbound_intent_ledger::IntentEscalationReason::BindingInvalid
+            matches!(
+                escalation.reason,
+                IntentEscalationReason::BindingInvalid | IntentEscalationReason::GrantNotStanding
+            )
         })
     {
         return Ok(ScopedMcpConsentDecision::Escalate(

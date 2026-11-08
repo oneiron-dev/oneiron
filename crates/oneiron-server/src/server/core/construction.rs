@@ -283,6 +283,18 @@ impl SyncServer {
         // Another vault of this process reads this one through this handle
         // (FIX 11157): the read-only door refuses a root held open here.
         vault.register_served();
+        // FIX 9609: the engine inspects the PDFs a field save or a sign act
+        // lays fields on through this server's organ host, before its writer.
+        #[cfg(unix)]
+        let organs = Arc::new(oneiron_organ_host::OrganHost::with_floor(
+            oneiron_organ_host::HostConfig::default(),
+            Arc::new(crate::machine::OrganFloor(memory.clone())),
+        ));
+        #[cfg(unix)]
+        vault.install_esign_page_inspector(Arc::new(crate::api::EsignOrganPageInspector::new(
+            Arc::clone(&organs),
+            memory.clone(),
+        )));
         let hyde_queue_wait = config.limits.queue_wait();
         let server = Self {
             note_editors: super::NoteEditors::default(),
@@ -376,10 +388,7 @@ impl SyncServer {
             mesh_transport: std::sync::OnceLock::new(),
             builtin_handles: Arc::default(),
             #[cfg(unix)]
-            organs: Arc::new(oneiron_organ_host::OrganHost::with_floor(
-                oneiron_organ_host::HostConfig::default(),
-                Arc::new(crate::machine::OrganFloor(memory.clone())),
-            )),
+            organs,
             #[cfg(unix)]
             organ_dir: None,
             run_receipts,
