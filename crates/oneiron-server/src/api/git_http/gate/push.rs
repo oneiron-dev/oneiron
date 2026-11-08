@@ -16,6 +16,7 @@ use std::sync::Arc;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::Response;
 use oneiron::federation::{GitPushCaller, GitPushCredential};
+use oneiron::origin::RepoPortableId;
 use oneiron::origin::smart_http;
 use oneiron::{EdgeActorClass, EntityId};
 
@@ -77,11 +78,12 @@ pub(in crate::api::git_http) async fn preflight(
     repo: &str,
     request: &smart_http::ServeRequest,
     caller: Option<&GitPushCaller>,
+    push_selection: Option<(RepoPortableId, EntityId)>,
 ) -> Option<Response> {
     let vault = Arc::clone(server.vault());
     let (repo, request, caller) = (repo.to_owned(), request.clone(), caller.cloned());
     let decided = tokio::task::spawn_blocking(move || {
-        smart_http::admit_receive_pack(&vault, &repo, &request, caller.as_ref())
+        smart_http::admit_receive_pack(&vault, &repo, &request, caller.as_ref(), push_selection)
     })
     .await;
     match decided {
