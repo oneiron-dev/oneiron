@@ -233,7 +233,7 @@ impl FactHookRunner {
                 pass.run_source(source, max_entries, &bindings)?;
             }
         }
-        pass.prune_watcher_feeds(&bindings, max_entries)?;
+        pass.prune_watcher_feeds(max_entries)?;
         Ok(pass.report)
     }
 
