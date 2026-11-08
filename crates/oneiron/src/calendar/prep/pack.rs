@@ -15,6 +15,7 @@ use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_FACET, ENTITY_TYPE_MESSAGE,
     ENTITY_TYPE_NOTE, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
+use crate::store::retrieval_values::CandidateGate;
 use crate::vault::Vault;
 
 /// Default ceiling on the assembled pack. A ceiling, not a target.
@@ -153,9 +154,11 @@ pub struct PrepBuildRequest {
 
 /// Assembles the vault owners' prep pack from live vault state at `fired_at`:
 /// the card every vault owner is shown (FIX 22323). It is assembled on the
-/// first owner's own lane and keeps only rows every other owner's lane reads
-/// too, so a row a source audience or a private thread withholds from any
-/// one owner never reaches the card.
+/// first owner's own lane and keeps only rows every other owner's lane
+/// retrieves too, so a row a source audience or a private thread withholds
+/// from any one owner never reaches the card. Each owner's lane is the live
+/// Owner census's ([`ScopedReadActorKey::vault_owner_by_census`]): a live
+/// co-Owner with no actor binding reads as his own Owner lane.
 ///
 /// `Ok(None)` means deliberately blank — the EVENT stopped being eligible, the
 /// vault has no owner, or scoping and ranking left nothing worth saying. It is
@@ -185,7 +188,7 @@ pub fn build_prep_pack(vault: &Vault, request: &PrepBuildRequest) -> Result<Opti
     };
     let mut lanes = owners.into_iter().map(|owner| {
         vault
-            .scoped_read(ScopedReadActorKey::vault_owner(owner))
+            .scoped_read(ScopedReadActorKey::vault_owner_by_census(owner))
             .with_claim_status(ClaimReadStatus::Surfaceable)
     });
     let Some(lane) = lanes.next() else {
@@ -216,7 +219,7 @@ pub(crate) fn build_prep_pack_scoped(
 }
 
 /// [`build_prep_pack_scoped`] on `read`, keeping only the candidates every
-/// lane in `also` reads too, each judged in the assembly's own snapshot.
+/// lane in `also` retrieves too ([`retrieved_by_every_lane`]).
 fn build_prep_pack_read_by_all(
     read: &ScopedRead<'_>,
     also: &[ScopedRead<'_>],
@@ -236,16 +239,10 @@ fn build_prep_pack_read_by_all(
     // Every candidate goes to the actor gate, under one authority per
     // snapshot (FIX 11648).
     let gate = read.recall_candidate_gate(&policy, &filter);
-    let admitted =
-        |_: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| -> Result<bool> {
-            for lane in also {
-                let read = lane.get_entities_parts_in_txn(txn, std::slice::from_ref(id))?;
-                if read.into_iter().next().flatten().is_none() {
-                    return Ok(false);
-                }
-            }
-            Ok(true)
-        };
+    let admitted = |_: &crate::store::StoreRead<'_>,
+                    _: &heed::RoTxn<'_>,
+                    _: &EntityId|
+     -> Result<bool> { Ok(true) };
     let (scoped, _) = prep_context_builder(read.vault(), &request.event, request.fired_at)
         .authority_filter(plan_candidates)
         .filter_candidates(&admitted)
@@ -253,10 +250,46 @@ fn build_prep_pack_read_by_all(
         .run_scoped_with_run_status(read)?;
     let mut candidates = scoped.value.results;
     candidates.extend(scoped.value.neighbors);
+    if !also.is_empty() {
+        candidates = retrieved_by_every_lane(read, also, candidates)?;
+    }
     Ok(crate::claim::ScopedReadResult {
         value: pack_from_candidates(read.vault(), request, &candidates)?,
         receipt: scoped.receipt,
     })
+}
+
+/// The `candidates` (search results and edge neighbors alike) every lane in
+/// `also` retrieves, each judged by that lane's own recall gate in one
+/// snapshot. The gate takes a TURN only with every MESSAGE in it, so a
+/// TURN's composed text holds no message another lane is withheld.
+fn retrieved_by_every_lane(
+    read: &ScopedRead<'_>,
+    also: &[ScopedRead<'_>],
+    candidates: Vec<ContextEntity>,
+) -> Result<Vec<ContextEntity>> {
+    let plans = also
+        .iter()
+        .map(ScopedRead::recall_plan)
+        .collect::<Result<Vec<_>>>()?;
+    let gates: Vec<_> = also
+        .iter()
+        .zip(&plans)
+        .map(|(lane, plan)| lane.recall_candidate_gate(&plan.policy, &plan.filter))
+        .collect();
+    let txn = read.vault().store.env.read_txn()?;
+    let store = read.store_read();
+    let filters: Vec<_> = gates.iter().map(|gate| gate.in_txn(&txn)).collect();
+    let mut kept = Vec::with_capacity(candidates.len());
+    'candidates: for candidate in candidates {
+        for filter in &filters {
+            if !filter(&store, &txn, &candidate.id)? {
+                continue 'candidates;
+            }
+        }
+        kept.push(candidate);
+    }
+    Ok(kept)
 }
 
 /// Every vault row id a pack's rows cite, the EVENT itself excluded: the
