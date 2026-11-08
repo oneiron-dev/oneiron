@@ -24,6 +24,20 @@ pub(crate) async fn vault_code_snapshots_ingest(
     .await
 }
 
+pub(crate) async fn vault_code_snapshots_capture(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeSnapshotCaptureRequest,
+) -> Listed<CodeSnapshotView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.snapshots.capture",
+        move |memory, owner| memory.code_snapshot_capture_as(owner, input),
+    )
+    .await
+}
+
 pub(crate) async fn vault_code_snapshots_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

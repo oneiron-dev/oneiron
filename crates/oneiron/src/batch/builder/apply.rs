@@ -184,7 +184,9 @@ impl BatchBuilder<'_> {
             .with_asset_file_bodies(std::mem::take(&mut self.asset_file_bodies))
             .with_replicated_puts(std::mem::take(&mut self.replicated_puts))
             .with_marked_carriers(std::mem::take(&mut self.marked_carriers))
-            .with_caller_envelopes(std::mem::take(&mut self.caller_envelopes));
+            .with_caller_envelopes(std::mem::take(&mut self.caller_envelopes))
+            .with_prepared_person_substrate(self.prepared_person_substrate.take())
+            .with_prepared_agent_birth(self.prepared_agent_birth.take());
         let deferred =
             if matches!(lane, crate::core_write::CoreWriteLaneRef::Read(_)) && !gated.is_empty() {
                 let mut decisions = Vec::new();
@@ -235,31 +237,35 @@ impl BatchBuilder<'_> {
         } else {
             crate::comm::take_projector_only_batch_puts_in_txn(vault, wtxn, &mut self.ops)?
         };
+        let mut born_touches = crate::comm::DeferredBornTouches::default();
         let routed = match taken {
-            Some(routed) => match actor {
-                Some(actor) => {
-                    original_bodies.extend_from_slice(routed.inputs());
-                    super::comm_input::admit_routed_inputs(
-                        vault,
-                        wtxn,
-                        routed.inputs(),
-                        &mut gate_mode,
-                    )?;
-                    routed.record_with_admission_in_txn(
-                        vault,
-                        wtxn,
-                        admission
-                            .as_mut()
-                            .map(|value| value as &mut dyn crate::comm::ProjectedHeadAdmission),
-                    )?
-                }
-                None => match admission.as_mut() {
-                    Some(admission) => {
-                        routed.record_with_admission_in_txn(vault, wtxn, Some(admission))?
+            Some(mut routed) => {
+                born_touches = routed.take_born_touches();
+                match actor {
+                    Some(actor) => {
+                        original_bodies.extend_from_slice(routed.inputs());
+                        super::comm_input::admit_routed_inputs(
+                            vault,
+                            wtxn,
+                            routed.inputs(),
+                            &mut gate_mode,
+                        )?;
+                        routed.record_with_admission_in_txn(
+                            vault,
+                            wtxn,
+                            admission
+                                .as_mut()
+                                .map(|value| value as &mut dyn crate::comm::ProjectedHeadAdmission),
+                        )?
                     }
-                    None => routed.record_in_txn(vault, wtxn)?,
-                },
-            },
+                    None => match admission.as_mut() {
+                        Some(admission) => {
+                            routed.record_with_admission_in_txn(vault, wtxn, Some(admission))?
+                        }
+                        None => routed.record_in_txn(vault, wtxn)?,
+                    },
+                }
+            }
             None => std::collections::BTreeSet::new(),
         };
         let text_index_trusted = if contains_text_op(&self.ops) {
@@ -323,6 +329,15 @@ impl BatchBuilder<'_> {
         if let (Some(actor), Some(original)) = (actor, original) {
             original.admit_routed_inputs(vault, wtxn, actor, &original_bodies)?;
         }
+        let born_rows = born_touches.record_with_admission_in_txn(
+            vault,
+            wtxn,
+            admission
+                .as_mut()
+                .map(|admission| admission as &mut dyn crate::comm::ProjectedHeadAdmission),
+        )?;
+        let changes_claims = changes_claims || !born_rows.is_empty();
+        rows.extend(born_rows);
         if let crate::core_write::CoreWriteLaneRef::Read(reader) = lane {
             if let Some(admission) = admission {
                 gated.extend(admission.gated_claims(vault, wtxn)?);

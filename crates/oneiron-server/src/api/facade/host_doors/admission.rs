@@ -186,6 +186,9 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultIdentityProposalsResolve
         | Row::VaultIdentityProposalsForPair
         | Row::VaultPacksPreview
+        | Row::VaultMailPackInstall
+        | Row::VaultMailSourcesSync
+        | Row::VaultMailReplyApprove
         | Row::VaultPacksConnectorPrepare
         | Row::VaultPacksConnectorGet
         | Row::VaultPacksConnectorQualify
@@ -298,6 +301,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultRepoGitPushRevoke
         | Row::VaultRepoAnchorBind
         | Row::VaultAgentsBase
+        | Row::VaultOauthAuthorizationAnswer
         | Row::VaultResidenceMode
         | Row::VaultResidenceOpen
         | Row::VaultResidenceIndex

@@ -3,8 +3,9 @@
 //!
 //! A grant is a Delegate/Delegate FEDERATION_GRANT the owner mints from no
 //! parent grant, marked `owner_agent` in its body. Its member is a live agent
-//! principal of this vault (a live agent definition, or a base agent such as
-//! the Coach's MACHINE principal), never a person or a physical machine; its
+//! principal of this vault (a live agent definition, a base agent such as
+//! the Coach's MACHINE principal, or a named agent's PERSON, FIX 4902),
+//! never another person or a physical machine; its
 //! authority is the six-axis scope the owner gave, stored exactly (a nonempty
 //! explicit verb list, no default cap, no allowlist); it names the owner as
 //! its delegator; and it stands until he revokes it, or until the expiry he
@@ -72,7 +73,7 @@ const NO_VERB_LIST: &str = "an agent grant names its verbs: authority_scope.verb
                             nonempty explicit set, or empty beside a nonempty verb_classes";
 const BAD_VERB_CLASS: &str =
     "an agent grant's verb_classes are nonempty, unpadded class names, never git_push";
-const NOT_AN_AGENT: &str = "an agent grant names a live agent principal of this vault: an agent definition or a base agent";
+const NOT_AN_AGENT: &str = "an agent grant names a live agent principal of this vault: an agent definition, a base agent or a named agent";
 const ALREADY_EXPIRED: &str = "an agent grant's expires_at must be later than now";
 const RESERVED_GIT_PUSH: &str =
     "an agent grant never lists git_push: only vault.repo.git_push.mint grants raw git push";
@@ -243,6 +244,7 @@ impl Vault {
                 repo_bounds,
                 kind: super::FederationGrantKind::Access,
                 git_push_bounds: None,
+                detach_on_member_leave: None,
                 verb_classes,
                 wallet_ref,
             };
@@ -621,8 +623,11 @@ impl Vault {
     }
 
     /// Whether `agent` is a live agent principal of this vault: a live agent
-    /// definition, or one of the two seeded base-agent MACHINE principals
-    /// (the Dreamer's and the Coach's). Any other machine is a device.
+    /// definition, one of the two seeded base-agent MACHINE principals (the
+    /// Dreamer's and the Coach's), or a named agent's PERSON, the one
+    /// [`Vault::ensure_agent_principal`] derives from its name (an OAuth
+    /// client's sign-in, FIX 4902). Any other machine is a device and any
+    /// other person a person.
     fn is_agent_principal_in_txn(&self, txn: &heed::RoTxn<'_>, agent: EntityId) -> Result<bool> {
         Ok(match live_entity_row_in_txn(&self.store, txn, &agent)? {
             LiveEntityRow::Live {
@@ -633,6 +638,10 @@ impl Vault {
                 entity_type: ENTITY_TYPE_MACHINE,
                 ..
             } => crate::dreamer_runner::authority::is_base_agent_actor(&agent)?,
+            LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_PERSON,
+                body,
+            } => crate::vault::is_named_agent_principal_body(&agent, &body),
             _ => false,
         })
     }
