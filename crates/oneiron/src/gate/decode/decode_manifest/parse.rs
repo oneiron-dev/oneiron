@@ -33,6 +33,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | crate::federation::grant_policy::ROWS_KEY
                 | crate::gate::room_policy::KEY
                 | POLICY_SHARED_ACT_POLICIES_KEY
+                | POLICY_OWNER_CHANGE_WAIT_SECS_KEY
                 | crate::consent::CATASTROPHE_FLOOR_ROW_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
                 | POLICY_OWNER_POLICY_PRECEDENCE_KEY
@@ -208,6 +209,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_shared_act_policies(value)?),
+    };
+    let owner_change_wait_secs = match single_map_value(&entries, POLICY_OWNER_CHANGE_WAIT_SECS_KEY)
+    {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(value.as_u64()?),
     };
     let catastrophe_floor =
         match single_map_value(&entries, crate::consent::CATASTROPHE_FLOOR_ROW_KEY) {
@@ -740,6 +747,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         federation_grant_rows,
         room_policy_rows,
         shared_act_policies,
+        owner_change_wait_secs,
         catastrophe_floor,
         single_valued_predicates,
         owner_policy_rows,
