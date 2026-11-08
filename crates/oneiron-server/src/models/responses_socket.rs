@@ -14,11 +14,13 @@
 //!
 //! The vault the chains are kept in and the `store` switch are the server's
 //! own ([`ResponsesContext`], FIX 9516), never the process's.
+use std::pin::Pin;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::ready;
 use std::time::{Duration, Instant};
 
-use futures_util::{FutureExt, SinkExt, StreamExt};
+use futures_util::{FutureExt, Sink, SinkExt, StreamExt};
 use oneiron::llm::{LlmCallMetadata, LlmEndpointFlavor, SingleRouteBackend};
 use oneiron::{
     BudgetLease, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest, LlmResult, LlmStream,
@@ -356,14 +358,53 @@ impl ResponsesSockets {
         &'a self,
         session: Session,
         turn: OpenAiResponsesTurn,
+        lease: &'a BudgetLease,
     ) -> OpenAiCompatProviderStream<'a> {
         Box::pin(futures_util::stream::unfold(
             Turn::Start(session, turn),
-            move |state| self.step(state),
+            move |state| self.step(state, lease),
         ))
     }
 
-    async fn step(&self, state: Turn) -> Option<(Frame, Turn)> {
+    async fn send_frame(
+        socket: &mut Socket,
+        frame: String,
+        lease: &BudgetLease,
+    ) -> Result<(), OpenAiCompatTransportError> {
+        if !lease.has_dispatch_release() {
+            return socket
+                .send(Message::text(frame))
+                .await
+                .map_err(|_| OpenAiCompatTransportError::Connection);
+        }
+        let release = || {
+            lease
+                .check_dispatch_release()
+                .map_err(OpenAiCompatTransportError::DispatchRelease)
+        };
+        let mut message = Some(Message::text(frame));
+        futures_util::future::poll_fn(|cx| {
+            release()?;
+            if message.is_some() {
+                ready!(Pin::new(&mut *socket).poll_ready(cx))
+                    .map_err(|_| OpenAiCompatTransportError::Connection)?;
+                release()?;
+                if let Some(message) = message.take() {
+                    lease.begin_physical_attempt();
+                    Pin::new(&mut *socket)
+                        .start_send(message)
+                        .map_err(|_| OpenAiCompatTransportError::Connection)?;
+                }
+            }
+            release()?;
+            Pin::new(&mut *socket)
+                .poll_flush(cx)
+                .map(|result| result.map_err(|_| OpenAiCompatTransportError::Connection))
+        })
+        .await
+    }
+
+    async fn step(&self, state: Turn, lease: &BudgetLease) -> Option<(Frame, Turn)> {
         let (mut session, turn, mut previous_response_id) = match state {
             Turn::Done => return None,
             Turn::Reading(session, turn, previous) => (session, turn, previous),
@@ -371,13 +412,10 @@ impl ResponsesSockets {
                 let (previous, input) = session.chain.plan(&turn.items);
                 let previous_response_id = previous.map(str::to_owned);
                 let frame = turn.create_frame(previous, input);
-                if session
-                    .socket
-                    .send(Message::text(frame.to_string()))
-                    .await
-                    .is_err()
+                if let Err(error) =
+                    Self::send_frame(&mut session.socket, frame.to_string(), lease).await
                 {
-                    return Some((Err(OpenAiCompatTransportError::Connection), Turn::Done));
+                    return Some((Err(error), Turn::Done));
                 }
                 (session, turn, previous_response_id)
             }
@@ -411,13 +449,10 @@ impl ResponsesSockets {
                     session.chain.clear();
                     previous_response_id = None;
                     let frame = turn.create_frame(None, &turn.items);
-                    if session
-                        .socket
-                        .send(Message::text(frame.to_string()))
-                        .await
-                        .is_err()
+                    if let Err(error) =
+                        Self::send_frame(&mut session.socket, frame.to_string(), lease).await
                     {
-                        return Some((Err(OpenAiCompatTransportError::Connection), Turn::Done));
+                        return Some((Err(error), Turn::Done));
                     }
                     continue;
                 }
@@ -559,7 +594,7 @@ impl LlmBackend for OpenAiSessions {
             let turn = self.turn(&request, false)?;
             match self.sockets.checkout(&turn).await {
                 Some(session) => {
-                    OpenAiResponsesLlmStream::new(self.sockets.run(session, turn))
+                    OpenAiResponsesLlmStream::new(self.sockets.run(session, turn, lease))
                         .into_response()
                         .await
                 }
@@ -580,7 +615,7 @@ impl LlmBackend for OpenAiSessions {
         let opened = async move {
             match self.sockets.checkout(&turn).await {
                 Some(session) => Ok(LlmStream::new(OpenAiResponsesLlmStream::new(
-                    self.sockets.run(session, turn),
+                    self.sockets.run(session, turn, lease),
                 ))),
                 None => self.chat.stream(request, lease).map(chat_stream_metadata),
             }
