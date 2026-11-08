@@ -34,7 +34,7 @@ use crate::memory::{
 };
 use crate::outbound_consent::{
     ConnectorAwaitingInput, ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest,
-    ConnectorToolSchema,
+    ConnectorSource, ConnectorToolSchema,
 };
 use crate::outbound_intent_ledger::IntentLedgerError;
 use crate::runtime_hooks::InvocationId;
@@ -51,12 +51,16 @@ pub use crate::code_run::{ConnectorCallReply, ConnectorToolResult};
 
 pub use crate::code_run::{ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorQuestionAnswer};
 
-/// `connector.schema`'s input: a catalogued connector and one of its tools.
+/// `connector.schema`'s input: a selected connector and one of its tools.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorSchemaRequest {
-    /// The connector's catalog name.
+    /// The connector's name within the selected source.
     pub name: String,
+    /// Explicit catalog or builtin selection. When absent, `web` selects
+    /// the builtin and other names select their catalog entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ConnectorSource>,
     /// The tool, as the connector's approved manifest names it.
     pub tool: String,
 }
@@ -137,15 +141,25 @@ pub fn connector_call_host_only(
 }
 
 /// `connector.schema`: one tool's approved input schema for the bound
-/// caller, through the resolution a call of it takes. Reads only.
+/// caller, through the resolution a call of it takes. Reads only. The
+/// built-in `google.sheets` answers its own declared schemas (FIX 4862).
+/// It answers when the catalog source is selected (omitted or `catalog`);
+/// an explicit `builtin` serves only `web` (FIX 11606).
 pub fn connector_schema_read(
     memory: &Memory<'_>,
     input: ConnectorSchemaRequest,
 ) -> MemoryResult<ConnectorSchemaReply> {
-    let schema = memory
-        .vault()
-        .connector_tool_schema(memory, &input.name, &input.tool)
-        .map_err(connector_call_error)?;
+    let selected = ConnectorSource::resolve(input.source, &input.name);
+    let schema = if selected == ConnectorSource::Catalog
+        && input.name == crate::channel_identity_provider::sheets::SHEETS_CATALOG_NAME
+    {
+        crate::channel_identity_provider::sheets::sheets_tool_schema(memory.vault(), &input.tool)?
+    } else {
+        memory
+            .vault()
+            .connector_tool_schema_from(memory, &input.name, &input.tool, input.source)
+            .map_err(connector_call_error)?
+    };
     let source = source(&input.name, &input.tool);
     Ok(match schema {
         ConnectorToolSchema::Approved {

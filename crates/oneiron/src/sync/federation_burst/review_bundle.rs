@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 pub struct FederationIsolatedUpdate {
     pub request_ref: String,
     pub window: String,
-    pub admitted_update: Vec<u8>,
+    #[schemars(with = "Vec<u8>")]
+    pub admitted_update: super::FederationPayloadBytes,
     pub rate_ratio: f32,
     pub streak_ratio: f32,
 }

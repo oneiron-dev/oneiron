@@ -351,7 +351,10 @@ pub unsafe extern "C" fn oneiron_vault_put_entity(
 ///
 /// `entities` may be null only when `entities_len == 0`. Each payload pointer
 /// inside the array must be non-null for its byte length. A bound handle
-/// stores them as its caller (`oneiron_vault_bind`).
+/// stores them as its caller (`oneiron_vault_bind`). `entities_len` is
+/// measured against `legacy_batch_entities` before any input is read
+/// (FIX 72): past it the row asks, and every input is still stored in the
+/// one transaction.
 ///
 /// # Safety
 ///
@@ -366,6 +369,10 @@ pub unsafe extern "C" fn oneiron_vault_batch_put_entities(
 ) -> OneironStatus {
     ffi_guard(|| {
         let result = with_vault(vault, |handle| {
+            let _ = handle.vault.measure_limit(
+                oneiron::limit_ask::EngineLimit::LegacyBatchEntities,
+                entities_len as u64,
+            );
             with_optional_slice(entities, entities_len, |values| {
                 let mut parsed = Vec::new();
                 for entry in values.unwrap_or(&[]) {

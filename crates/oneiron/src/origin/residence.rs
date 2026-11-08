@@ -509,6 +509,24 @@ impl Vault {
         request: OriginPublicationRequest,
         lease: &OriginAuthorityLease,
     ) -> Result<OriginPublicationReceipt> {
+        match self.publish_origin_ref_authorized_checked(git, request, lease, |_| {
+            Ok(Ok::<(), std::convert::Infallible>(()))
+        })? {
+            Ok(receipt) => Ok(receipt),
+            Err(never) => match never {},
+        }
+    }
+
+    /// [`Self::publish_origin_ref_authorized`], with `check` judged again as
+    /// the first act of the permit and publication staging writers (FIX 7179).
+    /// A refusal writes no rows in the writer that refused.
+    pub(crate) fn publish_origin_ref_authorized_checked<R>(
+        &self,
+        git: &GitWire<'_>,
+        request: OriginPublicationRequest,
+        lease: &OriginAuthorityLease,
+        check: impl Fn(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<OriginPublicationReceipt, R>> {
         let _guard = lock_repository(request.repo.common_dir())?;
         let current = self
             .origin_authority(&request.repo)?
@@ -521,7 +539,10 @@ impl Vault {
             return Err(Error::ConcurrentWrite("stale origin authority lease"));
         }
         let id = origin_publication_id(&request)?;
-        self.with_write_txn_grouped(|txn| {
+        let permitted = self.with_write_txn_grouped(|txn| {
+            if let Err(refused) = check(txn)? {
+                return Ok(Err(refused));
+            }
             // A publication decided in an earlier epoch cannot be reauthorized.
             if let Some(epoch) = AUTHORITY_PERMIT.get(&self.store, txn, &id)? {
                 if epoch != lease.epoch {
@@ -532,9 +553,12 @@ impl Vault {
             } else {
                 AUTHORITY_PERMIT.put(&self.store, txn, &id, &lease.epoch)?;
             }
-            Ok(())
+            Ok(Ok(()))
         })?;
-        self.publish_origin_ref(git, request)
+        if let Err(refused) = permitted {
+            return Ok(Err(refused));
+        }
+        self.publish_origin_ref_checked(git, request, &check)
     }
     pub(in crate::origin) fn require_origin_authority(
         &self,

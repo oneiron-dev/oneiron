@@ -46,6 +46,7 @@ mod moves;
 mod outcomes;
 mod pipeline;
 mod policy;
+mod receipt_index;
 mod rollups;
 mod run_loop;
 mod silence;
