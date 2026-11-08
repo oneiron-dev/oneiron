@@ -38,8 +38,9 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
     self, ActAnswer, EmptyRequest, HandoffAlarmRequest, SharedActExecuted, SharedActRequest,
-    SharedMemberAddRequest, SharedMemberRequest, SharedMemberRoleRequest, SharedReceiptRequest,
-    SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
+    SharedAddOwnerRequest, SharedMemberAddRequest, SharedMemberRequest, SharedMemberRoleRequest,
+    SharedOwnerChangeWaitSetRequest, SharedReceiptRequest, SharedRemoveOwnerRequest,
+    SharedTransferRequest, SharedVaultRequest,
 };
 
 use super::clock_ingress;
@@ -238,6 +239,59 @@ pub(crate) async fn vault_shared_propose_remove_owner(
         VERB,
         person(server, auth, VERB),
         move |server, starter| sdk::propose_shared_remove_owner(server.vault(), &starter, input),
+        |_| Some(Vec::new()),
+    )
+    .await
+}
+
+/// `vault.shared.propose_add_owner`: start an `add_owner` act.
+pub(crate) async fn vault_shared_propose_add_owner(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SharedAddOwnerRequest,
+) -> MaybeListed<PendingAuthorityAct> {
+    const VERB: &str = "vault.shared.propose_add_owner";
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, starter| sdk::propose_shared_add_owner(server.vault(), &starter, input),
+        |_| Some(Vec::new()),
+    )
+    .await
+}
+
+/// `vault.shared.owner_change_wait.set`: one live Owner sets the common
+/// wait; answers the effective wait in seconds. Names no listed row.
+pub(crate) async fn vault_shared_owner_change_wait_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SharedOwnerChangeWaitSetRequest,
+) -> MaybeListed<Option<u64>> {
+    const VERB: &str = "vault.shared.owner_change_wait.set";
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, owner| sdk::set_shared_owner_change_wait(server.vault(), &owner, input),
+        |_| Some(Vec::new()),
+    )
+    .await
+}
+
+/// `vault.shared.owner_change_wait.get`: the common wait in seconds, for
+/// the owner. Names no listed row.
+pub(crate) async fn vault_shared_owner_change_wait_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: EmptyRequest,
+) -> MaybeListed<Option<u64>> {
+    const VERB: &str = "vault.shared.owner_change_wait.get";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(server, auth, VERB),
+        move |server, owner| sdk::read_shared_owner_change_wait(server.vault(), &owner),
         |_| Some(Vec::new()),
     )
     .await
