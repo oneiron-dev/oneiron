@@ -174,6 +174,7 @@ impl Vault {
             Value::from("sensitivity"),
             Value::from("public"),
         )]));
+        body.scope_facet = self.default_facet_in_txn(txn)?;
         self.put_reserved_claim_in_txn(txn, &id, &body, record.occurred, now)?;
         CHANGE_RECEIPTS.put(
             &self.store,
