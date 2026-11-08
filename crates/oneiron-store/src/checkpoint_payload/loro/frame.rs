@@ -12,6 +12,8 @@ use oneiron_base::error::Result;
 pub const FRAME_VERSION: u8 = 1;
 pub const SNAPSHOT: u8 = 0;
 pub const UPDATES: u8 = 1;
+/// A shallow or state-only snapshot kept as stored (FIX 6442).
+pub const SHALLOW_SNAPSHOT: u8 = 2;
 
 /// A row's content, read back.
 pub struct Frame {

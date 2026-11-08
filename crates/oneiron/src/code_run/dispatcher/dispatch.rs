@@ -110,7 +110,7 @@ impl HostSelfDispatcher<'_> {
             SelfCall::WorkflowDispatch(call) => self.dispatch_workflow_bound(*call, read_as),
             // The run repo rows read on the lane their door admitted, under
             // the run's lease, at its executor site (FIX 6867).
-            SelfCall::Repo(call) => self.dispatch_repo(call, site, read_as),
+            SelfCall::Repo(call) => self.dispatch_repo(*call, site, read_as),
         }?;
         self.note_created_from_outcome(agent_verb, &outcome);
         Ok(outcome)
