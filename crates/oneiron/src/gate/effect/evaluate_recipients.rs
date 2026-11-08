@@ -50,17 +50,17 @@ impl ExternalEffectJudgment {
         if self.envelope_wait.is_none() {
             self.envelope_wait = judged.envelope_wait;
         }
-        if let Some((grant_id, grant)) = judged.matched_grant
+        if let Some(grant) = judged.matched_grant
             && self
                 .matched_grant
                 .as_ref()
-                .is_none_or(|(matched, _)| *matched != grant_id)
+                .is_none_or(|matched| matched.grant_ref() != grant.grant_ref())
             && !self
                 .recipient_grants
                 .iter()
-                .any(|(touched, _)| *touched == grant_id)
+                .any(|recorded| recorded.grant_ref() == grant.grant_ref())
         {
-            self.recipient_grants.push((grant_id, grant));
+            self.recipient_grants.push(grant);
         }
         Ok(())
     }
