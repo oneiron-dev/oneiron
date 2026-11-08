@@ -161,6 +161,22 @@ pub enum SweepWork {
         /// files removed.
         removed: u64,
     },
+    /// The OAuth server's rows past their lifetime (FIX 4902).
+    #[serde(rename = "oauth_rows")]
+    OAuthRows {
+        /// Authorization requests, answered or not; their asks offer no tap.
+        requests: u64,
+        /// Authorization codes, redeemed or not.
+        codes: u64,
+        /// Access and refresh tokens, each access token with the slip its
+        /// row held.
+        tokens: u64,
+        /// Token families past their newest refresh token's lifetime.
+        families: u64,
+        /// Metadata-document clients whose document went stale, used by no
+        /// sign-in.
+        clients: u64,
+    },
 }
 
 impl SweepWork {
@@ -218,6 +234,13 @@ impl SweepWork {
             } => rebuilt == 0 && failed == 0 && dropped == 0,
             Self::AnnotationBodyAnchors { moved, failed } => moved == 0 && failed == 0,
             Self::DrafterCorpora { removed } => removed == 0,
+            Self::OAuthRows {
+                requests,
+                codes,
+                tokens,
+                families,
+                clients,
+            } => requests == 0 && codes == 0 && tokens == 0 && families == 0 && clients == 0,
         }
     }
 }

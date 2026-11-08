@@ -19,7 +19,10 @@
 //! Codes, tokens and the authorize page's poll secret are 32 random bytes. No row, log or
 //! receipt holds one: each table keys them by a BLAKE3 hash keyed from the host issuer's secret,
 //! as pairing codes are (`slip_pairing::pairing_row_key`). A row past its expiry is dropped when
-//! a write reads it; nothing sweeps them.
+//! a write reads it, and the engine's housekeeping sweep `oauth_expiry` drops the rest (`sweep`).
+//!
+//! The two open doors a stranger can make write, `/oauth/register` and `/oauth/authorize`, are
+//! capped per client address and per vault by the server, under the limits named here.
 //!
 //! Every value canon leaves open is one named constant or one policy fn here, each marked an
 //! engine call (CALLS, FIX 4902).
@@ -28,6 +31,7 @@ mod access_slips;
 mod authorization;
 mod clients;
 mod rows;
+mod sweep;
 mod tokens;
 
 pub use authorization::{
@@ -71,6 +75,23 @@ pub const OAUTH_PENDING_REQUESTS_MAX: usize = 16;
 /// slot; a new one is refused only when every client is in use (CALLS, FIX 4902: an engine
 /// call).
 pub const OAUTH_CLIENTS_MAX: usize = 1_024;
+/// The most `/oauth/register` attempts one client address may make in an hour: the open inbox's
+/// default share per sender. Past it the server sheds the address's attempts until the hour turns
+/// (CALLS, FIX 4902: an engine call).
+pub const OAUTH_REGISTRATIONS_PER_SOURCE_PER_HOUR: u32 = 20;
+/// The most `/oauth/register` attempts the vault takes in an hour from every address together: a
+/// quarter of [`OAUTH_CLIENTS_MAX`]. A full table yields its oldest unused client first, so a
+/// flood from many addresses needs hours, not seconds, to push out a client between its
+/// registration and its sign-in (CALLS, FIX 4902: an engine call).
+pub const OAUTH_REGISTRATIONS_PER_HOUR: u32 = 256;
+/// The most `/oauth/authorize` attempts one client address may make in an hour: half of
+/// [`OAUTH_PENDING_REQUESTS_MAX`], so no one address can hold every waiting slot or send the
+/// owner more than that many asks an hour (CALLS, FIX 4902: an engine call).
+pub const OAUTH_AUTHORIZATIONS_PER_SOURCE_PER_HOUR: u32 = 8;
+/// The most `/oauth/authorize` attempts the vault takes in an hour from every address together: a
+/// quarter of [`OAUTH_CLIENTS_MAX`], as for registration, since an authorize that names a new
+/// metadata-document client stores a client too (CALLS, FIX 4902: an engine call).
+pub const OAUTH_AUTHORIZATIONS_PER_HOUR: u32 = 256;
 /// The longest `client_name` a client may give, in characters (CALLS, FIX 4902: an engine call).
 pub const OAUTH_CLIENT_NAME_MAX_CHARS: usize = 128;
 /// The most redirect URIs one client may list (CALLS, FIX 4902: an engine call).
