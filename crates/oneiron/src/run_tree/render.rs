@@ -82,6 +82,7 @@ pub(super) fn render_run_tree_presorted(records: Vec<AttemptRecord>) -> Result<R
     Ok(RunTree {
         roots: rendered_roots,
         repairs,
+        deletions: Vec::new(),
     })
 }
 

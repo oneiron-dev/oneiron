@@ -1,4 +1,4 @@
-//! The geometry callers' input lease, region and isolated parse.
+//! Geometry and ceremony-preview callers' input lease, region and isolated parse.
 
 use std::time::Instant;
 

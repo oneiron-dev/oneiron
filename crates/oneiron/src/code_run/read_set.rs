@@ -36,7 +36,8 @@ pub fn resident_tool_answer_rows(
 }
 
 /// The DurableWait/MemorySearch half of the resident read set, decodable as
-/// an append-only suffix by the replay record's memo (FIX 837).
+/// an append-only suffix by the replay record's memo (FIX 837), with the
+/// records each fold answer's words were written from (FIX 18924).
 pub(crate) fn resident_tool_answer_rows_of_from(
     calls: &[CodeRunBridgeCall],
     from: usize,
@@ -57,6 +58,9 @@ pub(crate) fn resident_tool_answer_rows_of_from(
             SelfDispatchOutcome::MemorySearch(search) => {
                 rows.extend(search.results.into_iter().map(|hit| hit.id));
             }
+            // A fold answer that copies a summary was served from the
+            // records its words were written from (FIX 18924).
+            SelfDispatchOutcome::Fold(answer) => rows.extend(answer.word_sources()),
             _ => {}
         }
     }

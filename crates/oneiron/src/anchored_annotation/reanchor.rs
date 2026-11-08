@@ -1,12 +1,15 @@
 //! Edit-manifest lowering, locator replay math, and the re-anchor sweep (own-txn
 //! plus caller-txn).
 
+use super::code_units::CodeReanchor;
 use super::codec::ThreadHead;
 use super::model::{
-    A1Range, AnnotationThread, DriftMarker, Locator, ReanchorOp, ReanchorOutcome, ReanchorSummary,
+    A1Range, AnnotationThread, CODE_ANCHOR_VERSION, DriftMarker, Locator, ReanchorOp,
+    ReanchorOutcome, ReanchorSummary,
 };
 use super::threads::thread_from_head;
 use crate::Vault;
+use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::{AnchorEffect, Axis, CellRef, RangeRef, StructuralShift};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -382,6 +385,7 @@ impl Vault {
                 None,
                 html.as_ref(),
                 text.as_ref(),
+                None,
             );
             if drifted {
                 self.record_detached_in_txn(wtxn, artifact_id, &thread, to_version, learned_at)?;
@@ -479,6 +483,7 @@ impl Vault {
                 docx.as_ref(),
                 html.as_ref(),
                 text.as_ref(),
+                None,
             );
             // Each thread's head write + old-head supersede share ONE txn, so a
             // rejected supersede leaves that thread's original head live.
@@ -592,6 +597,7 @@ impl Vault {
                 docx.as_ref(),
                 html.as_ref(),
                 text.as_ref(),
+                None,
             );
             // A detached comment joins the Unattached list with its words; a
             // moved one keeps the anchor it left, for an exact restore.
@@ -616,6 +622,81 @@ impl Vault {
             );
         }
         Ok(summary)
+    }
+
+    /// Moves a code artifact's threads onto the snapshot that stands for it
+    /// in `wtxn` (FIX 7905): each live, non-drifted thread whose code
+    /// locator names another commit. The sweep reads that snapshot in its
+    /// own write, so a late sweep never moves threads back to a tree a later
+    /// put replaced; no snapshot moves nothing. A path the tree lacks or
+    /// withholds drifts; the same file hash moves to the new commit as it
+    /// is; any other file moves the span by the text diff a plain-text span
+    /// uses, and the span drifts when none of its characters survives. Heads
+    /// keep [`CODE_ANCHOR_VERSION`]. The engine moves them as the vault's
+    /// owner, as the body-anchor sweep writes.
+    pub(crate) fn reanchor_code_threads_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        artifact_id: &EntityId,
+    ) -> Result<()> {
+        let Some(snapshot) = self.get_codebase_snapshot_in_txn(wtxn, artifact_id)? else {
+            return Ok(());
+        };
+        let threads = self.effect_annotation_threads_for_artifact_in_txn(wtxn, artifact_id)?;
+        let Some(code) = CodeReanchor::load(self, wtxn, &snapshot, &threads)? else {
+            return Ok(());
+        };
+        let actor = WriteActor::new(
+            crate::vault::embedded_owner_actor_id()?,
+            EdgeActorClass::Human,
+        );
+        let learned_at = self.now_recorded_at();
+        let occurred = TimeRange {
+            start: learned_at,
+            end: learned_at,
+        };
+        for thread in threads {
+            if thread.is_drifted()
+                || thread.anchor.version != CODE_ANCHOR_VERSION
+                || !code.moves(&thread.anchor.locator)
+            {
+                continue;
+            }
+            let (head, drifted) = plan_reanchored_head(
+                &thread,
+                CODE_ANCHOR_VERSION,
+                CODE_ANCHOR_VERSION,
+                &[],
+                None,
+                None,
+                None,
+                None,
+                Some(&code),
+            );
+            // A detached comment joins the Unattached list with its words; a
+            // moved one keeps the anchor it left.
+            if drifted {
+                self.record_detached_in_txn(
+                    wtxn,
+                    artifact_id,
+                    &thread,
+                    CODE_ANCHOR_VERSION,
+                    learned_at,
+                )?;
+            } else {
+                self.record_prior_anchor_in_txn(wtxn, artifact_id, &thread, CODE_ANCHOR_VERSION)?;
+            }
+            self.apply_reanchor_head_in_txn(
+                wtxn,
+                artifact_id,
+                &thread,
+                &head,
+                actor,
+                occurred,
+                learned_at,
+            )?;
+        }
+        Ok(())
     }
 
     /// Writes one re-anchored head and supersedes the thread's prior head in the
@@ -659,6 +740,7 @@ fn plan_reanchored_head(
     docx: Option<&super::recovery::DocxReanchor>,
     html: Option<&super::recovery::HtmlReanchor>,
     text: Option<&super::anchor_text::TextReanchor>,
+    code: Option<&CodeReanchor>,
 ) -> (ThreadHead, bool) {
     let outcome = match &thread.anchor.locator {
         Locator::Pptx { .. } => {
@@ -671,6 +753,9 @@ fn plan_reanchored_head(
             context.rebind(&thread.anchor.locator)
         }),
         Locator::Text { .. } => text.map_or(ReanchorOutcome::Drifted, |context| {
+            context.rebind(&thread.anchor.locator)
+        }),
+        Locator::Code { .. } => code.map_or(ReanchorOutcome::Drifted, |context| {
             context.rebind(&thread.anchor.locator)
         }),
         _ => replay_locator(&thread.anchor.locator, ops),
