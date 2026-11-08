@@ -10,6 +10,7 @@
 //! Every time here is unix milliseconds on one clock: the parent's cutoff,
 //! fixed in its parent row at its first spawn.
 
+mod coverage;
 mod origins;
 
 use std::sync::Arc;
@@ -23,6 +24,8 @@ use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::vault::VaultId;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
+pub use self::coverage::SourceDeliveryWitness;
+pub(crate) use self::coverage::{merge_ranges, subtract_ranges};
 pub(crate) use self::origins::OriginsUnion;
 pub use self::origins::{DelegatedSource, ReaderFindingRef, ResultOrigins};
 
@@ -152,10 +155,14 @@ pub fn summary_exceeds_window(tokens: u64, window_tokens: u64) -> String {
 }
 
 /// The reason a summary whose members hold `bytes`, past the `max_bytes`
-/// its window reads before any token is counted, settles with.
+/// its `window_tokens` window reads before any token is counted, settles
+/// with (FIX 2260): the bytes, their cap, and the window the cap was
+/// sized from, beside the counted reason's tokens and window.
 #[must_use]
-pub fn summary_exceeds_window_bytes(bytes: u64, max_bytes: u64) -> String {
-    format!("{SUMMARY_GROUP_EXCEEDS_WINDOW} bytes={bytes} max_bytes={max_bytes}")
+pub fn summary_exceeds_window_bytes(bytes: u64, max_bytes: u64, window_tokens: u64) -> String {
+    format!(
+        "{SUMMARY_GROUP_EXCEEDS_WINDOW} bytes={bytes} max_bytes={max_bytes} window_tokens={window_tokens}"
+    )
 }
 
 /// How hard one `summarize` works.
@@ -541,7 +548,8 @@ pub struct SpawnParentBinding {
 }
 
 /// Where a child stands. A settled one (`Done`, `Partial`, `Failed`) never
-/// moves again.
+/// moves again. `Done` is completed with a committed finding: it proves no
+/// read of any input (FIX 7735).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ReaderJobState {
@@ -589,6 +597,10 @@ pub struct ReaderJob {
     pub finding: Option<ReaderFindingRef>,
     pub enqueued_at_ms: u64,
     pub settled_at_ms: Option<u64>,
+    /// What a scoped child's reads were shown of its primary source in its
+    /// latest claim, frozen when it settles (FIX 7735).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_witness: Option<SourceDeliveryWitness>,
 }
 
 impl ReaderJob {

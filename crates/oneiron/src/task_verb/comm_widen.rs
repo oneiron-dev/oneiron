@@ -17,8 +17,8 @@ use std::collections::BTreeMap;
 
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
-    TaskAskDefault, TaskAskOptionId, TaskAskQuestion, TaskAskResult, TaskAskSettlementReason,
-    TaskAskSource, TaskAskSpec, TaskAskTarget, TaskAskWord,
+    TaskAskDefault, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskResult,
+    TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskTarget, TaskAskWord,
 };
 use super::highway::invalid_state;
 use super::{ConsultPayloadRef, TaskAssignee};
@@ -192,22 +192,30 @@ fn ask_spec(
         CommWidenRecipient::Owner(_) => BTreeMap::from([
             (
                 TaskAskOptionId::new(APPROVE_ONCE)?,
-                format!("Approve once: widen this run's comm reach to {reach}"),
+                TaskAskOption::new(format!(
+                    "Approve once: widen this run's comm reach to {reach}"
+                )),
             ),
             (
                 TaskAskOptionId::new(APPROVE_AND_STOP_ASKING)?,
-                format!(
+                TaskAskOption::new(format!(
                     "Approve and stop asking: widen this run, and the runs it starts, up to {reach}"
-                ),
+                )),
             ),
-            (TaskAskOptionId::new(DENY)?, "Deny".to_owned()),
+            (
+                TaskAskOptionId::new(DENY)?,
+                TaskAskOption::new("Deny".to_owned()),
+            ),
         ]),
         CommWidenRecipient::Agent(_) | CommWidenRecipient::Erased => BTreeMap::from([
             (
                 TaskAskOptionId::new(APPROVE)?,
-                format!("Approve: widen its comm reach to {reach}"),
+                TaskAskOption::new(format!("Approve: widen its comm reach to {reach}")),
             ),
-            (TaskAskOptionId::new(DECLINE)?, "Decline".to_owned()),
+            (
+                TaskAskOptionId::new(DECLINE)?,
+                TaskAskOption::new("Decline".to_owned()),
+            ),
         ]),
     };
     let who = match request.recipient {
@@ -670,6 +678,7 @@ impl Vault {
                     occurred_at: question.at,
                     receipt_ref: None,
                     payload_ref: Some(member.task),
+                    approval_digest: None,
                     concern: None,
                     diary_review: None,
                     sender: None,
