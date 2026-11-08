@@ -41,6 +41,7 @@
 mod attachments;
 mod caldav_calendar;
 mod calendar;
+pub(crate) mod claim_recheck;
 mod compliance;
 mod credential;
 mod dav_xml;
@@ -85,6 +86,7 @@ pub(crate) use calendar::{
     bind_calendar_source_row_in_txn, calendar_source_occupancy, calendar_source_of_system_in,
     merge_busy,
 };
+pub(crate) use claim_recheck::{claim_recheck_current_in, erase_claim_recheck_ids_in_txn};
 pub(crate) use compliance::erase_compliance_actor_in_txn;
 pub use compliance::{
     MailComplianceEventKind, MailComplianceEventView, MailComplianceHit, MailComplianceSearchReply,
