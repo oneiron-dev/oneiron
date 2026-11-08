@@ -87,6 +87,7 @@ pub(super) mod intent_routes;
 pub(super) mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
+mod meeting_transcript_routes;
 pub(super) mod model_setting_routes;
 mod oauth_authorization_routes;
 #[cfg(target_os = "linux")]
@@ -168,6 +169,7 @@ fn owner_tables() -> OwnerTable {
         concern_routes::owner_table(),
         learning_setting_routes::owner_table(),
         machine_routes::owner_table(),
+        meeting_transcript_routes::owner_table(),
         model_setting_routes::owner_table(),
         room_thread_setting_routes::owner_table(),
         backup_setting_routes::owner_table(),
@@ -799,6 +801,11 @@ struct DecideRun {
     run_ref: Option<String>,
     /// The bundle id review returned for exactly these proposals.
     bundle_id: String,
+    /// On approve, the reminder wordings the owner saw: per proposal claim
+    /// id, the BLAKE3 hash (64 hex) of the wording text. Each such reminder
+    /// sends those words.
+    #[serde(default)]
+    reminder_wordings: std::collections::BTreeMap<String, String>,
 }
 
 async fn approve_run(
@@ -829,13 +836,14 @@ async fn decide_run(
     let resolved = blocking(move || {
         let run =
             runs::RunName::from_fields(request.run_id.as_deref(), request.run_ref.as_deref())?;
-        runs::resolve(
+        runs::resolve_with_wordings(
             server.vault(),
             &owner,
             run,
             &request.bundle_id,
             action,
             destination,
+            &request.reminder_wordings,
         )
     })
     .await?;

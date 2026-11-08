@@ -959,7 +959,10 @@ pub fn validate_decision(
             if pin.rung == DecisionRung::Human {
                 return !(asked && at == last);
             }
-            crate::llm::ModelId::new(format!("{}@{}", pin.model, pin.version)).is_err()
+            // A pin is a provider's own name and version, as every other decision door
+            // checks it: the house read names its engine model id and a recipe-stamped
+            // revision, which no `ModelId` parse of the two joined admits.
+            crate::model_decision::validate_pin(pin, pin.rung).is_err()
         })
         || receipt
             .time
@@ -988,11 +991,8 @@ pub(super) fn validate_prediction(
         || !prediction.probability.is_finite()
         || !(0.0..=1.0).contains(&prediction.probability)
         || prediction.provider.rung == DecisionRung::Human
-        || crate::llm::ModelId::new(format!(
-            "{}@{}",
-            prediction.provider.model, prediction.provider.version
-        ))
-        .is_err()
+        || crate::model_decision::validate_pin(&prediction.provider, prediction.provider.rung)
+            .is_err()
         || !prediction.cost_per_thousand.is_finite()
         || prediction.cost_per_thousand < 0.0
         || prediction.paired.is_some_and(|reading| {

@@ -232,10 +232,13 @@ connection syncs and then every 30 seconds while it stays synced: no mesh signal
 node's offer changed. Each model a node serves on its own compute becomes an own-server row in
 the vault registry, routed to that node. A row the vault already holds another way is kept, and
 the node's offer is skipped. A node that does not answer keeps the rows it had. Nothing is
-deleted when a node stops offering a model.
+deleted when a node stops offering a model: its row is kept and marked stale, and nothing routes
+to it.
 
-The rows feed the own-server backend. The configured model router is built from `[models]` at
-start, so serve does not route a discovered model by itself yet.
+Serve routes each live row to its node, beside the configured models, also with no `[models]`. A
+serve with the mesh off marks every such row stale at its start, since no refresh keeps them
+current there; `oneiron maintain` after it counts none of them. The next serve with the mesh on
+writes each row its node still offers live again at its first refresh.
 
 ## Shared environments
 
