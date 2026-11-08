@@ -27,7 +27,7 @@
 
 use heed::RwTxn;
 
-use super::store::{get_ledger_record, ledger_rows, put_erased_record};
+use super::store::{get_ledger_record, ledger_rows, put_erased_record, put_ledger_record};
 use super::types::{
     IntentEscalationReason, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentState,
     RecordedOutboundOutcome,
@@ -316,6 +316,7 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
     actor: &EntityId,
 ) -> crate::Result<()> {
     let mut erased = Vec::new();
+    let mut authorized = Vec::new();
     // FIX 11030: the sends whose party had no PERSON when admitted, linked
     // to this person when it was deleted, are its sends too.
     let linked = super::late_recipient::late_recipient_intents_in(vault, &*wtxn, actor)?;
@@ -325,6 +326,11 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
             continue;
         };
         let Ok(stored) = StoredPayload::parse(record.payload()) else {
+            // The owner a row names is the record's, not its payload's: a row
+            // whose payload does not read still drops the erased owner.
+            if record.authorizing_owner == Some(*actor) {
+                authorized.push(record.id);
+            }
             continue;
         };
         let named = stored.named();
@@ -337,6 +343,8 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
                 _ => None,
             };
             erased.push((record.id, custody_ref, named.actor != Some(*actor)));
+        } else if record.authorizing_owner == Some(*actor) {
+            authorized.push(record.id);
         }
     }
     for (id, custody_ref, recipient_only) in erased {
@@ -356,6 +364,34 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
         if let Some(erased) = get_ledger_record(vault, &*wtxn, &id).map_err(erase_error)? {
             super::settlement::settle_reservation_in_txn(vault, wtxn, &erased)
                 .map_err(erase_error)?;
+        }
+    }
+    // A send the erased person authorized as its owner, naming him neither as
+    // its actor nor as its recipient: it keeps no id of him, and a send not
+    // yet settled stops as one whose owner is no longer live stops (FIX
+    // 17393). Its payload stays its actor's.
+    for id in authorized {
+        let Some(mut record) = get_ledger_record(vault, &*wtxn, &id).map_err(erase_error)? else {
+            continue;
+        };
+        let stops = matches!(record.state, IntentState::Pending | IntentState::Deferred);
+        record.authorizing_owner = None;
+        stop_for_erase(&mut record, IntentEscalationReason::OwnerNotLive);
+        put_ledger_record(vault, wtxn, &record).map_err(erase_error)?;
+        // An older checkpoint of the call still names him: its compartment
+        // rolls, and the next capture reseals the row without him.
+        super::store::payload_erase::roll_call_compartment_in_txn(
+            vault,
+            wtxn,
+            &record.attempt_id,
+            record.call_seq,
+        )?;
+        if stops {
+            super::settlement::forget_remote_task_in_txn(vault, wtxn, &id).map_err(erase_error)?;
+            if let Some(stopped) = get_ledger_record(vault, &*wtxn, &id).map_err(erase_error)? {
+                super::settlement::settle_reservation_in_txn(vault, wtxn, &stopped)
+                    .map_err(erase_error)?;
+            }
         }
     }
     Ok(())
