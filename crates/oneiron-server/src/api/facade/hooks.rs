@@ -259,11 +259,20 @@ pub(super) async fn facade_hooks_pre_counted(
     value: serde_json::Value,
 ) -> Result<(VerbHookPre, Vec<serde_json::Value>), FacadeApiError> {
     let check = facade_rewrite_admit(server, call.auth(), &value);
+    let owner_whole_vault_export =
+        super::export_transfer::owner_whole_vault_export_admitted(server, call.auth(), verb);
     facade_hooks_pre_admitting(server, call, verb, value, check, true)
         .await
         .map_err(|stopped| {
             released_hook_stop(server, stopped, |rows, saved| {
-                released_saved_result(server.vault(), call.auth(), verb, rows, saved)
+                released_saved_result(
+                    server.vault(),
+                    call.auth(),
+                    verb,
+                    rows,
+                    saved,
+                    owner_whole_vault_export,
+                )
             })
         })
 }
