@@ -1,24 +1,29 @@
 //! The served host's transport for an origin mirror's outbound git: an exact
 //! publish's and an automatic mirror push plan's (ARCH-0069 OSH-3, ARCH-0068
-//! RC4, FIX 19083).
+//! RC4, FIX 19083), and a mirror run's Git-LFS upload (FIX 19876).
 //!
 //! A served host installs one per open vault
 //! ([`Vault::install_origin_git_transport`]). Once it is installed, every
 //! authenticated read at the mirror and every push to it go through it
-//! alone: an exact publish's reads of its branch and its one push, and a
-//! plan's reads of its refs and its pushes of frozen batches. The host sends
-//! each git exchange through its credential broker, which alone installs the
-//! mirror's credential, so the Git child never holds it. A broker that
-//! cannot be reached, or that refuses, fails the read or leaves the push
-//! unproven under the caller's own rules; nothing falls back to the direct
-//! path. A vault opened with no host keeps the direct path
-//! (`publish::reconcile`, `publish::mirror_plan_remote`): the custody door
-//! hands the mirror's credential to the child as one header.
+//! alone: an exact publish's reads of its branch and its one push, a plan's
+//! reads of its refs and its pushes of frozen batches, and the LFS batch
+//! calls and object actions of a run's upload. The host sends each git and
+//! LFS exchange through its credential broker, which alone installs the
+//! mirror's credential, so neither the Git child nor the daemon's own HTTP
+//! client holds it. A broker that cannot be reached, or that refuses, fails
+//! the read, leaves the push unproven under the caller's own rules, or
+//! leaves the LFS objects missing; nothing falls back to the direct path. A
+//! vault opened with no host keeps the direct path (`publish::reconcile`,
+//! `publish::mirror_plan_remote`, `publish::mirror_lfs`): the custody door
+//! hands the mirror's credential to the child as one header, and to the
+//! daemon's LFS client as its batch calls' header.
 //!
 //! The port carries transport only, and sends each exchange once. The
 //! approval, the frozen tuple or plan, the publication gate, the claims, the
 //! settlement, an exact publish's no-resend rule and a plan's reconcile and
-//! same-plan resend stay in the engine.
+//! same-plan resend stay in the engine, and so do the LFS upload's batching,
+//! ordering and store checks (`lfs::upload_lfs_objects`, which the host runs
+//! over its broker's transport) and the run's readiness.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -32,6 +37,7 @@ use crate::git_wire::{
     GitWire, GitWireRepo,
 };
 use crate::llm::BrokerIsolation;
+use crate::origin::lfs::{LfsOid, LfsTransferReport};
 use crate::origin::publish::OriginPublishDestination;
 
 /// The transport a served host lends an origin mirror's git. It never runs
@@ -85,6 +91,20 @@ pub trait OriginGitTransport: Send + Sync {
         repo: &GitWireRepo,
         push: &OriginGitPlanPush<'_>,
     ) -> OriginGitPlanPushReport;
+
+    /// Sends each of `objects` the mirror at `destination` does not hold
+    /// yet, from the store of the repository `repo_id`'s vault, through
+    /// [`crate::origin::lfs::upload_lfs_objects`] over the host's broker:
+    /// `destination` is judged again before each exchange, and the mirror's
+    /// credential is installed by the broker alone. Each exchange goes once.
+    /// The report carries the orchestration's answer, the broker's
+    /// isolation and its credential rewrite count.
+    fn push_lfs_objects(
+        &self,
+        repo_id: EntityId,
+        destination: &OriginPublishDestination,
+        objects: &[(LfsOid, u64)],
+    ) -> LfsTransferReport;
 }
 
 /// One exact publish's push: its repository's id and the destination the
