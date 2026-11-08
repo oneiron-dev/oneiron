@@ -44,6 +44,7 @@ pub(crate) fn sdk_error(
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
         legal_hold: None,
+        room_join_hold: None,
     }
 }
 
