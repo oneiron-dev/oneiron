@@ -3,8 +3,9 @@
 //! can carry an old time, and the notify counter is process-local. The
 //! engine's own hook feeds live in submodules: the settlement feed in
 //! `settlement`, and the two watcher sources (FIX 4749) in `schedule` and
-//! `surface_inbound`. Those three are the feeds the runner prunes and an
-//! erase scrubs; the claim changelog is neither.
+//! `surface_inbound`. Those three are the feeds the runner and each
+//! housekeeping pass prune and an erase scrubs; the claim changelog is
+//! neither.
 
 mod schedule;
 mod settlement;

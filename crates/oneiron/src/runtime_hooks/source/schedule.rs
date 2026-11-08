@@ -7,18 +7,21 @@
 //! write: a row leaves the index and gains its feed sequence together, so
 //! each tick is released once per vault, and feed order is commit order.
 //! It releases them at each fact-hook runner pass and each housekeeping
-//! pass, hooks on or off, with a binding to take a tick or none, so a watch
-//! TASK settles at its due time wherever the vault serves; a stopped vault
-//! wakes for its earliest due row (FIX 22180). Hooks read the feed through
-//! their own cursors, as they read the settlement feed, so a restart neither
-//! skips nor repeats a tick. A watch TASK's tick settles it Done in the
-//! write that releases it (FIX 22121); the hooks bound at that release are
-//! still offered the tick, as it was open at its due time, and a hook bound
-//! after it is not (review #6784). A binding a peer enabled is bound here
-//! when this node first places its cursor.
-//! The runner prunes the rows every hook binding has passed, but an open
-//! TASK's own tick, and an erase leaves an erased TASK's rows at their
-//! sequences with no TASK in them.
+//! pass, the owner's run now and `oneiron maintain` included, hooks on or
+//! off, with a binding to take a tick or none, so a watch TASK settles at
+//! its due time wherever the vault serves; a stopped vault wakes for its
+//! earliest due row, and `oneiron maintain` settles its due watch TASKs
+//! (FIX 22180). Hooks read the feed through their own cursors, as they read
+//! the settlement feed, so a restart neither skips nor repeats a tick. A
+//! watch TASK's tick settles it Done in the write that releases it
+//! (FIX 22121); the hooks bound at that release are still offered the
+//! tick, as it was open at its due time, and a hook bound after it is not
+//! (review #6784). A binding a peer enabled is bound here when this node
+//! first places its cursor.
+//! The runner and each housekeeping pass prune the rows every hook binding
+//! has passed, but an open TASK's own tick, so a host that runs no runner
+//! keeps the feed bounded too, and an erase leaves an erased TASK's rows at
+//! their sequences with no TASK in them.
 
 use std::ops::Bound;
 
@@ -141,9 +144,12 @@ fn releases_here(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
 /// time leaves the index with no tick. A watch TASK settles Done with its
 /// tick, whether or not a hook takes it (FIX 22121). Returns whether due
 /// rows remain past the bound. The fact-hook runner calls it at the start of
-/// each pass and the housekeeping pass on each host tick, whatever the
-/// bindings and the hooks switch (FIX 22180); a row two releases both plan
-/// moves once.
+/// each pass and each housekeeping pass before its sweeps, the host tick's,
+/// the owner's run now and `oneiron maintain`, whatever the bindings and the
+/// hooks switch (FIX 22180). A row two releases both plan moves once: the
+/// writes commit one after the other, the later one finds the row gone from
+/// the due index and skips it, and each draws its sequences in its own
+/// write.
 pub(crate) fn release_due_ticks(vault: &Vault, now: u64) -> Result<bool> {
     let (due, more) = {
         let rtxn = vault.store.env.read_txn()?;
