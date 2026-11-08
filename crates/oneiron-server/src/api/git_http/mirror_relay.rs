@@ -1,43 +1,63 @@
-//! An exact publish's mirror git through the credential broker on a served
-//! host (ARCH-0069 OSH-3, ARCH-0068 RC4, FIX 19083).
+//! An origin mirror's git through the credential broker on a served host:
+//! an exact publish's and an automatic mirror push plan's (ARCH-0069 OSH-3,
+//! ARCH-0068 RC4, FIX 19083).
 //!
 //! Serve installs this transport on its vault where it attaches the broker
 //! ([`install_origin_git_transport`]). It holds the vault and the broker
 //! weakly, since the broker's custody door holds the vault, and for each
-//! authenticated read of the mirror's branch and for the one push it starts
-//! a mirror relay of that call alone:
+//! authenticated read at the mirror (an exact publish's branch, a plan's
+//! refs) and for each push (an exact publish's one push, a plan's one
+//! frozen batch) it starts a mirror relay of that call alone:
 //!
 //! - **Relay.** Stock Git lists or pushes, with no credential, to a loopback
 //!   listener on an OS-assigned port under a fresh random path, which serves
 //!   the advertisement and the RPC of one service of the one destination
-//!   repository: `git-upload-pack` for the read, `git-receive-pack` for the
+//!   repository: `git-upload-pack` for a read, `git-receive-pack` for a
 //!   push. Its URL rides Git's argv, which other local users can read, so it
 //!   is no capability: each request must carry the relay's random ticket in
 //!   a header Git's environment holds, and anything else is not found.
-//! - **Exchange.** Each request is judged again (for the push, the mirror
-//!   still the destination the request recorded, as the dispatch judged it
-//!   before its claim), its body spooled to a private unnamed file on the
-//!   vault's disk, each write first asking for room above the disk reserve
-//!   (`limits.disk_reserve_bytes`), decoded from any gzip, and its digest
-//!   taken. The broker gets the exchange and its body and acknowledges both;
-//!   only then is the mirror's credential released at the custody door
-//!   (`origin:mirror-push`), the same basic-auth value the direct path
-//!   builds, copied once and handed to the broker, which installs it and
-//!   sends. The reply streams back to Git exactly as the mirror sent it; a
-//!   reply the broker cut ends Git's read broken, never clean.
+//! - **Exchange.** Each request is judged again (for a push, the mirror
+//!   still the destination the request or plan recorded, as the dispatch
+//!   judged it before its claim), its body spooled to a private unnamed
+//!   file on the vault's disk, each write first asking for room above the
+//!   disk reserve (`limits.disk_reserve_bytes`), decoded from any gzip, and
+//!   its digest taken. The broker gets the exchange and its body and
+//!   acknowledges both; only then is the mirror's credential released at
+//!   the custody door (`origin:mirror-push`), the same basic-auth value the
+//!   direct path builds, copied once and handed to the broker, which
+//!   installs it and sends. The reply streams back to Git exactly as the
+//!   mirror sent it; a reply the broker cut ends Git's read broken, never
+//!   clean.
 //! - **Outcome.** Git's own porcelain still decides: applied, rejected or
-//!   unknown. An unknown push's detail names the first refusal any exchange
+//!   unknown, for the one branch or for each ref of the batch. An unknown
+//!   push's detail (a batch's failure) names the first refusal any exchange
 //!   met and whether the push's RPC reached the broker: `not sent` before,
 //!   `unproven` after. Once Git returns the relay stops, and no exchange
 //!   hands the broker the credential after, so a `not sent` holds. The
-//!   publish settles an unknown push by an authenticated reread and never
-//!   sends it again. The broker's isolation goes on the request.
+//!   relay sends each exchange once. The publish settles an unknown push by
+//!   an authenticated reread and never sends it again; a plan reconciles an
+//!   unknown ref by its own reread and resends only its same frozen tuple,
+//!   under its own policy. The broker's isolation goes on the request, or on
+//!   the batch.
+//!
+//! A mirror run's Git-LFS upload goes through the same broker with no relay
+//! (FIX 19876): the engine's LFS orchestration runs here over the broker's
+//! LFS transport (`lfs_broker`), each batch call and object action judged
+//! again against the destination the run read, its spool keeping the disk
+//! reserve, and the mirror's credential released at the same custody door
+//! only after the broker acknowledged the exchange's body: for each batch
+//! call, and for an action the batch reply handed it back for, which the
+//! broker installs again only at the mirror's own origin. Object actions
+//! carry the headers the batch reply named, as given, never the mirror's
+//! credential. The broker's isolation and its rewrite count go on the run,
+//! apart from the git pushes'.
 //!
 //! No pack size or call time is bounded here: each step waits at most the
 //! host's transfer idle limit without progress, a write at the disk reserve
 //! is refused, and Git's exit ends the relay. No host allowlist applies: a
-//! relay serves the one repository its request names.
+//! relay serves the one repository its request or plan names.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
@@ -50,11 +70,16 @@ use axum::http::header::CONTENT_TYPE;
 use axum::http::request::Parts;
 use axum::response::Response;
 use axum::routing::{get, post};
-use oneiron::git_wire::{GitPublishPushOutcome, GitRefName, GitRemoteTip, GitWire, GitWireRepo};
+use oneiron::git_wire::{
+    GitOid, GitPlanPushReport, GitPlanRefOutcome, GitPublishPushOutcome, GitRefName, GitRemoteTip,
+    GitWire, GitWireRepo,
+};
 use oneiron::llm::BrokerIsolation;
 use oneiron::origin::git_transport::{
-    OriginGitPublishPush, OriginGitPushReport, OriginGitTransport,
+    OriginGitPlanPush, OriginGitPlanPushReport, OriginGitPublishPush, OriginGitPushReport,
+    OriginGitTransport,
 };
+use oneiron::origin::lfs::{LfsOid, LfsTransferReport, upload_lfs_objects};
 use oneiron::origin::publish::OriginPublishDestination;
 use oneiron::{EntityId, Vault};
 use oneiron_broker::{
@@ -65,10 +90,11 @@ use tokio::sync::oneshot;
 use zeroize::Zeroizing;
 
 use super::broker_relay::{
-    RelayNotes, answer, broker_code, digest_body, serve_loopback, spool_request,
+    RelayNotes, answer, broker_code, broker_isolation, digest_body, serve_loopback, spool_request,
 };
 use super::gate::{advertised_service, header_value, text_response};
 use super::import_source_relay::{carries_relay_ticket, mint_relay_ticket};
+use super::lfs_broker::{BrokeredLfsTransport, LfsCustody};
 use super::routes::GitService;
 use crate::machine::DiskFloor;
 use crate::models::{BrokerContext, WeakBrokerContext};
@@ -79,8 +105,11 @@ const MIRROR_REPO_SEGMENT: &str = "mirror.git";
 /// The prefix of every refusal code a mirror relay notes.
 const MIRROR_CODE_PREFIX: &str = "mirror";
 
-/// Installs on `vault` the transport its exact publishes send their mirror
-/// git through: `broker`, each step waiting at most the transfer idle limit
+/// The prefix of every refusal code a mirror's Git-LFS upload meets.
+const MIRROR_LFS_CODE_PREFIX: &str = "mirror_lfs";
+
+/// Installs on `vault` the transport its origin mirror git goes through:
+/// `broker`, each step waiting at most the transfer idle limit
 /// `idle`, each spool write keeping the vault disk's floor `disk`. Both the
 /// vault and the broker are held weakly.
 pub(crate) fn install_origin_git_transport(
@@ -97,7 +126,7 @@ pub(crate) fn install_origin_git_transport(
     }));
 }
 
-/// The served host's transport for an exact publish's mirror git.
+/// The served host's transport for an origin mirror's git.
 struct BrokeredOriginGitTransport {
     vault: Weak<Vault>,
     broker: WeakBrokerContext,
@@ -141,7 +170,7 @@ impl BrokeredOriginGitTransport {
             stopped: AtomicBool::new(false),
         });
         MirrorRelay::start(leg, repository).map_err(|error| {
-            tracing::warn!(%error, "an exact publish's mirror relay did not start");
+            tracing::warn!(%error, "an origin mirror relay did not start");
             format!("{MIRROR_CODE_PREFIX}_relay_unavailable")
         })
     }
@@ -197,44 +226,232 @@ impl OriginGitTransport for BrokeredOriginGitTransport {
             broker_isolation: end.isolation,
         }
     }
+
+    fn read_remote_refs(
+        &self,
+        wire: &GitWire<'_>,
+        repo: &GitWireRepo,
+        destination: &OriginPublishDestination,
+        names: &[GitRefName],
+    ) -> oneiron::Result<BTreeMap<GitRefName, GitOid>> {
+        // No name, no read: as the direct read, no child runs.
+        if names.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let relay = self
+            .relay(oneiron_broker::GitService::UploadPack, destination, None)
+            .map_err(read_refused)?;
+        let read = wire.read_remote_refs_via_relay(repo, &relay.url, &relay.ticket, names);
+        let end = relay.stop();
+        match (read, end.noted) {
+            (Err(_), Some(code)) => Err(read_refused(code)),
+            (read, _) => read,
+        }
+    }
+
+    fn push_mirror_plan_batch(
+        &self,
+        wire: &GitWire<'_>,
+        repo: &GitWireRepo,
+        push: &OriginGitPlanPush<'_>,
+    ) -> OriginGitPlanPushReport {
+        let service = oneiron_broker::GitService::ReceivePack;
+        let relay = match self.relay(service, push.destination, Some(push.repo_id)) {
+            Ok(relay) => relay,
+            Err(code) => {
+                return OriginGitPlanPushReport {
+                    report: Ok(unpushed_plan_report(
+                        push.refs.len(),
+                        format!("{code}, not sent"),
+                    )),
+                    broker_isolation: None,
+                };
+            }
+        };
+        let pushed = wire.push_mirror_plan_batch_via_relay(
+            repo,
+            &relay.url,
+            &relay.ticket,
+            push.refs,
+            push.hold,
+        );
+        let end = relay.stop();
+        OriginGitPlanPushReport {
+            report: Ok(pushed_plan_report(pushed, push.refs.len(), &end)),
+            broker_isolation: end.isolation,
+        }
+    }
+
+    fn push_lfs_objects(
+        &self,
+        repo_id: EntityId,
+        destination: &OriginPublishDestination,
+        objects: &[(LfsOid, u64)],
+    ) -> LfsTransferReport {
+        let unsent = |code: String| LfsTransferReport {
+            missing: Err(oneiron::Error::Refused(format!(
+                "{code}: the mirror's Git-LFS objects were not sent through the credential broker"
+            ))),
+            broker_isolation: None,
+            credential_rewrites: 0,
+        };
+        let (Some(vault), Some(broker)) = (self.vault.upgrade(), self.broker.upgrade()) else {
+            return unsent(format!("{MIRROR_LFS_CODE_PREFIX}_broker_unavailable"));
+        };
+        let Ok(repository) = GitRepository::parse(&destination.url) else {
+            return unsent(format!("{MIRROR_LFS_CODE_PREFIX}_url_malformed"));
+        };
+        let custody = MirrorLfsCustody {
+            vault: &vault,
+            repo_id,
+            destination,
+        };
+        let transport = BrokeredLfsTransport::new(
+            &broker,
+            &custody,
+            repository,
+            self.idle,
+            &self.disk,
+            MIRROR_LFS_CODE_PREFIX,
+        );
+        let missing = upload_lfs_objects(&vault, &transport, objects);
+        transport.report(missing)
+    }
+}
+
+/// A mirror's custody for its Git-LFS upload: the destination the run read,
+/// judged again before each exchange as a push's is, and the mirror's
+/// credential.
+struct MirrorLfsCustody<'a> {
+    vault: &'a Vault,
+    repo_id: EntityId,
+    destination: &'a OriginPublishDestination,
+}
+
+impl LfsCustody for MirrorLfsCustody<'_> {
+    fn admitted(&self) -> Result<(), String> {
+        mirror_destination_admitted(self.vault, self.repo_id, self.destination)
+    }
+
+    fn credential(&self) -> Result<Zeroizing<Vec<u8>>, String> {
+        mirror_credential(self.vault, self.destination)
+    }
+}
+
+/// Whether the mirror of the repository `repo_id` is still `destination`,
+/// judged again now; otherwise the refusal's code.
+fn mirror_destination_admitted(
+    vault: &Vault,
+    repo_id: EntityId,
+    destination: &OriginPublishDestination,
+) -> Result<(), String> {
+    vault
+        .check_origin_publish_destination(repo_id, destination)
+        .map_err(|error| match error {
+            oneiron::Error::Refused(reason) => reason
+                .split(':')
+                .next()
+                .unwrap_or("destination_changed")
+                .to_owned(),
+            _ => "destination_unreadable".to_owned(),
+        })
+}
+
+/// The mirror's basic-auth value for `destination`, released at the custody
+/// door and copied once into a buffer wiped on drop.
+fn mirror_credential(
+    vault: &Vault,
+    destination: &OriginPublishDestination,
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    let mut secret = Zeroizing::new(Vec::new());
+    let mut oversized = false;
+    vault
+        .with_publish_credential(destination, &mut |header: &str| {
+            if header.len() > MAX_SECRET {
+                oversized = true;
+                return;
+            }
+            // Sized once, so no reallocation leaves a copy behind.
+            secret.reserve_exact(header.len());
+            secret.extend_from_slice(header.as_bytes());
+        })
+        .map_err(|error| match error {
+            oneiron::Error::Refused(reason) => reason
+                .split(':')
+                .next()
+                .unwrap_or("credential_refused")
+                .to_owned(),
+            _ => format!("{MIRROR_CODE_PREFIX}_credential_refused_at_door"),
+        })?;
+    if oversized || secret.is_empty() {
+        return Err(format!("{MIRROR_CODE_PREFIX}_credential_not_a_header"));
+    }
+    Ok(secret)
 }
 
 /// A read's failure through the relay, naming its refusal code.
 fn read_refused(code: String) -> oneiron::Error {
     oneiron::Error::Refused(format!(
-        "{code}: the mirror's branch was not read through the credential broker"
+        "{code}: the mirror was not read through the credential broker"
     ))
 }
 
-/// The push's outcome as its child reported it. An unknown one names the
-/// first refusal its exchanges met and whether its RPC reached the broker:
-/// `not sent` before, `unproven` after. Applied and rejected stand as Git
-/// reported them.
-fn pushed_outcome(
-    pushed: oneiron::Result<GitPublishPushOutcome>,
-    end: &RelayEnd,
-) -> GitPublishPushOutcome {
+/// `detail` of a push through the relay, after the first refusal its
+/// exchanges met and whether its RPC reached the broker: `not sent` before,
+/// `unproven` after.
+fn relay_detail(end: &RelayEnd, detail: &str) -> String {
     let stage = if end.rpc_opened {
         "unproven"
     } else {
         "not sent"
     };
-    let named = |detail: String| match &end.noted {
+    match &end.noted {
         Some(code) => format!("{code}, {stage}; {detail}"),
         None => format!("{stage}; {detail}"),
-    };
+    }
+}
+
+/// The push's outcome as its child reported it. An unknown one names the
+/// first refusal its exchanges met and whether its RPC reached the broker
+/// ([`relay_detail`]). Applied and rejected stand as Git reported them.
+fn pushed_outcome(
+    pushed: oneiron::Result<GitPublishPushOutcome>,
+    end: &RelayEnd,
+) -> GitPublishPushOutcome {
     match pushed {
-        Ok(GitPublishPushOutcome::Unknown(detail)) => GitPublishPushOutcome::Unknown(named(detail)),
-        Err(error) => GitPublishPushOutcome::Unknown(named(error.to_string())),
+        Ok(GitPublishPushOutcome::Unknown(detail)) => {
+            GitPublishPushOutcome::Unknown(relay_detail(end, &detail))
+        }
+        Err(error) => GitPublishPushOutcome::Unknown(relay_detail(end, &error.to_string())),
         Ok(reported) => reported,
     }
 }
 
-/// The receipt spelling of the broker's isolation.
-const fn broker_isolation(isolation: Isolation) -> BrokerIsolation {
-    match isolation {
-        Isolation::SeparateUser => BrokerIsolation::SeparateUser,
-        Isolation::SameUser => BrokerIsolation::SameUser,
+/// A plan batch's report as its child gave it. A child that did not
+/// succeed names, before its cause, the first refusal its exchanges met and
+/// whether its RPC reached the broker ([`relay_detail`]); one that did not
+/// run leaves every ref unknown, with that cause. Each ref's outcome stands
+/// as Git reported it.
+fn pushed_plan_report(
+    pushed: oneiron::Result<GitPlanPushReport>,
+    refs: usize,
+    end: &RelayEnd,
+) -> GitPlanPushReport {
+    match pushed {
+        Ok(GitPlanPushReport { outcomes, failure }) => GitPlanPushReport {
+            outcomes,
+            failure: failure.map(|failure| relay_detail(end, &failure)),
+        },
+        Err(error) => unpushed_plan_report(refs, relay_detail(end, &error.to_string())),
+    }
+}
+
+/// The report of a plan batch no child reported on: each of its `refs`
+/// unknown, with `failure`.
+fn unpushed_plan_report(refs: usize, failure: String) -> GitPlanPushReport {
+    GitPlanPushReport {
+        outcomes: vec![GitPlanRefOutcome::Unknown; refs],
+        failure: Some(failure),
     }
 }
 
@@ -269,51 +486,19 @@ struct MirrorLeg {
 }
 
 impl MirrorLeg {
-    /// A push's mirror, still the destination its request recorded, judged
-    /// again now. A read is judged by the custody door alone.
+    /// A push's mirror, still the destination its request or plan recorded,
+    /// judged again now. A read is judged by the custody door alone.
     fn admitted(&self) -> Result<(), String> {
         let Some(repo_id) = self.push_of else {
             return Ok(());
         };
-        self.vault
-            .check_origin_publish_destination(repo_id, &self.destination)
-            .map_err(|error| match error {
-                oneiron::Error::Refused(reason) => reason
-                    .split(':')
-                    .next()
-                    .unwrap_or("destination_changed")
-                    .to_owned(),
-                _ => "destination_unreadable".to_owned(),
-            })
+        mirror_destination_admitted(&self.vault, repo_id, &self.destination)
     }
 
     /// The mirror's basic-auth value, released at the custody door for the
     /// recorded destination and copied once into a buffer wiped on drop.
     fn credential(&self) -> Result<Zeroizing<Vec<u8>>, String> {
-        let mut secret = Zeroizing::new(Vec::new());
-        let mut oversized = false;
-        self.vault
-            .with_publish_credential(&self.destination, &mut |header: &str| {
-                if header.len() > MAX_SECRET {
-                    oversized = true;
-                    return;
-                }
-                // Sized once, so no reallocation leaves a copy behind.
-                secret.reserve_exact(header.len());
-                secret.extend_from_slice(header.as_bytes());
-            })
-            .map_err(|error| match error {
-                oneiron::Error::Refused(reason) => reason
-                    .split(':')
-                    .next()
-                    .unwrap_or("credential_refused")
-                    .to_owned(),
-                _ => format!("{MIRROR_CODE_PREFIX}_credential_refused_at_door"),
-            })?;
-        if oversized || secret.is_empty() {
-            return Err(format!("{MIRROR_CODE_PREFIX}_credential_not_a_header"));
-        }
-        Ok(secret)
+        mirror_credential(&self.vault, &self.destination)
     }
 
     /// Sends one exchange of this leg's service with `repository` through
@@ -351,7 +536,7 @@ impl MirrorLeg {
                 .git_connection(self.idle)
                 .await
                 .map_err(|error| {
-                    tracing::warn!(%error, "no credential broker for an exact publish's mirror");
+                    tracing::warn!(%error, "no credential broker for an origin mirror");
                     format!("{MIRROR_CODE_PREFIX}_broker_unavailable")
                 })?;
         let mut body: Box<dyn AsyncRead + Unpin + Send> = match body {
@@ -383,7 +568,7 @@ impl MirrorLeg {
             exchange = ?exchange,
             digest = %header.digest,
             isolation = isolation.as_str(),
-            "an exact publish's mirror exchange went through the credential broker"
+            "an origin mirror exchange went through the credential broker"
         );
         Ok(reply)
     }
@@ -518,8 +703,7 @@ impl MirrorRelay {
                 post(mirror_rpc),
             )
             .with_state(state);
-        let (port, stop) =
-            serve_loopback(leg.broker.runtime(), app, "an exact publish's mirror relay")?;
+        let (port, stop) = serve_loopback(leg.broker.runtime(), app, "an origin mirror relay")?;
         Ok(Self {
             url: format!("http://127.0.0.1:{port}{base}"),
             ticket,
