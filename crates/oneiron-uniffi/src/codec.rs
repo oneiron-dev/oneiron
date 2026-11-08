@@ -707,6 +707,9 @@ impl Lift<engine::ClaimView> for ClaimView {
             source: view.source,
             world_ref: view.world_ref,
             scope: Lift::lift(view.scope)?,
+            claim_scope: lift_record("ClaimView.claim_scope", &view.claim_scope)?,
+            made_by: lift_record("ClaimView.made_by", &view.made_by)?,
+            claim: lift_record("ClaimView.claim", &view.claim)?,
             valid_from: optional_signed("valid_from", view.valid_from)?,
             valid_to: optional_signed("valid_to", view.valid_to)?,
             salience: view.salience,
@@ -871,6 +874,7 @@ impl Lift<engine::EntityView> for EntityView {
             occurred_end: signed_seconds("occurred_end", view.occurred_end)?,
             learned_at: signed_seconds("learned_at", view.learned_at)?,
             body: Lift::lift(view.body)?,
+            made_by: lift_record("EntityView.made_by", &view.made_by)?,
         })
     }
 }
