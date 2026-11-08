@@ -445,7 +445,9 @@ impl ShadowBridgeHost<'_> {
                 let missing = ShadowUnavailable::new(Reason::SourceMissing, "stored_reply_body");
                 return Err(self.stop(missing));
             };
-            reply.body.seed(&self.store)?;
+            if let Some(bytes) = &reply.body.bytes {
+                self.store.import(reply.body.output.output_ref(), bytes)?;
+            }
             let output = reply.body.output.clone();
             if !self
                 .results

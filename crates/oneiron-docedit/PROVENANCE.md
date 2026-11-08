@@ -148,18 +148,6 @@ stripping and this carrier. Native wire/schema versions and marker-free
 replacement semantics are unchanged; no Word-runtime comparison is claimed.
 
 
-The nested-table identity change (2026-11-07, FIX 21302) touches `src/import.rs`.
-Rows, cells and content-control-wrapped cells pass the existing body/story
-`table_counter` into nested tables instead of resetting it in each cell.
-The existing `tbl_N` mint and derived row/cell names therefore identify every
-nested table within that parse scope without colliding with an ancestor or a
-table in another cell. Each story keeps its own counter; these are not global
-identities. A later outer table can receive a different native id after an
-earlier nested table. No old-id reader, new address field or format version is
-added. Paragraph counters, XML content, tracking, formatting, materialization
-and the direct-only story-cell editing surface are unchanged. This fixes the
-native producer identity only; it does not add nested story-cell editing.
-
 ## Native deck transaction graphic ceilings (FIX 10653)
 
 A deck transaction may carry `graphics` with the existing `svg_bytes`,
