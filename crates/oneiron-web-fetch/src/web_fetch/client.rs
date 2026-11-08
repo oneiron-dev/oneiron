@@ -1,85 +1,75 @@
-//! The readability rung's HTTP client as a host builds it (FIX 7123). The
-//! server builds its default ladder's client here, and a host that supplies
-//! its own ladder builds the same client through [`build_web_fetch_client`],
-//! so on a managed (hosted) node an injected ladder's client checks every
-//! redirect hop too. [`build_single_hop_client`] is that client for one
-//! request at a time, for a host that performs each request a browser makes
-//! (FIX 7122). [`hosted_dns_resolver`] is that client's resolver alone, for
-//! a host that drives those requests on its own async runtime (FIX 7557).
+//! The readability rung's HTTP client as a host builds it (FIX 7123,
+//! FIX 4734). [`build_single_hop_client`] builds a client that follows no
+//! redirect, and the readability rung takes it only as that
+//! [`SingleHopClient`]: the rung follows each redirect hop itself, holding
+//! it to a same-site crawl's pinned origin and checking it with a managed
+//! node's guard before it is sent, so no client a host hands in follows a
+//! hop unchecked. [`hosted_dns_resolver`] is that client's resolver alone,
+//! for a host that drives its own requests, a browser's among them, on its
+//! own async runtime (FIX 7122, FIX 7557).
 //!
-//! On a managed node every name either client connects to resolves through
+//! On a managed node every name the client connects to resolves through
 //! the node's [`HostedEgressGuard`]: a name with any address that is hosted
 //! infrastructure, or a private-network address while the name is no
 //! operator origin's (FIX 7657), fails its connection with the
 //! [`HostedEgressRefusal`](super::HostedEgressRefusal), and the connection
-//! goes only to the addresses the guard just admitted. Neither client uses a
+//! goes only to the addresses the guard just admitted. The client uses no
 //! proxy, so nothing resolves the name elsewhere.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
+
+use reqwest::Url;
 
 use super::HostedEgressGuard;
 
-/// The readability rung's client: no proxy, every other setting reqwest's
-/// default. With `Some(guard)`, a managed node's client: every name it
-/// connects to, a redirect's included, resolves through `guard`, and a
-/// redirect `guard` refuses (an address literal it refuses, or a listed
-/// private name at an origin no entry lists) fails with the
-/// [`HostedEgressRefusal`](super::HostedEgressRefusal); other redirects
-/// follow reqwest's default policy. With `None`, the plain client a
-/// self-hosted node fetches with.
-///
-/// The ladder still checks the page it is asked for, an address literal
-/// included, before this client sends the request.
-///
-/// # Errors
-/// Returns reqwest's error when the client cannot be built.
-pub fn build_web_fetch_client(
-    guard: Option<Arc<HostedEgressGuard>>,
-) -> reqwest::Result<reqwest::blocking::Client> {
-    no_proxy_client(guard.map(|guard| (Arc::clone(&guard), hosted_redirects(guard))))
+/// A blocking client that follows no redirect, for the readability rung
+/// ([`NativeReadabilityRenderer::new`](super::NativeReadabilityRenderer::new)),
+/// built only by [`build_single_hop_client`]. Its client is private: the
+/// rung sends one request per hop through it.
+#[derive(Debug, Clone)]
+pub struct SingleHopClient(reqwest::blocking::Client);
+
+impl SingleHopClient {
+    /// One GET of `url`, never followed past a redirect.
+    pub(super) fn get(&self, url: Url) -> reqwest::blocking::RequestBuilder {
+        self.0.get(url)
+    }
 }
 
-/// A managed node's client for exactly one request: the guarded client of
-/// [`build_web_fetch_client`], following no redirect, for a host that
-/// performs each request a browser makes, every redirect hop included, as
-/// its own request (FIX 7122). Each connection resolves its name once,
-/// through `guard`, and goes only to the addresses the guard admitted; the
-/// request keeps its URL, so its Host header and TLS server name stay the
-/// requested name. An address-literal URL resolves nothing: its caller checks
-/// that address with [`HostedEgressGuard::check_request`] before sending,
-/// and a named one's origin with [`HostedEgressGuard::refuses_origin`].
+/// The readability rung's client: no proxy, following no redirect, every
+/// other setting reqwest's default. With `Some(guard)`, a managed node's:
+/// every name it connects to resolves through `guard`, a name `guard`
+/// refuses by its answers fails its connection with the
+/// [`HostedEgressRefusal`](super::HostedEgressRefusal), and the connection
+/// goes only to the addresses the guard admitted; the request keeps its URL,
+/// so its Host header and TLS server name stay the requested name. With
+/// `None`, the plain client a self-hosted node fetches with.
+///
+/// The rung checks each URL before this client sends it: the page, and each
+/// redirect hop, which it follows itself (FIX 4734).
 ///
 /// # Errors
 /// Returns reqwest's error when the client cannot be built.
 pub fn build_single_hop_client(
-    guard: Arc<HostedEgressGuard>,
-) -> reqwest::Result<reqwest::blocking::Client> {
-    no_proxy_client(Some((guard, reqwest::redirect::Policy::none())))
+    guard: Option<Arc<HostedEgressGuard>>,
+) -> reqwest::Result<SingleHopClient> {
+    let builder = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none());
+    let builder = match guard {
+        Some(guard) => builder.dns_resolver(Arc::new(HostedResolver(guard))),
+        None => builder,
+    };
+    builder.build().map(SingleHopClient)
 }
 
 /// The guarded resolver as an async client takes it: every name the client
 /// connects to resolves through `guard`, exactly as with
-/// [`build_single_hop_client`], while the host drives its requests on its
-/// own runtime, where each stays cancellable (FIX 7557).
+/// [`build_single_hop_client`]`(Some(guard))`, while the host drives its
+/// requests on its own runtime, where each stays cancellable (FIX 7557).
 pub fn hosted_dns_resolver(guard: Arc<HostedEgressGuard>) -> Arc<impl reqwest::dns::Resolve> {
     Arc::new(HostedResolver(guard))
-}
-
-/// The body both builders share: a client with no proxy; with `guarded`, its
-/// guard resolves every name the client connects to and its policy decides
-/// each redirect, and without, reqwest's defaults stand.
-fn no_proxy_client(
-    guarded: Option<(Arc<HostedEgressGuard>, reqwest::redirect::Policy)>,
-) -> reqwest::Result<reqwest::blocking::Client> {
-    let builder = reqwest::blocking::Client::builder().no_proxy();
-    let builder = match guarded {
-        Some((guard, redirects)) => builder
-            .dns_resolver(Arc::new(HostedResolver(guard)))
-            .redirect(redirects),
-        None => builder,
-    };
-    builder.build()
 }
 
 /// A managed client's resolver: every name a fetch connects to, a
@@ -107,26 +97,4 @@ async fn resolve_admitted(
         return Err(Box::new(refused));
     }
     Ok(Box::new(addresses.into_iter()))
-}
-
-/// The default redirect policy, with a hop to an address literal the guard
-/// refuses, and every hop to a listed private name at an origin no entry
-/// lists (FIX 7657), refused: a named hop's addresses are checked by
-/// [`HostedResolver`] when it connects.
-fn hosted_redirects(guard: Arc<HostedEgressGuard>) -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(move |attempt| {
-        let url = attempt.url();
-        let literal = url
-            .host_str()
-            .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
-            .and_then(|host| host.parse::<IpAddr>().ok());
-        let refused = match literal {
-            Some(ip) => guard.refuses(ip),
-            None => guard.refuses_origin(url),
-        };
-        if let Some(refused) = refused {
-            return attempt.error(refused);
-        }
-        reqwest::redirect::Policy::default().redirect(attempt)
-    })
 }

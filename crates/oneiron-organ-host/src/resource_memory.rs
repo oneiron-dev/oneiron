@@ -63,6 +63,11 @@ pub trait FloorLease: Send {
 /// server's implementation is its machine memory line, shared with every
 /// other lease it gives.
 pub trait MachineFloor: Send + Sync {
+    /// Records `bytes` already allocated, held until the returned lease drops.
+    /// This does not admit a new allocation and never waits or refuses. Use
+    /// the actual buffer capacity, and free the buffer before its lease.
+    fn track_allocated(&self, bytes: u64) -> Box<dyn FloorLease>;
+
     /// A lease of `bytes` of the machine's memory, held until what it returns
     /// drops: admitted as soon as they fit, waiting no later than `deadline`
     /// and no longer than `stopped` allows.

@@ -58,6 +58,7 @@ use oneiron_store::git_wire::record;
 use oneiron_store::git_wire::repo;
 mod repository_profile;
 mod retained_object;
+mod secret_purge;
 mod wire_publish;
 mod wire_reads;
 mod wire_stage;
@@ -107,7 +108,8 @@ pub(crate) use self::repo::{
     try_lock_repository_for_maintenance,
 };
 pub(crate) use oneiron_store::git_wire::path_text::{
-    git_path_bytes, git_path_os_str, git_path_string, git_path_text, git_path_text_of_os,
+    git_path_bytes, git_path_has_control, git_path_os_str, git_path_string, git_path_text,
+    git_path_text_of_os,
 };
 
 // The flat git_wire.rs module used to provide these names to the sibling test
@@ -136,4 +138,4 @@ use std::path::Path;
 #[cfg(test)]
 use std::time::Duration;
 
-pub(crate) use hub_read::read_hub_git;
+pub(crate) use hub_read::{read_hub_git, read_local_hub_git};

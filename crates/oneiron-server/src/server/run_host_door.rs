@@ -85,6 +85,7 @@ use crate::decision_verdict::{HELD_IMAGE, HeldImage, on_caller_payer, run_verdic
 use crate::slide_render::{AdmittedRenderer, RenderRefusal};
 
 mod board_carrier;
+mod graph_skill;
 mod host_rows;
 mod media_step;
 mod resident_rows;
@@ -416,7 +417,7 @@ impl AgentVerbDoor for RunHostDoor {
                         media_step.as_ref(),
                     )
                 }
-                None => answer_as_agent_in_step(
+                None => answer_as_agent_with_run(
                     &server,
                     actor,
                     &origin,
@@ -426,6 +427,7 @@ impl AgentVerbDoor for RunHostDoor {
                     held,
                     line.as_ref(),
                     attempt.as_deref(),
+                    Some(run_id),
                     media_step.as_ref(),
                 ),
             })
@@ -733,11 +735,32 @@ pub(super) fn answer_as_agent_in_step(
     attempt: Option<&str>,
     media_step: Option<&RunMediaStep>,
 ) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
+    answer_as_agent_with_run(
+        server, actor, origin, invocation, verb, input, held, line, attempt, None, media_step,
+    )
+}
+
+fn answer_as_agent_with_run(
+    server: &SyncServer,
+    actor: WriteActor,
+    origin: &HostWriteOrigin,
+    invocation: InvocationId,
+    verb: AgentVerb,
+    input: Value,
+    held: Option<HeldImage>,
+    line: Option<&RunAdmission>,
+    attempt: Option<&str>,
+    run_id: Option<EntityId>,
+    media_step: Option<&RunMediaStep>,
+) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
     // The agent's task work waits its turn in the vault's line (Rule 5), as
     // a served caller's does, and runs on it.
-    let turn = verb
-        .is_task_work()
-        .then(|| Arc::new(server.vault.admit_task_work_blocking(actor.entity_ref())));
+    let turn = verb.is_task_work().then(|| {
+        Arc::new(server.vault.admit_task_work_blocking_observed(
+            actor.entity_ref(),
+            crate::api::admission_observer(),
+        ))
+    });
     let producers = ProducerRows::default();
     let memory = agent_memory(server, actor, origin, invocation)
         .with_task_decisions(server.decision_host().task_decisions()?)
@@ -762,6 +785,8 @@ pub(super) fn answer_as_agent_in_step(
                     input,
                     line,
                     attempt,
+                    origin,
+                    run_id,
                     media_step,
                     &mut evidence,
                 )
@@ -818,6 +843,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::AiVideoCancel
             | AgentVerb::AiVerdict
             | AgentVerb::VaultGraphAsk
+            | AgentVerb::SelfSkillsGraph
             | AgentVerb::VaultQuestionsCreate
             | AgentVerb::VaultQuestionsEdit
             | AgentVerb::VaultQuestionsPause

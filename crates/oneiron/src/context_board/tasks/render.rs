@@ -218,6 +218,10 @@ fn cause_tokens(intent: &TaskIntentPresence) -> Vec<String> {
     if intent.connector_outcome == Some(ConnectorSendTaskOutcome::Ambiguous) {
         return vec!["ambiguous".to_owned()];
     }
+    // FIX 4747: an uncertain send the owner chose not to resend.
+    if intent.connector_outcome == Some(ConnectorSendTaskOutcome::OwnerDeclinedResend) {
+        return vec!["owner_declined_resend".to_owned()];
+    }
     if let Some(disposition) = intent.ladder_disposition {
         return ladder_board_projection(disposition)
             .tokens
@@ -271,6 +275,8 @@ pub(super) fn bare_job_row(job: &JobPresence) -> TaskRow {
         counter_task_ref: None,
         cancel_pathology: job.cancel_pathology.clone(),
         widening: None,
+        // FIX685: a bare job row is no intent, so it carries no due stamp.
+        due_at: None,
         fits: Vec::new(),
     }
 }

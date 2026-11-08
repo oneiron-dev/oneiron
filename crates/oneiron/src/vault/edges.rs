@@ -354,6 +354,17 @@ impl Vault {
         filtered_edge_peers_in(&self.store, rtxn, direction, prefix_id, kind, peer_type)
     }
 
+    pub(crate) fn filtered_edge_peers_sourced(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        direction: EdgeDirection,
+        prefix_id: &EntityId,
+        kind: EdgeKind,
+        peer_type: Option<u8>,
+    ) -> Result<(Vec<EntityId>, Option<Vec<EntityId>>)> {
+        filtered_edge_peers_sourced_in(&self.store, rtxn, direction, prefix_id, kind, peer_type)
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "the caller's snapshot and the page's edge run, peer type and resume point"
@@ -626,6 +637,19 @@ pub(crate) fn filtered_edge_peers_in(
     kind: EdgeKind,
     peer_type: Option<u8>,
 ) -> Result<Vec<EntityId>> {
+    Ok(filtered_edge_peers_sourced_in(store, rtxn, direction, prefix_id, kind, peer_type)?.0)
+}
+
+/// The same edge scan beside its native row sources. Stored edge rows have no
+/// EntityId body carrier, including rows whose peers fail the original type filter.
+pub(crate) fn filtered_edge_peers_sourced_in(
+    store: &impl crate::store::ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    direction: EdgeDirection,
+    prefix_id: &EntityId,
+    kind: EdgeKind,
+    peer_type: Option<u8>,
+) -> Result<(Vec<EntityId>, Option<Vec<EntityId>>)> {
     let scope = [
         &[direction as u8][..],
         prefix_id.as_bytes(),
@@ -634,9 +658,11 @@ pub(crate) fn filtered_edge_peers_in(
     .concat();
     let mut count = ScanCount::start(store, rtxn, EngineScan::EdgePeerRows, &scope)?;
     let mut ids = Vec::new();
+    let mut sources = Some(Vec::new());
     for entry in store.port_edges(rtxn, prefix_id, direction, Some(kind), None)? {
         count.row();
         let peer = entry?.target;
+        sources = None;
 
         if let Some(req_type) = peer_type
             && store
@@ -649,5 +675,5 @@ pub(crate) fn filtered_edge_peers_in(
         ids.push(peer);
     }
     count.defer(store);
-    Ok(ids)
+    Ok((ids, sources))
 }

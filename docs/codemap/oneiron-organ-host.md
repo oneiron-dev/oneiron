@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/asks.rs` | src | m | 11 crate-vis | — | Protocol 1.1 asks, the engine side: who answers, and what the receipt records |
 | `src/bin/oneiron-organ-probe.rs` | src | m | 11 crate-vis | — | A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)… |
-| `src/budget.rs` | src | m | 1 struct · 1 fn · 31 crate-vis | BudgetConfig | One admission budget for every organ: threads, memory, in-flight calls |
+| `src/budget.rs` | src | m | 1 struct · 1 fn · 33 crate-vis | BudgetConfig | One admission budget for every organ: threads, memory, in-flight calls |
 | `src/clock.rs` | src | s | 11 crate-vis | — | A call's time, which stops while the call waits for budget room (Engine ruling, 10-20; FIX 6196, 8020) |
 | `src/error.rs` | src | s | 2 enum | HostError, Unavailable | What can go wrong on the engine side of an organ call |
 | `src/fetch.rs` | src | m | 1 struct · 3 crate-vis | GuardedFetch | The granted fetch, `net.fetch`: the engine fetches for an organ that has no network of its own, inside the… |
@@ -23,7 +23,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/host/shutdown.rs` | src | m | 1 struct · 8 fn · 11 crate-vis | MeshCancel | The mesh's stop, as the organ work it admitted sees it (FIX 4755, 4756) |
 | `src/host/sized.rs` | src | s | 3 struct · 5 fn · 8 crate-vis | CallMeasure, CallSize, LentRegion | A call its caller sizes from what it lends (Rule 5): a booking and a process grant that grow with the input… |
 | `src/isolation.rs` | src | s | 1 struct · 2 enum | DescendantFence, NamespaceFact, OrganIsolation | What the kernel isolated an organ process with, as its start found it (`sandbox`): plain facts, read on the… |
-| `src/landing.rs` | src | m | 3 fn | — | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |
+| `src/landing.rs` | src | m | 4 fn | — | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |
 | `src/lib.rs` | src | s | 2 mod · 19 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
 | `src/measure.rs` | src | s | 1 crate-vis | — | The organ host's `[limits]` rows (OF-520, Rule 5): what a call counted and carried, measured where the host… |
 | `src/mesh/client.rs` | src | m | 3 crate-vis | — | The asking side of a mesh organ call: stage the inputs, send the call, answer the organ's asks while it… |
@@ -52,7 +52,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/seal/file_keys.rs` | src | s | 1 struct · 3 fn | FileSealKeys | A seal key held in files (OF-415): a PKCS#8 private key and its PEM certificate chain, named by the host's… |
 | `src/seal/observe.rs` | src | s | 14 crate-vis | — | What one seal or verification call measured, against the engine's `[limits]` rows (OF-520, Rule 5) |
 | `src/seal/pdf_work.rs` | src | m | 3 fn · 1 re-export | — | The seal port's PDF-work adapter: `seal.inspect` + `seal.prepare` over the organ (FIX 7980/8157) |
-| `src/seal/pdf_work/inspect.rs` | src | s | 1 enum · 1 fn | PdfInspectionError | Inspection on the caller's original wall deadline and admitted region |
+| `src/seal/pdf_work/inspect.rs` | src | s | 1 enum · 2 fn | PdfInspectionError | Inspection on the caller's original wall deadline and admitted region |
 | `src/seal/verify.rs` | src | s | 2 crate-vis | — | The seal's fresh verification and its suffix gate (OF-415, C032, Engine ruling D) |
 | `src/slot.rs` | src | m | 1 struct · 1 enum · 15 crate-vis | OrganState, OrganStatus | One installed organ: its process, its crash history, its condition |
 | `src/spec.rs` | src | s | 9 struct · 2 enum · 3 fn | AskGrant, CallClass, FetchGrant, FetchOrigin, HostConfig, LentInput, OrganCall, OrganInput +3 | What the engine installs and what a caller asks |

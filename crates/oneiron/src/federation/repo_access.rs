@@ -36,13 +36,14 @@ use crate::codebase::RepoRef;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::origin::RepoPortableId;
 use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 use super::{
-    AgentGrantStanding, FederationGrantScope, REPO_READ_VERB, RepoAccessBounds, RepoAccessIntent,
-    RepoAccessRefusal, RepoTarget, Scope, own_device_residence_scope,
+    AgentGrantStanding, AgentVerbClasses, FederationGrantScope, REPO_READ_VERB, RepoAccessBounds,
+    RepoAccessIntent, RepoAccessRefusal, RepoTarget, Scope, own_device_residence_scope,
 };
 
 /// A mint names repo bounds its Scope cannot use.
@@ -108,7 +109,20 @@ impl Vault {
         class: EdgeActorClass,
         repo: EntityId,
     ) -> Result<RepoAdmission> {
-        self.admit_repo_in_txn(txn, actor, class, repo, None)
+        self.admit_repo_in_txn(txn, actor, class, repo, None, None)
+    }
+
+    /// The same membership decision for a requested project. The project
+    /// is selection data: the one admitting Grant must itself name it.
+    pub(crate) fn admit_repo_member_in_project_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        class: EdgeActorClass,
+        repo: EntityId,
+        project: EntityId,
+    ) -> Result<RepoAdmission> {
+        self.admit_repo_in_project_in_txn(txn, actor, class, repo, Some(project), None)
     }
 
     /// Admits `actor` to the repo handle `repo` as
@@ -132,6 +146,7 @@ impl Vault {
             actor,
             class,
             repo,
+            None,
             Some((target, RepoAccessIntent::Read)),
         )
     }
@@ -156,6 +171,7 @@ impl Vault {
             actor,
             class,
             repo,
+            None,
             Some((target, RepoAccessIntent::Edit)),
         )
     }
@@ -164,13 +180,34 @@ impl Vault {
     /// membership alone; with one, the first Grant (in id order) whose
     /// bounds admit the target wins, and the refusal is the one that got
     /// furthest across the actor's Grants for this handle, a held Grant's
-    /// [`RepoAccessRefusal::MembershipHeld`] among them.
-    fn admit_repo_in_txn(
+    /// [`RepoAccessRefusal::MembershipHeld`] among them. A supplied portable
+    /// selector resolves to the local handle first; absent or unknown uses
+    /// `repo`. The caller's target must name that same selected handle;
+    /// the selector changes no authority and never repairs a mismatched target.
+    pub(crate) fn admit_repo_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         actor: EntityId,
         class: EdgeActorClass,
         repo: EntityId,
+        portable: Option<&RepoPortableId>,
+        ask: Option<(&RepoTarget, RepoAccessIntent)>,
+    ) -> Result<RepoAdmission> {
+        let resolved = match portable {
+            Some(id) => self.resolve_repo_anchor_by_portable_in_txn(txn, id)?,
+            None => None,
+        };
+        let repo = resolved.unwrap_or(repo);
+        self.admit_repo_in_project_in_txn(txn, actor, class, repo, None, ask)
+    }
+
+    fn admit_repo_in_project_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        class: EdgeActorClass,
+        repo: EntityId,
+        project: Option<EntityId>,
         ask: Option<(&RepoTarget, RepoAccessIntent)>,
     ) -> Result<RepoAdmission> {
         let verb = ask.map_or(REPO_READ_VERB, |(_, intent)| intent.verb());
@@ -183,20 +220,33 @@ impl Vault {
             .shared_vault_creation_in_txn(txn)?
             .map(|creation| creation.vault_id);
         let mut refusal = RepoAccessRefusal::NoMembership;
-        for standing in self.agent_grants_in_txn(txn)? {
+        let grants = self.agent_grants_in_txn(txn)?;
+        let classes = AgentVerbClasses::for_grants_in_txn(
+            &self.store,
+            txn,
+            grants
+                .iter()
+                .filter(|standing| standing.grant.member_ref == actor)
+                .map(|standing| &standing.grant),
+        )?;
+        for standing in &grants {
             let grant = &standing.grant;
             let Some(bounds) = grant.repo_bounds.as_ref() else {
                 continue;
             };
+            // A verb a class the Grant names admits counts as listed (FIX 8735).
             if bounds.repo != repo
+                || project.is_some_and(|project| bounds.project != project)
                 || grant.member_ref != actor
-                || !grant.confers_at(now)
+                || !grant.confers_with_classes_at(now, &classes)
                 || !owners.contains(&standing.delegated_by)
-                || !grant.authority_scope.admits_repo_member(bounds)
+                || !grant
+                    .scope_for_verb(REPO_READ_VERB, &classes)
+                    .admits_repo_member(bounds)
             {
                 continue;
             }
-            match self.agent_grant_gate_in_txn(txn, &standing, shared)? {
+            match self.agent_grant_gate_in_txn(txn, standing, shared)? {
                 GrantGate::Stands => {}
                 GrantGate::Held => {
                     refusal = refusal.max(RepoAccessRefusal::MembershipHeld);
@@ -209,7 +259,7 @@ impl Vault {
             };
             if let Some((target, intent)) = ask
                 && let Err(refused) = grant
-                    .authority_scope
+                    .scope_for_verb(intent.verb(), &classes)
                     .admit_repo_target(bounds, target, intent)
             {
                 refusal = refusal.max(refused);
@@ -283,7 +333,9 @@ impl Vault {
     /// one that passes. Grants are never unioned. `Ok(Err(Some(refused)))`:
     /// no Grant admits the read (the furthest refusal, as the read seam
     /// answers); `Ok(Err(None))`: a Grant admits the read, none of those
-    /// passes.
+    /// passes. `passes` also takes the owner's verb-class rows this
+    /// admission read once (FIX 8735), so a verb it judges resolves classes
+    /// as every other owner-agent door does.
     ///
     /// # Errors
     /// A store, fold or clock failure; never a refusal.
@@ -294,7 +346,7 @@ impl Vault {
         class: EdgeActorClass,
         repo: EntityId,
         target: &RepoTarget,
-        passes: impl Fn(&AgentGrantStanding) -> bool,
+        passes: impl Fn(&AgentGrantStanding, &AgentVerbClasses) -> bool,
     ) -> Result<std::result::Result<RepoMembership, Option<RepoAccessRefusal>>> {
         let intent = RepoAccessIntent::Read;
         if principal_standing_in_txn(self, txn, actor, class, intent.verb())?.is_none() {
@@ -306,20 +358,32 @@ impl Vault {
             .shared_vault_creation_in_txn(txn)?
             .map(|creation| creation.vault_id);
         let mut refusal = Some(RepoAccessRefusal::NoMembership);
-        for standing in self.agent_grants_in_txn(txn)? {
+        let grants = self.agent_grants_in_txn(txn)?;
+        let classes = AgentVerbClasses::for_grants_in_txn(
+            &self.store,
+            txn,
+            grants
+                .iter()
+                .filter(|standing| standing.grant.member_ref == actor)
+                .map(|standing| &standing.grant),
+        )?;
+        for standing in &grants {
             let grant = &standing.grant;
             let Some(bounds) = grant.repo_bounds.as_ref() else {
                 continue;
             };
+            // A verb a class the Grant names admits counts as listed (FIX 8735).
             if bounds.repo != repo
                 || grant.member_ref != actor
-                || !grant.confers_at(now)
+                || !grant.confers_with_classes_at(now, &classes)
                 || !owners.contains(&standing.delegated_by)
-                || !grant.authority_scope.admits_repo_member(bounds)
+                || !grant
+                    .scope_for_verb(REPO_READ_VERB, &classes)
+                    .admits_repo_member(bounds)
             {
                 continue;
             }
-            match self.agent_grant_gate_in_txn(txn, &standing, shared)? {
+            match self.agent_grant_gate_in_txn(txn, standing, shared)? {
                 GrantGate::Stands => {}
                 GrantGate::Held => {
                     refusal =
@@ -332,13 +396,13 @@ impl Vault {
                 continue;
             };
             if let Err(refused) = grant
-                .authority_scope
+                .scope_for_verb(intent.verb(), &classes)
                 .admit_repo_target(bounds, target, intent)
             {
                 refusal = refusal.map(|furthest| furthest.max(refused));
                 continue;
             }
-            if !passes(&standing) {
+            if !passes(standing, &classes) {
                 refusal = None;
                 continue;
             }
@@ -392,10 +456,16 @@ impl Vault {
         let shared = self
             .shared_vault_creation_in_txn(txn)?
             .map(|creation| creation.vault_id);
+        let grants = self.agent_grants_in_txn(txn)?;
+        let classes = super::AgentVerbClasses::for_grants_in_txn(
+            &self.store,
+            txn,
+            grants.iter().map(|standing| &standing.grant),
+        )?;
         let mut held = false;
-        for standing in self.agent_grants_in_txn(txn)? {
+        for standing in grants {
             if standing.grant.repo_bounds.is_some()
-                || !standing.stands_for(actor, verb, now, &owners)
+                || !standing.stands_in_txn(self, txn, actor, verb, now, &owners, &classes)
             {
                 continue;
             }

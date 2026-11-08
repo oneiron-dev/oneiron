@@ -244,7 +244,9 @@ side_tables! {
     /// never synced, and dropped wherever the machine id is. Key: ().
     IDENTITY_PINNED_ROOT: SyncState b"m:pinned_root" Raw;
     /// Sweep refs a hard delete captured from a provenance Claim before its SoftErase emptied the
-    /// body, held until a purge queues its sweep. Key: hex32 (entity id).
+    /// body, and the ids of the rows an erase retired with the entity (FIX 7494), held until a
+    /// purge queues its sweep; and the relayed ask intents a legal hold kept from the entity's
+    /// erase, held until a due legal-hold pass retires them (FIX 20468). Key: hex32 (entity id).
     DELETION_PENDING_SWEEP_REFS: SyncState b"m:sr:" Raw;
     /// Monotonic counter allocating the next u:e: sequence number for one entity's text document.
     /// Key: hex32 (entity id).
@@ -419,6 +421,11 @@ side_tables! {
     /// This machine's sealed bundle cursor (FIX 922): the u64be UTC slot it last finished ‖ the
     /// generation (24) it last took in, when it took one. Key: ().
     SYNC_RESIDENCE_BUNDLE_CURSOR: SyncState b"rbt" Raw;
+    /// A stored window's ready generation (fix list row 19634): u64 little-endian, one higher
+    /// each time a policy wake persists the window again; an absent row is 0. Each live
+    /// connection asks its peer to exchange the window once per generation it has not asked
+    /// for; no send, export or receipt consumes it. Local to this vault. Key: window key.
+    WINDOW_READY_GENERATION: SyncState b"ready:w:" Raw;
     /// A retained federation or maintenance item that carries an entity's bytes, so the entity's
     /// erase scrubs it (FIX 7998). Empty value. Key: hex32 (entity id) then the item's reference.
     SYNC_RETAINED_WORK_CARRIER: SyncState b"retained:carrier:" Raw;
