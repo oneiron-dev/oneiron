@@ -738,7 +738,7 @@ fn with_console_text(
     let message = rebuilt
         .messages
         .get_mut(usize::try_from(console.message).ok()?)?;
-    let ContentPart::Text { text: shown } = message
+    let ContentPart::Text { text: shown, .. } = message
         .content
         .get_mut(usize::try_from(console.part).ok()?)?
     else {

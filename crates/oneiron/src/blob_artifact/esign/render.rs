@@ -116,6 +116,11 @@ pub enum PdfPreparationError {
     /// A caller may ask again. Never malformed.
     #[error("the work's resource wait or deadline passed")]
     Deadline,
+    /// The producer must unwind before admitting a larger complete pool.
+    /// Only the observed allocation prefix is measured; rounded and
+    /// structural reservations are estimates.
+    #[error("the seal input needs a {needed}-byte reservation")]
+    InputReservation { needed: u64, measured: u64 },
 }
 impl From<lopdf::Error> for PdfPreparationError {
     fn from(error: lopdf::Error) -> Self {

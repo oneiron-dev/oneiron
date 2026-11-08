@@ -1,15 +1,18 @@
 //! The proposal landing (ARCH-0078): machine work waits beside the live
 //! artifact, never on it, until a person keeps or discards it once.
 //!
-//! Two kinds wait here. A held [`EditProposal`] (a sheet edit, a Word
-//! revision, a deck transaction) keeps its bytes, manifest and inspection so a
-//! later Keep replays it through the ordinary settle door. A native organ
+//! Three forms wait here. Paid sheet decisions retain their original base and
+//! read rows before byte staging; no proposed workbook bytes exist until the
+//! same row is promoted to a validated edit. A held [`EditProposal`] (a sheet
+//! edit, a Word revision, a deck transaction) keeps its bytes, manifest and
+//! inspection so a later Keep replays it through the ordinary settle door.
+//! A native organ
 //! output ([`NativeOutput`]: a created deck, an image export, any organ's
 //! export file) keeps its file and report; its Keep appends the file as a
 //! version forked from the head it was made against, with its made_by
 //! envelope. A deck export waits pinned to the version the deck projected
 //! over, and its Keep also rebinds the deck to the version it lands
-//! ([`DeckExportHold`], FIX 2700). Both settle through the one consume-once
+//! ([`DeckExportHold`], FIX 2700). All settle through the one consume-once
 //! ledger.
 
 use std::collections::BTreeMap;
@@ -39,6 +42,7 @@ mod admission;
 mod keep_output;
 mod output_retention;
 mod output_settle;
+mod sheet_answers;
 mod view;
 pub use admission::MadeByReader;
 use output_settle::output_record;
@@ -75,6 +79,8 @@ pub(super) struct PendingRow {
     /// back as false and keep today's behavior.
     #[serde(default)]
     explicit_fork: bool,
+    /// The selected suffix begins here; byte staging does not consume it.
+    next_sheet_row: Option<u32>,
     new_bytes: Vec<u8>,
     body: PendingBody,
     /// The rows its producer read beside its base and its made_by: each
@@ -117,6 +123,9 @@ pub(crate) struct DeckExportHold {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum PendingBody {
+    SheetAnswers {
+        bundle: SheetAnswerBundle,
+    },
     Edit {
         format: OfficeFormat,
         manifest: Vec<u8>,
@@ -508,6 +517,7 @@ impl Vault {
     }
 
     /// The proposals waiting beside one artifact, oldest ref hash first.
+    /// A `NeedsStaging` view retains paid answers, not proposed workbook bytes.
     pub fn pending_proposals(&self, artifact_id: &EntityId) -> Result<Vec<PendingProposalView>> {
         let rtxn = self.store.env.read_txn()?;
         let mut out = Vec::new();
@@ -533,6 +543,7 @@ impl Vault {
     }
 
     /// The held edit proposal under `proposal_ref`, rebuilt for a settle door.
+    /// Paid `NeedsStaging` answers return `None` until byte validation succeeds.
     pub fn pending_edit_proposal(
         &self,
         artifact_id: &EntityId,
@@ -548,6 +559,8 @@ impl Vault {
     /// [`Vault::settle_select_edit_proposal_made_by`]; a native output lands
     /// as a version forked from the head it was made against, the head it
     /// replaced kept beside it, and a deck export binds the deck to it.
+    /// Retained sheet answers stage first in this same Keep action. Keep has
+    /// no work clock, so staging uses the ordinary untimed resource port.
     pub fn keep_pending_proposal(
         &self,
         artifact_id: &EntityId,
@@ -557,9 +570,18 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SettleSelectOutcome> {
-        let row = self
+        let mut row = self
             .pending_row(artifact_id, proposal_ref)?
             .ok_or(Error::EntityNotFound)?;
+        if matches!(&row.body, PendingBody::SheetAnswers { .. }) {
+            self.authorize_settle(consent, actor)?;
+            // This is the existing explicit Keep act, not an extension of the
+            // expired ask. With no clock on Keep, its byte work is untimed.
+            self.stage_pending_sheet_answers(artifact_id, proposal_ref, None)?;
+            row = self
+                .pending_row(artifact_id, proposal_ref)?
+                .ok_or(Error::EntityNotFound)?;
+        }
         let outcome = if let Some(proposal) = row.edit_proposal()? {
             if proposal.sheet_answers.is_some() {
                 self.settle_select_edit_proposal_made_by(
@@ -781,6 +803,7 @@ fn edit_pending_row(
         base_version: proposal.base_version,
         base_content_hash: Some(proposal.base_content_hash),
         explicit_fork: false,
+        next_sheet_row: None,
         new_bytes: proposal.new_bytes.clone(),
         read_rows: {
             let mut rows = read_rows.to_vec();

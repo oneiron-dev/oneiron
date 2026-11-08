@@ -78,6 +78,8 @@ pub(super) fn ask_selection(
             if items.is_empty() {
                 return Ok(ArtifactAskRun {
                     proposal: None,
+                    sheet_answers: None,
+                    deferred_floor: None,
                     abstained: Vec::new(),
                     refused: Vec::new(),
                     read_rows: Vec::new(),

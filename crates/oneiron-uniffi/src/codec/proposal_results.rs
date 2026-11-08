@@ -100,12 +100,16 @@ impl Lift<oneiron::blob_artifact::ArtifactAskOutcome> for crate::ArtifactAskOutc
     fn lift(value: oneiron::blob_artifact::ArtifactAskOutcome) -> Result<Self, OneironError> {
         let oneiron::blob_artifact::ArtifactAskOutcome {
             proposed,
+            needs_staging,
             abstained,
             refused,
             next_sheet_row,
         } = value;
-        // Consume the nested proposal (and its deep summary tree) first.
+        // Consume both nested proposals (and their deep summary trees) first.
         let proposed = proposed.map(crate::PendingProposalView::lift).transpose()?;
+        let needs_staging = needs_staging
+            .map(crate::PendingProposalView::lift)
+            .transpose()?;
         let abstained = abstained
             .into_iter()
             .map(crate::UnitAbstention::lift)
@@ -116,6 +120,7 @@ impl Lift<oneiron::blob_artifact::ArtifactAskOutcome> for crate::ArtifactAskOutc
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             proposed,
+            needs_staging,
             abstained,
             refused,
             next_sheet_row,

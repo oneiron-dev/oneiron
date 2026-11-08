@@ -15663,7 +15663,7 @@ class BornFromView(TypedDict):
     born: list[EntityId]
     born_records: list[RecordRef]
     versions: list[BornFromArtifact]
-PendingProposalKind = Literal["edit", "output"]
+PendingProposalKind = Literal["needs_staging", "edit", "output"]
 class PendingProposalView(TypedDict):
     artifact_id: EntityId
     artifact: RecordRef
@@ -15911,6 +15911,7 @@ class UnitRefusal(TypedDict):
     judged_live: NotRequired[LivePin | None]
 class ArtifactAskOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
+    needs_staging: NotRequired[PendingProposalView | None]
     abstained: list[UnitAbstention]
     refused: list[UnitRefusal]
     next_sheet_row: NotRequired[int | None]

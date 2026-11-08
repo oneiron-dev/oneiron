@@ -36,10 +36,11 @@ pub fn preserve_external_links(
     after: &[u8],
     limits: Limits,
     resources: &oneiron_docedit::resource::Resources,
-) -> std::result::Result<(), &'static str> {
-    let before =
-        Package::open(before, limits, resources).map_err(|_| "unreadable input package")?;
-    let after = Package::open(after, limits, resources).map_err(|_| "unreadable output package")?;
+) -> crate::Result<()> {
+    let before = Package::open(before, limits, resources)
+        .map_err(|error| preservation_error(error.into(), "unreadable input package"))?;
+    let after = Package::open(after, limits, resources)
+        .map_err(|error| preservation_error(error.into(), "unreadable output package"))?;
     for name in before.names() {
         let link_part = name.starts_with("xl/externalLinks/");
         if !link_part && !name.ends_with(".rels") {
@@ -47,33 +48,47 @@ pub fn preserve_external_links(
         }
         let part = before
             .part(name)
-            .map_err(|_| "unreadable input part")?
-            .ok_or("missing external-link input part")?;
+            .map_err(|error| preservation_error(error.into(), "unreadable input part"))?
+            .ok_or(crate::FormulaError::InvalidWorkbook(
+                "missing external-link input part",
+            ))?;
         let protected =
             link_part || !route_workbook([], [part.as_slice()], [], resources).is_in_process();
         if protected
             && after
                 .part(name)
-                .map_err(|_| "unreadable output part")?
+                .map_err(|error| preservation_error(error.into(), "unreadable output part"))?
                 .as_ref()
                 != Some(&part)
         {
-            return Err("fallback altered or dropped an external-link part");
+            return Err(crate::FormulaError::InvalidWorkbook(
+                "fallback altered or dropped an external-link part",
+            ));
         }
     }
     let before_formulas = crate::workbook::external_formulas(&before)
-        .map_err(|_| "cannot inspect external formula links")?;
+        .map_err(|error| preservation_error(error, "cannot inspect external formula links"))?;
     if !before_formulas.is_empty() {
-        let after_formulas = crate::workbook::external_formulas(&after)
-            .map_err(|_| "cannot inspect output external formula links")?;
+        let after_formulas = crate::workbook::external_formulas(&after).map_err(|error| {
+            preservation_error(error, "cannot inspect output external formula links")
+        })?;
         if before_formulas
             .iter()
             .any(|(cell, formula)| after_formulas.get(cell) != Some(formula))
         {
-            return Err("fallback altered or dropped an external formula link");
+            return Err(crate::FormulaError::InvalidWorkbook(
+                "fallback altered or dropped an external formula link",
+            ));
         }
     }
     Ok(())
+}
+
+fn preservation_error(error: crate::FormulaError, reason: &'static str) -> crate::FormulaError {
+    match error {
+        crate::FormulaError::Resource(_) => error,
+        _ => crate::FormulaError::InvalidWorkbook(reason),
+    }
 }
 
 /// Decide the recalc route for a workbook from its part names, relationship

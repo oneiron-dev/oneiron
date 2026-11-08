@@ -706,7 +706,7 @@ pub(crate) fn decode_xref_stream_admitted(
                             0
                         } as u16;
                         if let Some(id) = section_id(start, j) {
-                            admission.admit(entry_bytes)?;
+                            admission.admit_estimate(entry_bytes, 0)?;
                             xref.insert(id, XrefEntry::Normal { offset, generation });
                         }
                     }
@@ -715,7 +715,7 @@ pub(crate) fn decode_xref_stream_admitted(
                         let container = read_field(&mut reader, widths[1])?;
                         let index = read_field(&mut reader, widths[2])? as u16;
                         if let Some(id) = section_id(start, j) {
-                            admission.admit(entry_bytes)?;
+                            admission.admit_estimate(entry_bytes, 0)?;
                             xref.insert(id, XrefEntry::Compressed { container, index });
                         }
                     }
