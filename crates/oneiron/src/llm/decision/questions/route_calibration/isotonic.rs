@@ -13,9 +13,11 @@ struct Block {
 }
 
 /// The isotonic map of `points`, each (raw probability, label, weight), as its knots (see
-/// [`super::RouteCalibrationMap::knots`]). Points of one raw probability pool first; then
-/// each block pools into the one before it while that one's label rate is not below its own.
-/// A point that weighs nothing is left out. Empty when nothing weighs anything.
+/// [`super::RouteCalibrationMap::knots`]). Every point of one raw probability pools first,
+/// whatever order the points were read in; then pool-adjacent-violators runs across the
+/// distinct probabilities: each level pools into the block before it while that block's label
+/// rate is not below its own. A point that weighs nothing is left out. Empty when nothing
+/// weighs anything.
 pub(super) fn fit(points: &[(f64, bool, f64)]) -> Vec<MapKnot> {
     let mut sorted: Vec<(f64, bool, f64)> = points
         .iter()
@@ -23,22 +25,25 @@ pub(super) fn fit(points: &[(f64, bool, f64)]) -> Vec<MapKnot> {
         .filter(|&(_, _, weight)| weight > 0.0)
         .collect();
     sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let mut blocks: Vec<Block> = Vec::new();
+    let mut levels: Vec<Block> = Vec::new();
     for (probability, label, weight) in sorted {
         let yes = if label { weight } else { 0.0 };
-        if blocks.last().is_some_and(|last| last.high == probability) {
-            if let Some(last) = blocks.last_mut() {
+        match levels.last_mut() {
+            Some(last) if last.high.total_cmp(&probability).is_eq() => {
                 last.weight += weight;
                 last.yes += yes;
             }
-        } else {
-            blocks.push(Block {
+            _ => levels.push(Block {
                 low: probability,
                 high: probability,
                 weight,
                 yes,
-            });
+            }),
         }
+    }
+    let mut blocks: Vec<Block> = Vec::new();
+    for level in levels {
+        blocks.push(level);
         while blocks.len() >= 2 {
             let (earlier, later) = (&blocks[blocks.len() - 2], &blocks[blocks.len() - 1]);
             // Cross-multiplied rates: both weights are positive.
