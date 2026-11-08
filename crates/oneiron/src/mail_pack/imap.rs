@@ -39,7 +39,7 @@ use std::fmt::Write as _;
 use serde::{Deserialize, Serialize};
 
 use super::credential::WireReads;
-use super::gmail::{address_list, rfc2822_seconds};
+use super::gmail::rfc2822_seconds;
 use super::imap_client::{
     Fetched, FolderStatus, ImapSession, Item, ListedFolder, decode_mailbox_name, range_set,
     ranges_hold, uid_set,
@@ -439,12 +439,7 @@ fn headers_of(
     let provider_id = rfc_message_id
         .as_deref()
         .map_or_else(|| place_id(folder, uid_validity, read.uid), content_id);
-    let addresses = |name: &str| {
-        parsed
-            .header(name)
-            .map(|value| address_list(&value))
-            .unwrap_or_default()
-    };
+    let addresses = |name: &str| parsed.address_header(name);
     let date = parsed.header("date").as_deref().and_then(rfc2822_seconds);
     let flagged = |flag: &str| read.flags.iter().any(|held| held == flag);
     MailHeaders {
@@ -455,7 +450,7 @@ fn headers_of(
             .header("references")
             .map(|value| value.split_whitespace().map(str::to_owned).collect())
             .unwrap_or_default(),
-        from: parsed.header("from").filter(|from| !from.is_empty()),
+        from: Some(parsed.address_header("from").join(", ")).filter(|from| !from.is_empty()),
         to: addresses("to"),
         cc: addresses("cc"),
         reply_to: addresses("reply-to"),

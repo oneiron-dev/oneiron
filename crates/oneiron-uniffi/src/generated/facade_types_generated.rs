@@ -74204,6 +74204,10 @@ pub struct MailReplyDraftRequest {
     pub body: String,
     #[serde(rename = "body_html", default, skip_serializing_if = "Option::is_none")]
     pub body_html: Option<String>,
+    #[serde(rename = "reply_all", default, skip_serializing_if = "Option::is_none")]
+    pub reply_all: Option<bool>,
+    #[serde(rename = "cc", default, skip_serializing_if = "Option::is_none")]
+    pub cc: Option<Vec<String>>,
     #[serde(rename = "request_key")]
     pub request_key: String,
 }
@@ -74238,7 +74242,9 @@ pub struct MailReplyDraftView {
     #[serde(rename = "parent_turn_ref")]
     pub parent_turn_ref: String,
     #[serde(rename = "to")]
-    pub to: String,
+    pub to: Vec<String>,
+    #[serde(rename = "cc", default, skip_serializing_if = "Option::is_none")]
+    pub cc: Option<Vec<String>>,
     #[serde(rename = "subject")]
     pub subject: String,
     #[serde(rename = "body")]

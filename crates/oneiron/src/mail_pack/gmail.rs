@@ -593,9 +593,16 @@ pub(super) fn address_list(value: &str) -> Vec<String> {
     let mut addresses = Vec::new();
     let mut current = String::new();
     let mut quoted = false;
+    let mut escaped = false;
     let mut angle = 0_u32;
     for ch in value.chars() {
+        if escaped {
+            escaped = false;
+            current.push(ch);
+            continue;
+        }
         match ch {
+            '\\' if quoted => escaped = true,
             '"' => quoted = !quoted,
             '<' if !quoted => angle += 1,
             '>' if !quoted => angle = angle.saturating_sub(1),

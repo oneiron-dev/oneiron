@@ -96,6 +96,16 @@ fn looked_up_cannot_tell() -> OutboundExecutionOutcome {
         .with_possible_delivery()
         .with_receipt_field(SENT_LOOKUP_FIELD, SENT_LOOKUP_CANNOT_TELL)
 }
+
+impl<S: OutboundExecutionSink> DispatchChokepointTransport<'_, S> {
+    /// Whether the sink delivers this send whole (fix list row 17645): a
+    /// message to several recipients goes only through a sink that sends it
+    /// to every one of them, never to its first alone.
+    fn sink_delivers_every_recipient(&self) -> bool {
+        self.request.intent.recipients.is_empty() || self.sink.delivers_recipient_lists()
+    }
+}
+
 impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
     for DispatchChokepointTransport<'_, S>
 {
@@ -103,6 +113,12 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         &mut self,
         call: &crate::outbound_intent_ledger::FrozenOutboundCall,
     ) -> crate::outbound_intent_ledger::OutboundSendOutcome {
+        // A message to several recipients goes only through a sink that
+        // sends it to every one of them, never to its first alone (fix list
+        // row 17645).
+        if !self.sink_delivers_every_recipient() {
+            return invalid_frozen_call();
+        }
         let vault = self.vault;
         let request = self.request;
         let verb_contract = self.verb_contract;
@@ -248,6 +264,13 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<(), crate::outbound_intent_ledger::IntentLedgerError> {
+        if !self.sink_delivers_every_recipient() {
+            return Err(
+                crate::outbound_intent_ledger::IntentLedgerError::InvalidInput(
+                    "the sink sends to one recipient, and the message names several",
+                ),
+            );
+        }
         self.sink
             .admit_in(txn)
             .map_err(crate::outbound_intent_ledger::IntentLedgerError::from)

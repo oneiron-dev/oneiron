@@ -700,6 +700,15 @@ pub trait OutboundExecutionSink {
     ) -> crate::outbound_intent_ledger::DeliveryReadBack {
         crate::outbound_intent_ledger::DeliveryReadBack::Unknown
     }
+
+    /// Whether the sink sends one message to every recipient of an intent
+    /// that names more than one ([`OutboundIntent::recipients`], fix list
+    /// row 17645), its frozen message naming exactly that list. A sink that
+    /// does not is never handed one: the transport refuses the call before
+    /// any decision is recorded. By default a sink sends to its one target.
+    fn delivers_recipient_lists(&self) -> bool {
+        false
+    }
 }
 
 pub use crate::store::outbound_outcome::OutboundDispatchOutcome;
