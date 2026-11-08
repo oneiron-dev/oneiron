@@ -146,7 +146,6 @@ impl BookingPagePublication {
                 return Err("public booking configuration hash must be a BLAKE3 digest");
             }
             if event.key.0.trim().is_empty()
-                || event.key.0.len() > 64
                 || event.title.trim().is_empty()
                 || event.duration_min == 0
                 || self.event_types[..index]

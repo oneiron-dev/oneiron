@@ -6,6 +6,7 @@ mod file_mode;
 mod identity;
 mod ingest;
 mod instructions;
+mod registration;
 mod repo_ref;
 mod residue;
 mod secret_projection;
@@ -22,15 +23,18 @@ pub use self::file_mode::DEFAULT_CODE_FILE_MODE;
 pub(crate) use self::file_mode::validate_code_file_mode;
 pub use self::identity::RepoIdentity;
 pub(crate) use self::identity::resolve_repo_identity_in_txn;
+pub(crate) use self::ingest::{
+    CODE_SNAPSHOT_CAPTURE_CONTENT_KIND, code_snapshot_capture_receipt_fields,
+    read_asset_blob_in_txn, read_asset_blob_sighted_in_txn, validate_project_id,
+    with_asset_blob_reader_in_txn,
+};
 pub use self::ingest::{
     HostedMediaHashMatchDecision, HostedMediaHashMatchInput, HostedMediaHashMatchProvider,
     NoopHostedMediaHashMatchProvider, RepoIngestConfig, RepoIngestResult,
 };
-pub(crate) use self::ingest::{
-    read_asset_blob_in_txn, read_asset_blob_sighted_in_txn, validate_project_id,
-};
 pub(crate) use self::instructions::code_instruction_handles_in;
 pub use self::instructions::{CODE_INSTRUCTION_FILE_NAMES, CodeInstructionHandle};
+pub(crate) use self::registration::{CaptureRepository, RegisteredRepository, proposed_file_paths};
 pub use self::repo_ref::{CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_REPO_REF_MAX_BYTES, RepoRef};
 pub use self::snapshot::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FILE_ENTRY_KEYS, CODEBASE_FILE_PATH_MAX_BYTES,

@@ -24,6 +24,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 mod receipt_page;
 
 pub use receipt_page::VaultReceiptsPage;
+pub(crate) use receipt_page::{ReceiptReader, receipts_page_for};
 
 const SNIPPET_MAX_CHARS: usize = 160;
 
@@ -74,7 +75,7 @@ pub struct ClaimView {
 }
 
 /// Filter for [`Memory::claim_list`].
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ClaimListFilter {
     /// Restrict to claims on this subject (short-id ref or hex).
     pub subject_ref: Option<String>,
@@ -84,6 +85,10 @@ pub struct ClaimListFilter {
     pub lifecycle: Option<String>,
     /// Maximum results (required; no unbounded scans).
     pub limit: usize,
+    /// The caller's retrieval filter (FIX 3977): it narrows the claims the
+    /// list reads, never the subject it names.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 /// One BM25 hit (engine index scores, never re-ranked app-side).
@@ -272,6 +277,15 @@ impl Memory<'_> {
         &self,
         filter: &ClaimListFilter,
     ) -> MemoryResult<ScopedReadResult<Vec<ClaimView>>> {
+        if let Some(read_filter) = &filter.filter {
+            // Bind the caller's filter on this call's handle once, so the
+            // list's lane meets it (FIX 3977).
+            let bound = ClaimListFilter {
+                filter: None,
+                ..filter.clone()
+            };
+            return self.with_read_filter(Some(read_filter)).claim_list(&bound);
+        }
         if filter.limit == 0 {
             return Err(MemoryError::bad_request(
                 "claim_list limit must be at least 1",
@@ -667,9 +681,13 @@ impl Memory<'_> {
             }
         };
         let short_ref = self.short_ref_of(id)?;
-        let value = served(&body.value);
+        let (mut value, mut scope) = (served(&body.value), body.scope.as_ref().map(served));
+        if !secret {
+            self.mask_lifted_claim_parts(&mut value, scope.as_mut())?;
+        }
         let claim = crate::lens::RecordRef::from_id(ENTITY_TYPE_CLAIM, id, short_ref.as_deref());
-        // The label is the value this view serves: redacted for a secret.
+        // The label is the value this view serves: redacted for a secret, a
+        // lifted key as its handle (FIX 13735).
         let claim = match &value {
             serde_json::Value::String(text) => claim.with_label(text),
             other => claim.with_label(&other.to_string()),
@@ -690,7 +708,7 @@ impl Memory<'_> {
             lifecycle: body.lifecycle.as_str().to_owned(),
             source: body.source.map(|source| source.as_str().to_owned()),
             world_ref: body.world.map(|world| world.to_hex()),
-            scope: body.scope.as_ref().map(served),
+            scope,
             claim_scope: ClaimScope::of_body(body),
             made_by: self.collection_view(id)?.and_then(|view| view.made_by),
             valid_from: body.valid_from,
@@ -761,14 +779,23 @@ fn family_receipt(record: crate::receipt::ReceiptRecord) -> MemoryReceipt {
         policy_trace,
         mut fields,
     } = record;
+    let capture = receipt_kind == crate::receipt::ReceiptKind::Gate
+        && fields
+            .get("content_kind")
+            .is_some_and(|kind| kind == crate::codebase::CODE_SNAPSHOT_CAPTURE_CONTENT_KIND);
+    let (prefix, target_type) = if capture {
+        ("entity:", crate::registry::ENTITY_TYPE_CODE_ARTIFACT)
+    } else {
+        ("claim:", ENTITY_TYPE_CLAIM)
+    };
     let claim_ref = trigger_ref
         .as_deref()
-        .and_then(|reference| reference.strip_prefix("claim:"))
+        .and_then(|reference| reference.strip_prefix(prefix))
         .map(str::to_owned);
     let claim = claim_ref
         .as_deref()
         .and_then(|hex| EntityId::from_hex(hex).ok())
-        .map(|id| crate::lens::RecordRef::from_id(ENTITY_TYPE_CLAIM, &id, None));
+        .map(|id| crate::lens::RecordRef::from_id(target_type, &id, None));
     for (key, value) in [
         ("trigger_ref", trigger_ref),
         ("job_ref", job_ref),

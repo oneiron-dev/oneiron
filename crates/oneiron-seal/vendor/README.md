@@ -116,3 +116,21 @@
     behavior, returned mappings and the reverse map are unchanged; no new API,
     and no admission/heap/lifecycle claim.
   - `src/parser/cmap_parser.rs` (FIX 12777 codespace metadata): validates every codespace range with the same one-or-more grammar without collecting the discarded range payload. Keeps the private empty `CsRange` marker consumed by `ToUnicodeCMap`, which ignores that payload. Mapping data, accepted input and public error classes are unchanged; sections, maps and admission plumbing remain separate. No new cap, refusal or format.
+
+  - Cooperative hosted container reads (FIX 7943/11549, partial): default no-op
+    `DecodeAdmission::checkpoint` reports native xref/object/stream positions;
+    controlled reads opt into sequential loading even when Rayon is compiled.
+    Pausing keeps the same native stack alive and returns `Ok` after resume;
+    it is not a terminal admission error or a serialized parser cursor.
+    The hosted inline and file-backed masks have an owned async continuation and one
+    worker; drop closes its handshake so the worker can unwind at a checkpoint.
+    Existing synchronous reads and memory-ledger admissions keep their defaults.
+    This adds no wall timeout and cannot preempt a single opaque codec unit.
+
+  - Header copies (FIX 12746/12780, narrow slice): `src/parser/mod.rs`
+    admits the version String and binary-marker Vec before copying through
+    the reader's existing `DecodeAdmission`. Both metadata and full-document
+    readers propagate a refusal as `Error::DecodeAdmission`, not an invalid
+    header or an absent marker. Without admission, the same grammar, strict
+    header handling and binary-marker selection remain unchanged. This does
+    not cover all parser allocations or retained-document ownership.

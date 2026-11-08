@@ -28,6 +28,15 @@
 //! The checkpoint the enrolment's link pinned is adopted on the first
 //! connection's authority catch-up.
 //!
+//! While its home is down, a device with a mesh listener syncs with the
+//! vault's other machines over the mesh (FIX 4748): once the home has served
+//! this machine no sync for a minute (dials unanswered, refused, or ended
+//! before the home's root), each connection goes to a machine marked mine,
+//! the standby home first, and confirms nothing there; a probe of the home
+//! ends it once the home serves sync again, and the home's own connection
+//! then replays everything queued (`oneiron::sync::peer_route`). Without a
+//! listener here nothing of it runs.
+//!
 //! While the home connection is synced, the device also learns the models
 //! the owner's other nodes offer (OF-575): it asks them on each sync and then
 //! on a cadence, since no mesh signal says a peer's offer changed, and writes
@@ -245,8 +254,8 @@ async fn open(
     mesh: Option<&MeshHost>,
     freeze: ReapFreeze,
 ) -> anyhow::Result<DeviceSyncHost> {
-    use oneiron::sync::SyncDialer;
-    use oneiron_mesh_transport::sync_dialer::MeshSyncDialer;
+    use oneiron::sync::{SyncDialer, SyncPeerDialer};
+    use oneiron_mesh_transport::sync_dialer::{MeshPeerDialer, MeshSyncDialer};
 
     let Dial {
         home,
@@ -266,6 +275,10 @@ async fn open(
         standing(&vault, home, enrolled)
     })
     .await??;
+    // While the home is down the link dials this vault's other machines,
+    // on the listener's transport, whether the home itself rides the mesh or
+    // its URL (FIX 4748); no listener here, no peer.
+    let listener = mesh;
     // Over the mesh when the home has a paired address and a listener runs
     // here; otherwise at the home's URL.
     let mesh = mesh.filter(|_| paired);
@@ -284,6 +297,14 @@ async fn open(
     };
     let resolve = route::resolver(Arc::clone(host.vault()), home, machine, routes());
     let moves = route::RouteChanges::new(mesh.and_then(|_| routes()), Arc::clone(&resolve));
+    let peer_dialer = listener.map(|listener| {
+        Arc::new(MeshPeerDialer::new(
+            listener.transport(),
+            Arc::clone(host.vault()),
+            machine,
+            Arc::clone(&resolve),
+        )) as Arc<dyn SyncPeerDialer>
+    });
     let mesh_dialer = match mesh {
         Some(mesh) => Some(
             Arc::new(MeshSyncDialer::resolving(mesh.transport(), resolve)) as Arc<dyn SyncDialer>,
@@ -297,6 +318,7 @@ async fn open(
         url,
         worlds,
         mesh_dialer,
+        peer_dialer,
         pin,
         machine,
         candidacy,
@@ -345,6 +367,9 @@ struct Link {
     worlds: Vec<oneiron::EntityId>,
     topology: Option<oneiron::sync::HomeNodeTopology>,
     mesh_dialer: Option<Arc<dyn oneiron::sync::SyncDialer>>,
+    /// The carriers to this vault's other machines while the home is down
+    /// (FIX 4748); `None` with no mesh listener here.
+    peer_dialer: Option<Arc<dyn oneiron::sync::SyncPeerDialer>>,
     /// The checkpoint the enrolment's link pinned: the first authority
     /// catch-up adopts it, and a later connection finds it adopted.
     pin: Option<oneiron::authority::AuthorityCheckpointPin>,
@@ -393,6 +418,7 @@ impl Link {
             followed_worlds: Some(self.worlds.clone()),
             home_node_topology: self.topology.clone(),
             mesh_dialer: self.mesh_dialer.clone(),
+            peer_dialer: self.peer_dialer.clone(),
             authority_checkpoint_pin: self.pin.clone(),
             ..SyncClientConfig::default()
         })

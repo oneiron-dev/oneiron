@@ -311,6 +311,10 @@ pub enum FatalLlmError {
         /// The provider's structured error code, never inferred from its text.
         code: Option<String>,
     },
+    /// A provider's structured refusal because the input exceeds its context
+    /// window, with the same bounded provider message as other request errors.
+    #[error("context window exceeded: {message}")]
+    ContextWindowExceeded { message: String },
     #[error("authentication failed")]
     Auth,
     #[error("content filtered")]
@@ -355,6 +359,9 @@ pub enum LabelReadFailure {
     /// The read did not stop at the forced end of generation.
     #[error("not an end-of-generation stop")]
     NotEosStop,
+    /// The read exhausted its requested generation-token budget.
+    #[error("generation token limit")]
+    TokenCap,
     /// A label's probability is absent from the read.
     #[error("missing labels")]
     MissingLabels,

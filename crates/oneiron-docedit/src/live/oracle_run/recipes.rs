@@ -215,6 +215,7 @@ fn carried(
                             x: None,
                             x_labels: None,
                             plot: None,
+                            plot_id: None,
                             categories: None,
                             bubble_size: None,
                             bubble_3d: None,
