@@ -18195,6 +18195,7 @@ class ConnectorCallReplyAwaitingInput(TypedDict):
     questions: list[ConnectorQuestion]
     live_until_ms: int
     reasons: NotRequired[list[str]]
+    budget_steering: NotRequired[list[str]]
 ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery | ConnectorCallReplyAwaitingInput
 LiveVoiceToolCallReply = NarrowedQuestions | ConnectorCallReply
 class LiveVoiceToolReply(TypedDict):
