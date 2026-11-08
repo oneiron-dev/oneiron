@@ -4,9 +4,10 @@
 //! feed order is commit order, and a provider's re-delivery, which admits
 //! nothing new, appends nothing; nor does an event no fact binding reads
 //! (FIX 22141). A row keeps ids and tokens only, never provider text: a
-//! hook that wants more reads it under its own grant. The runner prunes the
-//! rows every hook binding has passed, and an erase leaves a row that names
-//! an erased entity at its sequence with no ids or tokens in it.
+//! hook that wants more reads it under its own grant. The runner and each
+//! housekeeping pass prune the rows every hook binding has passed (FIX
+//! 22180), and an erase leaves a row that names an erased entity at its
+//! sequence with no ids or tokens in it.
 
 use std::collections::BTreeSet;
 use std::ops::Bound;

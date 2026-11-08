@@ -116,6 +116,13 @@ pub(super) struct CursorRow {
     /// The binding was seen disabled; it restarts where it is re-enabled.
     pub(super) paused: bool,
     updated_at: u64,
+    /// On the tick feed's row, the feed's head when the binding was last
+    /// enabled, 0 for an empty feed: a tick past it was released while the
+    /// binding was bound ([`enabled_before_tick_in_txn`]). `None` on every
+    /// other source's row, and on a row written before enables kept it,
+    /// which reads as enabled before every tick.
+    #[serde(default)]
+    enabled_tick_head: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,6 +149,7 @@ impl CursorRow {
             }),
             paused: false,
             updated_at: at,
+            enabled_tick_head: None,
         }
     }
 
@@ -223,7 +231,10 @@ pub(super) fn put_cursor_in_txn(
 /// keeps its cursor; a disabled-to-enabled transition starts at the enable
 /// write, including the settlement head (FIX 10078). A binding with no
 /// `previous` row is fresh, so a watcher's starts before the earliest tick of
-/// a TASK still open (FIX 4749).
+/// a TASK still open (FIX 4749). Each enable keeps the tick feed's head in
+/// this write ([`enable_cursor_in_txn`]): a watch TASK whose tick was
+/// released, and so settled it, at or before that head never runs this
+/// binding, which was bound after its work was done (review #6784).
 pub(crate) fn sync_binding_cursor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -258,14 +269,57 @@ pub(crate) fn sync_binding_cursor_in_txn(
         return Ok(());
     }
     for source in FactSource::ALL {
-        let start = source::enable_start_in_txn(vault, txn, &binding, source, previous.is_none())?;
-        put_cursor_in_txn(vault, txn, binding, source, &CursorRow::new(start, at))?;
+        let row = enable_cursor_in_txn(vault, txn, &binding, source, previous.is_none())?;
+        put_cursor_in_txn(vault, txn, binding, source, &row)?;
     }
     Ok(())
 }
 
+/// The cursor row an enable writes for `binding` in `source`, now: where
+/// [`source::enable_start_in_txn`] starts it, and on the tick feed, that
+/// feed's head, its enable-time tick head. A fresh binding still starts
+/// before the earliest tick of a TASK still open, and is offered that
+/// tick; a watch TASK's tick at or before the head was released, settling
+/// the TASK, before the binding was bound, so it never reaches it
+/// ([`enabled_before_tick_in_txn`]).
+pub(super) fn enable_cursor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding: &EntityId,
+    source: FactSource,
+    fresh: bool,
+) -> Result<CursorRow> {
+    let start = source::enable_start_in_txn(vault, txn, binding, source, fresh)?;
+    let mut row = CursorRow::new(start, vault.store.clock.now_recorded_at());
+    if source == FactSource::Schedule {
+        let head = match source::head_in_txn(vault, txn, source)? {
+            Some(FactPosition::Schedule(SchedulePosition(sequence))) => sequence,
+            _ => 0,
+        };
+        row.enabled_tick_head = Some(head);
+    }
+    Ok(row)
+}
+
+/// Whether `binding` was enabled before the tick at `position` was
+/// released: the enable-time tick head its tick feed cursor keeps stands
+/// before `position`. A binding with no kept head, its row written before
+/// enables kept one, reads as enabled before every tick.
+pub(super) fn enabled_before_tick_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding: EntityId,
+    position: FactPosition,
+) -> Result<bool> {
+    let key = (binding, [FactSource::Schedule.tag()]);
+    Ok(CURSORS
+        .get(&vault.store, txn, &key)?
+        .and_then(|row| row.enabled_tick_head)
+        .is_none_or(|head| FactPosition::Schedule(SchedulePosition(head)) < position))
+}
+
 /// Moves `binding`'s cursor to `position` unless it already stands there or
-/// past it.
+/// past it. The enable-time tick head stays with the binding as it reads on.
 pub(super) fn advance_cursor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -274,19 +328,18 @@ pub(super) fn advance_cursor_in_txn(
     at: u64,
 ) -> Result<()> {
     let source = position.source();
-    let current = CURSORS
-        .get(&vault.store, txn, &(binding, [source.tag()]))?
-        .and_then(CursorRow::position);
-    if current.is_some_and(|current| current >= position) {
+    let held = CURSORS.get(&vault.store, txn, &(binding, [source.tag()]))?;
+    if held
+        .and_then(CursorRow::position)
+        .is_some_and(|current| current >= position)
+    {
         return Ok(());
     }
-    put_cursor_in_txn(
-        vault,
-        txn,
-        binding,
-        source,
-        &CursorRow::new(Some(position), at),
-    )
+    let row = CursorRow {
+        enabled_tick_head: held.and_then(|row| row.enabled_tick_head),
+        ..CursorRow::new(Some(position), at)
+    };
+    put_cursor_in_txn(vault, txn, binding, source, &row)
 }
 
 /// How a run ended.

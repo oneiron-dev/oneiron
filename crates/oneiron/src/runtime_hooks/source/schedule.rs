@@ -6,13 +6,22 @@
 //! The vault's elected home releases the due rows into the tick feed in one
 //! write: a row leaves the index and gains its feed sequence together, so
 //! each tick is released once per vault, and feed order is commit order.
-//! Hooks read the feed through their own cursors, as they read the
-//! settlement feed, so a restart neither skips nor repeats a tick. A watch
-//! TASK's tick settles it Done in the write that releases it (FIX 22121);
-//! its hooks are still offered the tick, as it was open at its due time.
-//! The runner prunes the rows every hook binding has passed, but an open
-//! TASK's own tick, and an erase leaves an erased TASK's rows at their
-//! sequences with no TASK in them.
+//! It releases them at each fact-hook runner pass and each housekeeping
+//! pass, the owner's run now and `oneiron maintain` included, hooks on or
+//! off, with a binding to take a tick or none, so a watch TASK settles at
+//! its due time wherever the vault serves; a stopped vault wakes for its
+//! earliest due row, and `oneiron maintain` settles its due watch TASKs
+//! (FIX 22180). Hooks read the feed through their own cursors, as they read
+//! the settlement feed, so a restart neither skips nor repeats a tick. A
+//! watch TASK's tick settles it Done in the write that releases it
+//! (FIX 22121); the hooks bound at that release are still offered the
+//! tick, as it was open at its due time, and a hook bound after it is not
+//! (review #6784). A binding a peer enabled is bound here when this node
+//! first places its cursor.
+//! The runner and each housekeeping pass prune the rows every hook binding
+//! has passed, but an open TASK's own tick, so a host that runs no runner
+//! keeps the feed bounded too, and an erase leaves an erased TASK's rows at
+//! their sequences with no TASK in them.
 
 use std::collections::BTreeSet;
 use std::ops::Bound;
@@ -39,7 +48,8 @@ const TICKS_NEXT: SideTable<(), u64, Named> = SideTable::new(&side_table::HOOKS_
 
 /// Due rows one release moves into the tick feed (CALLS, FIX 4749): an
 /// engine call that bounds one write. A longer backlog moves on the next
-/// passes, which the runner starts at once.
+/// releases: the runner starts its next pass at once, and a housekeeping
+/// pass releases again until its budget passes.
 const HOOK_TICK_RELEASE_ROWS: usize = 256;
 
 /// One TASK's place in the due index.
@@ -134,8 +144,14 @@ fn releases_here(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
 /// alone. A row whose TASK is gone, has settled, or is no longer due at that
 /// time leaves the index with no tick. A watch TASK settles Done with its
 /// tick, whether or not a hook takes it (FIX 22121). Returns whether due
-/// rows remain past the bound.
-pub(in crate::runtime_hooks) fn release_due_ticks(vault: &Vault, now: u64) -> Result<bool> {
+/// rows remain past the bound. The fact-hook runner calls it at the start of
+/// each pass and each housekeeping pass before its sweeps, the host tick's,
+/// the owner's run now and `oneiron maintain`, whatever the bindings and the
+/// hooks switch (FIX 22180). A row two releases both plan moves once: the
+/// writes commit one after the other, the later one finds the row gone from
+/// the due index and skips it, and each draws its sequences in its own
+/// write.
+pub(crate) fn release_due_ticks(vault: &Vault, now: u64) -> Result<bool> {
     let (due, more) = {
         let rtxn = vault.store.env.read_txn()?;
         if !releases_here(vault, &rtxn)? {
@@ -191,6 +207,23 @@ pub(in crate::runtime_hooks) fn release_due_ticks(vault: &Vault, now: u64) -> Re
         TICKS_NEXT.put(&vault.store, txn, &(), &sequence)
     })?;
     Ok(more)
+}
+
+/// When this node next releases a tick: the due time of the earliest row in
+/// the due index, Unix seconds, on the vault's home alone; `None` elsewhere
+/// and while no TASK waits. A stopped vault wakes then
+/// (`Vault::housekeeping_wake_at`, FIX 22180). A cancelled TASK's row wakes
+/// it once: that release drops the row with no tick.
+pub(crate) fn next_tick_release_at(vault: &Vault) -> Result<Option<u64>> {
+    let rtxn = vault.store.env.read_txn()?;
+    if !releases_here(vault, &rtxn)? {
+        return Ok(None);
+    }
+    let earliest = TASK_DUE
+        .iter_from(&vault.store, &rtxn, &[])?
+        .next()
+        .transpose()?;
+    Ok(earliest.map(|((due_at, _), ())| due_at))
 }
 
 /// Where a binding new to the tick feed starts: just before the earliest
