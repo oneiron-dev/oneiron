@@ -299,3 +299,8 @@ replacement. Existing held-media paths do not re-admit their bytes. Omitting the
 settings keeps the existing numeric defaults and the old profile/key serialization.
 An explicit setting is part of `ExportKey`, so a memo for another setting cannot
 stand in for it. The projector signature and export gate remain unchanged.
+The ideographic-space estimate change (2026-11-06, FIX 16557) touches
+`src/design_plan/capability.rs`. `Metrics::lines_in` measures a complete nonempty
+U+0020/U+3000 run through the same advance and greedy wrap at leading, trailing,
+and internal separators; other whitespace keeps its existing fallback. Advance,
+words, height, and emission are unchanged; no renderer comparison is claimed.
