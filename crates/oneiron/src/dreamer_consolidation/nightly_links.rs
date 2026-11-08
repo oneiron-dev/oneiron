@@ -146,12 +146,12 @@ impl ConsolidationExecutor<'_> {
         let read = merge_read(ctx.vault, self.actor)?;
         let proposals = {
             let txn = ctx.vault.store.env.read_txn()?;
-            if let Some((completed_units, step_hashes)) =
+            if let Some((completed_units, step_bindings)) =
                 landed_units_in_txn(ctx.vault, &txn, attempt_id)?
             {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units,
-                    step_hashes,
+                    step_bindings,
                 });
             }
             let merged = merged_snapshot_in_txn(ctx.vault, &txn, input.merge)?;
@@ -161,7 +161,7 @@ impl ConsolidationExecutor<'_> {
                     return Ok(DreamerAttemptExecution::Deferred {
                         completed_units: 0,
                         retry_at: (ctx.now_ms / 1_000).saturating_add(merged.retry_secs),
-                        step_hashes: Vec::new(),
+                        step_bindings: Vec::new(),
                     });
                 }
             }
@@ -273,7 +273,7 @@ impl ConsolidationExecutor<'_> {
                 &MergeResult {
                     outputs,
                     completed_units: charges.units,
-                    step_hashes: charges.step_hashes.clone(),
+                    step_bindings: charges.step_bindings.clone(),
                     chunks: Vec::new(),
                     links,
                 },
@@ -282,7 +282,7 @@ impl ConsolidationExecutor<'_> {
         match commit {
             Ok(()) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
-                step_hashes: charges.step_hashes.clone(),
+                step_bindings: charges.step_bindings.clone(),
             }),
             // A proposal that moved before the commit lands again on resume;
             // a gate only an owner act opens keeps the private park.
@@ -424,22 +424,28 @@ impl ConsolidationExecutor<'_> {
             .await;
         // Every generation that finished is spent, whatever the call's
         // outcome.
-        for (index, (hash, usage, _)) in spent.iter().enumerate() {
-            if let Err(error) = charges.record_terminal(vault, step.attempt_id, *hash, usage) {
-                for (_, usage, memoized) in &spent[index..] {
-                    if !*memoized {
+        for (index, (_, usage, binding, _)) in spent.iter().enumerate() {
+            if let Some(binding) = binding {
+                if let Err(error) =
+                    charges.record_terminal(vault, binding.attempt_id, binding.step_hash, usage)
+                {
+                    for (_, usage, _, memoized) in &spent[index..] {
+                        if !*memoized {
+                            charges.record_usage(usage);
+                        }
+                    }
+                    if let Some(usage) = decided
+                        .as_ref()
+                        .err()
+                        .and_then(DurableStepError::spent_usage)
+                    {
                         charges.record_usage(usage);
                     }
+                    return super::residency::spent_or_deferred(error, ctx, charges)
+                        .map(ControlFlow::Break);
                 }
-                if let Some(usage) = decided
-                    .as_ref()
-                    .err()
-                    .and_then(DurableStepError::spent_usage)
-                {
-                    charges.record_usage(usage);
-                }
-                return super::residency::spent_or_deferred(error, ctx, charges)
-                    .map(ControlFlow::Break);
+            } else {
+                charges.record_usage(usage);
             }
         }
         let decisions = match decided {
