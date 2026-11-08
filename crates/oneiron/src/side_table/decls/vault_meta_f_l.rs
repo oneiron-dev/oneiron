@@ -286,6 +286,10 @@ side_tables! {
     /// a verb run's saved copy. Key: id16 (binding) + u64be (commit time, Unix ms) + hash32 (run
     /// key).
     HOOKS_RUN_INDEX: VaultMeta b"hooks:run_index:v1:" Named;
+    /// A permanently erased id whose hook carriers an erase's scrub cleaned, and when (Unix
+    /// seconds): the hard-erase sweep scrubs only the ids not here, as every hook carrier's writer
+    /// keeps a fenced id out from that write on (FIX 22191). Key: id16 (the erased id).
+    HOOKS_SCRUBBED_SOURCE: VaultMeta b"hooks:scrubbed_source:v1:" Named;
     /// The settlement feed fact hooks follow: one row per settled proposal while a fact binding
     /// reads the feed; an erase leaves a row naming the erased proposal or settler as an empty
     /// erased row, and the runner prunes the rows every binding passed, every row while no fact

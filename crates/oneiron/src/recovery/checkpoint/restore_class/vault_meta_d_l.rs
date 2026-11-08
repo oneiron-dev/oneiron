@@ -307,6 +307,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::HOOKS_RECEIPT, CONTENT),
     (&t::HOOKS_REGEN, LIVE),
     (&t::HOOKS_RUN_INDEX, CONTENT),
+    // FIX 22191: the scrub marks restore with the carriers they vouch for,
+    // so an image from before a scrub brings none back and its sweep runs.
+    (&t::HOOKS_SCRUBBED_SOURCE, CONTENT),
     (&t::HOOKS_SETTLED, CONTENT),
     (&t::HOOKS_SETTLED_NEXT, CONTENT),
     // FIX 4749: the watcher feeds, the due index and the tick feed restore

@@ -1,5 +1,7 @@
 //! The native fact-run completion, prepared before the writer and applied in it.
 
+use std::borrow::Cow;
+
 use crate::receipt::hex_lower;
 use crate::runtime_hooks::apply;
 use crate::runtime_hooks::block::{self, HookBlock};
@@ -133,7 +135,13 @@ impl<'run, 'binding> PreparedRunCommit<'run, 'binding> {
         }
         if !erased {
             if let Some((id, added)) = &added {
-                block::put_block_in_txn(vault, txn, *id, added)?;
+                // A block naming a row a permanent erase fenced lands expired
+                // and cleared, as the erase's scrub leaves one (FIX 22191).
+                let mut added = Cow::Borrowed(added);
+                if block::names_erased_in_txn(vault, txn, &added)? {
+                    block::scrub_block_payload(added.to_mut(), at);
+                }
+                block::put_block_in_txn(vault, txn, *id, &added)?;
                 lineage::put_in_txn(vault, txn, id.as_bytes(), &chain)?;
             }
             if let Some(id) = proposal {

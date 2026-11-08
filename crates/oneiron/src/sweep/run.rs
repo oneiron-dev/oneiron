@@ -309,14 +309,11 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
     }
 
     // Hook memo, verdict, outcome and intent carriers go before the sweep
-    // can call any historical carrier complete (FIX 10080).
+    // can call any historical carrier complete (FIX 10080). Each id is
+    // scrubbed once, the new ones together in one write; one scrubbed
+    // before is skipped, as every hook writer keeps it out (FIX 22191).
     if !erased.is_empty() {
-        vault.with_write_txn_grouped(|txn| {
-            for id in &erased {
-                crate::runtime_hooks::scrub_hook_source_in_txn(vault, txn, id, now)?;
-            }
-            Ok(())
-        })?;
+        crate::runtime_hooks::scrub_erased_hook_sources(vault, &erased, now)?;
     }
 
     // Withdrawn-generation authority: every hw: row and fence, due or not.
