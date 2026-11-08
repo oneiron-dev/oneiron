@@ -29,6 +29,7 @@ mod peer_serve;
 mod protocol_close;
 #[cfg(test)]
 mod residence_socket_tests;
+mod root_updates;
 mod sealed_updates;
 pub(crate) mod selector_scope;
 mod socket_stop;

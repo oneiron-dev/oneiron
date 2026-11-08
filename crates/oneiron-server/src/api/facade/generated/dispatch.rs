@@ -29644,6 +29644,51 @@ async fn vault_repo_symbols_release(
         hook_notice,
     })
 }
+async fn vault_repo_model_generate(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    facade_outside_room_turn(call, "vault.repo.model.generate")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.repo.model.generate", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.repo.model.generate", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_repo_model_generate(
+            server,
+            auth,
+            call.session()?,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks).is_some();
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error.with_hook_notice(hook_notice));
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output)
+            .await
+            .map_err(|error| error.with_hook_notice(hook_notice))?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+        hook_notice,
+    })
+}
 async fn vault_repo_proposal_submit(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -53346,6 +53391,14 @@ fn boxed_vault_repo_symbols_release<'a>(
     Box::pin(vault_repo_symbols_release(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_repo_model_generate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_model_generate(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_repo_proposal_submit<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -59110,6 +59163,7 @@ async fn call_verb_row(
         "vault.repo.symbols.declare" => boxed_vault_repo_symbols_declare(server, call, input).await,
         "vault.repo.symbols.renew" => boxed_vault_repo_symbols_renew(server, call, input).await,
         "vault.repo.symbols.release" => boxed_vault_repo_symbols_release(server, call, input).await,
+        "vault.repo.model.generate" => boxed_vault_repo_model_generate(server, call, input).await,
         "vault.repo.proposal_submit" => boxed_vault_repo_proposal_submit(server, call, input).await,
         "vault.repo.merge_queue.enqueue" => {
             boxed_vault_repo_merge_queue_enqueue(server, call, input).await

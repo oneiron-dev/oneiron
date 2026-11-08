@@ -54,6 +54,17 @@ impl ProducerRows {
         (listing.drained && !listing.unknown).then(|| listing.rows.clone())
     }
 
+    /// The listing of a drained call's saved answer: the rows it was saved
+    /// beside, `None` when its door listed none (FIX 22294). A door that
+    /// answers a saved answer itself, before any surface lists it, releases
+    /// it by this listing.
+    #[must_use]
+    pub fn saved(saved: Option<Vec<EntityId>>) -> Self {
+        let producers = Self::default();
+        producers.list_saved(saved);
+        producers
+    }
+
     /// Lists `rows` as producers of the answer being read.
     pub(crate) fn list(&self, rows: impl IntoIterator<Item = EntityId>) {
         self.listing().rows.extend(rows);
@@ -142,9 +153,9 @@ impl Memory<'_> {
     /// them (`Vault::verb_hook_saved_producers`). A listing its door did not
     /// keep, or one that does not read, is unknown, never an empty one.
     pub(crate) fn produced_by_drained(&self, invocation: Option<InvocationId>) {
-        let Some(producers) = self.producers else {
+        if self.producers.is_none() {
             return;
-        };
+        }
         let saved = invocation.and_then(|invocation| {
             self.vault
                 .verb_hook_saved_producers(invocation)
@@ -152,7 +163,16 @@ impl Memory<'_> {
                 .ok()
                 .flatten()
         });
-        producers.list_saved(saved);
+        self.produced_by_saved(saved);
+    }
+
+    /// Lists the rows a drained or paced call's saved answer was saved
+    /// beside, `saved`, as that answer's producers; `None` marks them
+    /// unknown (FIX 22294).
+    pub(crate) fn produced_by_saved(&self, saved: Option<Vec<EntityId>>) {
+        if let Some(producers) = self.producers {
+            producers.list_saved(saved);
+        }
     }
 
     /// Lists `row` as a producer of the answer being read, which a caller

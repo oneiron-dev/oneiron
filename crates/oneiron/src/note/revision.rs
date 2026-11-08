@@ -114,7 +114,9 @@ pub(crate) fn stored_slot_with_pending_in_txn(
 }
 
 /// The selected native prose shares the historical physical row's metadata;
-/// no frontier entry keeps another copy of the NOTE core or its author.
+/// no frontier entry keeps another copy of the NOTE core or its author. The
+/// physical row is the NOTE's core alone, and the result is that core with
+/// this prose, as a read door projects a NOTE (FIX 7783).
 pub(crate) fn row_with_markdown_in_txn(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -126,10 +128,9 @@ pub(crate) fn row_with_markdown_in_txn(
     if header.entity_type != crate::registry::ENTITY_TYPE_NOTE {
         return Err(Error::CorruptedIndex("NOTE revision entity type"));
     }
-    let mut body = super::decode_note_body_in_txn(store, txn, &raw[ENTITY_METADATA_HEADER_LEN..])?;
-    body.markdown = markdown;
+    let core = super::decode_note_core_in_txn(store, txn, &raw[ENTITY_METADATA_HEADER_LEN..])?;
     let mut selected = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
-    selected.extend_from_slice(&super::encode_note_body(&body)?);
+    selected.extend_from_slice(&super::encode_note_body(&core.with_markdown(markdown))?);
     Ok(selected)
 }
 
