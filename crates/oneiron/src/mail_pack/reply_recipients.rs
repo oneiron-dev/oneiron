@@ -8,6 +8,7 @@
 //! is refused, never cut. A list's address is one opaque recipient: no group
 //! is expanded into its members (fix list row 17642).
 
+use super::gmail::{AddressPlace, address_list, address_places};
 use super::state::MailReplyHeaders;
 use crate::channel_identity_provider::native_mail::canonical_recipient;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
@@ -112,44 +113,63 @@ fn group_refused(header: &str, hint: &str) -> MemoryError {
 }
 
 /// The mailboxes of one address header value, a comma-separated list
-/// (`Name <a@b>, c@d`): each one's bare address. Commas inside a quoted
-/// display name (its `\\"` escapes included) or an angle address do not
-/// split it. An empty group
+/// (`Name <a@b>, c@d`): each one's bare address ([`mailbox_address`]). A
+/// comma inside a quoted display name (its `\\"` escapes included), a
+/// comment or an angle address does not split it. An empty group
 /// (`undisclosed-recipients:;`) names no mailbox; a header whose group
 /// names members never reaches here ([`names_group_members`]).
-fn mailboxes(text: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let (mut start, mut quoted, mut angled, mut escaped) = (0, false, false, false);
-    for (at, character) in text.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match character {
-            '\\' if quoted => escaped = true,
-            '"' if !angled => quoted = !quoted,
-            '<' if !quoted => angled = true,
-            '>' if !quoted => angled = false,
-            ',' if !quoted && !angled => {
-                parts.push(&text[start..at]);
-                start = at + 1;
-            }
-            _ => {}
-        }
-    }
-    parts.push(&text[start..]);
-    parts
-        .into_iter()
-        .map(str::trim)
-        .filter(|part| !part.is_empty() && !empty_group(part))
+///
+/// # Errors
+///
+/// A mailbox whose address cannot be read as one ([`mailbox_address`]).
+fn mailboxes(text: &str) -> MemoryResult<Vec<String>> {
+    address_list(text)
+        .iter()
+        .filter(|part| !empty_group(part))
         .map(|part| {
-            let address = match (part.rfind('<'), part.rfind('>')) {
-                (Some(open), Some(close)) if open < close => &part[open + 1..close],
-                _ => part,
-            };
-            address.trim().to_owned()
+            mailbox_address(part).ok_or_else(|| {
+                MemoryError::bad_request(
+                    "the answered message names a mailbox with more than one address, or one \
+                     left open; answer it in a new message",
+                )
+            })
         })
         .collect()
+}
+
+/// The bare address of one mailbox `part` (`Name <a@b>` or `a@b`, either
+/// with comments): the one angle address outside its quoted strings and
+/// comments, else the part with its comments left out. A `<` in a comment
+/// (`Alice <a@b> (via <c@d>)`) or in a quoted display name is never read
+/// as the address. `None` when the part names two angle addresses or
+/// leaves a quoted string, comment, angle address or domain literal open.
+fn mailbox_address(part: &str) -> Option<String> {
+    let (places, open) = address_places(part);
+    if open {
+        return None;
+    }
+    let angles = places
+        .iter()
+        .filter(|(_, character, place)| *character == '<' && *place == AddressPlace::Top)
+        .count();
+    let address: String = match angles {
+        0 => places
+            .iter()
+            .filter(|(_, character, place)| match place {
+                AddressPlace::Comment => false,
+                AddressPlace::Top => !matches!(character, '(' | ')'),
+                AddressPlace::Quoted | AddressPlace::Angle | AddressPlace::Literal => true,
+            })
+            .map(|(_, character, _)| *character)
+            .collect(),
+        1 => places
+            .iter()
+            .filter(|(_, _, place)| *place == AddressPlace::Angle)
+            .map(|(_, character, _)| *character)
+            .collect(),
+        _ => return None,
+    };
+    Some(address.trim().to_owned())
 }
 
 /// Whether `part` is an RFC 5322 group that names no mailbox, as a message
@@ -187,7 +207,7 @@ impl ReplyRecipientList<'_> {
     /// Names every mailbox of the header entries `entries` in `role`.
     fn name_header(&mut self, role: OutboundRecipientRole, entries: &[String]) -> MemoryResult<()> {
         for entry in entries {
-            for address in mailboxes(entry) {
+            for address in mailboxes(entry)? {
                 self.name(role, &address)?;
             }
         }

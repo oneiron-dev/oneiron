@@ -72340,8 +72340,17 @@ async fn mcp_verb_row_vault_mail_reply_draft(row: McpVerbRow<'_>) -> McpVerbRowR
     };
     let input: oneiron::mail_pack::MailReplyDraftRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
-    let output = oneiron::task_verb::sdk::vault_mail_reply_draft(&memory, input)
-        .map_err(mcp_facade_error)?;
+    let (output, listed) = Box::pin(mcp_off_runtime_row(
+        server,
+        tool,
+        actor,
+        surface,
+        move |memory| oneiron::task_verb::sdk::vault_mail_reply_draft(memory, input),
+    ))
+    .await?;
+    // Derived from the rows its reads listed, on a refusal too.
+    served.extend(listed);
+    let output = output.map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)
 }
