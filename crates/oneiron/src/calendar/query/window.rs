@@ -4,6 +4,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use super::facts::{CalendarRead, event_row, receipted, visit_calendar_events};
+use super::occurrences::SeriesCursors;
 use super::pages::{CalendarOccurrencesPage, Slices};
 use super::requests::CalendarRangeDto;
 use crate::calendar::claims::{CalendarSeriesExceptionValue, CalendarSeriesMasterValue};
@@ -64,7 +65,7 @@ fn occurrences_in(
     range: CalendarRangeDto,
 ) -> Result<Vec<CalendarOccurrenceView>> {
     match prepare_occurrences(lane, master_id)? {
-        Some(prepared) => prepared.within(range),
+        Some(prepared) => prepared.within(range, &mut SeriesCursors::default()),
         None => Ok(Vec::new()),
     }
 }
@@ -92,12 +93,17 @@ pub(super) fn read_occurrences_page_scoped(
         );
         let prepared = prepare_occurrences(lane, master_id)?;
         let mut occurrences = Vec::new();
+        // The series' walk carries from one slice to the next (FIX 16174).
+        let mut cursors = SeriesCursors::default();
         while let Some(slice) = slices.next_slice() {
             if let Some(prepared) = &prepared {
-                occurrences.extend(prepared.within(CalendarRangeDto {
-                    start: slice.start,
-                    end: slice.end,
-                })?);
+                occurrences.extend(prepared.within(
+                    CalendarRangeDto {
+                        start: slice.start,
+                        end: slice.end,
+                    },
+                    &mut cursors,
+                )?);
             }
         }
         Ok(CalendarOccurrencesPage {
@@ -166,15 +172,27 @@ fn prepare_occurrences(
 
 impl PreparedOccurrences {
     /// The occurrences that start in `range`, by actual start, then end,
-    /// UID, original start and EVENT.
-    fn within(&self, range: CalendarRangeDto) -> Result<Vec<CalendarOccurrenceView>> {
+    /// UID, original start and EVENT. The series expands under `cursors`,
+    /// which a page's slices share.
+    fn within(
+        &self,
+        range: CalendarRangeDto,
+        cursors: &mut SeriesCursors,
+    ) -> Result<Vec<CalendarOccurrenceView>> {
         let master_id = self.master_id;
         let keys: Vec<_> = self
             .exceptions
             .iter()
             .map(|(_, _, key)| key.clone())
             .collect();
-        let starts = expand_master_window(&self.series, range.to_time_range())
+        // The slice after starts the second after this one.
+        let starts = cursors
+            .expand(
+                master_id,
+                &self.series,
+                range.to_time_range(),
+                range.end.checked_add(1),
+            )
             .map_err(|_| Error::InvalidConfig("calendar recurrence projection failed".into()))?;
         let mut result = Vec::new();
         for uid in &self.uids {
