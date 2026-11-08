@@ -17,6 +17,29 @@ impl Memory<'_> {
         self.vault
     }
 
+    /// This handle for one call bound to the caller's own retrieval filter
+    /// (FIX 3977, RETRIEVAL-04): every read lane it opens meets `filter`
+    /// after the floor (live proof or owner, the vault manifest, the actor
+    /// and credential floor), so the call's reads only narrow. It binds a
+    /// request, never authority. A rebind meets the filter already bound and
+    /// never widens it; `None` leaves it as it is.
+    #[must_use]
+    pub fn with_read_filter(&self, filter: Option<&crate::memory::ReadFilterInput>) -> Self {
+        let mut bound = self.clone();
+        if let Some(filter) = filter {
+            bound.read_filter = crate::gate::RetrievalFilter::meet_requests(
+                self.read_filter.as_ref(),
+                Some(&filter.to_filter()),
+            );
+        }
+        bound
+    }
+
+    /// The caller filter this handle's reads are bound to, if any.
+    pub(crate) fn read_filter(&self) -> Option<&crate::gate::RetrievalFilter> {
+        self.read_filter.as_ref()
+    }
+
     /// Binds the vault task-work turn a host already holds for this
     /// operation (Rule 5): the surface's task work runs on it and never waits
     /// in the line again. A host that waited for the turn passes that one.
@@ -253,6 +276,27 @@ impl Memory<'_> {
     pub fn with_origin_conversation(mut self, id: EntityId) -> Self {
         self.origin_conversation = Some(id);
         self
+    }
+
+    /// Records the caller origin the host observed at root admission. This
+    /// is separate from read locality and destination and changes no gate.
+    #[must_use]
+    pub fn with_caller_origin(mut self, origin: crate::agent_dispatch::CallerOrigin) -> Self {
+        self.caller_origin = Some(origin);
+        self
+    }
+
+    /// The host's explicit origin, or an in-process host invocation when
+    /// that is known. Default on-device read locality proves no connection.
+    #[must_use]
+    pub fn caller_origin(&self) -> crate::agent_dispatch::CallerOrigin {
+        self.caller_origin.unwrap_or_else(|| {
+            if self.native_invocation() {
+                crate::agent_dispatch::CallerOrigin::NativeHost
+            } else {
+                crate::agent_dispatch::CallerOrigin::Unknown
+            }
+        })
     }
 
     /// Binds the off-record session the host's request names (its
