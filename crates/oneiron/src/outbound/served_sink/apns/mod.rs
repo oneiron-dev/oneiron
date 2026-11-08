@@ -144,17 +144,43 @@ impl ServedChannelSink<'_> {
     }
 
     fn apns_device(&self, target: &str) -> Result<Option<ApnsDeviceAddress>> {
-        let Some(id) = ApnsDeviceAddress::target_identity(target) else {
-            return Ok(None);
-        };
-        let Some(identity) = self.vault.get_channel_identity(&id)? else {
-            return Ok(None);
-        };
-        if identity.channel() != "apns" || identity.state() != ChannelIdentityState::Active {
-            return Ok(None);
-        }
-        ApnsDeviceAddress::parse(identity.address_or_handle()).map(Some)
+        apns_device_in(self.vault, target)
     }
+}
+
+/// The active APNs device `target` names, as its channel identity reads in
+/// `vault`; `None` for a target that names none.
+fn apns_device_in(vault: &crate::Vault, target: &str) -> Result<Option<ApnsDeviceAddress>> {
+    let Some(id) = ApnsDeviceAddress::target_identity(target) else {
+        return Ok(None);
+    };
+    let Some(identity) = vault.get_channel_identity(&id)? else {
+        return Ok(None);
+    };
+    if identity.channel() != "apns" || identity.state() != ChannelIdentityState::Active {
+        return Ok(None);
+    }
+    ApnsDeviceAddress::parse(identity.address_or_handle()).map(Some)
+}
+
+/// Whether this machine holds the APNs application the device `target`
+/// names, still bound to that device's environment and topic (FIX 4747
+/// slice 4): the reads `apns_push` makes before its send, as a read-only
+/// predicate.
+pub(super) fn apns_application_held(
+    vault: &crate::Vault,
+    transports: &super::ServedTransports,
+    target: &str,
+) -> bool {
+    let Ok(Some(device)) = apns_device_in(vault, target) else {
+        return false;
+    };
+    transports
+        .apns_application(&device.application)
+        .is_some_and(|application| {
+            application.config.environment == device.environment
+                && application.config.topic == device.topic
+        })
 }
 
 fn apns_send(

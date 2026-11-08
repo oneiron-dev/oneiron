@@ -300,15 +300,28 @@ impl BrokerResponses {
             }
             return Err(broker_error(error));
         }
-        let reply = open_with_whole(
-            self.chat.client(),
-            self.chat.keys(),
-            self.chat.secret(),
-            &header,
-            &body,
-            &whole,
-        )
-        .await?;
+        let reply = if lease.has_dispatch_release() {
+            super::broker::open_with_whole_released(
+                self.chat.client(),
+                self.chat.keys(),
+                self.chat.secret(),
+                &header,
+                &body,
+                &whole,
+                lease,
+            )
+            .await?
+        } else {
+            open_with_whole(
+                self.chat.client(),
+                self.chat.keys(),
+                self.chat.secret(),
+                &header,
+                &body,
+                &whole,
+            )
+            .await?
+        };
         match reply.outcome().clone() {
             Outcome::Answered { status, .. } if !(200..=299).contains(&status) => {
                 if (400..500).contains(&status) && !matches!(status, 408 | 429) {
@@ -338,16 +351,21 @@ impl BrokerResponses {
         let session = BrokerSession { reply, chain };
         Ok(Box::pin(futures_util::stream::unfold(
             Turn::Reading(session, turn, chained),
-            move |state| self.step(state),
+            move |state| self.step(lease, state),
         )))
     }
 
-    async fn step(&self, state: Turn) -> Option<(Event, Turn)> {
+    async fn step(&self, lease: &BudgetLease, state: Turn) -> Option<(Event, Turn)> {
         let Turn::Reading(mut session, turn, mut chained) = state else {
             return None;
         };
         loop {
-            match session.reply.next().await {
+            let release = || {
+                lease.check_dispatch_release()?;
+                lease.begin_physical_attempt();
+                Ok::<(), oneiron::LlmError>(())
+            };
+            match session.reply.next_released(&release).await {
                 Ok(StreamPart::Chunk(chunk)) => {
                     let Ok(mut event) = serde_json::from_slice::<JsonValue>(&chunk) else {
                         return Some((Err(OpenAiCompatTransportError::StreamCut), Turn::Done));
@@ -395,7 +413,13 @@ impl BrokerResponses {
                 Ok(StreamPart::Cut(reason)) => {
                     return Some((Err(cut_error(reason)), Turn::Done));
                 }
-                Err(_) => {
+                Err(oneiron_broker::DispatchError::Release(error)) => {
+                    return Some((
+                        Err(OpenAiCompatTransportError::DispatchRelease(error)),
+                        Turn::Done,
+                    ));
+                }
+                Err(oneiron_broker::DispatchError::Broker(_)) => {
                     return Some((Err(OpenAiCompatTransportError::StreamCut), Turn::Done));
                 }
             }

@@ -323,17 +323,10 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
                     )))
             })
             .transpose()?,
-        // FIX685: its own `due_at` key; a due/deadline annotation only,
-        // never the `ttl` expiry map.
-        due_at: task_body_optional(entries, "due_at")?
-            .map(|value| {
-                value
-                    .as_u64()
-                    .ok_or(Error::Record(RecordError::InvalidTaskBody(
-                        "tasks.body.due_at",
-                    )))
-            })
-            .transpose()?,
+        // FIX685: its own `due_at` key, never the `ttl` expiry map; FIX
+        // 22121: the watch flag beside it.
+        due_at: super::watch_task::decode_due_at(entries, "tasks.body.due_at")?,
+        watch: super::watch_task::decode_watch(entries, "tasks.body.watch")?,
         state: task_body_optional(entries, "state")?
             .map(decode_task_execution_state)
             .transpose()?,

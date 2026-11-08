@@ -70,6 +70,9 @@ mod highway_report;
 pub(crate) mod highway_runner;
 mod highway_status;
 mod highway_types;
+mod host_done_confession;
+pub use host_done_confession::HostDoneConfessionContext;
+pub(crate) use host_done_confession::host_done_confession_in_txn;
 mod lifecycle_facade;
 mod lifecycle_receipt;
 pub(crate) use lifecycle_receipt::{
@@ -121,6 +124,8 @@ mod terminal_state;
 mod training_offer_ask;
 mod training_swap_ask;
 mod verb_kind;
+mod watch_task;
+pub(crate) use watch_task::{settle_watch_task_in_txn, tick_due_at_in_txn};
 mod wave_port;
 mod wire_decode;
 pub(crate) use contribution_pair::{
@@ -216,9 +221,9 @@ pub use runner_done::{
 };
 
 pub(crate) use create_validation::{
-    completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,
-    settled_task_result_binding, settled_task_result_binding_in_txn, task_human_assignee,
-    task_is_terminal,
+    completed_task_at_in_txn, open_task_due_at_in_txn, reject_born_expired_task_deadline,
+    reject_incoherent_task_terminal, settled_task_result_binding,
+    settled_task_result_binding_in_txn, task_human_assignee, task_is_terminal, watcher_due_at,
 };
 pub(crate) use rate_limit::task_create_owner;
 pub(crate) use task_continuation::{
@@ -474,10 +479,10 @@ pub use ask_types::{
     TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskEffectAuthorization,
     TaskAskElectorate, TaskAskEvidence, TaskAskEvidenceReason, TaskAskFallback, TaskAskGuest,
     TaskAskHandle, TaskAskHoldReason, TaskAskLadderPrediction, TaskAskLaunchHold, TaskAskNeed,
-    TaskAskOptionId, TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight,
-    TaskAskPreflightRecipient, TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult,
-    TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus,
-    TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
+    TaskAskOption, TaskAskOptionId, TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight,
+    TaskAskPreflightRecipient, TaskAskProvisional, TaskAskQuestion, TaskAskRec, TaskAskReceipt,
+    TaskAskResult, TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec,
+    TaskAskStatus, TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };
 
 use crate::memory::{MemoryError, MemoryResult};

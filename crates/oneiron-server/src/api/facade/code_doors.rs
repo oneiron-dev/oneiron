@@ -67,6 +67,20 @@ pub(crate) async fn vault_code_proposal_submit(
     .await
 }
 
+pub(crate) async fn vault_code_proposal_rereview(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeProposalRereviewRequest,
+) -> Listed<CodeProposalSubmitted> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.proposal_rereview",
+        move |memory, owner| memory.code_proposal_rereview_as(owner, input.original, input.change),
+    )
+    .await
+}
+
 pub(crate) async fn vault_code_oplog(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -116,6 +130,22 @@ pub(crate) async fn vault_code_proposal_resolve(
         auth,
         "vault.code.proposal_resolve",
         move |memory, owner| memory.code_proposal_resolve_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_proposal_resolve_rereview(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeProposalResolveRereviewRequest,
+) -> Listed<CodeProposalSubmitted> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.proposal_resolve_rereview",
+        move |memory, owner| {
+            memory.code_proposal_resolve_rereview_as(owner, input.original, input.change)
+        },
     )
     .await
 }

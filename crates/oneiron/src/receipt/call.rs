@@ -405,13 +405,14 @@ fn call_receipt_id(receipt_ref: &str) -> Option<EntityId> {
 impl Vault {
     /// The input versions of an action that reads `named`, captured in one
     /// read snapshot before it runs (OF-568): the newest change in the
-    /// vault's change log (every entity write), its graph version (every
-    /// edge change), and each named entity's live revision, `-` when it has
-    /// none. `None` past [`MAX_ACTION_INPUT_ENTITIES`].
+    /// vault's change log (every entity write), its document-mutation head
+    /// (every committed document edit, FIX 2860), its graph version (every
+    /// edge change), and each named entity's live revision. A change log,
+    /// head or revision the vault does not hold reads `-`, never equal to
+    /// one it holds. `None` past [`MAX_ACTION_INPUT_ENTITIES`].
     ///
-    /// Not seen: a live document edit to an entity the request does not
-    /// name, side-table state, and the world outside the vault. A caller
-    /// whose action reads the world captures nothing.
+    /// Not seen: other side-table state and the world outside the vault. A
+    /// caller whose action reads the world captures nothing.
     ///
     /// # Errors
     ///
@@ -425,9 +426,16 @@ impl Vault {
             || "-".to_owned(),
             |(id, _)| crate::entity_id::bytes_to_hex_lower(&id),
         );
+        let documents =
+            crate::vault::entity_revision::document_mutation_head_in_txn(&self.store, &txn)?
+                .map_or_else(
+                    || "-".to_owned(),
+                    |mutation| crate::entity_id::bytes_to_hex_lower(&mutation),
+                );
         let graph = crate::store::graph_version::read_graph_version(&self.store, &txn)?;
         let mut inputs = ActionInputs::new()
             .with("vault.changes", head)
+            .with("vault.documents", documents)
             .with("vault.graph", graph.to_string());
         for id in named {
             let revision = crate::vault::entity_revision::revision_for_mode_in_txn(

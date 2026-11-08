@@ -48,7 +48,8 @@ fn origin_field_matrix_and_atomic_admission() {
         read_event(
             &vault,
             &CalendarReadRequest {
-                event_ref: native.to_hex()
+                event_ref: native.to_hex(),
+                filter: None,
             }
         )
         .unwrap()
@@ -142,7 +143,8 @@ fn source_delete_invalidates_dreamer_but_not_native() {
         read_event(
             &vault,
             &CalendarReadRequest {
-                event_ref: dreamer.to_hex()
+                event_ref: dreamer.to_hex(),
+                filter: None,
             }
         )
         .unwrap()
@@ -159,7 +161,8 @@ fn source_delete_invalidates_dreamer_but_not_native() {
         read_event(
             &vault,
             &CalendarReadRequest {
-                event_ref: dreamer.to_hex()
+                event_ref: dreamer.to_hex(),
+                filter: None,
             }
         )
         .unwrap()
@@ -169,7 +172,8 @@ fn source_delete_invalidates_dreamer_but_not_native() {
         read_event(
             &vault,
             &CalendarReadRequest {
-                event_ref: native.to_hex()
+                event_ref: native.to_hex(),
+                filter: None,
             }
         )
         .unwrap()
@@ -207,7 +211,8 @@ fn legacy_reads_default_but_originless_calendar_overwrite_refuses() {
         read_event(
             &vault,
             &CalendarReadRequest {
-                event_ref: event.to_hex()
+                event_ref: event.to_hex(),
+                filter: None,
             }
         )
         .unwrap()
@@ -445,6 +450,7 @@ fn late_origin_binding_preserves_source_invalidation_without_hiding_native_event
             .unwrap();
         let request = CalendarReadRequest {
             event_ref: event.to_hex(),
+            filter: None,
         };
         assert!(read_event(&vault, &request).unwrap().is_none());
 

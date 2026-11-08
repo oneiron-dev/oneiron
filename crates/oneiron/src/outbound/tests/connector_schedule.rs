@@ -2110,6 +2110,9 @@ fn terminal_outcome_follows_ledger_resolution_on_every_door() -> crate::Result<(
                 ConnectorSendTaskOutcome::Failed => {
                     assert!(receipt.is_none_or(|outcome| outcome == "failed"), "{case}");
                 }
+                ConnectorSendTaskOutcome::OwnerDeclinedResend => {
+                    unreachable!("{case}: no case settles by the owner's word")
+                }
             }
         }
     }
