@@ -298,6 +298,9 @@ side_tables! {
     /// Each TASK with a due time not yet ticked (FIX 4749). Key: u64be (due time, Unix seconds)
     /// + id16 (TASK).
     HOOKS_TASK_DUE: VaultMeta b"hooks:task_due:v1:" Named;
+    /// Each TASK the due index holds (FIX 4749): the due time it holds, and the tick sequence
+    /// its release committed, if it has ticked. Key: id16 (TASK).
+    HOOKS_TASK_DUE_REVERSE: VaultMeta b"hooks:task_due_reverse:v1:" Named;
     /// The tick feed fact hooks follow (FIX 4749): one row per due TASK released. Key: u64be
     /// (sequence).
     HOOKS_TICK: VaultMeta b"hooks:tick:v1:" Named;
@@ -479,6 +482,10 @@ side_tables! {
     /// Key: string (pack name "\0" skill id hex).
     LENS_SLOT: VaultMeta b"lens/slot/v1\0" Named
         => crate::lens::erase_slot_actor_in_txn;
+    /// Native provider archive version captured by a LINE observation. Key: id16(claim).
+    LINE_CHAT_ARCHIVE_PIN: VaultMeta b"line:chat_archive_pin:v1:" Named Engine;
+    /// Exact native join-version release still owed after capture teardown. Key: id16(claim).
+    LINE_CHAT_ARCHIVE_RELEASE: VaultMeta b"line:chat_archive_release:v1:" Named Engine;
     /// Tracker issue id to task id. Key: string.
     LINEAR_ISSUE_REVERSE: VaultMeta b"linear.issue.v1/" Raw;
     /// One TASK's mirror control (OF-427 C6): whether it is opted out, its mapping revision and
