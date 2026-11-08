@@ -14,7 +14,9 @@
 //! sweep also retries a bounded number of files a revoke or an expiry could
 //! not remove then. The found-key drain raises one write's share of due
 //! notices a page, each page its own write, and stops between pages at the
-//! deadline.
+//! deadline. The OAuth row sweep removes at most one clients table's bound of
+//! lapsed rows a page, each page its own write, and stops between pages at
+//! the deadline.
 
 use super::{Deadline, HardEraseWork, HousekeepingSweep, SecretLiftWork, SweepWork};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
@@ -180,6 +182,7 @@ pub(super) fn run(
                 migrated: report.migrated,
             }
         }
+        HousekeepingSweep::OAuthExpiry => return oauth_rows(vault, now, deadline),
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune
@@ -366,6 +369,28 @@ fn found_key_notices(vault: &Vault, deadline: &Deadline) -> Result<Run> {
             });
         }
     }
+}
+
+/// Drops the OAuth server's rows past their lifetime (FIX 4902) a page at a
+/// time, each page its own short write, until none is left or the deadline
+/// passes, with the owner agent grant of each sign-in that lapsed before its
+/// client held a token (FIX 22142). The lapsed rows are the queue, so the
+/// schedule keeps no cursor.
+fn oauth_rows(vault: &Vault, now: u64, deadline: &Deadline) -> Result<Run> {
+    let (swept, complete) = vault.sweep_lapsed_oauth_rows(now, || deadline.passed())?;
+    Ok(Run {
+        work: SweepWork::OAuthRows {
+            requests: swept.requests,
+            codes: swept.codes,
+            tokens: swept.tokens,
+            families: swept.families,
+            clients: swept.clients,
+            grants: swept.grants,
+        },
+        complete,
+        cursor: None,
+        covered_until: None,
+    })
 }
 
 /// Rebuilds whole-body line indexes reads found missing or short (FIX 1186b):

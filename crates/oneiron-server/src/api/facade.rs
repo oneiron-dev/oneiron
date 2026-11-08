@@ -148,6 +148,7 @@ mod model_setting_doors;
 mod model_step_doors;
 mod model_stream_doors;
 mod note_doors;
+mod oauth_authorization_doors;
 mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;

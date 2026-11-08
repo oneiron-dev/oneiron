@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1336 facade rows, 4811 declarations.
-Inputs: 1265 of 1336 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1165 of 1336 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1337 facade rows, 4814 declarations.
+Inputs: 1266 of 1337 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1166 of 1337 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
@@ -14702,6 +14702,19 @@ class AgentVerbClassesConfigureRequest(TypedDict):
 class AgentVerbClassesReceipt(TypedDict):
     configuration: AgentVerbClassesView
     receipt_ref: str
+AgentTier = Literal["read", "propose", "full"]
+class OAuthAuthorizationAnswer(TypedDict):
+    request_ref: EntityId
+    allow: bool
+    tier: NotRequired[AgentTier | None]
+    world_ref: NotRequired[EntityId | None]
+class OAuthAuthorizationAnswered(TypedDict):
+    request_ref: EntityId
+    allowed: bool
+    agent: NotRequired[EntityId | None]
+    grant_ref: NotRequired[EntityId | None]
+    tier: NotRequired[AgentTier | None]
+    world_ref: NotRequired[EntityId | None]
 class GitPushRepo(TypedDict):
     repo: EntityId
     project: EntityId
