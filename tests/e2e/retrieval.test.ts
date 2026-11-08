@@ -982,33 +982,15 @@ suite.test(test, "RETRIEVAL-07", "Freshness does not rewrite confidence should w
     expect(factors.get("semantic-new")![1]!).toBeGreaterThan(factors.get("working-new")![1]!);
     expect(factors.get("semantic-new")![0]!).toBeGreaterThan(factors.get("semantic-old")![0]!);
     const original = records.get("semantic-old")!;
-    // A replacement is a closure proposal (landing.rs): it lands Proposed and
-    // the prior stays active until the owner clears it with the engine's own
-    // nonce and read frontier. Supersession is checked after that.
-    const proposed = await engine.client.call("vault.claims.upsert", {
-      scope, subject_ref: engine.pairedActor.principalRef, source: "user_stated",
+    // FIX 22041: the owner's own correction of a claim the owner authored
+    // lands at once, through the fresh-claim oracle, and closes the prior in
+    // the same write. No proposal opens; the receipt names the prior.
+    const replacement = await claim(engine, scope, {
       predicate: "profile.retrieval_aging_semantic_old", value: fixture.newValue,
       confidence: fixture.confidence, occurred_at: utc(fixture.newUtc), learned_at: utc(fixture.newUtc), salience: 0.5,
     });
-    expect(proposed.approval).toBe("proposed");
-    expect(proposed.receipt_ref).toMatch(/^gate:[0-9a-f]+$/);
-    const beforeSettlement = await engine.client.call("vault.claims.history", { claim_ref: original.ref });
-    readReceipt(beforeSettlement.narrowing);
-    expect(beforeSettlement.value.find(row => row.claim_ref === original.id || row.short_ref === original.ref))
-      .toMatchObject({ value: fixture.oldValue, lifecycle: "active" });
-    const pending = await engine.client.call("vault.writes.critical_confirm.pending", { pending_operation: proposed.receipt_ref });
-    if (pending === null) throw new Error("critical_confirm.pending returned null");
-    expect(pending.pending_operation).toBe(proposed.receipt_ref);
-    const settled = await engine.client.call("vault.writes.critical_confirm.clear", {
-      pending_operation: pending.pending_operation, nonce: pending.nonce, read_frontier_hash: pending.read_frontier_hash,
-    });
-    expect(settled.resolution).toBe("Cleared");
-    expect(settled.receipt.disposition).toBe("clear");
-    await engine.awaitReceipt(proposed.receipt_ref);
-    const hydrated = await engine.client.call("vault.hydrate", { refs: [proposed.claim_short_id] });
-    readReceipt(hydrated.narrowing);
-    expect(hydrated.value).toHaveLength(1);
-    const replacement = { ref: proposed.claim_short_id, id: hydrated.value[0]!.id_hex };
+    expect(replacement.id).not.toBe(original.id);
+    expect(replacement.receipt.superseded?.id).toBe(original.id);
     const present = await engine.client.call("vault.search.hybrid", {
       query: "field kit locker", replay: { now: utc(fixture.timeAnchorsUtc[1]!), blend_weights: blend }, limit: 20,
     });
