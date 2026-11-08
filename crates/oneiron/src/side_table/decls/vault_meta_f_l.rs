@@ -287,6 +287,10 @@ side_tables! {
     /// A hook's regen record: the contract its last good body passed under, its intent, and a
     /// regen decision waiting to be enacted. Key: id16 (binding).
     HOOKS_REGEN: VaultMeta b"hooks:regen:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_regen_accepts_masked];
+    /// One step in a hook's regen history (FIX 4691): a regen decision with its golden manifest,
+    /// or an adoption, cancel or revert of one; body hashes only, never a body. Key: hash32
+    /// (blake3 of the hook's pack, a zero byte and its name) + u64be (sequence within the hook).
+    HOOKS_REGEN_RECEIPT: VaultMeta b"hooks:regen_receipt:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_regen_receipt_accepts_masked];
     /// Each hook binding's runs in commit order, each naming its saved row: a fact run's memo or
     /// a verb run's saved copy. Key: id16 (binding) + u64be (commit time, Unix ms) + hash32 (run
     /// key).

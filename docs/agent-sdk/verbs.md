@@ -67,6 +67,7 @@ both bindings and their export-census tests in one change.
 - `self.grants.asked`
 - `vault.companions.access_requests.answer`
 - `self.grants.answer`
+- `vault.proactivity.digest.get`
 - `vault.personas.preview`
 - `vault.personas.export`
 - `vault.personas.edit`
@@ -673,7 +674,11 @@ both bindings and their export-census tests in one change.
 - `vault.hooks.replay`
 - `vault.hooks.regen.due`
 - `vault.hooks.regen.get`
+- `vault.hooks.regen.history`
+- `vault.hooks.regen.revert`
+- `vault.hooks.regen.run`
 - `vault.hooks.regen.adopt`
+- `vault.hooks.regen.cancel`
 - `vault.artifacts.publish_approval`
 - `vault.artifacts.publish`
 - `vault.artifacts.repoint`
@@ -730,6 +735,8 @@ both bindings and their export-census tests in one change.
 - `vault.code.corrections`
 - `vault.code.step_evidence`
 - `vault.code.type_diagnostics`
+- `vault.code.waits.rebind_prepare`
+- `vault.code.waits.rebind`
 - `vault.code.waits.resolve`
 - `vault.code.waits.receipt`
 - `vault.results.status`
@@ -890,6 +897,7 @@ both bindings and their export-census tests in one change.
 - `tasks.answer.forward`
 - `tasks.answer.forward.status`
 - `tasks.outcomes`
+- `tasks.outcomes.route_calibration`
 - `vault.rooms.list`
 - `vault.rooms.messages`
 - `vault.rooms.participants`
@@ -1131,6 +1139,7 @@ both bindings and their export-census tests in one change.
 - `vault.esign.signing.pdf`
 - `vault.esign.signing.image`
 - `vault.esign.signing.signature`
+- `vault.esign.signing.preview`
 - `vault.esign.seal.get`
 - `vault.conversations.create`
 - `vault.conversations.turns.create`
@@ -1263,6 +1272,8 @@ both bindings and their export-census tests in one change.
 - `self.run.attach`
 - `self.folds.describe`
 - `self.history`
+- `self.hooks.regen.adopt`
+- `self.hooks.regen.get`
 - `vault.runs.review`
 - `vault.runs.settle`
 - `vault.runs.settlement`
@@ -1299,6 +1310,7 @@ both bindings and their export-census tests in one change.
 - `vault.mail.sources.sync_status`
 - `vault.mail.sources.import_mbox`
 - `vault.mail.sources.sync`
+- `vault.mail.sources.search`
 - `vault.mail.inbox`
 - `vault.mail.threads.read`
 - `vault.mail.attachments.open`
