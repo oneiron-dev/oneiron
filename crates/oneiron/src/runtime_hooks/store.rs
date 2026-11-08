@@ -192,7 +192,9 @@ pub(super) fn put_cursor_in_txn(
 /// Commits a fact binding's cursor with its real enable, disable or
 /// replacement write. A selector-only update of an already-enabled binding
 /// keeps its cursor; a disabled-to-enabled transition starts at the enable
-/// write, including the settlement head (FIX 10078).
+/// write, including the settlement head (FIX 10078). A binding with no
+/// `previous` row is fresh, so a watcher's starts before the earliest tick of
+/// a TASK still open (FIX 4749).
 pub(crate) fn sync_binding_cursor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -227,7 +229,7 @@ pub(crate) fn sync_binding_cursor_in_txn(
         return Ok(());
     }
     for source in FactSource::ALL {
-        let start = source::enable_start_in_txn(vault, txn, &binding, source)?;
+        let start = source::enable_start_in_txn(vault, txn, &binding, source, previous.is_none())?;
         put_cursor_in_txn(vault, txn, binding, source, &CursorRow::new(start, at))?;
     }
     Ok(())
