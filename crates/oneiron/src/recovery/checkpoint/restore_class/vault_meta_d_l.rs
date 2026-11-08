@@ -179,6 +179,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::EDIT_DISTANCE_PROPOSAL_ARTIFACT, CONTENT),
     (&t::EDIT_DISTANCE_PROPOSAL_DOCUMENT, CONTENT),
     (&t::EDIT_DISTANCE_RESERVOIR_EXPORT, CONTENT),
+    (&t::EDIT_DISTANCE_ROUTING_OUTCOME, CONTENT),
+    (&t::EDIT_SETTLE_KEEP_LINK, CONTENT),
     (&t::EDIT_SETTLE_ORGAN_WAIT, LIVE),
     (&t::EDIT_SETTLE_PENDING_PROPOSAL, CONTENT),
     (&t::EDIT_SETTLE_STRANDED_PROPOSAL, CONTENT),
@@ -388,6 +390,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // names; the owner's follow-or-pin preference stands as the live vault holds it.
     (&t::LLM_MODEL_PACK_ACTIVE, CONTENT),
     (&t::LLM_MODEL_PACK_PREFERENCE, LIVE),
+    // FIX 20192: a model pack's replaced version travels with the install
+    // receipts a revert puts it back among.
+    (&t::LLM_MODEL_PACK_REPLACED, CONTENT),
     // FIX 5368: a retirement notice the owners were sent stays sent; a restore
     // never sends it again.
     (&t::LLM_MODEL_PACK_RETIREMENT_NOTICE, LIVE),

@@ -12,6 +12,7 @@ use crate::error::Result;
 use crate::secret_custody::EraseOwnerAct;
 use crate::side_table::ActorScrub;
 
+use super::ErasureEffects;
 use super::tombstone::HARD_DELETE_MARKER;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -122,7 +123,7 @@ const ACTOR_STAMP_TOKENS: ActorScrub = crate::provenance::erase_actor_stamp_toke
 pub(super) fn erase_actor_fields_in_txn(
     mut erase: ActorErasureWriter<'_, '_>,
     act: Option<&EraseOwnerAct<'_>>,
-) -> Result<Vec<(crate::attempt_queue::AttemptId, u32)>> {
+) -> Result<ErasureEffects> {
     let accepted_hard_purge = erase.payload_scope == PayloadEraseScope::AcceptedHardPurge;
     let (vault, wtxn, actor) = erase.parts();
     let actor = &actor;
@@ -167,15 +168,20 @@ pub(super) fn erase_actor_fields_in_txn(
     } else {
         BTreeSet::new()
     };
-    scrub_actor_fields_in_txn(&mut erase, act)?;
+    let mut effects = ErasureEffects {
+        decision_answers: scrub_actor_fields_in_txn(&mut erase, act)?,
+        ..ErasureEffects::default()
+    };
     let (vault, wtxn, _) = erase.parts();
     super::connector_witness::erase_connector_witness_rows_in_txn(vault, wtxn, &witnessed, act)?;
     if hard || accepted_hard_purge {
-        return crate::attempt_queue::ForceCancelAuthority::erase_actor_payloads_in_txn(
-            &mut erase, act,
+        effects.extend(
+            crate::attempt_queue::ForceCancelAuthority::erase_actor_payloads_in_txn(
+                &mut erase, act,
+            )?,
         );
     }
-    Ok(Vec::new())
+    Ok(effects)
 }
 
 /// The sweep's scrubs without the attempt payloads, which a restore's sweep
@@ -185,7 +191,7 @@ pub(super) fn erase_actor_fields_in_txn(
 fn scrub_actor_fields_in_txn(
     erase: &mut ActorErasureWriter<'_, '_>,
     act: Option<&EraseOwnerAct<'_>>,
-) -> Result<()> {
+) -> Result<Vec<u64>> {
     let (vault, wtxn, actor) = erase.parts();
     let mut copied_messages = BTreeSet::new();
     let mut copied_turns = BTreeSet::new();
@@ -218,13 +224,23 @@ fn scrub_actor_fields_in_txn(
     // here, and a restore's sweep retires a restored copy again (FIX 7494).
     crate::task_verb::retire_holder_ask_forward_rows_in_txn(erase)?;
     let (vault, wtxn, actor) = erase.parts();
-    for scrub in crate::side_table::actor_scrubs() {
-        scrub(vault, wtxn, &actor)?;
+    let mut withdrawn = Vec::new();
+    for (decl, scrub) in crate::side_table::actor_scrubs() {
+        let enrollment = &crate::side_table::CAMPAIGN_ENROLLMENT_ASK;
+        if decl.db == enrollment.db && decl.prefix == enrollment.prefix {
+            withdrawn.extend(
+                crate::campaign::enrollment::drop_enrollment_asks_of_actor_in_txn(
+                    vault, wtxn, &actor,
+                )?,
+            );
+        } else {
+            scrub(vault, wtxn, &actor)?;
+        }
     }
     for id in copied_messages.into_iter().chain(copied_turns) {
         vault.soft_erase_active_store_in_txn(wtxn, &id, true, act)?;
     }
-    Ok(())
+    Ok(withdrawn)
 }
 
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of

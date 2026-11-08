@@ -43,6 +43,12 @@ pub struct WakeRecipePolicy {
     /// parts makes in one wake before it checkpoints the rest (FIX 7509
     /// PR3): a pace, never a bound on the Arc. Above zero.
     pub arc_child_calls_per_wake: u32,
+    /// Whether an Arc composed in parts asks one synopsis call over its
+    /// assembled lines before it lands (FIX 8290, FIX 12353). Off: an Arc is
+    /// its parts' lines, assembled, with no further model call. The host's
+    /// summary instruction must describe the `synopsis` kind before this is
+    /// turned on; the engine ships no synopsis prompt.
+    pub arc_synopsis_enabled: bool,
     /// What the expensive path is asked of an unflagged window.
     pub audit_window_instruction: String,
     /// Whether the sieve's follower session reads the owed novelty rung in
