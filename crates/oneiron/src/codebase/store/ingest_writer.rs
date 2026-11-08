@@ -224,19 +224,24 @@ impl Vault {
                 "commit tree could not be read",
             ))
         })?;
-        // A run keeps the namespace its existing repository admission names.
-        let repo_path = if select.is_some() {
-            std::fs::canonicalize(&config.repo_path)
-        } else {
-            // Commit-only imports also work when the checkout is unavailable.
-            std::fs::canonicalize(repo.workdir().unwrap_or_else(|| repo.path()))
-                .or_else(|_| std::fs::canonicalize(repo.path()))
-        }
-        .map_err(|_| {
+        let invalid_repo_path = |_| {
             Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "repo_path must be a canonicalizable local path",
             ))
-        })?;
+        };
+        // Absolute custody declarations follow the commit tree's actual root.
+        // Commit-only imports also work when the checkout is unavailable.
+        let custody_path = std::fs::canonicalize(repo.workdir().unwrap_or_else(|| repo.path()))
+            .or_else(|_| std::fs::canonicalize(repo.path()))
+            .map_err(invalid_repo_path)?;
+        // A run keeps the namespace its existing repository admission names.
+        let repo_path = if select.is_some() {
+            std::fs::canonicalize(&config.repo_path).map_err(invalid_repo_path)?
+        } else {
+            custody_path.clone()
+        };
+        let custody_path = custody_path.to_string_lossy();
+        let custody_root = Some(custody_path.trim_end_matches('/'));
         let repo_ref = RepoRef::LocalFolder {
             path: repo_path.to_string_lossy().into_owned(),
             commit: commit_hash.clone(),
@@ -265,7 +270,7 @@ impl Vault {
                 .map(|index| blobs[index].data.clone())
         };
         let rtxn = self.store.env.read_txn()?;
-        self.apply_custody_to_snapshot(&rtxn, &snapshot, &contents)?;
+        self.apply_custody_to_snapshot(&rtxn, &snapshot, custody_root, &contents)?;
         drop(rtxn);
         after_first_pass()?;
         // Keep main's vault-scoped, test-only writer rendezvous: a registration
@@ -289,6 +294,7 @@ impl Vault {
             &blobs,
             (occurred, learned_at),
             repository.as_ref(),
+            custody_root,
             &contents,
             owner,
             admit,
@@ -332,6 +338,7 @@ impl Vault {
         blobs: &[RepoIngestBlob],
         (occurred, learned_at): (TimeRange, u64),
         repository: Option<&CaptureRepository>,
+        custody_root: Option<&str>,
         contents: &dyn Fn(&str) -> Option<Vec<u8>>,
         owner: Option<&AuthenticatedOwner>,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
@@ -353,8 +360,13 @@ impl Vault {
             // Repo-marked files stay in the snapshot; their index copies
             // are masked (FIX 7608 slice 3).
             let repo_marks = RepoIndexMarks::read_in_txn(self, wtxn)?;
-            let (files, custody_report) =
-                self.repo_snapshot_inputs_in_txn(wtxn, &repo_marks, snapshot, contents)?;
+            let (files, custody_report) = self.repo_snapshot_inputs_in_txn(
+                wtxn,
+                &repo_marks,
+                snapshot,
+                custody_root,
+                contents,
+            )?;
             let filtered_snapshot = snapshot.rebuilt_with_files(files)?;
             let retained_paths = filtered_snapshot
                 .files
@@ -453,9 +465,9 @@ impl Vault {
                 .collect::<Result<Vec<_>>>()?;
             // Symbol rows first, then every edge a working batch at a time.
             let mut symbol_graph = prepare_code_symbol_graph(
-                snapshot.repo_ref.clone(),
+                repo_ref.clone(),
                 identity,
-                snapshot.commit_hash.clone(),
+                commit_hash.map(str::to_owned),
                 symbol_sources,
             )?;
             // Each symbol names the operations that wrote it, read from its
