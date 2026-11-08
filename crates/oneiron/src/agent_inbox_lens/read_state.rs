@@ -282,7 +282,12 @@ impl Memory<'_> {
         let notification = digest_notification(&item)
             .map(|id| self.inbox_mark(id, NotificationMark::Seen))
             .transpose()?;
-        let lens = crate::calendar::calendar_inbox_card_lens(self.vault(), &item.item_id)?;
+        let lens = crate::calendar::calendar_inbox_card_lens(
+            self.vault(),
+            &item.item_id,
+            self.actor(),
+            &read,
+        )?;
         self.record_inbox_read_state(&item, AgentInboxReadState::Open, None)?;
         let mut row = InboxLensRow::from(item);
         row.read_state = Some(AgentInboxReadState::Open);

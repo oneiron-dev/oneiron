@@ -265,6 +265,7 @@ impl Vault {
             query,
             occurred,
             learned_at,
+            &mut super::SkillImportRows::default(),
         )
     }
     #[expect(
@@ -281,11 +282,12 @@ impl Vault {
         query: &dyn OsvQuery,
         occurred: TimeRange,
         learned_at: u64,
+        rows: &mut super::SkillImportRows,
     ) -> Result<SkillInstallAdvisories> {
         let (status, advisory_ids, scans) =
             self.dependency_advisories(package.content_hash()?, coordinates, query, learned_at)?;
         let entity = self.import_skill_from_hub_with_scans(
-            owner, hub_ref, package, id, &scans, occurred, learned_at,
+            owner, hub_ref, package, id, &scans, occurred, learned_at, rows,
         )?;
         Ok(SkillInstallAdvisories {
             entity,
