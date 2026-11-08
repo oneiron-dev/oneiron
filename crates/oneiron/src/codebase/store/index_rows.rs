@@ -85,10 +85,11 @@ fn unshared_assets(
         .iter()
         .map(|entry| entry.content_hash)
         .collect();
-    // A scope is one project and one repo_ref, so every snapshot that can
-    // share it is indexed under the repo_ref.
-    let prefix = text_index_scan_prefix(&snapshot.repo_ref.canonical());
-    for key in REPO_INDEX.scan_keys(store, wtxn, &prefix)? {
+    // A scope is one project and one repository at every revision (FIX
+    // 4299), so every snapshot that can share it is indexed under its
+    // project; the scope check below keeps those of this scope.
+    let prefix = text_index_scan_prefix(&snapshot.project_id);
+    for key in PROJECT_INDEX.scan_keys(store, wtxn, &prefix)? {
         if unshared.is_empty() {
             break;
         }
