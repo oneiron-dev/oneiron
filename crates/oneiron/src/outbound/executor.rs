@@ -5,11 +5,14 @@
 use super::OutboundDeliveryWindowDecision;
 use super::connector_task::{
     ConnectorSendAttemptPayload, ConnectorSendTask, ConnectorSendTaskOutcome,
-    mark_connector_send_task_attempt_started, project_connector_send_task_outcome,
-    project_connector_send_task_outcome_in_txn, send_receipt_exists_for_task,
+    SEND_EXECUTOR_FENCE_FIELD, SEND_EXECUTOR_STOOD_DOWN, SendExecutorFence, SendExecutorLease,
+    SendExecutorLeaseTake, log_send_executor_stand_down, mark_send_lookup_cleared,
+    project_connector_send_task_outcome, project_connector_send_task_outcome_in_txn,
+    renew_send_executor_lease_in_txn, send_receipt_exists_for_task, take_send_executor_lease,
 };
 use super::dispatch_pipeline::{
     ALTERNATIVE_OUTCOME_FIELD, GATE_OUTCOME_PENDING, PROVIDER_RETRY_AFTER_FIELD,
+    ambient_alternative_ref,
 };
 use super::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
@@ -19,25 +22,34 @@ use super::receipt_fields::{PROVIDER_WAIT_FIELD, append_connector_task_window_re
 use super::retry_audit::{
     complete_degraded_connector_task, persist_failed_send_receipt_and_retry,
     persist_send_receipt_and_retry, reconcile_connector_task, settle_suppressed_send,
+    stop_owner_declined_send,
+};
+use super::send_lookup::{
+    SENT_LOOKUP_CANNOT_TELL, SENT_LOOKUP_FIELD, SENT_LOOKUP_NOT_SENT,
+    UNCERTAIN_SEND_ANSWER_POLL_SECS, UNCERTAIN_SEND_AWAITS_OWNER_REASON,
+    UNCERTAIN_SEND_LOOKUP_DELAY_SECS, UNCERTAIN_SEND_LOOKUP_DUE_REASON,
+    earlier_executor_may_have_sent, engine_send_id, owner_declined_resend,
 };
 use super::window_door::local_minute_of_day_at;
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptQueue, CompleteAttempt, CompleteOutcome, FailAttempt, RetryAttempt,
+    AttemptId, AttemptQueue, CompleteAttempt, CompleteOutcome, FailAttempt, RetryAttempt,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::outbound_intent_ledger::{
-    IntentEscalationReason, IntentResolution, RetryDisposition, UnconfirmedDelivery,
+    IntentEscalationReason, IntentLedgerError, IntentResolution, RetryDisposition,
+    UnconfirmedDelivery, abandon_attempt_undelivered_intents_in_txn,
 };
 use crate::receipt::SendReceiptOutcome;
 
+mod alternative_route;
 mod phases;
 mod send_line;
 
 use self::phases::{
-    ambient_alternative_went, connector_dispatch_request, settle_failed_connector_task,
-    settle_held_connector_task,
+    ambient_alternative_went, connector_dispatch_request, park_uncertain_send,
+    settle_failed_connector_task, settle_held_connector_task,
 };
 use self::send_line::ConnectorSendLine;
 
@@ -203,6 +215,13 @@ impl Vault {
                 complete_connector_task_attempt(self, &attempt, now)?;
                 continue;
             }
+            // FIX 4747: the owner answered this TASK's uncertain send with no
+            // resend. This machine's own row of the send stops with his
+            // word, and nothing is sent.
+            if owner_declined_resend(task.outcome) {
+                stop_owner_declined_send(self, &attempt, &task, now)?;
+                continue;
+            }
             // A commitment wake sends only while its approval stands. Asked on
             // every attempt, so a retraction after scheduling stops the send.
             if !crate::commitment_wake::scheduled_commitment_wake_authorised(self, &task)? {
@@ -219,17 +238,86 @@ impl Vault {
             }
             #[cfg(test)]
             run_before_attempt_start_hook(self);
-            let attempt_started_node_id = crate::identity::load_or_mint_client_id(self)?;
-            if !mark_connector_send_task_attempt_started(
+            // FIX 4747: only the TASK's sticky send executor sends it.
+            let node_id = crate::identity::load_or_mint_client_id(self)?;
+            let taken = match take_send_executor_lease(
                 self,
                 task_ref,
-                attempt_started_node_id,
+                node_id,
+                &engine_send_id(&task),
                 now,
             )? {
-                complete_connector_task_attempt(self, &attempt, now)?;
+                SendExecutorLeaseTake::Taken(taken) => taken,
+                SendExecutorLeaseTake::HeldElsewhere(held) => {
+                    log_send_executor_stand_down(task_ref, node_id, None, Some(held));
+                    stand_down_connector_task_attempt(self, &attempt, &task, now)?;
+                    continue;
+                }
+                SendExecutorLeaseTake::Closed => {
+                    complete_connector_task_attempt(self, &attempt, now)?;
+                    continue;
+                }
+                // This process is closing: the attempt stays pending, re-armed
+                // as a retry, so the send is neither sent nor lost (review
+                // #6574).
+                SendExecutorLeaseTake::Closing => {
+                    retry_connector_task_attempt(
+                        self,
+                        &queue,
+                        &attempt,
+                        task_ref,
+                        now,
+                        "send_executor_closing",
+                        None,
+                    )?;
+                    continue;
+                }
+            };
+            // FIX 4747: a send that may have gone out, which no lookup could
+            // settle, sends nothing until the owner answers its ask. The
+            // attempt comes back to read his answer, which may come from any
+            // machine.
+            if taken.uncertain_send.is_some() {
+                retry_connector_task_attempt_at(
+                    self,
+                    &queue,
+                    &attempt,
+                    task_ref,
+                    now,
+                    UNCERTAIN_SEND_AWAITS_OWNER_REASON,
+                    now.saturating_add(UNCERTAIN_SEND_ANSWER_POLL_SECS),
+                )?;
                 continue;
             }
-            let request = connector_dispatch_request(task_ref, &task, &attempt, now, drain_clock);
+            let lease = taken.lease;
+            let mut request =
+                connector_dispatch_request(task_ref, &task, &attempt, lease, now, drain_clock);
+            // FIX 4747: the engine send id rides to the wire and to the
+            // provider lookup; a send an earlier executor may have made is
+            // looked up first, and the owner's resend goes once unlooked.
+            request.engine_send_id = Some(taken.engine_send_id.clone());
+            request.owner_released_resend = taken.owner_released_resend;
+            request.send_approved_at = Some(task.occurred_at);
+            request.earlier_send_lookup =
+                !taken.owner_released_resend && earlier_executor_may_have_sent(&taken);
+            // FIX 11029: an ambient alternative admitted for this interrupt
+            // decides the route; the interrupt does not go after it.
+            match alternative_route::route_bound_alternative(
+                self,
+                sink,
+                &queue,
+                &attempt,
+                &task,
+                &mut request,
+                now,
+            )? {
+                alternative_route::RoutedAttempt::Interrupt => {}
+                alternative_route::RoutedAttempt::Went => {
+                    executed = executed.saturating_add(1);
+                    continue;
+                }
+                alternative_route::RoutedAttempt::Settled => continue,
+            }
             let receipt_id = request.receipt_id.clone();
             let result = match self.dispatch_outbound_intent_with_verified_actor(
                 request,
@@ -278,8 +366,10 @@ impl Vault {
                     // the drain's `now` before computing this retry's edge.
                     let now = self.now_recorded_at();
                     retry_connector_task_attempt(
+                        self,
                         &queue,
                         &attempt,
+                        task_ref,
                         now,
                         "dispatch_uncertain",
                         None,
@@ -287,6 +377,31 @@ impl Vault {
                     continue;
                 }
             };
+            // FIX 4747: the fence found the lease moved before the transport
+            // call, so nothing was sent; the TASK stays the holder's.
+            if send_executor_stood_down(&result) {
+                stand_down_connector_task_attempt(self, &attempt, &task, self.now_recorded_at())?;
+                continue;
+            }
+            // FIX 4747: what the send's provider lookup found. Nobody can
+            // tell: the TASK holds and asks the owner, nothing sent. The
+            // provider has no such send: this lease generation's send is
+            // cleared to go, and its outcome settles below as any other.
+            match sent_lookup_finding(&result) {
+                Some(SentLookupFinding::CannotTell) => {
+                    park_uncertain_send(self, &attempt, task_ref, &task, result)?;
+                    continue;
+                }
+                Some(SentLookupFinding::NotSent) => {
+                    mark_send_lookup_cleared(
+                        self,
+                        task_ref,
+                        lease.generation,
+                        self.now_recorded_at(),
+                    )?;
+                }
+                None => {}
+            }
             match result.outcome {
                 OutboundDispatchOutcome::DeliveredToChannel => {
                     #[cfg(test)]
@@ -414,6 +529,104 @@ fn complete_connector_task_attempt(
         )
     })? {
         CompleteOutcome::Completed(_) | CompleteOutcome::AlreadyCompleted(_) => Ok(()),
+    }
+}
+
+/// What a machine that does not hold a TASK's send executor lease does with
+/// its own local attempt (FIX 4747): in one writer, it stops its local sends
+/// of the TASK that certainly never went, which gives their reserved budget
+/// back, and completes the local queue row. A local send that may have gone
+/// keeps its state. The synced TASK stays unsettled, so the holder sends and
+/// this machine never claims the row again. Engine call (CALLS, FIX 4747):
+/// complete, not re-park; a lease handed back here later comes with a fresh
+/// local attempt from its handover caller.
+fn stand_down_connector_task_attempt(
+    vault: &Vault,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task: &ConnectorSendTask,
+    now: u64,
+) -> Result<(), Error> {
+    let ledger_attempt_ids = connector_task_ledger_attempt_ids(task)?;
+    match vault.with_write_txn_grouped(|txn| {
+        for ledger_attempt_id in &ledger_attempt_ids {
+            abandon_attempt_undelivered_intents_in_txn(
+                vault,
+                txn,
+                *ledger_attempt_id,
+                IntentEscalationReason::SendExecutorStoodDown,
+                now,
+            )
+            .map_err(|error| match error {
+                IntentLedgerError::Engine(error) => error,
+                _ => Error::CorruptedIndex("outbound intent ledger row"),
+            })?;
+        }
+        crate::ports::JobQueue::port_job_complete(
+            vault,
+            txn,
+            CompleteAttempt {
+                id: attempt.id,
+                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                now,
+            },
+        )
+    })? {
+        CompleteOutcome::Completed(_) | CompleteOutcome::AlreadyCompleted(_) => Ok(()),
+    }
+}
+
+/// The ledger attempt ids `task`'s local sends are keyed under: its logical
+/// send's, and its bound ambient alternative's (FIX 7962), each derived from
+/// the ledger identity its dispatch request carries. The stand-down abandons
+/// under them, and the reaper's take supersedes what it abandoned (FIX 4747).
+pub(super) fn connector_task_ledger_attempt_ids(
+    task: &ConnectorSendTask,
+) -> Result<Vec<AttemptId>, Error> {
+    let logical_ref = connector_logical_send_intent_ref(task);
+    let mut ledger_refs = Vec::with_capacity(2);
+    if let Some(alternative) = task.ambient_alternative.as_ref() {
+        ledger_refs.push(ambient_alternative_ref(&logical_ref, &alternative.surface));
+    }
+    ledger_refs.push(logical_ref);
+    ledger_refs
+        .iter()
+        .map(|ledger_ref| {
+            super::dispatch_attempt_id::outbound_dispatch_attempt_id(ledger_ref)
+                .map_err(|_| Error::InvariantViolation("invalid connector logical send ref"))
+        })
+        .collect()
+}
+
+/// Whether the send executor fence stood this dispatch down before its
+/// transport call (FIX 4747), directly or through its ambient alternative.
+fn send_executor_stood_down(result: &OutboundDispatchResult) -> bool {
+    result
+        .receipt
+        .fields
+        .get(SEND_EXECUTOR_FENCE_FIELD)
+        .is_some_and(|value| value == SEND_EXECUTOR_STOOD_DOWN)
+}
+
+/// What a send's provider lookup found, as its dispatch receipt names it
+/// (FIX 4747). A lookup that found the send kept settles it delivered as any
+/// other delivery, so it needs no reading here.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SentLookupFinding {
+    NotSent,
+    CannotTell,
+}
+
+fn sent_lookup_finding(result: &OutboundDispatchResult) -> Option<SentLookupFinding> {
+    match result
+        .receipt
+        .fields
+        .get(SENT_LOOKUP_FIELD)
+        .map(String::as_str)
+    {
+        Some(SENT_LOOKUP_NOT_SENT) => Some(SentLookupFinding::NotSent),
+        Some(SENT_LOOKUP_CANNOT_TELL) => Some(SentLookupFinding::CannotTell),
+        _ => None,
     }
 }
 
@@ -549,8 +762,10 @@ fn connector_task_retry_at(
 }
 
 fn retry_connector_task_attempt(
+    vault: &Vault,
     queue: &AttemptQueue<'_>,
     attempt: &crate::attempt_queue::AttemptRecord,
+    task_ref: EntityId,
     now: u64,
     reason: &str,
     provider_retry_after_secs: Option<u64>,
@@ -561,26 +776,37 @@ fn retry_connector_task_attempt(
         curve: ConnectorRetryCurve::Transport,
     };
     let backoff_until = connector_task_retry_at(queue, attempt, now, &arm)?;
-    retry_connector_task_attempt_at(queue, attempt, now, reason, backoff_until)
+    retry_connector_task_attempt_at(vault, queue, attempt, task_ref, now, reason, backoff_until)
 }
 
 /// Re-arms at an ALREADY-COMPUTED instant, so a caller that stamped the exact
-/// `retry_at` onto a receipt re-arms the queue at that same instant.
+/// `retry_at` onto a receipt re-arms the queue at that same instant. In the
+/// same writer, this machine's send executor lease on `task_ref` is renewed
+/// through that instant (FIX 4747 slice 4), so the park keeps its lease.
 fn retry_connector_task_attempt_at(
+    vault: &Vault,
     queue: &AttemptQueue<'_>,
     attempt: &crate::attempt_queue::AttemptRecord,
+    task_ref: EntityId,
     now: u64,
     reason: &str,
     backoff_until: u64,
 ) -> Result<(), Error> {
-    queue.retry(RetryAttempt {
-        id: attempt.id,
-        lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-        attempt_count: attempt.attempt_count,
-        backoff_until,
-        last_error: Some(reason.to_owned()),
-        now,
+    vault.with_write_txn_grouped(|wtxn| {
+        queue.retry_in_txn(
+            wtxn,
+            RetryAttempt {
+                id: attempt.id,
+                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                backoff_until,
+                last_error: Some(reason.to_owned()),
+                now,
+            },
+        )?;
+        renew_send_executor_lease_in_txn(vault, wtxn, task_ref, backoff_until, now)
     })?;
+    vault.store.notify_attempt_observers();
     Ok(())
 }
 

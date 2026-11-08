@@ -78,6 +78,10 @@ pub trait MachineFloor: Send + Sync {
     /// # Errors
     /// The physical floor when `bytes` cannot fit on an idle machine.
     fn try_lease(&self, bytes: u64) -> Result<Option<Box<dyn FloorLease>>, FloorRefusal>;
+    /// Records `bytes` already allocated, held until the returned lease drops.
+    /// This does not admit a new allocation and never waits or refuses. Use
+    /// the actual buffer capacity, and free the buffer before its lease.
+    fn track_allocated(&self, bytes: u64) -> Box<dyn FloorLease>;
 
     /// A lease of `bytes` of the machine's memory, held until what it returns
     /// drops: admitted as soon as they fit, waiting no later than `deadline`

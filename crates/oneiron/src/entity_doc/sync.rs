@@ -31,6 +31,7 @@ use super::doc_actor::DocActor;
 use super::document::{BIRTH, BODY, Birth, META, map_insert_bytes, stamp_with};
 use super::prose_admission::{LandedProse, admit_landed};
 use super::storage::{self, Head};
+use super::succession::Succession;
 use super::verbs::{Admitted, admitted_text_in_txn};
 use super::{EntityDoc, TextField, invalid};
 use crate::batch::secret_scan::{
@@ -189,7 +190,8 @@ pub(crate) fn edit_sync_text_in_txn(
 /// this vault's own birth of the same row first; a record's sequence rows
 /// take the update as their next one. `masked` is the re-masked copy text a
 /// copy edit landed from: the scan reads it in place of the document's
-/// text. Whether the text moved.
+/// text. A typed body's frame joins the body instead (FIX 2458). Whether the
+/// text moved.
 pub(crate) fn join_sync_update_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -197,6 +199,17 @@ pub(crate) fn join_sync_update_in_txn(
     update: &[u8],
     masked: Option<&str>,
 ) -> Result<bool> {
+    // FIX 2458: whatever plane the record's text keeps here, a typed body's
+    // frame joins its body through the office merge preflight.
+    if let Some(moved) = crate::typed_body::sync_frame::join_typed_body_frame_in_txn(
+        vault,
+        txn,
+        entity,
+        update,
+        &super::office::OFFICE_BODY_OWNER,
+    )? {
+        return Ok(moved);
+    }
     let (mut h, whole) = match plane_in(vault, txn, entity)? {
         Plane::Document(h) => (h, whole_document(update)),
         Plane::Unborn => match whole_document(update) {
@@ -220,7 +233,12 @@ pub(crate) fn join_sync_update_in_txn(
         && !before.includes_vv(&whole.oplog_vv())
         && !born_alike(entity, &h, &before, &whole)?
     {
-        return Err(invalid("sync text of another document birth"));
+        return match succession_in_txn(vault, txn, entity, h, &doc, whole, false)? {
+            Some(Succeeded::Taken) => Ok(true),
+            Some(Succeeded::Held) => Ok(false),
+            Some(Succeeded::Stands(reason)) => Err(invalid(reason)),
+            None => Err(invalid("sync text of another document birth")),
+        };
     }
     import_whole(&doc.doc, update)?;
     if doc.doc.oplog_vv() == before {
@@ -236,6 +254,120 @@ pub(crate) fn join_sync_update_in_txn(
         synced(masked),
     )?;
     Ok(true)
+}
+
+/// What a peer's whole document of a record did here by a canonical
+/// restore's succession proof (FIX 3553).
+enum Succeeded {
+    /// It succeeds the history held here, and took its place.
+    Taken,
+    /// It is a copy of the history a restore of the text here replaced: the
+    /// text here stands, and the peer takes it in turn.
+    Held,
+    /// It succeeds the history held here, which stands against it
+    /// ([`super::adoption`]).
+    Stands(&'static str),
+}
+
+/// `whole`, a peer's document of `entity` that is no version of `old`, the
+/// one `h` heads here (FIX 3553; Engine 11-06 20:16, A). A copy of the
+/// history a restore of the text here replaced is held. A restore's
+/// successor of the history held here takes its place by the rules of
+/// [`super::adoption`], under a new incarnation, as a record's incarnation
+/// is this vault's own; a MESSAGE's successor comes with its window head and
+/// its incarnation instead (`carried`). The sync plane names no shared
+/// incarnation, so a history is held here where the two versions share an
+/// operation. Only a door with the owner's authority replaces history here,
+/// `privileged`: a STATE, never a peer's UPDATE, whose writer holds a text
+/// grant and no restore of its own, and whose proof alone certifies nothing.
+/// `None` where no proof relates them, or the door may not take one.
+fn succession_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    mut h: Head,
+    old: &EntityDoc,
+    whole: LoroDoc,
+    privileged: bool,
+) -> Result<Option<Succeeded>> {
+    let held = old.doc.oplog_vv();
+    let theirs = whole.oplog_vv();
+    let replaced_here = h
+        .succeeds
+        .as_ref()
+        .and_then(|succeeds| VersionVector::decode(&succeeds.version).ok());
+    if replaced_here.is_some_and(|replaced| shares(&replaced, &theirs)) {
+        return Ok(Some(Succeeded::Held));
+    }
+    if !privileged {
+        return Ok(None);
+    }
+    let Some(proof) = Succession::read(&whole) else {
+        return Ok(None);
+    };
+    let Ok(replaced) = VersionVector::decode(&proof.version) else {
+        return Ok(None);
+    };
+    if !shares(&replaced, &held)
+        || vault.get_entity_type_in_txn(txn, entity)? == Some(ENTITY_TYPE_MESSAGE)
+    {
+        return Ok(None);
+    }
+    let incoming = EntityDoc::from_loro(whole)?;
+    if incoming.birth().entity != entity.to_hex() {
+        return Ok(None);
+    }
+    let pins = match super::adoption::twins_in(vault, txn, entity, old, &incoming, &replaced)? {
+        Ok(pins) => pins,
+        Err(
+            super::adoption::Stands::Deferred(reason) | super::adoption::Stands::Refused(reason),
+        ) => return Ok(Some(Succeeded::Stands(reason))),
+    };
+    h.incarnation = EntityId::now().to_hex();
+    h.birth_frontier = None;
+    h.succeeds = Some(proof);
+    storage::persist_scanned(vault, txn, entity, &mut h, &incoming, None, synced(None))?;
+    super::adoption::complete_in_txn(vault, txn, entity, &h, old, &incoming, &replaced, &pins)?;
+    Ok(Some(Succeeded::Taken))
+}
+
+/// Whether `a` and `b` hold operations of one peer: versions of one
+/// history. A restore's replay takes fresh peers, so its successor shares
+/// none with the history it replaced (FIX 3553).
+fn shares(a: &VersionVector, b: &VersionVector) -> bool {
+    a.iter()
+        .any(|(peer, counter)| *counter > 0 && b.get(peer).is_some_and(|theirs| *theirs > 0))
+}
+
+/// [`join_sync_update_in_txn`]'s honour of a canonical restore's succession
+/// proof, for `staged`, a STATE of `entity` (FIX 3553): `Some(true)` once a
+/// restore's successor of the text held here took its place, `Some(false)`
+/// for a copy of the history a restore of the text here replaced, which
+/// changes nothing. `None` where the two are versions of one history, no
+/// proof relates them, or the door is not `privileged` (the owner's own
+/// import, never a peer's text grant). A successor the text here stands
+/// against is refused.
+pub(crate) fn take_sync_successor_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    staged: &LoroDoc,
+    privileged: bool,
+) -> Result<Option<bool>> {
+    let Plane::Document(h) = plane_in(vault, txn, entity)? else {
+        return Ok(None);
+    };
+    let old = storage::load(&vault.store, txn, &h)?;
+    let (held, theirs) = (old.doc.oplog_vv(), staged.oplog_vv());
+    if theirs.is_empty() || held.includes_vv(&theirs) || theirs.includes_vv(&held) {
+        return Ok(None);
+    }
+    match succession_in_txn(vault, txn, entity, h, &old, staged.fork(), privileged)? {
+        Some(Succeeded::Taken) => Ok(Some(true)),
+        Some(Succeeded::Held) => Ok(Some(false)),
+        Some(Succeeded::Stands(reason)) => Err(invalid(reason)),
+        None => Ok(None),
+    }
 }
 
 /// Replaces `entity`'s document with `staged`, a peer's state with this
@@ -607,12 +739,14 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
     )?;
     let mut head = Head {
         entity: entity.to_hex(),
+        owner_kind: storage::DocumentOwnerKind::Entity,
         incarnation: lazy_incarnation(entity)?,
         document: entity.to_hex(),
         field: born.field,
         generation: 0,
         pending: 0,
         birth_frontier: Some(born.doc.frontier()),
+        succeeds: None,
     };
     storage::persist_scanned(vault, txn, entity, &mut head, &born.doc, None, synced(None))?;
     Ok(head)
@@ -658,12 +792,14 @@ fn carried_head_in_txn(
     };
     Ok(Head {
         entity: entity.to_hex(),
+        owner_kind: storage::DocumentOwnerKind::Entity,
         incarnation,
         document,
         field,
         generation: 0,
         pending: 0,
         birth_frontier: None,
+        succeeds: None,
     })
 }
 

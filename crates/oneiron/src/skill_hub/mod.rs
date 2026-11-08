@@ -16,6 +16,7 @@ mod http_fetch;
 mod hub_owner;
 mod import_receipt;
 mod install_transition;
+mod local_dir;
 pub use import_receipt::{
     CallerPermissions, HoldsNothing, HubImportReceipt, MarketplaceFit, MarketplaceFitDecision,
     MarketplaceFitEvaluator, RuleSkillFit, SkillFitSetting,
@@ -45,12 +46,18 @@ pub use claim_refinement::{
 pub use decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions, claim_replay_filled_state};
 pub(crate) use default_hub::MODEL_PACK_SUBTREE;
 pub use default_hub::{
-    DefaultSkillHub, MODEL_PACK_NAME, ModelCatalogSync, REVIEW_BUNDLE_EXPLAINER_SUBTREE,
-    default_skill_hub_commit, default_skill_hub_id,
+    DefaultSkillHub, FIRST_PARTY_PACK_PUBLISHER, MODEL_PACK_NAME, ModelCatalogSync,
+    PRODUCTIVITY_PACK_NAME, PRODUCTIVITY_PACK_SUBTREE, REVIEW_BUNDLE_EXPLAINER_SUBTREE,
+    WRITE_A_WATCHER_SUBTREE, default_skill_hub_commit, default_skill_hub_id,
 };
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
+pub use http_fetch::{
+    ClawHubGitHubHandoff, ClawHubSearchHit, ClawHubSearchOwner, ClawHubSearchReply,
+};
+pub use hub_owner::{ClawHubImportReply, ClawHubImportRequest};
 pub use install_transition::{InstallDisposition, InstallHoldReason, InstallLifecycle};
+pub use local_dir::LocalDirEndpointSkillHubAdapter;
 pub(crate) use package_codec::remove_hub_package_in_txn;
 pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;
@@ -131,8 +138,9 @@ pub(crate) use self::index::{
 };
 pub(crate) use self::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 pub(crate) use self::verdict::{
-    scan_verdict_row_risk, skill_scan_verdict_heads_for_content_hash_in_store,
-    skill_scan_verdicts_for_content_hash_in_store,
+    scan_verdict_row_risk, skill_content_anchor_entity_id,
+    skill_scan_verdict_heads_for_content_hash_in_store, skill_scan_verdict_heads_sourced_in_store,
+    skill_scan_verdict_stands_in_store, skill_scan_verdicts_for_content_hash_in_store,
 };
 
 // The flat skill_hub.rs module used to provide these names to the test module
@@ -145,8 +153,6 @@ use self::index::{
 };
 #[cfg(test)]
 use self::support::{map_text, map_value};
-#[cfg(test)]
-pub(crate) use self::verdict::skill_content_anchor_entity_id;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
@@ -172,7 +178,7 @@ use rmpv::Value;
 #[cfg(test)]
 use std::collections::BTreeSet;
 
-pub(crate) use bootstrap::seed_bootstrap_skills;
+pub(crate) use bootstrap::{bootstrap_skill_ids_and_hashes, seed_bootstrap_skills};
 mod archive;
 pub mod osv;
 

@@ -79,8 +79,9 @@ pub(crate) async fn vault_notes_follow_citation(
 }
 
 /// The credential's own principal, as the facade binds a write to one. An
-/// owner-grade credential that names none is refused, as on create.
-fn principal(
+/// owner-grade credential that names none is refused, as on create. The
+/// facade runs it before these doors' pre chain too (FIX 1817).
+pub(in crate::api::facade) fn principal(
     server: &SyncServer,
     auth: &CoreAuth,
     verb: &str,
@@ -92,4 +93,29 @@ fn principal(
             &["Present a slip paired from a link created with --principal-ref and --actor-class."],
         )
     })
+}
+
+/// Issues a recipient-bound, view-only link under the serving host's key.
+/// The engine checks the actual caller is this share's issuer or owner.
+pub(crate) async fn vault_shares_issue_view_link(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::ShareViewLinkRequest,
+) -> Listed<oneiron::authority::PairingLink> {
+    const VERB: &str = "vault.shares.issue_view_link";
+    let caller = match principal(server, auth, VERB) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    credential_listing(server, auth, caller, VERB, move |server, _, memory| {
+        let issuer = server.host_issuer().ok_or_else(|| {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "share link requires the serving host issuer",
+                &[],
+            )
+        })?;
+        oneiron::task_verb::sdk::issue_share_view_link_with_issuer(&memory, issuer, input)
+    })
+    .await
 }

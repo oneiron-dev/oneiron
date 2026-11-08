@@ -261,9 +261,9 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
 }
 /// Keeps one native mail inbound in the vault as its provider event
 /// ([`Vault::archive_provider_event`]): the inbound as it arrived, its
-/// threading headers and its quarantine reference included. Its
-/// `payload_ref` becomes the archive's, so a reply to the message reads the
-/// headers it threads on back through the answered event.
+/// threading headers, subject, reply top text and quarantine reference
+/// included. Its `payload_ref` becomes the archive's, so a reply to the
+/// message reads the headers it threads on back through the answered event.
 pub(crate) fn archive_native_mail_inbound(
     vault: &Vault,
     inbound: &mut EmailProviderInbound,
@@ -364,7 +364,8 @@ impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> 
 /// native-mail and member-mailbox (OF-374) approve doors. Each door checks its
 /// own sender shape first; this composes the one digest the Gate's mail lane
 /// looks up, so the owner approves the exact operation dispatch re-evaluates.
-/// A changed recipient, content or logical send ref is a different digest.
+/// A changed recipient (any of a message's several, its role included),
+/// content or logical send ref is a different digest.
 pub(crate) fn approve_canonical_mail_send_once(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -394,6 +395,9 @@ pub(crate) fn canonical_mail_send_digest(
         provenance: GateProvenanceHandles {
             actor_entity_ref: Some(actor),
             mail_content_ref: request.intent.content_ref.clone(),
+            // Fix list row 17645: a message to several is one operation
+            // naming every recipient, the digest the Gate's mail lane reads.
+            mail_recipients: canonical.recipients,
             ..GateProvenanceHandles::default()
         },
         verb: "send".into(),

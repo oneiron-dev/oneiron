@@ -71,6 +71,12 @@ impl oneiron_organ_host::MachineFloor for OrganFloor {
             .map_err(organ_refusal)
     }
 
+    fn track_allocated(&self, bytes: u64) -> Box<dyn oneiron_organ_host::FloorLease> {
+        let mut lease = self.0.empty_lease();
+        lease.materialized(0, bytes);
+        Box::new(OrganLease(lease))
+    }
+
     fn lease(
         &self,
         bytes: u64,

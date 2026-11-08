@@ -209,6 +209,7 @@ pub(crate) async fn asked(
             response_format: ResponseFormat::Text,
             locality: seat.locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,

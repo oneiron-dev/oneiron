@@ -115,7 +115,12 @@ pub(super) fn accept_cleanup_proposal_in_txn(
             entries: live_slots(applied.entries),
         },
     )?;
-    PROPOSAL.delete(&vault.store, wtxn, proposal)?;
+    super::entity_rows::delete_in_txn(
+        &vault.store,
+        wtxn,
+        super::entity_rows::Listing::Proposal,
+        proposal.as_bytes(),
+    )?;
     // The owner's answer is the proposal's review, and it reached a person.
     crate::store::healer_oversight::reviewed_in_txn(
         vault,
@@ -162,7 +167,12 @@ pub(super) fn reject_cleanup_proposal_in_txn(
         .get(&vault.store, wtxn, proposal)?
         .ok_or_else(not_found)?;
     let row = decode_proposal(*proposal, &raw)?;
-    if !PROPOSAL.delete(&vault.store, wtxn, proposal)? {
+    if !super::entity_rows::delete_in_txn(
+        &vault.store,
+        wtxn,
+        super::entity_rows::Listing::Proposal,
+        proposal.as_bytes(),
+    )? {
         return Err(not_found());
     }
     let reviewed_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;

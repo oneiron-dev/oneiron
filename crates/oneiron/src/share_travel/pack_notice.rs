@@ -144,6 +144,41 @@ impl WorldRecipientNotice {
         }
     }
 
+    /// An artifact export's display notice must not make its previously
+    /// readable file fail the destination's unchanged release scan. The
+    /// receipt keeps the original name and id.
+    pub(crate) fn in_artifact_export_result(self, vault: &Vault, actual: &ReadDestination) -> Self {
+        let mut notice = self.in_result();
+        if actual.is_off_device() && notice.world_name.is_some() {
+            let names_kept = serde_json::to_vec(&notice)
+                .ok()
+                .and_then(|bytes| names_kept_row(vault, actual, &bytes).ok())
+                .unwrap_or(true);
+            let name = notice
+                .world_name
+                .as_deref()
+                .expect("notice has a world name");
+            let reference = name
+                .split_once('@')
+                .map_or(name, |(reference, _)| reference);
+            let short_kept = crate::entity_id::parse_short_ref_syntax(reference).is_ok()
+                && match crate::memory::resolve_entity_ref(vault, reference) {
+                    Ok(row) => vault
+                        .release_hold_for(&[row], actual)
+                        .map_or(true, |hold| hold.is_some()),
+                    Err(_) => true,
+                };
+            if names_kept || short_kept {
+                notice.world_name = None;
+                notice.body = PACK_NOTICE_WORDING
+                    .export
+                    .replace("{world_name}", PACK_NOTICE_WORDING.unnamed)
+                    .replace("{reason}", &notice.reason);
+            }
+        }
+        notice
+    }
+
     /// An import lands in `world`, which `hold` keeps from this install. It
     /// rides on results alone (the install receipt and the preview), so it
     /// names the world by name.
@@ -198,20 +233,17 @@ pub(super) fn receipt_fields(notices: &[WorldRecipientNotice]) -> Vec<(String, S
     fields
 }
 
-/// Drops every notice field only the owner reads from `receipts` when
-/// `reader` is not the owner (`secret_sight`, as his export asks): any other
-/// reader sees each notice's type, world ref and reason, never the world's
-/// name. A reader whose standing cannot be read is not the owner.
+/// Drops every notice field only the owner reads from `receipts` when the
+/// reader is not the owner (`owner`, its `secret_sight` as his export asks
+/// it, read only when a receipt names such a field): any other reader sees
+/// each notice's type, world ref and reason, never the world's name. A
+/// reader whose standing cannot be read is not the owner.
 pub(crate) fn screen_owner_notice_fields(
-    reader: &crate::memory::Memory<'_>,
+    owner: impl FnOnce() -> bool,
     receipts: &mut [crate::receipt::ReceiptRecord],
 ) {
     let names = |fields: &BTreeMap<String, String>| fields.keys().any(|key| owner_only(key));
-    if !receipts.iter().any(|receipt| names(&receipt.fields))
-        || reader
-            .secret_sight()
-            .is_ok_and(|sight| sight == crate::secret_custody::SecretSight::Owner)
-    {
+    if !receipts.iter().any(|receipt| names(&receipt.fields)) || owner() {
         return;
     }
     for receipt in receipts {
@@ -328,6 +360,31 @@ pub(super) fn owner_export_notices_in(
         notices.push(WorldRecipientNotice::export(world, name, limit));
     }
     Ok(Some(notices))
+}
+
+/// Recipient notices for the artifact bytes and the selected born-with
+/// sources of the owner's export. Placement is advisory: it never narrows
+/// the owner's plain read or adds an export admission check.
+pub(super) fn artifact_export_notices(
+    vault: &Vault,
+    rows: &BTreeSet<EntityId>,
+    onward: &ReadDestination,
+) -> Result<Vec<WorldRecipientNotice>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut worlds = BTreeSet::new();
+    for row in rows {
+        let carried = crate::settings::carried_worlds_in(&vault.store, &txn, row)?;
+        if carried.unknown {
+            tracing::warn!("owner artifact export has an unplaced notice source");
+        }
+        worlds.extend(carried.worlds);
+    }
+    let mut notices = Vec::new();
+    for (world, limit) in crate::settings::recipient_limits_in(vault, &txn, &worlds, onward)? {
+        let name = world_label_in_txn(vault, &txn, &world)?;
+        notices.push(WorldRecipientNotice::export(world, name, limit));
+    }
+    Ok(notices)
 }
 
 /// Whether `bytes` spell, as a whole 32-digit hex token, a row a world

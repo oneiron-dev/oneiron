@@ -4,11 +4,21 @@ use std::collections::BTreeMap;
 use super::PolicyScopedGrantRow;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyCeiling {
     Auto,
     Proposed,
+}
+
+impl PolicyCeiling {
+    /// The public name of the Gate's approval ceiling `ceiling`.
+    pub(crate) const fn of_approval(ceiling: crate::gate::PolicyApprovalCeiling) -> Self {
+        match ceiling {
+            crate::gate::PolicyApprovalCeiling::Auto => Self::Auto,
+            crate::gate::PolicyApprovalCeiling::Proposed => Self::Proposed,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
@@ -18,11 +28,17 @@ pub enum PolicyCriticality {
     Critical,
 }
 
+/// A predicate class's rung on the DEC-0005 content ladder: `public`,
+/// `private`, `sensitive`, `restricted`. `normal` is the ordinary,
+/// non-sensitive label the shipped packs carry; it keeps that meaning.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicySensitivity {
-    Normal,
+    Public,
+    Private,
     Sensitive,
+    Restricted,
+    Normal,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -91,6 +107,9 @@ pub struct SourceTrustRow {
     pub max_auto_sensitivity: Option<SensitivityBand>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
+    /// Native checker selected for this source and actor binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_checker: Option<String>,
     #[serde(default)]
     pub receipted: bool,
     #[serde(default)]
@@ -142,6 +161,10 @@ pub struct PolicyManifest {
     /// shipped rows hold.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slide_review_policy: Option<Vec<crate::llm::decision::SlideReviewPolicyRow>>,
+    /// Who may settle a held code effect; each named person still needs its power.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_consent_settlement:
+        Option<crate::gate::code_consent_settlement::CodeConsentSettlementRow>,
     /// Omit to preserve the stored table; an explicit list replaces it and
     /// an empty list clears it. No other manifest table is changed.
     #[serde(default, skip_serializing_if = "Option::is_none")]

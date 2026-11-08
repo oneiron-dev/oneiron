@@ -22,13 +22,18 @@ mod schema_guard;
 mod schema_runtime;
 pub use schema::validate_json_schema;
 mod peer_wait;
+// FIX 4816: a durable step's recovery from its saved work.
+mod recovery;
 mod response_bodies;
 // FIX 6225: a step claim holds its oversize response's exact version.
 mod response_pins;
 // FIX 9930: transport retries; past the schedule, its last interval paces.
 mod retry;
 mod settled;
+mod source;
 mod step_claim;
+// FIX 4816: the memo index's keys, admission, lookup and deindex.
+mod step_index;
 mod step_only;
 mod step_state;
 // FIX 9929: a public submission's kept copies under body custody.
@@ -44,7 +49,7 @@ use super::{BudgetLease, BudgetSettlement, LlmUsage};
 
 pub use self::media_step::{MediaStepOutcome, call_media_as_step};
 
-pub(crate) use self::execute::ExecutedModelWitness;
+pub(crate) use self::execute::{ExecutedModelWitness, call_as_step_checked_with_unsaved_usage};
 pub use self::execute::{call_as_step, call_as_step_checked, call_as_step_with_fallbacks};
 pub(crate) use self::execute::{
     verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,
@@ -72,8 +77,8 @@ pub use self::types::{
 };
 
 pub(crate) use self::step_only::{
-    consume_step_wait_in_txn, open_step_wait_in_txn, register_detached_step_in_txn,
-    signal_step_wait_in_txn,
+    consume_step_wait_in_txn, erase_detached_step_actor_in_txn, open_step_wait_in_txn,
+    register_detached_step_in_txn, signal_step_wait_in_txn,
 };
 
 pub(crate) use self::settled::{
@@ -88,7 +93,7 @@ pub(crate) use self::response_bodies::{retire_step_claim_in_rows, retire_step_cl
 // FIX 6225: a claim's teardown, a restore and an activation take its pins.
 pub(crate) use self::response_pins::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
-    retire_erased_step_responses_in_rows,
+    retire_erased_step_responses_in_rows, step_response_version_pinned_in_txn,
 };
 pub(crate) use self::step_state::{
     dreamer_step_state_accepts_masked, erase_step_state_owner_in_txn, owner_gone_in_txn,

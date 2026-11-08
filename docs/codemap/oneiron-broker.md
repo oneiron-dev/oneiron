@@ -18,24 +18,35 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/child/tests.rs` | test | s | — | — | A live child that let its channel go is not taken as ready (Astra on #1416): the daemon replaces it, or… |
 | `src/cli.rs` | src | s | 1 fn | — | `oneiron-broker serve --socket <path> --client-uid <uid> [--extra-roots <pem>]… [--timeout-secs <n>]`: the… |
 | `src/client.rs` | src | m | 4 struct · 1 enum · 10 fn · 1 crate-vis | BrokerClient, BrokerConnection, BrokerReply, BrokerStream, StreamPart | The daemon's side of the socket |
+| `src/client/released.rs` | src | s | 4 fn | — | Released provider sends use the existing call socket in both directions |
 | `src/deadline.rs` | src | s | 1 const · 7 crate-vis | — | One call's deadline (FIX 8559) |
-| `src/digest.rs` | src | s | 2 fn · 2 crate-vis | — | The request digest (ARCH-0069 `#broker-digest`): blake3 over the method, the path, the sorted non-auth… |
+| `src/digest.rs` | src | s | 2 fn · 7 crate-vis | — | The request digest (ARCH-0069 `#broker-digest`): blake3 over the method, the path, the sorted non-auth… |
 | `src/error.rs` | src | s | 3 enum | BrokerError, Failure, Refusal | Why a call stopped |
+| `src/exchange.rs` | src | s | 7 crate-vis | — | What the broker's spooled exchanges share: a git exchange (OSH-3, `git_http`) and an LFS exchange (`lfs_http`) |
+| `src/exchange/client.rs` | src | s | 5 crate-vis | — | The daemon's side of a spooled exchange: the opening word, the header and the body, the wait for the… |
+| `src/exchange/credential.rs` | src | s | 2 crate-vis | — | The credential a spooled exchange carries: the one complete `Authorization` value the daemon hands over once… |
+| `src/exchange/relay.rs` | src | s | 5 crate-vis | — | A spooled exchange's reply, from its header on: relayed byte for byte in chunks, under the echo watch, then… |
+| `src/exchange/send.rs` | src | s | 3 crate-vis | — | A spooled exchange's one send: no redirect and no resend, dropped when the daemon hangs up, and timed out… |
+| `src/exchange/spool.rs` | src | s | 5 crate-vis | — | The broker's hold on a spooled exchange's body: read into a private unnamed file as its chunks come, its… |
 | `src/form.rs` | src | m | 1 struct · 4 fn · 1 crate-vis | FormData | `multipart/form-data` bodies, for the shapes that upload a file: the check the broker runs on one, which… |
-| `src/frame.rs` | src | m | 4 const · 19 crate-vis | — | The wire between the daemon and the broker, one connection per call |
-| `src/git_http.rs` | src | m | 4 struct · 2 enum · 17 fn · 1 re-export · 2 crate-vis | GitCallHeader, GitExchange, GitRepository, GitRequestDigest, GitService, GitTarget | The git smart-HTTP adapter (ARCH-0069 OSH-3, the broker's second adapter after model keys): one exchange of… |
+| `src/frame.rs` | src | m | 4 const · 23 crate-vis | — | The wire between the daemon and the broker, one connection per call |
+| `src/frame/dispatch.rs` | src | s | 1 enum · 6 crate-vis | DispatchError | Same-call release checks before physical provider writes |
+| `src/git_http.rs` | src | m | 4 struct · 2 enum · 18 fn · 1 re-export · 3 crate-vis | GitCallHeader, GitExchange, GitRepository, GitRequestDigest, GitService, GitTarget | The git smart-HTTP adapter (ARCH-0069 OSH-3, the broker's second adapter after model keys): one exchange of… |
 | `src/git_http/client.rs` | src | s | 2 struct · 4 fn | GitReply, PreparedGitCall | The daemon's side of a git exchange (see the parent module's steps): the header and the spooled body first… |
-| `src/git_http/serve.rs` | src | m | 1 crate-vis | — | The broker's side of a git exchange, from its header on (see the parent module's steps): spool and check the… |
-| `src/lib.rs` | src | s | 1 enum · 1 fn · 2 mod · 15 re-export | Isolation | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) |
+| `src/git_http/serve.rs` | src | s | 1 crate-vis | — | The broker's side of a git exchange, from its header on (see the parent module's steps): spool and check the… |
+| `src/lfs_http.rs` | src | m | 4 struct · 2 enum · 20 fn · 1 const · 1 re-export · 7 crate-vis | LfsActionTarget, LfsBatchTarget, LfsCallHeader, LfsOperation, LfsRequestDigest, LfsTarget | The Git LFS adapter (ARCH-0069, the broker's third adapter, beside git's smart HTTP): one request of a… |
+| `src/lfs_http/client.rs` | src | s | 2 struct · 6 fn | LfsReply, PreparedLfsCall | The daemon's side of an LFS exchange (see the parent module's steps): the header and the spooled body first… |
+| `src/lfs_http/serve.rs` | src | m | 1 crate-vis | — | The broker's side of an LFS exchange, from its header on (see the parent module's steps): spool and check… |
+| `src/lib.rs` | src | s | 1 enum · 1 fn · 2 mod · 18 re-export | Isolation | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) |
 | `src/peer.rs` | src | s | 7 crate-vis | — | Who this process is, and closing its memory to processes of its own uid |
 | `src/responses.rs` | src | m | 1 crate-vis | — | OpenAI Responses over one broker-upgraded WebSocket per call |
 | `src/route_keys.rs` | src | s | 1 crate-vis | — | — |
-| `src/send.rs` | src | m | 1 struct · 12 crate-vis | SendPolicy | The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply… |
+| `src/send.rs` | src | L | 1 struct · 17 crate-vis | SendPolicy | The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply… |
 | `src/serve.rs` | src | m | 1 struct · 1 fn · 1 const · 1 crate-vis | ServeConfig | The broker's side of the socket: one call per connection, from the daemon's uid only |
 | `src/serve/tests.rs` | test | m | — | — | The broker end to end, on a real Unix socket against the local TLS fake: one send with the key, the… |
-| `src/shape.rs` | src | m | 1 enum · 10 fn · 2 crate-vis | Shape | The shape rows: for each wire protocol the broker speaks, the method, the path, the content type, where the… |
+| `src/shape.rs` | src | L | 1 enum · 10 fn · 2 crate-vis | Shape | The shape rows: for each wire protocol the broker speaks, the method, the path, the content type, where the… |
 | `src/shape/tests.rs` | test | s | — | — | The selector parser's refusals, as `#door-reads-model` and the broker design list them: the parser reads the… |
-| `src/strip.rs` | src | m | 1 fn · 1 const · 3 crate-vis | — | The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a… |
+| `src/strip.rs` | src | m | 1 fn · 1 const · 5 crate-vis | — | The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a… |
 | `src/strip/tests.rs` | test | m | — | — | The strip forms of ARCH-0069 `#model-adapter-strip-forms`, each written the way a provider could echo it… |
 | `src/strip/watch.rs` | src | m | 4 crate-vis | — | The strip rule read as a reply streams (FIX 6103), moved out of the strip module whole: [`KeyWatch`] |
 | `src/testing.rs` | src | s | 3 struct · 8 fn | FakeProvider, FakeReply, SeenRequest | A local fake model provider over TLS, for the broker's own tests and the server's paid-leg fixture |

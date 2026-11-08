@@ -63,7 +63,7 @@ fn invalid(reason: &str) -> Error {
 fn owed_nothing() -> Result<DreamerAttemptExecution> {
     Ok(DreamerAttemptExecution::Completed {
         completed_units: 0,
-        step_hashes: Vec::new(),
+        step_bindings: Vec::new(),
     })
 }
 
@@ -96,12 +96,15 @@ async fn lens_step(
     Ok(
         match call_as_step(step_ctx, backend, model.guard, request).await {
             Ok(StepOutcome::Finished {
-                response, memoized, ..
+                response,
+                memoized,
+                binding,
+                ..
             }) => {
                 if let Err(error) = charges.record_terminal(
                     step_ctx.vault,
-                    step_ctx.attempt_id,
-                    step_hash,
+                    binding.attempt_id,
+                    binding.step_hash,
                     &response.usage,
                 ) {
                     if !memoized {
@@ -157,6 +160,7 @@ fn lens_request(
     model: ModelId,
     locality: ModelLocality,
     keyless: bool,
+    paid: bool,
     instruction: String,
     text: String,
 ) -> Result<LlmRequest> {
@@ -178,6 +182,7 @@ fn lens_request(
             },
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: vec![
@@ -222,6 +227,7 @@ pub fn live_weave_lens_request(
         model,
         locality,
         false,
+        inference.selected_paid(),
         live.instruction.clone(),
         live.input.clone(),
     )?;
@@ -325,7 +331,15 @@ pub async fn run_weave_lens(
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
     let keyless = model.inference.selected_keyless();
-    let request = lens_request(model.model.clone(), locality, keyless, instruction, text)?;
+    let paid = model.inference.selected_paid();
+    let request = lens_request(
+        model.model.clone(),
+        locality,
+        keyless,
+        paid,
+        instruction,
+        text,
+    )?;
     let mut request = ctx
         .vault
         .authorize_model_role(model.role, request, &model.inference)?
@@ -382,7 +396,7 @@ pub async fn run_weave_lens(
                 }
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
-                    step_hashes: charges.step_hashes.clone(),
+                    step_bindings: charges.step_bindings.clone(),
                 });
             }
             // The refused answer and why go back to the model; the repair
@@ -423,6 +437,6 @@ pub async fn run_weave_lens(
     }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
-        step_hashes: charges.step_hashes.clone(),
+        step_bindings: charges.step_bindings.clone(),
     })
 }

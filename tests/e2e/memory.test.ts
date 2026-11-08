@@ -1,10 +1,13 @@
 import { afterAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { mkdir, copyFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { Facade, FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
-import { EngineFixture } from "./support/engine.ts";
+import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { credentialParts, PublicHttpClient } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
-import { defineFile } from "./support/run.ts";
+import { ScriptedProviders, openaiText } from "./support/providers.ts";
+import { BlockedDoor, defineFile } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -16,7 +19,7 @@ afterAll(suite.flush);
  * 0040/0043/0055, not handlers or runtime OpenAPI. Canonical fixture values
  * are translated to the current snake_case facade, never sent as app DTOs.
  * Fresh real server per ID. No engine defaults or harness deadlines change.
- * MEMORY-02, MEMORY-03, MEMORY-04 and MEMORY-06 retain their full journeys as TODOs.
+ * MEMORY-03, MEMORY-04 and MEMORY-06 retain their full journeys as TODOs.
  */
 
 type ClaimInput = FacadeInput<"vault.claims.upsert">;
@@ -45,7 +48,12 @@ interface Cases {
       recallAfterRetraction: string[] } };
   "MEMORY-02": { id: "MEMORY-02"; valid: CanonicalClaim;
     malformed: { case: string; omit?: string; value?: unknown; confidence?: number;
-      subjectType?: string; made_by?: unknown }[] };
+      subjectType?: string; made_by?: unknown }[];
+    opaqueControl: { case: string; replaces: string; predicate: string;
+      subjectId: string; worldId: string; scopeFacetId: string;
+      scopeRelationshipId: "all" | string[]; scopeProjectId: string;
+      value: unknown; confidence: number; source: string;
+      evidenceTurnIds?: string[]; note: string; canon: string[] } };
   "MEMORY-04": { id: "MEMORY-04"; neutral: CanonicalClaim;
     takes: { actor: string; markdown: string }[]; expected: { labels: string[] } };
   "MEMORY-05": { id: "MEMORY-05"; statements: (CanonicalClaim & { ref: string;
@@ -66,7 +74,7 @@ interface Cases {
 type Case = Cases[keyof Cases];
 interface Data { fixture: Roles; cases: (Case | { id: "MEMORY-03" | "MEMORY-06" })[] }
 interface World {
-  engine: EngineFixture; data: Data; refs: Map<string, string>; conversation: string;
+  engine: EngineFixture; providers: ScriptedProviders; data: Data; refs: Map<string, string>; conversation: string;
   scope: Position; occurred: number;
 }
 // Chosen public input ids, not purported existing engine handles. Every one
@@ -98,9 +106,6 @@ async function entity(client: PublicHttpClient, entity_ref: string): Promise<Ent
   const result = await client.call("vault.get", { entity_ref });
   if (!result.value) throw new Error(`Public entity missing: ${entity_ref}`);
   return result.value;
-}
-async function doors(engine: EngineFixture, verbs: readonly FacadeVerb[]): Promise<void> {
-  for (const verb of verbs) await engine.requireHttpDoor(`/v1/core/facade/${verb}`, "POST");
 }
 async function witnessed(w: World, role: string, content: string, at = w.occurred): Promise<string> {
   const receipt = await w.engine.client.call("vault.witness", {
@@ -144,17 +149,150 @@ async function agent(w: World, role: string) {
   return paired;
 }
 function scenarioName(w: World): string { return w.engine.options.id! }
+const PROJECT_LEADER = "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1709"; // seeded sys.team_lead (system_agent_definitions.v1.json)
+const memoryModels = (providers: ScriptedProviders) => `
+[models.providers.drafter]
+kind = "local-openai-compat"
+base_url = "${providers.urls.drafter}"
+revision = "e2e-v1"
+[models.providers.decider]
+kind = "local-openai-compat"
+base_url = "${providers.urls.decider}"
+revision = "e2e-v1"
+[models.roles.generative_reasoner]
+model = "drafter:project-drafter"
+[models.roles.checker]
+model = "decider:project-decider"
+[models.decisions.big]
+role = "checker"
+version = "e2e-v1"
+wording = "You answer one typed question about the state you are given."
+reply = "json"
+[models.code_mode]
+prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/prompts"))}
+[models.dreamer]
+enabled = false
+`;
+function git(cwd: string, args: string[]): string {
+  const run = Bun.spawnSync(["git", "-c", "user.name=oneiron-e2e", "-c", "user.email=e2e@oneiron.invalid", ...args],
+    { cwd, stdout: "pipe", stderr: "pipe" });
+  if (run.exitCode !== 0) throw new Error(`git ${args[0]} failed: ${run.stderr.toString()}`);
+  return run.stdout.toString().trim();
+}
+/** Imports the repo's project-proposal skill through the default hub, repointed
+ * at a local Git folder at one full commit (#6711), and reads its activation back. */
+async function installProjectProposal(engine: EngineFixture): Promise<void> {
+  // Fixture input inside the engine's own temporary root, as HOOKS-05 does
+  // (hooks.test.ts about lines 1034-1046): never a project repository, never pushed.
+  const dir = resolve(engine.root, "project-proposal-hub");
+  await mkdir(resolve(dir, "skills", "project-proposal"), { recursive: true });
+  await copyFile(resolve(import.meta.dir, "../../skills/project-proposal/SKILL.md"), resolve(dir, "skills", "project-proposal", "SKILL.md"));
+  git(dir, ["init", "-q"]);
+  git(dir, ["add", "skills/project-proposal/SKILL.md"]);
+  git(dir, ["commit", "-q", "-m", "project-proposal"]);
+  const commit = git(dir, ["rev-parse", "HEAD"]);
+  const { hub } = await engine.client.call("vault.skill_hubs.default.get", {});
+  const configured = await engine.client.call("vault.skill_hubs.put", {
+    hub, kind: "local-dir", endpoint: dir, trust_tier: "community", sync_policy: "pinned-commit" });
+  expect(configured.consent.outcome).toBe("approved");
+  await engine.client.call("vault.skill_hubs.refs.set", {
+    hub_ref: { hub_id: hub, ref_string: "skills", pin: { type: "commit", value: commit } }, sync_policy: "pinned-commit" });
+  const hub_ref = { hub_id: hub, ref_string: "skills/project-proposal", pin: { type: "commit" as const, value: commit } };
+  const { entity } = await engine.client.call("vault.skills.import", { hub_ref, publisher: "oneiron-e2e-local" });
+  const latest = async () => (await engine.client.call("vault.skills.receipts", { entity })).imports.at(-1)?.disposition;
+  if (await latest() === "pending_permission") await engine.client.call("vault.skills.permissions.approve", { entity, hub_ref });
+  const disposition = await latest();
+  if (disposition !== "installed" && disposition !== "already_installed") {
+    throw new Error(`project-proposal import not active: ${JSON.stringify(disposition)}`);
+  }
+}
+/** One real project: source turn, typed YES, house-dispatched drafter
+ * propose, owner confirm, and the leader's goal-intake run. */
+async function mintProject(engine: EngineFixture, providers: ScriptedProviders, row: { ref: string; name: string },
+  index: number, occurred: number): Promise<string> {
+  const client = engine.client;
+  const conversation = await client.call("vault.conversations.create", {
+    body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred });
+  const decide = `project-decide-${index}`;
+  providers.enqueue({ id: `project-yes-${index}`, origin: "decider", role: "checker", purpose: "project question",
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-decider" }, barrier: decide,
+    response: openaiText(`project-yes-${index}`, "project-decider", JSON.stringify({ answer: true, probability: 0.9 }),
+      { inputTokens: 256, outputTokens: 16 }) });
+  const witnessed = await client.call("vault.witness", { conversation_ref: conversation.id, occurred_at: occurred,
+    messages: [{ author: "user", message_type: "text", is_visible: true, order: 0,
+      content: `I am starting ${row.name}, a project I will plan, build and review over several weeks of sittings.` }] });
+  const message = (await entity(client, witnessed.message_short_ids[0]!)).id_hex;
+  try {
+    await providers.awaitBarrier(decide);
+  } catch (error) {
+    await engine.artifacts.json(`diagnostic-project-decide-${index}-timeout.json`, {
+      conversation_ref: conversation.id, message_ref: message,
+      seenFixtureCalls: providers.seenFixtureCalls.map(call => ({
+        origin: call.origin, fixtureId: call.fixtureId, path: call.path,
+        model: (call.body as {model?:unknown})?.model,
+      })),
+    });
+    if(process.env.E2E_MEMORY_RETAIN_VAULT==="1") await engine.close({retainVault:true});
+    throw error;
+  }
+  const card_id = `project-${message}`;
+  const proposal = { card_id, source_message_ref: message,
+    goal: { goal: `Build ${row.name}`, why: `${row.name} is the owner's stated multi-week project.`, axes: ["plan", "build", "review"] },
+    picks: { leader_agent_def_ref: PROJECT_LEADER, board_human_refs: [engine.pairedActor.principalRef],
+      budget_share_bps: 1000, starting_skill_refs: [] } };
+  providers.enqueue({ id: `project-draft-${index}`, origin: "drafter", role: "generative_reasoner", purpose: "house project drafter",
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-drafter" },
+    response: openaiText(`project-draft-${index}`, "project-drafter",
+      `await vault.projects.propose(${JSON.stringify(proposal)});\nfinish(${JSON.stringify(card_id)});`,
+      { inputTokens: 512, outputTokens: 128 }) });
+  providers.releaseBarrier(decide);
+  await awaitPublic(async () => client.call("vault.projects.proposals", { conversation_ref: conversation.id }),
+    cards => cards.some(card => card.card.card_id === card_id && card.state === "proposed"),
+    { label: `house-drafted project card ${card_id}` });
+  const intake = `project-intake-${index}`;
+  providers.enqueue({ id: `project-intake-${index}`, origin: "drafter", role: "generative_reasoner", purpose: "leader goal intake",
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-drafter" }, barrier: intake,
+    response: openaiText(`project-intake-${index}`, "project-drafter", `finish("goal intake waits for the owner");`,
+      { inputTokens: 512, outputTokens: 16 }) });
+  const minted = await client.call("vault.projects.confirm", { card_id, action_id: "mint_project", occurred_at: occurred });
+  expect(minted.card_id).toBe(card_id);
+  await providers.awaitBarrier(intake);
+  providers.releaseBarrier(intake);
+  expect((await entity(client, minted.project_id)).kind).toBe("PROJECT");
+  return minted.project_id;
+}
+async function closeWorld(w: World): Promise<void> {
+  const errors: string[] = [];
+  const text = (error: unknown): string => error instanceof Error ? error.message : String(error);
+  try { await w.engine.close({retainVault:process.env.E2E_MEMORY_RETAIN_VAULT==="1"}); } catch (error) { errors.push(text(error)); }
+  try { await w.providers.close(); } catch (error) { errors.push(text(error)); }
+  if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
+}
 async function setup(id: string): Promise<World> {
   const data = await (await loadFixtures()).readJson<Data>("memory-canonical-cases");
-  const engine = await EngineFixture.start({ id, profile });
+  const providers = await ScriptedProviders.start({ id: `memory-projects-${id}`, origins: ["decider", "drafter"], steps: [] });
+  const engine = await EngineFixture.start({ id, profile, serverConfig: memoryModels(providers),
+    serverLog: "info,oneiron::workflow_pump=debug,oneiron_server::ai_host=debug,oneiron_server::big_rung=debug,oneiron_server::decision_host=debug,oneiron::agent_dispatch=debug,oneiron::llm::decision=debug,oneiron::workspace_roster=debug" });
   const occurred = 1769947200; // Public setup input, never an engine clock override.
+  await installProjectProposal(engine);
+  const projects = new Map<string, string>();
+  for (const [index, row] of data.fixture.projects.entries()) {
+    projects.set(row.ref, await mintProject(engine, providers, row, index, occurred));
+  }
+  // Every later witness stages a project question on its own conversation:
+  // the house answers no, so no further card or project appears.
+  providers.enqueue({ id: "project-no", origin: "decider", role: "checker", purpose: "project question (not a project)",
+    standing: true, request: { method: "POST", path: "/v1/chat/completions", model: "project-decider" },
+    response: openaiText("project-no", "project-decider", JSON.stringify({ answer: false, probability: 0.9 }),
+      { inputTokens: 256, outputTokens: 16 }) });
   const conversation = await engine.client.call("vault.conversations.create", {
     body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
   });
   const base = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
-  const w: World = { engine, data, refs: new Map(), conversation: conversation.id,
+  const w: World = { engine, providers, data, refs: new Map(), conversation: conversation.id,
     scope: base, occurred };
   w.refs.set("@base", base.world_id);
+  for (const [ref, id] of projects) w.refs.set(ref, id);
   for (const row of data.fixture.people) await person(w, row.ref, row.name);
   const mask = applied(await engine.client.call("vault.identity.facet", {
     entity: ref(w, "@person-a"), facets: [{ label: "work" }], reassignment_map: [],
@@ -163,14 +301,6 @@ async function setup(id: string): Promise<World> {
   if (mask.receipt.action.op !== "facet") throw new Error("Wrong facet receipt action");
   expect(mask.receipt.action.facets).toHaveLength(1);
   w.refs.set("@facet-work", mask.receipt.action.facets[0]!);
-  for (const row of data.fixture.projects) {
-    const result = await engine.client.call("vault.structural.put", {
-      kind: "PROJECT", body: { name: row.name, role: row.role }, occurred_at: occurred,
-      text_fields: [{ field: "name", value: row.name }],
-    });
-    expect((await entity(engine.client, result.entity_ref)).kind).toBe("PROJECT");
-    w.refs.set(row.ref, result.id_hex);
-  }
   for (const row of data.fixture.worlds) {
     const result = await engine.client.call("vault.structural.put", {
       kind: "WORLD", body: { name: row.name, kind: row.kind }, occurred_at: occurred,
@@ -245,8 +375,6 @@ async function timeline(w: World, id: string): Promise<Timeline> {
 suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work", async () => {
   const w = await setup("MEMORY-01");
   try {
-    await doors(w.engine, ["vault.claims.seed", "vault.claims.review", "vault.claims.settle",
-      "vault.claims.upsert", "vault.claims.retract", "vault.claims.history"]);
     const c = scenario(w, "MEMORY-01");
     await witnessed(w, "@name-statement", `The name is ${c.current.value.value}.`);
     await witnessed(w, "@name-correction", `The name is now ${c.alternative.value.value}.`);
@@ -286,22 +414,16 @@ suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work
     await w.engine.awaitReceipt(settled.receipt_ref);
     // Current ordinary-owner supersession is upsert-driven. Reuse the
     // approved row's public id; no caller-set approval or run-id substitute.
+    // FIX 22041: the owner's own correction of the original lands at once
+    // and closes it in the same write. No proposal opens, so nothing is
+    // settled a second time.
     const supersession = await w.engine.client.call("vault.claims.upsert", claimInput(w, c.alternative, newId));
     expect((await entity(w.engine.client, supersession.claim_short_id)).id_hex).toBe(newId);
+    expect(supersession.approval).toBe("auto");
     expect(supersession.superseded_short_id).toBe(original.claim_short_id);
-    // A replacement re-proposes: the superseding upsert lands proposed and
-    // closes the original, so the holder settles the same proposal again.
-    expect((await claim(w, newId)).approval).toBe("proposed");
-    expect(values(await recalled(w, "Morgan name"), c.current.predicate)).toEqual([]);
-    const review2 = await w.engine.client.call("vault.claims.review", { claim_ref: newId });
-    expect(review2.proposal_ref).toBe(newId);
-    const settled2 = await w.engine.client.call("vault.claims.settle", {
-      claim_ref: newId, review_id: review2.review_id, decision: "approve",
-    });
-    expect(settled2.verdict).toBe("landed");
-    expect(settled2.changes).toEqual([{ claim_ref: newId, verdict: "landed" }]);
-    await w.engine.awaitReceipt(settled2.receipt_ref);
-    expect((await claim(w, newId)).approval).toBe("approved");
+    expect(supersession.superseded?.id).toBe(oldId);
+    await w.engine.awaitReceipt(supersession.receipt_ref);
+    expect((await claim(w, newId)).approval).toBe("auto");
     expect(values(await recalled(w, "Morgan name"), c.current.predicate))
       .toEqual(c.expected.recallAfterAuthorizedApprovalAndSupersession);
     const retracted = await w.engine.client.call("vault.claims.retract", { claim_ref: newId });
@@ -313,7 +435,7 @@ suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work
     expect(old.value).toBe(c.current.value.value);
     expect(old.lifecycle).toBe("superseded"); expect(old.approval).toBe("auto");
     expect(current.value).toBe(c.alternative.value.value);
-    expect(current.lifecycle).toBe("retracted"); expect(current.approval).toBe("approved");
+    expect(current.lifecycle).toBe("retracted"); expect(current.approval).toBe("auto");
     for (const [row, evidence, actor] of [[old, ref(w, "@name-statement"), w.engine.pairedActor.principalRef],
       [current, ref(w, "@name-correction"), ref(w, "@agent-a")]] as const) {
       expect(row.valid_from).not.toBeNull(); expect(row.valid_to).not.toBeNull();
@@ -327,8 +449,8 @@ suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work
     expect(newer.state).toBe("retracted"); expect(newer.supersedes).toContain(oldId);
     expect(full.records.find(row => row.id === oldId)?.superseded_by).toContain(newId);
     await w.engine.artifacts.json("lifecycle.json", { original, alternative, review, refusal: refused.body,
-      settled, supersession, review2, settled2, retracted, history, timeline: full });
-  } finally { await w.engine.close() }
+      settled, supersession, retracted, history, timeline: full });
+  } finally { await closeWorld(w) }
 });
 
 /* ARCH-0003 D18 and four required axes; ARCH-0040 host authorship.
@@ -338,43 +460,430 @@ suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work
  * unknown structural kinds refuse (registry lookup), and forged made_by
  * refuses at decode (made_by is not an input field). HTTP and tool-first
  * MCP use the same owner credential with positive controls on both.
- * The full ID stays TODO on the eighth case: invalid-value sends a JSON
- * object as the claim value, but val is an opaque MessagePack payload the
- * crate never interprets, so the object lands (and supersedes the
- * control) instead of refusing. No typed per-predicate value-shape
- * validation exists in this catalog. Arming needs a typed val contract
- * that refuses it or a fixture revision of that case; asserting
- * landed-as-opaque here would contradict the pinned malformed expectation.
+ * The eighth case is a POSITIVE opaque-value control, not a refusal (Engine 10:14
+ * YES on the 10:11 ASK): ARCH-0003:90 makes Claim/ClaimValue TypeScript the
+ * app-layer view only, and :223-225 makes the per-predicate valueKind tuple
+ * extractor/consolidator guidance rather than a Rust crate contract, while D18
+ * (:92/:94) validates only the structural body plus the required scope keys; the
+ * native predicate_validators.rs:294 treats generic val as opaque MessagePack with
+ * specific families owning their own validators. The suite's own valid control is
+ * itself an object, so object-ness cannot refuse. The {kind:number,
+ * value:not-a-number} object therefore lands opaquely on @person-b (same four axes
+ * as the control, distinct subject so the subject+scope+predicate supersession key
+ * never closes the valid control) and reads back whole; asserting a refusal here
+ * would contradict the canon-pinned oracle correction recorded in the fixture.
  * MCP arming note: tool-first verb calls need {schema_version, consent,
  * arguments: {spec}} (bare {spec} is refused); refusals arrive as
  * JSON-RPC errors, hook stops as isError results.
- * Keep the complete journey: paired valid control, all eight malformed
- * cases over HTTP+MCP with per-element receipts, no surviving bad row in
- * claims/point-reads/neighbors/recall, HTTP/MCP parity, valid siblings
+ * Keep the complete journey: paired valid control, all seven malformed cases plus
+ * the opaque positive control over HTTP+MCP with per-element receipts, no surviving
+ * bad row in claims/point-reads/neighbors/recall, HTTP/MCP parity, valid siblings
  * preserved, batch per-element outcomes (never blanket rollback).
  */
-suite.todo(test, "MEMORY-02",
-  "waits on typed claim-value shape validation: object values land opaquely instead of refusing");
+suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should work", async () => {
+  const w = await setup("MEMORY-02");
+  const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error);
+  let primaryFailed = false;
+  let primary: unknown;
+  try {
+    await w.engine.mcp.initialize();
+    type McpTool = { name: string; inputSchema: { properties: { schema_version: { const: string } } } };
+    type McpTools = { surfaceMode: string; tools: McpTool[] };
+    const tools = await w.engine.mcp.listTools() as McpTools;
+    // Consent producer (this suite) + consumer (MCP validate: nonblank policy_ref/purpose
+    // only, no registry lookup): the label below is caller-owned, like policy:boot-session.
+    const toolArguments = (name: string, fields: Record<string, unknown>): Record<string, unknown> => {
+      const tool = tools.tools.find(item => item.name === name);
+      if (!tool) throw new Error(`Required public MCP tool not registered: ${name}`);
+      // The version is a transport binding from tools/list, not an expected outcome.
+      return { schema_version: tool.inputSchema.properties.schema_version.const,
+        consent: { policy_ref: "policy:memory-02-claim-admission", purpose: "MEMORY-02 claim admission journey" }, ...fields };
+    };
+    type McpCallResult = { isError: boolean; structuredContent?: { output?: unknown; actor?: unknown; meta?: unknown } };
+    const mcpCall = async <V extends FacadeVerb>(verb: V, input: FacadeInput<V>): Promise<FacadeResult<V>> => {
+      const reply = await w.engine.mcp.callTool(verb, toolArguments(verb, { arguments: { spec: input } })) as McpCallResult;
+      expect(reply.isError).toBe(false);
+      const output = reply.structuredContent?.output as FacadeResult<V> | undefined;
+      if (output === undefined) throw new Error(`MCP ${verb} returned no structured output`);
+      return output;
+    };
+    const mcpRefused = async (verb: string, spec: unknown): Promise<unknown> => {
+      const reply = await w.engine.mcp.rpc("tools/call",
+        { name: verb, arguments: toolArguments(verb, { arguments: { spec } }) });
+      if (!("error" in reply)) throw new Error(`Expected an MCP JSON-RPC refusal for ${verb}`);
+      const data = reply.error.data as Record<string, unknown> | undefined;
+      if (!data || typeof data !== "object") throw new Error(`MCP ${verb} refusal has no data envelope`);
+      // Structural shape only (boot pattern): no refusal-literal pinning without an observed run.
+      expect(typeof data.kind).toBe("string");
+      expect((data.kind as string).length).toBeGreaterThan(0);
+      expect(data.error_code).toBe(data.kind);
+      expect(Array.isArray(data.recovery_suggestions)).toBe(true);
+      expect((data.recovery_suggestions as unknown[]).length).toBeGreaterThan(0);
+      return reply;
+    };
+    const errMessage = (body: unknown): unknown => (body as { error?: { message?: unknown } }).error?.message;
+    const errCode = (body: unknown): unknown => (body as { error?: { code?: unknown } }).error?.code;
+    // Both decode and typed InvalidClaimBody-family refusals answer 400; literals stay archived.
+    const expectRefused = (status: number, body: unknown): void => {
+      expect(status).toBe(400);
+      expect(typeof errCode(body)).toBe("string");
+      expect((errCode(body) as string).length).toBeGreaterThan(0);
+      expect(typeof errMessage(body)).toBe("string");
+      expect((errMessage(body) as string).length).toBeGreaterThan(0);
+    };
+    const neighborSet = async (subject: string): Promise<string[]> =>
+      // Page size mirrors ownerBaseClaimScope (support/fixtures.ts), not a new constant.
+      (await w.engine.client.call("vault.neighbors", { entity_ref: ref(w, subject), opts: { limit: 100 } }))
+        .value.map(hit => `${hit.short_id}|${hit.kind}|${hit.edge_kind}|${hit.direction}|${hit.weight}`).sort();
+    const scopedValues = async (person: string, project: string, query: string): Promise<string[]> =>
+      values(await recalled(w, query, { worlds: { kind: "all" }, project_refs: [ref(w, project)],
+        person_ref: ref(w, person), kinds: ["semantic"] }), "profile.name");
+    type Memory02Snapshot = { listA: string[]; listB: string[]; predA: string[]; predB: string[];
+      neighborsA: string[]; neighborsB: string[]; recallANorth: string[]; recallBNorth: string[];
+      recallASouth: string[]; recallBSouth: string[] };
+    const snapshot = async (): Promise<Memory02Snapshot> => {
+      const rowsA = await claims(w, "@person-a");
+      const rowsB = await claims(w, "@person-b");
+      return {
+        listA: rowsA.map(row => row.claim_ref).sort(),
+        listB: rowsB.map(row => row.claim_ref).sort(),
+        predA: [...new Set(rowsA.map(row => row.predicate))].sort(),
+        predB: [...new Set(rowsB.map(row => row.predicate))].sort(),
+        neighborsA: await neighborSet("@person-a"),
+        neighborsB: await neighborSet("@person-b"),
+        recallANorth: await scopedValues("@person-a", "@project-north", "Morgan Vale"),
+        recallBNorth: await scopedValues("@person-b", "@project-north", "not-a-number number kind"),
+        recallASouth: await scopedValues("@person-a", "@project-south", "Morgan Vale"),
+        recallBSouth: await scopedValues("@person-b", "@project-south", "not-a-number number kind"),
+      };
+    };
+    const expectUnchanged = async (before: Memory02Snapshot): Promise<void> => {
+      expect(await snapshot()).toEqual(before);
+    };
+    const c = scenario(w, "MEMORY-02");
+    expect(c.malformed).toHaveLength(7);
+    expect(c.opaqueControl.replaces).toBe("invalid-value");
+    expect(c.malformed.some(item => item.case === "invalid-value")).toBe(false);
+    await witnessed(w, "@name-statement", `The name is ${c.valid.value.value}.`);
+    const owner = w.engine.pairedActor.principalRef;
+    const refusals: { case: string; surface: string; status?: number; body: unknown }[] = [];
+    // HTTP valid control (original placement: @person-a + north axes).
+    const validInput = claimInput(w, c.valid, inputId("MEMORY-02:valid-http"));
+    const validReceipt = await w.engine.client.call("vault.claims.upsert", validInput);
+    expect(validReceipt.approval).toBe("auto");
+    await w.engine.awaitReceipt(validReceipt.receipt_ref);
+    const validId = (await entity(w.engine.client, validReceipt.claim_short_id)).id_hex;
+    const validRow = await claim(w, validId);
+    expect(validRow.value).toBe(c.valid.value.value);
+    expect(validRow.claim_scope).toEqual(validInput.scope);
+    birth(validRow, owner, [ref(w, "@name-statement")]);
+    expect(validRow.approval).toBe("auto");
+    expect(validRow.lifecycle).toBe("active");
+    expect(validRow.source).toBe("user_stated");
+    expect((await entity(w.engine.client, validId)).made_by).toEqual(validRow.made_by);
+    expect(await scopedValues("@person-a", "@project-north", "Morgan Vale")).toEqual([c.valid.value.value]);
+    // HTTP opaque control (@person-b + same four axes; subject differs so the
+    // subject+scope+predicate supersession key never closes the valid control).
+    const opaqueBase: CanonicalClaim = { subjectId: c.opaqueControl.subjectId, predicate: c.opaqueControl.predicate,
+      value: { kind: "string", value: "opaque-placeholder-never-sent" }, confidence: c.opaqueControl.confidence,
+      source: c.opaqueControl.source, worldId: c.opaqueControl.worldId, scopeFacetId: c.opaqueControl.scopeFacetId,
+      scopeRelationshipId: c.opaqueControl.scopeRelationshipId, scopeProjectId: c.opaqueControl.scopeProjectId,
+      ...(c.opaqueControl.evidenceTurnIds === undefined ? {} : { evidenceTurnIds: c.opaqueControl.evidenceTurnIds }) };
+    // Stock claimInput sends row.value.value; the opaque control overrides with the whole
+    // fixture object through the real `value: unknown` typed boundary (no cast, no second door).
+    const opaqueInput: ClaimInput = { ...claimInput(w, opaqueBase, inputId("MEMORY-02:opaque-http")), value: c.opaqueControl.value };
+    const opaqueReceipt = await w.engine.client.call("vault.claims.upsert", opaqueInput);
+    expect(opaqueReceipt.approval).toBe("auto");
+    await w.engine.awaitReceipt(opaqueReceipt.receipt_ref);
+    const opaqueId = (await entity(w.engine.client, opaqueReceipt.claim_short_id)).id_hex;
+    const opaqueRow = await claim(w, opaqueId);
+    expect(opaqueRow.value).toEqual(c.opaqueControl.value);
+    expect(opaqueRow.claim_scope).toEqual(opaqueInput.scope);
+    birth(opaqueRow, owner, [ref(w, "@name-statement")]);
+    expect(opaqueRow.approval).toBe("auto");
+    expect(opaqueRow.lifecycle).toBe("active");
+    expect(opaqueRow.source).toBe("user_stated");
+    expect((await entity(w.engine.client, opaqueId)).made_by).toEqual(opaqueRow.made_by);
+    const opaqueTextNorth = await scopedValues("@person-b", "@project-north", "not-a-number number kind");
+    expect(opaqueTextNorth).toHaveLength(1);
+    expect(opaqueTextNorth[0]!.length).toBeGreaterThan(0);
+    // MCP mirrors on @project-south (project differs, so no supersession either way).
+    const mcpValidInput = claimInput(w, { ...c.valid, scopeProjectId: "@project-south" }, inputId("MEMORY-02:valid-mcp"));
+    const mcpValidReceipt = await mcpCall("vault.claims.upsert", mcpValidInput);
+    expect(mcpValidReceipt.approval).toBe("auto");
+    await w.engine.awaitReceipt(mcpValidReceipt.receipt_ref);
+    const mcpValidId = (await entity(w.engine.client, mcpValidReceipt.claim_short_id)).id_hex;
+    const mcpValidRow = await claim(w, mcpValidId);
+    expect(mcpValidRow.value).toBe(c.valid.value.value);
+    expect(mcpValidRow.claim_scope).toEqual(mcpValidInput.scope);
+    birth(mcpValidRow, owner, [ref(w, "@name-statement")]);
+    expect(mcpValidRow.approval).toBe("auto");
+    expect(mcpValidRow.lifecycle).toBe("active");
+    expect(await scopedValues("@person-a", "@project-south", "Morgan Vale")).toEqual([c.valid.value.value]);
+    const mcpOpaqueInput: ClaimInput = { ...claimInput(w, { ...opaqueBase, scopeProjectId: "@project-south" },
+      inputId("MEMORY-02:opaque-mcp")), value: c.opaqueControl.value };
+    const mcpOpaqueReceipt = await mcpCall("vault.claims.upsert", mcpOpaqueInput);
+    expect(mcpOpaqueReceipt.approval).toBe("auto");
+    await w.engine.awaitReceipt(mcpOpaqueReceipt.receipt_ref);
+    const mcpOpaqueId = (await entity(w.engine.client, mcpOpaqueReceipt.claim_short_id)).id_hex;
+    const mcpOpaqueRow = await claim(w, mcpOpaqueId);
+    expect(mcpOpaqueRow.value).toEqual(c.opaqueControl.value);
+    expect(mcpOpaqueRow.claim_scope).toEqual(mcpOpaqueInput.scope);
+    birth(mcpOpaqueRow, owner, [ref(w, "@name-statement")]);
+    expect(mcpOpaqueRow.approval).toBe("auto");
+    expect(mcpOpaqueRow.lifecycle).toBe("active");
+    const opaqueTextSouth = await scopedValues("@person-b", "@project-south", "not-a-number number kind");
+    expect(opaqueTextSouth).toHaveLength(1);
+    expect(opaqueTextSouth[0]!.length).toBeGreaterThan(0);
+    // Quartet: four mutually non-superseding rows, every scope stamp pinned.
+    expect((await claims(w, "@person-a")).filter(row => row.predicate === "profile.name")).toHaveLength(2);
+    expect((await claims(w, "@person-b")).filter(row => row.predicate === "profile.name")).toHaveLength(2);
+    // HTTP/MCP field-level parity on the same-owner readbacks (full bodies archived).
+    const pick = (row: Claim): unknown => ({ value: row.value, predicate: row.predicate, lifecycle: row.lifecycle,
+      approval: row.approval, subject_ref: row.subject_ref, source: row.source, claim_scope: row.claim_scope, made_by: row.made_by });
+    const byRef = (rows: Claim[]): unknown[] =>
+      [...rows].sort((a, b) => a.claim_ref.localeCompare(b.claim_ref)).map(pick);
+    // List page size mirrors the claims() helper, not a new constant.
+    const mcpListA = await mcpCall("vault.claims.list", { subject_ref: ref(w, "@person-a"), limit: 1000 });
+    const mcpListB = await mcpCall("vault.claims.list", { subject_ref: ref(w, "@person-b"), limit: 1000 });
+    expect(byRef(mcpListA.value)).toEqual(byRef(await claims(w, "@person-a")));
+    expect(byRef(mcpListB.value)).toEqual(byRef(await claims(w, "@person-b")));
+    const mcpHistory = await mcpCall("vault.claims.history", { claim_ref: validId });
+    const httpHistory = (await w.engine.client.call("vault.claims.history", { claim_ref: validId })).value;
+    expect(byRef(mcpHistory.value)).toEqual(byRef(httpHistory));
+    const mcpGet = await mcpCall("vault.get", { entity_ref: validId });
+    const httpGet = (await w.engine.client.call("vault.get", { entity_ref: validId })).value;
+    expect(mcpGet.value?.kind).toBe(httpGet?.kind);
+    expect(mcpGet.value?.made_by).toEqual(httpGet?.made_by);
+    // Recall input mirrors the recalled() helper budget; only the transport differs.
+    const recallInput: FacadeInput<"vault.recall"> = { query: "Morgan Vale", effort: "light", limit: 100,
+      token_budget: 8192, format: "md", scope: { worlds: { kind: "all" }, project_refs: [ref(w, "@project-north")],
+        person_ref: ref(w, "@person-a"), kinds: ["semantic"] } };
+    expect(values(await mcpCall("vault.recall", recallInput), "profile.name"))
+      .toEqual(values(await w.engine.client.call("vault.recall", recallInput), "profile.name"));
+    // Seven malformed cases, each over HTTP then MCP with no surviving bad row.
+    const omitToSnake: Record<string, string> = { worldId: "world_id", scopeFacetId: "scope_facet_id",
+      scopeRelationshipId: "scope_relationship_id", scopeProjectId: "scope_project_id" };
+    for (const row of c.malformed.filter(item => item.omit !== undefined)) {
+      const snake = omitToSnake[row.omit!]!;
+      const before = await snapshot();
+      const id = inputId(`MEMORY-02:${row.case}`);
+      const full = claimInput(w, c.valid, id);
+      const wire: Record<string, unknown> = { ...full, scope: { ...full.scope } };
+      delete object(wire.scope)[snake];
+      const refused = await w.engine.client.raw("POST", "/v1/core/facade/vault.claims.upsert", wire);
+      expectRefused(refused.status, refused.body);
+      refusals.push({ case: row.case, surface: "http", status: refused.status, body: refused.body });
+      expect((await w.engine.client.call("vault.get", { entity_ref: id })).value).toBeNull();
+      await expectUnchanged(before);
+      const mcpId = inputId(`MEMORY-02:${row.case}:mcp`);
+      const mcpFull = claimInput(w, c.valid, mcpId);
+      const mcpWire: Record<string, unknown> = { ...mcpFull, scope: { ...mcpFull.scope } };
+      delete object(mcpWire.scope)[snake];
+      refusals.push({ case: row.case, surface: "mcp", body: await mcpRefused("vault.claims.upsert", mcpWire) });
+      expect((await w.engine.client.call("vault.get", { entity_ref: mcpId })).value).toBeNull();
+      await expectUnchanged(before);
+    }
+    {
+      const before = await snapshot();
+      const id = inputId("MEMORY-02:invalid-confidence");
+      const refused = await w.engine.client.raw("POST", "/v1/core/facade/vault.claims.upsert",
+        { ...claimInput(w, c.valid, id), confidence: 1.1 });
+      expectRefused(refused.status, refused.body);
+      refusals.push({ case: "invalid-confidence", surface: "http", status: refused.status, body: refused.body });
+      expect((await w.engine.client.call("vault.get", { entity_ref: id })).value).toBeNull();
+      await expectUnchanged(before);
+      const mcpId = inputId("MEMORY-02:invalid-confidence:mcp");
+      refusals.push({ case: "invalid-confidence", surface: "mcp",
+        body: await mcpRefused("vault.claims.upsert", { ...claimInput(w, c.valid, mcpId), confidence: 1.1 }) });
+      expect((await w.engine.client.call("vault.get", { entity_ref: mcpId })).value).toBeNull();
+      await expectUnchanged(before);
+    }
+    {
+      const before = await snapshot();
+      const id = inputId("MEMORY-02:unknown-structural-kind");
+      // Body/text_fields mirror setup(); only the kind is not in the registry.
+      const spec = { id, kind: "not-a-kind", body: { name: "Morgan Vale" },
+        text_fields: [{ field: "name", value: "Morgan Vale" }], occurred_at: w.occurred };
+      const refused = await w.engine.client.raw("POST", "/v1/core/facade/vault.structural.put", spec);
+      expectRefused(refused.status, refused.body);
+      // The ONE sourced engine-Display literal: codec registry lookup, forwarded whole.
+      expect(String(errMessage(refused.body))).toContain('unknown entity kind "not-a-kind"');
+      refusals.push({ case: "unknown-structural-kind", surface: "http", status: refused.status, body: refused.body });
+      expect((await w.engine.client.call("vault.get", { entity_ref: id })).value).toBeNull();
+      await expectUnchanged(before);
+      const mcpId = inputId("MEMORY-02:unknown-structural-kind:mcp");
+      refusals.push({ case: "unknown-structural-kind", surface: "mcp",
+        body: await mcpRefused("vault.structural.put", { ...spec, id: mcpId }) });
+      expect((await w.engine.client.call("vault.get", { entity_ref: mcpId })).value).toBeNull();
+      await expectUnchanged(before);
+    }
+    {
+      const forged = c.malformed.find(item => item.case === "forged-author")!;
+      const before = await snapshot();
+      const id = inputId("MEMORY-02:forged-author");
+      // made_by is not an input field: typed call() cannot send this, raw can.
+      const refused = await w.engine.client.raw("POST", "/v1/core/facade/vault.claims.upsert",
+        { ...claimInput(w, c.valid, id), made_by: forged.made_by });
+      expectRefused(refused.status, refused.body);
+      refusals.push({ case: "forged-author", surface: "http", status: refused.status, body: refused.body });
+      expect((await w.engine.client.call("vault.get", { entity_ref: id })).value).toBeNull();
+      await expectUnchanged(before);
+      const mcpId = inputId("MEMORY-02:forged-author:mcp");
+      refusals.push({ case: "forged-author", surface: "mcp",
+        body: await mcpRefused("vault.claims.upsert", { ...claimInput(w, c.valid, mcpId), made_by: forged.made_by }) });
+      expect((await w.engine.client.call("vault.get", { entity_ref: mcpId })).value).toBeNull();
+      await expectUnchanged(before);
+    }
+    // Batch: per-element gates, forced proposed, no rollback of valid siblings.
+    const sibAId = inputId("MEMORY-02:batch-sib-a");
+    const confId = inputId("MEMORY-02:batch-conf");
+    const sibBId = inputId("MEMORY-02:batch-sib-b");
+    const batch = await w.engine.client.call("vault.claims.seed", { claims: [
+      claimInput(w, c.valid, sibAId),
+      { ...claimInput(w, c.valid, confId), confidence: 1.1 },
+      claimInput(w, { ...c.valid, subjectId: "@person-b" }, sibBId),
+    ] });
+    expect(batch).toHaveLength(3);
+    expect(batch[0]!.outcome).toBe("landed");
+    if (batch[0]!.outcome !== "landed") throw new Error("HTTP batch sibling A refused");
+    expect(batch[0]!.approval).toBe("proposed");
+    expect(batch[1]!.outcome).toBe("refused");
+    if (batch[1]!.outcome !== "refused") throw new Error("HTTP batch conf element landed");
+    expect(typeof batch[1]!.refusal.reason).toBe("string");
+    expect(typeof batch[1]!.refusal.code).toBe("string");
+    expect((batch[1]!.refusal.code as string).length).toBeGreaterThan(0);
+    expect(typeof batch[1]!.refusal.message).toBe("string");
+    expect((batch[1]!.refusal.message as string).length).toBeGreaterThan(0);
+    expect(Array.isArray(batch[1]!.refusal.suggestions)).toBe(true);
+    expect(typeof batch[1]!.refusal.field).toBe("string");
+    expect(batch[2]!.outcome).toBe("landed");
+    if (batch[2]!.outcome !== "landed") throw new Error("HTTP batch sibling B refused");
+    expect(batch[2]!.approval).toBe("proposed");
+    expect((await w.engine.client.call("vault.get", { entity_ref: confId })).value).toBeNull();
+    await w.engine.awaitReceipt(batch[0]!.receipt_ref);
+    await w.engine.awaitReceipt(batch[2]!.receipt_ref);
+    const sibAEntity = (await entity(w.engine.client, batch[0]!.claim_short_id)).id_hex;
+    const sibBEntity = (await entity(w.engine.client, batch[2]!.claim_short_id)).id_hex;
+    const sibARow = await claim(w, sibAEntity);
+    const sibBRow = await claim(w, sibBEntity);
+    expect(sibARow.value).toBe(c.valid.value.value);
+    expect(sibARow.claim_scope).toEqual(claimInput(w, c.valid).scope);
+    birth(sibARow, owner, [ref(w, "@name-statement")]);
+    expect(sibARow.approval).toBe("proposed");
+    expect(sibARow.lifecycle).toBe("active");
+    expect(sibBRow.value).toBe(c.valid.value.value);
+    expect(sibBRow.claim_scope).toEqual(claimInput(w, { ...c.valid, subjectId: "@person-b" }).scope);
+    birth(sibBRow, owner, [ref(w, "@name-statement")]);
+    expect(sibBRow.approval).toBe("proposed");
+    expect(sibBRow.lifecycle).toBe("active");
+    // Proposed seed siblings are excluded from recall: no rollback, no surfacing.
+    expect(await scopedValues("@person-a", "@project-north", "Morgan Vale")).toEqual([c.valid.value.value]);
+    expect(await scopedValues("@person-b", "@project-north", "not-a-number number kind")).toEqual(opaqueTextNorth);
+    const mcpSibAId = inputId("MEMORY-02:batch-sib-a:mcp");
+    const mcpConfId = inputId("MEMORY-02:batch-conf:mcp");
+    const mcpSibBId = inputId("MEMORY-02:batch-sib-b:mcp");
+    const mcpBatch = await mcpCall("vault.claims.seed", { claims: [
+      claimInput(w, c.valid, mcpSibAId),
+      { ...claimInput(w, c.valid, mcpConfId), confidence: 1.1 },
+      claimInput(w, { ...c.valid, subjectId: "@person-b" }, mcpSibBId),
+    ] });
+    expect(mcpBatch).toHaveLength(3);
+    expect(mcpBatch.map(outcome => outcome.outcome)).toEqual(batch.map(outcome => outcome.outcome));
+    expect(mcpBatch.map(outcome => outcome.outcome === "landed" ? outcome.approval : null))
+      .toEqual(batch.map(outcome => outcome.outcome === "landed" ? outcome.approval : null));
+    expect(mcpBatch[1]!.outcome).toBe("refused");
+    if (mcpBatch[1]!.outcome !== "refused") throw new Error("MCP batch conf element landed");
+    expect(typeof mcpBatch[1]!.refusal.reason).toBe("string");
+    expect(typeof mcpBatch[1]!.refusal.code).toBe("string");
+    expect((mcpBatch[1]!.refusal.code as string).length).toBeGreaterThan(0);
+    expect(typeof mcpBatch[1]!.refusal.message).toBe("string");
+    expect((mcpBatch[1]!.refusal.message as string).length).toBeGreaterThan(0);
+    expect(Array.isArray(mcpBatch[1]!.refusal.suggestions)).toBe(true);
+    expect(typeof mcpBatch[1]!.refusal.field).toBe("string");
+    expect((await w.engine.client.call("vault.get", { entity_ref: mcpConfId })).value).toBeNull();
+    expect((await claims(w, "@person-a")).some(row => row.claim_ref === mcpConfId)).toBe(false);
+    if (mcpBatch[0]!.outcome !== "landed") throw new Error("MCP batch sibling A refused");
+    if (mcpBatch[2]!.outcome !== "landed") throw new Error("MCP batch sibling B refused");
+    await w.engine.awaitReceipt(mcpBatch[0]!.receipt_ref);
+    await w.engine.awaitReceipt(mcpBatch[2]!.receipt_ref);
+    const mcpSibAEntity = (await entity(w.engine.client, mcpBatch[0]!.claim_short_id)).id_hex;
+    const mcpSibBEntity = (await entity(w.engine.client, mcpBatch[2]!.claim_short_id)).id_hex;
+    const mcpSibARow = await claim(w, mcpSibAEntity);
+    const mcpSibBRow = await claim(w, mcpSibBEntity);
+    expect(mcpSibARow.value).toBe(c.valid.value.value);
+    expect(mcpSibARow.claim_scope).toEqual(claimInput(w, c.valid).scope);
+    birth(mcpSibARow, owner, [ref(w, "@name-statement")]);
+    expect(mcpSibARow.approval).toBe("proposed");
+    expect(mcpSibARow.lifecycle).toBe("active");
+    expect(mcpSibBRow.value).toBe(c.valid.value.value);
+    expect(mcpSibBRow.claim_scope).toEqual(claimInput(w, { ...c.valid, subjectId: "@person-b" }).scope);
+    birth(mcpSibBRow, owner, [ref(w, "@name-statement")]);
+    expect(mcpSibBRow.approval).toBe("proposed");
+    expect(mcpSibBRow.lifecycle).toBe("active");
+    const batchFields = (row: Claim): unknown => ({ value: row.value, predicate: row.predicate,
+      subject_ref: row.subject_ref, source: row.source, confidence: row.confidence,
+      claim_scope: row.claim_scope, approval: row.approval, lifecycle: row.lifecycle });
+    expect(batchFields(mcpSibARow)).toEqual(batchFields(sibARow));
+    expect(batchFields(mcpSibBRow)).toEqual(batchFields(sibBRow));
+    // Finale: quartet + four seed siblings intact; per-(subject,predicate) counts exact.
+    const finalA = (await claims(w, "@person-a")).filter(row => row.predicate === "profile.name");
+    const finalB = (await claims(w, "@person-b")).filter(row => row.predicate === "profile.name");
+    expect(finalA).toHaveLength(4);
+    expect(finalB).toHaveLength(4);
+    expect(finalA.every(row => row.lifecycle === "active")).toBe(true);
+    expect(finalB.every(row => row.lifecycle === "active")).toBe(true);
+    expect((await claim(w, validId)).value).toBe(c.valid.value.value);
+    expect((await claim(w, opaqueId)).value).toEqual(c.opaqueControl.value);
+    expect((await claim(w, mcpValidId)).value).toBe(c.valid.value.value);
+    expect((await claim(w, mcpOpaqueId)).value).toEqual(c.opaqueControl.value);
+    expect((await claim(w, validId)).claim_scope).toEqual(validInput.scope);
+    expect((await claim(w, opaqueId)).claim_scope).toEqual(opaqueInput.scope);
+    birth(await claim(w, validId), owner, [ref(w, "@name-statement")]);
+    birth(await claim(w, opaqueId), owner, [ref(w, "@name-statement")]);
+    await w.engine.artifacts.json("memory-02-claim-admission.json", { note: c.opaqueControl.note,
+      canon: c.opaqueControl.canon, receipts: { validReceipt, opaqueReceipt, mcpValidReceipt, mcpOpaqueReceipt },
+      readbacks: { validRow, opaqueRow, mcpValidRow, mcpOpaqueRow, sibARow, sibBRow, mcpSibARow, mcpSibBRow },
+      opaqueRecall: { opaqueTextNorth, opaqueTextSouth }, refusals, batch, mcpBatch,
+      parity: { mcpListA, mcpListB, mcpHistory, mcpGet }, finale: { finalA, finalB } });
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
+  } finally {
+    const cleanups: string[] = [];
+    try { await w.engine.close({retainVault:process.env.E2E_MEMORY_RETAIN_VAULT==="1"}); } catch (error) { cleanups.push(errorText(error)); }
+    try { await w.providers.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
+  }
+});
 
 /* ARCH-0003 observed/stated disagreement; ARCH-0040 source trust.
  * The extraction and run-bound supersession doors NOW EXIST:
  * vault.memory.signal_extraction/result, self.run.attach, vault.claims.supersede.
- * The full ID still needs a publicly established, leased generated-writing
- * run owned by the paired agent and registered on the serving host. The
- * resident pump can create runs, but holds the entry guard while it calls
- * the model; attach waits on that same guard. No typed public between-entry
- * hold/setup door is supplied here that leaves that run leased and attachable.
- * The shared fixture has no runner binding for such a hold. A provider barrier
- * inside the entry, an inert AGENT_DEF, a queued task or a guessed run id is
- * not this setup. execute_code is not a permitted substitute.
+ * Engine 2026-11-07 07:12 JST confirms the real run composition: agents.spawn,
+ * pair the genuine agent_def_ref holder, read agents.spawn.get until leased,
+ * then self.run.attach and claims.supersede as that agent. A queue receipt
+ * alone does not let the human owner borrow the agent's run.
+ * Engine 07:32 keeps this WHOLE/BLOCKED on the production Observed/language
+ * producer FIX 21842. Model JSON is not a host-stamped Observed producer;
+ * any source/value/scope oracle change is an Engine decision, not this suite's.
+ * This fixture has not established deterministic timing for one attach while
+ * the real run keeps its lease. A barrier inside the model entry holds the
+ * same guard attach needs. Do not invent a new registration/hold API, retry
+ * a Busy mutating attach, or substitute an inert AGENT_DEF, queued task,
+ * guessed run id, execute_code or a weaker attach-only smoke test.
  * Keep the complete journey: English/user_stated; three Japanese requests
  * over two sessions; exact scripted production extraction; both active with
  * stated first and an exact conflict pair; a genuine generated supersession
  * attempt with refusal/held-proposal receipt and unchanged stated source,
  * evidence and lifecycle. Never directly upsert an observed result instead.
  */
-suite.todo(test, "MEMORY-03",
-  "waits on public leased live-run ownership/registration setup for the generated supersession leg; extraction and attach calls exist");
+suite.skip(test, "MEMORY-03",
+  "waits on merged FIX 21842 production Observed/language producer and qualification of the whole original leased supersession fixture; spawn/agent-pair/leased-get/attach composition exists, not a new registration API [FIX 3958]");
 
 /* MEMORY-04: ARCH-0032 writers, ARCH-0002 NOTE beside CLAIM, OF-330.
  * author_take NOW EXISTS as AuthorTakeRequest -> EntityRefReceipt, and real
@@ -392,8 +901,8 @@ suite.todo(test, "MEMORY-03",
  * edge's source revision. Raw entity/export byte comparison would not prove
  * that link-level invariant, so do not arm an attribution-only partial test.
  */
-suite.todo(test, "MEMORY-04",
-  "waits on typed per-edge author/source-revision provenance read; author_take and real agent pairing already exist");
+suite.skip(test, "MEMORY-04",
+  "waits on typed per-edge author/source-revision provenance read; author_take and real agent pairing already exist [FIX 3959]");
 
 interface TimedPackRequest {
   query: string; limit: number; edge_hop: number; view: "full";
@@ -407,7 +916,6 @@ interface TimedPackReply {
 suite.test(test, "MEMORY-05", "Bitemporal entity history should work", async () => {
   const w = await setup("MEMORY-05");
   try {
-    await doors(w.engine, ["vault.claims.upsert", "vault.get", "vault.claims.history"]);
     await w.engine.requireHttpDoor("/v1/core/context-pack", "POST");
     const c = scenario(w, "MEMORY-05");
     const rows: { role: string; id: string; input: typeof c.statements[number]; view: Entity; receipt: Receipt }[] = [];
@@ -459,32 +967,29 @@ suite.test(test, "MEMORY-05", "Bitemporal entity history should work", async () 
       await w.engine.artifacts.json(`history-${row.role.replace(/[^a-z0-9]/gi, "-")}.json`, { row, current, timeline: full });
     }
     await w.engine.artifacts.json("bitemporal-windows.json", windows);
-  } finally { await w.engine.close() }
+  } finally { await closeWorld(w) }
 });
 
 /* ARCH-0067 TASK roles and ARCH-0003 productivity vocabulary.
- * Role creation/tree and immutable check-in doors NOW EXIST. But install
- * takes HubImportRequest {hub_ref:{hub_id,ref_string,pin},publisher}, not a
- * built-in pack name. This checkout/fixture has neither the actual
- * oneiron-productivity pack files nor its pinned hub record/publisher.
- * No typed built-in vocabulary-install call accepts this name. A pack made
- * up here, an arbitrary hub ref or omission of install would change the ID.
+ * Role creation/tree and immutable check-in doors NOW EXIST. Install takes
+ * HubImportRequest {hub_ref:{hub_id,ref_string,pin},publisher}, not a name.
+ * Engine 2026-11-07 07:36 JST names the real pack oneiron.productivity.
+ * Keep this whole journey BLOCKED until OPUS-L06's hub PR AND engine pin
+ * PR merge and supply the exact HubImportRequest/pin/publisher. No invented
+ * pack, arbitrary hub ref, new built-in install door, or omitted install.
  * Keep the full journey: install the declared pack; project scope plus
  * Goal -> Milestone -> routed Task and Habit; reject Goal/Task/Habit -> Task
  * with unchanged trees and no partial child; repeat the same check-in id
  * and immutable payload; refuse changed payload; one HabitCheckin child,
  * original clocks/data, current_streak=1 and longest_streak=1; task readback.
  */
-suite.todo(test, "MEMORY-06",
-  "waits on actual pinned oneiron-productivity pack/hub setup or a typed built-in vocabulary-install door; role/tree/check-in calls exist");
+suite.skip(test, "MEMORY-06",
+  "waits on merged engine pin PR #6668 and qualification of the complete authored oneiron.productivity fixture: canonical projects, stable check-in id and valid routedTask spec; real hub pack commit 5407656fbe1e94241bf3e4b15defbfb9ff259166 is merged, and install/role/tree/check-in calls exist [FIX 3961; qualif 17747]");
 
 // ARCH-0055 redirect shells, evidence-guided split, masks and counter-events.
 suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async () => {
   const w = await setup("MEMORY-07");
   try {
-    await doors(w.engine, ["vault.identity.merge", "vault.identity.split", "vault.identity.facet",
-      "vault.identity.resolve", "vault.identity.undo", "vault.identity.events.get",
-      "vault.identity.assert_distinct", "vault.identity.propose", "vault.identity.proposals.for_pair"]);
     const c = scenario(w, "MEMORY-07");
     const originals: { id: string; subject: string; before: Claim }[] = [];
     for (const input of c.evidence) {
@@ -590,7 +1095,7 @@ suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async
     expect((await entity(w.engine.client, facetId)).kind).toBe("FACET");
     await w.engine.artifacts.json("identity-topology.json", { mask, merged, bMerged, split, shell, chain,
       undoSplit, undoMerge, distinct, proposal: { status: proposal.status, body: proposal.body }, suggestions, originals });
-  } finally { await w.engine.close() }
+  } finally { await closeWorld(w) }
 });
 
 // ARCH-0022 four explicit axes; ARCH-0004 labelled world partitions;
@@ -598,7 +1103,6 @@ suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async
 suite.test(test, "MEMORY-08", "World and project separation should work", async () => {
   const w = await setup("MEMORY-08");
   try {
-    await doors(w.engine, ["vault.claims.upsert", "vault.recall", "self.credential.attenuate", "vault.scope.ceiling"]);
     const c = scenario(w, "MEMORY-08");
     const ids: string[] = [];
     for (const input of c.claims) {
@@ -692,5 +1196,5 @@ suite.test(test, "MEMORY-08", "World and project separation should work", async 
     expect((await w.engine.client.call("vault.get", { entity_ref: missing.id! })).value).toBeNull();
     expect((await claims(w)).filter(row => row.predicate === c.claims[0]!.predicate)).toHaveLength(6);
     await w.engine.artifacts.json("world-project-scopes.json", { ids, all, positive: readable, receipts, refusal: rejected.body });
-  } finally { await w.engine.close() }
+  } finally { await closeWorld(w) }
 });

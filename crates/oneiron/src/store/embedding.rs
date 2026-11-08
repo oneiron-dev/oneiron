@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// Where an embedder runs relative to the vault owner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EmbedderLocality {
     /// Runs on the same device as the vault.
     OnDevice,

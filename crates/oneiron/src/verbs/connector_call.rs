@@ -34,10 +34,12 @@ use crate::memory::{
 };
 use crate::outbound_consent::{
     ConnectorAwaitingInput, ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest,
-    ConnectorToolSchema,
+    ConnectorCallState, ConnectorQuestion, ConnectorSource, ConnectorToolSchema,
 };
 use crate::outbound_intent_ledger::IntentLedgerError;
 use crate::runtime_hooks::InvocationId;
+
+use super::ActAnswer;
 
 pub use crate::code_run::{
     CONNECTOR_QUESTIONS_NOT_RETAINED, CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED,
@@ -51,12 +53,16 @@ pub use crate::code_run::{ConnectorCallReply, ConnectorToolResult};
 
 pub use crate::code_run::{ConnectorAnswerAction, ConnectorAnswerRequest, ConnectorQuestionAnswer};
 
-/// `connector.schema`'s input: a catalogued connector and one of its tools.
+/// `connector.schema`'s input: a selected connector and one of its tools.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorSchemaRequest {
-    /// The connector's catalog name.
+    /// The connector's name within the selected source.
     pub name: String,
+    /// Explicit catalog or builtin selection. When absent, `web` selects
+    /// the builtin and other names select their catalog entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ConnectorSource>,
     /// The tool, as the connector's approved manifest names it.
     pub tool: String,
 }
@@ -137,15 +143,25 @@ pub fn connector_call_host_only(
 }
 
 /// `connector.schema`: one tool's approved input schema for the bound
-/// caller, through the resolution a call of it takes. Reads only.
+/// caller, through the resolution a call of it takes. Reads only. The
+/// built-in `google.sheets` answers its own declared schemas (FIX 4862).
+/// It answers when the catalog source is selected (omitted or `catalog`);
+/// an explicit `builtin` serves only `web` (FIX 11606).
 pub fn connector_schema_read(
     memory: &Memory<'_>,
     input: ConnectorSchemaRequest,
 ) -> MemoryResult<ConnectorSchemaReply> {
-    let schema = memory
-        .vault()
-        .connector_tool_schema(memory, &input.name, &input.tool)
-        .map_err(connector_call_error)?;
+    let selected = ConnectorSource::resolve(input.source, &input.name);
+    let schema = if selected == ConnectorSource::Catalog
+        && input.name == crate::channel_identity_provider::sheets::SHEETS_CATALOG_NAME
+    {
+        crate::channel_identity_provider::sheets::sheets_tool_schema(memory.vault(), &input.tool)?
+    } else {
+        memory
+            .vault()
+            .connector_tool_schema_from(memory, &input.name, &input.tool, input.source)
+            .map_err(connector_call_error)?
+    };
     let source = source(&input.name, &input.tool);
     Ok(match schema {
         ConnectorToolSchema::Approved {
@@ -210,9 +226,10 @@ pub enum ConnectorCallStatus {
     },
     /// Sent, and its connector asks for input (FIX 3837): round
     /// `generation`, `asked` questions, kept on the call's row; answer them
-    /// with `connector.answer` and the reply's handle. The reply carries no
-    /// questions' text, which the row never keeps: the call's own reply or
-    /// its wait carried them. `uncertain` when the live exchange ended
+    /// with `connector.answer` and the reply's handle. A served reader joins
+    /// the matching live questions; the row itself never keeps their text.
+    /// Question text that stays on this device narrows inside `reply`, while
+    /// the round's metadata stays whole. `uncertain` when the live exchange ended
     /// unanswered (a restart, a lost stream): the questions stand, and their
     /// delivery is not known.
     AwaitingInput {
@@ -223,7 +240,7 @@ pub enum ConnectorCallStatus {
         asked: usize,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         uncertain: bool,
-        reply: ConnectorCallReply,
+        reply: ActAnswer<ConnectorCallReply>,
     },
 }
 
@@ -240,6 +257,22 @@ pub enum ConnectorCallStatus {
 pub fn connector_call_status_read(
     memory: &Memory<'_>,
     input: ConnectorCallStatusRequest,
+) -> MemoryResult<ConnectorCallStatus> {
+    connector_call_status_read_with_questions(memory, input, |_, _| Vec::new())
+}
+
+/// The status read with a host's call-time, read-only live question join.
+/// The reader runs only after the caller-or-owner check, for one unanswered
+/// round on the same state snapshot. Missing live text leaves the row's
+/// metadata intact. It never claims an answer or re-admits a send.
+///
+/// # Errors
+///
+/// The same malformed ref, not-found and storage errors as the row-only read.
+pub fn connector_call_status_read_with_questions(
+    memory: &Memory<'_>,
+    input: ConnectorCallStatusRequest,
+    read_questions: impl FnOnce(EntityId, &ConnectorCallState) -> Vec<ConnectorQuestion>,
 ) -> MemoryResult<ConnectorCallStatus> {
     let not_found = || {
         MemoryError::new(
@@ -263,7 +296,12 @@ pub fn connector_call_status_read(
     // A call whose connector asked for input reads from its row: its round
     // while it stands, its delivery once answered. A wait reply it settled
     // holds only its first questions (FIX 3837).
-    if let Some(input) = state.input {
+    if let Some(input) = state.input.as_ref() {
+        let questions = if state.settled.is_none() {
+            read_questions(call_ref, &state)
+        } else {
+            Vec::new()
+        };
         memory.produced_from(state.source_rows.into_iter().flatten());
         let (name, tool) = (state.name, state.tool);
         return Ok(match state.settled {
@@ -285,16 +323,17 @@ pub fn connector_call_status_read(
                 generation: input.generation,
                 asked: input.asked,
                 uncertain: input.uncertain,
-                reply: ConnectorCallReply::awaiting_input(
+                reply: ActAnswer::Done(ConnectorCallReply::awaiting_input(
                     &name,
                     &tool,
                     call_ref,
                     ConnectorAwaitingInput {
-                        handle: input.handle,
-                        questions: Vec::new(),
+                        handle: input.handle.clone(),
+                        questions,
                         live_until_ms: input.live_until_ms,
                     },
-                ),
+                    Vec::new(),
+                )),
                 name,
                 tool,
             },

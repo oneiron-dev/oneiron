@@ -3,11 +3,8 @@ use super::*;
 use crate::Vault;
 use crate::error::Result;
 use crate::secret_lease::VaultInstant;
-use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 use ed25519_dalek::Signer;
-use oneiron_authority::federation::Scope;
-use std::collections::BTreeSet;
 
 mod backup_signer;
 mod connect;
@@ -16,18 +13,14 @@ pub use connect_lifecycle::{
     ConnectRescopeOffer, ConnectWindow, GuestDocumentContext, GuestDocumentEnvelope,
 };
 mod courtesy;
+mod host_root;
 pub use connect::{ConnectOffer, ScopeOpeningKey};
 mod issuer_custody;
 mod issuer_seed;
 pub use issuer_seed::{HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer};
 
-const ROOT_LIFETIME: u64 = 10 * 365 * 24 * 60 * 60;
 /// The attestation a host's own root roster row carries.
 pub(super) const HOST_ROOT_ATTESTATION: &str = "HostRoot";
-
-/// Cached minted host-root capability-slip token for one host signing key. Key: `:` + hex64.
-const HOST_ROOT_SLIP_CACHE: SideTable<String, String, Raw> =
-    SideTable::new(&side_table::AUTHORITY_HOST_ROOT_SLIP_CACHE);
 
 impl HostSlipIssuer {
     #[must_use]
@@ -148,6 +141,25 @@ impl AuthorityFold {
     }
 }
 
+struct PreparedHashedSlipOp {
+    row: (AuthorityLogEntry, TimeRange, u64),
+    hash: AuthorityEntryHash,
+}
+
+impl PreparedHashedSlipOp {
+    fn apply(self, vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<AuthorityEntryHash> {
+        vault.put_authority_log_entries_in_txn(txn, &[self.row])?;
+        if !vault
+            .authority_view_readonly_in_txn(txn)?
+            .valid_entries
+            .contains(&self.hash)
+        {
+            return Err(invalid_authority());
+        }
+        Ok(self.hash)
+    }
+}
+
 impl Vault {
     /// Rechecks a verified capability against one vault clock/authority snapshot.
     pub fn capability_slip_is_live(&self, verified: &VerifiedSlip) -> Result<bool> {
@@ -205,131 +217,6 @@ impl Vault {
         }
     }
 
-    /// Bootstrap Genesis + host root slip atomically, and only on a truly empty
-    /// log; a self-hosted root binds the vault's embedded owner as `human` in
-    /// the same transaction, so owner verbs hold for the owner alone (H149).
-    /// A rooted vault must already recognize this host. A rejected cached
-    /// root is never silently replaced (revocation stays terminal).
-    pub fn ensure_host_root_slip(&self, issuer: &HostSlipIssuer) -> Result<CapabilitySlip> {
-        let mut txn = self.store.env.write_txn()?;
-        let slip = self.ensure_host_root_slip_in_txn(&mut txn, issuer)?;
-        txn.commit()?;
-        Ok(slip)
-    }
-    pub(super) fn ensure_host_root_slip_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        issuer: &HostSlipIssuer,
-    ) -> Result<CapabilitySlip> {
-        if self.privacy_posture() == crate::HostingPrivacyPosture::Relay {
-            return Err(invalid_authority());
-        }
-        let cache_key = format!(":{}", blake3::hash(&issuer.binding_key()).to_hex());
-        let now = self.instant_in_txn(txn)?.secs();
-        let mut fold = self.authority_fold_readonly_in_txn(txn)?;
-        let mut pending = Vec::new();
-        if fold.append_sequences.is_empty() {
-            let recovery = issuer.genesis_recovery();
-            let genesis = issuer.sign_entry(
-                None,
-                0,
-                Vec::new(),
-                AuthorityOp::Genesis {
-                    device: issuer.root_device(self.privacy_posture()),
-                    genesis_nonce: random_slip_id(),
-                    recovery: GenesisRecoveryStep::acknowledge(&recovery, true)?,
-                },
-                now,
-            )?;
-            pending.push(genesis);
-            // Only bootstrap on no records, never on a confused/invalid fold.
-            let pin = super::pinned_root::read_pinned_root_in_txn(&self.store, txn)?;
-            fold = super::fold_engine::fold_own_authority_log(
-                &pending,
-                self.privacy_posture(),
-                pin.as_ref(),
-            );
-        }
-        require_host(&fold, issuer)?;
-        if let Some(token) = HOST_ROOT_SLIP_CACHE.get(&self.store, txn, &cache_key)? {
-            let slip = CapabilitySlip::from_token(&token)?;
-            slip.verify_authority(&issuer.public_key(), &fold, now)?;
-
-            return Ok(slip);
-        }
-        let claims = SlipClaims {
-            slip_id: random_slip_id(),
-            vault_id: fold.vault_id.ok_or_else(invalid_authority)?,
-            parent_id: None,
-            holder_ref: "host".into(),
-            binding_key: issuer.binding_key(),
-            scope: Scope::top(),
-            issued_at: now,
-            expires_at: now.saturating_add(ROOT_LIFETIME),
-            ttl_secs: ROOT_LIFETIME,
-            single_use: false,
-            records: BTreeSet::new(),
-            channels: BTreeSet::new(),
-            actor_class: None,
-            org_ref: None,
-            grant_ref: None,
-            invitation_ref: None,
-            delegation: None,
-            comm: None,
-            trusted_contact: None,
-            seat_claim: None,
-        };
-        let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
-        let mint = next_entry(
-            issuer,
-            &fold,
-            AuthorityOp::SlipMint(SlipMintAction {
-                claims,
-                renews: None,
-                minting_member: None,
-            }),
-            now,
-        )?;
-        pending.push(mint);
-        let rows: Vec<_> = pending
-            .iter()
-            .map(|entry| {
-                (
-                    entry.clone(),
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                )
-            })
-            .collect();
-        self.put_authority_log_entries_in_txn(txn, &rows)?;
-        let fresh = self.authority_view_readonly_in_txn(txn)?;
-        slip.verify_authority(&issuer.public_key(), &fresh, now)?;
-        HOST_ROOT_SLIP_CACHE.put(&self.store, txn, &cache_key, &slip.to_token()?)?;
-        // A root written here binds the vault's owner with it (H149).
-        if pending
-            .first()
-            .is_some_and(|entry| matches!(entry.op, AuthorityOp::Genesis { .. }))
-        {
-            self.bind_rooted_owner_in_txn(txn, issuer)?;
-        }
-        Ok(slip)
-    }
-    /// Proves the local retained host secret through its actual logged root slip.
-    pub fn verified_host_root_slip(&self, issuer: &HostSlipIssuer) -> Result<VerifiedSlip> {
-        let slip = self.ensure_host_root_slip(issuer)?;
-        let txn = self.store.env.read_txn()?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        slip.verify(
-            &issuer.public_key(),
-            &fold,
-            self.instant_in_txn(&txn)?.secs(),
-            b"local-host-root",
-            &issuer.binding_proof(&slip, b"local-host-root")?,
-        )
-    }
     /// Read-only holder verification for repeatable credential checks. One-shot
     /// redemption uses authenticate_capability_slip or the secret door instead.
     pub fn verify_capability_slip(
@@ -704,6 +591,47 @@ impl Vault {
         self.store.notify_credential_revocations();
         Ok(true)
     }
+    /// Opens an effect writer behind the native one-shot spend turn. This is
+    /// serialization, not admission: the effect still judges the credential,
+    /// target and Gate in that writer before consuming the instrument.
+    pub(crate) fn with_capability_spend_txn<T>(
+        &self,
+        credential: &VerifiedSlip,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
+    ) -> Result<T> {
+        let _spend_guard = credential
+            .claims()
+            .single_use
+            .then(|| super::slip_replay::spend_guard(self))
+            .transpose()?;
+        self.with_write_txn(write)
+    }
+
+    /// Consumes a live verified one-shot in the effect's own transaction.
+    /// The caller holds the native spend turn from before opening its writer.
+    /// The explicit host issuer signs the ordinary SlipConsume record; no
+    /// owner identity or signing key is inferred from the credential.
+    pub(crate) fn consume_verified_capability_slip_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        credential: &VerifiedSlip,
+    ) -> Result<()> {
+        if !credential.claims().single_use {
+            return Ok(());
+        }
+        if !self.capability_slip_is_live_in_txn(txn, credential)? {
+            return Err(invalid_authority());
+        }
+        self.append_slip_op_in_txn(
+            txn,
+            issuer,
+            AuthorityOp::SlipConsume {
+                slip_id: credential.claims().slip_id,
+            },
+        )
+    }
+
     /// Verifies the binding and burns single-use authority before returning it.
     /// Request nonce consumption is transactionally shared with SlipConsume.
     pub fn authenticate_capability_slip(
@@ -791,6 +719,17 @@ impl Vault {
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
     ) -> Result<AuthorityEntryHash> {
+        self.prepare_hashed_slip_op_in_txn(txn, issuer, op)?
+            .apply(self, txn)
+    }
+
+    // Preparation retains the native frontier writes; it is not a read-only preview.
+    fn prepare_hashed_slip_op_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+    ) -> Result<PreparedHashedSlipOp> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
@@ -801,25 +740,17 @@ impl Vault {
             .unwrap_or(fold);
         let entry = next_entry(issuer, &fold, op, now)?;
         let hash = authority_entry_hash(&entry)?;
-        self.put_authority_log_entries_in_txn(
-            txn,
-            &[(
+        Ok(PreparedHashedSlipOp {
+            row: (
                 entry,
                 TimeRange {
                     start: now,
                     end: now,
                 },
                 now,
-            )],
-        )?;
-        if !self
-            .authority_view_readonly_in_txn(txn)?
-            .valid_entries
-            .contains(&hash)
-        {
-            return Err(invalid_authority());
-        }
-        Ok(hash)
+            ),
+            hash,
+        })
     }
 }
 pub(super) fn next_entry(

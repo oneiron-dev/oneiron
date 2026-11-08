@@ -24,6 +24,9 @@ pub struct MailSyncSource {
     pub custody_ref: String,
     /// The delegated channel identity the source reads through, if any.
     pub channel_identity: Option<EntityId>,
+    /// The copy setting's cutoff for this step: mail received before it is
+    /// not copied. `None` keeps all mail.
+    pub newer_than: Option<u64>,
 }
 
 impl MailSyncSource {
@@ -35,6 +38,7 @@ impl MailSyncSource {
             provider_account: row.provider_account.clone(),
             custody_ref: row.custody_ref.clone(),
             channel_identity: row.channel_identity,
+            newer_than: None,
         }
     }
 }
@@ -66,7 +70,7 @@ pub struct MailIdPage {
 
 /// One attachment a message carries, as described, not its bytes: bytes
 /// load only when someone opens it (MAIL-GOOGLE = A).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MailAttachmentRef {
     /// The MIME part id within the message.
     pub part_id: String,
@@ -89,6 +93,10 @@ pub struct MailHeaders {
     pub from: Option<String>,
     pub to: Vec<String>,
     pub cc: Vec<String>,
+    /// The `Reply-To` addresses, where a reply goes when the sender named
+    /// one (FIX 15420).
+    #[serde(default)]
+    pub reply_to: Vec<String>,
     pub subject: Option<String>,
     /// The authored `Date` header, Unix seconds.
     pub date: Option<u64>,
@@ -104,6 +112,18 @@ pub struct MailHeaders {
     pub draft: bool,
 }
 
+/// One message's address headers as its raw RFC 5322 source names them,
+/// each entry one mailbox, split at the header's top-level commas before
+/// any encoded word is decoded (fix list row 20520): a display name whose
+/// encoded words decode to a comma or an address stays one quoted name.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MailAddressHeaders {
+    pub from: Vec<String>,
+    pub reply_to: Vec<String>,
+    pub to: Vec<String>,
+    pub cc: Vec<String>,
+}
+
 /// A message read whole: its headers, its plain-text body, and its
 /// attachments described.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -113,6 +133,12 @@ pub struct MailFull {
     /// message has no text part.
     pub body_text: Option<String>,
     pub attachments: Vec<MailAttachmentRef>,
+    /// The BLAKE3 of the whole message, each line ended by CRLF, when it was
+    /// read whole: what proves a copy of it found later to be the same
+    /// message (fix list row 19145). `None` where the wire does not read the
+    /// message's bytes.
+    #[serde(default)]
+    pub content_digest: Option<[u8; 32]>,
 }
 
 /// One change a history page reports since the source's anchor.
@@ -129,6 +155,9 @@ pub enum MailHistoryChange {
         labels: Vec<String>,
         trash_or_spam: bool,
     },
+    /// A folder or label the provider no longer has: each copied message
+    /// under it is looked up again (REVIEW-5754).
+    LabelGone { label: String },
 }
 
 /// One page of changes since an anchor.
@@ -182,4 +211,83 @@ pub trait MailProviderWire {
         anchor: &str,
         page: Option<&str>,
     ) -> Result<MailHistoryRead>;
+
+    /// The labels a listing read for `provider_id` in this wire's step,
+    /// when they come at no further provider read: a provider whose folders
+    /// are labels (IMAP) names a message once per folder, so a message the
+    /// vault holds carries the folders it is found in, and a listing after
+    /// an expired anchor takes them whole where it first names the message
+    /// (an empty set where only the all-mail view does). `None` by default.
+    fn listed_labels(&self, _provider_id: &str) -> Option<Vec<String>> {
+        None
+    }
+
+    /// The address headers of `provider_id`, read once from its raw message,
+    /// for a reply to it (fix list row 20520). `None` by default: a wire
+    /// whose header stage keeps each mailbox apart already (IMAP and mbox
+    /// split before they decode; Graph names typed addresses) leaves the
+    /// stored headers to stand. A wire that answers here never answers
+    /// `None` for a message it cannot read.
+    ///
+    /// # Errors
+    ///
+    /// The provider's own failure, the message gone at the provider
+    /// included.
+    fn raw_address_headers(
+        &self,
+        _source: &MailSyncSource,
+        _provider_id: &str,
+    ) -> Result<Option<MailAddressHeaders>> {
+        Ok(None)
+    }
+
+    /// The addresses the provider proves the mailbox owns, as it names them
+    /// (fix list row 20400): Gmail's primary and verified send-as addresses,
+    /// Graph's `mail` and SMTP proxy addresses. Never one the mailbox only
+    /// has a right to send as, a delegate's, or a rewritten address. `None`
+    /// by default: a provider that proves none (IMAP, mbox) keeps the
+    /// source's stored set. The importer reads a failure here as `None`.
+    ///
+    /// # Errors
+    ///
+    /// The provider's own failure, a refusal for a missing scope included.
+    fn own_addresses(&self, _source: &MailSyncSource) -> Result<Option<Vec<String>>> {
+        Ok(None)
+    }
+
+    /// One page of the mailbox's messages that `query` finds, in the
+    /// provider's own search language, at most `limit`, trash, spam and
+    /// drafts excluded (fix list row 15424). A wire whose provider it cannot
+    /// search refuses.
+    ///
+    /// # Errors
+    ///
+    /// `mail_search_not_served` from a wire that cannot search, or the
+    /// provider's own failure.
+    fn search_page(
+        &self,
+        _source: &MailSyncSource,
+        _query: &str,
+        _limit: u32,
+        _page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        Err(super::rest::refused("mail_search_not_served"))
+    }
+
+    /// Whether a backslash inside a quoted string of this provider's search
+    /// language escapes the character after it (IMAP), so a search query's
+    /// grouping is read as the provider reads it (fix list row 19089). No by
+    /// default: a quote then always ends the string.
+    fn search_escapes(&self) -> bool {
+        false
+    }
+
+    /// One attachment's bytes, as a reader opened it; `None` when the
+    /// provider no longer has the message or the attachment.
+    fn attachment(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+        attachment: &MailAttachmentRef,
+    ) -> Result<Option<Vec<u8>>>;
 }

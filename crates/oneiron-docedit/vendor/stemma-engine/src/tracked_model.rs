@@ -6415,7 +6415,11 @@ fn project_blocks_for_accept_reject(
     }
     for plan in &move_destination_deletions {
         all_move_mixture_ids.insert(plan.move_revision.identity);
-        all_move_mixture_ids.extend(plan.deletions.iter().map(|(revision, _)| revision.identity));
+        all_move_mixture_ids.extend(
+            plan.deletions
+                .iter()
+                .map(|deletion| deletion.revision.identity),
+        );
     }
     let action = if keep_inserted {
         ResolveSelectionAction::Accept
@@ -9707,17 +9711,27 @@ struct InsertedMoveOriginPlan {
 }
 
 #[derive(Clone)]
+struct MoveDestinationDeletion {
+    revision: RevisionInfo,
+    text: String,
+    source_range: Option<std::ops::Range<usize>>,
+}
+
+#[derive(Clone)]
 struct MoveDestinationDeletionPlan {
     source_id: NodeId,
     destination_id: NodeId,
     move_revision: RevisionInfo,
-    deletions: Vec<(RevisionInfo, String)>,
+    deletions: Vec<MoveDestinationDeletion>,
 }
 
 /// A deletion nested in moveTo strikes the destination CLONE, not the untouched
 /// source copy. If the deletion is rejected, that restored text is still moveTo
-/// content; if the move is rejected, the destination-only deletion cascades
-/// away with the clone. Represent both transitions before the ordinary status
+/// content; if the move is rejected, the destination-only deletion moves back
+/// onto the restored source, still pending, so the editor's deletion is kept
+/// for its own answer (tests/suite/spec_mixed_move_resolution.rs
+/// rejecting_move_maps_its_destination_deletion_back_to_source). Represent both
+/// transitions before the ordinary status
 /// projector sees the inner deletion in isolation.
 fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinationDeletionPlan> {
     fn is_move_half(block: &TrackedBlock, identity: u32, inserted: bool) -> bool {
@@ -9740,6 +9754,7 @@ fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinati
     }
 
     let mut plans = Vec::new();
+    let final_paragraph = document_final_paragraph_index(blocks);
     for (destination_index, tracked) in blocks.iter().enumerate() {
         if tracked.move_id.is_none() {
             continue;
@@ -9747,21 +9762,44 @@ fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinati
         let BlockNode::Paragraph(paragraph) = &tracked.block else {
             continue;
         };
-        let Some(TrackingStatus::Inserted(move_revision)) = &paragraph.para_mark_status else {
-            continue;
+        let (move_revision, requires_exact_source) = match &paragraph.para_mark_status {
+            Some(TrackingStatus::Inserted(revision)) => (revision, false),
+            Some(TrackingStatus::Normal) if final_paragraph == Some(destination_index) => {
+                let TrackingStatus::Inserted(revision) = &tracked.status else {
+                    continue;
+                };
+                (revision, true)
+            }
+            _ => continue,
         };
-        let deletions: Vec<(RevisionInfo, String)> = paragraph
-            .segments
-            .iter()
-            .filter_map(|segment| match &segment.status {
-                TrackingStatus::Deleted(revision)
-                    if revision.identity != move_revision.identity =>
-                {
-                    Some((revision.clone(), extract_inlines_text(&segment.inlines)))
+        let mut original_text = String::new();
+        let mut cursor = 0usize;
+        let mut deletions = Vec::new();
+        for segment in &paragraph.segments {
+            let original = match &segment.status {
+                TrackingStatus::Normal | TrackingStatus::Deleted(_) => true,
+                TrackingStatus::Inserted(revision) => revision.identity == move_revision.identity,
+                TrackingStatus::InsertedThenDeleted(stacked) => {
+                    stacked.inserted.identity == move_revision.identity
                 }
-                _ => None,
-            })
-            .collect();
+            };
+            if !original {
+                continue;
+            }
+            let text = extract_inlines_text(&segment.inlines);
+            let end = cursor + text.chars().count();
+            if let TrackingStatus::Deleted(revision) = &segment.status
+                && revision.identity != move_revision.identity
+            {
+                deletions.push(MoveDestinationDeletion {
+                    revision: revision.clone(),
+                    text: text.clone(),
+                    source_range: Some(cursor..end),
+                });
+            }
+            original_text.push_str(&text);
+            cursor = end;
+        }
         // A move range keeps the relative order of its source and destination
         // blocks. Count every sibling, not just paragraphs with inner deletions.
         let position = blocks[..destination_index]
@@ -9771,7 +9809,7 @@ fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinati
                     && is_move_half(candidate, move_revision.identity, true)
             })
             .count();
-        let source_id = blocks
+        let source = blocks
             .iter()
             .filter(|candidate| {
                 candidate.move_id == tracked.move_id
@@ -9785,11 +9823,27 @@ fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinati
                 matches!(&source.para_mark_status,
                     Some(TrackingStatus::Deleted(revision))
                         if revision.identity == move_revision.identity)
-                .then(|| block_id(&candidate.block).clone())
+                .then(|| {
+                    (
+                        block_id(&candidate.block).clone(),
+                        extract_inlines_text(&source.all_inlines_owned()),
+                    )
+                })
             });
         if !deletions.is_empty()
-            && let Some(source_id) = source_id
+            && let Some((source_id, source_text)) = source
         {
+            // These offsets address the full source, not a filtered projection.
+            // Keep the existing unique-text mapping for nonaligned clones.
+            if original_text != source_text {
+                // Suppressed final marks only use full-source coordinates.
+                if requires_exact_source {
+                    continue;
+                }
+                for deletion in &mut deletions {
+                    deletion.source_range = None;
+                }
+            }
             plans.push(MoveDestinationDeletionPlan {
                 source_id,
                 destination_id: block_id(&tracked.block).clone(),
@@ -9811,7 +9865,7 @@ fn apply_move_destination_deletion_cascade(
         let deletion_identities: HashSet<u32> = plan
             .deletions
             .iter()
-            .map(|(revision, _)| revision.identity)
+            .map(|deletion| deletion.revision.identity)
             .collect();
         let rejecting_move = action == ResolveSelectionAction::Reject
             && selected_revision_ids.contains(&plan.move_revision.identity);
@@ -9832,18 +9886,25 @@ fn apply_move_destination_deletion_cascade(
             let BlockNode::Paragraph(source_paragraph) = &mut source.block else {
                 continue;
             };
-            for (revision, text) in &plan.deletions {
-                if accepting_inner_deletion && !selected_revision_ids.contains(&revision.identity) {
+            for deletion in &plan.deletions {
+                if accepting_inner_deletion
+                    && !selected_revision_ids.contains(&deletion.revision.identity)
+                {
                     continue;
                 }
-                assert!(
-                    overlay_unique_text_status(
-                        source_paragraph,
-                        text,
-                        TrackingStatus::Deleted(revision.clone()),
-                    ),
-                    "move-destination deletion must map uniquely onto its source clone"
-                );
+                // Zero-width markers have no source characters to retag.
+                if deletion.text.is_empty() {
+                    continue;
+                }
+                let status = TrackingStatus::Deleted(deletion.revision.clone());
+                if let Some(range) = &deletion.source_range {
+                    overlay_text_range_status(source_paragraph, range.clone(), status, true);
+                } else {
+                    assert!(
+                        overlay_unique_text_status(source_paragraph, &deletion.text, status),
+                        "move-destination deletion must map uniquely onto its source clone"
+                    );
+                }
             }
         }
 
@@ -9895,6 +9956,20 @@ fn overlay_unique_text_status(
     }
     let start = haystack[..matches[0]].chars().count();
     let end = start + needle.chars().count();
+    overlay_text_range_status(paragraph, start..end, status, false);
+    true
+}
+
+/// Retag material characters without changing inline contents or marker status.
+fn overlay_text_range_status(
+    paragraph: &mut ParagraphNode,
+    range: std::ops::Range<usize>,
+    status: TrackingStatus,
+    retag_atomic: bool,
+) {
+    if range.is_empty() {
+        return;
+    }
     let mut cursor = 0usize;
     let mut rebuilt: Vec<TrackedSegment> = Vec::new();
 
@@ -9916,18 +9991,22 @@ fn overlay_unique_text_status(
         for inline in segment.inlines {
             let InlineNode::Text(text) = inline else {
                 // Match the placeholder widths used by extract_inlines_text.
-                if matches!(
+                let width = usize::from(matches!(
                     inline,
                     InlineNode::HardBreak(_) | InlineNode::OpaqueInline(_)
-                ) {
-                    cursor += 1;
-                }
-                push(&mut rebuilt, inline, segment.status.clone());
+                ));
+                let inline_status = if retag_atomic && width == 1 && range.contains(&cursor) {
+                    status.clone()
+                } else {
+                    segment.status.clone()
+                };
+                cursor += width;
+                push(&mut rebuilt, inline, inline_status);
                 continue;
             };
             let len = text.text.chars().count();
-            let overlap_start = start.saturating_sub(cursor).min(len);
-            let overlap_end = end.saturating_sub(cursor).min(len);
+            let overlap_start = range.start.saturating_sub(cursor).min(len);
+            let overlap_end = range.end.saturating_sub(cursor).min(len);
             if overlap_start >= overlap_end {
                 cursor += len;
                 push(&mut rebuilt, InlineNode::Text(text), segment.status.clone());
@@ -9954,7 +10033,6 @@ fn overlay_unique_text_status(
         }
     }
     paragraph.segments = rebuilt;
-    true
 }
 
 fn inserted_move_origin_plans(blocks: &[TrackedBlock]) -> Vec<InsertedMoveOriginPlan> {

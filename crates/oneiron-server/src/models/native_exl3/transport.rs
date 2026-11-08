@@ -48,6 +48,10 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex as AsyncMutex;
 
 use super::buffer::{InputRegion, Outbound};
+use super::session_ops::{
+    AppendSourceCheck, ControlSourceCheck, PrepareSourceCheck, PrepareSourceMiss,
+    SnapshotSourceCheck, SnapshotSourceMiss,
+};
 use super::wire::{self, Incoming, Outgoing};
 use super::worker_host::{self, NativeLaunch};
 
@@ -179,6 +183,49 @@ impl Channel {
         self.writer.lock().await.write_all(&bytes).await
     }
 
+    /// Checks the original call and canonical source before every plain write.
+    async fn send_control_checked(
+        &mut self,
+        op: &str,
+        request_id: u64,
+        epoch: Option<&str>,
+        body: JsonValue,
+        lease: &oneiron::BudgetLease,
+        source: &ControlSourceCheck<'_>,
+    ) -> Result<(), ControlExchangeError> {
+        let bytes =
+            Self::frame(op, request_id, epoch, body).map_err(ControlExchangeError::Transport)?;
+        let writer = self.writer.lock().await;
+        let stream: &UnixStream = (*writer).as_ref();
+        let mut sent = 0;
+        while sent < bytes.len() {
+            stream
+                .writable()
+                .await
+                .map_err(ControlExchangeError::Transport)?;
+            lease
+                .check_dispatch_release()
+                .map_err(ControlExchangeError::Release)?;
+            let checked = source().await;
+            // A release during the source read wins over that read's verdict.
+            lease
+                .check_dispatch_release()
+                .map_err(ControlExchangeError::Release)?;
+            checked.map_err(ControlExchangeError::Source)?;
+            match stream.try_write(&bytes[sent..]) {
+                Ok(0) => {
+                    return Err(ControlExchangeError::Transport(
+                        io::ErrorKind::WriteZero.into(),
+                    ));
+                }
+                Ok(written) => sent += written,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(error) => return Err(ControlExchangeError::Transport(error)),
+            }
+        }
+        Ok(())
+    }
+
     /// Sends one frame with `fd` riding on its first byte, then the rest of
     /// it.
     async fn send_with_fd(
@@ -210,6 +257,122 @@ impl Channel {
             return Err(io::ErrorKind::WriteZero.into());
         }
         writer.write_all(&bytes[sent..]).await
+    }
+
+    async fn send_with_fd_released(
+        &mut self,
+        op: &str,
+        request_id: u64,
+        epoch: Option<&str>,
+        body: JsonValue,
+        fd: BorrowedFd<'_>,
+        lease: &oneiron::BudgetLease,
+        count_inference: bool,
+    ) -> Result<(), DispatchWriteError> {
+        self.send_with_fd_checked(
+            op,
+            request_id,
+            epoch,
+            body,
+            fd,
+            lease,
+            count_inference,
+            None::<fn() -> std::future::Ready<Result<(), std::convert::Infallible>>>,
+        )
+        .await
+    }
+
+    async fn send_with_fd_checked<F, Fut, E>(
+        &mut self,
+        op: &str,
+        request_id: u64,
+        epoch: Option<&str>,
+        body: JsonValue,
+        fd: BorrowedFd<'_>,
+        lease: &oneiron::BudgetLease,
+        count_inference: bool,
+        source: Option<F>,
+    ) -> Result<(), DispatchWriteError<E>>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<(), E>>,
+    {
+        let bytes =
+            Self::frame(op, request_id, epoch, body).map_err(DispatchWriteError::Transport)?;
+        let fds = [fd];
+        let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
+        let mut control = SendAncillaryBuffer::new(&mut space);
+        if !control.push(SendAncillaryMessage::ScmRights(&fds)) {
+            return Err(DispatchWriteError::Transport(io::Error::other(
+                "the descriptor does not fit its control message",
+            )));
+        }
+        let writer = self.writer.lock().await;
+        let stream: &UnixStream = (*writer).as_ref();
+        let mut attempted = false;
+        let sent = loop {
+            stream
+                .writable()
+                .await
+                .map_err(DispatchWriteError::Transport)?;
+            lease
+                .check_dispatch_release()
+                .map_err(DispatchWriteError::Release)?;
+            if let Some(source) = &source {
+                let checked = source().await;
+                // A call released during the source read still ends the turn.
+                lease
+                    .check_dispatch_release()
+                    .map_err(DispatchWriteError::Release)?;
+                checked.map_err(DispatchWriteError::Source)?;
+            }
+            match stream.try_io(Interest::WRITABLE, || {
+                if count_inference && !attempted {
+                    lease.begin_physical_attempt();
+                    attempted = true;
+                }
+                sendmsg(stream, &[IoSlice::new(&bytes)], &mut control, SEND_FLAGS)
+                    .map_err(io::Error::from)
+            }) {
+                Ok(sent) => break sent,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(error) => return Err(DispatchWriteError::Transport(error)),
+            }
+        };
+        if sent == 0 {
+            return Err(DispatchWriteError::Transport(
+                io::ErrorKind::WriteZero.into(),
+            ));
+        }
+        let mut sent = sent;
+        while sent < bytes.len() {
+            stream
+                .writable()
+                .await
+                .map_err(DispatchWriteError::Transport)?;
+            lease
+                .check_dispatch_release()
+                .map_err(DispatchWriteError::Release)?;
+            if let Some(source) = &source {
+                let checked = source().await;
+                // A call released during the source read still ends the turn.
+                lease
+                    .check_dispatch_release()
+                    .map_err(DispatchWriteError::Release)?;
+                checked.map_err(DispatchWriteError::Source)?;
+            }
+            match stream.try_write(&bytes[sent..]) {
+                Ok(0) => {
+                    return Err(DispatchWriteError::Transport(
+                        io::ErrorKind::WriteZero.into(),
+                    ));
+                }
+                Ok(written) => sent += written,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(error) => return Err(DispatchWriteError::Transport(error)),
+            }
+        }
+        Ok(())
     }
 
     /// The next frame, or `None` once the worker has closed the connection.
@@ -471,6 +634,149 @@ impl Channel {
         }
     }
 
+    pub(super) async fn exchange_control_released(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        body: JsonValue,
+        lease: &oneiron::BudgetLease,
+        source: &ControlSourceCheck<'_>,
+    ) -> Result<Incoming, ControlExchangeError> {
+        let request_id = next_request_id();
+        self.send_control_checked(op, request_id, epoch, body, lease, source)
+            .await?;
+        loop {
+            match self.next().await.map_err(ControlExchangeError::Transport)? {
+                Some(frame) if frame.request_id == request_id => return Ok(frame),
+                Some(_) => {}
+                None => {
+                    return Err(ControlExchangeError::Transport(
+                        io::ErrorKind::UnexpectedEof.into(),
+                    ));
+                }
+            }
+        }
+    }
+
+    pub(super) async fn exchange_released(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        body: JsonValue,
+        input: Outbound<'_>,
+        lease: &oneiron::BudgetLease,
+    ) -> Result<Incoming, ReleasedExchangeError> {
+        if !lease.has_dispatch_release() {
+            return self
+                .exchange(op, epoch, body, Some(input))
+                .await
+                .map_err(ReleasedExchangeError::Transport);
+        }
+        self.exchange_fd_checked(
+            op,
+            epoch,
+            body,
+            input,
+            lease,
+            None::<fn() -> std::future::Ready<Result<(), std::convert::Infallible>>>,
+        )
+        .await
+        .map_err(|error| match error {
+            DispatchWriteError::Transport(error) => ReleasedExchangeError::Transport(error),
+            DispatchWriteError::Release(error) => ReleasedExchangeError::Release(error),
+            DispatchWriteError::Source(never) => match never {},
+        })
+    }
+
+    pub(super) async fn exchange_snapshot_released(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        body: JsonValue,
+        input: Outbound<'_>,
+        lease: &oneiron::BudgetLease,
+        source: &SnapshotSourceCheck<'_>,
+    ) -> Result<Incoming, SnapshotExchangeError> {
+        self.exchange_fd_checked(op, epoch, body, input, lease, Some(source))
+            .await
+            .map_err(|error| match error {
+                DispatchWriteError::Transport(error) => SnapshotExchangeError::Transport(error),
+                DispatchWriteError::Release(error) => SnapshotExchangeError::Release(error),
+                DispatchWriteError::Source(miss) => SnapshotExchangeError::Source(miss),
+            })
+    }
+
+    pub(super) async fn exchange_append_released(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        body: JsonValue,
+        input: Outbound<'_>,
+        lease: &oneiron::BudgetLease,
+        source: &AppendSourceCheck<'_>,
+    ) -> Result<Incoming, AppendExchangeError> {
+        self.exchange_fd_checked(op, epoch, body, input, lease, Some(source))
+            .await
+            .map_err(|error| match error {
+                DispatchWriteError::Transport(error) => AppendExchangeError::Transport(error),
+                DispatchWriteError::Release(error) => AppendExchangeError::Release(error),
+                DispatchWriteError::Source(miss) => AppendExchangeError::Source(miss),
+            })
+    }
+
+    pub(super) async fn exchange_prepare_released(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        body: JsonValue,
+        input: Outbound<'_>,
+        lease: &oneiron::BudgetLease,
+        source: &PrepareSourceCheck<'_>,
+    ) -> Result<Incoming, PrepareExchangeError> {
+        self.exchange_fd_checked(op, epoch, body, input, lease, Some(source))
+            .await
+            .map_err(|error| match error {
+                DispatchWriteError::Transport(error) => PrepareExchangeError::Transport(error),
+                DispatchWriteError::Release(error) => PrepareExchangeError::Release(error),
+                DispatchWriteError::Source(miss) => PrepareExchangeError::Source(miss),
+            })
+    }
+
+    async fn exchange_fd_checked<F, Fut, E>(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        mut body: JsonValue,
+        input: Outbound<'_>,
+        lease: &oneiron::BudgetLease,
+        source: Option<F>,
+    ) -> Result<Incoming, DispatchWriteError<E>>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<(), E>>,
+    {
+        let request_id = next_request_id();
+        if let Some(fields) = body.as_object_mut() {
+            fields.insert(
+                "input".to_owned(),
+                wire::region(request_id, input.len, input.encoding),
+            );
+        }
+        self.send_with_fd_checked(op, request_id, epoch, body, input.fd, lease, false, source)
+            .await?;
+        loop {
+            match self.next().await.map_err(DispatchWriteError::Transport)? {
+                Some(frame) if frame.request_id == request_id => return Ok(frame),
+                Some(_) => {}
+                None => {
+                    return Err(DispatchWriteError::Transport(
+                        io::ErrorKind::UnexpectedEof.into(),
+                    ));
+                }
+            }
+        }
+    }
+
     /// [`Self::exchange`] for an op whose answer passes a descriptor: the
     /// worker's frame of the same id, with every descriptor that rode on
     /// it. Those another frame brought are closed.
@@ -566,23 +872,21 @@ fn keep_until_revoked(lease: Option<WorkerLease>, grant: Option<DeviceGrant>) {
         });
     } else {
         // A failed spawn drops the closure, and the lease and grant with it.
-        let _ = std::thread::Builder::new()
-            .name("exl3-keep-lease".to_owned())
-            .spawn(move || {
-                let wait = async move {
-                    if let Some(lease) = &lease {
-                        lease.revocation().await;
-                    }
-                    drop((lease, grant));
-                };
-                match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime.block_on(wait),
-                    Err(_) => drop(wait),
+        let _ = crate::engine_thread("exl3-keep-lease".to_owned()).spawn(move || {
+            let wait = async move {
+                if let Some(lease) = &lease {
+                    lease.revocation().await;
                 }
-            });
+                drop((lease, grant));
+            };
+            match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime.block_on(wait),
+                Err(_) => drop(wait),
+            }
+        });
     }
 }
 
@@ -609,8 +913,45 @@ impl CallUpdates {
     }
 }
 
+pub(super) enum ControlExchangeError {
+    Transport(io::Error),
+    Release(oneiron::LlmError),
+    Source(oneiron::llm::SessionInvalidation),
+}
+
+pub(super) enum ReleasedExchangeError {
+    Transport(io::Error),
+    Release(oneiron::LlmError),
+}
+
+pub(super) enum SnapshotExchangeError {
+    Transport(io::Error),
+    Release(oneiron::LlmError),
+    Source(SnapshotSourceMiss),
+}
+
+pub(super) enum AppendExchangeError {
+    Transport(io::Error),
+    Release(oneiron::LlmError),
+    Source(oneiron::llm::SessionInvalidation),
+}
+
+pub(super) enum PrepareExchangeError {
+    Transport(io::Error),
+    Release(oneiron::LlmError),
+    Source(PrepareSourceMiss),
+}
+
+enum DispatchWriteError<E = std::convert::Infallible> {
+    Transport(io::Error),
+    Release(oneiron::LlmError),
+    Source(E),
+}
+
 /// How a call's start went wrong.
 pub(super) enum Start {
+    /// The current dispatch condition refused another write of this call.
+    Release(oneiron::LlmError),
     /// Nothing left this side: the worker never saw the call. Carries
     /// `OpenAiCompatTransportError::NotSent`.
     NotSent(OpenAiCompatTransportError),
@@ -756,6 +1097,7 @@ impl Call {
         session: Option<JsonValue>,
         schedule: Option<&CallSchedule>,
         worker: Option<&InferenceWorker>,
+        dispatch_lease: Option<&oneiron::BudgetLease>,
     ) -> Result<Self, Start> {
         let bytes = serde_json::to_vec(conversation).map_err(|e| not_sent("encode input", e))?;
         let input = InputRegion::new(&bytes).map_err(|e| not_sent("input region", e))?;
@@ -773,9 +1115,25 @@ impl Call {
             }
             None => "generate",
         };
-        let sent = channel
-            .send_with_fd(op, request_id, Some(epoch), body, input.fd())
-            .await;
+        let sent = match dispatch_lease {
+            Some(lease) if lease.has_dispatch_release() => {
+                channel
+                    .send_with_fd_released(
+                        op,
+                        request_id,
+                        Some(epoch),
+                        body,
+                        input.fd(),
+                        lease,
+                        true,
+                    )
+                    .await
+            }
+            _ => channel
+                .send_with_fd(op, request_id, Some(epoch), body, input.fd())
+                .await
+                .map_err(DispatchWriteError::Transport),
+        };
         let mut call = Self {
             channel: Some(channel),
             request_id,
@@ -787,7 +1145,13 @@ impl Call {
         };
         if let Err(error) = sent {
             call.ended = true;
-            return Err(Start::Cut(io_fault("send generate", Some(error))));
+            return Err(match error {
+                DispatchWriteError::Transport(error) => {
+                    Start::Cut(io_fault("send generate", Some(error)))
+                }
+                DispatchWriteError::Release(error) => Start::Release(error),
+                DispatchWriteError::Source(never) => match never {},
+            });
         }
         loop {
             let frame = match call.channel_mut().next().await {

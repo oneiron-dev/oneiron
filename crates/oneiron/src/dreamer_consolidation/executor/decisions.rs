@@ -66,6 +66,8 @@ pub struct ConsolidationDecisions {
     /// Whether two claims different children of one night proposed state the
     /// same thing (OF-498d): same_as, no_link or unresolved.
     pub nightly_link_wording: String,
+    /// Whether an Arc's cited TURN should be opened beside the current claims.
+    pub arc_open_wording: String,
     /// The host's write-gate auto check, when it runs one. `None` promotes
     /// without a check, as before.
     pub checker: Option<BoundedAutoChecker>,
@@ -93,6 +95,7 @@ impl ConsolidationDecisions {
             sieve_entity_wording: wording.sieve_entity,
             sieve_confidence_wording: wording.sieve_confidence,
             nightly_link_wording: wording.nightly_link,
+            arc_open_wording: wording.arc_open,
             checker: None,
         })
     }
@@ -118,6 +121,7 @@ struct Wording {
     sieve_entity: String,
     sieve_confidence: String,
     nightly_link: String,
+    arc_open: String,
 }
 
 /// `ids` as a choice's option groups, each of at most [`IDS_PER_QUESTION`] ids, with
@@ -291,14 +295,27 @@ impl ConsolidationExecutor<'_> {
             .await;
         // Every generation that finished is spent, whatever the pack's outcome: a later
         // step that traps or fails leaves the prefix on the tally.
-        for (index, (hash, usage, _)) in spent.iter().enumerate() {
-            if let Err(error) = charges.record_terminal(vault, step_ctx.attempt_id, *hash, usage) {
-                for (_, usage, memoized) in &spent[index..] {
-                    if !*memoized {
+        for (index, (_, usage, binding, _)) in spent.iter().enumerate() {
+            if let Some(binding) = binding {
+                if let Err(error) =
+                    charges.record_terminal(vault, binding.attempt_id, binding.step_hash, usage)
+                {
+                    for (_, usage, _, memoized) in &spent[index..] {
+                        if !*memoized {
+                            charges.record_usage(usage);
+                        }
+                    }
+                    if let Some(usage) = decided
+                        .as_ref()
+                        .err()
+                        .and_then(DurableStepError::spent_usage)
+                    {
                         charges.record_usage(usage);
                     }
+                    return Err(error.into());
                 }
-                return Err(error.into());
+            } else {
+                charges.record_usage(usage);
             }
         }
         decided
@@ -309,6 +326,7 @@ impl ConsolidationExecutor<'_> {
 /// messages yet.
 fn verdict_shell(call: &RoleCall<'_>, scope: &oneiron_model::llm::Scope) -> Result<LlmRequest> {
     let keyless = call.inference.selected_keyless();
+    let paid = call.inference.selected_paid();
     Ok(LlmRequest {
         model: call.model.clone(),
         envelope: CallEnvelope {
@@ -330,6 +348,7 @@ fn verdict_shell(call: &RoleCall<'_>, scope: &oneiron_model::llm::Scope) -> Resu
                 crate::Error::InvalidConfig("consolidation host binding needs locality".into())
             })?,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: Vec::new(),

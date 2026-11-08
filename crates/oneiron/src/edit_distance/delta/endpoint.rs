@@ -17,8 +17,9 @@ use crate::vault::entity_revision::{ReadMode, RevisionRef, revision_for_mode_in_
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EndpointDocument {
-    /// A finalized proposal artifact's retained Loro document (ED-00): the
-    /// body text at a frontier. By artifact id hex.
+    /// A finalized proposal artifact's retained Loro document (ED-00), its
+    /// own headed document on the entity-document plane (FIX 11535): the
+    /// body text at a frontier. By artifact id hex, its head's key.
     ProposalArtifact(String),
     /// The proposed text an endpoint-only settlement retained under its own
     /// record. By record id hex.
@@ -134,6 +135,20 @@ impl EndpointRef {
             EndpointDocument::ApprovedClaim(_)
             | EndpointDocument::IdentityOpProposal(_)
             | EndpointDocument::ReceiptAmendedBody(_) => None,
+        }
+    }
+
+    /// The entity row this end's document is retained under; `None` for a
+    /// receipt field, which no row holds.
+    #[must_use]
+    pub fn entity(&self) -> Option<EntityId> {
+        match &self.document {
+            EndpointDocument::ProposalArtifact(hex)
+            | EndpointDocument::ImportedProposed(hex)
+            | EndpointDocument::ImportedFinal(hex)
+            | EndpointDocument::ApprovedClaim(hex)
+            | EndpointDocument::IdentityOpProposal(hex) => EntityId::from_hex(hex).ok(),
+            EndpointDocument::ReceiptAmendedBody(_) => None,
         }
     }
 

@@ -446,6 +446,17 @@ impl SeatPool {
         {
             return Err(invalid("seat task, facet and warm scope are required"));
         }
+        let owner_pin = if task.override_model.is_none() {
+            learning::owner_model_pin(vault, task.learning.as_ref())?
+        } else {
+            None
+        };
+        let pinned_task = owner_pin.map(|model| {
+            let mut pinned = task.clone();
+            pinned.override_model = Some(model);
+            pinned
+        });
+        let task = pinned_task.as_ref().unwrap_or(task);
         // A pin outside the agent's list refuses before any judgment.
         if task
             .override_model

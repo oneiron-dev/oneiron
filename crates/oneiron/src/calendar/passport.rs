@@ -173,6 +173,7 @@ fn resolve_uid(
     if let Some(id) = indexed
         && vault.get_entity_type(&id)? == Some(ENTITY_TYPE_EVENT)
         && !detached(vault, &id)?
+        && !source_bound(vault, &id)?
         && vouches(vault, &id, uid)?
     {
         return Ok(Some(id));
@@ -193,6 +194,7 @@ fn resolve_uid(
     let mut found: Option<EntityId> = None;
     for event_ref in event_ids {
         if !detached(vault, &event_ref)?
+            && !source_bound(vault, &event_ref)?
             && vouches(vault, &event_ref, uid)?
             && found.is_none_or(|current| event_ref.as_bytes() < current.as_bytes())
         {
@@ -207,6 +209,14 @@ fn resolve_uid(
         index_passport_uid(vault, uid, &event_ref)?;
     }
     Ok(found)
+}
+
+/// Whether a pack calendar source binds `event` (FIX 12559): that copy is
+/// the source's own, and no UID resolves to it, so an ordinary feed, seat or
+/// invite never attaches to a person's private calendar.
+fn source_bound(vault: &Vault, event: &EntityId) -> Result<bool, CalendarError> {
+    let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    Ok(crate::source_audience::binding_in(vault, &rtxn, event)?.is_some())
 }
 
 /// Resolves an invite inside its publication snapshot, without repairing an
@@ -224,6 +234,9 @@ pub(crate) fn resolve_invite_event_in_txn(
         .port_entity_ids_by_type(txn, ENTITY_TYPE_EVENT, None)?
     {
         let event = entry?;
+        if crate::source_audience::binding_in(vault, txn, &event)?.is_some() {
+            continue;
+        }
         let mut exception = false;
         for id in vault.claims_for_subject_in_txn(txn, &event)? {
             if vault.get_claim_in_txn(txn, &id)?.is_some_and(|body| {
@@ -253,6 +266,7 @@ pub(crate) fn resolve_invite_event_in_txn(
     }
     if let Some(event) = indexed
         && vault.get_entity_type_in_txn(txn, &event)? == Some(ENTITY_TYPE_EVENT)
+        && crate::source_audience::binding_in(vault, txn, &event)?.is_none()
     {
         return Ok(Some(event));
     }
@@ -519,7 +533,7 @@ fn passport_digest(uid: &str) -> [u8; 32] {
 /// [`super::claims::decode_passport_value`] reads. CAL-00 owns the codec; the
 /// write-door validator chain rejects any drift fail-closed.
 pub(crate) fn encode_passport_value(value: &CalendarPassportValue) -> rmpv::Value {
-    rmpv::Value::Map(vec![
+    let mut entries = vec![
         (
             rmpv::Value::from("system"),
             rmpv::Value::from(value.system.as_str()),
@@ -548,7 +562,23 @@ pub(crate) fn encode_passport_value(value: &CalendarPassportValue) -> rmpv::Valu
             rmpv::Value::from("presence"),
             rmpv::Value::from(value.presence.as_str()),
         ),
-    ])
+    ];
+    if let Some(source) = value.source {
+        entries.push((
+            rmpv::Value::from("source"),
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("artifact"),
+                    rmpv::Value::from(source.artifact.to_hex()),
+                ),
+                (
+                    rmpv::Value::from("version"),
+                    rmpv::Value::from(source.version),
+                ),
+            ]),
+        ));
+    }
+    rmpv::Value::Map(entries)
 }
 
 fn ingest(reason: &'static str) -> CalendarError {
