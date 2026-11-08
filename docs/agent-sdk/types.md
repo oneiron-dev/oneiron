@@ -1852,6 +1852,10 @@ class Oneiron:
             """Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction."""
         @property
         def program(self) -> "Oneiron._VaultCampaignProgramVerbs": ...
+        def held(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.CampaignEnrollmentHeldCall]:
+            """The owner reviews the last-observed campaign enrollment holds and their queued redrives; a redrive is not a sent or completed call."""
+        def approve_once(self, spec: Facade.CampaignEnrollmentApproveOnceRequest) -> Facade.ConsentActReceipt:
+            """The owner approves exactly one current campaign enrollment hold by its call ref and reviewed digest, queuing the original work without a standing grant or bypassing its ordinary send checks."""
     class _VaultCampaignComplianceVerbs:
         def install(self, spec: Facade.ComplianceAmendRequest) -> Facade.ComplianceReceipt:
             """The owner installs cited compliance rows through the versioned amendment classifier; a loosening still waits for an exact-hash owner approval."""

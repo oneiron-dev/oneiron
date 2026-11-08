@@ -1760,6 +1760,12 @@ impl OneironClient {
                 "vault.consent.approve_once" => remote_agent_verb_output::<
                     oneiron::consent::lifecycle::ConsentActReceipt,
                 >(client, verb, &input),
+                "vault.campaign.held" => remote_agent_verb_output::<
+                    Vec<oneiron::campaign::enrollment::CampaignEnrollmentHeldCall>,
+                >(client, verb, &input),
+                "vault.campaign.approve_once" => remote_agent_verb_output::<
+                    oneiron::consent::lifecycle::ConsentActReceipt,
+                >(client, verb, &input),
                 "vault.connectors.calls.approve_once" => remote_agent_verb_output::<
                     oneiron::consent::lifecycle::ConsentActReceipt,
                 >(client, verb, &input),
@@ -11004,6 +11010,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consent.approve_once", value)
+    }
+    pub fn vault_campaign_held(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::campaign::enrollment::CampaignEnrollmentHeldCall>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.held", value)
+    }
+    pub fn vault_campaign_approve_once(
+        &self,
+        input: &oneiron::task_verb::sdk::CampaignEnrollmentApproveOnceRequest,
+    ) -> Result<oneiron::consent::lifecycle::ConsentActReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.approve_once", value)
     }
     pub fn vault_connectors_calls_approve_once(
         &self,

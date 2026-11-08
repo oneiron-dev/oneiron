@@ -17944,6 +17944,71 @@ async fn vault_consent_approve_once(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_campaign_held(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.campaign.held")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.campaign.held", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.campaign.held", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_campaign_held(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_campaign_approve_once(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.campaign.approve_once")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.campaign.approve_once", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.campaign.approve_once", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_campaign_approve_once(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_connectors_calls_approve_once(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -46003,6 +46068,22 @@ fn boxed_vault_consent_approve_once<'a>(
     Box::pin(vault_consent_approve_once(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_campaign_held<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_held(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_approve_once<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_approve_once(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_connectors_calls_approve_once<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -53091,6 +53172,10 @@ async fn call_verb_row(
         }
         "vault.policy.relay.decide" => boxed_vault_policy_relay_decide(server, call, input).await,
         "vault.consent.approve_once" => boxed_vault_consent_approve_once(server, call, input).await,
+        "vault.campaign.held" => boxed_vault_campaign_held(server, call, input).await,
+        "vault.campaign.approve_once" => {
+            boxed_vault_campaign_approve_once(server, call, input).await
+        }
         "vault.connectors.calls.approve_once" => {
             boxed_vault_connectors_calls_approve_once(server, call, input).await
         }

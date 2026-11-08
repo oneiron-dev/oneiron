@@ -43,6 +43,7 @@ use crate::store::checkpoint_payload::retirement::{PayloadDisposition, settle_ow
 /// it may have crossed the wire; a settled send stays as it settled, and a
 /// send that certainly never went gives its reserved budget back. `false`
 /// for a call with no row here, or one whose request is already erased.
+/// The second return value names only owner asks withdrawn in this writer.
 ///
 /// # Errors
 ///
@@ -52,19 +53,19 @@ pub(crate) fn erase_call_request_in_txn(
     wtxn: &mut RwTxn<'_>,
     attempt_id: AttemptId,
     call_seq: u64,
-) -> IntentLedgerResult<bool> {
+) -> IntentLedgerResult<(bool, Vec<u64>)> {
     let key = AttemptCallKey {
         attempt_id,
         call_seq,
     };
     let Some(id) = INTENT_ATTEMPT_INDEX.get(&vault.store, &*wtxn, &key)? else {
-        return Ok(false);
+        return Ok((false, Vec::new()));
     };
     let Some(mut record) = get_ledger_record(vault, &*wtxn, &id)? else {
-        return Ok(false);
+        return Ok((false, Vec::new()));
     };
     if payload_erased(record.payload())? {
-        return Ok(false);
+        return Ok((false, Vec::new()));
     }
     if let Some(custody_ref) = sealed_custody_ref(record.payload())? {
         retire_connector_resume_in_txn(&vault.store, wtxn, &custody_ref)?;
@@ -78,14 +79,14 @@ pub(crate) fn erase_call_request_in_txn(
         ));
     }
     put_erased_record(vault, wtxn, record)?;
-    crate::campaign::enrollment::drop_enrollment_asks_of_call_in_txn(
+    let withdrawn = crate::campaign::enrollment::drop_enrollment_asks_of_call_in_txn(
         vault, wtxn, attempt_id, call_seq,
     )?;
     forget_remote_task_in_txn(vault, wtxn, &id)?;
     if let Some(erased) = get_ledger_record(vault, &*wtxn, &id)? {
         settle_reservation_in_txn(vault, wtxn, &erased)?;
     }
-    Ok(true)
+    Ok((true, withdrawn))
 }
 
 impl Vault {
@@ -109,11 +110,15 @@ impl Vault {
         call_seq: u64,
     ) -> IntentLedgerResult<bool> {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
-        let erased = erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
+        let (erased, withdrawn) =
+            erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
         wtxn.commit().map_err(Error::from)?;
         let synced = force_sync(self);
         if erased {
             self.wake_owner_shed();
+        }
+        for seq in withdrawn {
+            self.signal_decision_answer(seq);
         }
         synced?;
         if erased {
@@ -133,11 +138,15 @@ impl Vault {
     ) -> IntentLedgerResult<bool> {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
         owner.revalidate_in_txn(self, &wtxn)?;
-        let erased = erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
+        let (erased, withdrawn) =
+            erase_call_request_in_txn(self, &mut wtxn, attempt_id, call_seq)?;
         wtxn.commit().map_err(Error::from)?;
         let synced = force_sync(self);
         if erased {
             self.wake_owner_shed();
+        }
+        for seq in withdrawn {
+            self.signal_decision_answer(seq);
         }
         synced?;
         if erased {

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1287 facade rows, 4660 declarations.
-Inputs: 1216 of 1287 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1116 of 1287 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1288 facade rows, 4661 declarations.
+Inputs: 1217 of 1288 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1117 of 1288 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -10887,6 +10887,26 @@ class ConsentActReceipt(TypedDict):
     reason_code: str
     grant_ref: NotRequired[str | None]
     diff_handle: list[int]
+class CampaignEnrollmentHeldCall(TypedDict):
+    call_ref: EntityId
+    consequence_ref: EntityId
+    call_seq: int
+    campaign_ref: EntityId
+    program_ref: EntityId
+    step_ref: EntityId
+    member_ref: EntityId
+    owner_actor: EntityId
+    frozen_event_ref: EntityId
+    attempt_ref: str
+    approval_digest: str
+    approval_actor: NotRequired[EntityId | None]
+    envelope_hash: str
+    held_at_ms: int
+    owner_ask_seq: NotRequired[int | None]
+    approved_redrive: NotRequired[str | None]
+class CampaignEnrollmentApproveOnceRequest(TypedDict):
+    call_ref: str
+    approval_digest: str
 class ConnectorCallApproveOnceRequest(TypedDict):
     call_ref: str
     approval_digest: str
@@ -22495,10 +22515,6 @@ class NoteReadRequest(TypedDict):
     note_ref: str
     reason: NotRequired[str | None]
     version: NotRequired[NoteVersion | None]
-    spans: NotRequired[list[NoteReadSpan]]
-class NoteIndexedReadRequest(TypedDict):
-    note_ref: str
-    reason: NotRequired[str | None]
     spans: NotRequired[list[NoteReadSpan]]
 class NoteAccessRequest(TypedDict):
     note_ref: str

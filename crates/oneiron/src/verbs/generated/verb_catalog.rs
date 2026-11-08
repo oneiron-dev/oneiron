@@ -567,6 +567,8 @@ pub enum AgentVerb {
     VaultPolicyOutboundDecide,
     VaultPolicyRelayDecide,
     VaultConsentApproveOnce,
+    VaultCampaignHeld,
+    VaultCampaignApproveOnce,
     VaultConnectorsCallsApproveOnce,
     VaultConnectorsRepliesRetryFailed,
     VaultConsentDeny,
@@ -1902,6 +1904,8 @@ impl AgentVerb {
         Self::VaultPolicyOutboundDecide,
         Self::VaultPolicyRelayDecide,
         Self::VaultConsentApproveOnce,
+        Self::VaultCampaignHeld,
+        Self::VaultCampaignApproveOnce,
         Self::VaultConnectorsCallsApproveOnce,
         Self::VaultConnectorsRepliesRetryFailed,
         Self::VaultConsentDeny,
@@ -3258,6 +3262,8 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => "vault.policy.outbound.decide",
             Self::VaultPolicyRelayDecide => "vault.policy.relay.decide",
             Self::VaultConsentApproveOnce => "vault.consent.approve_once",
+            Self::VaultCampaignHeld => "vault.campaign.held",
+            Self::VaultCampaignApproveOnce => "vault.campaign.approve_once",
             Self::VaultConnectorsCallsApproveOnce => "vault.connectors.calls.approve_once",
             Self::VaultConnectorsRepliesRetryFailed => "vault.connectors.replies.retry_failed",
             Self::VaultConsentDeny => "vault.consent.deny",
@@ -4615,6 +4621,8 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultCampaignHeld
+                | Self::VaultCampaignApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
@@ -5979,6 +5987,8 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultCampaignHeld
+                | Self::VaultCampaignApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
@@ -6798,6 +6808,7 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsLog
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
+                | Self::VaultCampaignHeld
                 | Self::VaultConsentCreateBypassGrant
                 | Self::VaultConsentActiveBypassGrants
                 | Self::VaultConsentBypassedEffectReceipts
@@ -7497,6 +7508,8 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultCampaignHeld
+                | Self::VaultCampaignApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
@@ -8535,6 +8548,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultCampaignApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
                 | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
@@ -9593,6 +9607,8 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultCampaignHeld => &["spec"],
+            Self::VaultCampaignApproveOnce => &["spec"],
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
             Self::VaultConnectorsRepliesRetryFailed => &["spec"],
             Self::VaultConsentDeny => &["spec"],
@@ -10929,6 +10945,8 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultCampaignHeld => &["spec"],
+            Self::VaultCampaignApproveOnce => &["spec"],
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
             Self::VaultConnectorsRepliesRetryFailed => &["spec"],
             Self::VaultConsentDeny => &["spec"],
@@ -13365,6 +13383,12 @@ impl AgentVerb {
             }
             Self::VaultConsentApproveOnce => {
                 "The owner approves exactly one engine-emitted effect digest; no standing grant is created."
+            }
+            Self::VaultCampaignHeld => {
+                "The owner reviews the last-observed campaign enrollment holds and their queued redrives; a redrive is not a sent or completed call."
+            }
+            Self::VaultCampaignApproveOnce => {
+                "The owner approves exactly one current campaign enrollment hold by its call ref and reviewed digest, queuing the original work without a standing grant or bypassing its ordinary send checks."
             }
             Self::VaultConnectorsCallsApproveOnce => {
                 "The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."
