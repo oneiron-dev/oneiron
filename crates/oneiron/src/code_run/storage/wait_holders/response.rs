@@ -23,7 +23,10 @@ use crate::side_table::{SideKey, SideTableDbs};
 use crate::{EntityId, Result};
 
 /// Who owns the delivery row `key` (a full `vault_meta` key): its run, the
-/// actor its membership names, and the actor its run's stamps name.
+/// actor its membership names, and the actor its run's stamps name. A
+/// membership or owner row a soft delete took names its actor only for that
+/// actor's later erase to select the run (FIX 6591), so it owns nothing
+/// here.
 ///
 /// # Errors
 ///
