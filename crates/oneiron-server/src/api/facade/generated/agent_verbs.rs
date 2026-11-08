@@ -863,6 +863,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.cache.get", post(facade_route))
         .route("/vault.code.cache.reuse", post(facade_route))
         .route("/vault.code.snapshots.ingest", post(facade_route))
+        .route("/vault.code.snapshots.capture", post(facade_route))
         .route("/vault.code.snapshots.get", post(facade_route))
         .route("/vault.code.snapshots.read", post(facade_route))
         .route("/vault.code.symbols.definitions", post(facade_route))

@@ -82,6 +82,7 @@
 //! - `vault.code.checkout.publish`
 //! - `vault.code.checkout.settle`
 //! - `vault.code.checkout.teardown`
+//! - `vault.code.snapshots.capture`
 //! - `vault.code.symbols.neighbors`
 //! - `vault.connectors.read_grants.grant`
 //! - `vault.connectors.read_grants.revoke`
@@ -1840,6 +1841,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.code.checkout.publish"
                 | "vault.code.checkout.settle"
                 | "vault.code.checkout.teardown"
+                | "vault.code.snapshots.capture"
                 | "vault.code.symbols.neighbors"
                 | "vault.connectors.read_grants.grant"
                 | "vault.connectors.read_grants.revoke"

@@ -6806,6 +6806,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_snapshots_capture(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.snapshots.capture", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_snapshots_get(
         &self,
         input: serde_json::Value,
