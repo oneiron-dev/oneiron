@@ -189,6 +189,24 @@ pub(super) fn cursor_in_txn(
     CURSORS.get(&vault.store, txn, &(binding, [source.tag()]))
 }
 
+/// The bindings whose cursor in `source` stands unpaused, read in `txn`, in
+/// binding order. A binding with no cursor there, or a paused one, takes a
+/// start when it next runs or is enabled ([`source::enable_start_in_txn`]).
+pub(super) fn unpaused_cursor_bindings_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: FactSource,
+) -> Result<Vec<EntityId>> {
+    let mut bindings = Vec::new();
+    for row in CURSORS.iter_from(&vault.store, txn, &[])? {
+        let ((binding, tag), cursor) = row?;
+        if tag == [source.tag()] && !cursor.paused {
+            bindings.push(binding);
+        }
+    }
+    Ok(bindings)
+}
+
 pub(super) fn put_cursor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

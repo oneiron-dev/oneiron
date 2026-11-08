@@ -286,14 +286,16 @@ side_tables! {
     /// a verb run's saved copy. Key: id16 (binding) + u64be (commit time, Unix ms) + hash32 (run
     /// key).
     HOOKS_RUN_INDEX: VaultMeta b"hooks:run_index:v1:" Named;
-    /// The settlement feed fact hooks follow: one row per settled proposal. Key: u64be (sequence).
+    /// The settlement feed fact hooks follow: one row per settled proposal; an erase leaves a row
+    /// naming the erased proposal or settler as an empty erased row, and the runner prunes the
+    /// rows every binding passed. Key: u64be (sequence).
     HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
     /// The last settlement sequence handed out. Key: ().
     HOOKS_SETTLED_NEXT: VaultMeta b"hooks:settled_next:v1" Named;
     /// The inbound surface-event feed fact hooks follow (FIX 4749): one row per admitted
-    /// connector SurfaceEvent, its ids and tokens only; an erase leaves a row naming the erased
-    /// entity as an empty erased row, and the runner prunes the rows every binding passed. Key:
-    /// u64be (sequence).
+    /// connector SurfaceEvent while a fact binding reads the feed, its ids and tokens only; an
+    /// erase leaves a row naming the erased entity as an empty erased row, and the runner prunes
+    /// the rows every binding passed. Key: u64be (sequence).
     HOOKS_SURFACE_INBOUND: VaultMeta b"hooks:surface_inbound:v1:" Named;
     /// The last inbound surface-event sequence handed out. Key: ().
     HOOKS_SURFACE_INBOUND_NEXT: VaultMeta b"hooks:surface_inbound_next:v1" Named;

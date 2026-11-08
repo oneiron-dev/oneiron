@@ -152,6 +152,18 @@ impl Vault {
         Ok(live)
     }
 
+    /// The approved binding claim at `id`, enabled or not, in the caller's
+    /// snapshot; `None` when none stands there. It reads that one claim and
+    /// none of the checks [`Self::pack_hook_bindings_in_txn`] adds: a binding
+    /// they hold back keeps its cursors, and runs from them once it is live.
+    pub(crate) fn pack_hook_binding_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<PackHookBinding>> {
+        binding_in_txn(&self.store, txn, id)
+    }
+
     /// The body a binding names, read from its exact pack source and checked
     /// against the binding's hash.
     pub fn pack_hook_body(&self, binding: &PackHookBinding) -> Result<Vec<u8>> {

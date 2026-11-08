@@ -1,7 +1,7 @@
-//! The runner's work on the two watcher feeds (FIX 4749): a pass releases
-//! the due watcher TASKs into the tick feed, and at its end prunes the tick
-//! and inbound rows every binding has passed (FIX 22121). The claim
-//! changelog and the settlement feed are not pruned here.
+//! The runner's work on the engine's own hook feeds: a pass releases the
+//! due watcher TASKs into the tick feed (FIX 4749), and at its end prunes
+//! the settlement, tick and inbound rows every binding has passed
+//! (FIX 22121, FIX 22141). The claim changelog is not pruned here.
 
 use crate::runtime_hooks::filter;
 use crate::runtime_hooks::source::{self, FactKind, FactPosition, FactSource};
@@ -31,7 +31,7 @@ impl Pass<'_, '_> {
         Ok(())
     }
 
-    /// Prunes both watcher feeds once at the end of each pass, retained or
+    /// Prunes the hook feeds once at the end of each pass, retained or
     /// not (FIX 22121): the rows at or below the lowest stored cursor of
     /// every fact binding enabled in the prune's own snapshot, held back or
     /// not, at most `max_rows` a feed, planned in that snapshot and deleted
@@ -43,7 +43,7 @@ impl Pass<'_, '_> {
     /// past every planned row, or, new to the tick feed, before the earliest
     /// open TASK's tick, which the tick prune keeps. Nothing goes from a feed
     /// while a binding stands at its start or holds no cursor there.
-    pub(super) fn prune_watcher_feeds(&self, max_rows: usize) -> Result<()> {
+    pub(super) fn prune_hook_feeds(&self, max_rows: usize) -> Result<()> {
         let planned = {
             let rtxn = self.vault.store.env.read_txn()?;
             let readers: Vec<EntityId> = self
@@ -54,7 +54,11 @@ impl Pass<'_, '_> {
                 .map(|(id, _)| id)
                 .collect();
             let mut planned = Vec::new();
-            for source in [FactSource::Schedule, FactSource::SurfaceInbound] {
+            for source in [
+                FactSource::Settlement,
+                FactSource::Schedule,
+                FactSource::SurfaceInbound,
+            ] {
                 let Some(floor) = floor_in_txn(self.vault, &rtxn, &readers, source)? else {
                     continue;
                 };
