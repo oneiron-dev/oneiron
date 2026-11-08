@@ -9727,8 +9727,11 @@ struct MoveDestinationDeletionPlan {
 
 /// A deletion nested in moveTo strikes the destination CLONE, not the untouched
 /// source copy. If the deletion is rejected, that restored text is still moveTo
-/// content; if the move is rejected, the destination-only deletion cascades
-/// away with the clone. Represent both transitions before the ordinary status
+/// content; if the move is rejected, the destination-only deletion moves back
+/// onto the restored source, still pending, so the editor's deletion is kept
+/// for its own answer (tests/suite/spec_mixed_move_resolution.rs
+/// rejecting_move_maps_its_destination_deletion_back_to_source). Represent both
+/// transitions before the ordinary status
 /// projector sees the inner deletion in isolation.
 fn move_destination_deletion_plans(blocks: &[TrackedBlock]) -> Vec<MoveDestinationDeletionPlan> {
     fn is_move_half(block: &TrackedBlock, identity: u32, inserted: bool) -> bool {
