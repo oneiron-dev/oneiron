@@ -31,5 +31,6 @@ pub(super) use self::scoped::{
     validate_never_list_entry,
 };
 pub(crate) use self::scoped::{
-    ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
+    ScopedCapabilityProvenance, brief_server_name, canonical_scoped_server_segment,
+    normalize_connector_key,
 };

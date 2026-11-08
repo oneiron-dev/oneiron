@@ -1,9 +1,11 @@
 //! The source-audience obligation (fix list row 16256): one engine-owned key
 //! in a bound row's own MessagePack body, saying the row reads only under the
 //! source audience its binding names. The engine's source landing stamps it
-//! on every CONVERSATION, TURN and MESSAGE it binds; the source-audience
-//! judge reads it from the row's own bytes, whatever the row's kind and
-//! whether or not its TURN or `PartOf` edge has arrived.
+//! on every row it binds (a mail thread's CONVERSATION, TURNs and MESSAGEs, a
+//! calendar's EVENTs, the BLOB_ARTIFACT an attachment or a calendar resource
+//! is kept in); the source-audience judge reads it from the row's own bytes,
+//! whatever the row's kind and whether or not its TURN or `PartOf` edge has
+//! arrived.
 //!
 //! This module is the vocabulary and the strict codec only. It grants no
 //! authority: who may stamp a row is the engine's source landing alone.

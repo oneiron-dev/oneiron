@@ -7,11 +7,12 @@
 //! case is then prepared through the public standing-answer door, answered by
 //! the real [`DecisionLadder`](oneiron::llm::decision::DecisionLadder) whose
 //! escalation rung is the configured house read (the production label read:
-//! P(yes) is the model's, never the bench's), and admitted with its full
-//! decision, so its receipt keeps its clock and so its route. Only after that
-//! answer lands is the case's gold written on its unit, through the public
-//! gated claim writer, as the fact the question's outcome binding labels. The
-//! gold never enters a state the model reads.
+//! P(yes) is the model's, never the bench's) and whose Big rung is the
+//! configured big model when the models file binds one, and admitted with its
+//! full decision, so its receipt keeps its clock and so its route. Only after
+//! that answer lands is the case's gold written on its unit, through the
+//! public gated claim writer, as the fact the question's outcome binding
+//! labels. The gold never enters a state the model reads.
 //!
 //! The report is `route_calibration_report` over the ordinary calibration
 //! pairs, beside a run header and a per-case table. A case that abstains,
@@ -78,8 +79,9 @@ pub(super) fn run_route_calibration(args: &[String]) -> EvalResult<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let rung = HouseReadRung::load(&args.models_toml, &runtime)?;
+    let mut rung = HouseReadRung::load(&args.models_toml, &runtime)?;
     let bench = BenchVault::create(&args.vault)?;
+    rung.bind_big(bench.vault(), runtime.handle().clone())?;
     let units = bench.seed_units(&case_file.cases)?;
     let question = bench.store_question(definition.input, units.clone())?;
     let budget = question.definition.deadline(bench.vault())?;
