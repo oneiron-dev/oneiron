@@ -351,6 +351,11 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
         if let Some(custody_ref) = custody_ref {
             retire_connector_resume_in_txn(&vault.store, wtxn, &custody_ref)?;
         }
+        // The form question its remote task parked for the owner goes with
+        // the request: its row, its sealed carrier and its Ask (FIX 16029).
+        vault
+            .forget_remote_task_input_in_txn(wtxn, &id)
+            .map_err(erase_error)?;
         let Some(mut record) = get_ledger_record(vault, &*wtxn, &id).map_err(erase_error)? else {
             continue;
         };
@@ -359,6 +364,9 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
             // for that, as an actor's erase stops its own sends.
             stop_for_erase(&mut record, IntentEscalationReason::RecipientErased);
         }
+        // A session its remote task's polls kept open is owed its end
+        // before the handle naming it goes (FIX 16028).
+        super::remote_task_poll::keep_session_end_in_txn(vault, wtxn, &id).map_err(erase_error)?;
         put_erased_record(vault, wtxn, record)?;
         super::settlement::forget_remote_task_in_txn(vault, wtxn, &id).map_err(erase_error)?;
         if let Some(erased) = get_ledger_record(vault, &*wtxn, &id).map_err(erase_error)? {
