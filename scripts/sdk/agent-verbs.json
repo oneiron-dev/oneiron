@@ -21937,7 +21937,7 @@
     },
     {
       "name": "vault.mail.sources.connect",
-      "description": "Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names.",
+      "description": "Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members.",
       "input": "crate::mail_pack::MailSourceConnectRequest",
       "output": "crate::mail_pack::MailSourceConnectReceipt",
       "call": "memory.mail_sources_connect(&input)?",
@@ -22073,6 +22073,18 @@
         "spec": "$"
       },
       "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.mail.sources.import_mbox",
+      "description": "The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place.",
+      "input": "crate::mail_pack::MailMboxImportRequest",
+      "output": "crate::mail_pack::MailMboxImportReport",
+      "call": "memory.mail_sources_import_mbox(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {

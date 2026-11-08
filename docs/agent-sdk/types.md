@@ -4450,7 +4450,7 @@ class Oneiron:
             """The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing."""
     class _VaultMailSourcesVerbs:
         def connect(self, spec: Facade.MailSourceConnectRequest) -> Facade.MailSourceConnectReceipt:
-            """Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."""
+            """Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members."""
         def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.MailSourceView]:
             """The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted."""
         @property
@@ -4461,6 +4461,8 @@ class Oneiron:
             """Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins."""
         def sync_status(self, spec: Facade.MailSourceRef) -> Facade.MailSyncStatusView:
             """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
+        def import_mbox(self, spec: Facade.MailMboxImportRequest) -> Facade.MailMboxImportReport:
+            """The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place."""
         def sync(self, spec: Facade.MailSourceSyncRequest) -> Facade.MailSyncReport:
             """The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
     class _VaultMailSourcesSettingsVerbs:

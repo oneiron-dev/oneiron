@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1382 code-mode rows (1339 host rows, 43 run rows), 4851 declarations.
-// Replies: 1190 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1383 code-mode rows (1340 host rows, 43 run rows), 4853 declarations.
+// Replies: 1191 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -4671,7 +4671,7 @@ declare namespace Sdk {
   type MailCopySetting = "all" | { recent_months: { months: number } } | "search_only";
   type MailProviderDeleteSetting = "keep_in_memory" | "forget_too";
   type CalendarDetailSetting = "busy_free_only" | "shared";
-  type MailSourceConnectRequest = { provider: MailProvider; kind: MailSourceKind; address: string; provider_account: string; custody_ref: string; members?: string[]; channel_identity_ref?: string | null; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null };
+  type MailSourceConnectRequest = { provider: MailProvider; kind: MailSourceKind; address: string; provider_account: string; custody_ref: string; members?: string[]; for_person?: string | null; channel_identity_ref?: string | null; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null };
   type MailSourceStatus = "active" | "paused" | "disconnected";
   type MailSourceView = { source_ref: string; provider: MailProvider; kind: MailSourceKind; address?: string | null; owner_ref?: string | null; reads: boolean; members?: string[]; copy: MailCopySetting; on_provider_delete: MailProviderDeleteSetting; calendar_details: CalendarDetailSetting; status: MailSourceStatus; connected_at: number; updated_at: number };
   type MailSourceConnectReceipt = { source: MailSourceView; resumed: boolean };
@@ -4687,6 +4687,8 @@ declare namespace Sdk {
   type MailComplianceEventKind = "enabled" | "disabled" | "search";
   type MailComplianceEventView = { sequence: number; kind: MailComplianceEventKind; by_ref?: string | null; at: number; purpose: string; query_digest?: string | null; result_count?: number | null };
   type MailSyncStatusView = { source_ref: string; live: boolean; copy_done: boolean; landed: number; bodies: number; bodies_waiting: number; deleted_at_provider: number; last_step_at?: number | null; last_error?: string | null };
+  type MailMboxImportRequest = { source_ref: string; path: string; messages?: number | null };
+  type MailMboxImportReport = { source_ref: string; landed: number; same: number; refused: number; refusal_reasons?: string[]; skipped: number; read_total: number; done: boolean };
   type MailSourceSyncRequest = { source_ref: string; bodies?: number | null };
   type MailSyncReport = { source_ref: string; landed: number; same: number; refused: number; refusal_reasons?: string[]; kept_deleted: number; forgotten: number; anchor_expired: boolean; copy_done: boolean; attachments_stored?: number };
   type MailInboxRequest = { source_ref?: string | null; include_source_deleted?: boolean; cursor?: string | null; limit?: number | null };
@@ -6928,8 +6930,10 @@ declare const vault: Sdk.VaultHost & {
     sources: {
       /** Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins. */
       audience_events(input: Sdk.MailSourceRef): Promise<Sdk.SourceAudienceEventView[] | StoredResult>;
-      /** Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names. */
+      /** Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members. */
       connect(input: Sdk.MailSourceConnectRequest): Promise<Sdk.MailSourceConnectReceipt | StoredResult>;
+      /** The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place. */
+      import_mbox(input: Sdk.MailMboxImportRequest): Promise<Sdk.MailMboxImportReport | StoredResult>;
       /** The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted. */
       list(input: Sdk.EmptyRequest): Promise<Sdk.MailSourceView[] | StoredResult>;
       members: {

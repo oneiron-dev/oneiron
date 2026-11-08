@@ -334,49 +334,74 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         // An attachment Gmail keeps apart is fetched by its id; a small one
         // rides inline in its part of the whole message.
         if let Some(id) = &attachment.provider_attachment_id {
-            let plain = id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
-            if id.is_empty() || !plain {
-                return Err(refused("gmail_mail_attachment_id_not_plain"));
-            }
-            let url = format!("{message_url}/attachments/{id}");
-            let Some(answer) = self.get(source, &url, &[])? else {
-                return Ok(None);
-            };
-            let data = answer
-                .get("data")
-                .and_then(Value::as_str)
-                .ok_or_else(|| refused("gmail_mail_attachment_without_data"))?;
-            return base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .decode(data.trim_end_matches('='))
-                .map(Some)
-                .map_err(|_| refused("gmail_mail_attachment_data_unreadable"));
+            return self.attachment_by_id(source, &message_url, id);
         }
         let params = [("format", "full".to_owned())];
         let Some(message) = self.get(source, &message_url, &params)? else {
             return Ok(None);
         };
-        Ok(message
+        let Some(part) = message
             .get("payload")
-            .and_then(|payload| part_bytes(payload, &attachment.part_id, 0)))
+            .and_then(|payload| part_by_id(payload, &attachment.part_id, 0))
+        else {
+            return Ok(None);
+        };
+        if let Some(data) = part.pointer("/body/data").and_then(Value::as_str) {
+            return attachment_data(data).map(Some);
+        }
+        // A part described without its id (an imported copy) whose bytes
+        // Gmail keeps apart: fetched by the id its part names now.
+        match part.pointer("/body/attachmentId").and_then(Value::as_str) {
+            Some(id) => self.attachment_by_id(source, &message_url, id),
+            None => Ok(None),
+        }
     }
 }
 
-/// The bytes of one part of a Gmail `full` answer, by its part id.
-fn part_bytes(part: &Value, part_id: &str, depth: usize) -> Option<Vec<u8>> {
+impl HttpGmailMailWire<'_> {
+    /// The bytes of the attachment `id` of the message at `message_url`.
+    fn attachment_by_id(
+        &self,
+        source: &MailSyncSource,
+        message_url: &str,
+        id: &str,
+    ) -> Result<Option<Vec<u8>>> {
+        let plain = id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
+        if id.is_empty() || !plain {
+            return Err(refused("gmail_mail_attachment_id_not_plain"));
+        }
+        let url = format!("{message_url}/attachments/{id}");
+        let Some(answer) = self.get(source, &url, &[])? else {
+            return Ok(None);
+        };
+        let data = answer
+            .get("data")
+            .and_then(Value::as_str)
+            .ok_or_else(|| refused("gmail_mail_attachment_without_data"))?;
+        attachment_data(data).map(Some)
+    }
+}
+
+/// An attachment's bytes from Gmail's URL-safe base64.
+fn attachment_data(data: &str) -> Result<Vec<u8>> {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(data.trim_end_matches('='))
+        .map_err(|_| refused("gmail_mail_attachment_data_unreadable"))
+}
+
+/// One part of a Gmail `full` answer, by its part id.
+fn part_by_id<'a>(part: &'a Value, part_id: &str, depth: usize) -> Option<&'a Value> {
     if depth > MAX_PART_DEPTH {
         return None;
     }
     if part.get("partId").and_then(Value::as_str) == Some(part_id) {
-        let data = part.pointer("/body/data").and_then(Value::as_str)?;
-        return base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(data.trim_end_matches('='))
-            .ok();
+        return Some(part);
     }
     array(part, "parts")
         .iter()
-        .find_map(|child| part_bytes(child, part_id, depth + 1))
+        .find_map(|child| part_by_id(child, part_id, depth + 1))
 }
 
 /// Whether the Gmail wire reads `provider`'s mailboxes.
@@ -562,7 +587,7 @@ fn charset_of(content_type: &str) -> Option<String> {
 
 /// The addresses of an address-list header, split at the commas outside
 /// quotes and angle brackets.
-fn address_list(value: &str) -> Vec<String> {
+pub(super) fn address_list(value: &str) -> Vec<String> {
     let mut addresses = Vec::new();
     let mut current = String::new();
     let mut quoted = false;
@@ -593,7 +618,7 @@ fn push_address(addresses: &mut Vec<String>, text: &str) {
 }
 
 /// An RFC 5322 `Date` value as Unix seconds; a trailing comment is dropped.
-fn rfc2822_seconds(value: &str) -> Option<u64> {
+pub(super) fn rfc2822_seconds(value: &str) -> Option<u64> {
     let bare = value
         .split_once(" (")
         .map_or(value, |(head, _)| head)

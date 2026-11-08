@@ -6417,6 +6417,11 @@ export_facade! {
     let output = client.vault_mail_sources_sync_status(&input)?;
     crate::codec::lift_record("vault.mail.sources.sync_status", &output)
 };
+"vault.mail.sources.import_mbox" => fn vault_mail_sources_import_mbox(&self, input: MailMboxImportRequest) -> MailMboxImportReport = |client| {
+    let input: oneiron::mail_pack::MailMboxImportRequest = crate::codec::lower_record("vault.mail.sources.import_mbox", input)?;
+    let output = client.vault_mail_sources_import_mbox(&input)?;
+    crate::codec::lift_record("vault.mail.sources.import_mbox", &output)
+};
 "vault.mail.sources.sync" => fn vault_mail_sources_sync(&self, input: MailSourceSyncRequest) -> MailSyncReport = |client| {
     let input: oneiron::mail_pack::MailSourceSyncRequest = crate::codec::lower_record("vault.mail.sources.sync", input)?;
     let output = client.vault_mail_sources_sync(&input)?;
