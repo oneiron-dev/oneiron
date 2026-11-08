@@ -15,11 +15,13 @@ mod integration;
 mod live_fork;
 mod log;
 mod request;
+mod vault_reads;
 
 pub use request::CompactionRequest;
 pub(crate) use request::{ConversationBinding, StoredCompactionRequest, WindowLog};
 
 use super::gate::{CompactionCheck, CompactionRefusal};
+use vault_reads::snapshot_watermark;
 
 use super::epoch::{
     mint_epoch_summary_guarded, mint_epoch_summary_in_overlay, mint_epoch_summary_with,
@@ -113,14 +115,15 @@ pub trait CompactionBackend: Send + Sync {
     > {
         self.compact(request, retry).map(|product| (product, None))
     }
-    /// At a breakpoint that seals a flight, the run's `live` request as the
-    /// host's admitted rung sends it, when this backend writes as its agent
-    /// from the live context (FIX 4465 C), or why it cannot be bound. `None`
-    /// from every other backend. Called on the step loop before the feed
-    /// can park; `summary_token_budget` sizes the room the capture leaves.
-    /// `prefix_sources` is every row `live` was read from, `None` when its
-    /// host did not witness them all: such a request is never captured
-    /// (FIX 9463).
+    /// At a breakpoint that seals a flight, the fork of the run's latest
+    /// completed call as the rung that answered it sent it (FIX 4933), when
+    /// this backend writes as its agent from the live context (FIX 4465 C),
+    /// or why it cannot be bound; `live` is the call the run sends next.
+    /// `None` from every other backend. Called on the step loop before the
+    /// feed can park; `summary_token_budget` sizes the room the capture
+    /// leaves. `prefix_sources` is every row `live` was read from, `None`
+    /// when its host did not witness them all: such a request is never
+    /// captured (FIX 9463).
     fn capture_live_fork(
         &self,
         _live: &oneiron_model::llm::LlmRequest,
@@ -134,6 +137,11 @@ pub trait CompactionBackend: Send + Sync {
     > {
         None
     }
+    /// Before each of its run's calls, `live` as the executor sends it (FIX
+    /// 4933): a backend that forks the live context holds the slot the rung
+    /// that answers it fills, so a breakpoint forks the latest completed
+    /// call. Every other backend does nothing.
+    fn hold_answering_rungs(&self, _live: &oneiron_model::llm::LlmRequest) {}
     /// [`Self::prepare_flight`] for a flight that carries the live fork its
     /// driver admitted (FIX 4465 C). The backend holds the fork, unchanged,
     /// for the flight's calls until [`Self::end_flight`]. A backend that
@@ -703,25 +711,4 @@ impl CompactionDriver {
     pub fn abandon(&mut self) {
         self.state = CompactionState::Idle;
     }
-}
-
-/// Reads the trigger-time durable watermark through the Dreamer's existing
-/// public surface (S-11, ONE-1793 v2).
-///
-/// The compound position is read whole: `last_learned_at` alone cannot
-/// separate two turns sharing one second. `DreamerConsolidationScope::Micro`
-/// names the Dreamer lane's OWN finest consolidation cursor — it is that
-/// lane's enum variant, not a summary-tier name. Epoch summaries mint at the
-/// unbounded integer `level` 0 and this module coins no tier vocabulary of
-/// its own.
-fn snapshot_watermark(vault: &Vault) -> Result<CompactionWatermark> {
-    let watermark = crate::dreamer_consolidation::read_watermark(
-        vault,
-        crate::store::consolidation_scope::DreamerConsolidationScope::Micro,
-    )?;
-    Ok(CompactionWatermark {
-        learned_at: watermark.last_learned_at,
-        turn_id: watermark.last_turn_id,
-        turn: None,
-    })
 }

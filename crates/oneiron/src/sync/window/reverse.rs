@@ -10,7 +10,7 @@ use super::loro_support::{
 use super::pack_sync;
 use super::quarantine::{self, QuarantineContainer};
 use super::types::WindowKey;
-use super::window_packing_excludes_entity;
+use super::window_packing_excludes_entity_with;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -235,6 +235,10 @@ fn reverse_rematerialize_scan(
         entities_in_range = kept;
     }
     let device_only = withhold.worlds(vault)?;
+    // One snapshot for the pass's source-audience verdicts, kept across its
+    // rows and edge ends (FIX 16254).
+    let lineage_txn = vault.store.env.read_txn()?;
+    let mut lineage = crate::source_audience::LineagePass::new(vault, &lineage_txn)?;
 
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
@@ -330,7 +334,7 @@ fn reverse_rematerialize_scan(
         let hex_id = id.to_hex();
 
         // Defer-sync egress door, before reading or packing the payload.
-        if window_packing_excludes_entity(vault, &device_only, id)? {
+        if window_packing_excludes_entity_with(vault, &mut lineage, &device_only, id)? {
             continue;
         }
 
@@ -565,7 +569,7 @@ fn reverse_rematerialize_scan(
     // Only its edges reaching this world are packed below. Apply the same
     // locality and egress gates before adding it to the edge-only pass.
     for id in base_edge_sources {
-        if window_packing_excludes_entity(vault, &device_only, &id)?
+        if window_packing_excludes_entity_with(vault, &mut lineage, &device_only, &id)?
             || !local_claim_sync_allowed(vault, &id)?
             || local_entity_is_unsyncable(vault, &id)?
         {
@@ -596,7 +600,12 @@ fn reverse_rematerialize_scan(
             // map. Plain containment = skip on this branch; reason-aware
             // (skip iff HARD) once tombstone v2 lands in M4-06.
             if tombstones.contains(&edge.target)
-                || window_packing_excludes_entity(vault, &device_only, &edge.target)?
+                || window_packing_excludes_entity_with(
+                    vault,
+                    &mut lineage,
+                    &device_only,
+                    &edge.target,
+                )?
             {
                 continue;
             }
@@ -643,8 +652,18 @@ fn reverse_rematerialize_scan(
                 if super::types::entity_world(&source_raw)?.is_some()
                     || is_unsyncable_secret_custody(&source_raw)
                     || edge.kind == EdgeKind::Blocks
-                    || window_packing_excludes_entity(vault, &device_only, &source)?
-                    || window_packing_excludes_entity(vault, &device_only, target)?
+                    || window_packing_excludes_entity_with(
+                        vault,
+                        &mut lineage,
+                        &device_only,
+                        &source,
+                    )?
+                    || window_packing_excludes_entity_with(
+                        vault,
+                        &mut lineage,
+                        &device_only,
+                        target,
+                    )?
                     || !local_claim_sync_allowed(vault, &source)?
                     || !local_claim_sync_allowed(vault, target)?
                     || local_entity_is_unsyncable(vault, &source)?
