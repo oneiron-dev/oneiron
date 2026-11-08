@@ -1,37 +1,14 @@
-//! The runner's work on the engine's own hook feeds: a pass releases the
-//! due watcher TASKs into the tick feed (FIX 4749), and at its end, with a
-//! binding to run or none, hooks on or off, prunes the settlement, tick and
-//! inbound rows every binding has passed (FIX 22121, FIX 22141, FIX 22154,
-//! FIX 22178). The claim changelog is not pruned here.
+//! The runner's work on the engine's own hook feeds: at the end of each
+//! pass, with a binding to run or none, hooks on or off, it prunes the
+//! settlement, tick and inbound rows every binding has passed (FIX 22121,
+//! FIX 22141, FIX 22154, FIX 22178). The due watcher TASKs are released at
+//! the start of the pass (FIX 22180). The claim changelog is not pruned
+//! here.
 
-use crate::runtime_hooks::filter;
-use crate::runtime_hooks::source::{self, FactKind, FactPosition, FactSource};
+use crate::runtime_hooks::source::{self, FactPosition, FactSource};
 use crate::runtime_hooks::store::{self, CursorRow};
-use crate::skill_hub::pack_catalog::{HookPhase, PackHookBinding};
+use crate::skill_hub::pack_catalog::HookPhase;
 use crate::{EntityId, Result, Vault};
-
-use super::Pass;
-
-impl Pass<'_, '_> {
-    /// Releases the due watcher TASKs into the tick feed, when `source` is
-    /// the tick feed and a binding here can take a tick.
-    pub(super) fn release_ticks(
-        &mut self,
-        source: FactSource,
-        bindings: &[(EntityId, PackHookBinding)],
-    ) -> Result<()> {
-        if source != FactSource::Schedule
-            || !bindings.iter().any(|(_, binding)| {
-                filter::verbs_admit_kind(&binding.selector.verbs, FactKind::ScheduleTick)
-            })
-        {
-            return Ok(());
-        }
-        let now = self.vault.store.clock.now_recorded_at();
-        self.report.more |= source::release_due_ticks(self.vault, now)?;
-        Ok(())
-    }
-}
 
 /// Prunes the hook feeds once at the end of each pass, retained or not, with
 /// no binding to run, and with hooks off, when no binding moves its cursor

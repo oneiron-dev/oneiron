@@ -175,10 +175,11 @@ pub(in crate::runtime_hooks) fn scrub_erased_actor_in_txn(
     Ok(())
 }
 
-/// A verb run's commit write keeps out a caller, `actor`, that a permanent
-/// erase fenced before it, from its saved copy and its Hook receipt, as the
-/// erase's own scrub would have had the run committed first
-/// ([`erase_verb_actor`], [`erase_receipt_caller`]; FIX 22178).
+/// A verb run's commit write keeps out a caller, `actor`, and each actor
+/// its saved tail names (a receipt's `actor_ref` and `fields.on_behalf_of`),
+/// that a permanent erase fenced before it, from its saved copy and its Hook
+/// receipt, as the erase's own scrub would have had the run committed first
+/// ([`erase_verb_actor`], [`erase_receipt_caller`]; FIX 22178, review #6799).
 pub(in crate::runtime_hooks) fn scrub_erased_verb_actor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -186,10 +187,33 @@ pub(in crate::runtime_hooks) fn scrub_erased_verb_actor_in_txn(
     receipt: &mut ReceiptRecord,
     actor: EntityId,
 ) -> Result<()> {
-    if source_erased_in_txn(vault, txn, &actor)? {
-        let actor_hex = actor.to_hex();
-        erase_verb_actor(record, &actor_hex);
-        erase_receipt_caller(receipt, &actor_hex);
+    let mut actors = BTreeSet::from([actor]);
+    if let Some(input) = record.input_json.as_deref()
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(input)
+        && let Some(tail) = value
+            .get("receipt_tail")
+            .and_then(serde_json::Value::as_array)
+    {
+        for tail_receipt in tail {
+            for named in [
+                tail_receipt.get("actor_ref"),
+                tail_receipt.pointer("/fields/on_behalf_of"),
+            ] {
+                if let Some(id) = named
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|hex| EntityId::from_hex(hex).ok())
+                {
+                    actors.insert(id);
+                }
+            }
+        }
+    }
+    for actor in actors {
+        if source_erased_in_txn(vault, txn, &actor)? {
+            let actor_hex = actor.to_hex();
+            erase_verb_actor(record, &actor_hex);
+            erase_receipt_caller(receipt, &actor_hex);
+        }
     }
     Ok(())
 }
