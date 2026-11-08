@@ -213,10 +213,10 @@ fn is_axis(node: &Node) -> bool {
 }
 
 /// The same-length sequence writes that make a workbook chart read as
-/// `wanted` without a rewrite: each series' name, categories (or x values)
-/// and values that differ, for the checked chart writer. `None` when the
-/// chart changes shape, or a sequence that changes is literal or changes
-/// length.
+/// `wanted` without a rewrite: each series' name, categories (or x values),
+/// values and bubble sizes that differ, for the checked chart writer.
+/// `None` when the chart changes shape, or a sequence that changes is
+/// literal or changes length.
 pub(super) fn plan(
     package: &Package,
     chart: &str,
@@ -240,8 +240,8 @@ pub(super) fn plan(
     else {
         return None;
     };
-    // Plot settings, the 3D view, bubble sizes and text x values are
-    // written by the full rewrite.
+    // Plot settings, the 3D view and text x values are written by the full
+    // rewrite. Adding or removing the bubble-size sequence also changes shape.
     if family != want_family
         || !same_settings(have, wanted)
         || held_series.len() != series.len()
@@ -249,7 +249,7 @@ pub(super) fn plan(
             was.family.unwrap_or(*family) != now.family.unwrap_or(*want_family)
                 || was.x.is_some() != now.x.is_some()
                 || was.x_labels != now.x_labels
-                || was.bubble_size != now.bubble_size
+                || was.bubble_size.is_some() != now.bubble_size.is_some()
                 || was.bubble_3d != now.bubble_3d
         })
     {
@@ -316,6 +316,17 @@ pub(super) fn plan(
             Some(_) => {}
             None if number_cells(&was.values, len) == cells => {}
             None => return None,
+        }
+        if was.bubble_size != now.bubble_size {
+            let sizes = now.bubble_size.as_ref()?;
+            let held = line.bubble_size.as_ref()?;
+            if sizes.len() > held.cache.len() {
+                return None;
+            }
+            let cells = number_cells(sizes, held.cache.len());
+            if held.cache != cells {
+                writes.push((index, Target::Size, cells));
+            }
         }
     }
     Some(writes)
