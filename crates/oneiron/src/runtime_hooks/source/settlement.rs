@@ -1,9 +1,10 @@
 //! The settlement source (ARCH-0080 §4 Sources and cursors; OF-579): one row
 //! per settled proposal, appended in the transaction of the door that
 //! settles it. The sequence is drawn there, so feed order is commit order.
-//! The runner prunes the rows every hook binding has passed, and an erase
-//! leaves a row that names the erased proposal or settler at its sequence
-//! with nothing in it (FIX 22141).
+//! A settlement no fact binding reads appends nothing (FIX 22154). The
+//! runner prunes the rows every hook binding has passed, and an erase leaves
+//! a row that names the erased proposal or settler at its sequence with
+//! nothing in it (FIX 22141).
 
 use std::ops::Bound;
 
@@ -14,8 +15,8 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::{
-    FactEntry, FactKind, FactOp, FactPosition, SettledFact, SettledOutcome, SettlementDetails,
-    SettlementKind, SettlementPosition, SourceBatch,
+    FactEntry, FactKind, FactOp, FactPosition, FactSource, SettledFact, SettledOutcome,
+    SettlementDetails, SettlementKind, SettlementPosition, SourceBatch,
 };
 
 /// The settlement feed: one row per settled proposal, keyed by its sequence.
@@ -38,7 +39,7 @@ enum SettlementFeedRow {
 
 /// One settled proposal, as the feed keeps it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct SettledRow {
+pub(in crate::runtime_hooks) struct SettledRow {
     #[serde(with = "crate::serialize::entity_ref")]
     proposal: EntityId,
     outcome: SettledOutcome,
@@ -62,12 +63,24 @@ impl SettledRow {
 }
 
 /// Appends one settlement to the feed, in the settling door's transaction.
-/// The sequence is allocated there, so feed order is commit order.
+/// The sequence is allocated there, so feed order is commit order. A
+/// settlement with no reader there ([`super::has_reader_in_txn`]: hooks
+/// off, or no enabled fact binding that takes `proposal.settled` follows
+/// the feed) is one no hook reads, so it appends nothing (FIX 22154); a
+/// binding enabled later starts at the feed head, past it.
 pub(crate) fn record_settlement_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     fact: SettledFact,
-) -> Result<SettlementPosition> {
+) -> Result<()> {
+    if !super::has_reader_in_txn(
+        vault,
+        txn,
+        FactSource::Settlement,
+        FactKind::ProposalSettled,
+    )? {
+        return Ok(());
+    }
     let (position, row) = prepare_settlement_in_txn(vault, txn, fact)?;
     SETTLED.put(
         &vault.store,
@@ -75,11 +88,10 @@ pub(crate) fn record_settlement_in_txn(
         &position.0,
         &SettlementFeedRow::Settled(row),
     )?;
-    SETTLED_NEXT.put(&vault.store, txn, &(), &position.0)?;
-    Ok(position)
+    SETTLED_NEXT.put(&vault.store, txn, &(), &position.0)
 }
 
-fn prepare_settlement_in_txn(
+pub(in crate::runtime_hooks) fn prepare_settlement_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     fact: SettledFact,
@@ -117,7 +129,7 @@ pub(crate) fn record_timeout_demotion_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     proposal: EntityId,
-) -> Result<SettlementPosition> {
+) -> Result<()> {
     record_settlement_in_txn(
         vault,
         txn,
@@ -175,7 +187,7 @@ pub(super) fn settlements_after_in_txn(
     Ok(batch)
 }
 
-fn settlement_fact_in_txn(
+pub(in crate::runtime_hooks) fn settlement_fact_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     position: SettlementPosition,

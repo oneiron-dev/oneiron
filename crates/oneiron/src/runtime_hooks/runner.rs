@@ -176,7 +176,7 @@ impl FactHookRunner {
         vault: &Vault,
         runtime: &dyn HookBodyRuntime,
         max_entries: usize,
-        retained: Option<RetainedPass<'_>>,
+        mut retained: Option<RetainedPass<'_>>,
     ) -> Result<HookPassReport> {
         let mut report = HookPassReport::default();
         if !vault.hooks_enabled()? {
@@ -200,9 +200,8 @@ impl FactHookRunner {
         pause_disabled(vault, &all)?;
         let bindings = fact_bindings(&all);
         if bindings.is_empty() {
-            return Ok(report);
+            return hook_feeds::prune_hook_feeds(vault, max_entries).map(|()| report);
         }
-        let mut retained = retained;
         if let Some(pass) = &mut retained {
             pass.runs.keep_source_order_for(&bindings);
         }
@@ -237,7 +236,7 @@ impl FactHookRunner {
                 pass.run_source(source, max_entries, &bindings)?;
             }
         }
-        pass.prune_hook_feeds(max_entries)?;
+        hook_feeds::prune_hook_feeds(vault, max_entries)?;
         Ok(pass.report)
     }
 
