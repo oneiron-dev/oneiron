@@ -23,7 +23,8 @@ const SWEEP_BATCH: usize = 256;
 struct Retired {
     /// Files that went.
     removed: usize,
-    /// Notes a reader's pin kept, or a dropped pin forgot, for a later pass.
+    /// Notes an older read snapshot or a reader's pin keeps for a later
+    /// pass, and ones a pin taken since forgot.
     kept: usize,
     /// Files a write names again: their notes are forgotten.
     named: usize,
@@ -174,7 +175,8 @@ impl Vault {
     ) -> Result<Retired> {
         let mut retired = Retired::default();
         let oldest = self.store.env.oldest_reader_txn_id()?;
-        let due = self.result_body_pins.due_retiring(oldest, limit, wanted);
+        let (due, waiting) = self.result_body_pins.due_retiring(oldest, limit, wanted);
+        retired.kept = waiting;
         if due.is_empty() {
             return Ok(retired);
         }
