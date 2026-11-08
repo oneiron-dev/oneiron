@@ -58,4 +58,5 @@ pub(crate) mod secret_marks;
 pub(crate) mod secret_projection;
 pub mod secret_publication;
 pub mod secret_purge;
+pub(crate) mod tables;
 pub mod tree;

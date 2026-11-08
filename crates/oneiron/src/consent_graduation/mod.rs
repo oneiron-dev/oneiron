@@ -99,6 +99,7 @@ pub(crate) use self::fold::{
 };
 pub(crate) use self::receipts::ramp_receipts;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

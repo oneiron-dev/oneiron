@@ -54,6 +54,7 @@ pub(crate) use self::spawn_replay::barrier_spawn_call;
 mod storage;
 pub(crate) use storage::erase_reader_caller_actor_in_txn;
 mod support;
+pub(crate) mod tables;
 mod task_reporting;
 mod task_settlement;
 mod team_submit;

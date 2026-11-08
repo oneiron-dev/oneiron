@@ -146,6 +146,7 @@ use self::files::path_swap_hook;
 #[cfg(test)]
 use self::storage::{receipt_fault_hook, registration_fault_hook};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

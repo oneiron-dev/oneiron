@@ -87,3 +87,4 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 pub mod native_mail;
+pub(crate) mod tables;

@@ -202,3 +202,4 @@ pub(super) fn one_line_token(s: &str) -> String {
 pub(crate) use self::plugin::context_board_plugin_block_accepts_masked;
 
 pub mod agent_run_status;
+pub(crate) mod tables;

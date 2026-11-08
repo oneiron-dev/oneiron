@@ -33,6 +33,7 @@ mod uncertain_send;
 mod weave_digest_send;
 mod window_door;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

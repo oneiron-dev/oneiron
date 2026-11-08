@@ -26,6 +26,7 @@ mod trailer;
 mod types;
 mod worktree;
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

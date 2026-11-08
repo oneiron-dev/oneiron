@@ -95,4 +95,5 @@ use crate::temporal::TimeRange;
 #[cfg(test)]
 use rmpv::Value;
 
+pub(crate) mod tables;
 pub mod team_shape_catalog;

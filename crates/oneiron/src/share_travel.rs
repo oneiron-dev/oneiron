@@ -21,6 +21,7 @@ mod copy;
 mod guest_window;
 mod pack_notice;
 mod reader_prompts;
+pub(crate) mod tables;
 
 pub use self::agent_pack::{
     AGENT_PACK_TRAVEL_SCHEMA, AgentPackKnowledge, AgentPackPolicy, AgentPackSkill,

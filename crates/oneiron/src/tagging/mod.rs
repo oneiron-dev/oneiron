@@ -99,5 +99,6 @@ pub(crate) use tags::{
 };
 #[cfg(test)]
 mod save_tests;
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

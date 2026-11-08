@@ -99,4 +99,5 @@ use crate::temporal::TimeRange;
 use rmpv::Value;
 
 mod archive;
+pub(crate) mod tables;
 pub(crate) use archive::{imported_reliability_body, validate_imported_reliability};

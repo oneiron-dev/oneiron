@@ -63,6 +63,7 @@ pub(crate) use self::vault_agent::is_vault_agent_in;
 use self::vault_context::disclosure_tier_a_marked_in;
 pub(crate) use self::vault_context::{contact_clearance_in_txn, contact_clearances_in_txn};
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 

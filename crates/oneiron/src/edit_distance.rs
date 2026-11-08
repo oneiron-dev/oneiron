@@ -838,5 +838,6 @@ impl RawValue for StoredProposal {
     }
 }
 
+pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
