@@ -287,6 +287,7 @@ pub struct EsignSealedItemView {
     pub sha256: String,
     /// Actual profiles and every native degradation reason from this item's seal.
     pub profile: super::sealer::SealProfileEvidence,
+    pub active_content: super::sealer::SealActiveContentFacts,
 }
 
 /// A sealed document's manifest: which attempt sealed it, over which
