@@ -41,6 +41,7 @@ use crate::store::Store;
 pub use crate::store::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 
 pub use self::actors_memory::ActorBound;
+pub(crate) use self::actors_memory::is_named_agent_principal_body;
 #[cfg(test)]
 pub(crate) use self::database_digests::{mask_embed_job_stamps, mask_unrepeatable_stamps};
 pub use self::doctor_manifest::{
@@ -79,9 +80,10 @@ pub(crate) use self::vector_evidence::NoMatchFloors;
 pub struct Vault {
     /// Live seat prefixes are vault-owned, never process-global.
     pub(crate) model_seats: std::sync::Mutex<crate::llm::seat::SeatPool>,
-    /// Each installed model pack's last full check, beside the install
-    /// receipt, frozen pin and source liveness it read (FIX 20043): a role
-    /// call reuses it while those match the store. In memory only.
+    /// Each installed model pack's last full check, beside the receipt,
+    /// frozen pin, source liveness and row, and scan evidence it read (FIX
+    /// 20043, 22119): a role call reuses it while those match the store. In
+    /// memory only.
     pub(crate) admitted_model_packs: crate::skill_hub::pack_catalog::AdmittedModelPacks,
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
     /// Exact HOST live-session orders, independent of a failed capture socket.

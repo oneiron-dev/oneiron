@@ -49,6 +49,40 @@ impl Memory<'_> {
             .with_read_filter(self.read_filter.as_ref()))
     }
 
+    /// Opens only a bound brief view. A view-only slip cannot enter any
+    /// general read verb; its holder need not be enrolled in this vault.
+    pub(crate) fn shared_brief_read_lane(
+        &self,
+        share: EntityId,
+        verb: &str,
+    ) -> MemoryResult<ScopedRead<'_>> {
+        let Some(proof) = self
+            .read_proof
+            .as_ref()
+            .filter(|proof| proof.claims().share_ref.is_some())
+        else {
+            return self.read_lane(ClaimReadStatus::Surfaceable);
+        };
+        let key = ScopedReadActorKey::from_share_view_slip(proof, verb)
+            .filter(|key| {
+                key.share_view_ref() == Some(share)
+                    && key.actor_ref() == self.actor.to_hex()
+                    && key.actor_class() == Some(self.actor_class.gate_actor_class())
+            })
+            .ok_or_else(|| {
+                MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "credential does not open this shared brief",
+                    &[],
+                )
+            })?;
+        let key = self.in_room_turn(key.for_destination(&self.destination))?;
+        Ok(self
+            .vault
+            .scoped_read(key)
+            .with_claim_status(ClaimReadStatus::Surfaceable))
+    }
+
     /// [`Self::read_lane`] for rows that go on to `destination` as well
     /// (FIX 10105): the key meets it, so it only narrows, and the caller's
     /// grants and room ceilings stay. A row a world keeps from there reads
@@ -143,6 +177,32 @@ impl Memory<'_> {
     /// As [`Self::read_lane`] refuses.
     pub fn read_key(&self) -> MemoryResult<ScopedReadActorKey> {
         self.in_room_turn(self.actor_read_key()?)
+    }
+
+    /// Share-only rendering keeps its credential for the renderer, but its
+    /// hooks receive no record-read authority, including on ask re-entry.
+    pub(crate) fn verb_hook_read_key(&self, verb: &str) -> MemoryResult<ScopedReadActorKey> {
+        let Some(proof) = self.read_proof.as_ref().filter(|proof| {
+            let claims = proof.claims();
+            claims.share_ref.is_some()
+                && matches!(verb, "vault.shares.view" | "vault.notes.follow_citation")
+                && proof.allows_verb(verb)
+                && claims.holder_ref == self.actor.to_hex()
+                && claims.actor_class.as_deref() == Some(self.actor_class.gate_actor_class())
+        }) else {
+            return self.read_key();
+        };
+        if !self.vault.capability_slip_is_live(proof)? {
+            return self.read_key();
+        }
+        let key = ScopedReadActorKey::read_nothing(
+            self.actor.to_hex(),
+            self.actor_class.gate_actor_class(),
+        )
+        .ok_or_else(|| {
+            MemoryError::bad_request("bound actor cannot be used as a scoped read key")
+        })?;
+        self.in_room_turn(key.for_destination(&self.destination))
     }
 
     /// The current credential's read key, when this handle carries one.
