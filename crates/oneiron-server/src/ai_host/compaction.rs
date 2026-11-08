@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::agent_dispatch::SpendScopeId;
-use oneiron::code_run::CompactionHostBinding;
+use oneiron::code_run::{CompactionHostBinding, ScopedChildGeneration, ScopedChildProfile};
 use oneiron::compaction::{
     CompactionBackend, CompactionBackendRegistry, CompactionDriver, CompactionGatePolicy,
     CompactionOff, CompactionRefusal, CompactionSuppression, EpochEmbedder,
@@ -47,6 +47,7 @@ use crate::wire_telemetry::{LimitQuestions, LimitRow};
 mod chat;
 mod chat_flights;
 mod live_fork;
+mod profiled;
 mod self_writer;
 mod serve;
 
@@ -337,6 +338,32 @@ impl CodeModeCompaction {
         spend: Option<&SpendScopeId>,
         admission: &Arc<dyn LiveAdmission>,
     ) -> RunCompaction {
+        self.for_meter(
+            host,
+            credential,
+            spend.map(|scope| CompactionMeter::Scope(scope.clone())),
+            admission,
+        )
+    }
+
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    pub(super) fn for_profiled_run(
+        &self,
+        host: CompactionHostBinding,
+        credential: &str,
+        profile: &ScopedChildProfile,
+    ) -> Option<RunCompaction> {
+        profiled::seat(self, host, credential, profile)
+    }
+
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    fn for_meter(
+        &self,
+        host: CompactionHostBinding,
+        credential: &str,
+        meter: Option<CompactionMeter>,
+        admission: &Arc<dyn LiveAdmission>,
+    ) -> RunCompaction {
         let live = match self {
             Self::Off(why) => return RunCompaction::off(*why),
             Self::Live(live) => live,
@@ -346,9 +373,8 @@ impl CodeModeCompaction {
         // Docs Q13: the agent's own hot window, when its profile names one.
         let hot_steps = profile.hot_steps.unwrap_or(live.hot_steps);
         let scoped;
-        let registry = match (definition, spend) {
-            (Some(definition), _) => {
-                let meter = spend.map(|scope| CompactionMeter::Scope(scope.clone()));
+        let registry = match (definition, meter) {
+            (Some(definition), meter) => {
                 match live.self_registry(&profile, definition, host, meter, admission) {
                     Ok(registry) => {
                         scoped = registry;
@@ -361,7 +387,7 @@ impl CodeModeCompaction {
                 }
             }
             (None, None) => &live.registry,
-            (None, Some(scope)) => match live.scoped_registry(scope) {
+            (None, Some(meter)) => match live.metered_registry(meter) {
                 Ok(registry) => {
                     scoped = registry;
                     &scoped
@@ -394,14 +420,16 @@ impl CodeModeCompaction {
 }
 
 impl LiveCompaction {
-    /// The registry a run that spends under `scope` compacts on: each served
-    /// backend, its calls metered on `scope` in place of code mode's.
+    /// Each served backend on this run's meter, in place of code mode's.
     #[cfg(feature = "code-sandbox-wasmtime")]
-    fn scoped_registry(&self, scope: &SpendScopeId) -> oneiron::Result<CompactionBackendRegistry> {
+    fn metered_registry(
+        &self,
+        meter: CompactionMeter,
+    ) -> oneiron::Result<CompactionBackendRegistry> {
         let mut registry = CompactionBackendRegistry::new();
         for backend in &self.served {
             registry.register(Arc::new(ServedCompactionBackend {
-                meter: CompactionMeter::Scope(scope.clone()),
+                meter: meter.clone(),
                 ..ServedCompactionBackend::clone(backend)
             }))?;
         }
@@ -604,6 +632,11 @@ enum CompactionMeter {
     /// books what it used once it returns, paid or failed, so a pass that
     /// outlives its run still books.
     Scope(SpendScopeId),
+    /// A profiled child's actual parent guard and original generation count.
+    Profiled {
+        guard: BudgetGuard,
+        generation: Arc<dyn ScopedChildGeneration>,
+    },
     /// `chat_compaction_meter` (FIX 4465 D): a chat turn's flight spends on
     /// its own guard on the chat actor's budget line and bills the payer the
     /// turn resolved (`None` is the vault owner, as a turn's is). Each call
