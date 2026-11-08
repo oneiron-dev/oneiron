@@ -34,7 +34,7 @@ pub(crate) use device_local::{
 pub(crate) use device_only::{
     CarriedWorlds, carried_worlds_in, device_only_recipient_worlds,
     device_only_recipient_worlds_raw, device_only_withholds, device_only_withholds_raw,
-    minted_worlds_in,
+    device_only_withholds_run, minted_worlds_in,
 };
 
 pub use board_layout::{
