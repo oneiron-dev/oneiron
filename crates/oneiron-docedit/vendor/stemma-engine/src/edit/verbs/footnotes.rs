@@ -63,10 +63,17 @@
 //!   story AND every matching reference run; a story with no body reference
 //!   (or a reference with no story) is a hard error (`NoteReferenceMissing`),
 //!   never a half-delete.
+//! - `EditNoteRuns` edits ONE paragraph within a note story as marked runs (a
+//!   whole-paragraph redline with the exact six marks), paragraph-scoped
+//!   across multi-paragraph notes; every other note block, the auto-number
+//!   marker, and the paragraph's structural markers survive.
 
 use super::super::{
     ContentFragment, ParagraphContent, apply_opaque_delete, apply_replace_paragraph_text,
-    find_opaque_flat_index, next_revision,
+    apply_segment_replace_paragraph, collect_anchor_inventory, extract_text_sections,
+    find_opaque_flat_index, has_structural_markers, next_revision, normalize_expect_punctuation,
+    paragraph_visible_text, reposition_segment_replacement_markers, set_exact_replacement_marks,
+    validate_preserved_inlines,
 };
 use super::super::{EditError, MaterializationMode};
 use super::super::{find_block_index, validate_block_is_editable};
@@ -76,6 +83,7 @@ use crate::domain::{
     ProofRef, RevisionInfo, StyleProps, TrackedBlock, TrackedSegment, TrackingStatus,
 };
 use crate::semantic_hash::check_block_guard;
+use crate::tracked_model::project_block_for_accept_reject;
 
 /// Which note family a `*Note` verb targets. Maps to the reference opaque kind
 /// and the story collection. See the module doc for why this small enum is
@@ -482,6 +490,273 @@ pub(crate) fn apply_edit(
         }
     }
     Ok(())
+}
+
+/// Edit ONE paragraph within a footnote/endnote story as marked runs.
+///
+/// Paragraph-scoped sibling of [`apply_edit`]: the target is the story-local
+/// `block_id` (resolved within the actual `note_id` story only — never a body
+/// id, never another note), including later paragraphs of a multi-paragraph
+/// note. There is deliberately NO `NoteBodyMultiParagraph` refusal: the op is
+/// paragraph-scoped, so a multi-paragraph body is an ordinary multi-target
+/// shape, not an out-of-scope one.
+///
+/// Validation mirrors the header/footer story edit over the resolved note
+/// paragraph: tracked block/segment editability, the optional semantic-hash
+/// guard, `expect` within one text section, and opaque/hardbreak preservation
+/// on the ACTUAL target paragraph. The replacement always materializes
+/// through the untouched shared segment builder (even all-plain, empty, or
+/// same-text content — empty runs validly empty the paragraph), then the
+/// shared exact-marks post-pass stamps the new `Inserted` runs. No inherited
+/// identity shortcut applies.
+///
+/// Marker preservation: the note auto-number glyph (`w:footnoteRef` /
+/// `w:endnoteRef`, classified from its wire bytes) is popped before
+/// materialization and prepended back as its own leading `Normal` segment, so
+/// it can never land inside a `Deleted` segment and vanish on accept. Every
+/// OTHER structural marker (bookmark/custom-XML/foreign decorations,
+/// comment ranges) is cloned from the post-pop original into the new
+/// `Inserted` segment at original text offsets via the shared offset law —
+/// the `Deleted` tombstone keeps its own copies, so reject-all still restores
+/// the original and accept-all keeps the markers. Opaque `CommentReference`
+/// atoms are excluded from that clone: they ride `PreservedInlineRef` and the
+/// segment builder already cloned them. `Direct` mode projects the same rich
+/// replacement (accept), preserving note metadata and the marker. The story's
+/// `content_hash` is recomputed over the ENTIRE note afterwards; every other
+/// note block, story, script selector, font, and deleted history is untouched.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_edit_runs(
+    doc: &mut CanonDoc,
+    note_id: &str,
+    note_kind: NoteKind,
+    block_id: &NodeId,
+    expect: &str,
+    semantic_hash: Option<&str>,
+    content: &ParagraphContent,
+    revision: &RevisionInfo,
+    mode: MaterializationMode,
+    rev_counter: &mut u32,
+    step_index: usize,
+) -> Result<(), EditError> {
+    let story = note_story_mut(doc, note_kind, note_id, step_index)?;
+
+    // Story-local id lookup over the ACTUAL note blocks. This deliberately
+    // does not call the body `find_block_index`: a colliding body id must
+    // never resolve here, and a note-local id must never reach the body.
+    let idx = story
+        .blocks
+        .iter()
+        .position(|tb| match &tb.block {
+            BlockNode::Paragraph(p) => &p.id == block_id,
+            BlockNode::Table(t) => &t.id == block_id,
+            BlockNode::OpaqueBlock(o) => &o.id == block_id,
+        })
+        .ok_or_else(|| EditError::BlockNotFound {
+            block_id: block_id.clone(),
+            step_index,
+        })?;
+
+    // Same tracked block/segment editability gate the body and header/footer
+    // edits enforce: no stacking onto a pending tracked change.
+    validate_block_is_editable(&story.blocks[idx], step_index)?;
+
+    match &story.blocks[idx].block {
+        BlockNode::Paragraph(_) => {}
+        BlockNode::Table(_) => {
+            return Err(EditError::NotAParagraph {
+                block_id: block_id.clone(),
+                actual_kind: "table",
+                step_index,
+            });
+        }
+        BlockNode::OpaqueBlock(_) => {
+            return Err(EditError::NotAParagraph {
+                block_id: block_id.clone(),
+                actual_kind: "opaque_block",
+                step_index,
+            });
+        }
+    }
+
+    let BlockNode::Paragraph(para) = &story.blocks[idx].block else {
+        unreachable!("checked paragraph above");
+    };
+
+    // Optional semantic-hash precondition (stale-snapshot detection).
+    if let Some(expected) = semantic_hash
+        && let Err(actual) = check_block_guard(&story.blocks[idx].block, expected)
+    {
+        return Err(EditError::BlockSemanticHashMismatch {
+            block_id: block_id.clone(),
+            expected: expected.to_string(),
+            actual,
+            step_index,
+        });
+    }
+
+    // `expect` must appear within a single text section (same contract as the
+    // header/footer story edit). Punctuation-normalized on both sides.
+    let text_sections = extract_text_sections(para);
+    let expect_norm = normalize_expect_punctuation(expect);
+    let expect_found = text_sections
+        .iter()
+        .any(|section| normalize_expect_punctuation(section).contains(&expect_norm));
+    if !expect_found {
+        return Err(EditError::ExpectMismatch {
+            block_id: block_id.clone(),
+            expected: expect.to_string(),
+            actual_text: paragraph_visible_text(para),
+            step_index,
+        });
+    }
+
+    // Opaque-preservation + preserved-inline-order validation on the ACTUAL
+    // target paragraph (never a blanket scan of an unrelated one).
+    let anchors = collect_anchor_inventory(para);
+    validate_preserved_inlines(para, block_id, content, &anchors, step_index)?;
+
+    let BlockNode::Paragraph(para_mut) = &mut story.blocks[idx].block else {
+        unreachable!("checked paragraph above");
+    };
+
+    // Pop ONLY the genuine auto-number glyph (footnoteRef/endnoteRef by wire
+    // tag). Any other leading decoration (a bookmark start, a foreign marker)
+    // is an ordinary structural marker retained once by the segment builder.
+    // Popping it would move it away from its original position.
+    let autonumber = match para_mut.segments.first_mut() {
+        Some(seg)
+            if seg
+                .inlines
+                .first()
+                .is_some_and(is_note_autonumber_decoration) =>
+        {
+            let deco = seg.inlines.remove(0);
+            if seg.inlines.is_empty() {
+                para_mut.segments.remove(0);
+            }
+            Some(deco)
+        }
+        _ => None,
+    };
+
+    // Marker source for the accepted reading: the post-pop original, minus
+    // opaque CommentReference atoms (those ride PreservedInlineRef, already
+    // cloned into the replacement by the segment builder — re-injecting them
+    // would duplicate their ids). The exclusion shifts no offsets: a
+    // CommentReference atom is zero-width in the offset law.
+    let marker_source: Vec<TrackedSegment> = para_mut
+        .segments
+        .iter()
+        .map(|seg| TrackedSegment {
+            status: seg.status.clone(),
+            inlines: seg
+                .inlines
+                .iter()
+                .filter(|inline| {
+                    !matches!(
+                        inline,
+                        InlineNode::OpaqueInline(opaque)
+                            if matches!(opaque.kind, OpaqueKind::CommentReference(_))
+                    )
+                })
+                .cloned()
+                .collect(),
+        })
+        .collect();
+    let carry_markers = has_structural_markers(&marker_source);
+
+    // No enclosing block insertion: `validate_block_is_editable` above refuses
+    // a pending-inserted (or otherwise tracked) note block, so this paragraph
+    // is never itself part of a block insertion.
+    apply_segment_replace_paragraph(para_mut, content, revision, None, rev_counter);
+    set_exact_replacement_marks(para_mut, content);
+    if carry_markers {
+        reposition_segment_replacement_markers(para_mut, &marker_source);
+    }
+
+    if let Some(deco) = autonumber {
+        para_mut.segments.insert(
+            0,
+            TrackedSegment {
+                status: TrackingStatus::Normal,
+                inlines: vec![deco],
+            },
+        );
+    }
+
+    // Direct mode: resolve the freshly-authored tracked changes so the note
+    // paragraph returns to all-Normal (mirrors the body/header Direct path).
+    if mode == MaterializationMode::Direct {
+        project_block_for_accept_reject(&mut story.blocks[idx].block, true);
+    }
+
+    // Recompute the ENTIRE chosen note story's content hash: every block's
+    // text, not just the edited paragraph's.
+    let story_nodes: Vec<BlockNode> = story.blocks.iter().map(|tb| tb.block.clone()).collect();
+    *story.content_hash = crate::import::compute_story_content_hash(&story_nodes);
+    Ok(())
+}
+
+/// Mutable access to one note story's blocks plus its content hash, resolved
+/// by actual `w:id` within the addressed collection.
+struct NoteStoryMut<'a> {
+    blocks: &'a mut Vec<TrackedBlock>,
+    content_hash: &'a mut String,
+}
+
+fn note_story_mut<'a>(
+    doc: &'a mut CanonDoc,
+    note_kind: NoteKind,
+    note_id: &str,
+    step_index: usize,
+) -> Result<NoteStoryMut<'a>, EditError> {
+    match note_kind {
+        NoteKind::Footnote => doc
+            .footnotes
+            .iter_mut()
+            .find(|story| story.id == note_id)
+            .map(|story| NoteStoryMut {
+                blocks: &mut story.blocks,
+                content_hash: &mut story.content_hash,
+            }),
+        NoteKind::Endnote => doc
+            .endnotes
+            .iter_mut()
+            .find(|story| story.id == note_id)
+            .map(|story| NoteStoryMut {
+                blocks: &mut story.blocks,
+                content_hash: &mut story.content_hash,
+            }),
+    }
+    .ok_or_else(|| EditError::NoteNotFound {
+        note_id: note_id.to_string(),
+        note_kind: note_kind.label(),
+        step_index,
+    })
+}
+
+/// True when `inline` is the note auto-number glyph run (`w:footnoteRef` /
+/// `w:endnoteRef`), classified from the raw wire bytes: `DecorationType` does
+/// not encode the tag (note refs import under the foreign-element fallback),
+/// the same reason `import::decoration_is_self_contained_run` classifies from
+/// bytes rather than trusting the kind.
+fn is_note_autonumber_decoration(inline: &InlineNode) -> bool {
+    let InlineNode::Decoration(decoration) = inline else {
+        return false;
+    };
+    let Some(raw) = decoration.raw_xml.as_deref() else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(raw);
+    let Some(after_angle) = text.find('<').map(|index| index + 1) else {
+        return false;
+    };
+    let name: String = text[after_angle..]
+        .chars()
+        .take_while(|c| !c.is_whitespace() && *c != '/' && *c != '>')
+        .collect();
+    let local = name.rsplit(':').next().unwrap_or(&name);
+    matches!(local, "footnoteRef" | "endnoteRef")
 }
 
 /// Delete a note: remove BOTH the reference run(s) and the story.

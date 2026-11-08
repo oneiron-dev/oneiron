@@ -7,7 +7,8 @@
 //! writer's own transaction. A receipt id that is not `health_review:` and
 //! 64 hex names no index row: the lookup refuses that shape anyway. An
 //! index row whose card no longer holds its receipt is passed by on lookup.
-//! Cards written before this index have no index rows; no migration builds
+//! A receipt a card no longer holds takes its review state row with it (FIX
+//! 8082). Cards written before this index have no index rows; no migration builds
 //! them (no backward compatibility).
 
 use std::collections::BTreeSet;
@@ -25,7 +26,7 @@ const CARD_BY_RECEIPT: SideTable<([u8; 32], CardKey), (), Raw> =
     SideTable::new(&side_table::COACH_AGENT_HEALTH_CARD_BY_RECEIPT);
 
 /// The digest a reviewer receipt id spells: `health_review:` and 64 hex.
-pub(super) fn receipt_digest(receipt: &str) -> Option<[u8; 32]> {
+pub(crate) fn receipt_digest(receipt: &str) -> Option<[u8; 32]> {
     let hex = receipt.strip_prefix(HEALTH_REVIEW_RECEIPT_PREFIX)?;
     let mut digest = [0u8; 32];
     if hex.len() != 64 {
@@ -65,6 +66,7 @@ pub(super) fn put_card_in_txn(
     let after = receipts(card);
     for gone in before.difference(&after) {
         CARD_BY_RECEIPT.delete(store, txn, &(*gone, *key))?;
+        super::outcomes::review_state::delete_in_txn(store, txn, gone)?;
     }
     for added in after.difference(&before) {
         CARD_BY_RECEIPT.put(store, txn, &(*added, *key), &())?;
