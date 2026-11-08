@@ -259,7 +259,10 @@ pub fn place_turn_context<S: AsRef<str>>(
         at,
         LlmMessage {
             role: LlmMessageRole::User,
-            content: vec![ContentPart::Text { text, signature: None }],
+            content: vec![ContentPart::Text {
+                text,
+                signature: None,
+            }],
         },
     );
     Some(at)

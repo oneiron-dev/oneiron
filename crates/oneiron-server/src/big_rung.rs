@@ -48,7 +48,10 @@ fn failed(what: impl std::fmt::Display) -> Error {
 fn message(role: LlmMessageRole, text: String) -> LlmMessage {
     LlmMessage {
         role,
-        content: vec![ContentPart::Text { text, signature: None }],
+        content: vec![ContentPart::Text {
+            text,
+            signature: None,
+        }],
     }
 }
 
@@ -273,7 +276,10 @@ impl BigModel {
         for clip in call.audio {
             let reference = format!("audio:{}", clip.name);
             state[clip.name.as_str()] = json!(reference);
-            content.push(ContentPart::Text { text: reference, signature: None });
+            content.push(ContentPart::Text {
+                text: reference,
+                signature: None,
+            });
             content.push(ContentPart::Audio {
                 media_type: clip.media_type.clone(),
                 data: clip.base64(),

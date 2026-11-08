@@ -230,7 +230,10 @@ fn writer_request(
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: data, signature: None }],
+                content: vec![ContentPart::Text {
+                    text: data,
+                    signature: None,
+                }],
             },
         ],
         tools: Vec::new(),

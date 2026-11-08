@@ -767,11 +767,17 @@ impl Child {
             messages: vec![
                 LlmMessage {
                     role: LlmMessageRole::System,
-                    content: vec![ContentPart::Text { text: prompt, signature: None }],
+                    content: vec![ContentPart::Text {
+                        text: prompt,
+                        signature: None,
+                    }],
                 },
                 LlmMessage {
                     role: LlmMessageRole::User,
-                    content: vec![ContentPart::Text { text: input, signature: None }],
+                    content: vec![ContentPart::Text {
+                        text: input,
+                        signature: None,
+                    }],
                 },
             ],
             tools: Vec::new(),
