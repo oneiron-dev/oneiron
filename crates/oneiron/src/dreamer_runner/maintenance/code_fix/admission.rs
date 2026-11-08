@@ -361,27 +361,38 @@ pub(crate) fn admitting_grant_in(
     let now = vault.instant_in_txn(txn)?.secs();
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let mut lapsed = false;
-    'grants: for standing in vault.agent_grants_in_txn(txn)? {
+    let grants = vault.agent_grants_in_txn(txn)?;
+    // A verb class a Coach Grant names that admits `read` lists it (FIX 8735).
+    let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
+        &vault.store,
+        txn,
+        grants
+            .iter()
+            .filter(|standing| standing.grant.member_ref == coach)
+            .map(|standing| &standing.grant),
+    )?;
+    'grants: for standing in &grants {
         let grant = &standing.grant;
+        let read = grant.scope_for_verb("read", &classes);
         if only.is_some_and(|only| only != standing.id)
             || grant.member_ref != coach
             || !owners.contains(&standing.delegated_by)
-            || !grant.confers_at(now)
+            || !grant.confers_with_classes_at(now, &classes)
             || !refs
                 .worlds
                 .iter()
-                .all(|world| grant.authority_scope.worlds.contains(&ScopeId(*world)))
+                .all(|world| read.worlds.contains(&ScopeId(*world)))
         {
             continue;
         }
         for (id, raw) in &raws {
-            if !lane.grant_admits_position_in(txn, id, raw, &grant.authority_scope)? {
+            if !lane.grant_admits_position_in(txn, id, raw, &read)? {
                 continue 'grants;
             }
         }
         if let Some(scopes) = scopes.as_deref() {
             for scope in scopes {
-                if !grant.authority_scope.admits("read", scope, &Scope::top()) {
+                if !read.admits("read", scope, &Scope::top()) {
                     continue 'grants;
                 }
             }
