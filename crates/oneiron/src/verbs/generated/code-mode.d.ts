@@ -4673,9 +4673,9 @@ declare namespace Sdk {
   type CalendarDetailSetting = "busy_free_only" | "shared";
   type MailSourceConnectRequest = { provider: MailProvider; kind: MailSourceKind; address: string; provider_account: string; custody_ref: string; members?: string[]; for_person?: string | null; channel_identity_ref?: string | null; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null };
   type MailSourceStatus = "active" | "paused" | "disconnected";
-  type MailSourceView = { source_ref: string; provider: MailProvider; kind: MailSourceKind; address?: string | null; owner_ref?: string | null; reads: boolean; members?: string[]; copy: MailCopySetting; on_provider_delete: MailProviderDeleteSetting; calendar_details: CalendarDetailSetting; status: MailSourceStatus; connected_at: number; updated_at: number };
+  type MailSourceView = { source_ref: string; provider: MailProvider; kind: MailSourceKind; address?: string | null; own_addresses?: string[]; owner_ref?: string | null; reads: boolean; members?: string[]; copy: MailCopySetting; on_provider_delete: MailProviderDeleteSetting; calendar_details: CalendarDetailSetting; status: MailSourceStatus; connected_at: number; updated_at: number };
   type MailSourceConnectReceipt = { source: MailSourceView; resumed: boolean };
-  type MailSourceSettingsRequest = { source_ref: string; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null; status?: MailSourceStatus | null };
+  type MailSourceSettingsRequest = { source_ref: string; copy?: MailCopySetting | null; on_provider_delete?: MailProviderDeleteSetting | null; calendar_details?: CalendarDetailSetting | null; status?: MailSourceStatus | null; own_addresses?: string[] | null };
   type MailSourceMembersRequest = { source_ref: string; members: string[] };
   type MailSourceRef = { source_ref: string };
   type SourceAudienceOp = "reader_added" | "reader_removed" | "shared" | "unshared" | "opened" | "closed";

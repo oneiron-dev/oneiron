@@ -741,13 +741,16 @@ impl Memory<'_> {
             None => parent,
         };
         // Every recipient the reply names, as it would send, so a redraft to
-        // the same people is the same revision (fix list row 17645). The
-        // mailbox's own address is never one of them; one no mail can go to
-        // is no recipient's either.
+        // the same people is the same revision (fix list row 17645). None of
+        // the mailbox's own addresses is one of them: its address (one no
+        // mail can go to is no recipient's either) and every address its
+        // provider proves or its owner confirms it owns (fix list row
+        // 20400).
         let own: Vec<String> =
             crate::channel_identity_provider::native_mail::canonical_recipient(&row.address)
                 .ok()
                 .into_iter()
+                .chain(row.own_addresses.iter().cloned())
                 .collect();
         let recipients = reply_recipients(&parent, &own, input.reply_all, &input.cc)?;
         // The HTML as it would send, so a redraft of the same words is the

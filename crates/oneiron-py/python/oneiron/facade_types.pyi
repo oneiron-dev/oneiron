@@ -23864,6 +23864,7 @@ class MailSourceView(TypedDict):
     provider: MailProvider
     kind: MailSourceKind
     address: NotRequired[str | None]
+    own_addresses: NotRequired[list[str]]
     owner_ref: NotRequired[str | None]
     reads: bool
     members: NotRequired[list[str]]
@@ -23882,6 +23883,7 @@ class MailSourceSettingsRequest(TypedDict):
     on_provider_delete: NotRequired[MailProviderDeleteSetting | None]
     calendar_details: NotRequired[CalendarDetailSetting | None]
     status: NotRequired[MailSourceStatus | None]
+    own_addresses: NotRequired[list[str] | None]
 class MailSourceMembersRequest(TypedDict):
     source_ref: str
     members: list[str]
