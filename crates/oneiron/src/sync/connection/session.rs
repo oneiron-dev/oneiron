@@ -225,10 +225,11 @@ impl SessionFault {
     }
 
     /// The fault of applying a frame the far end sent, told as `message`, on
-    /// the side `error`'s type names (FIX 22153): a fault of this machine's
-    /// own store ([`TransportError::Storage`]) is this machine's own; a frame
-    /// that does not decode or that the protocol refuses, and a refusal it
-    /// carries, are the far end's.
+    /// the side `error`'s type names (FIX 22153): [`TransportError::Storage`],
+    /// a fault of this machine's own store or a reply of its own that does
+    /// not encode (FIX 22179), is this machine's own; a frame that does not
+    /// decode or that the protocol refuses, and a refusal it carries, are the
+    /// far end's.
     pub(super) fn of_frame(error: &TransportError, message: String) -> Self {
         match error {
             TransportError::Storage(_) => Self::Local(message),

@@ -441,7 +441,7 @@ impl SyncClient {
                 .map_err(|e| TransportError::Storage(e.to_string()))?;
             let frame =
                 transport::encode_window_sync(key.as_str(), window_sub_tags::VV_REQUEST, &vv)
-                    .into_result()?;
+                    .into_own_frame()?;
             self.requested_windows
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)

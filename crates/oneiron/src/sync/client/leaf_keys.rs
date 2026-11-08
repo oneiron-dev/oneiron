@@ -67,7 +67,7 @@ impl SyncClient {
                         .unwrap_or(LeafKeyFailureCause::HolderFault),
                 };
                 logged(tag, &id, holder, executor, "not_answered");
-                Ok(vec![encode_leaf_key_failure(&id, &cause).into_result()?])
+                Ok(vec![encode_leaf_key_failure(&id, &cause).into_own_frame()?])
             }
             TAG_LEAF_KEY_ANSWER => {
                 let answer = decode_leaf_key_answer(payload)?;
