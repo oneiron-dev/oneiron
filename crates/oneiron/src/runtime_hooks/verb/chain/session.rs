@@ -175,7 +175,9 @@ impl<'c> Chain<'c> {
 
     /// Holds the chain's receipts and saved runs, each with what the call's
     /// answer will say of it, for the call to keep in its session's own
-    /// store once its read is done.
+    /// store once its read is done. Each is held as the vault's write lands
+    /// it ([`Self::landed_in_txn`]); one the vault cannot be read for keeps
+    /// no payload.
     pub(super) fn hold_in_session(&self, hooks: &SessionHooks<'_>) {
         let at = self
             .vault
@@ -190,27 +192,19 @@ impl<'c> Chain<'c> {
         };
         let rtxn = self.vault.store.env.read_txn().ok();
         hooks.hold(self.runs.iter().map(|run| {
-            let mut receipt = self.receipt(run);
-            let mut saved = self.saved(run, at);
-            let erased = rtxn.as_ref().map_or(true, |txn| {
-                // A caller a permanent erase fenced leaves the held copy as
-                // it leaves the vault's (FIX 22178).
-                store::scrub_erased_verb_actor_in_txn(
-                    self.vault,
-                    txn,
-                    &mut saved,
-                    &mut receipt,
-                    self.call.actor,
-                )
-                .and_then(|()| {
-                    store::dependencies_erased_in_txn(self.vault, txn, &run.hook_dependencies())
-                })
-                .unwrap_or(true)
-            });
-            if erased {
-                store::scrub_receipt_payload(&mut receipt);
-                store::scrub_verb_payload(&mut saved);
-            }
+            let landed = rtxn
+                .as_ref()
+                .and_then(|txn| self.landed_in_txn(txn, run, at).ok());
+            let (receipt, saved) = match landed {
+                Some((receipt, saved, _)) => (receipt, saved),
+                None => {
+                    let mut receipt = self.receipt(run);
+                    let mut saved = self.saved(run, at);
+                    store::scrub_receipt_payload(&mut receipt);
+                    store::scrub_verb_payload(&mut saved);
+                    (receipt, saved)
+                }
+            };
             HeldRun {
                 key: run.key,
                 receipt,

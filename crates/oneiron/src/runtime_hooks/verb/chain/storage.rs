@@ -5,12 +5,12 @@
 //! its write committed.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use crate::Result;
 use crate::receipt::{ReceiptKind, ReceiptRecord, hex_lower};
 use crate::runtime_hooks::runner::{MAX_PINNED_INPUT, bounded};
 use crate::runtime_hooks::{HookPassReport, apply, block, filter, lineage, store};
-use crate::{EntityId, Result};
 
 use super::super::ask;
 use super::super::record::{self, HookVerbRunRecord};
@@ -48,26 +48,42 @@ impl Chain<'_> {
     /// runs stay in the keep. A room's chain, and a call whose consequences
     /// do not run, holds none.
     pub(super) fn consequences_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
-        self.consequences_at_in_txn(txn, self.vault.store.clock.now_recorded_at())
+        if self.blocks.is_empty() && self.intents.is_empty() {
+            return Ok(());
+        }
+        let at = self.vault.store.clock.now_recorded_at();
+        let mut retired = BTreeSet::new();
+        for run in &self.runs {
+            if self.landed_in_txn(txn, run, at.saturating_mul(1_000))?.2 {
+                retired.insert(run.key);
+            }
+        }
+        self.consequences_at_in_txn(txn, at, &retired)
     }
 
     /// The chain's blocks with their lineage and its intents, each written
-    /// once; `at` (Unix seconds) stamps when a block on an erased source
-    /// expires and an intent on one is refused. A caller a permanent erase
-    /// fenced before this write leaves the lineage of each, as the erase's
-    /// own scrub would have taken it had the chain committed first
+    /// once; `at` (Unix seconds) stamps when a block or intent of a run in
+    /// `retired` ([`Self::landed_in_txn`]), or a block naming a row a
+    /// permanent erase fenced before this write, expires or is refused, as
+    /// that erase's own scrub would have left it had the chain committed
+    /// first (FIX 22191). An erased caller leaves the lineage of each
     /// ([`lineage::erase_entity`]; FIX 22184).
-    fn consequences_at_in_txn(&self, txn: &mut heed::RwTxn<'_>, at: u64) -> Result<()> {
+    fn consequences_at_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        at: u64,
+        retired: &BTreeSet<store::RunKey>,
+    ) -> Result<()> {
         if self.blocks.is_empty() && self.intents.is_empty() {
             return Ok(());
         }
         let vault = self.vault;
-        let erased = self.erased_sources(txn)?;
+        let retired_refs: BTreeSet<String> = retired.iter().map(|key| hex_lower(key)).collect();
         let caller =
             store::source_erased_in_txn(vault, txn, &self.call.actor)?.then_some(self.call.actor);
         for (id, row, chain) in &self.blocks {
             let chain = lineage::without_erased(chain, caller.as_ref());
-            if row.refs.iter().any(|id| erased.contains(id)) {
+            if retired_refs.contains(&row.run_key) || block::names_erased_in_txn(vault, txn, row)? {
                 let mut row = row.clone();
                 block::scrub_block_payload(&mut row, at);
                 block::put_block_in_txn(vault, txn, *id, &row)?;
@@ -83,7 +99,9 @@ impl Chain<'_> {
             if let Some(caller) = &caller {
                 lineage::erase_entity(&mut intent.to_mut().lineage, caller);
             }
-            if store::dependencies_erased_in_txn(vault, txn, &intent.dependencies)? {
+            if retired.contains(key)
+                || store::dependencies_erased_in_txn(vault, txn, &intent.dependencies)?
+            {
                 let intent = intent.to_mut();
                 store::scrub_intent_payload(intent, at);
                 store::INTENTS.put(vault, txn, key, intent)?;
@@ -98,31 +116,6 @@ impl Chain<'_> {
             store::INTENTS.put(vault, txn, key, &intent)?;
         }
         Ok(())
-    }
-
-    /// The permanently erased sources this chain carries, checked in its
-    /// own write snapshot before any original payload can be committed.
-    fn erased_sources(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<std::collections::BTreeSet<EntityId>> {
-        let vault = self.vault;
-        let mut erased = std::collections::BTreeSet::new();
-        for run in &self.runs {
-            erased.extend(store::erased_dependency_ids_in_txn(
-                vault,
-                txn,
-                &run.hook_dependencies(),
-            )?);
-        }
-        for (_, intent, _) in &self.intents {
-            erased.extend(store::erased_dependency_ids_in_txn(
-                vault,
-                txn,
-                &intent.dependencies,
-            )?);
-        }
-        Ok(erased)
     }
 
     /// [`Self::consequences_in_txn`] in a vault write of its own, when the
@@ -153,28 +146,47 @@ impl Chain<'_> {
             crate::code_run::clear_parked_wait_in_txn(vault, txn, turn.run, token.ask())?;
         }
         let at = vault.store.clock.now_recorded_at().saturating_mul(1_000);
+        let mut retired = BTreeSet::new();
         for run in &self.runs {
-            let mut receipt = self.receipt(run);
-            let mut saved = self.saved(run, at);
-            // A run across its caller's permanent erase keeps no caller id
-            // (FIX 22178), and one across a source's erase none of its bytes.
-            store::scrub_erased_verb_actor_in_txn(
-                vault,
-                txn,
-                &mut saved,
-                &mut receipt,
-                self.call.actor,
-            )?;
-            if !store::erased_dependency_ids_in_txn(vault, txn, &run.hook_dependencies())?
-                .is_empty()
-            {
-                store::scrub_receipt_payload(&mut receipt);
-                store::scrub_verb_payload(&mut saved);
+            let (receipt, saved, gone) = self.landed_in_txn(txn, run, at)?;
+            if gone {
+                retired.insert(run.key);
             }
             store::RECEIPTS.put(vault, txn, &run.key, &receipt)?;
             record::put_in_txn(vault, vault, txn, &run.key, &saved)?;
         }
-        self.consequences_at_in_txn(txn, at / 1_000)
+        self.consequences_at_in_txn(txn, at / 1_000, &retired)
+    }
+
+    /// `run`'s receipt and saved copy as a write at `at` (Unix ms) lands
+    /// them, read in that write's snapshot, and whether its payload retired.
+    /// A caller or tail actor a permanent erase fenced names the erased
+    /// marker (FIX 22178); a run across a source's erase keeps none of its
+    /// bytes, nor one whose caller's own args or result name an erased row
+    /// (FIX 22191). So each lands as the erase's own scrub would have left it
+    /// had the chain committed first, and no later sweep scrubs it again.
+    pub(super) fn landed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        run: &RunRecord<'_>,
+        at: u64,
+    ) -> Result<(ReceiptRecord, HookVerbRunRecord, bool)> {
+        let vault = self.vault;
+        let mut receipt = self.receipt(run);
+        let mut saved = self.saved(run, at);
+        let mut retired = store::scrub_erased_verb_run_in_txn(
+            vault,
+            txn,
+            &mut saved,
+            &mut receipt,
+            self.call.actor,
+        )?;
+        if !store::erased_dependency_ids_in_txn(vault, txn, &run.hook_dependencies())?.is_empty() {
+            store::scrub_receipt_payload(&mut receipt);
+            store::scrub_verb_payload(&mut saved);
+            retired = true;
+        }
+        Ok((receipt, saved, retired))
     }
 
     /// Lands the post chain's queued outcomes, each once, as its hook's
