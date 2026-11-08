@@ -79,6 +79,23 @@ pub(crate) fn install_served_transports(server: &SyncServer, models: Option<&Mod
             }
         }
     }
+    // The installed MCP endpoint of each `[connectors]` section, under the
+    // normalized name the served connector host keys it by: a catalog
+    // connector's tool call goes there, and `can({effect: {connector_call}})`
+    // judges it for that endpoint (FIX 22102).
+    transports = transports.with_connector_endpoints(
+        server
+            .config
+            .connectors
+            .iter()
+            .map(|(name, connector)| {
+                (
+                    crate::config::connectors::normalize_name(name),
+                    connector.endpoint.clone(),
+                )
+            })
+            .collect(),
+    );
     server
         .vault()
         .install_served_transports(Arc::new(transports));

@@ -24,7 +24,7 @@ pub(crate) use fanout::{
     fanout_width_check_row,
 };
 
-pub(crate) use self::admission::execute_outbound_effect;
+pub(crate) use self::admission::{execute_outbound_effect, judge_new_effect_in_txn};
 pub(crate) use self::replay::PROVIDER_WAIT_REASON;
 #[cfg(any(test, feature = "test-hooks"))]
 pub(crate) use self::types::BEFORE_NEW_ADMISSION;

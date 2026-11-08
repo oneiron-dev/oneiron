@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1312 facade rows, 4743 generated types.
+// UniFFI census: 1312 facade rows, 4744 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1264.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -51565,11 +51565,54 @@ pub struct CanOutboundSchedule {
     pub outbound_schedule: OutboundScheduleRequest,
 }
 
+/// `oneiron::outbound_consent::connector_call_types::ConnectorSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConnectorSource {
+    #[serde(rename = "catalog")]
+    Catalog,
+    #[serde(rename = "builtin")]
+    Builtin,
+}
+
+/// `oneiron::outbound_consent::tool_call::MutationIntent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MutationIntent {
+    #[serde(rename = "preview")]
+    Preview,
+    #[serde(rename = "explicit_mutation")]
+    ExplicitMutation,
+}
+
+/// `oneiron::outbound_consent::connector_call_types::ConnectorCallRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorCallRequest {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ConnectorSource>,
+    #[serde(rename = "tool")]
+    pub tool: String,
+    #[serde(rename = "arguments", default, skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<crate::WireJson>,
+    #[serde(rename = "mutation", default, skip_serializing_if = "Option::is_none")]
+    pub mutation: Option<MutationIntent>,
+}
+
+/// `oneiron::verbs::can::CanConnectorCall`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CanConnectorCall {
+    #[serde(rename = "connector_call")]
+    pub connector_call: ConnectorCallRequest,
+}
+
 /// `oneiron::verbs::can::CanEffect`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum CanEffect {
     OutboundSchedule(CanOutboundSchedule),
+    ConnectorCall(CanConnectorCall),
 }
 
 /// `oneiron::verbs::can::CanEffectRequest`.
@@ -56855,40 +56898,6 @@ pub struct LiveVoiceUsage {
     pub metering_enabled: bool,
     #[serde(rename = "settlements")]
     pub settlements: Vec<RunRungSettlement>,
-}
-
-/// `oneiron::outbound_consent::connector_call_types::ConnectorSource`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ConnectorSource {
-    #[serde(rename = "catalog")]
-    Catalog,
-    #[serde(rename = "builtin")]
-    Builtin,
-}
-
-/// `oneiron::outbound_consent::tool_call::MutationIntent`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum MutationIntent {
-    #[serde(rename = "preview")]
-    Preview,
-    #[serde(rename = "explicit_mutation")]
-    ExplicitMutation,
-}
-
-/// `oneiron::outbound_consent::connector_call_types::ConnectorCallRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectorCallRequest {
-    #[serde(rename = "name")]
-    pub name: String,
-    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<ConnectorSource>,
-    #[serde(rename = "tool")]
-    pub tool: String,
-    #[serde(rename = "arguments", default, skip_serializing_if = "Option::is_none")]
-    pub arguments: Option<crate::WireJson>,
-    #[serde(rename = "mutation", default, skip_serializing_if = "Option::is_none")]
-    pub mutation: Option<MutationIntent>,
 }
 
 /// `oneiron::verbs::live_voice::LiveVoiceToolRequest`.
